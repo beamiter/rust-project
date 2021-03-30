@@ -6,7 +6,7 @@ use termion::{clear, color, cursor, style};
 
 fn draw_colorful_system(sys: &mut System) {
     sys.refresh_all();
-    print!("{}{}", clear::BeforeCursor, cursor::Goto(1, 1));
+    print!("{}{}{}", clear::BeforeCursor, cursor::Goto(1, 1), style::Reset);
 
     println!("{}Disks", color::Fg(color::Red));
     for disk in sys.get_disks() {
