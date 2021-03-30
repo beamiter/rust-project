@@ -8,7 +8,7 @@ fn draw_colorful_system(sys: &mut System) {
     sys.refresh_all();
     print!("{}{}{}", clear::BeforeCursor, cursor::Goto(1, 1), style::Reset);
 
-    println!("{}Disks", color::Fg(color::Red));
+    println!("{}        Disks", color::Fg(color::Red));
     for disk in sys.get_disks() {
         if let Some("/") = disk.get_mount_point().to_str() {
             // println!("{:?}", disk);
@@ -23,19 +23,19 @@ fn draw_colorful_system(sys: &mut System) {
     println!("{}Networks", color::Fg(color::Cyan));
     for (interface_name, data) in sys.get_networks() {
         println!(
-            "{}:     recv: {} KB, trans: {} KB",
-            interface_name,
+            "recv: {:05} KB, trans: {:05} KB,     {}",
             data.get_received() / 1000,
-            data.get_transmitted() / 1000
+            data.get_transmitted() / 1000,
+            interface_name
         );
     }
 
-    println!("{}Temperatures", color::Fg(color::Magenta));
+    println!("{}        Temperatures", color::Fg(color::Magenta));
     for component in sys.get_components() {
         println!("{:?}", component);
     }
 
-    println!("{}Memory", color::Fg(color::Green));
+    println!("{}        Memory", color::Fg(color::Green));
     println!(
         "total memory:           {} MB",
         sys.get_total_memory() / 1000
@@ -54,7 +54,7 @@ fn draw_colorful_system(sys: &mut System) {
     // println!("[{}] {} {:?}", pid, process.name(), process.disk_usage());
     // }
 
-    println!("{}Systems", color::Fg(color::Blue));
+    println!("{}        Systems", color::Fg(color::Blue));
     println!(
         "System name:             {:?}",
         sys.get_name().unwrap_or("nan".to_string())
@@ -73,7 +73,7 @@ fn draw_colorful_system(sys: &mut System) {
     );
 
     println!(
-        "{}{}{}             Clock",
+        "{}{}{}        Clock",
         color::Fg(color::LightMagenta),
         style::Bold,
         style::Italic
