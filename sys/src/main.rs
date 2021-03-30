@@ -45,6 +45,10 @@ fn draw_colorful_system(sys: &mut System) {
         sys.get_used_memory() / 1000
     );
     println!(
+        "available memory:       {} MB",
+        sys.get_available_memory() / 1000
+    );
+    println!(
         "free memory:            {} MB",
         sys.get_free_memory() / 1000
     );
