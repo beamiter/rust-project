@@ -6,7 +6,31 @@ use termion::{clear, color, cursor, style};
 
 fn draw_colorful_system(sys: &mut System) {
     sys.refresh_all();
-    print!("{}{}{}", clear::BeforeCursor, cursor::Goto(1, 1), style::Reset);
+    print!(
+        "{}{}{}",
+        clear::BeforeCursor,
+        cursor::Goto(1, 1),
+        style::Reset
+    );
+
+    println!("{}        Systems", color::Fg(color::Blue));
+    println!(
+        "Name:             {:?}",
+        sys.get_name().unwrap_or("nan".to_string())
+    );
+    println!(
+        "Kernel version:   {:?}",
+        sys.get_kernel_version().unwrap_or("nan".to_string())
+    );
+    println!(
+        "OS version:       {:?}",
+        sys.get_os_version().unwrap_or("nan".to_string())
+    );
+    println!(
+        "host name:        {:?}",
+        sys.get_host_name().unwrap_or("nan".to_string())
+    );
+    println!("Processors:       {}", sys.get_processors().len());
 
     println!("{}        Disks", color::Fg(color::Red));
     for disk in sys.get_disks() {
@@ -20,7 +44,16 @@ fn draw_colorful_system(sys: &mut System) {
         }
     }
 
-    println!("{}Networks", color::Fg(color::Cyan));
+    println!("{}        Temperatures", color::Fg(color::Magenta));
+    for component in sys.get_components() {
+        println!("{:?}", component);
+    }
+
+    // for (pid, process) in sys.get_processes() {
+    // println!("[{}] {} {:?}", pid, process.name(), process.disk_usage());
+    // }
+
+    println!("{}        Networks", color::Fg(color::Cyan));
     for (interface_name, data) in sys.get_networks() {
         println!(
             "recv: {:05} KB, trans: {:05} KB,     {}",
@@ -30,51 +63,11 @@ fn draw_colorful_system(sys: &mut System) {
         );
     }
 
-    println!("{}        Temperatures", color::Fg(color::Magenta));
-    for component in sys.get_components() {
-        println!("{:?}", component);
-    }
-
-    println!("{}        Memory", color::Fg(color::Green));
-    println!(
-        "total memory:           {} MB",
-        sys.get_total_memory() / 1000
-    );
-    println!(
-        "used memory:            {} MB",
-        sys.get_used_memory() / 1000
-    );
-    println!(
-        "available memory:       {} MB",
-        sys.get_available_memory() / 1000
-    );
-    println!(
-        "free memory:            {} MB",
-        sys.get_free_memory() / 1000
-    );
-    println!("NB processors:          {}", sys.get_processors().len());
-
-    // for (pid, process) in sys.get_processes() {
-    // println!("[{}] {} {:?}", pid, process.name(), process.disk_usage());
-    // }
-
-    println!("{}        Systems", color::Fg(color::Blue));
-    println!(
-        "System name:             {:?}",
-        sys.get_name().unwrap_or("nan".to_string())
-    );
-    println!(
-        "System kernel version:   {:?}",
-        sys.get_kernel_version().unwrap_or("nan".to_string())
-    );
-    println!(
-        "System OS version:       {:?}",
-        sys.get_os_version().unwrap_or("nan".to_string())
-    );
-    println!(
-        "System host name:        {:?}",
-        sys.get_host_name().unwrap_or("nan".to_string())
-    );
+    println!("{}        Memories", color::Fg(color::Green));
+    println!("total:           {} MB", sys.get_total_memory() / 1000);
+    println!("used:            {} MB", sys.get_used_memory() / 1000);
+    println!("available:       {} MB", sys.get_available_memory() / 1000);
+    println!("free:            {} MB", sys.get_free_memory() / 1000);
 
     println!(
         "{}{}{}        Clock",
@@ -85,7 +78,7 @@ fn draw_colorful_system(sys: &mut System) {
     let now: DateTime<Local> = Local::now();
     let hour = now.hour();
     println!(
-        "                    {:02}:{:02}:{:02}",
+        "H::m::s          {:02}:{:02}:{:02}",
         hour,
         now.minute(),
         now.second()
