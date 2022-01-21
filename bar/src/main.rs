@@ -90,15 +90,22 @@ fn main() {
     let mut sys = System::new_all();
     loop {
         sys.refresh_all();
-        //draw_colorful_system(&mut sys);
         let now: DateTime<Local> = Local::now();
-        let hour = now.hour();
-        println!(
+        //println!(
+        //    "{:02}/{:02}/{:04} {:02}:{:02}:{:02}",
+        //    now.day(),
+        //    now.month(),
+        //    now.year(),
+        //    now.hour(),
+        //    now.minute(),
+        //    now.second()
+        //);
+        let current_time = format!(
             "{:02}/{:02}/{:04} {:02}:{:02}:{:02}",
             now.day(),
             now.month(),
             now.year(),
-            hour,
+            now.hour(),
             now.minute(),
             now.second()
         );
@@ -108,7 +115,7 @@ fn main() {
                 max_cpu_usage = processor.cpu_usage();
             }
         }
-        println!("{:?}", max_cpu_usage);
+        println!("{}, {:.3}%", current_time, max_cpu_usage);
         sleep(Duration::new(1, 0));
     }
 }
