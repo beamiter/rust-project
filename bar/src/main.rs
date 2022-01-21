@@ -85,8 +85,8 @@ fn draw_colorful_system(sys: &mut System) {
     );
 }
 
+#[allow(unused_variables)]
 fn main() {
-    println!("Draw colorful system info");
     let mut sys = System::new_all();
     loop {
         sys.refresh_all();
@@ -115,7 +115,14 @@ fn main() {
                 max_cpu_usage = processor.cpu_usage();
             }
         }
-        println!("{}, {:.3}%", current_time, max_cpu_usage);
+        let center = "%{c}";
+        let right = "%{r}";
+        let left = "%{l}";
+        let f1 = "%{F#FFFF00}";
+        println!(
+            "{}{} {}{}cpu usage: {:.3}%    ",
+            center, current_time, right, f1, max_cpu_usage
+        );
         sleep(Duration::new(1, 0));
     }
 }
