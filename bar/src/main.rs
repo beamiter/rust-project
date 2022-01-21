@@ -1,9 +1,10 @@
 use chrono::prelude::*;
 use std::thread::sleep;
 use std::time::Duration;
-use sysinfo::{DiskExt, NetworkExt, System, SystemExt};
+use sysinfo::{DiskExt, NetworkExt, ProcessorExt, System, SystemExt};
 use termion::{clear, color, cursor, style};
 
+#[allow(dead_code)]
 fn draw_colorful_system(sys: &mut System) {
     sys.refresh_all();
     print!(
@@ -88,8 +89,26 @@ fn main() {
     println!("Draw colorful system info");
     let mut sys = System::new_all();
     loop {
-        draw_colorful_system(&mut sys);
+        sys.refresh_all();
+        //draw_colorful_system(&mut sys);
+        let now: DateTime<Local> = Local::now();
+        let hour = now.hour();
+        println!(
+            "{:02}/{:02}/{:04} {:02}:{:02}:{:02}",
+            now.day(),
+            now.month(),
+            now.year(),
+            hour,
+            now.minute(),
+            now.second()
+        );
+        let mut max_cpu_usage: f32 = 0.0;
+        for processor in sys.processors() {
+            if max_cpu_usage < processor.cpu_usage() {
+                max_cpu_usage = processor.cpu_usage();
+            }
+        }
+        println!("{:?}", max_cpu_usage);
         sleep(Duration::new(1, 0));
     }
 }
-
