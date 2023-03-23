@@ -30,7 +30,6 @@ fn draw_colorful_system(sys: &mut System) {
         "host name:        {:?}",
         sys.host_name().unwrap_or("nan".to_string())
     );
-    println!("Processors:       {}", sys.processors().len());
 
     println!("{}        Disks", color::Fg(color::Red));
     for disk in sys.disks() {
@@ -60,10 +59,10 @@ fn draw_colorful_system(sys: &mut System) {
     }
 
     println!("{}        Memories", color::Fg(color::Green));
-    println!("total:           {} MB", sys.total_memory() / 1000);
-    println!("used:            {} MB", sys.used_memory() / 1000);
-    println!("available:       {} MB", sys.available_memory() / 1000);
-    println!("free:            {} MB", sys.free_memory() / 1000);
+    println!("total:           {} MB", sys.total_memory() as f64 / 1e6);
+    println!("used:            {} MB", sys.used_memory() as f64 / 1e6);
+    println!("available:       {} MB", sys.available_memory() as f64 / 1e6);
+    println!("free:            {} MB", sys.free_memory() as f64 / 1e6);
 
     println!(
         "{}{}{}        Clock",

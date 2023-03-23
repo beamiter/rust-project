@@ -1,7 +1,7 @@
 use chrono::prelude::*;
 use std::thread::sleep;
 use std::time::Duration;
-use sysinfo::{DiskExt, NetworkExt, ProcessorExt, System, SystemExt};
+use sysinfo::{DiskExt, NetworkExt, System, SystemExt};
 use termion::{clear, color, cursor, style};
 
 #[allow(dead_code)]
@@ -31,7 +31,6 @@ fn draw_colorful_system(sys: &mut System) {
         "host name:        {:?}",
         sys.host_name().unwrap_or("nan".to_string())
     );
-    println!("Processors:       {}", sys.processors().len());
 
     println!("{}        Disks", color::Fg(color::Red));
     for disk in sys.disks() {
@@ -109,12 +108,7 @@ fn main() {
             now.minute(),
             now.second()
         );
-        let mut max_cpu_usage: f32 = 0.0;
-        for processor in sys.processors() {
-            if max_cpu_usage < processor.cpu_usage() {
-                max_cpu_usage = processor.cpu_usage();
-            }
-        }
+        let max_cpu_usage: f32 = 0.0;
         let center = "%{c}";
         let right = "%{r}";
         let left = "%{l}";
