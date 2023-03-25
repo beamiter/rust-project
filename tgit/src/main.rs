@@ -4,6 +4,7 @@ use std::{
     io::{stdin, stdout, Write},
     process::Command,
 };
+use std::{thread, time};
 
 use termion::input::TermRead;
 use termion::{color, style};
@@ -59,7 +60,7 @@ fn get_git_branch() -> Vec<String> {
     branches
 }
 
-fn checkout_git_branch<W: Write>(screen: &mut W, branch: &String) {
+fn checkout_git_branch<W: Write>(screen: &mut W, branch: &String) -> bool {
     let mut name = branch.to_string();
     if let Some('*') = name.chars().next() {
         name.remove(0);
@@ -84,15 +85,16 @@ fn checkout_git_branch<W: Write>(screen: &mut W, branch: &String) {
     } else {
         write!(
             screen,
-            "{}\u{1f970}{}checkout to target branch {}{}{}",
+            "{}\u{1f973}{} Checkout to target branch {}, closing now ...{}{}",
             termion::cursor::Goto(x, y + 10),
-            color::Fg(color::LightYellow),
+            color::Fg(color::Green),
             name,
             color::Fg(color::Reset),
             termion::cursor::Goto(x, y),
         )
         .unwrap();
     }
+    output.status.success()
 }
 
 // https://symbl.cc/en/
@@ -196,14 +198,13 @@ fn main() {
         match c.unwrap() {
             Key::Char('q') => break,
             Key::Char('\n') => {
-                checkout_git_branch(&mut screen, &branches.to_vec()[(row - start_row) as usize])
+                if checkout_git_branch(&mut screen, &branches.to_vec()[(row - start_row) as usize])
+                {
+                    screen.flush().unwrap();
+                    thread::sleep(time::Duration::from_secs_f32(0.5));
+                    break;
+                }
             }
-            // Key::Char(c) => println!("{}{}", termion::cursor::Goto(1, 3), c),
-            // Key::Alt(c) => println!("{}^{}", termion::cursor::Goto(1, 3), c),
-            // Key::Ctrl(c) => println!("{}*{}", termion::cursor::Goto(1, 3), c),
-            // Key::Esc => println!("{}ESC", termion::cursor::Goto(1, 3),),
-            // Key::Left => println!("{}←", termion::cursor::Goto(1, 3),),
-            // Key::Right => println!("{}→", termion::cursor::Goto(1, 3),),
             Key::Up => move_cursor_up(
                 &mut screen,
                 &mut row,
@@ -218,7 +219,6 @@ fn main() {
                 end_row,
                 &mut key_move_counter,
             ),
-            // Key::Backspace => println!("{}×", termion::cursor::Goto(1, 3),),
             _ => {}
         }
         screen.flush().unwrap();
