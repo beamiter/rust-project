@@ -5,9 +5,9 @@ use std::{
     process::Command,
 };
 
-use termion::event::Key;
 use termion::input::TermRead;
 use termion::{color, style};
+use termion::{cursor::DetectCursorPos, event::Key};
 use termion::{raw::IntoRawMode, screen::IntoAlternateScreen};
 
 const UNICODE_TABLE: [&'static str; 12] = [
@@ -59,14 +59,40 @@ fn get_git_branch() -> Vec<String> {
     branches
 }
 
-fn checkout_git_branch(branch: &str) {
-    let args = "checkout ".to_string() + branch;
+fn checkout_git_branch<W: Write>(screen: &mut W, branch: &String) {
+    let mut name = branch.to_string();
+    if let Some('*') = name.chars().next() {
+        name.remove(0);
+    }
+    name = name.trim().to_string();
     let output = Command::new("git")
-        .arg(args)
+        .args(["checkout", name.as_str()])
         .output()
         .expect("failed to execute process");
-    println!("status: {}", output.status);
-    assert!(output.status.success());
+    let (x, y) = screen.cursor_pos().unwrap();
+    if !output.status.success() {
+        write!(
+            screen,
+            "{}\u{1f602}{}{:?}{}{}",
+            termion::cursor::Goto(x, y + 10),
+            color::Fg(color::LightYellow),
+            String::from_utf8_lossy(&output.stderr),
+            color::Fg(color::Reset),
+            termion::cursor::Goto(x, y),
+        )
+        .unwrap();
+    } else {
+        write!(
+            screen,
+            "{}\u{1f970}{}checkout to target branch {}{}{}",
+            termion::cursor::Goto(x, y + 10),
+            color::Fg(color::LightYellow),
+            name,
+            color::Fg(color::Reset),
+            termion::cursor::Goto(x, y),
+        )
+        .unwrap();
+    }
 }
 
 // https://symbl.cc/en/
@@ -170,7 +196,7 @@ fn main() {
         match c.unwrap() {
             Key::Char('q') => break,
             Key::Char('\n') => {
-                checkout_git_branch(branches.to_vec()[(row - start_row) as usize].as_str())
+                checkout_git_branch(&mut screen, &branches.to_vec()[(row - start_row) as usize])
             }
             // Key::Char(c) => println!("{}{}", termion::cursor::Goto(1, 3), c),
             // Key::Alt(c) => println!("{}^{}", termion::cursor::Goto(1, 3), c),
