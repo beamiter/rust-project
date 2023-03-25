@@ -85,7 +85,7 @@ fn checkout_git_branch<W: Write>(screen: &mut W, branch: &String) -> bool {
     } else {
         write!(
             screen,
-            "{}\u{1f973}{} Checkout to target branch {}, closing now ...{}{}",
+            "{}\u{1f973}Checkout to target branch {}{}{}, enter 'q' to quit{}",
             termion::cursor::Goto(x, y + 10),
             color::Fg(color::Green),
             name,
