@@ -27,9 +27,10 @@ const UNICODE_TABLE: [&'static str; 12] = [
     "\u{1f341}",
 ];
 
+// Currently limit the log number to 100.
 fn get_git_log(branch: &String) -> Vec<String> {
     let output = Command::new("git")
-        .args(["log", branch.as_str()])
+        .args(["log", branch.as_str(), "-100"])
         .output()
         .expect("failed to execute process");
     // println!("status: {}", output.status);
@@ -47,32 +48,34 @@ fn get_git_log(branch: &String) -> Vec<String> {
     }
     logs
 }
-fn show_git_log<W: Write>(screen: &mut W, branch: &String) {
+fn show_git_log<W: Write>(
+    screen: &mut W,
+    branch: &String,
+    zone_top: &mut usize,
+    zone_bottom: &mut usize,
+) {
     let (x, y) = screen.cursor_pos().unwrap();
     let logs = get_git_log(branch);
     let x_tmp = x + 30;
     let mut y_tmp = 2;
+    // Clear previous log zone.
+    for clear_y in *zone_top..=*zone_bottom {
+        write!(
+            screen,
+            "{}{}",
+            termion::cursor::Goto(x_tmp, clear_y as u16),
+            termion::clear::UntilNewline,
+        )
+        .unwrap();
+    }
+    *zone_top = y_tmp as usize;
     for log in logs {
-        if log.is_empty() {
-            write!(
-                screen,
-                "{}{}",
-                termion::cursor::Goto(x_tmp, y_tmp),
-                termion::clear::UntilNewline,
-            )
-            .unwrap();
-        } else {
-            write!(
-                screen,
-                "{}{}{}",
-                termion::cursor::Goto(x_tmp, y_tmp),
-                termion::clear::UntilNewline,
-                log
-            )
-            .unwrap();
+        if !log.is_empty() {
+            write!(screen, "{}{}", termion::cursor::Goto(x_tmp, y_tmp), log).unwrap();
         }
         y_tmp += 1;
     }
+    *zone_bottom = y_tmp as usize;
     write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
 }
 
@@ -100,7 +103,7 @@ fn get_git_branch() -> Vec<String> {
     branches
 }
 
-fn checkout_git_branch<W: Write>(screen: &mut W, branch: &String) -> bool {
+fn checkout_git_branch<W: Write>(screen: &mut W, branch: &String, end_row: u16) -> bool {
     let output = Command::new("git")
         .args(["checkout", branch.as_str()])
         .output()
@@ -110,7 +113,7 @@ fn checkout_git_branch<W: Write>(screen: &mut W, branch: &String) -> bool {
         write!(
             screen,
             "{}\u{1f602}{}{:?}{}{}",
-            termion::cursor::Goto(x, y + 10),
+            termion::cursor::Goto(x, end_row + 10),
             color::Fg(color::LightYellow),
             String::from_utf8_lossy(&output.stderr),
             color::Fg(color::Reset),
@@ -120,10 +123,12 @@ fn checkout_git_branch<W: Write>(screen: &mut W, branch: &String) -> bool {
     } else {
         write!(
             screen,
-            "{}\u{1f973}Checkout to target branch {}{}{}, enter 'q' to quit{}",
-            termion::cursor::Goto(x, y + 10),
+            "{}\u{1f973}{}Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
+            termion::cursor::Goto(x, end_row + 10),
+            color::Fg(color::LightYellow),
             color::Fg(color::Green),
             branch,
+            color::Fg(color::LightYellow),
             color::Fg(color::Reset),
             termion::cursor::Goto(x, y),
         )
@@ -149,7 +154,9 @@ fn move_cursor_up<W: Write>(
     }
     write!(
         screen,
-        "{}{}",
+        "{}{}{}{}",
+        termion::cursor::Goto(1, bottom + 10),
+        termion::clear::CurrentLine,
         termion::cursor::Goto(1, *row),
         UNICODE_TABLE[*key_move_counter % UNICODE_TABLE.len()]
     )
@@ -172,7 +179,9 @@ fn move_cursor_down<W: Write>(
     }
     write!(
         screen,
-        "{}{}",
+        "{}{}{}{}",
+        termion::cursor::Goto(1, bottom + 10),
+        termion::clear::CurrentLine,
         termion::cursor::Goto(1, *row),
         UNICODE_TABLE[*key_move_counter % UNICODE_TABLE.len()]
     )
@@ -192,7 +201,7 @@ fn main() {
     write!(
         screen,
         "{}{}{}Welcome to tui git{}{}{}\n",
-        termion::cursor::Goto(10, 1),
+        termion::cursor::Goto(20, 1),
         color::Fg(color::Magenta),
         style::Bold,
         style::Italic,
@@ -228,7 +237,14 @@ fn main() {
     let end_row = start_row + branches.len() as u16 - 1;
     row = start_row;
     write!(screen, "{}{}", termion::cursor::Goto(1, row), "\u{1f63b}").unwrap();
-    show_git_log(&mut screen, &branches.to_vec()[(row - start_row) as usize]);
+    let mut zone_top = 2;
+    let mut zone_bottom = 2;
+    show_git_log(
+        &mut screen,
+        &branches.to_vec()[(row - start_row) as usize],
+        &mut zone_top,
+        &mut zone_bottom,
+    );
     screen.flush().unwrap();
     let mut key_move_counter: usize = 0;
     for c in stdin.keys() {
@@ -236,8 +252,11 @@ fn main() {
         match c.unwrap() {
             Key::Char('q') => break,
             Key::Char('\n') => {
-                if checkout_git_branch(&mut screen, &branches.to_vec()[(row - start_row) as usize])
-                {
+                if checkout_git_branch(
+                    &mut screen,
+                    &branches.to_vec()[(row - start_row) as usize],
+                    end_row,
+                ) {
                     screen.flush().unwrap();
                     thread::sleep(time::Duration::from_secs_f32(0.5));
                     // break;
@@ -252,7 +271,12 @@ fn main() {
                     &mut key_move_counter,
                 );
                 // Show the log.
-                show_git_log(&mut screen, &branches.to_vec()[(row - start_row) as usize]);
+                show_git_log(
+                    &mut screen,
+                    &branches.to_vec()[(row - start_row) as usize],
+                    &mut zone_top,
+                    &mut zone_bottom,
+                );
             }
             Key::Down => {
                 move_cursor_down(
@@ -263,7 +287,12 @@ fn main() {
                     &mut key_move_counter,
                 );
                 // Show the log.
-                show_git_log(&mut screen, &branches.to_vec()[(row - start_row) as usize]);
+                show_git_log(
+                    &mut screen,
+                    &branches.to_vec()[(row - start_row) as usize],
+                    &mut zone_top,
+                    &mut zone_bottom,
+                );
             }
             _ => {}
         }
