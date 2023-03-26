@@ -34,7 +34,7 @@ fn get_git_log(branch: &String) -> Vec<String> {
         .output()
         .expect("failed to execute process");
     // println!("status: {}", output.status);
-    assert!(output.status.success());
+    // assert!(output.status.success());
     // write!(stdout, "{:?}", String::from_utf8_lossy(&output.stdout)).unwrap();
     let log_output: Vec<char> = output.stdout.iter().map(|&t| t as char).collect();
     let mut log_iter = log_output.split(|&x| x == '\n');
@@ -85,7 +85,7 @@ fn get_git_branch() -> Vec<String> {
         .output()
         .expect("failed to execute process");
     // println!("status: {}", output.status);
-    assert!(output.status.success());
+    // assert!(output.status.success());
     // println!("{}", String::from_utf8_lossy(&output.stdout));
     let mut branch_output: Vec<char> = output.stdout.iter().map(|&t| t as char).collect();
     branch_output.pop();
