@@ -3,6 +3,7 @@ extern crate termion;
 use std::{
     io::{stdin, stdout, Write},
     process::Command,
+    vec,
 };
 use std::{thread, time};
 
@@ -26,14 +27,53 @@ const UNICODE_TABLE: [&'static str; 12] = [
     "\u{1f341}",
 ];
 
-fn get_git_log() {
+fn get_git_log(branch: &String) -> Vec<String> {
     let output = Command::new("git")
-        .arg("log")
+        .args(["log", branch.as_str()])
         .output()
         .expect("failed to execute process");
-    println!("status: {}", output.status);
+    // println!("status: {}", output.status);
     assert!(output.status.success());
-    // println!("{}", String::from_utf8_lossy(&output.stdout));
+    // write!(stdout, "{:?}", String::from_utf8_lossy(&output.stdout)).unwrap();
+    let log_output: Vec<char> = output.stdout.iter().map(|&t| t as char).collect();
+    let mut log_iter = log_output.split(|&x| x == '\n');
+    let mut logs: Vec<String> = vec![];
+    loop {
+        if let Some(val) = log_iter.next() {
+            logs.push(val.iter().collect::<String>().to_string());
+        } else {
+            break;
+        }
+    }
+    logs
+}
+fn show_git_log<W: Write>(screen: &mut W, branch: &String) {
+    let (x, y) = screen.cursor_pos().unwrap();
+    let logs = get_git_log(branch);
+    let x_tmp = x + 30;
+    let mut y_tmp = 2;
+    for log in logs {
+        if log.is_empty() {
+            write!(
+                screen,
+                "{}{}",
+                termion::cursor::Goto(x_tmp, y_tmp),
+                termion::clear::UntilNewline,
+            )
+            .unwrap();
+        } else {
+            write!(
+                screen,
+                "{}{}{}",
+                termion::cursor::Goto(x_tmp, y_tmp),
+                termion::clear::UntilNewline,
+                log
+            )
+            .unwrap();
+        }
+        y_tmp += 1;
+    }
+    write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
 }
 
 fn get_git_branch() -> Vec<String> {
@@ -41,7 +81,7 @@ fn get_git_branch() -> Vec<String> {
         .arg("branch")
         .output()
         .expect("failed to execute process");
-    println!("status: {}", output.status);
+    // println!("status: {}", output.status);
     assert!(output.status.success());
     // println!("{}", String::from_utf8_lossy(&output.stdout));
     let mut branch_output: Vec<char> = output.stdout.iter().map(|&t| t as char).collect();
@@ -61,13 +101,8 @@ fn get_git_branch() -> Vec<String> {
 }
 
 fn checkout_git_branch<W: Write>(screen: &mut W, branch: &String) -> bool {
-    let mut name = branch.to_string();
-    if let Some('*') = name.chars().next() {
-        name.remove(0);
-    }
-    name = name.trim().to_string();
     let output = Command::new("git")
-        .args(["checkout", name.as_str()])
+        .args(["checkout", branch.as_str()])
         .output()
         .expect("failed to execute process");
     let (x, y) = screen.cursor_pos().unwrap();
@@ -88,7 +123,7 @@ fn checkout_git_branch<W: Write>(screen: &mut W, branch: &String) -> bool {
             "{}\u{1f973}Checkout to target branch {}{}{}, enter 'q' to quit{}",
             termion::cursor::Goto(x, y + 10),
             color::Fg(color::Green),
-            name,
+            branch,
             color::Fg(color::Reset),
             termion::cursor::Goto(x, y),
         )
@@ -146,8 +181,7 @@ fn move_cursor_down<W: Write>(
 }
 
 fn main() {
-    get_git_log();
-    let branches = get_git_branch();
+    let mut branches = get_git_branch();
 
     let stdin = stdin();
     let mut screen = stdout()
@@ -169,14 +203,17 @@ fn main() {
     // write!(screen, "{}{:?}", termion::cursor::Goto(1, 5), branches).unwrap();
     let start_row = 2;
     let mut row = start_row - 1;
-    for branch in &branches {
+    for branch in &mut branches {
         row += 1;
         if let Some('*') = branch.chars().next() {
+            branch.remove(0);
+            *branch = branch.trim().to_string();
             // This is the Current branch.
             write!(
                 screen,
-                "{}{}{}{}{}{}",
+                "{}{}{}{}{}{}{}",
                 termion::cursor::Goto(5, row),
+                color::Bg(color::White),
                 color::Fg(color::Green),
                 style::Bold,
                 branch,
@@ -191,6 +228,7 @@ fn main() {
     let end_row = start_row + branches.len() as u16 - 1;
     row = start_row;
     write!(screen, "{}{}", termion::cursor::Goto(1, row), "\u{1f63b}").unwrap();
+    show_git_log(&mut screen, &branches.to_vec()[(row - start_row) as usize]);
     screen.flush().unwrap();
     let mut key_move_counter: usize = 0;
     for c in stdin.keys() {
@@ -202,23 +240,31 @@ fn main() {
                 {
                     screen.flush().unwrap();
                     thread::sleep(time::Duration::from_secs_f32(0.5));
-                    break;
+                    // break;
                 }
             }
-            Key::Up => move_cursor_up(
-                &mut screen,
-                &mut row,
-                start_row,
-                end_row,
-                &mut key_move_counter,
-            ),
-            Key::Down => move_cursor_down(
-                &mut screen,
-                &mut row,
-                start_row,
-                end_row,
-                &mut key_move_counter,
-            ),
+            Key::Up => {
+                move_cursor_up(
+                    &mut screen,
+                    &mut row,
+                    start_row,
+                    end_row,
+                    &mut key_move_counter,
+                );
+                // Show the log.
+                show_git_log(&mut screen, &branches.to_vec()[(row - start_row) as usize]);
+            }
+            Key::Down => {
+                move_cursor_down(
+                    &mut screen,
+                    &mut row,
+                    start_row,
+                    end_row,
+                    &mut key_move_counter,
+                );
+                // Show the log.
+                show_git_log(&mut screen, &branches.to_vec()[(row - start_row) as usize]);
+            }
             _ => {}
         }
         screen.flush().unwrap();
