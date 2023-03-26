@@ -168,7 +168,7 @@ impl RenderGit for TuiGit {
             )
             .unwrap();
         }
-        self.branch_row_top = y_tmp;
+        self.log_row_top = y_tmp;
         for log in self.log_map.get(branch).unwrap() {
             if !log.is_empty() {
                 write!(
@@ -181,7 +181,7 @@ impl RenderGit for TuiGit {
             }
             y_tmp += 1;
         }
-        self.branch_row_bottom = y_tmp;
+        self.log_row_bottom = y_tmp;
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
     }
     fn checkout_git_branch<W: Write>(&self, screen: &mut W, branch: &String) -> bool {
@@ -235,7 +235,6 @@ impl RenderGit for TuiGit {
         } else {
             *row = *row - 1;
         }
-        println!("{}{}{}", self.branch_row_top, self.branch_row_bottom, row);
         write!(
             screen,
             "{}{}{}{}",
@@ -260,7 +259,6 @@ impl RenderGit for TuiGit {
         } else {
             *row = *row + 1;
         }
-        println!("{}", row);
         write!(
             screen,
             "{}{}{}{}",
@@ -340,18 +338,18 @@ fn main() {
             Key::Up => {
                 tui_git.move_cursor_up(&mut screen, &mut row, &mut key_move_counter);
                 // Show the log.
-                // tui_git.show_git_log(
-                //     &mut screen,
-                //     &branch_vec.to_vec()[(row - tui_git.branch_row_top) as usize],
-                // );
+                tui_git.show_git_log(
+                    &mut screen,
+                    &branch_vec.to_vec()[(row - tui_git.branch_row_top) as usize],
+                );
             }
             Key::Down => {
                 tui_git.move_cursor_down(&mut screen, &mut row, &mut key_move_counter);
                 // Show the log.
-                // tui_git.show_git_log(
-                //     &mut screen,
-                //     &branch_vec.to_vec()[(row - tui_git.branch_row_top) as usize],
-                // );
+                tui_git.show_git_log(
+                    &mut screen,
+                    &branch_vec.to_vec()[(row - tui_git.branch_row_top) as usize],
+                );
             }
             _ => {}
         }
