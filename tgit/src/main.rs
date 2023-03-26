@@ -1,6 +1,7 @@
 extern crate termion;
 
 use std::{
+    collections::HashMap,
     io::{stdin, stdout, Write},
     process::Command,
     vec,
@@ -27,170 +28,255 @@ const UNICODE_TABLE: [&'static str; 12] = [
     "\u{1f341}",
 ];
 
-// Currently limit the log number to 100.
-fn get_git_log(branch: &String) -> Vec<String> {
-    let output = Command::new("git")
-        .args(["log", branch.as_str(), "-100"])
-        .output()
-        .expect("failed to execute process");
-    // println!("status: {}", output.status);
-    // assert!(output.status.success());
-    // write!(stdout, "{:?}", String::from_utf8_lossy(&output.stdout)).unwrap();
-    let log_output: Vec<char> = output.stdout.iter().map(|&t| t as char).collect();
-    let mut log_iter = log_output.split(|&x| x == '\n');
-    let mut logs: Vec<String> = vec![];
-    loop {
-        if let Some(val) = log_iter.next() {
-            logs.push(val.iter().collect::<String>().to_string());
+struct TuiGit {
+    // branch render area;
+    branch_row_top: u16,
+    branch_row_bottom: u16,
+    branch_col_left: u16,
+    branch_col_right: u16,
+
+    // log render area;
+    log_row_top: u16,
+    log_row_bottom: u16,
+    log_col_left: u16,
+    log_col_right: u16,
+
+    // check status area;
+    check_info_row: u16,
+    check_info_col: u16,
+
+    // data storage;
+    branch_vec: Vec<String>,
+    log_map: HashMap<String, Vec<String>>,
+
+    // Main branch;
+    main_branch: String,
+    main_row: u16,
+}
+impl TuiGit {
+    pub fn new() -> TuiGit {
+        TuiGit {
+            branch_row_top: 2,
+            branch_row_bottom: 0,
+            branch_col_left: 0,
+            branch_col_right: 0,
+            log_row_top: 1,
+            log_row_bottom: 0,
+            log_col_left: 0,
+            log_col_right: 0,
+            check_info_row: 0,
+            check_info_col: 0,
+            branch_vec: vec![],
+            log_map: HashMap::new(),
+            main_branch: String::new(),
+            main_row: 0,
+        }
+    }
+    fn set_main_row(&mut self, row: u16) {
+        self.main_row = row;
+    }
+    fn update_git_branch(&mut self) {
+        let output = Command::new("git")
+            .arg("branch")
+            .output()
+            .expect("failed to execute process");
+        let branch_output: Vec<char> = output
+            .stdout
+            .iter()
+            .map(|&t| t as char)
+            .filter(|&t| t != ' ')
+            .collect();
+        // println!("branch_output {:?}", branch_output);
+        let mut branch_iter = branch_output.split(|&x| x == '\n');
+        self.branch_vec.clear();
+        loop {
+            if let Some(val) = branch_iter.next() {
+                if val.is_empty() {
+                    continue;
+                }
+                // println!("{}", val.iter().collect::<String>());
+                if let Some('*') = val.iter().next() {
+                    self.main_branch = val.iter().collect::<String>();
+                    // Remove the '*' symbol.
+                    self.main_branch.remove(0);
+                    // println!("{}", self.main_branch);
+                    self.branch_vec.push(self.main_branch.to_string());
+                } else {
+                    self.branch_vec
+                        .push(val.iter().collect::<String>().to_string());
+                }
+            } else {
+                break;
+            }
+        }
+        self.branch_row_bottom = self.branch_vec.len() as u16 + self.branch_row_top - 1;
+        println!("{}--{}", self.branch_row_top, self.branch_row_bottom);
+    }
+
+    // Currently limit the log number to 100.
+    fn update_git_log(&mut self, branch: &String) {
+        if self.log_map.get(branch).is_some() {
+            return;
+        }
+        let output = Command::new("git")
+            .args(["log", branch.as_str(), "-100"])
+            .output()
+            .expect("failed to execute process");
+        // println!("status: {}", output.status);
+        // assert!(output.status.success());
+        // write!(stdout, "{:?}", String::from_utf8_lossy(&output.stdout)).unwrap();
+        let log_output: Vec<char> = output.stdout.iter().map(|&t| t as char).collect();
+        let mut log_iter = log_output.split(|&x| x == '\n');
+        let mut logs: Vec<String> = vec![];
+        loop {
+            if let Some(val) = log_iter.next() {
+                logs.push(val.iter().collect::<String>().to_string());
+            } else {
+                break;
+            }
+        }
+        self.log_map.insert(branch.to_string(), logs);
+    }
+}
+
+trait RenderGit {
+    fn show_git_log<W: Write>(&mut self, screen: &mut W, branch: &String);
+    fn checkout_git_branch<W: Write>(&self, screen: &mut W, branch: &String) -> bool;
+    fn cursor_to_main<W: Write>(&self, screen: &mut W);
+    fn move_cursor_up<W: Write>(&self, screen: &mut W, row: &mut u16, key_move_counter: &mut usize);
+    fn move_cursor_down<W: Write>(
+        &self,
+        screen: &mut W,
+        row: &mut u16,
+        key_move_counter: &mut usize,
+    );
+}
+
+impl RenderGit for TuiGit {
+    fn show_git_log<W: Write>(&mut self, screen: &mut W, branch: &String) {
+        let (x, y) = screen.cursor_pos().unwrap();
+        self.update_git_log(branch);
+        let x_tmp = x + 30;
+        let mut y_tmp = 2;
+        // Clear previous log zone.
+        for clear_y in self.log_row_top..=self.log_row_bottom {
+            write!(
+                screen,
+                "{}{}",
+                termion::cursor::Goto(x_tmp, clear_y as u16),
+                termion::clear::UntilNewline,
+            )
+            .unwrap();
+        }
+        self.branch_row_top = y_tmp;
+        for log in self.log_map.get(branch).unwrap() {
+            if !log.is_empty() {
+                write!(
+                    screen,
+                    "{}{}",
+                    termion::cursor::Goto(x_tmp, y_tmp as u16),
+                    log
+                )
+                .unwrap();
+            }
+            y_tmp += 1;
+        }
+        self.branch_row_bottom = y_tmp;
+        write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
+    }
+    fn checkout_git_branch<W: Write>(&self, screen: &mut W, branch: &String) -> bool {
+        let output = Command::new("git")
+            .args(["checkout", branch.as_str()])
+            .output()
+            .expect("failed to execute process");
+        let (x, y) = screen.cursor_pos().unwrap();
+        if !output.status.success() {
+            write!(
+                screen,
+                "{}\u{1f602}{}{:?}{}{}",
+                termion::cursor::Goto(x, self.branch_row_bottom + 10),
+                color::Fg(color::LightYellow),
+                String::from_utf8_lossy(&output.stderr),
+                color::Fg(color::Reset),
+                termion::cursor::Goto(x, y),
+            )
+            .unwrap();
         } else {
-            break;
+            write!(
+                screen,
+                "{}\u{1f973}{}Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
+                termion::cursor::Goto(x, self.branch_row_bottom + 10),
+                color::Fg(color::LightYellow),
+                color::Fg(color::Green),
+                branch,
+                color::Fg(color::LightYellow),
+                color::Fg(color::Reset),
+                termion::cursor::Goto(x, y),
+            )
+            .unwrap();
         }
+        output.status.success()
     }
-    logs
-}
-fn show_git_log<W: Write>(
-    screen: &mut W,
-    branch: &String,
-    zone_top: &mut usize,
-    zone_bottom: &mut usize,
-) {
-    let (x, y) = screen.cursor_pos().unwrap();
-    let logs = get_git_log(branch);
-    let x_tmp = x + 30;
-    let mut y_tmp = 2;
-    // Clear previous log zone.
-    for clear_y in *zone_top..=*zone_bottom {
-        write!(
-            screen,
-            "{}{}",
-            termion::cursor::Goto(x_tmp, clear_y as u16),
-            termion::clear::UntilNewline,
-        )
-        .unwrap();
-    }
-    *zone_top = y_tmp as usize;
-    for log in logs {
-        if !log.is_empty() {
-            write!(screen, "{}{}", termion::cursor::Goto(x_tmp, y_tmp), log).unwrap();
-        }
-        y_tmp += 1;
-    }
-    *zone_bottom = y_tmp as usize;
-    write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
-}
 
-fn get_git_branch() -> Vec<String> {
-    let output = Command::new("git")
-        .arg("branch")
-        .output()
-        .expect("failed to execute process");
-    // println!("status: {}", output.status);
-    // assert!(output.status.success());
-    // println!("{}", String::from_utf8_lossy(&output.stdout));
-    let mut branch_output: Vec<char> = output.stdout.iter().map(|&t| t as char).collect();
-    branch_output.pop();
-    // println!("branch_output {:?}", branch_output);
-    let mut branch_iter = branch_output.split(|&x| x == '\n');
-    let mut branches: Vec<String> = vec![];
-    loop {
-        if let Some(val) = branch_iter.next() {
-            // println!("{}", val.iter().collect::<String>());
-            branches.push(val.iter().collect::<String>().trim().to_string());
+    fn cursor_to_main<W: Write>(&self, screen: &mut W) {
+        write!(screen, "{}", termion::cursor::Goto(1, self.main_row)).unwrap();
+    }
+    // https://symbl.cc/en/
+    fn move_cursor_up<W: Write>(
+        &self,
+        screen: &mut W,
+        row: &mut u16,
+        key_move_counter: &mut usize,
+    ) {
+        // Clear previous.
+        write!(screen, "{} ", termion::cursor::Goto(1, *row)).unwrap();
+        if *row == self.branch_row_top {
+            *row = self.branch_row_bottom;
         } else {
-            break;
+            *row = *row - 1;
         }
-    }
-    branches
-}
-
-fn checkout_git_branch<W: Write>(screen: &mut W, branch: &String, end_row: u16) -> bool {
-    let output = Command::new("git")
-        .args(["checkout", branch.as_str()])
-        .output()
-        .expect("failed to execute process");
-    let (x, y) = screen.cursor_pos().unwrap();
-    if !output.status.success() {
+        println!("{}{}{}", self.branch_row_top, self.branch_row_bottom, row);
         write!(
             screen,
-            "{}\u{1f602}{}{:?}{}{}",
-            termion::cursor::Goto(x, end_row + 10),
-            color::Fg(color::LightYellow),
-            String::from_utf8_lossy(&output.stderr),
-            color::Fg(color::Reset),
-            termion::cursor::Goto(x, y),
+            "{}{}{}{}",
+            termion::cursor::Goto(1, self.branch_row_bottom + 10),
+            termion::clear::CurrentLine,
+            termion::cursor::Goto(1, *row),
+            UNICODE_TABLE[*key_move_counter % UNICODE_TABLE.len()]
         )
         .unwrap();
-    } else {
+        *key_move_counter = (*key_move_counter + 1) % usize::MAX;
+    }
+    fn move_cursor_down<W: Write>(
+        &self,
+        screen: &mut W,
+        row: &mut u16,
+        key_move_counter: &mut usize,
+    ) {
+        // Clear previous.
+        write!(screen, "{} ", termion::cursor::Goto(1, *row)).unwrap();
+        if *row == self.branch_row_bottom {
+            *row = self.branch_row_top;
+        } else {
+            *row = *row + 1;
+        }
+        println!("{}", row);
         write!(
             screen,
-            "{}\u{1f973}{}Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
-            termion::cursor::Goto(x, end_row + 10),
-            color::Fg(color::LightYellow),
-            color::Fg(color::Green),
-            branch,
-            color::Fg(color::LightYellow),
-            color::Fg(color::Reset),
-            termion::cursor::Goto(x, y),
+            "{}{}{}{}",
+            termion::cursor::Goto(1, self.branch_row_bottom + 10),
+            termion::clear::CurrentLine,
+            termion::cursor::Goto(1, *row),
+            UNICODE_TABLE[*key_move_counter % UNICODE_TABLE.len()]
         )
         .unwrap();
+        *key_move_counter = (*key_move_counter + 1) % usize::MAX;
     }
-    output.status.success()
-}
-
-// https://symbl.cc/en/
-fn move_cursor_up<W: Write>(
-    screen: &mut W,
-    row: &mut u16,
-    top: u16,
-    bottom: u16,
-    key_move_counter: &mut usize,
-) {
-    // Clear previous.
-    write!(screen, "{} ", termion::cursor::Goto(1, *row)).unwrap();
-    if *row == top {
-        *row = bottom;
-    } else {
-        *row = *row - 1;
-    }
-    write!(
-        screen,
-        "{}{}{}{}",
-        termion::cursor::Goto(1, bottom + 10),
-        termion::clear::CurrentLine,
-        termion::cursor::Goto(1, *row),
-        UNICODE_TABLE[*key_move_counter % UNICODE_TABLE.len()]
-    )
-    .unwrap();
-    *key_move_counter = (*key_move_counter + 1) % usize::MAX;
-}
-fn move_cursor_down<W: Write>(
-    screen: &mut W,
-    row: &mut u16,
-    top: u16,
-    bottom: u16,
-    key_move_counter: &mut usize,
-) {
-    // Clear previous.
-    write!(screen, "{} ", termion::cursor::Goto(1, *row)).unwrap();
-    if *row == bottom {
-        *row = top;
-    } else {
-        *row = *row + 1;
-    }
-    write!(
-        screen,
-        "{}{}{}{}",
-        termion::cursor::Goto(1, bottom + 10),
-        termion::clear::CurrentLine,
-        termion::cursor::Goto(1, *row),
-        UNICODE_TABLE[*key_move_counter % UNICODE_TABLE.len()]
-    )
-    .unwrap();
-    *key_move_counter = (*key_move_counter + 1) % usize::MAX;
 }
 
 fn main() {
-    let mut branches = get_git_branch();
+    let mut tui_git = TuiGit::new();
+    tui_git.update_git_branch();
 
     let stdin = stdin();
     let mut screen = stdout()
@@ -209,18 +295,16 @@ fn main() {
         style::Reset,
     )
     .unwrap();
-    // write!(screen, "{}{:?}", termion::cursor::Goto(1, 5), branches).unwrap();
-    let start_row = 2;
-    let mut row = start_row - 1;
-    for branch in &mut branches {
+
+    let mut row = 1;
+    let branch_vec = tui_git.branch_vec.clone();
+    for branch in &branch_vec {
         row += 1;
-        if let Some('*') = branch.chars().next() {
-            branch.remove(0);
-            *branch = branch.trim().to_string();
-            // This is the Current branch.
+        if *branch == tui_git.main_branch {
+            tui_git.set_main_row(row);
             write!(
                 screen,
-                "{}{}{}{}{}{}{}",
+                "{}{}{}{}{}{}{} \u{1f63b}",
                 termion::cursor::Goto(5, row),
                 color::Bg(color::White),
                 color::Fg(color::Green),
@@ -231,31 +315,22 @@ fn main() {
             )
             .unwrap();
         } else {
-            write!(screen, "{}{}", termion::cursor::Goto(5, row), branch,).unwrap();
+            write!(screen, "{}{}", termion::cursor::Goto(5, row), branch).unwrap();
         }
     }
-    let end_row = start_row + branches.len() as u16 - 1;
-    row = start_row;
-    write!(screen, "{}{}", termion::cursor::Goto(1, row), "\u{1f63b}").unwrap();
-    let mut zone_top = 2;
-    let mut zone_bottom = 2;
-    show_git_log(
-        &mut screen,
-        &branches.to_vec()[(row - start_row) as usize],
-        &mut zone_top,
-        &mut zone_bottom,
-    );
+    tui_git.cursor_to_main(&mut screen);
+    tui_git.show_git_log(&mut screen, &tui_git.main_branch.to_string());
     screen.flush().unwrap();
+
     let mut key_move_counter: usize = 0;
+    row = tui_git.main_row;
     for c in stdin.keys() {
-        // write!(screen, "{}", termion::cursor::Hide).unwrap();
         match c.unwrap() {
             Key::Char('q') => break,
             Key::Char('\n') => {
-                if checkout_git_branch(
+                if tui_git.checkout_git_branch(
                     &mut screen,
-                    &branches.to_vec()[(row - start_row) as usize],
-                    end_row,
+                    &branch_vec.to_vec()[(row - tui_git.branch_row_top) as usize],
                 ) {
                     screen.flush().unwrap();
                     thread::sleep(time::Duration::from_secs_f32(0.5));
@@ -263,40 +338,23 @@ fn main() {
                 }
             }
             Key::Up => {
-                move_cursor_up(
-                    &mut screen,
-                    &mut row,
-                    start_row,
-                    end_row,
-                    &mut key_move_counter,
-                );
+                tui_git.move_cursor_up(&mut screen, &mut row, &mut key_move_counter);
                 // Show the log.
-                show_git_log(
-                    &mut screen,
-                    &branches.to_vec()[(row - start_row) as usize],
-                    &mut zone_top,
-                    &mut zone_bottom,
-                );
+                // tui_git.show_git_log(
+                //     &mut screen,
+                //     &branch_vec.to_vec()[(row - tui_git.branch_row_top) as usize],
+                // );
             }
             Key::Down => {
-                move_cursor_down(
-                    &mut screen,
-                    &mut row,
-                    start_row,
-                    end_row,
-                    &mut key_move_counter,
-                );
+                tui_git.move_cursor_down(&mut screen, &mut row, &mut key_move_counter);
                 // Show the log.
-                show_git_log(
-                    &mut screen,
-                    &branches.to_vec()[(row - start_row) as usize],
-                    &mut zone_top,
-                    &mut zone_bottom,
-                );
+                // tui_git.show_git_log(
+                //     &mut screen,
+                //     &branch_vec.to_vec()[(row - tui_git.branch_row_top) as usize],
+                // );
             }
             _ => {}
         }
         screen.flush().unwrap();
     }
-    // write!(screen, "{}", termion::cursor::Show).unwrap();
 }
