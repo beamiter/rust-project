@@ -117,11 +117,21 @@ impl TuiGit {
                 break;
             }
         }
-        let branch_size = self.branch_vec.iter().map(|x| x.len()).collect::<Vec<usize>>();
+        let branch_size = self
+            .branch_vec
+            .iter()
+            .map(|x| x.len())
+            .collect::<Vec<usize>>();
         self.branch_row_bottom = self.branch_vec.len() as u16 + self.branch_row_top - 1;
-        self.branch_col_right = self.branch_col_left + *branch_size.iter().max().unwrap() as u16 + 5;
-        self.log_col_left  = self.branch_col_right + 5;
-        println!("{}--{}--{}", branch_size.iter().max().unwrap(), self.branch_row_top, self.branch_row_bottom);
+        self.branch_col_right =
+            self.branch_col_left + *branch_size.iter().max().unwrap() as u16 + 5;
+        self.log_col_left = self.branch_col_right + 5;
+        println!(
+            "{}--{}--{}",
+            branch_size.iter().max().unwrap(),
+            self.branch_row_top,
+            self.branch_row_bottom
+        );
     }
 
     // Currently limit the log number to 100.
@@ -151,9 +161,13 @@ impl TuiGit {
 }
 
 trait RenderGit {
+    fn show_title<W: Write>(&mut self, screen: &mut W);
+    fn show_branch<W: Write>(&mut self, screen: &mut W);
     fn show_git_log<W: Write>(&mut self, screen: &mut W, branch: &String);
-    fn checkout_git_branch<W: Write>(&self, screen: &mut W, branch: &String) -> bool;
+
+    fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
+
     fn move_cursor_up<W: Write>(&self, screen: &mut W, row: &mut u16, key_move_counter: &mut usize);
     fn move_cursor_down<W: Write>(
         &self,
@@ -167,7 +181,12 @@ impl RenderGit for TuiGit {
     fn show_git_log<W: Write>(&mut self, screen: &mut W, branch: &String) {
         let (x, y) = screen.cursor_pos().unwrap();
         self.update_git_log(branch);
+        let (col, row) = termion::terminal_size().unwrap();
         let x_tmp = self.log_col_left;
+        if col <= x_tmp {
+            // No show due to no enough col.
+            return;
+        }
         let mut y_tmp = 2;
         // Clear previous log zone.
         for clear_y in self.log_row_top..=self.log_row_bottom {
@@ -186,16 +205,20 @@ impl RenderGit for TuiGit {
                     screen,
                     "{}{}",
                     termion::cursor::Goto(x_tmp, y_tmp as u16),
-                    log
+                    log.substring(0, (col - x_tmp) as usize)
                 )
                 .unwrap();
+            }
+            // Spare 2 for check info.
+            if y_tmp >= row - 2 {
+                break;
             }
             y_tmp += 1;
         }
         self.log_row_bottom = y_tmp;
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
     }
-    fn checkout_git_branch<W: Write>(&self, screen: &mut W, branch: &String) -> bool {
+    fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
         let output = Command::new("git")
             .args(["checkout", branch.as_str()])
             .output()
@@ -205,8 +228,9 @@ impl RenderGit for TuiGit {
         if !output.status.success() {
             write!(
                 screen,
-                "{}\u{1f602}{}{:?}{}{}",
+                "{}{}\u{1f602}{}{:?}{}{}",
                 termion::cursor::Goto(1, row),
+                termion::clear::BeforeCursor,
                 color::Fg(color::LightYellow),
                 String::from_utf8_lossy(&output.stderr),
                 color::Fg(color::Reset),
@@ -214,10 +238,13 @@ impl RenderGit for TuiGit {
             )
             .unwrap();
         } else {
+            self.main_branch = branch.to_string();
+            self.main_row = y;
             write!(
                 screen,
-                "{}\u{1f973}{}Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
+                "{}{}\u{1f973}{}Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
                 termion::cursor::Goto(1, row),
+                termion::clear::BeforeCursor,
                 color::Fg(color::LightYellow),
                 color::Fg(color::Green),
                 branch,
@@ -231,7 +258,12 @@ impl RenderGit for TuiGit {
     }
 
     fn cursor_to_main<W: Write>(&self, screen: &mut W) {
-        write!(screen, "{}", termion::cursor::Goto(1, self.main_row)).unwrap();
+        write!(
+            screen,
+            "{}\u{1f33f}",
+            termion::cursor::Goto(1, self.main_row)
+        )
+        .unwrap();
     }
     // https://symbl.cc/en/
     fn move_cursor_up<W: Write>(
@@ -282,6 +314,53 @@ impl RenderGit for TuiGit {
         .unwrap();
         *key_move_counter = (*key_move_counter + 1) % usize::MAX;
     }
+
+    fn show_title<W: Write>(&mut self, screen: &mut W) {
+        write!(
+            screen,
+            "{}{}{}{}Welcome to tui git{}{}{}\n",
+            termion::cursor::Goto(19, 1),
+            termion::clear::CurrentLine,
+            color::Fg(color::Magenta),
+            style::Bold,
+            style::Italic,
+            color::Fg(color::Reset),
+            style::Reset,
+        )
+        .unwrap();
+    }
+
+    fn show_branch<W: Write>(&mut self, screen: &mut W) {
+        let mut row = 1;
+        for branch in self.branch_vec.to_vec() {
+            row += 1;
+            if *branch == self.main_branch {
+                self.set_main_row(row);
+                write!(
+                    screen,
+                    "{}{}{}{}{}{}{}{} \u{1f63b}",
+                    termion::cursor::Goto(5, row),
+                    termion::clear::CurrentLine,
+                    color::Bg(color::White),
+                    color::Fg(color::Green),
+                    style::Bold,
+                    branch,
+                    color::Fg(color::Reset),
+                    style::Reset,
+                )
+                .unwrap();
+            } else {
+                write!(
+                    screen,
+                    "{}{}{}",
+                    termion::cursor::Goto(5, row),
+                    termion::clear::CurrentLine,
+                    branch
+                )
+                .unwrap();
+            }
+        }
+    }
 }
 
 fn main() {
@@ -294,73 +373,47 @@ fn main() {
         .unwrap()
         .into_alternate_screen()
         .unwrap();
-    write!(
-        screen,
-        "{}{}{}Welcome to tui git{}{}{}\n",
-        termion::cursor::Goto(20, 1),
-        color::Fg(color::Magenta),
-        style::Bold,
-        style::Italic,
-        color::Fg(color::Reset),
-        style::Reset,
-    )
-    .unwrap();
 
-    let mut row = 1;
-    let branch_vec = tui_git.branch_vec.clone();
-    for branch in &branch_vec {
-        row += 1;
-        if *branch == tui_git.main_branch {
-            tui_git.set_main_row(row);
-            write!(
-                screen,
-                "{}{}{}{}{}{}{} \u{1f63b}",
-                termion::cursor::Goto(5, row),
-                color::Bg(color::White),
-                color::Fg(color::Green),
-                style::Bold,
-                branch,
-                color::Fg(color::Reset),
-                style::Reset,
-            )
-            .unwrap();
-        } else {
-            write!(screen, "{}{}", termion::cursor::Goto(5, row), branch).unwrap();
-        }
-    }
+    // Init show, need to refresh every frame.
+    tui_git.show_title(&mut screen);
+    tui_git.show_branch(&mut screen);
     tui_git.cursor_to_main(&mut screen);
     tui_git.show_git_log(&mut screen, &tui_git.main_branch.to_string());
     screen.flush().unwrap();
 
     let mut key_move_counter: usize = 0;
-    row = tui_git.main_row;
+    let mut main_row = tui_git.main_row;
     for c in stdin.keys() {
         match c.unwrap() {
             Key::Char('q') => break,
             Key::Char('\n') => {
-                if tui_git.checkout_git_branch(
-                    &mut screen,
-                    &branch_vec.to_vec()[(row - tui_git.branch_row_top) as usize],
-                ) {
-                    screen.flush().unwrap();
-                    thread::sleep(time::Duration::from_secs_f32(0.5));
+                let branch =
+                    &tui_git.branch_vec.to_vec()[(main_row - tui_git.branch_row_top) as usize];
+                if tui_git.checkout_git_branch(&mut screen, branch) {
                     // break;
                 }
+                // Refresh title and branch.
+                tui_git.show_title(&mut screen);
+                tui_git.show_branch(&mut screen);
+                tui_git.cursor_to_main(&mut screen);
+                main_row = tui_git.main_row;
+                tui_git.show_git_log(&mut screen, branch);
+                screen.flush().unwrap();
             }
             Key::Up => {
-                tui_git.move_cursor_up(&mut screen, &mut row, &mut key_move_counter);
+                tui_git.move_cursor_up(&mut screen, &mut main_row, &mut key_move_counter);
                 // Show the log.
                 tui_git.show_git_log(
                     &mut screen,
-                    &branch_vec.to_vec()[(row - tui_git.branch_row_top) as usize],
+                    &tui_git.branch_vec.to_vec()[(main_row - tui_git.branch_row_top) as usize],
                 );
             }
             Key::Down => {
-                tui_git.move_cursor_down(&mut screen, &mut row, &mut key_move_counter);
+                tui_git.move_cursor_down(&mut screen, &mut main_row, &mut key_move_counter);
                 // Show the log.
                 tui_git.show_git_log(
                     &mut screen,
-                    &branch_vec.to_vec()[(row - tui_git.branch_row_top) as usize],
+                    &tui_git.branch_vec.to_vec()[(main_row - tui_git.branch_row_top) as usize],
                 );
             }
             _ => {}
