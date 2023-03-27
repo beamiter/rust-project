@@ -7,6 +7,7 @@ use std::{
     vec,
 };
 use std::{thread, time};
+use substring::Substring;
 
 use termion::input::TermRead;
 use termion::{color, style};
@@ -99,7 +100,15 @@ impl TuiGit {
                     self.main_branch = val.iter().collect::<String>();
                     // Remove the '*' symbol.
                     self.main_branch.remove(0);
-                    // println!("{}", self.main_branch);
+                    let head_str: &str = "HEADdetachedat";
+                    if let Some(pos) = self.main_branch.rfind(head_str) {
+                        self.main_branch = self
+                            .main_branch
+                            .substring(pos, self.main_branch.len())
+                            .to_string();
+                        println!("******** {}", self.main_branch);
+                    }
+                    println!("{}", self.main_branch);
                     self.branch_vec.push(self.main_branch.to_string());
                 } else {
                     self.branch_vec
