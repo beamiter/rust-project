@@ -101,12 +101,11 @@ impl TuiGit {
                     // Remove the '*' symbol.
                     self.main_branch.remove(0);
                     let head_str: &str = "HEADdetachedat";
-                    if let Some(pos) = self.main_branch.rfind(head_str) {
+                    if let Some(pos) = self.main_branch.find(head_str) {
                         self.main_branch = self
                             .main_branch
-                            .substring(pos, self.main_branch.len())
+                            .substring(pos + head_str.len(), self.main_branch.len() - 1)
                             .to_string();
-                        println!("******** {}", self.main_branch);
                     }
                     println!("{}", self.main_branch);
                     self.branch_vec.push(self.main_branch.to_string());
