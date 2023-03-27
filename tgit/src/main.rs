@@ -59,7 +59,7 @@ impl TuiGit {
         TuiGit {
             branch_row_top: 2,
             branch_row_bottom: 0,
-            branch_col_left: 0,
+            branch_col_left: 5,
             branch_col_right: 0,
             log_row_top: 1,
             log_row_bottom: 0,
@@ -117,8 +117,11 @@ impl TuiGit {
                 break;
             }
         }
+        let branch_size = self.branch_vec.iter().map(|x| x.len()).collect::<Vec<usize>>();
         self.branch_row_bottom = self.branch_vec.len() as u16 + self.branch_row_top - 1;
-        println!("{}--{}", self.branch_row_top, self.branch_row_bottom);
+        self.branch_col_right = self.branch_col_left + *branch_size.iter().max().unwrap() as u16 + 5;
+        self.log_col_left  = self.branch_col_right + 5;
+        println!("{}--{}--{}", branch_size.iter().max().unwrap(), self.branch_row_top, self.branch_row_bottom);
     }
 
     // Currently limit the log number to 100.
@@ -164,7 +167,7 @@ impl RenderGit for TuiGit {
     fn show_git_log<W: Write>(&mut self, screen: &mut W, branch: &String) {
         let (x, y) = screen.cursor_pos().unwrap();
         self.update_git_log(branch);
-        let x_tmp = x + 30;
+        let x_tmp = self.log_col_left;
         let mut y_tmp = 2;
         // Clear previous log zone.
         for clear_y in self.log_row_top..=self.log_row_bottom {
