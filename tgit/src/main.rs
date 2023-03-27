@@ -6,7 +6,6 @@ use std::{
     process::Command,
     vec,
 };
-use std::{thread, time};
 use substring::Substring;
 
 use termion::input::TermRead;
@@ -40,11 +39,11 @@ struct TuiGit {
     log_row_top: u16,
     log_row_bottom: u16,
     log_col_left: u16,
-    log_col_right: u16,
-
-    // check status area;
-    check_info_row: u16,
-    check_info_col: u16,
+    // log_col_right: u16,
+    //
+    // // check status area;
+    // check_info_row: u16,
+    // check_info_col: u16,
 
     // data storage;
     branch_vec: Vec<String>,
@@ -64,9 +63,9 @@ impl TuiGit {
             log_row_top: 1,
             log_row_bottom: 0,
             log_col_left: 0,
-            log_col_right: 0,
-            check_info_row: 0,
-            check_info_col: 0,
+            // log_col_right: 0,
+            // check_info_row: 0,
+            // check_info_col: 0,
             branch_vec: vec![],
             log_map: HashMap::new(),
             main_branch: String::new(),
@@ -219,18 +218,34 @@ impl RenderGit for TuiGit {
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
     }
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
+        let (x, y) = screen.cursor_pos().unwrap();
+        let (_, row) = termion::terminal_size().unwrap();
+        if branch == &self.main_branch {
+            write!(
+                screen,
+                "{}{}\u{1f973}{}Already in target branch {}{}{}, enter 'q' to quit{}{}",
+                termion::cursor::Goto(1, row),
+                termion::clear::All,
+                color::Fg(color::LightYellow),
+                color::Fg(color::Green),
+                branch,
+                color::Fg(color::LightYellow),
+                color::Fg(color::Reset),
+                termion::cursor::Goto(x, y),
+            )
+            .unwrap();
+            return true;
+        }
         let output = Command::new("git")
             .args(["checkout", branch.as_str()])
             .output()
             .expect("failed to execute process");
-        let (x, y) = screen.cursor_pos().unwrap();
-        let (_, row) = termion::terminal_size().unwrap();
         if !output.status.success() {
             write!(
                 screen,
                 "{}{}\u{1f602}{}{:?}{}{}",
                 termion::cursor::Goto(1, row),
-                termion::clear::BeforeCursor,
+                termion::clear::All,
                 color::Fg(color::LightYellow),
                 String::from_utf8_lossy(&output.stderr),
                 color::Fg(color::Reset),
@@ -339,7 +354,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}{}{}{}{}{}{} \u{1f63b}",
-                    termion::cursor::Goto(5, row),
+                    termion::cursor::Goto(4, row),
                     termion::clear::CurrentLine,
                     color::Bg(color::White),
                     color::Fg(color::Green),
@@ -353,7 +368,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}{}",
-                    termion::cursor::Goto(5, row),
+                    termion::cursor::Goto(4, row),
                     termion::clear::CurrentLine,
                     branch
                 )
@@ -373,6 +388,7 @@ fn main() {
         .unwrap()
         .into_alternate_screen()
         .unwrap();
+    write!(screen, "{}", termion::cursor::Hide).unwrap();
 
     // Init show, need to refresh every frame.
     tui_git.show_title(&mut screen);
@@ -388,9 +404,11 @@ fn main() {
             Key::Char('q') => break,
             Key::Char('\n') => {
                 let branch =
-                    &tui_git.branch_vec.to_vec()[(main_row - tui_git.branch_row_top) as usize];
+                    &mut tui_git.branch_vec.to_vec()[(main_row - tui_git.branch_row_top) as usize];
                 if tui_git.checkout_git_branch(&mut screen, branch) {
                     // break;
+                } else {
+                    *branch = tui_git.main_branch.to_string();
                 }
                 // Refresh title and branch.
                 tui_git.show_title(&mut screen);
