@@ -201,11 +201,12 @@ impl RenderGit for TuiGit {
             .output()
             .expect("failed to execute process");
         let (x, y) = screen.cursor_pos().unwrap();
+        let (_, row) = termion::terminal_size().unwrap();
         if !output.status.success() {
             write!(
                 screen,
                 "{}\u{1f602}{}{:?}{}{}",
-                termion::cursor::Goto(x, self.branch_row_bottom + 10),
+                termion::cursor::Goto(1, row),
                 color::Fg(color::LightYellow),
                 String::from_utf8_lossy(&output.stderr),
                 color::Fg(color::Reset),
@@ -216,7 +217,7 @@ impl RenderGit for TuiGit {
             write!(
                 screen,
                 "{}\u{1f973}{}Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
-                termion::cursor::Goto(x, self.branch_row_bottom + 10),
+                termion::cursor::Goto(1, row),
                 color::Fg(color::LightYellow),
                 color::Fg(color::Green),
                 branch,
