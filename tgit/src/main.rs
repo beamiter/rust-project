@@ -52,6 +52,7 @@ struct TuiGit {
     // Main branch;
     main_branch: String,
     main_branch_row: u16,
+    current_branch: String,
     current_branch_row: u16,
 
     // 0 for title, 1 for branch, 2 for log and e.t.c.
@@ -65,7 +66,7 @@ impl TuiGit {
             branch_row_bottom: 0,
             branch_col_left: 5,
             branch_col_right: 0,
-            log_row_top: 1,
+            log_row_top: 2,
             log_row_bottom: 0,
             log_col_left: 0,
             // log_col_right: 0,
@@ -75,6 +76,7 @@ impl TuiGit {
             log_map: HashMap::new(),
             main_branch: String::new(),
             main_branch_row: 0,
+            current_branch: String::new(),
             current_branch_row: 0,
             layout_position: 0,
             key_move_counter: 0,
@@ -218,6 +220,7 @@ impl RenderGit for TuiGit {
             y_tmp += 1;
         }
         self.log_row_bottom = y_tmp;
+        self.current_branch = branch.to_string();
         self.current_branch_row = y;
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
     }
@@ -390,7 +393,7 @@ impl RenderGit for TuiGit {
         write!(
             screen,
             "{}✍ ",
-            termion::cursor::Goto(self.log_col_left - 2, y)
+            termion::cursor::Goto(self.log_col_left - 2, self.log_row_top)
         )
         .unwrap();
     }
