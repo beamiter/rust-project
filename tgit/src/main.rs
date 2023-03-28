@@ -80,26 +80,19 @@ impl TuiGit {
             .arg("branch")
             .output()
             .expect("failed to execute process");
-        let branch_output: Vec<char> = output
-            .stdout
-            .iter()
-            .map(|&t| t as char)
-            .filter(|&t| t != ' ')
-            .collect();
+        let branch_output = String::from_utf8_lossy(&output.stdout);
         // println!("branch_output {:?}", branch_output);
-        let mut branch_iter = branch_output.split(|&x| x == '\n');
+        let mut branch_iter = branch_output.split('\n');
         self.branch_vec.clear();
         loop {
             if let Some(val) = branch_iter.next() {
                 if val.is_empty() {
                     continue;
                 }
-                // println!("{}", val.iter().collect::<String>());
-                if let Some('*') = val.iter().next() {
-                    self.main_branch = val.iter().collect::<String>();
-                    // Remove the '*' symbol.
-                    self.main_branch.remove(0);
-                    let head_str: &str = "HEADdetachedat";
+                if let Some('*') = val.chars().next() {
+                    // Remove the '*' symbol and trim white space.
+                    self.main_branch = val[1..val.len()].to_string().trim().to_string();
+                    let head_str: &str = "HEAD detached at";
                     if let Some(pos) = self.main_branch.find(head_str) {
                         self.main_branch = self
                             .main_branch
@@ -107,10 +100,10 @@ impl TuiGit {
                             .to_string();
                     }
                     println!("{}", self.main_branch);
+                    self.update_git_log(&self.main_branch.to_string());
                     self.branch_vec.push(self.main_branch.to_string());
                 } else {
-                    self.branch_vec
-                        .push(val.iter().collect::<String>().to_string());
+                    self.branch_vec.push(val.to_string());
                 }
             } else {
                 break;
@@ -144,13 +137,13 @@ impl TuiGit {
             .expect("failed to execute process");
         // println!("status: {}", output.status);
         // assert!(output.status.success());
-        // write!(stdout, "{:?}", String::from_utf8_lossy(&output.stdout)).unwrap();
-        let log_output: Vec<char> = output.stdout.iter().map(|&t| t as char).collect();
-        let mut log_iter = log_output.split(|&x| x == '\n');
+        // write!(stdout(), "{:?}", String::from_utf8_lossy(&output.stdout)).unwrap();
+        let log_output = String::from_utf8_lossy(&output.stdout);
+        let mut log_iter = log_output.split('\n');
         let mut logs: Vec<String> = vec![];
         loop {
             if let Some(val) = log_iter.next() {
-                logs.push(val.iter().collect::<String>().to_string());
+                logs.push(val.to_string());
             } else {
                 break;
             }
@@ -381,6 +374,7 @@ impl RenderGit for TuiGit {
 fn main() {
     let mut tui_git = TuiGit::new();
     tui_git.update_git_branch();
+    // return;
 
     let stdin = stdin();
     let mut screen = stdout()
