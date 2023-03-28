@@ -51,7 +51,7 @@ struct TuiGit {
 
     // Main branch;
     main_branch: String,
-    main_row: u16,
+    main_branch_row: u16,
 
     // 0 for title, 1 for branch, 2 for log and e.t.c.
     layout_position: u16,
@@ -73,13 +73,13 @@ impl TuiGit {
             branch_vec: vec![],
             log_map: HashMap::new(),
             main_branch: String::new(),
-            main_row: 0,
+            main_branch_row: 0,
             layout_position: 0,
             key_move_counter: 0,
         }
     }
-    fn set_main_row(&mut self, row: u16) {
-        self.main_row = row;
+    fn set_main_branch_row(&mut self, row: u16) {
+        self.main_branch_row = row;
     }
     fn update_git_branch(&mut self) {
         let output = Command::new("git")
@@ -251,7 +251,7 @@ impl RenderGit for TuiGit {
             .unwrap();
         } else {
             self.main_branch = branch.to_string();
-            self.main_row = y;
+            self.main_branch_row = y;
             write!(
                 screen,
                 "{}{}✅{} Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
@@ -273,53 +273,105 @@ impl RenderGit for TuiGit {
         write!(
             screen,
             "{}\u{1f33f}",
-            termion::cursor::Goto(1, self.main_row)
+            termion::cursor::Goto(1, self.main_branch_row)
         )
         .unwrap();
     }
     // https://symbl.cc/en/
     fn move_cursor_up<W: Write>(&mut self, screen: &mut W, row: &mut u16) {
-        // Clear previous.
-        write!(screen, "{} ", termion::cursor::Goto(1, *row)).unwrap();
-
-        if self.layout_position == 1 {
-            if *row == self.branch_row_top {
-                *row = self.branch_row_bottom;
-            } else {
-                *row = *row - 1;
+        match self.layout_position {
+            1 => {
+                // Clear previous.
+                write!(screen, "{} ", termion::cursor::Goto(1, *row)).unwrap();
+                if *row == self.branch_row_top {
+                    *row = self.branch_row_bottom;
+                } else {
+                    *row = *row - 1;
+                }
+                write!(
+                    screen,
+                    "{}{}",
+                    termion::cursor::Goto(1, *row),
+                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
+                )
+                .unwrap();
+                // Show the log.
+                self.show_git_log(
+                    screen,
+                    &self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize],
+                );
             }
-            write!(
-                screen,
-                "{}{}{}{}",
-                termion::cursor::Goto(1, self.branch_row_bottom + 10),
-                termion::clear::CurrentLine,
-                termion::cursor::Goto(1, *row),
-                UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
-            )
-            .unwrap();
+            2 => {
+                // Clear previous.
+                write!(
+                    screen,
+                    "{} ",
+                    termion::cursor::Goto(self.log_col_left - 2, *row)
+                )
+                .unwrap();
+                if *row == self.log_row_top {
+                    *row = self.log_row_bottom;
+                } else {
+                    *row = *row - 1;
+                }
+                write!(
+                    screen,
+                    "{}{}",
+                    termion::cursor::Goto(self.log_col_left - 2, *row),
+                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
+                )
+                .unwrap();
+            }
+            _ => {}
         }
 
         self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
     }
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W, row: &mut u16) {
-        // Clear previous.
-        write!(screen, "{} ", termion::cursor::Goto(1, *row)).unwrap();
-
-        if self.layout_position == 1 {
-            if *row == self.branch_row_bottom {
-                *row = self.branch_row_top;
-            } else {
-                *row = *row + 1;
+        match self.layout_position {
+            1 => {
+                // Clear previous.
+                write!(screen, "{} ", termion::cursor::Goto(1, *row)).unwrap();
+                if *row == self.branch_row_bottom {
+                    *row = self.branch_row_top;
+                } else {
+                    *row = *row + 1;
+                }
+                write!(
+                    screen,
+                    "{}{}",
+                    termion::cursor::Goto(1, *row),
+                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
+                )
+                .unwrap();
+                // Show the log.
+                self.show_git_log(
+                    screen,
+                    &self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize],
+                );
             }
-            write!(
-                screen,
-                "{}{}{}{}",
-                termion::cursor::Goto(1, self.branch_row_bottom + 10),
-                termion::clear::CurrentLine,
-                termion::cursor::Goto(1, *row),
-                UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
-            )
-            .unwrap();
+            2 => {
+                // Clear previous.
+                write!(
+                    screen,
+                    "{} ",
+                    termion::cursor::Goto(self.log_col_left - 2, *row)
+                )
+                .unwrap();
+                if *row == self.log_row_bottom {
+                    *row = self.log_row_top;
+                } else {
+                    *row = *row + 1;
+                }
+                write!(
+                    screen,
+                    "{}{}",
+                    termion::cursor::Goto(self.log_col_left - 2, *row),
+                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
+                )
+                .unwrap();
+            }
+            _ => {}
         }
 
         self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
@@ -369,7 +421,7 @@ impl RenderGit for TuiGit {
         for branch in self.branch_vec.to_vec() {
             row += 1;
             if *branch == self.main_branch {
-                self.set_main_row(row);
+                self.set_main_branch_row(row);
                 write!(
                     screen,
                     "{}{}{}{}{}{}{}{} 🐝",
@@ -417,13 +469,13 @@ fn main() {
     tui_git.show_git_log(&mut screen, &tui_git.main_branch.to_string());
     screen.flush().unwrap();
 
-    let mut main_row = tui_git.main_row;
+    let mut row = tui_git.main_branch_row;
     for c in stdin.keys() {
         match c.unwrap() {
             Key::Char('q') => break,
             Key::Char('\n') => {
                 let branch =
-                    &mut tui_git.branch_vec.to_vec()[(main_row - tui_git.branch_row_top) as usize];
+                    &mut tui_git.branch_vec.to_vec()[(row - tui_git.branch_row_top) as usize];
                 if tui_git.checkout_git_branch(&mut screen, branch) {
                     // break;
                 } else {
@@ -433,7 +485,7 @@ fn main() {
                 tui_git.show_title(&mut screen);
                 tui_git.show_branch(&mut screen);
                 tui_git.cursor_to_main(&mut screen);
-                main_row = tui_git.main_row;
+                row = tui_git.main_branch_row;
                 tui_git.show_git_log(&mut screen, branch);
                 screen.flush().unwrap();
             }
@@ -444,20 +496,10 @@ fn main() {
                 tui_git.move_cursor_right(&mut screen);
             }
             Key::Up => {
-                tui_git.move_cursor_up(&mut screen, &mut main_row);
-                // Show the log.
-                tui_git.show_git_log(
-                    &mut screen,
-                    &tui_git.branch_vec.to_vec()[(main_row - tui_git.branch_row_top) as usize],
-                );
+                tui_git.move_cursor_up(&mut screen, &mut row);
             }
             Key::Down => {
-                tui_git.move_cursor_down(&mut screen, &mut main_row);
-                // Show the log.
-                tui_git.show_git_log(
-                    &mut screen,
-                    &tui_git.branch_vec.to_vec()[(main_row - tui_git.branch_row_top) as usize],
-                );
+                tui_git.move_cursor_down(&mut screen, &mut row);
             }
             _ => {}
         }
