@@ -92,7 +92,7 @@ impl TuiGit {
                 if let Some('*') = val.chars().next() {
                     // Remove the '*' symbol and trim white space.
                     self.main_branch = val[1..val.len()].to_string().trim().to_string();
-                    let head_str: &str = "HEAD detached at";
+                    let head_str: &str = "HEAD detached at ";
                     if let Some(pos) = self.main_branch.find(head_str) {
                         self.main_branch = self
                             .main_branch
@@ -103,7 +103,7 @@ impl TuiGit {
                     self.update_git_log(&self.main_branch.to_string());
                     self.branch_vec.push(self.main_branch.to_string());
                 } else {
-                    self.branch_vec.push(val.to_string());
+                    self.branch_vec.push(val.to_string().trim().to_string());
                 }
             } else {
                 break;
