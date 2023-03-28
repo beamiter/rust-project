@@ -52,6 +52,7 @@ struct TuiGit {
     // Main branch;
     main_branch: String,
     main_branch_row: u16,
+    current_branch_row: u16,
 
     // 0 for title, 1 for branch, 2 for log and e.t.c.
     layout_position: u16,
@@ -74,6 +75,7 @@ impl TuiGit {
             log_map: HashMap::new(),
             main_branch: String::new(),
             main_branch_row: 0,
+            current_branch_row: 0,
             layout_position: 0,
             key_move_counter: 0,
         }
@@ -166,8 +168,8 @@ trait RenderGit {
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
 
-    fn move_cursor_left<W: Write>(&mut self, screen: &mut W);
-    fn move_cursor_right<W: Write>(&mut self, screen: &mut W);
+    fn move_cursor_left<W: Write>(&mut self, screen: &mut W, row: &mut u16);
+    fn move_cursor_right<W: Write>(&mut self, screen: &mut W, row: &mut u16);
 
     fn move_cursor_up<W: Write>(&mut self, screen: &mut W, row: &mut u16);
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W, row: &mut u16);
@@ -212,6 +214,7 @@ impl RenderGit for TuiGit {
             y_tmp += 1;
         }
         self.log_row_bottom = y_tmp;
+        self.current_branch_row = y;
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
     }
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
@@ -272,7 +275,7 @@ impl RenderGit for TuiGit {
     fn cursor_to_main<W: Write>(&self, screen: &mut W) {
         write!(
             screen,
-            "{}\u{1f33f}",
+            "{}🌟",
             termion::cursor::Goto(1, self.main_branch_row)
         )
         .unwrap();
@@ -376,7 +379,7 @@ impl RenderGit for TuiGit {
 
         self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
     }
-    fn move_cursor_right<W: Write>(&mut self, screen: &mut W) {
+    fn move_cursor_right<W: Write>(&mut self, screen: &mut W, _row: &mut u16) {
         self.layout_position = 2;
         let (_, y) = screen.cursor_pos().unwrap();
         write!(screen, "{}  ", termion::cursor::Goto(1, y)).unwrap();
@@ -387,16 +390,23 @@ impl RenderGit for TuiGit {
         )
         .unwrap();
     }
-    fn move_cursor_left<W: Write>(&mut self, screen: &mut W) {
+    fn move_cursor_left<W: Write>(&mut self, screen: &mut W, row: &mut u16) {
         self.layout_position = 1;
-        let (_, y) = screen.cursor_pos().unwrap();
+        *row = self.current_branch_row;
+        let (x, y) = screen.cursor_pos().unwrap();
+        write!(screen, "{}  ", termion::cursor::Goto(x - 2, y)).unwrap();
         write!(
             screen,
             "{}  ",
-            termion::cursor::Goto(self.log_col_left - 2, y)
+            termion::cursor::Goto(self.log_col_left - 2, self.current_branch_row)
         )
         .unwrap();
-        write!(screen, "{}❆ ", termion::cursor::Goto(1, y)).unwrap();
+        write!(
+            screen,
+            "{}❆ ",
+            termion::cursor::Goto(1, self.current_branch_row)
+        )
+        .unwrap();
     }
 
     fn show_title<W: Write>(&mut self, screen: &mut W) {
@@ -490,10 +500,10 @@ fn main() {
                 screen.flush().unwrap();
             }
             Key::Left => {
-                tui_git.move_cursor_left(&mut screen);
+                tui_git.move_cursor_left(&mut screen, &mut row);
             }
             Key::Right => {
-                tui_git.move_cursor_right(&mut screen);
+                tui_git.move_cursor_right(&mut screen, &mut row);
             }
             Key::Up => {
                 tui_git.move_cursor_up(&mut screen, &mut row);
