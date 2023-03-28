@@ -160,6 +160,9 @@ trait RenderGit {
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
 
+    fn move_cursor_left<W: Write>(&self, screen: &mut W);
+    fn move_cursor_right<W: Write>(&self, screen: &mut W);
+
     fn move_cursor_up<W: Write>(&self, screen: &mut W, row: &mut u16, key_move_counter: &mut usize);
     fn move_cursor_down<W: Write>(
         &self,
@@ -216,7 +219,7 @@ impl RenderGit for TuiGit {
         if branch == &self.main_branch {
             write!(
                 screen,
-                "{}{}\u{1f973}{}Already in target branch {}{}{}, enter 'q' to quit{}{}",
+                "{}{}☑{}Already in target branch {}{}{}, enter 'q' to quit{}{}",
                 termion::cursor::Goto(1, row),
                 termion::clear::All,
                 color::Fg(color::LightYellow),
@@ -236,7 +239,7 @@ impl RenderGit for TuiGit {
         if !output.status.success() {
             write!(
                 screen,
-                "{}{}\u{1f602}{}{:?}{}{}",
+                "{}{}❌{}{:?}{}{}",
                 termion::cursor::Goto(1, row),
                 termion::clear::All,
                 color::Fg(color::LightYellow),
@@ -250,7 +253,7 @@ impl RenderGit for TuiGit {
             self.main_row = y;
             write!(
                 screen,
-                "{}{}\u{1f973}{}Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
+                "{}{}✅{}Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
                 termion::cursor::Goto(1, row),
                 termion::clear::BeforeCursor,
                 color::Fg(color::LightYellow),
@@ -322,6 +325,26 @@ impl RenderGit for TuiGit {
         .unwrap();
         *key_move_counter = (*key_move_counter + 1) % usize::MAX;
     }
+    fn move_cursor_right<W: Write>(&self, screen: &mut W) {
+        let (_, y) = screen.cursor_pos().unwrap();
+        write!(screen, "{}  ", termion::cursor::Goto(1, y)).unwrap();
+        write!(
+            screen,
+            "{}✍ ",
+            termion::cursor::Goto(self.log_col_left - 2, y)
+        )
+        .unwrap();
+    }
+    fn move_cursor_left<W: Write>(&self, screen: &mut W) {
+        let (_, y) = screen.cursor_pos().unwrap();
+        write!(
+            screen,
+            "{}  ",
+            termion::cursor::Goto(self.log_col_left - 2, y)
+        )
+        .unwrap();
+        write!(screen, "{}❆ ", termion::cursor::Goto(1, y)).unwrap();
+    }
 
     fn show_title<W: Write>(&mut self, screen: &mut W) {
         write!(
@@ -346,7 +369,7 @@ impl RenderGit for TuiGit {
                 self.set_main_row(row);
                 write!(
                     screen,
-                    "{}{}{}{}{}{}{}{} \u{1f63b}",
+                    "{}{}{}{}{}{}{}{} 🐝",
                     termion::cursor::Goto(4, row),
                     termion::clear::CurrentLine,
                     color::Bg(color::White),
@@ -411,6 +434,12 @@ fn main() {
                 main_row = tui_git.main_row;
                 tui_git.show_git_log(&mut screen, branch);
                 screen.flush().unwrap();
+            }
+            Key::Left => {
+                tui_git.move_cursor_left(&mut screen);
+            }
+            Key::Right => {
+                tui_git.move_cursor_right(&mut screen);
             }
             Key::Up => {
                 tui_git.move_cursor_up(&mut screen, &mut main_row, &mut key_move_counter);
