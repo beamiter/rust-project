@@ -168,6 +168,10 @@ trait RenderGit {
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
 
+    fn refresh_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
+
+    fn enter_pressed<W: Write>(&mut self, screen: &mut W, row: &mut u16);
+
     fn move_cursor_left<W: Write>(&mut self, screen: &mut W, row: &mut u16);
     fn move_cursor_right<W: Write>(&mut self, screen: &mut W, row: &mut u16);
 
@@ -457,6 +461,31 @@ impl RenderGit for TuiGit {
             }
         }
     }
+
+    fn refresh_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String) {
+        self.show_title(screen);
+        self.show_branch(screen);
+        self.cursor_to_main(screen);
+        self.show_git_log(screen, branch);
+        screen.flush().unwrap();
+    }
+
+    fn enter_pressed<W: Write>(&mut self, screen: &mut W, row: &mut u16) {
+        match self.layout_position {
+            1 => {
+                let branch = &mut self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize];
+                if self.checkout_git_branch(screen, branch) {
+                } else {
+                    *branch = self.main_branch.to_string();
+                }
+                // Refresh title and branch.
+                self.refresh_with_branch(screen, branch);
+                *row = self.main_branch_row;
+            }
+            2 => {}
+            _ => {}
+        }
+    }
 }
 
 fn main() {
@@ -472,32 +501,15 @@ fn main() {
         .unwrap();
     write!(screen, "{}", termion::cursor::Hide).unwrap();
 
-    // Init show, need to refresh every frame.
-    tui_git.show_title(&mut screen);
-    tui_git.show_branch(&mut screen);
-    tui_git.cursor_to_main(&mut screen);
-    tui_git.show_git_log(&mut screen, &tui_git.main_branch.to_string());
-    screen.flush().unwrap();
+    tui_git.refresh_with_branch(&mut screen, &tui_git.main_branch.to_string());
 
+    // Start with the main branch row.
     let mut row = tui_git.main_branch_row;
     for c in stdin.keys() {
         match c.unwrap() {
             Key::Char('q') => break,
             Key::Char('\n') => {
-                let branch =
-                    &mut tui_git.branch_vec.to_vec()[(row - tui_git.branch_row_top) as usize];
-                if tui_git.checkout_git_branch(&mut screen, branch) {
-                    // break;
-                } else {
-                    *branch = tui_git.main_branch.to_string();
-                }
-                // Refresh title and branch.
-                tui_git.show_title(&mut screen);
-                tui_git.show_branch(&mut screen);
-                tui_git.cursor_to_main(&mut screen);
-                row = tui_git.main_branch_row;
-                tui_git.show_git_log(&mut screen, branch);
-                screen.flush().unwrap();
+                tui_git.enter_pressed(&mut screen, &mut row);
             }
             Key::Left => {
                 tui_git.move_cursor_left(&mut screen, &mut row);
