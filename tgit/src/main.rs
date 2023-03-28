@@ -386,7 +386,7 @@ impl RenderGit for TuiGit {
 
         self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
     }
-    fn move_cursor_right<W: Write>(&mut self, screen: &mut W, _row: &mut u16) {
+    fn move_cursor_right<W: Write>(&mut self, screen: &mut W, row: &mut u16) {
         self.layout_position = 2;
         let (_, y) = screen.cursor_pos().unwrap();
         write!(screen, "{}  ", termion::cursor::Goto(1, y)).unwrap();
@@ -396,6 +396,7 @@ impl RenderGit for TuiGit {
             termion::cursor::Goto(self.log_col_left - 2, self.log_row_top)
         )
         .unwrap();
+        *row = self.log_row_top;
     }
     fn move_cursor_left<W: Write>(&mut self, screen: &mut W, row: &mut u16) {
         self.layout_position = 1;
