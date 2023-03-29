@@ -109,7 +109,7 @@ impl TuiGit {
                             .substring(pos + head_str.len(), self.main_branch.len() - 1)
                             .to_string();
                     }
-                    println!("{}", self.main_branch);
+                    println!("Main branch: {}", self.main_branch);
                     self.update_git_log(&self.main_branch.to_string());
                     self.branch_vec.push(self.main_branch.to_string());
                 } else {
@@ -128,12 +128,6 @@ impl TuiGit {
         self.branch_col_right =
             self.branch_col_left + *branch_size.iter().max().unwrap() as u16 + 5;
         self.log_col_left = self.branch_col_right + 5;
-        println!(
-            "{}--{}--{}",
-            branch_size.iter().max().unwrap(),
-            self.branch_row_top,
-            self.branch_row_bottom
-        );
     }
 
     // Currently limit the log number to 100.
@@ -191,7 +185,6 @@ impl RenderGit for TuiGit {
             // No show due to no enough col.
             return;
         }
-        let mut y_tmp = 2;
         // Clear previous log zone.
         for clear_y in self.log_row_top..=self.log_row_bottom {
             write!(
@@ -202,7 +195,8 @@ impl RenderGit for TuiGit {
             )
             .unwrap();
         }
-        self.log_row_top = y_tmp;
+        let mut y_tmp = self.log_row_top;
+        self.log_row_bottom = (self.log_map.get(branch).unwrap().len() as u16).min(row - 2);
         for log in self.log_map.get(branch).unwrap() {
             if !log.is_empty() {
                 write!(
@@ -219,7 +213,6 @@ impl RenderGit for TuiGit {
             }
             y_tmp += 1;
         }
-        self.log_row_bottom = y_tmp;
         self.current_branch = branch.to_string();
         self.current_branch_row = y;
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
