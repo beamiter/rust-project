@@ -142,7 +142,6 @@ impl TuiGit {
             .output()
             .expect("failed to execute process");
         // println!("status: {}", output.status);
-        // assert!(output.status.success());
         // write!(stdout(), "{:?}", String::from_utf8_lossy(&output.stdout)).unwrap();
         let log_output = String::from_utf8_lossy(&output.stdout);
         let mut log_iter = log_output.split('\n');
@@ -199,7 +198,6 @@ impl RenderGit for TuiGit {
         }
         let mut y_tmp = self.log_row_top;
         let current_branch_log_len = self.log_map.get(branch).unwrap().len() as u16;
-        assert!(self.log_scroll_offset < current_branch_log_len);
         for log in &self.log_map.get(branch).unwrap().to_vec()
             [self.log_scroll_offset as usize..current_branch_log_len as usize]
         {
@@ -263,7 +261,7 @@ impl RenderGit for TuiGit {
                 screen,
                 "{}{}✅{} Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
                 termion::cursor::Goto(1, row),
-                termion::clear::BeforeCursor,
+                termion::clear::All,
                 color::Fg(color::LightYellow),
                 color::Fg(color::Green),
                 branch,
@@ -527,7 +525,9 @@ fn main() {
     let mut row = tui_git.main_branch_row;
     for c in stdin.keys() {
         match c.unwrap() {
-            Key::Char('q') => break,
+            Key::Char('q') => {
+                break;
+            }
             Key::Char('\n') => {
                 tui_git.enter_pressed(&mut screen, &mut row);
             }
