@@ -200,7 +200,7 @@ impl RenderGit for TuiGit {
         }
         let mut y_tmp = self.log_row_top;
         let current_branch_log_len = self.log_map.get(branch).unwrap().len() as u16;
-        assert!(self.log_scroll_offset >= 0 && self.log_scroll_offset < current_branch_log_len);
+        assert!(self.log_scroll_offset < current_branch_log_len);
         for log in &self.log_map.get(branch).unwrap().to_vec()
             [self.log_scroll_offset as usize..current_branch_log_len as usize]
         {
@@ -219,8 +219,6 @@ impl RenderGit for TuiGit {
             }
             y_tmp += 1;
         }
-        self.current_branch = branch.to_string();
-        self.current_branch_row = y;
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
     }
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
@@ -304,11 +302,12 @@ impl RenderGit for TuiGit {
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
                 )
                 .unwrap();
+                // Update current_branch and current_branch_row,
+                self.current_branch =
+                    self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize].to_string();
+                self.current_branch_row = *row;
                 // Show the log.
-                self.show_git_log(
-                    screen,
-                    &self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize],
-                );
+                self.show_git_log(screen, &self.current_branch.to_string());
             }
             2 => {
                 // Clear previous.
@@ -359,11 +358,12 @@ impl RenderGit for TuiGit {
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
                 )
                 .unwrap();
+                // Update current_branch and current_branch_row,
+                self.current_branch =
+                    self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize].to_string();
+                self.current_branch_row = *row;
                 // Show the log.
-                self.show_git_log(
-                    screen,
-                    &self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize],
-                );
+                self.show_git_log(screen, &self.current_branch.to_string());
             }
             2 => {
                 // Clear previous.
@@ -402,6 +402,7 @@ impl RenderGit for TuiGit {
     fn move_cursor_right<W: Write>(&mut self, screen: &mut W, row: &mut u16) {
         self.layout_position = 2;
         let (_, y) = screen.cursor_pos().unwrap();
+        self.current_branch_row = y;
         write!(screen, "{}  ", termion::cursor::Goto(1, y)).unwrap();
         write!(
             screen,
