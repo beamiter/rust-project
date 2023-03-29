@@ -39,6 +39,7 @@ struct TuiGit {
     log_row_top: u16,
     log_row_bottom: u16,
     log_col_left: u16,
+    log_scroll_offset: u16,
     // log_col_right: u16,
     //
     // // check status area;
@@ -69,6 +70,7 @@ impl TuiGit {
             log_row_top: 2,
             log_row_bottom: 0,
             log_col_left: 0,
+            log_scroll_offset: 0,
             // log_col_right: 0,
             // check_info_row: 0,
             // check_info_col: 0,
@@ -186,6 +188,7 @@ impl RenderGit for TuiGit {
             return;
         }
         // Clear previous log zone.
+        self.log_row_bottom = (self.log_map.get(branch).unwrap().len() as u16).min(row - 2);
         for clear_y in self.log_row_top..=self.log_row_bottom {
             write!(
                 screen,
@@ -196,8 +199,11 @@ impl RenderGit for TuiGit {
             .unwrap();
         }
         let mut y_tmp = self.log_row_top;
-        self.log_row_bottom = (self.log_map.get(branch).unwrap().len() as u16).min(row - 2);
-        for log in self.log_map.get(branch).unwrap() {
+        let current_branch_log_len = self.log_map.get(branch).unwrap().len() as u16;
+        assert!(self.log_scroll_offset >= 0 && self.log_scroll_offset < current_branch_log_len);
+        for log in &self.log_map.get(branch).unwrap().to_vec()
+            [self.log_scroll_offset as usize..current_branch_log_len as usize]
+        {
             if !log.is_empty() {
                 write!(
                     screen,
@@ -313,7 +319,13 @@ impl RenderGit for TuiGit {
                 )
                 .unwrap();
                 if *row == self.log_row_top {
-                    *row = self.log_row_bottom;
+                    // For a close loop browse.
+                    // *row = self.log_row_bottom;
+                    // Hit the top.
+                    if self.log_scroll_offset > 0 {
+                        self.log_scroll_offset -= 1;
+                        self.show_git_log(screen, &self.current_branch.to_string());
+                    }
                 } else {
                     *row = *row - 1;
                 }
@@ -362,7 +374,15 @@ impl RenderGit for TuiGit {
                 )
                 .unwrap();
                 if *row == self.log_row_bottom {
-                    *row = self.log_row_top;
+                    // For a close loop browse.
+                    // *row = self.log_row_top;
+                    // Hit the bottom.
+                    let log_show_range = self.log_row_bottom - self.log_row_top;
+                    let current_log_len = self.log_map.get(&self.current_branch).unwrap().len();
+                    if usize::from(self.log_scroll_offset + log_show_range) < current_log_len {
+                        self.log_scroll_offset += 1;
+                        self.show_git_log(screen, &self.current_branch.to_string());
+                    }
                 } else {
                     *row = *row + 1;
                 }
