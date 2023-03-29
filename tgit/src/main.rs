@@ -13,6 +13,8 @@ use termion::{color, style};
 use termion::{cursor::DetectCursorPos, event::Key};
 use termion::{raw::IntoRawMode, screen::IntoAlternateScreen};
 
+use coredump::register_panic_handler;
+
 const UNICODE_TABLE: [&'static str; 12] = [
     "\u{1f407}",
     "\u{1f411}",
@@ -284,6 +286,7 @@ impl RenderGit for TuiGit {
     }
     // https://symbl.cc/en/
     fn move_cursor_up<W: Write>(&mut self, screen: &mut W, row: &mut usize) {
+        let (_, term_row) = termion::terminal_size().unwrap();
         match self.layout_position {
             1 => {
                 // Clear previous.
@@ -295,6 +298,18 @@ impl RenderGit for TuiGit {
                 }
                 write!(
                     screen,
+                    "{}{}{}, {}, {}, {}",
+                    termion::cursor::Goto(1, term_row),
+                    termion::clear::CurrentLine,
+                    row,
+                    self.layout_position,
+                    self.current_branch,
+                    self.current_branch_row,
+                )
+                .unwrap();
+                screen.flush().unwrap();
+                write!(
+                    screen,
                     "{}{}",
                     termion::cursor::Goto(1, *row as u16),
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
@@ -304,6 +319,8 @@ impl RenderGit for TuiGit {
                 self.current_branch =
                     self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize].to_string();
                 self.current_branch_row = *row;
+                // Need to reset this!
+                self.log_scroll_offset = 0;
                 // Show the log.
                 self.show_git_log(screen, &self.current_branch.to_string());
             }
@@ -340,6 +357,7 @@ impl RenderGit for TuiGit {
         self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
     }
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W, row: &mut usize) {
+        let (_, term_row) = termion::terminal_size().unwrap();
         match self.layout_position {
             1 => {
                 // Clear previous.
@@ -361,6 +379,20 @@ impl RenderGit for TuiGit {
                     self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize].to_string();
                 self.current_branch_row = *row;
                 // Show the log.
+                write!(
+                    screen,
+                    "{}{}{}, {}, {}, {}",
+                    termion::cursor::Goto(1, term_row),
+                    termion::clear::CurrentLine,
+                    row,
+                    self.layout_position,
+                    self.current_branch,
+                    self.current_branch_row,
+                )
+                .unwrap();
+                screen.flush().unwrap();
+                // Need to reset this!
+                self.log_scroll_offset = 0;
                 self.show_git_log(screen, &self.current_branch.to_string());
             }
             2 => {
@@ -508,6 +540,7 @@ impl RenderGit for TuiGit {
 }
 
 fn main() {
+    register_panic_handler().unwrap();
     let mut tui_git = TuiGit::new();
     tui_git.update_git_branch();
 
