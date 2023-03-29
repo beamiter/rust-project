@@ -169,13 +169,13 @@ trait RenderGit {
 
     fn refresh_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
 
-    fn enter_pressed<W: Write>(&mut self, screen: &mut W, row: &mut usize);
+    fn enter_pressed<W: Write>(&mut self, screen: &mut W);
 
-    fn move_cursor_left<W: Write>(&mut self, screen: &mut W, row: &mut usize);
-    fn move_cursor_right<W: Write>(&mut self, screen: &mut W, row: &mut usize);
+    fn move_cursor_left<W: Write>(&mut self, screen: &mut W);
+    fn move_cursor_right<W: Write>(&mut self, screen: &mut W);
 
-    fn move_cursor_up<W: Write>(&mut self, screen: &mut W, row: &mut usize);
-    fn move_cursor_down<W: Write>(&mut self, screen: &mut W, row: &mut usize);
+    fn move_cursor_up<W: Write>(&mut self, screen: &mut W);
+    fn move_cursor_down<W: Write>(&mut self, screen: &mut W);
 }
 
 impl RenderGit for TuiGit {
@@ -285,23 +285,24 @@ impl RenderGit for TuiGit {
         .unwrap();
     }
     // https://symbl.cc/en/
-    fn move_cursor_up<W: Write>(&mut self, screen: &mut W, row: &mut usize) {
+    fn move_cursor_up<W: Write>(&mut self, screen: &mut W) {
         let (_, term_row) = termion::terminal_size().unwrap();
+        let (_, mut y) = screen.cursor_pos().unwrap();
         match self.layout_position {
             1 => {
                 // Clear previous.
-                write!(screen, "{} ", termion::cursor::Goto(1, *row as u16)).unwrap();
-                if *row == self.branch_row_top {
-                    *row = self.branch_row_bottom;
+                write!(screen, "{} ", termion::cursor::Goto(1, y as u16)).unwrap();
+                if y == self.branch_row_top as u16 {
+                    y = self.branch_row_bottom as u16;
                 } else {
-                    *row = *row - 1;
+                    y = y - 1;
                 }
                 write!(
                     screen,
                     "{}{}{}, {}, {}, {}",
                     termion::cursor::Goto(1, term_row),
                     termion::clear::CurrentLine,
-                    row,
+                    y,
                     self.layout_position,
                     self.current_branch,
                     self.current_branch_row,
@@ -311,14 +312,14 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}",
-                    termion::cursor::Goto(1, *row as u16),
+                    termion::cursor::Goto(1, y),
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
                 )
                 .unwrap();
                 // Update current_branch and current_branch_row,
                 self.current_branch =
-                    self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize].to_string();
-                self.current_branch_row = *row;
+                    self.branch_vec.to_vec()[(y - self.branch_row_top as u16) as usize].to_string();
+                self.current_branch_row = y as usize;
                 // Need to reset this!
                 self.log_scroll_offset = 0;
                 // Show the log.
@@ -329,10 +330,10 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{} ",
-                    termion::cursor::Goto(self.log_col_left as u16 - 2, *row as u16)
+                    termion::cursor::Goto(self.log_col_left as u16 - 2, y as u16)
                 )
                 .unwrap();
-                if *row == self.log_row_top {
+                if y == self.log_row_top as u16 {
                     // For a close loop browse.
                     // *row = self.log_row_bottom;
                     // Hit the top.
@@ -341,12 +342,12 @@ impl RenderGit for TuiGit {
                         self.show_git_log(screen, &self.current_branch.to_string());
                     }
                 } else {
-                    *row = *row - 1;
+                    y = y - 1;
                 }
                 write!(
                     screen,
                     "{}{}",
-                    termion::cursor::Goto(self.log_col_left as u16 - 2, *row as u16),
+                    termion::cursor::Goto(self.log_col_left as u16 - 2, y as u16),
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
                 )
                 .unwrap();
@@ -356,35 +357,36 @@ impl RenderGit for TuiGit {
 
         self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
     }
-    fn move_cursor_down<W: Write>(&mut self, screen: &mut W, row: &mut usize) {
+    fn move_cursor_down<W: Write>(&mut self, screen: &mut W) {
         let (_, term_row) = termion::terminal_size().unwrap();
+        let (_, mut y) = screen.cursor_pos().unwrap();
         match self.layout_position {
             1 => {
                 // Clear previous.
-                write!(screen, "{} ", termion::cursor::Goto(1, *row as u16)).unwrap();
-                if *row == self.branch_row_bottom {
-                    *row = self.branch_row_top;
+                write!(screen, "{} ", termion::cursor::Goto(1, y as u16)).unwrap();
+                if y == self.branch_row_bottom as u16 {
+                    y = self.branch_row_top as u16;
                 } else {
-                    *row = *row + 1;
+                    y = y + 1;
                 }
                 write!(
                     screen,
                     "{}{}",
-                    termion::cursor::Goto(1, *row as u16),
+                    termion::cursor::Goto(1, y),
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
                 )
                 .unwrap();
                 // Update current_branch and current_branch_row,
                 self.current_branch =
-                    self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize].to_string();
-                self.current_branch_row = *row;
+                    self.branch_vec.to_vec()[(y - self.branch_row_top as u16) as usize].to_string();
+                self.current_branch_row = y as usize;
                 // Show the log.
                 write!(
                     screen,
                     "{}{}{}, {}, {}, {}",
                     termion::cursor::Goto(1, term_row),
                     termion::clear::CurrentLine,
-                    row,
+                    y,
                     self.layout_position,
                     self.current_branch,
                     self.current_branch_row,
@@ -400,11 +402,11 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{} ",
-                    termion::cursor::Goto(self.log_col_left as u16 - 2, *row as u16)
+                    termion::cursor::Goto(self.log_col_left as u16 - 2, y)
                 )
                 .unwrap();
-                if *row < self.log_row_bottom {
-                    *row = *row + 1;
+                if y < self.log_row_bottom as u16 {
+                    y = y + 1;
                 } else {
                     // For a close loop browse.
                     // *row = self.log_row_top;
@@ -419,7 +421,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}",
-                    termion::cursor::Goto(self.log_col_left as u16 - 2, *row as u16),
+                    termion::cursor::Goto(self.log_col_left as u16 - 2, y),
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
                 )
                 .unwrap();
@@ -429,7 +431,7 @@ impl RenderGit for TuiGit {
 
         self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
     }
-    fn move_cursor_right<W: Write>(&mut self, screen: &mut W, row: &mut usize) {
+    fn move_cursor_right<W: Write>(&mut self, screen: &mut W) {
         self.layout_position = 2;
         let (_, y) = screen.cursor_pos().unwrap();
         self.current_branch_row = y as usize;
@@ -440,11 +442,9 @@ impl RenderGit for TuiGit {
             termion::cursor::Goto(self.log_col_left as u16 - 2, self.log_row_top as u16)
         )
         .unwrap();
-        *row = self.log_row_top;
     }
-    fn move_cursor_left<W: Write>(&mut self, screen: &mut W, row: &mut usize) {
+    fn move_cursor_left<W: Write>(&mut self, screen: &mut W) {
         self.layout_position = 1;
-        *row = self.current_branch_row;
         let (x, y) = screen.cursor_pos().unwrap();
         write!(screen, "{}  ", termion::cursor::Goto(x - 2, y)).unwrap();
         write!(
@@ -521,17 +521,18 @@ impl RenderGit for TuiGit {
         screen.flush().unwrap();
     }
 
-    fn enter_pressed<W: Write>(&mut self, screen: &mut W, row: &mut usize) {
+    fn enter_pressed<W: Write>(&mut self, screen: &mut W) {
+        let (_, y) = screen.cursor_pos().unwrap();
         match self.layout_position {
             1 => {
-                let branch = &mut self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize];
+                let branch =
+                    &mut self.branch_vec.to_vec()[(y - self.branch_row_top as u16) as usize];
                 if self.checkout_git_branch(screen, branch) {
                 } else {
                     *branch = self.main_branch.to_string();
                 }
                 // Refresh title and branch.
                 self.refresh_with_branch(screen, branch);
-                *row = self.main_branch_row;
             }
             2 => {}
             _ => {}
@@ -555,26 +556,25 @@ fn main() {
     tui_git.refresh_with_branch(&mut screen, &tui_git.main_branch.to_string());
 
     // Start with the main branch row.
-    let mut row = tui_git.main_branch_row;
     for c in stdin.keys() {
         match c.unwrap() {
             Key::Char('q') => {
                 break;
             }
             Key::Char('\n') => {
-                tui_git.enter_pressed(&mut screen, &mut row);
+                tui_git.enter_pressed(&mut screen);
             }
             Key::Left => {
-                tui_git.move_cursor_left(&mut screen, &mut row);
+                tui_git.move_cursor_left(&mut screen);
             }
             Key::Right => {
-                tui_git.move_cursor_right(&mut screen, &mut row);
+                tui_git.move_cursor_right(&mut screen);
             }
             Key::Up => {
-                tui_git.move_cursor_up(&mut screen, &mut row);
+                tui_git.move_cursor_up(&mut screen);
             }
             Key::Down => {
-                tui_git.move_cursor_down(&mut screen, &mut row);
+                tui_git.move_cursor_down(&mut screen);
             }
             _ => {}
         }
