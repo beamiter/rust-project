@@ -188,7 +188,7 @@ impl RenderGit for TuiGit {
             return;
         }
         // Clear previous log zone.
-        for clear_y in self.log_row_top..=row {
+        for clear_y in self.log_row_top..=self.log_row_bottom {
             write!(
                 screen,
                 "{}{}",
