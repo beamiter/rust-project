@@ -30,21 +30,21 @@ const UNICODE_TABLE: [&'static str; 12] = [
 
 struct TuiGit {
     // branch render area;
-    branch_row_top: u16,
-    branch_row_bottom: u16,
-    branch_col_left: u16,
-    branch_col_right: u16,
+    branch_row_top: usize,
+    branch_row_bottom: usize,
+    branch_col_left: usize,
+    branch_col_right: usize,
 
     // log render area;
-    log_row_top: u16,
-    log_row_bottom: u16,
-    log_col_left: u16,
-    log_scroll_offset: u16,
-    // log_col_right: u16,
+    log_row_top: usize,
+    log_row_bottom: usize,
+    log_col_left: usize,
+    log_scroll_offset: usize,
+    // log_col_right: usize,
     //
     // // check status area;
-    // check_info_row: u16,
-    // check_info_col: u16,
+    // check_info_row: usize,
+    // check_info_col: usize,
 
     // data storage;
     branch_vec: Vec<String>,
@@ -52,12 +52,12 @@ struct TuiGit {
 
     // Main branch;
     main_branch: String,
-    main_branch_row: u16,
+    main_branch_row: usize,
     current_branch: String,
-    current_branch_row: u16,
+    current_branch_row: usize,
 
     // 0 for title, 1 for branch, 2 for log and e.t.c.
-    layout_position: u16,
+    layout_position: usize,
     key_move_counter: usize,
 }
 impl TuiGit {
@@ -84,7 +84,7 @@ impl TuiGit {
             key_move_counter: 0,
         }
     }
-    fn set_main_branch_row(&mut self, row: u16) {
+    fn set_main_branch_row(&mut self, row: usize) {
         self.main_branch_row = row;
     }
     fn update_git_branch(&mut self) {
@@ -126,9 +126,9 @@ impl TuiGit {
             .iter()
             .map(|x| x.len())
             .collect::<Vec<usize>>();
-        self.branch_row_bottom = self.branch_vec.len() as u16 + self.branch_row_top - 1;
+        self.branch_row_bottom = self.branch_vec.len() as usize + self.branch_row_top - 1;
         self.branch_col_right =
-            self.branch_col_left + *branch_size.iter().max().unwrap() as u16 + 5;
+            self.branch_col_left + *branch_size.iter().max().unwrap() as usize + 5;
         self.log_col_left = self.branch_col_right + 5;
     }
 
@@ -167,13 +167,13 @@ trait RenderGit {
 
     fn refresh_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
 
-    fn enter_pressed<W: Write>(&mut self, screen: &mut W, row: &mut u16);
+    fn enter_pressed<W: Write>(&mut self, screen: &mut W, row: &mut usize);
 
-    fn move_cursor_left<W: Write>(&mut self, screen: &mut W, row: &mut u16);
-    fn move_cursor_right<W: Write>(&mut self, screen: &mut W, row: &mut u16);
+    fn move_cursor_left<W: Write>(&mut self, screen: &mut W, row: &mut usize);
+    fn move_cursor_right<W: Write>(&mut self, screen: &mut W, row: &mut usize);
 
-    fn move_cursor_up<W: Write>(&mut self, screen: &mut W, row: &mut u16);
-    fn move_cursor_down<W: Write>(&mut self, screen: &mut W, row: &mut u16);
+    fn move_cursor_up<W: Write>(&mut self, screen: &mut W, row: &mut usize);
+    fn move_cursor_down<W: Write>(&mut self, screen: &mut W, row: &mut usize);
 }
 
 impl RenderGit for TuiGit {
@@ -182,7 +182,7 @@ impl RenderGit for TuiGit {
         self.update_git_log(branch);
         let (col, row) = termion::terminal_size().unwrap();
         let x_tmp = self.log_col_left;
-        if col <= x_tmp {
+        if col <= x_tmp as u16 {
             // No show due to no enough col.
             return;
         }
@@ -191,13 +191,13 @@ impl RenderGit for TuiGit {
             write!(
                 screen,
                 "{}{}",
-                termion::cursor::Goto(x_tmp, clear_y as u16),
+                termion::cursor::Goto(x_tmp as u16, clear_y as u16),
                 termion::clear::UntilNewline,
             )
             .unwrap();
         }
         let mut y_tmp = self.log_row_top;
-        let current_branch_log_len = self.log_map.get(branch).unwrap().len() as u16;
+        let current_branch_log_len = self.log_map.get(branch).unwrap().len() as usize;
         for log in &self.log_map.get(branch).unwrap().to_vec()
             [self.log_scroll_offset as usize..current_branch_log_len as usize]
         {
@@ -205,13 +205,13 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}",
-                    termion::cursor::Goto(x_tmp, y_tmp as u16),
-                    log.substring(0, (col - x_tmp) as usize)
+                    termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
+                    log.substring(0, (col - x_tmp as u16) as usize)
                 )
                 .unwrap();
             }
             // Spare 2 for check info.
-            if y_tmp >= row - 2 {
+            if y_tmp as u16 >= row - 2 {
                 break;
             }
             y_tmp += 1;
@@ -256,7 +256,7 @@ impl RenderGit for TuiGit {
             .unwrap();
         } else {
             self.main_branch = branch.to_string();
-            self.main_branch_row = y;
+            self.main_branch_row = y as usize;
             write!(
                 screen,
                 "{}{}✅{} Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
@@ -278,16 +278,16 @@ impl RenderGit for TuiGit {
         write!(
             screen,
             "{}🌟",
-            termion::cursor::Goto(1, self.main_branch_row)
+            termion::cursor::Goto(1, self.main_branch_row as u16)
         )
         .unwrap();
     }
     // https://symbl.cc/en/
-    fn move_cursor_up<W: Write>(&mut self, screen: &mut W, row: &mut u16) {
+    fn move_cursor_up<W: Write>(&mut self, screen: &mut W, row: &mut usize) {
         match self.layout_position {
             1 => {
                 // Clear previous.
-                write!(screen, "{} ", termion::cursor::Goto(1, *row)).unwrap();
+                write!(screen, "{} ", termion::cursor::Goto(1, *row as u16)).unwrap();
                 if *row == self.branch_row_top {
                     *row = self.branch_row_bottom;
                 } else {
@@ -296,7 +296,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}",
-                    termion::cursor::Goto(1, *row),
+                    termion::cursor::Goto(1, *row as u16),
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
                 )
                 .unwrap();
@@ -312,7 +312,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{} ",
-                    termion::cursor::Goto(self.log_col_left - 2, *row)
+                    termion::cursor::Goto(self.log_col_left as u16 - 2, *row as u16)
                 )
                 .unwrap();
                 if *row == self.log_row_top {
@@ -329,7 +329,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}",
-                    termion::cursor::Goto(self.log_col_left - 2, *row),
+                    termion::cursor::Goto(self.log_col_left as u16 - 2, *row as u16),
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
                 )
                 .unwrap();
@@ -339,11 +339,11 @@ impl RenderGit for TuiGit {
 
         self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
     }
-    fn move_cursor_down<W: Write>(&mut self, screen: &mut W, row: &mut u16) {
+    fn move_cursor_down<W: Write>(&mut self, screen: &mut W, row: &mut usize) {
         match self.layout_position {
             1 => {
                 // Clear previous.
-                write!(screen, "{} ", termion::cursor::Goto(1, *row)).unwrap();
+                write!(screen, "{} ", termion::cursor::Goto(1, *row as u16)).unwrap();
                 if *row == self.branch_row_bottom {
                     *row = self.branch_row_top;
                 } else {
@@ -352,7 +352,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}",
-                    termion::cursor::Goto(1, *row),
+                    termion::cursor::Goto(1, *row as u16),
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
                 )
                 .unwrap();
@@ -368,7 +368,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{} ",
-                    termion::cursor::Goto(self.log_col_left - 2, *row)
+                    termion::cursor::Goto(self.log_col_left as u16 - 2, *row as u16)
                 )
                 .unwrap();
                 if *row < self.log_row_bottom {
@@ -387,7 +387,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}",
-                    termion::cursor::Goto(self.log_col_left - 2, *row),
+                    termion::cursor::Goto(self.log_col_left as u16 - 2, *row as u16),
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
                 )
                 .unwrap();
@@ -397,20 +397,20 @@ impl RenderGit for TuiGit {
 
         self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
     }
-    fn move_cursor_right<W: Write>(&mut self, screen: &mut W, row: &mut u16) {
+    fn move_cursor_right<W: Write>(&mut self, screen: &mut W, row: &mut usize) {
         self.layout_position = 2;
         let (_, y) = screen.cursor_pos().unwrap();
-        self.current_branch_row = y;
+        self.current_branch_row = y as usize;
         write!(screen, "{}  ", termion::cursor::Goto(1, y)).unwrap();
         write!(
             screen,
             "{}✍ ",
-            termion::cursor::Goto(self.log_col_left - 2, self.log_row_top)
+            termion::cursor::Goto(self.log_col_left as u16 - 2, self.log_row_top as u16)
         )
         .unwrap();
         *row = self.log_row_top;
     }
-    fn move_cursor_left<W: Write>(&mut self, screen: &mut W, row: &mut u16) {
+    fn move_cursor_left<W: Write>(&mut self, screen: &mut W, row: &mut usize) {
         self.layout_position = 1;
         *row = self.current_branch_row;
         let (x, y) = screen.cursor_pos().unwrap();
@@ -418,13 +418,13 @@ impl RenderGit for TuiGit {
         write!(
             screen,
             "{}  ",
-            termion::cursor::Goto(self.log_col_left - 2, self.current_branch_row)
+            termion::cursor::Goto(self.log_col_left as u16 - 2, self.current_branch_row as u16)
         )
         .unwrap();
         write!(
             screen,
             "{}❆ ",
-            termion::cursor::Goto(1, self.current_branch_row)
+            termion::cursor::Goto(1, self.current_branch_row as u16)
         )
         .unwrap();
     }
@@ -455,7 +455,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}{}{}{}{}{}{} 🐝",
-                    termion::cursor::Goto(4, row),
+                    termion::cursor::Goto(4, row as u16),
                     termion::clear::CurrentLine,
                     color::Bg(color::White),
                     color::Fg(color::Green),
@@ -469,7 +469,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}{}",
-                    termion::cursor::Goto(4, row),
+                    termion::cursor::Goto(4, row as u16),
                     termion::clear::CurrentLine,
                     branch
                 )
@@ -489,7 +489,7 @@ impl RenderGit for TuiGit {
         screen.flush().unwrap();
     }
 
-    fn enter_pressed<W: Write>(&mut self, screen: &mut W, row: &mut u16) {
+    fn enter_pressed<W: Write>(&mut self, screen: &mut W, row: &mut usize) {
         match self.layout_position {
             1 => {
                 let branch = &mut self.branch_vec.to_vec()[(*row - self.branch_row_top) as usize];
