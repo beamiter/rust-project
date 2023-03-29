@@ -188,8 +188,7 @@ impl RenderGit for TuiGit {
             return;
         }
         // Clear previous log zone.
-        self.log_row_bottom = (self.log_map.get(branch).unwrap().len() as u16).min(row - 2);
-        for clear_y in self.log_row_top..=self.log_row_bottom {
+        for clear_y in self.log_row_top..=row {
             write!(
                 screen,
                 "{}{}",
@@ -219,6 +218,7 @@ impl RenderGit for TuiGit {
             }
             y_tmp += 1;
         }
+        self.log_row_bottom = y_tmp;
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
     }
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
@@ -373,18 +373,18 @@ impl RenderGit for TuiGit {
                     termion::cursor::Goto(self.log_col_left - 2, *row)
                 )
                 .unwrap();
-                if *row == self.log_row_bottom {
+                if *row < self.log_row_bottom {
+                    *row = *row + 1;
+                } else {
                     // For a close loop browse.
                     // *row = self.log_row_top;
                     // Hit the bottom.
                     let log_show_range = self.log_row_bottom - self.log_row_top;
                     let current_log_len = self.log_map.get(&self.current_branch).unwrap().len();
-                    if usize::from(self.log_scroll_offset + log_show_range) < current_log_len {
+                    if usize::from(self.log_scroll_offset + log_show_range + 1) < current_log_len {
                         self.log_scroll_offset += 1;
                         self.show_git_log(screen, &self.current_branch.to_string());
                     }
-                } else {
-                    *row = *row + 1;
                 }
                 write!(
                     screen,
@@ -485,6 +485,9 @@ impl RenderGit for TuiGit {
         self.show_branch(screen);
         self.cursor_to_main(screen);
         self.show_git_log(screen, branch);
+        // Reset with main branch.
+        self.current_branch = branch.to_string();
+        self.current_branch_row = self.main_branch_row;
         screen.flush().unwrap();
     }
 
@@ -509,7 +512,6 @@ impl RenderGit for TuiGit {
 fn main() {
     let mut tui_git = TuiGit::new();
     tui_git.update_git_branch();
-    // return;
 
     let stdin = stdin();
     let mut screen = stdout()
