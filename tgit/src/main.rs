@@ -461,7 +461,8 @@ impl RenderGit for TuiGit {
         write!(screen, "{}  ", termion::cursor::Goto(1, y)).unwrap();
         write!(
             screen,
-            "{}✍ ",
+            "{}  {}✍ ",
+            termion::cursor::Goto(self.log_col_left as u16 - 2, self.log_row_top as u16),
             termion::cursor::Goto(self.log_col_left as u16 - 2, self.log_row_top as u16)
         )
         .unwrap();
