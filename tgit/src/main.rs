@@ -350,12 +350,11 @@ impl RenderGit for TuiGit {
                 }
                 write!(
                     screen,
-                    "{}{}col: {}, row: {}, branch: {}, log: {}{}",
+                    "{}{}col: {}, row: {}, log: {}{}",
                     termion::cursor::Goto(1, term_row),
                     termion::clear::CurrentLine,
                     x,
                     y,
-                    self.current_branch,
                     self.row_log_map.get(&(y as usize)).unwrap(),
                     termion::cursor::Goto(x, y),
                 )
@@ -435,12 +434,11 @@ impl RenderGit for TuiGit {
                 }
                 write!(
                     screen,
-                    "{}{}col: {}, row: {}, branch: {}, log: {}{}",
+                    "{}{}col: {}, row: {}, log: {}{}",
                     termion::cursor::Goto(1, term_row),
                     termion::clear::CurrentLine,
                     x,
                     y,
-                    self.current_branch,
                     self.row_log_map.get(&(y as usize)).unwrap(),
                     termion::cursor::Goto(x, y),
                 )
