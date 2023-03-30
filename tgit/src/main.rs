@@ -154,9 +154,9 @@ impl TuiGit {
         self.branch_log_map.insert(branch.to_string(), logs);
     }
 
-    fn update_git_diff(&mut self) {
+    fn update_git_diff(&mut self, branch: &String) {
         let output = Command::new("git")
-            .arg("diff")
+            .args(["diff", branch.as_str()])
             .output()
             .expect("failed to execute process");
         let diff_output = String::from_utf8_lossy(&output.stdout);
@@ -182,7 +182,7 @@ trait RenderGit {
     fn show_title<W: Write>(&mut self, screen: &mut W);
     fn show_branch<W: Write>(&mut self, screen: &mut W);
     fn show_git_log<W: Write>(&mut self, screen: &mut W, branch: &String);
-    fn show_git_diff<W: Write>(&mut self, screen: &mut W);
+    fn show_git_diff<W: Write>(&mut self, screen: &mut W, branch: &String);
 
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
@@ -200,10 +200,10 @@ trait RenderGit {
 }
 
 impl RenderGit for TuiGit {
-    fn show_git_diff<W: Write>(&mut self, screen: &mut W) {
+    fn show_git_diff<W: Write>(&mut self, screen: &mut W, branch: &String) {
         // Replace git log with git diff.
         let (x, y) = screen.cursor_pos().unwrap();
-        self.update_git_diff();
+        self.update_git_diff(branch);
         let (col, row) = termion::terminal_size().unwrap();
         let x_tmp = self.log_col_left;
         if col <= x_tmp as u16 {
@@ -626,7 +626,7 @@ impl RenderGit for TuiGit {
         self.log_scroll_offset = 0;
         self.branch_diff_toggle = !self.branch_diff_toggle;
         if self.branch_diff_toggle {
-            self.show_git_diff(screen);
+            self.show_git_diff(screen, &self.current_branch.to_string());
         } else {
             self.show_git_log(screen, &self.current_branch.to_string());
         }
@@ -655,7 +655,6 @@ fn main() {
     register_panic_handler().unwrap();
     let mut tui_git = TuiGit::new();
     tui_git.update_git_branch();
-    tui_git.update_git_diff();
 
     let stdin = stdin();
     let mut screen = stdout()
