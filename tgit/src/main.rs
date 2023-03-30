@@ -11,7 +11,7 @@ use substring::Substring;
 use termion::input::TermRead;
 use termion::{color, style};
 use termion::{cursor::DetectCursorPos, event::Key};
-use termion::{raw::IntoRawMode, screen::IntoAlternateScreen};
+use termion::{raw::IntoRawMode, screen::IntoAlternateScreen, screen::ToMainScreen};
 
 use coredump::register_panic_handler;
 
@@ -162,6 +162,7 @@ trait RenderGit {
     fn show_title<W: Write>(&mut self, screen: &mut W);
     fn show_branch<W: Write>(&mut self, screen: &mut W);
     fn show_git_log<W: Write>(&mut self, screen: &mut W, branch: &String);
+    fn show_git_diff<W: Write>(&mut self, screen: &mut W, branch: &String);
 
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
@@ -178,6 +179,7 @@ trait RenderGit {
 }
 
 impl RenderGit for TuiGit {
+    fn show_git_diff<W: Write>(&mut self, screen: &mut W, branch: &String) {}
     fn show_git_log<W: Write>(&mut self, screen: &mut W, branch: &String) {
         let (x, y) = screen.cursor_pos().unwrap();
         self.update_git_log(branch);
@@ -593,6 +595,10 @@ fn main() {
             Key::Char('q') => {
                 break;
             }
+            Key::Char('d') => {
+                write!(screen, "{}", ToMainScreen).unwrap();
+            }
+            Key::Char('D') => {}
             Key::Char('\n') => {
                 tui_git.enter_pressed(&mut screen);
             }
