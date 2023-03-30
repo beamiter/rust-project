@@ -50,13 +50,13 @@ struct TuiGit {
 
     // data storage;
     branch_vec: Vec<String>,
-    log_map: HashMap<String, Vec<String>>,
+    branch_row_map: HashMap<String, usize>,
+    row_branch_map: HashMap<usize, String>,
+    branch_log_map: HashMap<String, Vec<String>>,
 
     // Main branch;
     main_branch: String,
-    main_branch_row: usize,
     current_branch: String,
-    current_branch_row: usize,
 
     // 0 for title, 1 for branch, 2 for log and e.t.c.
     layout_position: usize,
@@ -77,17 +77,14 @@ impl TuiGit {
             // check_info_row: 0,
             // check_info_col: 0,
             branch_vec: vec![],
-            log_map: HashMap::new(),
+            branch_row_map: HashMap::new(),
+            row_branch_map: HashMap::new(),
+            branch_log_map: HashMap::new(),
             main_branch: String::new(),
-            main_branch_row: 0,
             current_branch: String::new(),
-            current_branch_row: 0,
             layout_position: 0,
             key_move_counter: 0,
         }
-    }
-    fn set_main_branch_row(&mut self, row: usize) {
-        self.main_branch_row = row;
     }
     fn update_git_branch(&mut self) {
         let output = Command::new("git")
@@ -130,13 +127,13 @@ impl TuiGit {
             .collect::<Vec<usize>>();
         self.branch_row_bottom = self.branch_vec.len() as usize + self.branch_row_top - 1;
         self.branch_col_right =
-            self.branch_col_left + *branch_size.iter().max().unwrap() as usize + 5;
-        self.log_col_left = self.branch_col_right + 5;
+            self.branch_col_left + *branch_size.iter().max().unwrap() as usize + 3;
+        self.log_col_left = self.branch_col_right + 3;
     }
 
     // Currently limit the log number to 100.
     fn update_git_log(&mut self, branch: &String) {
-        if self.log_map.get(branch).is_some() {
+        if self.branch_log_map.get(branch).is_some() {
             return;
         }
         let output = Command::new("git")
@@ -155,7 +152,7 @@ impl TuiGit {
                 break;
             }
         }
-        self.log_map.insert(branch.to_string(), logs);
+        self.branch_log_map.insert(branch.to_string(), logs);
     }
 }
 
@@ -199,8 +196,8 @@ impl RenderGit for TuiGit {
             .unwrap();
         }
         let mut y_tmp = self.log_row_top;
-        let current_branch_log_len = self.log_map.get(branch).unwrap().len() as usize;
-        for log in &self.log_map.get(branch).unwrap().to_vec()
+        let current_branch_log_len = self.branch_log_map.get(branch).unwrap().len() as usize;
+        for log in &self.branch_log_map.get(branch).unwrap().to_vec()
             [self.log_scroll_offset as usize..current_branch_log_len as usize]
         {
             if !log.is_empty() {
@@ -258,7 +255,6 @@ impl RenderGit for TuiGit {
             .unwrap();
         } else {
             self.main_branch = branch.to_string();
-            self.main_branch_row = y as usize;
             write!(
                 screen,
                 "{}{}✅{} Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
@@ -280,7 +276,10 @@ impl RenderGit for TuiGit {
         write!(
             screen,
             "{}🌟",
-            termion::cursor::Goto(1, self.main_branch_row as u16)
+            termion::cursor::Goto(
+                1,
+                *self.branch_row_map.get(&self.main_branch).unwrap() as u16
+            )
         )
         .unwrap();
     }
@@ -305,7 +304,7 @@ impl RenderGit for TuiGit {
                     y,
                     self.layout_position,
                     self.current_branch,
-                    self.current_branch_row,
+                    *self.branch_row_map.get(&self.current_branch).unwrap() as u16
                 )
                 .unwrap();
                 screen.flush().unwrap();
@@ -316,14 +315,14 @@ impl RenderGit for TuiGit {
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
                 )
                 .unwrap();
-                // Update current_branch and current_branch_row,
-                self.current_branch =
-                    self.branch_vec.to_vec()[(y - self.branch_row_top as u16) as usize].to_string();
-                self.current_branch_row = y as usize;
+                // Update current_branch.
+                self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
                 // Need to reset this!
                 self.log_scroll_offset = 0;
                 // Show the log.
                 self.show_git_log(screen, &self.current_branch.to_string());
+
+                self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
             }
             2 => {
                 // Clear previous.
@@ -354,8 +353,6 @@ impl RenderGit for TuiGit {
             }
             _ => {}
         }
-
-        self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
     }
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W) {
         let (_, term_row) = termion::terminal_size().unwrap();
@@ -376,10 +373,8 @@ impl RenderGit for TuiGit {
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
                 )
                 .unwrap();
-                // Update current_branch and current_branch_row,
-                self.current_branch =
-                    self.branch_vec.to_vec()[(y - self.branch_row_top as u16) as usize].to_string();
-                self.current_branch_row = y as usize;
+                // Update current_branch.
+                self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
                 // Show the log.
                 write!(
                     screen,
@@ -389,13 +384,15 @@ impl RenderGit for TuiGit {
                     y,
                     self.layout_position,
                     self.current_branch,
-                    self.current_branch_row,
+                    *self.branch_row_map.get(&self.current_branch).unwrap() as u16
                 )
                 .unwrap();
                 screen.flush().unwrap();
                 // Need to reset this!
                 self.log_scroll_offset = 0;
                 self.show_git_log(screen, &self.current_branch.to_string());
+
+                self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
             }
             2 => {
                 // Clear previous.
@@ -412,7 +409,8 @@ impl RenderGit for TuiGit {
                     // *row = self.log_row_top;
                     // Hit the bottom.
                     let log_show_range = self.log_row_bottom - self.log_row_top;
-                    let current_log_len = self.log_map.get(&self.current_branch).unwrap().len();
+                    let current_log_len =
+                        self.branch_log_map.get(&self.current_branch).unwrap().len();
                     if usize::from(self.log_scroll_offset + log_show_range + 1) < current_log_len {
                         self.log_scroll_offset += 1;
                         self.show_git_log(screen, &self.current_branch.to_string());
@@ -428,13 +426,10 @@ impl RenderGit for TuiGit {
             }
             _ => {}
         }
-
-        self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
     }
     fn move_cursor_right<W: Write>(&mut self, screen: &mut W) {
         self.layout_position = 2;
         let (_, y) = screen.cursor_pos().unwrap();
-        self.current_branch_row = y as usize;
         write!(screen, "{}  ", termion::cursor::Goto(1, y)).unwrap();
         write!(
             screen,
@@ -450,13 +445,19 @@ impl RenderGit for TuiGit {
         write!(
             screen,
             "{}  ",
-            termion::cursor::Goto(self.log_col_left as u16 - 2, self.current_branch_row as u16)
+            termion::cursor::Goto(
+                self.log_col_left as u16 - 2,
+                *self.branch_row_map.get(&self.current_branch).unwrap() as u16
+            )
         )
         .unwrap();
         write!(
             screen,
             "{}❆ ",
-            termion::cursor::Goto(1, self.current_branch_row as u16)
+            termion::cursor::Goto(
+                1,
+                *self.branch_row_map.get(&self.current_branch).unwrap() as u16
+            )
         )
         .unwrap();
     }
@@ -480,10 +481,11 @@ impl RenderGit for TuiGit {
     fn show_branch<W: Write>(&mut self, screen: &mut W) {
         self.layout_position = 1;
         let mut row = 1;
+        self.branch_row_map.clear();
+        self.row_branch_map.clear();
         for branch in self.branch_vec.to_vec() {
             row += 1;
             if *branch == self.main_branch {
-                self.set_main_branch_row(row);
                 write!(
                     screen,
                     "{}{}{}{}{}{}{}{} 🐝",
@@ -507,6 +509,8 @@ impl RenderGit for TuiGit {
                 )
                 .unwrap();
             }
+            self.branch_row_map.insert(branch.to_string(), row);
+            self.row_branch_map.insert(row, branch.to_string());
         }
     }
 
@@ -517,7 +521,6 @@ impl RenderGit for TuiGit {
         self.show_git_log(screen, branch);
         // Reset with main branch.
         self.current_branch = branch.to_string();
-        self.current_branch_row = self.main_branch_row;
         screen.flush().unwrap();
     }
 
