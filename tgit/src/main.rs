@@ -9,9 +9,10 @@ use std::{
 use substring::Substring;
 
 use termion::input::TermRead;
+use termion::raw::IntoRawMode;
+use termion::screen::IntoAlternateScreen;
 use termion::{color, style};
 use termion::{cursor::DetectCursorPos, event::Key};
-use termion::{raw::IntoRawMode, screen::IntoAlternateScreen, screen::ToMainScreen};
 
 use coredump::register_panic_handler;
 
@@ -42,11 +43,6 @@ struct TuiGit {
     log_row_bottom: usize,
     log_col_left: usize,
     log_scroll_offset: usize,
-    // log_col_right: usize,
-    //
-    // // check status area;
-    // check_info_row: usize,
-    // check_info_col: usize,
 
     // data storage;
     branch_vec: Vec<String>,
@@ -54,6 +50,8 @@ struct TuiGit {
     row_branch_map: HashMap<usize, String>,
     branch_log_map: HashMap<String, Vec<String>>,
     row_log_map: HashMap<usize, String>,
+    branch_diff_vec: Vec<String>,
+    branch_diff_toggle: bool,
 
     // Main branch;
     main_branch: String,
@@ -74,14 +72,13 @@ impl TuiGit {
             log_row_bottom: 0,
             log_col_left: 0,
             log_scroll_offset: 0,
-            // log_col_right: 0,
-            // check_info_row: 0,
-            // check_info_col: 0,
             branch_vec: vec![],
+            branch_diff_toggle: false,
             branch_row_map: HashMap::new(),
             row_branch_map: HashMap::new(),
             branch_log_map: HashMap::new(),
             row_log_map: HashMap::new(),
+            branch_diff_vec: vec![],
             main_branch: String::new(),
             current_branch: String::new(),
             layout_position: 0,
@@ -156,13 +153,36 @@ impl TuiGit {
         }
         self.branch_log_map.insert(branch.to_string(), logs);
     }
+
+    fn update_git_diff(&mut self) {
+        let output = Command::new("git")
+            .arg("diff")
+            .output()
+            .expect("failed to execute process");
+        let diff_output = String::from_utf8_lossy(&output.stdout);
+        // println!("branch_output {:?}", diff_output);
+        let mut diff_iter = diff_output.split('\n');
+        self.branch_diff_vec.clear();
+        loop {
+            if let Some(val) = diff_iter.next() {
+                if val.is_empty() {
+                    continue;
+                } else {
+                    self.branch_diff_vec.push(val.to_string());
+                }
+            } else {
+                break;
+            }
+        }
+        // println!("{:?}", self.branch_diff_vec);
+    }
 }
 
 trait RenderGit {
     fn show_title<W: Write>(&mut self, screen: &mut W);
     fn show_branch<W: Write>(&mut self, screen: &mut W);
     fn show_git_log<W: Write>(&mut self, screen: &mut W, branch: &String);
-    fn show_git_diff<W: Write>(&mut self, screen: &mut W, branch: &String);
+    fn show_git_diff<W: Write>(&mut self, screen: &mut W);
 
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
@@ -170,6 +190,7 @@ trait RenderGit {
     fn refresh_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
 
     fn enter_pressed<W: Write>(&mut self, screen: &mut W);
+    fn lower_d_pressed<W: Write>(&mut self, screen: &mut W);
 
     fn move_cursor_left<W: Write>(&mut self, screen: &mut W);
     fn move_cursor_right<W: Write>(&mut self, screen: &mut W);
@@ -179,7 +200,50 @@ trait RenderGit {
 }
 
 impl RenderGit for TuiGit {
-    fn show_git_diff<W: Write>(&mut self, screen: &mut W, branch: &String) {}
+    fn show_git_diff<W: Write>(&mut self, screen: &mut W) {
+        // Replace git log with git diff.
+        let (x, y) = screen.cursor_pos().unwrap();
+        self.update_git_diff();
+        let (col, row) = termion::terminal_size().unwrap();
+        let x_tmp = self.log_col_left;
+        if col <= x_tmp as u16 {
+            // No show due to no enough col.
+            return;
+        }
+        // Clear previous log zone.
+        for clear_y in self.log_row_top..=self.log_row_bottom as usize {
+            write!(
+                screen,
+                "{}{}",
+                termion::cursor::Goto(x_tmp as u16, clear_y as u16),
+                termion::clear::UntilNewline,
+            )
+            .unwrap();
+        }
+        let mut y_tmp = self.log_row_top;
+        let diff_len = self.branch_diff_vec.len();
+        self.row_log_map.clear();
+        for log in &self.branch_diff_vec[self.log_scroll_offset as usize..diff_len as usize] {
+            let sub_log = log.substring(0, (col - x_tmp as u16) as usize);
+            if !log.is_empty() {
+                write!(
+                    screen,
+                    "{}{}",
+                    termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
+                    sub_log,
+                )
+                .unwrap();
+            }
+            self.row_log_map.insert(y_tmp, sub_log.to_string());
+            // Spare 2 for check info.
+            if y_tmp as u16 >= row - 2 {
+                break;
+            }
+            y_tmp += 1;
+        }
+        self.log_row_bottom = y_tmp;
+        write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
+    }
     fn show_git_log<W: Write>(&mut self, screen: &mut W, branch: &String) {
         let (x, y) = screen.cursor_pos().unwrap();
         self.update_git_log(branch);
@@ -555,6 +619,19 @@ impl RenderGit for TuiGit {
         screen.flush().unwrap();
     }
 
+    fn lower_d_pressed<W: Write>(&mut self, screen: &mut W) {
+        if self.layout_position != 1 {
+            return;
+        }
+        self.log_scroll_offset = 0;
+        self.branch_diff_toggle = !self.branch_diff_toggle;
+        if self.branch_diff_toggle {
+            self.show_git_diff(screen);
+        } else {
+            self.show_git_log(screen, &self.current_branch.to_string());
+        }
+    }
+
     fn enter_pressed<W: Write>(&mut self, screen: &mut W) {
         let (_, y) = screen.cursor_pos().unwrap();
         match self.layout_position {
@@ -578,6 +655,7 @@ fn main() {
     register_panic_handler().unwrap();
     let mut tui_git = TuiGit::new();
     tui_git.update_git_branch();
+    tui_git.update_git_diff();
 
     let stdin = stdin();
     let mut screen = stdout()
@@ -596,7 +674,7 @@ fn main() {
                 break;
             }
             Key::Char('d') => {
-                write!(screen, "{}", ToMainScreen).unwrap();
+                tui_git.lower_d_pressed(&mut screen);
             }
             Key::Char('D') => {}
             Key::Char('\n') => {
