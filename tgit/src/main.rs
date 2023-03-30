@@ -293,8 +293,10 @@ impl RenderGit for TuiGit {
                 write!(screen, "{} ", termion::cursor::Goto(1, y)).unwrap();
                 if y > self.branch_row_top as u16 && y <= self.branch_row_bottom as u16 {
                     y = y - 1;
-                    self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
+                } else {
+                    y = self.branch_row_bottom as u16;
                 }
+                self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
                 // Show the log.
                 write!(
                     screen,
@@ -362,8 +364,10 @@ impl RenderGit for TuiGit {
                 write!(screen, "{} ", termion::cursor::Goto(1, y)).unwrap();
                 if y >= self.branch_row_top as u16 && y < self.branch_row_bottom as u16 {
                     y = y + 1;
-                    self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
+                } else {
+                    y = self.branch_row_top as u16;
                 }
+                self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
                 write!(
                     screen,
                     "{}{}",
