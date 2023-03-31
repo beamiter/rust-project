@@ -413,15 +413,6 @@ impl RenderGit for TuiGit {
                 self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
                 write!(
                     screen,
-                    "{}{}",
-                    termion::cursor::Goto(1, y),
-                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
-                )
-                .unwrap();
-                // Update current_branch.
-                self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
-                write!(
-                    screen,
                     "{}{}c: {}, r: {}, branch: {}, branch_row: {}{}",
                     termion::cursor::Goto(1, term_row),
                     termion::clear::CurrentLine,
@@ -433,8 +424,24 @@ impl RenderGit for TuiGit {
                 )
                 .unwrap();
                 screen.flush().unwrap();
+                write!(
+                    screen,
+                    "{}{}",
+                    termion::cursor::Goto(1, y),
+                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
+                )
+                .unwrap();
+                // Update current_branch.
+                self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
                 // Need to reset this!
                 self.log_scroll_offset = 0;
+                // Show the log.
+                self.update_git_log(&self.current_branch.to_string());
+                self.current_log_vec = self
+                    .branch_log_map
+                    .get(&self.current_branch.to_string())
+                    .unwrap()
+                    .to_vec();
                 self.show_log_in_right_panel(screen);
             }
             2 => {
