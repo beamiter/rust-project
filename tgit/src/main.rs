@@ -101,7 +101,7 @@ impl TuiGit {
                 if val.is_empty() {
                     continue;
                 }
-                if let Some('*') = val.chars().next() {
+                if val.starts_with('*') {
                     // Remove the '*' symbol and trim white space.
                     self.main_branch = val[1..val.len()].to_string().trim().to_string();
                     let head_str: &str = "HEAD detached at ";
@@ -188,6 +188,8 @@ trait RenderGit {
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
 
+    fn update_line_fg<W: Write>(&self, screen: &mut W, log: &String);
+
     fn refresh_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
 
     fn enter_pressed<W: Write>(&mut self, screen: &mut W);
@@ -204,6 +206,30 @@ trait RenderGit {
 }
 
 impl RenderGit for TuiGit {
+    fn update_line_fg<W: Write>(&self, screen: &mut W, log: &String) {
+        if log.is_empty() {
+            return;
+        }
+        if self.branch_diff_toggle {
+            // Show "git diff".
+            match log.chars().next().unwrap() {
+                '-' => {
+                    write!(screen, "{}", termion::color::Fg(termion::color::Red)).unwrap();
+                }
+                '+' => {
+                    write!(screen, "{}", termion::color::Fg(termion::color::Green)).unwrap();
+                }
+                _ => {}
+            }
+        } else {
+            // Show "git log".
+            if log.starts_with("commit") {
+                write!(screen, "{}", termion::color::Fg(termion::color::Yellow)).unwrap();
+            } else {
+                write!(screen, "{}", termion::color::Fg(termion::color::Reset)).unwrap();
+            }
+        }
+    }
     fn show_log_in_right_panel<W: Write>(&mut self, screen: &mut W) {
         let (x, y) = screen.cursor_pos().unwrap();
         let (col, row) = termion::terminal_size().unwrap();
@@ -228,12 +254,14 @@ impl RenderGit for TuiGit {
             // Need to update bottom here.
             self.log_row_bottom = y_tmp;
             let sub_log = log.substring(0, (col - x_tmp as u16) as usize);
-            if !log.is_empty() {
+            if !sub_log.is_empty() {
+                self.update_line_fg(screen, log);
                 write!(
                     screen,
-                    "{}{}",
+                    "{}{}{}",
                     termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
                     sub_log,
+                    termion::color::Fg(termion::color::Reset),
                 )
                 .unwrap();
             }
