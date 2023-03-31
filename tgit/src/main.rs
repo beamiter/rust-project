@@ -196,6 +196,9 @@ trait RenderGit {
     fn move_cursor_left<W: Write>(&mut self, screen: &mut W);
     fn move_cursor_right<W: Write>(&mut self, screen: &mut W);
 
+    fn left_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool);
+    fn right_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool);
+
     fn move_cursor_up<W: Write>(&mut self, screen: &mut W);
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W);
 }
@@ -308,185 +311,137 @@ impl RenderGit for TuiGit {
         )
         .unwrap();
     }
-    // https://symbl.cc/en/
-    fn move_cursor_up<W: Write>(&mut self, screen: &mut W) {
+    fn left_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool) {
         let (_, term_row) = termion::terminal_size().unwrap();
         let (x, mut y) = screen.cursor_pos().unwrap();
+        // Clear previous.
+        write!(screen, "{} ", termion::cursor::Goto(1, y)).unwrap();
+        if up {
+            if y > self.branch_row_top as u16 && y <= self.branch_row_bottom as u16 {
+                y = y - 1;
+            } else {
+                y = self.branch_row_bottom as u16;
+            }
+        } else {
+            if y >= self.branch_row_top as u16 && y < self.branch_row_bottom as u16 {
+                y = y + 1;
+            } else {
+                y = self.branch_row_top as u16;
+            }
+        }
+        self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
+        write!(
+            screen,
+            "{}{}c: {}, r: {}, branch: {}, branch_row: {}{}",
+            termion::cursor::Goto(1, term_row),
+            termion::clear::CurrentLine,
+            x,
+            y,
+            self.current_branch,
+            *self.branch_row_map.get(&self.current_branch).unwrap() as u16,
+            termion::cursor::Goto(x, y),
+        )
+        .unwrap();
+        screen.flush().unwrap();
+        write!(
+            screen,
+            "{}{}",
+            termion::cursor::Goto(1, y),
+            UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
+        )
+        .unwrap();
+        // Update current_branch.
+        self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
+        // Need to reset this!
+        self.log_scroll_offset = 0;
+        // Show the log.
+        self.update_git_log(&self.current_branch.to_string());
+        self.current_log_vec = self
+            .branch_log_map
+            .get(&self.current_branch.to_string())
+            .unwrap()
+            .to_vec();
+        self.show_log_in_right_panel(screen);
+    }
+
+    fn right_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool) {
+        let (_, term_row) = termion::terminal_size().unwrap();
+        let (x, mut y) = screen.cursor_pos().unwrap();
+        // Clear previous.
+        write!(
+            screen,
+            "{} ",
+            termion::cursor::Goto(self.log_col_left as u16 - 2, y)
+        )
+        .unwrap();
+        if up {
+            if y == self.log_row_top as u16 {
+                // For a close loop browse.
+                // *row = self.log_row_bottom;
+                // Hit the top.
+                if self.log_scroll_offset > 0 {
+                    self.log_scroll_offset -= 1;
+                    self.show_log_in_right_panel(screen);
+                }
+            } else {
+                y = y - 1;
+            }
+        } else {
+            if y < self.log_row_bottom as u16 {
+                y = y + 1;
+            } else {
+                // For a close loop browse.
+                // *row = self.log_row_top;
+                // Hit the bottom.
+                let log_show_range = self.log_row_bottom - self.log_row_top;
+                let current_log_vec_len = self.current_log_vec.len();
+                if usize::from(self.log_scroll_offset + log_show_range + 1) < current_log_vec_len {
+                    self.log_scroll_offset += 1;
+                    self.show_log_in_right_panel(screen);
+                }
+            }
+        }
+        write!(
+            screen,
+            "{}{}c: {}, r: {}, r_bottom: {}, log: {}{}",
+            termion::cursor::Goto(1, term_row),
+            termion::clear::CurrentLine,
+            x,
+            y,
+            self.log_row_bottom,
+            self.row_log_map.get(&(y as usize)).unwrap(),
+            termion::cursor::Goto(x, y),
+        )
+        .unwrap();
+        screen.flush().unwrap();
+        write!(
+            screen,
+            "{}{}",
+            termion::cursor::Goto(self.log_col_left as u16 - 2, y),
+            UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
+        )
+        .unwrap();
+    }
+
+    // https://symbl.cc/en/
+    fn move_cursor_up<W: Write>(&mut self, screen: &mut W) {
         match self.layout_position {
             1 => {
-                // Clear previous.
-                write!(screen, "{} ", termion::cursor::Goto(1, y)).unwrap();
-                if y > self.branch_row_top as u16 && y <= self.branch_row_bottom as u16 {
-                    y = y - 1;
-                } else {
-                    y = self.branch_row_bottom as u16;
-                }
-                self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
-                write!(
-                    screen,
-                    "{}{}c: {}, r: {}, branch: {}, branch_row: {}{}",
-                    termion::cursor::Goto(1, term_row),
-                    termion::clear::CurrentLine,
-                    x,
-                    y,
-                    self.current_branch,
-                    *self.branch_row_map.get(&self.current_branch).unwrap() as u16,
-                    termion::cursor::Goto(x, y),
-                )
-                .unwrap();
-                screen.flush().unwrap();
-                write!(
-                    screen,
-                    "{}{}",
-                    termion::cursor::Goto(1, y),
-                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
-                )
-                .unwrap();
-                // Update current_branch.
-                self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
-                // Need to reset this!
-                self.log_scroll_offset = 0;
-                // Show the log.
-                self.update_git_log(&self.current_branch.to_string());
-                self.current_log_vec = self
-                    .branch_log_map
-                    .get(&self.current_branch.to_string())
-                    .unwrap()
-                    .to_vec();
-                self.show_log_in_right_panel(screen);
+                self.left_panel_handler(screen, true);
             }
             2 => {
-                // Clear previous.
-                write!(
-                    screen,
-                    "{} ",
-                    termion::cursor::Goto(self.log_col_left as u16 - 2, y)
-                )
-                .unwrap();
-                if y == self.log_row_top as u16 {
-                    // For a close loop browse.
-                    // *row = self.log_row_bottom;
-                    // Hit the top.
-                    if self.log_scroll_offset > 0 {
-                        self.log_scroll_offset -= 1;
-                        self.show_log_in_right_panel(screen);
-                    }
-                } else {
-                    y = y - 1;
-                }
-                write!(
-                    screen,
-                    "{}{}c: {}, r: {}, r_bottom: {}, log: {}{}",
-                    termion::cursor::Goto(1, term_row),
-                    termion::clear::CurrentLine,
-                    x,
-                    y,
-                    self.log_row_bottom,
-                    self.row_log_map.get(&(y as usize)).unwrap(),
-                    termion::cursor::Goto(x, y),
-                )
-                .unwrap();
-                screen.flush().unwrap();
-                write!(
-                    screen,
-                    "{}{}",
-                    termion::cursor::Goto(self.log_col_left as u16 - 2, y),
-                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
-                )
-                .unwrap();
+                self.right_panel_handler(screen, true);
             }
             _ => {}
         }
     }
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W) {
-        let (_, term_row) = termion::terminal_size().unwrap();
-        let (x, mut y) = screen.cursor_pos().unwrap();
         match self.layout_position {
             1 => {
-                // Clear previous.
-                write!(screen, "{} ", termion::cursor::Goto(1, y)).unwrap();
-                if y >= self.branch_row_top as u16 && y < self.branch_row_bottom as u16 {
-                    y = y + 1;
-                } else {
-                    y = self.branch_row_top as u16;
-                }
-                self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
-                write!(
-                    screen,
-                    "{}{}c: {}, r: {}, branch: {}, branch_row: {}{}",
-                    termion::cursor::Goto(1, term_row),
-                    termion::clear::CurrentLine,
-                    x,
-                    y,
-                    self.current_branch,
-                    *self.branch_row_map.get(&self.current_branch).unwrap() as u16,
-                    termion::cursor::Goto(x, y),
-                )
-                .unwrap();
-                screen.flush().unwrap();
-                write!(
-                    screen,
-                    "{}{}",
-                    termion::cursor::Goto(1, y),
-                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
-                )
-                .unwrap();
-                // Update current_branch.
-                self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
-                // Need to reset this!
-                self.log_scroll_offset = 0;
-                // Show the log.
-                self.update_git_log(&self.current_branch.to_string());
-                self.current_log_vec = self
-                    .branch_log_map
-                    .get(&self.current_branch.to_string())
-                    .unwrap()
-                    .to_vec();
-                self.show_log_in_right_panel(screen);
+                self.left_panel_handler(screen, false);
             }
             2 => {
-                // Clear previous.
-                write!(
-                    screen,
-                    "{} ",
-                    termion::cursor::Goto(self.log_col_left as u16 - 2, y)
-                )
-                .unwrap();
-                if y < self.log_row_bottom as u16 {
-                    y = y + 1;
-                } else {
-                    // For a close loop browse.
-                    // *row = self.log_row_top;
-                    // Hit the bottom.
-                    let log_show_range = self.log_row_bottom - self.log_row_top;
-                    let current_log_vec_len = self.current_log_vec.len();
-                    if usize::from(self.log_scroll_offset + log_show_range + 1)
-                        < current_log_vec_len
-                    {
-                        self.log_scroll_offset += 1;
-                        self.show_log_in_right_panel(screen);
-                    }
-                }
-                write!(
-                    screen,
-                    "{}{}c: {}, r: {}, r_bottom: {}, log: {}{}",
-                    termion::cursor::Goto(1, term_row),
-                    termion::clear::CurrentLine,
-                    x,
-                    y,
-                    self.log_row_bottom,
-                    self.row_log_map.get(&(y as usize)).unwrap(),
-                    termion::cursor::Goto(x, y),
-                )
-                .unwrap();
-                screen.flush().unwrap();
-                write!(
-                    screen,
-                    "{}{}",
-                    termion::cursor::Goto(self.log_col_left as u16 - 2, y),
-                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
-                )
-                .unwrap();
+                self.right_panel_handler(screen, false);
             }
             _ => {}
         }
