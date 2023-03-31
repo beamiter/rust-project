@@ -144,7 +144,13 @@ impl TuiGit {
             return;
         }
         let output = Command::new("git")
-            .args(["log", branch.as_str(), "-100"])
+            .args([
+                "log",
+                "--decorate",
+                "--abbrev-commit",
+                branch.as_str(),
+                "-n 100",
+            ])
             .output()
             .expect("failed to execute process");
         // println!("status: {}", output.status);
