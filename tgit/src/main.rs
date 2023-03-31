@@ -323,7 +323,7 @@ impl RenderGit for TuiGit {
                 self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
                 write!(
                     screen,
-                    "{}{}col: {}, row: {}, branch: {}, branch_row: {}{}",
+                    "{}{}c: {}, r: {}, branch: {}, branch_row: {}{}",
                     termion::cursor::Goto(1, term_row),
                     termion::clear::CurrentLine,
                     x,
@@ -368,12 +368,6 @@ impl RenderGit for TuiGit {
                     // Hit the top.
                     if self.log_scroll_offset > 0 {
                         self.log_scroll_offset -= 1;
-                        self.current_log_vec = self
-                            .branch_log_map
-                            .get(&self.current_branch.to_string())
-                            .unwrap()
-                            .to_vec();
-                        self.update_git_log(&self.current_branch.to_string());
                         self.show_log_in_right_panel(screen);
                     }
                 } else {
@@ -381,11 +375,12 @@ impl RenderGit for TuiGit {
                 }
                 write!(
                     screen,
-                    "{}{}col: {}, row: {}, log: {}{}",
+                    "{}{}c: {}, r: {}, r_bottom: {}, log: {}{}",
                     termion::cursor::Goto(1, term_row),
                     termion::clear::CurrentLine,
                     x,
                     y,
+                    self.log_row_bottom,
                     self.row_log_map.get(&(y as usize)).unwrap(),
                     termion::cursor::Goto(x, y),
                 )
@@ -426,7 +421,7 @@ impl RenderGit for TuiGit {
                 self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
                 write!(
                     screen,
-                    "{}{}col: {}, row: {}, branch: {}, branch_row: {}{}",
+                    "{}{}c: {}, r: {}, branch: {}, branch_row: {}{}",
                     termion::cursor::Goto(1, term_row),
                     termion::clear::CurrentLine,
                     x,
@@ -456,20 +451,20 @@ impl RenderGit for TuiGit {
                     // *row = self.log_row_top;
                     // Hit the bottom.
                     let log_show_range = self.log_row_bottom - self.log_row_top;
-                    let current_log_len =
-                        self.branch_log_map.get(&self.current_branch).unwrap().len();
-                    if usize::from(self.log_scroll_offset + log_show_range + 1) < current_log_len {
+                    let current_log_vec_len = self.current_log_vec.len();
+                    if usize::from(self.log_scroll_offset + log_show_range + 1) < current_log_vec_len {
                         self.log_scroll_offset += 1;
                         self.show_log_in_right_panel(screen);
                     }
                 }
                 write!(
                     screen,
-                    "{}{}col: {}, row: {}, log: {}{}",
+                    "{}{}c: {}, r: {}, r_bottom: {}, log: {}{}",
                     termion::cursor::Goto(1, term_row),
                     termion::clear::CurrentLine,
                     x,
                     y,
+                    self.log_row_bottom,
                     self.row_log_map.get(&(y as usize)).unwrap(),
                     termion::cursor::Goto(x, y),
                 )
