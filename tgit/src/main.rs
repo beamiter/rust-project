@@ -181,8 +181,8 @@ impl TuiGit {
 }
 
 trait RenderGit {
-    fn show_title<W: Write>(&mut self, screen: &mut W);
-    fn show_branch<W: Write>(&mut self, screen: &mut W);
+    fn show_title_in_top_panel<W: Write>(&mut self, screen: &mut W);
+    fn show_branch_in_left_panel<W: Write>(&mut self, screen: &mut W);
     fn show_log_in_right_panel<W: Write>(&mut self, screen: &mut W);
 
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
@@ -522,7 +522,7 @@ impl RenderGit for TuiGit {
         .unwrap();
     }
 
-    fn show_title<W: Write>(&mut self, screen: &mut W) {
+    fn show_title_in_top_panel<W: Write>(&mut self, screen: &mut W) {
         self.layout_position = 0;
         write!(
             screen,
@@ -538,7 +538,7 @@ impl RenderGit for TuiGit {
         .unwrap();
     }
 
-    fn show_branch<W: Write>(&mut self, screen: &mut W) {
+    fn show_branch_in_left_panel<W: Write>(&mut self, screen: &mut W) {
         self.layout_position = 1;
         let mut row = 1;
         self.branch_row_map.clear();
@@ -577,9 +577,9 @@ impl RenderGit for TuiGit {
     fn refresh_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String) {
         // Reset with main branch.
         self.current_branch = branch.to_string();
-        self.show_title(screen);
+        self.show_title_in_top_panel(screen);
         self.update_git_branch();
-        self.show_branch(screen);
+        self.show_branch_in_left_panel(screen);
         self.update_git_log(&self.current_branch.to_string());
         self.current_log_vec = self
             .branch_log_map
