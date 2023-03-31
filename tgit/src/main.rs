@@ -44,6 +44,10 @@ struct TuiGit {
     log_col_left: usize,
     log_scroll_offset: usize,
 
+    // status bar area;
+    status_bar_row: usize,
+    bottom_bar_row: usize,
+
     // data storage;
     branch_vec: Vec<String>,
     branch_row_map: HashMap<String, usize>,
@@ -73,6 +77,8 @@ impl TuiGit {
             log_row_bottom: 0,
             log_col_left: 0,
             log_scroll_offset: 0,
+            status_bar_row: 0,
+            bottom_bar_row: 0,
             branch_vec: vec![],
             branch_diff_toggle: false,
             branch_row_map: HashMap::new(),
@@ -185,6 +191,9 @@ trait RenderGit {
     fn show_branch_in_left_panel<W: Write>(&mut self, screen: &mut W);
     fn show_log_in_right_panel<W: Write>(&mut self, screen: &mut W);
 
+    fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
+    fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
+
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
 
@@ -274,23 +283,60 @@ impl RenderGit for TuiGit {
         }
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
     }
-    fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
+    fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
         let (x, y) = screen.cursor_pos().unwrap();
-        let (_, row) = termion::terminal_size().unwrap();
+        let (col, row) = termion::terminal_size().unwrap();
+        self.status_bar_row = row as usize - 1;
+        write!(
+            screen,
+            "{}{}{}",
+            termion::cursor::Goto(1, self.status_bar_row as u16),
+            termion::clear::CurrentLine,
+            color::Fg(color::LightYellow),
+        )
+        .unwrap();
+        write!(screen, "{}", &log.as_str()[..(col as usize).min(log.len())]).unwrap();
+        write!(
+            screen,
+            "{}{}",
+            color::Fg(color::Reset),
+            termion::cursor::Goto(x, y)
+        )
+        .unwrap();
+    }
+    fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
+        let (x, y) = screen.cursor_pos().unwrap();
+        let (col, row) = termion::terminal_size().unwrap();
+        self.bottom_bar_row = row as usize;
+        write!(
+            screen,
+            "{}{}{}",
+            termion::cursor::Goto(1, self.bottom_bar_row as u16),
+            termion::clear::CurrentLine,
+            color::Fg(color::Yellow),
+        )
+        .unwrap();
+        write!(screen, "{}", &log.as_str()[..col as usize]).unwrap();
+        write!(
+            screen,
+            "{}{}",
+            color::Fg(color::Reset),
+            termion::cursor::Goto(x, y)
+        )
+        .unwrap();
+    }
+    fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
         if branch == &self.main_branch {
-            write!(
+            self.show_in_status_bar(
                 screen,
-                "{}{}☑{} Already in target branch {}{}{}, enter 'q' to quit{}{}",
-                termion::cursor::Goto(1, row),
-                termion::clear::All,
-                color::Fg(color::LightYellow),
-                color::Fg(color::Green),
-                branch,
-                color::Fg(color::LightYellow),
-                color::Fg(color::Reset),
-                termion::cursor::Goto(x, y),
-            )
-            .unwrap();
+                &format!(
+                    "☑ Already in target branch {}{}{}, enter 'q' to quit.",
+                    color::Fg(color::Green),
+                    branch,
+                    color::Fg(color::LightYellow),
+                )
+                .to_string(),
+            );
             return true;
         }
         let output = Command::new("git")
@@ -298,32 +344,22 @@ impl RenderGit for TuiGit {
             .output()
             .expect("failed to execute process");
         if !output.status.success() {
-            write!(
+            self.show_in_status_bar(
                 screen,
-                "{}{}❌{} {:?}{}{}",
-                termion::cursor::Goto(1, row),
-                termion::clear::All,
-                color::Fg(color::LightYellow),
-                String::from_utf8_lossy(&output.stderr),
-                color::Fg(color::Reset),
-                termion::cursor::Goto(x, y),
-            )
-            .unwrap();
+                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
+            );
         } else {
             self.main_branch = branch.to_string();
-            write!(
+            self.show_in_status_bar(
                 screen,
-                "{}{}✅{} Checkout to target branch {}{}{}, enter 'q' to quit{}{}",
-                termion::cursor::Goto(1, row),
-                termion::clear::All,
-                color::Fg(color::LightYellow),
-                color::Fg(color::Green),
-                branch,
-                color::Fg(color::LightYellow),
-                color::Fg(color::Reset),
-                termion::cursor::Goto(x, y),
-            )
-            .unwrap();
+                &format!(
+                    "✅ Checkout to target branch {}{}{}, enter 'q' to quit",
+                    color::Fg(color::Green),
+                    branch,
+                    color::Fg(color::LightYellow),
+                )
+                .to_string(),
+            );
         }
         output.status.success()
     }
@@ -603,17 +639,11 @@ impl RenderGit for TuiGit {
     }
 
     fn enter_pressed<W: Write>(&mut self, screen: &mut W) {
-        let (_, y) = screen.cursor_pos().unwrap();
         match self.layout_position {
             1 => {
-                let branch =
-                    &mut self.branch_vec.to_vec()[(y - self.branch_row_top as u16) as usize];
-                if self.checkout_git_branch(screen, branch) {
+                if self.checkout_git_branch(screen, &self.current_branch.to_string()) {
                 } else {
-                    *branch = self.main_branch.to_string();
                 }
-                // Refresh title and branch.
-                self.refresh_with_branch(screen, branch);
             }
             2 => {}
             _ => {}
