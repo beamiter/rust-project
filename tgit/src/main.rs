@@ -222,6 +222,8 @@ impl RenderGit for TuiGit {
         let mut y_tmp = self.log_row_top;
         self.row_log_map.clear();
         for log in &self.current_log_vec[self.log_scroll_offset as usize..] {
+            // Need to update bottom here.
+            self.log_row_bottom = y_tmp;
             let sub_log = log.substring(0, (col - x_tmp as u16) as usize);
             if !log.is_empty() {
                 write!(
@@ -239,7 +241,6 @@ impl RenderGit for TuiGit {
             }
             y_tmp += 1;
         }
-        self.log_row_bottom = y_tmp;
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
     }
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
@@ -452,7 +453,9 @@ impl RenderGit for TuiGit {
                     // Hit the bottom.
                     let log_show_range = self.log_row_bottom - self.log_row_top;
                     let current_log_vec_len = self.current_log_vec.len();
-                    if usize::from(self.log_scroll_offset + log_show_range + 1) < current_log_vec_len {
+                    if usize::from(self.log_scroll_offset + log_show_range + 1)
+                        < current_log_vec_len
+                    {
                         self.log_scroll_offset += 1;
                         self.show_log_in_right_panel(screen);
                     }
@@ -484,6 +487,7 @@ impl RenderGit for TuiGit {
     fn move_cursor_right<W: Write>(&mut self, screen: &mut W) {
         self.layout_position = 2;
         let (_, y) = screen.cursor_pos().unwrap();
+
         write!(screen, "{}  ", termion::cursor::Goto(1, y)).unwrap();
         write!(
             screen,
