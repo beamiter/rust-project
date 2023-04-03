@@ -129,15 +129,6 @@ impl TuiGit {
                 break;
             }
         }
-        let branch_size = self
-            .branch_vec
-            .iter()
-            .map(|x| x.len())
-            .collect::<Vec<usize>>();
-        self.branch_row_bottom = self.branch_vec.len() as usize + self.branch_row_top - 1;
-        self.branch_col_right =
-            self.branch_col_left + *branch_size.iter().max().unwrap() as usize + 3;
-        self.log_col_left = self.branch_col_right + 3;
     }
 
     // Currently limit the log number to 100.
@@ -246,16 +237,33 @@ impl RenderGit for TuiGit {
     }
     fn show_branch_in_left_panel<W: Write>(&mut self, screen: &mut W) {
         self.layout_position = 1;
-        let mut row = 1;
+        let (col, row) = termion::terminal_size().unwrap();
+        let x_tmp = self.branch_col_left;
+        if col <= x_tmp as u16 {
+            // No show due to no enough col.
+            return;
+        }
+        // Clear previous branch zone.
+        for clear_y in self.branch_row_top..=self.branch_row_bottom {
+            write!(
+                screen,
+                "{}{}",
+                termion::cursor::Goto(x_tmp as u16, clear_y as u16),
+                termion::clear::CurrentLine,
+            )
+            .unwrap();
+        }
+        let mut y_tmp = self.branch_row_top;
         self.branch_row_map.clear();
         self.row_branch_map.clear();
         for branch in self.branch_vec.to_vec() {
-            row += 1;
+            // Need to update bottom here.
+            self.branch_row_bottom = y_tmp;
             if *branch == self.main_branch {
                 write!(
                     screen,
                     "{}{}{}{}{}{}{}{} 🐝",
-                    termion::cursor::Goto(self.branch_col_left as u16, row as u16),
+                    termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
                     termion::clear::CurrentLine,
                     color::Bg(color::White),
                     color::Fg(color::Green),
@@ -269,15 +277,28 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}{}",
-                    termion::cursor::Goto(self.branch_col_left as u16, row as u16),
+                    termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
                     termion::clear::CurrentLine,
                     branch
                 )
                 .unwrap();
             }
-            self.branch_row_map.insert(branch.to_string(), row);
-            self.row_branch_map.insert(row, branch.to_string());
+            self.branch_row_map.insert(branch.to_string(), y_tmp);
+            self.row_branch_map.insert(y_tmp, branch.to_string());
+            // Spare 2 for check info.
+            if y_tmp as u16 >= row - 2 {
+                break;
+            }
+            y_tmp += 1;
         }
+        let branch_size = self
+            .branch_vec
+            .iter()
+            .map(|x| x.len())
+            .collect::<Vec<usize>>();
+        self.branch_col_right =
+            self.branch_col_left + *branch_size.iter().max().unwrap() as usize + 3;
+        self.log_col_left = self.branch_col_right + 3;
     }
     fn show_log_in_right_panel<W: Write>(&mut self, screen: &mut W) {
         let (x, y) = screen.cursor_pos().unwrap();
@@ -392,6 +413,17 @@ impl RenderGit for TuiGit {
     fn lower_n_pressed<W: Write>(&mut self, screen: &mut W) {
         if self.branch_delete_toggle {
             self.show_in_status_bar(screen, &format!("Escape deleting branch").to_string());
+            let branch = self.current_branch.to_string();
+            let y = self.branch_row_map.get(&branch).unwrap();
+            write!(
+                screen,
+                "{}{}{}",
+                termion::color::Bg(termion::color::Reset),
+                termion::cursor::Goto(self.branch_col_left as u16, *y as u16),
+                branch,
+            )
+            .unwrap();
+            self.branch_delete_toggle = false;
         }
     }
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
@@ -429,6 +461,7 @@ impl RenderGit for TuiGit {
                 )
                 .to_string(),
             );
+            self.refresh_with_branch(screen, &self.main_branch.to_string());
         }
         output.status.success()
     }
@@ -588,6 +621,9 @@ impl RenderGit for TuiGit {
         }
     }
     fn upper_d_pressed<W: Write>(&mut self, screen: &mut W) {
+        if self.layout_position != 1 {
+            return;
+        }
         if self.current_branch == self.main_branch {
             self.show_in_status_bar(
                 screen,
@@ -619,6 +655,9 @@ impl RenderGit for TuiGit {
         self.branch_delete_toggle = true;
     }
     fn move_cursor_left<W: Write>(&mut self, screen: &mut W) {
+        if self.layout_position == 1 {
+            return;
+        }
         self.layout_position = 1;
         let (x, y) = screen.cursor_pos().unwrap();
         write!(screen, "{}  ", termion::cursor::Goto(x - 2, y)).unwrap();
@@ -643,6 +682,12 @@ impl RenderGit for TuiGit {
     }
 
     fn move_cursor_right<W: Write>(&mut self, screen: &mut W) {
+        if self.layout_position == 2 {
+            return;
+        }
+        if self.branch_delete_toggle {
+            return;
+        }
         self.layout_position = 2;
         let (_, y) = screen.cursor_pos().unwrap();
 
@@ -768,7 +813,7 @@ impl RenderGit for TuiGit {
     fn move_cursor_up<W: Write>(&mut self, screen: &mut W) {
         match self.layout_position {
             1 => {
-                if self.branch_diff_toggle {
+                if self.branch_diff_toggle || self.branch_delete_toggle {
                     return;
                 }
                 self.left_panel_handler(screen, true);
@@ -783,7 +828,7 @@ impl RenderGit for TuiGit {
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W) {
         match self.layout_position {
             1 => {
-                if self.branch_diff_toggle {
+                if self.branch_diff_toggle || self.branch_delete_toggle {
                     return;
                 }
                 self.left_panel_handler(screen, false);
