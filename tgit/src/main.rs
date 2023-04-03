@@ -475,11 +475,15 @@ impl RenderGit for TuiGit {
     fn cursor_to_main<W: Write>(&self, screen: &mut W) {
         write!(
             screen,
-            "{}🌟",
+            "{}🌟{}",
             termion::cursor::Goto(
                 1,
                 *self.branch_row_map.get(&self.main_branch).unwrap() as u16
-            )
+            ),
+            termion::cursor::Goto(
+                1,
+                *self.branch_row_map.get(&self.main_branch).unwrap() as u16
+            ),
         )
         .unwrap();
     }
@@ -752,9 +756,10 @@ impl RenderGit for TuiGit {
         );
         write!(
             screen,
-            "{}{}",
+            "{}{}{}",
             termion::cursor::Goto(1, y),
-            UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
+            UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
+            termion::cursor::Goto(1, y),
         )
         .unwrap();
         // Update current_branch.
