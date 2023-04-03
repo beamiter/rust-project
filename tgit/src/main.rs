@@ -56,6 +56,7 @@ struct TuiGit {
     row_log_map: HashMap<usize, String>,
     branch_diff_vec: Vec<String>,
     branch_diff_toggle: bool,
+    branch_delete_toggle: bool,
 
     // Main branch;
     main_branch: String,
@@ -81,6 +82,7 @@ impl TuiGit {
             bottom_bar_row: 0,
             branch_vec: vec![],
             branch_diff_toggle: false,
+            branch_delete_toggle: false,
             branch_row_map: HashMap::new(),
             row_branch_map: HashMap::new(),
             branch_log_map: HashMap::new(),
@@ -201,6 +203,8 @@ trait RenderGit {
     fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
 
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
+    fn delete_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
+
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
 
     fn display_line_log<W: Write>(&self, screen: &mut W, log: &String, x_tmp: u16, y_tmp: u16);
@@ -209,6 +213,10 @@ trait RenderGit {
 
     fn enter_pressed<W: Write>(&mut self, screen: &mut W);
     fn lower_d_pressed<W: Write>(&mut self, screen: &mut W);
+    fn lower_y_pressed<W: Write>(&mut self, screen: &mut W);
+    fn lower_n_pressed<W: Write>(&mut self, screen: &mut W);
+
+    fn upper_d_pressed<W: Write>(&mut self, screen: &mut W);
 
     fn move_cursor_left<W: Write>(&mut self, screen: &mut W);
     fn move_cursor_right<W: Write>(&mut self, screen: &mut W);
@@ -247,7 +255,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}{}{}{}{}{}{} 🐝",
-                    termion::cursor::Goto(4, row as u16),
+                    termion::cursor::Goto(self.branch_col_left as u16, row as u16),
                     termion::clear::CurrentLine,
                     color::Bg(color::White),
                     color::Fg(color::Green),
@@ -261,7 +269,7 @@ impl RenderGit for TuiGit {
                 write!(
                     screen,
                     "{}{}{}",
-                    termion::cursor::Goto(4, row as u16),
+                    termion::cursor::Goto(self.branch_col_left as u16, row as u16),
                     termion::clear::CurrentLine,
                     branch
                 )
@@ -350,6 +358,42 @@ impl RenderGit for TuiGit {
         .unwrap();
     }
 
+    fn delete_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
+        let output = Command::new("git")
+            .args(["branch", "-D", branch.as_str()])
+            .output()
+            .expect("failed to execute process");
+        if !output.status.success() {
+            self.show_in_status_bar(
+                screen,
+                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
+            );
+        } else {
+            self.show_in_status_bar(
+                screen,
+                &format!(
+                    "✅ Delete branch {}{}{} finished.",
+                    color::Fg(color::Red),
+                    branch,
+                    color::Fg(color::LightYellow),
+                )
+                .to_string(),
+            );
+        }
+        self.branch_delete_toggle = false;
+        self.refresh_with_branch(screen, &self.main_branch.to_string());
+        output.status.success()
+    }
+    fn lower_y_pressed<W: Write>(&mut self, screen: &mut W) {
+        if self.branch_delete_toggle {
+            self.delete_git_branch(screen, &self.current_branch.to_string());
+        }
+    }
+    fn lower_n_pressed<W: Write>(&mut self, screen: &mut W) {
+        if self.branch_delete_toggle {
+            self.show_in_status_bar(screen, &format!("Escape deleting branch").to_string());
+        }
+    }
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
         if branch == &self.main_branch {
             self.show_in_status_bar(
@@ -511,8 +555,9 @@ impl RenderGit for TuiGit {
     fn enter_pressed<W: Write>(&mut self, screen: &mut W) {
         match self.layout_position {
             1 => {
-                if self.checkout_git_branch(screen, &self.current_branch.to_string()) {
+                if self.branch_delete_toggle {
                 } else {
+                    self.checkout_git_branch(screen, &self.current_branch.to_string());
                 }
             }
             2 => {}
@@ -541,6 +586,37 @@ impl RenderGit for TuiGit {
                 self.move_cursor_left(screen);
             }
         }
+    }
+    fn upper_d_pressed<W: Write>(&mut self, screen: &mut W) {
+        if self.current_branch == self.main_branch {
+            self.show_in_status_bar(
+                screen,
+                &format!(
+                    "{}Cann't delete current branch you are in!{}",
+                    termion::color::Fg(termion::color::LightRed),
+                    termion::color::Fg(termion::color::Reset),
+                )
+                .to_string(),
+            );
+            self.branch_delete_toggle = false;
+            return;
+        }
+        self.show_in_status_bar(
+            screen,
+            &"Press 'y' to confirm delete, 'n' to escape\n".to_string(),
+        );
+        let branch = self.current_branch.to_string();
+        let y = self.branch_row_map.get(&branch).unwrap();
+        write!(
+            screen,
+            "{}{}{}{}",
+            termion::color::Bg(termion::color::Red),
+            termion::cursor::Goto(self.branch_col_left as u16, *y as u16),
+            branch,
+            termion::color::Bg(termion::color::Reset),
+        )
+        .unwrap();
+        self.branch_delete_toggle = true;
     }
     fn move_cursor_left<W: Write>(&mut self, screen: &mut W) {
         self.layout_position = 1;
@@ -744,7 +820,15 @@ fn main() {
             Key::Char('d') => {
                 tui_git.lower_d_pressed(&mut screen);
             }
-            Key::Char('D') => {}
+            Key::Char('y') => {
+                tui_git.lower_y_pressed(&mut screen);
+            }
+            Key::Char('n') => {
+                tui_git.lower_n_pressed(&mut screen);
+            }
+            Key::Char('D') => {
+                tui_git.upper_d_pressed(&mut screen);
+            }
             Key::Char('\n') => {
                 tui_git.enter_pressed(&mut screen);
             }
