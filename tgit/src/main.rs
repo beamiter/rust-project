@@ -1,7 +1,7 @@
 extern crate termion;
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     io::{stdin, stdout, Write},
     process::Command,
     vec,
@@ -56,7 +56,7 @@ struct TuiGit {
     row_log_map: HashMap<usize, String>,
     branch_diff_vec: Vec<String>,
     branch_diff_toggle: bool,
-    branch_delete_toggle: bool,
+    branch_delete_set: HashSet<String>,
 
     // Main branch;
     main_branch: String,
@@ -82,7 +82,7 @@ impl TuiGit {
             bottom_bar_row: 0,
             branch_vec: vec![],
             branch_diff_toggle: false,
-            branch_delete_toggle: false,
+            branch_delete_set: HashSet::new(),
             branch_row_map: HashMap::new(),
             row_branch_map: HashMap::new(),
             branch_log_map: HashMap::new(),
@@ -194,7 +194,7 @@ trait RenderGit {
     fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
 
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
-    fn delete_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
+    fn delete_git_branch<W: Write>(&mut self, screen: &mut W) -> bool;
 
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
 
@@ -379,51 +379,55 @@ impl RenderGit for TuiGit {
         .unwrap();
     }
 
-    fn delete_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
-        let output = Command::new("git")
-            .args(["branch", "-D", branch.as_str()])
-            .output()
-            .expect("failed to execute process");
-        if !output.status.success() {
-            self.show_in_status_bar(
-                screen,
-                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
-            );
-        } else {
-            self.show_in_status_bar(
-                screen,
-                &format!(
-                    "✅ Delete branch {}{}{} finished.",
-                    color::Fg(color::Red),
-                    branch,
-                    color::Fg(color::LightYellow),
-                )
-                .to_string(),
-            );
+    fn delete_git_branch<W: Write>(&mut self, screen: &mut W) -> bool {
+        for branch in self.branch_delete_set.to_owned() {
+            let output = Command::new("git")
+                .args(["branch", "-D", branch.as_str()])
+                .output()
+                .expect("failed to execute process");
+            if !output.status.success() {
+                self.show_in_status_bar(
+                    screen,
+                    &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
+                );
+                return false;
+            } else {
+                self.show_in_status_bar(
+                    screen,
+                    &format!(
+                        "✅ Delete branch {}{}{} finished.",
+                        color::Fg(color::Red),
+                        branch,
+                        color::Fg(color::LightYellow),
+                    )
+                    .to_string(),
+                );
+            }
         }
-        self.branch_delete_toggle = false;
+        self.branch_delete_set.clear();
         self.refresh_with_branch(screen, &self.main_branch.to_string());
-        output.status.success()
+        return true;
     }
     fn lower_y_pressed<W: Write>(&mut self, screen: &mut W) {
-        if self.branch_delete_toggle {
-            self.delete_git_branch(screen, &self.current_branch.to_string());
+        if !self.branch_delete_set.is_empty() {
+            self.delete_git_branch(screen);
         }
     }
     fn lower_n_pressed<W: Write>(&mut self, screen: &mut W) {
-        if self.branch_delete_toggle {
+        if !self.branch_delete_set.is_empty() {
             self.show_in_status_bar(screen, &format!("Escape deleting branch").to_string());
-            let branch = self.current_branch.to_string();
-            let y = self.branch_row_map.get(&branch).unwrap();
-            write!(
-                screen,
-                "{}{}{}",
-                termion::color::Bg(termion::color::Reset),
-                termion::cursor::Goto(self.branch_col_left as u16, *y as u16),
-                branch,
-            )
-            .unwrap();
-            self.branch_delete_toggle = false;
+            for branch in &self.branch_delete_set {
+                let y = self.branch_row_map.get(branch).unwrap();
+                write!(
+                    screen,
+                    "{}{}{}",
+                    termion::color::Bg(termion::color::Reset),
+                    termion::cursor::Goto(self.branch_col_left as u16, *y as u16),
+                    branch,
+                )
+                .unwrap();
+            }
+            self.branch_delete_set.clear();
         }
     }
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
@@ -588,8 +592,7 @@ impl RenderGit for TuiGit {
     fn enter_pressed<W: Write>(&mut self, screen: &mut W) {
         match self.layout_position {
             1 => {
-                if self.branch_delete_toggle {
-                } else {
+                if self.branch_delete_set.is_empty() {
                     self.checkout_git_branch(screen, &self.current_branch.to_string());
                 }
             }
@@ -634,7 +637,6 @@ impl RenderGit for TuiGit {
                 )
                 .to_string(),
             );
-            self.branch_delete_toggle = false;
             return;
         }
         self.show_in_status_bar(
@@ -642,17 +644,32 @@ impl RenderGit for TuiGit {
             &"Press 'y' to confirm delete, 'n' to escape\n".to_string(),
         );
         let branch = self.current_branch.to_string();
-        let y = self.branch_row_map.get(&branch).unwrap();
-        write!(
-            screen,
-            "{}{}{}{}",
-            termion::color::Bg(termion::color::Red),
-            termion::cursor::Goto(self.branch_col_left as u16, *y as u16),
-            branch,
-            termion::color::Bg(termion::color::Reset),
-        )
-        .unwrap();
-        self.branch_delete_toggle = true;
+        // Toggle branch delete.
+        if self.branch_delete_set.get(&branch).is_some() {
+            self.branch_delete_set.remove(&branch);
+            let y = self.branch_row_map.get(&branch).unwrap();
+            write!(
+                screen,
+                "{}{}{}{}",
+                termion::color::Bg(termion::color::Reset),
+                termion::cursor::Goto(self.branch_col_left as u16, *y as u16),
+                branch,
+                termion::color::Bg(termion::color::Reset),
+            )
+            .unwrap();
+        } else {
+            self.branch_delete_set.insert(branch.to_string());
+            let y = self.branch_row_map.get(&branch).unwrap();
+            write!(
+                screen,
+                "{}{}{}{}",
+                termion::color::Bg(termion::color::Red),
+                termion::cursor::Goto(self.branch_col_left as u16, *y as u16),
+                branch,
+                termion::color::Bg(termion::color::Reset),
+            )
+            .unwrap();
+        }
     }
     fn move_cursor_left<W: Write>(&mut self, screen: &mut W) {
         if self.layout_position == 1 {
@@ -685,7 +702,7 @@ impl RenderGit for TuiGit {
         if self.layout_position == 2 {
             return;
         }
-        if self.branch_delete_toggle {
+        if !self.branch_delete_set.is_empty() {
             return;
         }
         self.layout_position = 2;
@@ -813,7 +830,7 @@ impl RenderGit for TuiGit {
     fn move_cursor_up<W: Write>(&mut self, screen: &mut W) {
         match self.layout_position {
             1 => {
-                if self.branch_diff_toggle || self.branch_delete_toggle {
+                if self.branch_diff_toggle {
                     return;
                 }
                 self.left_panel_handler(screen, true);
@@ -828,7 +845,7 @@ impl RenderGit for TuiGit {
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W) {
         match self.layout_position {
             1 => {
-                if self.branch_diff_toggle || self.branch_delete_toggle {
+                if self.branch_diff_toggle {
                     return;
                 }
                 self.left_panel_handler(screen, false);
