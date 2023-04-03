@@ -1,8 +1,9 @@
 extern crate termion;
 
+use std::str;
 use std::{
     collections::{HashMap, HashSet},
-    io::{stdin, stdout, Write},
+    io::{stdin, stdout, Read, Write},
     process::Command,
     vec,
 };
@@ -356,6 +357,7 @@ impl RenderGit for TuiGit {
             termion::cursor::Goto(x, y)
         )
         .unwrap();
+        screen.flush().unwrap();
     }
     fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
         let (x, y) = screen.cursor_pos().unwrap();
@@ -377,6 +379,7 @@ impl RenderGit for TuiGit {
             termion::cursor::Goto(x, y)
         )
         .unwrap();
+        screen.flush().unwrap();
     }
 
     fn delete_git_branch<W: Write>(&mut self, screen: &mut W) -> bool {
@@ -747,7 +750,6 @@ impl RenderGit for TuiGit {
             )
             .to_string(),
         );
-        screen.flush().unwrap();
         write!(
             screen,
             "{}{}",
@@ -767,6 +769,7 @@ impl RenderGit for TuiGit {
             .unwrap()
             .to_vec();
         self.show_log_in_right_panel(screen);
+        screen.flush().unwrap();
     }
 
     fn right_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool) {
@@ -816,7 +819,6 @@ impl RenderGit for TuiGit {
             )
             .to_string(),
         );
-        screen.flush().unwrap();
         write!(
             screen,
             "{}{}",
@@ -824,6 +826,7 @@ impl RenderGit for TuiGit {
             UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
         )
         .unwrap();
+        screen.flush().unwrap();
     }
 
     // https://symbl.cc/en/
@@ -863,21 +866,42 @@ fn main() {
     let mut tui_git = TuiGit::new();
     tui_git.update_git_branch();
 
-    let stdin = stdin();
     let mut screen = stdout()
         .into_raw_mode()
         .unwrap()
         .into_alternate_screen()
         .unwrap();
-    write!(screen, "{}", termion::cursor::Hide).unwrap();
+    // write!(screen, "{}", termion::cursor::Hide).unwrap();
 
     tui_git.refresh_with_branch(&mut screen, &tui_git.main_branch.to_string());
 
     // Start with the main branch row.
-    for c in stdin.keys() {
+    for c in stdin().keys() {
         match c.unwrap() {
             Key::Char('q') => {
                 break;
+            }
+            Key::Char('a') => {
+                let mut bufs = vec![];
+                let mut buffer: &str = "";
+                tui_git.show_in_status_bar(&mut screen, &"branch: ".to_string());
+                loop {
+                    let b = stdin().lock().bytes().next().unwrap().unwrap();
+                    if char::from(b) != '\r' {
+                        bufs.push(b);
+                    } else {
+                        tui_git.show_in_status_bar(
+                            &mut screen,
+                            &format!("Switch to a new branch: {}", buffer.to_string()).to_string(),
+                        );
+                        break;
+                    }
+                    buffer = str::from_utf8(&bufs).unwrap();
+                    tui_git.show_in_status_bar(
+                        &mut screen,
+                        &format!("branch: {}", buffer.to_string()).to_string(),
+                    );
+                }
             }
             Key::Char('d') => {
                 tui_git.lower_d_pressed(&mut screen);
