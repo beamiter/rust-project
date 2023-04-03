@@ -203,7 +203,7 @@ trait RenderGit {
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
 
-    fn update_line_fg<W: Write>(&self, screen: &mut W, log: &String);
+    fn display_line_log<W: Write>(&self, screen: &mut W, log: &String, x_tmp: u16, y_tmp: u16);
 
     fn refresh_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
 
@@ -221,28 +221,54 @@ trait RenderGit {
 }
 
 impl RenderGit for TuiGit {
-    fn update_line_fg<W: Write>(&self, screen: &mut W, log: &String) {
-        if log.is_empty() {
-            return;
-        }
-        if self.branch_diff_toggle {
-            // Show "git diff".
-            match log.chars().next().unwrap() {
-                '-' => {
-                    write!(screen, "{}", termion::color::Fg(termion::color::Red)).unwrap();
-                }
-                '+' => {
-                    write!(screen, "{}", termion::color::Fg(termion::color::Green)).unwrap();
-                }
-                _ => {}
-            }
-        } else {
-            // Show "git log".
-            if log.starts_with("commit") {
-                write!(screen, "{}", termion::color::Fg(termion::color::Yellow)).unwrap();
+    fn show_title_in_top_panel<W: Write>(&mut self, screen: &mut W) {
+        self.layout_position = 0;
+        write!(
+            screen,
+            "{}{}{}{}Welcome to tui git{}{}{}\n",
+            termion::cursor::Goto(19, 1),
+            termion::clear::CurrentLine,
+            color::Fg(color::Magenta),
+            style::Bold,
+            style::Italic,
+            color::Fg(color::Reset),
+            style::Reset,
+        )
+        .unwrap();
+    }
+    fn show_branch_in_left_panel<W: Write>(&mut self, screen: &mut W) {
+        self.layout_position = 1;
+        let mut row = 1;
+        self.branch_row_map.clear();
+        self.row_branch_map.clear();
+        for branch in self.branch_vec.to_vec() {
+            row += 1;
+            if *branch == self.main_branch {
+                write!(
+                    screen,
+                    "{}{}{}{}{}{}{}{} 🐝",
+                    termion::cursor::Goto(4, row as u16),
+                    termion::clear::CurrentLine,
+                    color::Bg(color::White),
+                    color::Fg(color::Green),
+                    style::Bold,
+                    branch,
+                    color::Fg(color::Reset),
+                    style::Reset,
+                )
+                .unwrap();
             } else {
-                write!(screen, "{}", termion::color::Fg(termion::color::Reset)).unwrap();
+                write!(
+                    screen,
+                    "{}{}{}",
+                    termion::cursor::Goto(4, row as u16),
+                    termion::clear::CurrentLine,
+                    branch
+                )
+                .unwrap();
             }
+            self.branch_row_map.insert(branch.to_string(), row);
+            self.row_branch_map.insert(row, branch.to_string());
         }
     }
     fn show_log_in_right_panel<W: Write>(&mut self, screen: &mut W) {
@@ -270,15 +296,7 @@ impl RenderGit for TuiGit {
             self.log_row_bottom = y_tmp;
             let sub_log = log.substring(0, (col - x_tmp as u16) as usize);
             if !sub_log.is_empty() {
-                self.update_line_fg(screen, log);
-                write!(
-                    screen,
-                    "{}{}{}",
-                    termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
-                    sub_log,
-                    termion::color::Fg(termion::color::Reset),
-                )
-                .unwrap();
+                self.display_line_log(screen, &sub_log.to_string(), x_tmp as u16, y_tmp as u16);
             }
             self.row_log_map.insert(y_tmp, sub_log.to_string());
             // Spare 2 for check info.
@@ -331,6 +349,7 @@ impl RenderGit for TuiGit {
         )
         .unwrap();
     }
+
     fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
         if branch == &self.main_branch {
             self.show_in_status_bar(
@@ -369,7 +388,6 @@ impl RenderGit for TuiGit {
         }
         output.status.success()
     }
-
     fn cursor_to_main<W: Write>(&self, screen: &mut W) {
         write!(
             screen,
@@ -381,6 +399,187 @@ impl RenderGit for TuiGit {
         )
         .unwrap();
     }
+
+    fn display_line_log<W: Write>(&self, screen: &mut W, log: &String, x_tmp: u16, y_tmp: u16) {
+        if log.is_empty() {
+            return;
+        }
+        if self.branch_diff_toggle {
+            // Show "git diff".
+            match log.chars().next().unwrap() {
+                '-' => {
+                    write!(screen, "{}", termion::color::Fg(termion::color::Red)).unwrap();
+                }
+                '+' => {
+                    write!(screen, "{}", termion::color::Fg(termion::color::Green)).unwrap();
+                }
+                _ => {}
+            }
+        } else {
+            // Show "git log".
+            if log.starts_with("commit") {
+                write!(screen, "{}", termion::color::Fg(termion::color::Yellow)).unwrap();
+                let split_log: Vec<_> = log.split('(').collect();
+                if split_log.len() == 2 {
+                    write!(
+                        screen,
+                        "{}{}{}",
+                        termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
+                        split_log.first().unwrap(),
+                        termion::color::Fg(termion::color::Reset),
+                    )
+                    .unwrap();
+                    let split_last: String = split_log
+                        .last()
+                        .unwrap()
+                        .chars()
+                        .filter(|&x| x != ')' && x != '(')
+                        .collect::<String>();
+                    let decoration_split: Vec<_> = split_last.split(", ").collect();
+                    let mut decoration_out: String = format!("{}(", style::Bold);
+                    for decoration in decoration_split {
+                        if decoration.starts_with("HEAD -> ") {
+                            decoration_out += format!(
+                                "{}HEAD -> {}{}{}",
+                                termion::color::Fg(termion::color::Cyan),
+                                termion::color::Fg(termion::color::Green),
+                                decoration.strip_prefix("HEAD -> ").unwrap(),
+                                termion::color::Fg(termion::color::Reset),
+                            )
+                            .as_str();
+                        } else if decoration.starts_with("origin/") {
+                            decoration_out += format!(
+                                " {}{}{}",
+                                termion::color::Fg(termion::color::Red),
+                                decoration,
+                                termion::color::Fg(termion::color::Reset),
+                            )
+                            .as_str();
+                        } else {
+                            decoration_out += format!(
+                                " {}{}{}",
+                                termion::color::Fg(termion::color::Green),
+                                decoration,
+                                termion::color::Fg(termion::color::Reset),
+                            )
+                            .as_str();
+                        }
+                        decoration_out += ", ";
+                    }
+                    if decoration_out.ends_with(", ") {
+                        decoration_out = decoration_out.strip_suffix(", ").unwrap().to_string();
+                    }
+                    decoration_out += format!("){}", style::Reset).as_str();
+                    write!(
+                        screen,
+                        "{}{}",
+                        decoration_out,
+                        termion::color::Fg(termion::color::Reset),
+                    )
+                    .unwrap();
+                    return;
+                }
+            }
+        }
+        write!(
+            screen,
+            "{}{}{}",
+            termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
+            log,
+            termion::color::Fg(termion::color::Reset),
+        )
+        .unwrap();
+    }
+
+    fn refresh_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String) {
+        // Reset with main branch.
+        self.current_branch = branch.to_string();
+        self.show_title_in_top_panel(screen);
+        self.update_git_branch();
+        self.show_branch_in_left_panel(screen);
+        self.update_git_log(&self.current_branch.to_string());
+        self.current_log_vec = self
+            .branch_log_map
+            .get(&self.current_branch.to_string())
+            .unwrap()
+            .to_vec();
+        self.show_log_in_right_panel(screen);
+
+        self.cursor_to_main(screen);
+        screen.flush().unwrap();
+    }
+    fn enter_pressed<W: Write>(&mut self, screen: &mut W) {
+        match self.layout_position {
+            1 => {
+                if self.checkout_git_branch(screen, &self.current_branch.to_string()) {
+                } else {
+                }
+            }
+            2 => {}
+            _ => {}
+        }
+    }
+    fn lower_d_pressed<W: Write>(&mut self, screen: &mut W) {
+        self.log_scroll_offset = 0;
+        self.branch_diff_toggle = !self.branch_diff_toggle;
+        if self.branch_diff_toggle {
+            self.update_git_diff(&self.current_branch.to_string());
+            self.current_log_vec = self.branch_diff_vec.to_vec();
+            self.show_log_in_right_panel(screen);
+            if self.layout_position == 1 {
+                self.move_cursor_right(screen);
+            }
+        } else {
+            self.update_git_log(&self.current_branch.to_string());
+            self.current_log_vec = self
+                .branch_log_map
+                .get(&self.current_branch.to_string())
+                .unwrap()
+                .to_vec();
+            self.show_log_in_right_panel(screen);
+            if self.layout_position == 2 {
+                self.move_cursor_left(screen);
+            }
+        }
+    }
+    fn move_cursor_left<W: Write>(&mut self, screen: &mut W) {
+        self.layout_position = 1;
+        let (x, y) = screen.cursor_pos().unwrap();
+        write!(screen, "{}  ", termion::cursor::Goto(x - 2, y)).unwrap();
+        write!(
+            screen,
+            "{}  ",
+            termion::cursor::Goto(
+                self.log_col_left as u16 - 2,
+                *self.branch_row_map.get(&self.current_branch).unwrap() as u16
+            )
+        )
+        .unwrap();
+        write!(
+            screen,
+            "{}❆ ",
+            termion::cursor::Goto(
+                1,
+                *self.branch_row_map.get(&self.current_branch).unwrap() as u16
+            )
+        )
+        .unwrap();
+    }
+
+    fn move_cursor_right<W: Write>(&mut self, screen: &mut W) {
+        self.layout_position = 2;
+        let (_, y) = screen.cursor_pos().unwrap();
+
+        write!(screen, "{}  ", termion::cursor::Goto(1, y)).unwrap();
+        write!(
+            screen,
+            "{}  {}✍ ",
+            termion::cursor::Goto(self.log_col_left as u16 - 2, self.log_row_top as u16),
+            termion::cursor::Goto(self.log_col_left as u16 - 2, self.log_row_top as u16)
+        )
+        .unwrap();
+    }
+
     fn left_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool) {
         let (x, mut y) = screen.cursor_pos().unwrap();
         // Clear previous.
@@ -504,6 +703,7 @@ impl RenderGit for TuiGit {
             _ => {}
         }
     }
+
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W) {
         match self.layout_position {
             1 => {
@@ -515,148 +715,6 @@ impl RenderGit for TuiGit {
             2 => {
                 self.right_panel_handler(screen, false);
             }
-            _ => {}
-        }
-    }
-    fn move_cursor_right<W: Write>(&mut self, screen: &mut W) {
-        self.layout_position = 2;
-        let (_, y) = screen.cursor_pos().unwrap();
-
-        write!(screen, "{}  ", termion::cursor::Goto(1, y)).unwrap();
-        write!(
-            screen,
-            "{}  {}✍ ",
-            termion::cursor::Goto(self.log_col_left as u16 - 2, self.log_row_top as u16),
-            termion::cursor::Goto(self.log_col_left as u16 - 2, self.log_row_top as u16)
-        )
-        .unwrap();
-    }
-    fn move_cursor_left<W: Write>(&mut self, screen: &mut W) {
-        self.layout_position = 1;
-        let (x, y) = screen.cursor_pos().unwrap();
-        write!(screen, "{}  ", termion::cursor::Goto(x - 2, y)).unwrap();
-        write!(
-            screen,
-            "{}  ",
-            termion::cursor::Goto(
-                self.log_col_left as u16 - 2,
-                *self.branch_row_map.get(&self.current_branch).unwrap() as u16
-            )
-        )
-        .unwrap();
-        write!(
-            screen,
-            "{}❆ ",
-            termion::cursor::Goto(
-                1,
-                *self.branch_row_map.get(&self.current_branch).unwrap() as u16
-            )
-        )
-        .unwrap();
-    }
-
-    fn show_title_in_top_panel<W: Write>(&mut self, screen: &mut W) {
-        self.layout_position = 0;
-        write!(
-            screen,
-            "{}{}{}{}Welcome to tui git{}{}{}\n",
-            termion::cursor::Goto(19, 1),
-            termion::clear::CurrentLine,
-            color::Fg(color::Magenta),
-            style::Bold,
-            style::Italic,
-            color::Fg(color::Reset),
-            style::Reset,
-        )
-        .unwrap();
-    }
-
-    fn show_branch_in_left_panel<W: Write>(&mut self, screen: &mut W) {
-        self.layout_position = 1;
-        let mut row = 1;
-        self.branch_row_map.clear();
-        self.row_branch_map.clear();
-        for branch in self.branch_vec.to_vec() {
-            row += 1;
-            if *branch == self.main_branch {
-                write!(
-                    screen,
-                    "{}{}{}{}{}{}{}{} 🐝",
-                    termion::cursor::Goto(4, row as u16),
-                    termion::clear::CurrentLine,
-                    color::Bg(color::White),
-                    color::Fg(color::Green),
-                    style::Bold,
-                    branch,
-                    color::Fg(color::Reset),
-                    style::Reset,
-                )
-                .unwrap();
-            } else {
-                write!(
-                    screen,
-                    "{}{}{}",
-                    termion::cursor::Goto(4, row as u16),
-                    termion::clear::CurrentLine,
-                    branch
-                )
-                .unwrap();
-            }
-            self.branch_row_map.insert(branch.to_string(), row);
-            self.row_branch_map.insert(row, branch.to_string());
-        }
-    }
-
-    fn refresh_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String) {
-        // Reset with main branch.
-        self.current_branch = branch.to_string();
-        self.show_title_in_top_panel(screen);
-        self.update_git_branch();
-        self.show_branch_in_left_panel(screen);
-        self.update_git_log(&self.current_branch.to_string());
-        self.current_log_vec = self
-            .branch_log_map
-            .get(&self.current_branch.to_string())
-            .unwrap()
-            .to_vec();
-        self.show_log_in_right_panel(screen);
-
-        self.cursor_to_main(screen);
-        screen.flush().unwrap();
-    }
-
-    fn lower_d_pressed<W: Write>(&mut self, screen: &mut W) {
-        self.log_scroll_offset = 0;
-        self.branch_diff_toggle = !self.branch_diff_toggle;
-        if self.branch_diff_toggle {
-            self.update_git_diff(&self.current_branch.to_string());
-            self.current_log_vec = self.branch_diff_vec.to_vec();
-            self.show_log_in_right_panel(screen);
-            if self.layout_position == 1 {
-                self.move_cursor_right(screen);
-            }
-        } else {
-            self.update_git_log(&self.current_branch.to_string());
-            self.current_log_vec = self
-                .branch_log_map
-                .get(&self.current_branch.to_string())
-                .unwrap()
-                .to_vec();
-            self.show_log_in_right_panel(screen);
-            if self.layout_position == 2 {
-                self.move_cursor_left(screen);
-            }
-        }
-    }
-
-    fn enter_pressed<W: Write>(&mut self, screen: &mut W) {
-        match self.layout_position {
-            1 => {
-                if self.checkout_git_branch(screen, &self.current_branch.to_string()) {
-                } else {
-                }
-            }
-            2 => {}
             _ => {}
         }
     }
