@@ -449,7 +449,7 @@ impl RenderGit for TuiGit {
                             .as_str();
                         } else if decoration.starts_with("origin/") {
                             decoration_out += format!(
-                                " {}{}{}",
+                                "{}{}{}",
                                 termion::color::Fg(termion::color::Red),
                                 decoration,
                                 termion::color::Fg(termion::color::Reset),
@@ -457,7 +457,7 @@ impl RenderGit for TuiGit {
                             .as_str();
                         } else {
                             decoration_out += format!(
-                                " {}{}{}",
+                                "{}{}{}",
                                 termion::color::Fg(termion::color::Green),
                                 decoration,
                                 termion::color::Fg(termion::color::Reset),
