@@ -222,17 +222,17 @@ impl RenderGit for TuiGit {
             // Show "git diff".
             match log.chars().next().unwrap() {
                 '-' => {
-                    write!(screen, "{}", termion::color::Fg(termion::color::Red)).unwrap();
+                    write!(screen, "{}", termion::color::Fg(termion::color::LightRed)).unwrap();
                 }
                 '+' => {
-                    write!(screen, "{}", termion::color::Fg(termion::color::Green)).unwrap();
+                    write!(screen, "{}", termion::color::Fg(termion::color::LightGreen)).unwrap();
                 }
                 _ => {}
             }
         } else {
             // Show "git log".
             if log.starts_with("commit") {
-                write!(screen, "{}", termion::color::Fg(termion::color::Yellow)).unwrap();
+                write!(screen, "{}", termion::color::Fg(termion::color::LightYellow)).unwrap();
                 let split_log: Vec<_> = log.split('(').collect();
                 if split_log.len() == 2 {
                     write!(
@@ -255,8 +255,8 @@ impl RenderGit for TuiGit {
                         if decoration.starts_with("HEAD -> ") {
                             decoration_out += format!(
                                 "{}HEAD -> {}{}{}",
-                                termion::color::Fg(termion::color::Cyan),
-                                termion::color::Fg(termion::color::Green),
+                                termion::color::Fg(termion::color::LightCyan),
+                                termion::color::Fg(termion::color::LightGreen),
                                 decoration.strip_prefix("HEAD -> ").unwrap(),
                                 termion::color::Fg(termion::color::Reset),
                             )
@@ -264,7 +264,7 @@ impl RenderGit for TuiGit {
                         } else if decoration.starts_with("origin/") {
                             decoration_out += format!(
                                 "{}{}{}",
-                                termion::color::Fg(termion::color::Red),
+                                termion::color::Fg(termion::color::LightRed),
                                 decoration,
                                 termion::color::Fg(termion::color::Reset),
                             )
@@ -272,7 +272,7 @@ impl RenderGit for TuiGit {
                         } else {
                             decoration_out += format!(
                                 "{}{}{}",
-                                termion::color::Fg(termion::color::Green),
+                                termion::color::Fg(termion::color::LightGreen),
                                 decoration,
                                 termion::color::Fg(termion::color::Reset),
                             )
