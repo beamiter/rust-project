@@ -47,7 +47,7 @@ fn main() {
                 // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
                 let mut bufs = vec![];
                 let mut buffer: &str = "";
-                tui_git.show_and_stay_in_status_bar(&mut screen, &"branch: ".to_string());
+                tui_git.show_and_stay_in_status_bar(&mut screen, &"git fetch and check: ".to_string());
                 loop {
                     let b = stdin().lock().bytes().next().unwrap().unwrap();
                     match char::from(b) {
@@ -69,7 +69,7 @@ fn main() {
                     buffer = str::from_utf8(&bufs).unwrap();
                     tui_git.show_and_stay_in_status_bar(
                         &mut screen,
-                        &format!("branch: {}", buffer.to_string()).to_string(),
+                        &format!("get fetch and check: {}", buffer.to_string()).to_string(),
                     );
                 }
             }
@@ -77,7 +77,7 @@ fn main() {
                 // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
                 let mut bufs = vec![];
                 let mut buffer: &str = "";
-                tui_git.show_and_stay_in_status_bar(&mut screen, &"branch: ".to_string());
+                tui_git.show_and_stay_in_status_bar(&mut screen, &"git checkout: ".to_string());
                 loop {
                     let b = stdin().lock().bytes().next().unwrap().unwrap();
                     match char::from(b) {
@@ -99,7 +99,7 @@ fn main() {
                     buffer = str::from_utf8(&bufs).unwrap();
                     tui_git.show_and_stay_in_status_bar(
                         &mut screen,
-                        &format!("branch: {}", buffer.to_string()).to_string(),
+                        &format!("git checkout: {}", buffer.to_string()).to_string(),
                     );
                 }
             }
