@@ -44,6 +44,9 @@ impl Position {
     pub fn init(c: u16, r: u16) -> Position {
         Position { col: c, row: r }
     }
+    pub fn unpack(self) -> (u16, u16) {
+        return (self.col, self.row);
+    }
 }
 
 struct TuiGit {
@@ -90,7 +93,7 @@ impl TuiGit {
         TuiGit {
             branch_row_top: 2,
             branch_row_bottom: 0,
-            branch_col_left: 5,
+            branch_col_left: 4,
             branch_col_right: 0,
             log_row_top: 2,
             log_row_bottom: 0,
@@ -764,9 +767,11 @@ impl RenderGit for TuiGit {
     }
 
     fn left_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool) {
-        let (x, mut y) = screen.cursor_pos().unwrap();
-        // Clear previous.
-        write!(screen, "{} ", termion::cursor::Goto(1, y)).unwrap();
+        // Reset something here.
+        self.previous_pos = self.current_pos;
+        self.log_scroll_offset = 0;
+
+        let (x, mut y) = self.current_pos.unpack();
         if up {
             if y > self.branch_row_top as u16 && y <= self.branch_row_bottom as u16 {
                 y = y - 1;
@@ -780,30 +785,25 @@ impl RenderGit for TuiGit {
                 y = self.branch_row_top as u16;
             }
         }
+        self.current_pos = Position::init(x, y);
         self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
         self.show_in_bottom_bar(
             screen,
             &format!(
                 "c: {}, r: {}, branch: {}, branch_row: {}",
-                x,
-                y,
+                self.current_pos.col,
+                self.current_pos.row,
                 self.current_branch,
                 *self.branch_row_map.get(&self.current_branch).unwrap() as u16,
             )
             .to_string(),
         );
-        write!(
+        self.show_icon_after_cursor(
             screen,
-            "{}{}{}",
-            termion::cursor::Goto(1, y),
             UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
-            termion::cursor::Goto(1, y),
-        )
-        .unwrap();
+        );
         // Update current_branch.
         self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
-        // Need to reset this!
-        self.log_scroll_offset = 0;
         // Show the log.
         self.update_git_log(&self.current_branch.to_string());
         self.current_log_vec = self
@@ -816,14 +816,7 @@ impl RenderGit for TuiGit {
     }
 
     fn right_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool) {
-        let (x, mut y) = screen.cursor_pos().unwrap();
-        // Clear previous.
-        write!(
-            screen,
-            "{} ",
-            termion::cursor::Goto(self.log_col_left as u16 - 2, y)
-        )
-        .unwrap();
+        let (x, mut y) = self.current_pos.unpack();
         if up {
             if y == self.log_row_top as u16 {
                 // For a close loop browse.
