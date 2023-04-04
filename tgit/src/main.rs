@@ -194,7 +194,8 @@ trait RenderGit {
     fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
     fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
 
-    fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
+    fn checkout_local_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
+    fn checkout_remote_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn delete_git_branch<W: Write>(&mut self, screen: &mut W) -> bool;
 
     fn cursor_to_main<W: Write>(&self, screen: &mut W);
@@ -433,7 +434,32 @@ impl RenderGit for TuiGit {
             self.branch_delete_set.clear();
         }
     }
-    fn checkout_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
+    fn checkout_remote_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
+        let output = Command::new("git")
+            .args(["fetch", "origin", branch.as_str()])
+            .output()
+            .expect("failed to execute process");
+        if !output.status.success() {
+            self.show_in_status_bar(
+                screen,
+                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
+            );
+            return false;
+        } else {
+            self.show_in_status_bar(
+                screen,
+                &format!(
+                    "✅ Fetch origin branch {}{}{} succeed.",
+                    color::Fg(color::Green),
+                    branch,
+                    color::Fg(color::LightYellow),
+                )
+                .to_string(),
+            );
+        }
+        return self.checkout_local_git_branch(screen, branch);
+    }
+    fn checkout_local_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
         if branch == &self.main_branch {
             self.show_in_status_bar(
                 screen,
@@ -600,7 +626,7 @@ impl RenderGit for TuiGit {
         match self.layout_position {
             1 => {
                 if self.branch_delete_set.is_empty() {
-                    self.checkout_git_branch(screen, &self.current_branch.to_string());
+                    self.checkout_local_git_branch(screen, &self.current_branch.to_string());
                 }
             }
             2 => {}
@@ -895,10 +921,7 @@ fn main() {
                     if char::from(b) != '\r' {
                         bufs.push(b);
                     } else {
-                        tui_git.show_in_status_bar(
-                            &mut screen,
-                            &format!("Switch to a new branch: {}", buffer.to_string()).to_string(),
-                        );
+                        tui_git.checkout_remote_git_branch(&mut screen, &buffer.to_string());
                         break;
                     }
                     buffer = str::from_utf8(&bufs).unwrap();
