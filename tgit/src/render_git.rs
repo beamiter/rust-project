@@ -14,6 +14,7 @@ pub trait RenderGit {
     fn show_log_in_right_panel<W: Write>(&mut self, screen: &mut W);
 
     fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
+    fn show_and_stay_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
     fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
 
     fn reset_cursor_to_main<W: Write>(&mut self, screen: &mut W);
@@ -165,6 +166,20 @@ impl RenderGit for TuiGit {
             termion::cursor::Goto(x, y)
         )
         .unwrap();
+        screen.flush().unwrap();
+    }
+    fn show_and_stay_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
+        let (col, row) = termion::terminal_size().unwrap();
+        self.status_bar_row = row as usize - 1;
+        write!(
+            screen,
+            "{}{}{}",
+            termion::cursor::Goto(1, self.status_bar_row as u16),
+            termion::clear::CurrentLine,
+            color::Fg(color::LightYellow),
+        )
+        .unwrap();
+        write!(screen, "{}", &log.as_str()[..(col as usize).min(log.len())]).unwrap();
         screen.flush().unwrap();
     }
     fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String) {

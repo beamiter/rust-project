@@ -1,14 +1,14 @@
 extern crate termion;
 
 pub mod action_git;
+pub mod event_git;
 pub mod render_git;
 pub mod tui_git;
-pub mod event_git;
 
 use crate::action_git::*;
+use crate::event_git::*;
 use crate::render_git::*;
 use crate::tui_git::*;
-use crate::event_git::*;
 
 use std::str;
 use std::{
@@ -44,19 +44,30 @@ fn main() {
                 break;
             }
             Key::Char('a') => {
+                // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
                 let mut bufs = vec![];
                 let mut buffer: &str = "";
-                tui_git.show_in_status_bar(&mut screen, &"branch: ".to_string());
+                tui_git.show_and_stay_in_status_bar(&mut screen, &"branch: ".to_string());
                 loop {
                     let b = stdin().lock().bytes().next().unwrap().unwrap();
-                    if char::from(b) != '\r' {
-                        bufs.push(b);
-                    } else {
-                        tui_git.checkout_remote_git_branch(&mut screen, &buffer.to_string());
-                        break;
+                    match char::from(b) {
+                        '\r' => {
+                            tui_git.checkout_remote_git_branch(&mut screen, &buffer.to_string());
+                            break;
+                        }
+                        _ => {
+                            // Backslash '\\'
+                            if b == 127 {
+                                if !bufs.is_empty() {
+                                    bufs.remove(bufs.len() - 1);
+                                }
+                            } else {
+                                bufs.push(b);
+                            }
+                        }
                     }
                     buffer = str::from_utf8(&bufs).unwrap();
-                    tui_git.show_in_status_bar(
+                    tui_git.show_and_stay_in_status_bar(
                         &mut screen,
                         &format!("branch: {}", buffer.to_string()).to_string(),
                     );
