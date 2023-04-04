@@ -38,7 +38,7 @@ impl EventGit for TuiGit {
             }
         }
         self.branch_delete_set.clear();
-        self.refresh_with_branch(screen, &self.main_branch.to_string());
+        self.refresh_frame_with_branch(screen, &self.main_branch.to_string());
         return true;
     }
     fn checkout_remote_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
@@ -101,7 +101,7 @@ impl EventGit for TuiGit {
                 )
                 .to_string(),
             );
-            self.refresh_with_branch(screen, &self.main_branch.to_string());
+            self.refresh_frame_with_branch(screen, &self.main_branch.to_string());
         }
         output.status.success()
     }

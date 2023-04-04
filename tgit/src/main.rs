@@ -35,7 +35,7 @@ fn main() {
         .unwrap();
     // write!(screen, "{}", termion::cursor::Hide).unwrap();
 
-    tui_git.refresh_with_branch(&mut screen, &tui_git.main_branch.to_string());
+    tui_git.refresh_frame_with_branch(&mut screen, &tui_git.main_branch.to_string());
 
     // Start with the main branch row.
     for c in stdin().keys() {
