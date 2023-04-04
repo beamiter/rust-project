@@ -43,7 +43,7 @@ fn main() {
             Key::Char('q') => {
                 break;
             }
-            Key::Char('a') => {
+            Key::Char('f') => {
                 // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
                 let mut bufs = vec![];
                 let mut buffer: &str = "";
@@ -53,6 +53,36 @@ fn main() {
                     match char::from(b) {
                         '\r' => {
                             tui_git.checkout_remote_git_branch(&mut screen, &buffer.to_string());
+                            break;
+                        }
+                        _ => {
+                            // Backslash '\\'
+                            if b == 127 {
+                                if !bufs.is_empty() {
+                                    bufs.remove(bufs.len() - 1);
+                                }
+                            } else {
+                                bufs.push(b);
+                            }
+                        }
+                    }
+                    buffer = str::from_utf8(&bufs).unwrap();
+                    tui_git.show_and_stay_in_status_bar(
+                        &mut screen,
+                        &format!("branch: {}", buffer.to_string()).to_string(),
+                    );
+                }
+            }
+            Key::Char('c') => {
+                // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
+                let mut bufs = vec![];
+                let mut buffer: &str = "";
+                tui_git.show_and_stay_in_status_bar(&mut screen, &"branch: ".to_string());
+                loop {
+                    let b = stdin().lock().bytes().next().unwrap().unwrap();
+                    match char::from(b) {
+                        '\r' => {
+                            tui_git.checkout_local_git_branch(&mut screen, &buffer.to_string());
                             break;
                         }
                         _ => {
