@@ -786,7 +786,6 @@ impl RenderGit for TuiGit {
             }
         }
         self.current_pos = Position::init(x, y);
-        self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
         self.show_in_bottom_bar(
             screen,
             &format!(
@@ -798,6 +797,7 @@ impl RenderGit for TuiGit {
             )
             .to_string(),
         );
+        self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
         self.show_icon_after_cursor(
             screen,
             UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
@@ -816,6 +816,9 @@ impl RenderGit for TuiGit {
     }
 
     fn right_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool) {
+        // Reset something here.
+        self.previous_pos = self.current_pos;
+
         let (x, mut y) = self.current_pos.unpack();
         if up {
             if y == self.log_row_top as u16 {
@@ -844,24 +847,23 @@ impl RenderGit for TuiGit {
                 }
             }
         }
+        self.current_pos = Position::init(x, y);
         self.show_in_bottom_bar(
             screen,
             &format!(
                 "c: {}, r: {}, r_bottom: {}, log: {}",
-                x,
-                y,
+                self.current_pos.col,
+                self.current_pos.row,
                 self.log_row_bottom,
                 self.row_log_map.get(&(y as usize)).unwrap(),
             )
             .to_string(),
         );
-        write!(
+        self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
+        self.show_icon_after_cursor(
             screen,
-            "{}{}",
-            termion::cursor::Goto(self.log_col_left as u16 - 2, y),
-            UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]
-        )
-        .unwrap();
+            UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
+        );
         screen.flush().unwrap();
     }
 
