@@ -88,16 +88,16 @@ fn main() {
             Key::Char('\n') => {
                 tui_git.enter_pressed(&mut screen);
             }
-            Key::Left => {
+            Key::Left | Key::Char('h') => {
                 tui_git.move_cursor_left(&mut screen);
             }
-            Key::Right => {
+            Key::Right | Key::Char('l') => {
                 tui_git.move_cursor_right(&mut screen);
             }
-            Key::Up => {
+            Key::Up | Key::Char('k') => {
                 tui_git.move_cursor_up(&mut screen);
             }
-            Key::Down => {
+            Key::Down | Key::Char('j') => {
                 tui_git.move_cursor_down(&mut screen);
             }
             _ => {}
