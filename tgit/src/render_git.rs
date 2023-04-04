@@ -31,7 +31,6 @@ pub trait RenderGit {
 
 impl RenderGit for TuiGit {
     fn show_title_in_top_panel<W: Write>(&mut self, screen: &mut W) {
-        self.layout_position = 0;
         write!(
             screen,
             "{}{}{}{}Welcome to tui git{}{}{}\n",
@@ -46,7 +45,6 @@ impl RenderGit for TuiGit {
         .unwrap();
     }
     fn show_branch_in_left_panel<W: Write>(&mut self, screen: &mut W) {
-        self.layout_position = 1;
         let (col, row) = termion::terminal_size().unwrap();
         let x_tmp = self.branch_col_left;
         if col <= x_tmp as u16 {
@@ -218,7 +216,9 @@ impl RenderGit for TuiGit {
         if log.is_empty() {
             return;
         }
-        if self.branch_diff_toggle {
+        if let LayoutMode::LeftPanel(ContentType::Diff)
+        | LayoutMode::RightPanel(ContentType::Diff) = self.layout_mode
+        {
             // Show "git diff".
             match log.chars().next().unwrap() {
                 '-' => {

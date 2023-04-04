@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use substring::Substring;
 
+// https://symbl.cc/en/
 pub const UNICODE_TABLE: [&'static str; 12] = [
     "\u{1f407}",
     "\u{1f411}",
@@ -17,7 +18,7 @@ pub const UNICODE_TABLE: [&'static str; 12] = [
     "\u{1f341}",
 ];
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq, Eq)]
 pub struct Position {
     pub col: u16,
     pub row: u16,
@@ -32,6 +33,18 @@ impl Position {
     pub fn unpack(self) -> (u16, u16) {
         return (self.col, self.row);
     }
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ContentType {
+    Delete,
+    Diff,
+    Log,
+    Status,
+}
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum LayoutMode {
+    LeftPanel(ContentType),
+    RightPanel(ContentType),
 }
 
 pub struct TuiGit {
@@ -58,7 +71,6 @@ pub struct TuiGit {
     pub branch_log_map: HashMap<String, Vec<String>>,
     pub row_log_map: HashMap<usize, String>,
     pub branch_diff_vec: Vec<String>,
-    pub branch_diff_toggle: bool,
     pub branch_delete_set: HashSet<String>,
 
     // Main branch;
@@ -67,7 +79,7 @@ pub struct TuiGit {
     pub current_log_vec: Vec<String>,
 
     // 0 for title, 1 for branch, 2 for log and e.t.c.
-    pub layout_position: usize,
+    pub layout_mode: LayoutMode,
     pub key_move_counter: usize,
 
     pub previous_pos: Position,
@@ -87,7 +99,6 @@ impl TuiGit {
             status_bar_row: 0,
             bottom_bar_row: 0,
             branch_vec: vec![],
-            branch_diff_toggle: false,
             branch_delete_set: HashSet::new(),
             branch_row_map: HashMap::new(),
             row_branch_map: HashMap::new(),
@@ -97,7 +108,7 @@ impl TuiGit {
             main_branch: String::new(),
             current_branch: String::new(),
             current_log_vec: vec![],
-            layout_position: 0,
+            layout_mode: LayoutMode::LeftPanel(ContentType::Log),
             key_move_counter: 0,
             previous_pos: Position::new(),
             current_pos: Position::new(),

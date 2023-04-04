@@ -71,7 +71,7 @@ impl EventGit for TuiGit {
             self.show_in_status_bar(
                 screen,
                 &format!(
-                    "☑ Already in target branch {}{}{}, enter 'q' to quit.",
+                    "👻 Already in target branch {}{}{}, enter 'q' to quit.",
                     color::Fg(color::Green),
                     branch,
                     color::Fg(color::LightYellow),

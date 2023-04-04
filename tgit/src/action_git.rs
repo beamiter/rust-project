@@ -1,7 +1,7 @@
 extern crate termion;
+use crate::event_git::*;
 use crate::render_git::*;
 use crate::tui_git::*;
-use crate::event_git::*;
 
 use std::io::Write;
 
@@ -22,64 +22,79 @@ pub trait ActionGit {
 impl ActionGit for TuiGit {
     // https://symbl.cc/en/
     fn move_cursor_up<W: Write>(&mut self, screen: &mut W) {
-        match self.layout_position {
-            1 => {
-                if self.branch_diff_toggle {
+        match self.layout_mode {
+            LayoutMode::LeftPanel(content) => match content {
+                ContentType::Diff => {
                     return;
                 }
-                self.left_panel_handler(screen, true);
-            }
-            2 => {
+                _ => {
+                    self.left_panel_handler(screen, true);
+                }
+            },
+            LayoutMode::RightPanel(_) => {
                 self.right_panel_handler(screen, true);
             }
-            _ => {}
         }
     }
 
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W) {
-        match self.layout_position {
-            1 => {
-                if self.branch_diff_toggle {
+        match self.layout_mode {
+            LayoutMode::LeftPanel(content) => match content {
+                ContentType::Diff => {
                     return;
                 }
-                self.left_panel_handler(screen, false);
-            }
-            2 => {
+                _ => {
+                    self.left_panel_handler(screen, false);
+                }
+            },
+            LayoutMode::RightPanel(_) => {
                 self.right_panel_handler(screen, false);
             }
-            _ => {}
         }
     }
     fn move_cursor_left<W: Write>(&mut self, screen: &mut W) {
-        if self.layout_position == 1 {
-            return;
+        match self.layout_mode {
+            LayoutMode::LeftPanel(_) => {
+                return;
+            }
+            LayoutMode::RightPanel(content) => {
+                self.layout_mode = LayoutMode::LeftPanel(content);
+            }
         }
-        self.layout_position = 1;
         // Must update position.
         self.previous_pos = self.current_pos;
         self.current_pos = Position::init(
             1,
             *self.branch_row_map.get(&self.current_branch).unwrap() as u16,
         );
-        self.show_icon_after_cursor(screen, "❆");
+        self.show_icon_after_cursor(screen, "🏆");
     }
 
     fn move_cursor_right<W: Write>(&mut self, screen: &mut W) {
-        if self.layout_position == 2 {
-            return;
+        match self.layout_mode {
+            LayoutMode::LeftPanel(content) => match content {
+                ContentType::Delete => {
+                    return;
+                }
+                _ => {
+                    self.layout_mode = LayoutMode::RightPanel(content);
+                }
+            },
+            LayoutMode::RightPanel(_) => {
+                return;
+            }
         }
-        if !self.branch_delete_set.is_empty() {
-            return;
-        }
-        self.layout_position = 2;
         // Must update position.
         self.previous_pos = self.current_pos;
         self.current_pos = Position::init(self.log_col_left as u16 - 3, self.log_row_top as u16);
         self.show_icon_after_cursor(screen, "✍");
     }
     fn upper_d_pressed<W: Write>(&mut self, screen: &mut W) {
-        if self.layout_position != 1 {
-            return;
+        match self.layout_mode {
+            LayoutMode::LeftPanel(_) => {}
+            _ => {
+                return;
+            }
         }
         if self.current_branch == self.main_branch {
             self.show_in_status_bar(
@@ -148,37 +163,43 @@ impl ActionGit for TuiGit {
         }
     }
     fn enter_pressed<W: Write>(&mut self, screen: &mut W) {
-        match self.layout_position {
-            1 => {
-                if self.branch_delete_set.is_empty() {
+        match self.layout_mode {
+            LayoutMode::LeftPanel(content) => match content {
+                ContentType::Log => {
                     self.checkout_local_git_branch(screen, &self.current_branch.to_string());
                 }
+                _ => {}
+            },
+            LayoutMode::RightPanel(_) => {
+                return;
             }
-            2 => {}
-            _ => {}
         }
     }
     fn lower_d_pressed<W: Write>(&mut self, screen: &mut W) {
-        self.log_scroll_offset = 0;
-        self.branch_diff_toggle = !self.branch_diff_toggle;
-        if self.branch_diff_toggle {
-            self.update_git_diff(&self.current_branch.to_string());
-            self.current_log_vec = self.branch_diff_vec.to_vec();
-            self.show_log_in_right_panel(screen);
-            if self.layout_position == 1 {
-                self.move_cursor_right(screen);
+        match self.layout_mode {
+            LayoutMode::LeftPanel(content) => {
+                self.log_scroll_offset = 0;
+                match content {
+                    ContentType::Diff => {
+                        self.layout_mode = LayoutMode::LeftPanel(ContentType::Log);
+                        self.update_git_log(&self.current_branch.to_string());
+                        self.current_log_vec = self
+                            .branch_log_map
+                            .get(&self.current_branch.to_string())
+                            .unwrap()
+                            .to_vec();
+                        self.show_log_in_right_panel(screen);
+                    }
+                    ContentType::Log => {
+                        self.layout_mode = LayoutMode::LeftPanel(ContentType::Diff);
+                        self.update_git_diff(&self.current_branch.to_string());
+                        self.current_log_vec = self.branch_diff_vec.to_vec();
+                        self.show_log_in_right_panel(screen);
+                    }
+                    _ => {}
+                }
             }
-        } else {
-            self.update_git_log(&self.current_branch.to_string());
-            self.current_log_vec = self
-                .branch_log_map
-                .get(&self.current_branch.to_string())
-                .unwrap()
-                .to_vec();
-            self.show_log_in_right_panel(screen);
-            if self.layout_position == 2 {
-                self.move_cursor_left(screen);
-            }
+            _ => {}
         }
     }
 }
