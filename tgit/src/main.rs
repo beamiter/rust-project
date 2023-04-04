@@ -1,8 +1,10 @@
 extern crate termion;
 
+pub mod action_git;
 pub mod render_git;
 pub mod tui_git;
 
+use crate::action_git::*;
 use crate::render_git::*;
 use crate::tui_git::*;
 
