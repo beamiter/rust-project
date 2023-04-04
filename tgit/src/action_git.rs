@@ -1,6 +1,7 @@
 extern crate termion;
 use crate::render_git::*;
 use crate::tui_git::*;
+use crate::event_git::*;
 
 use std::io::Write;
 

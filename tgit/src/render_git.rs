@@ -1,8 +1,8 @@
 extern crate termion;
 use crate::tui_git::*;
 
+use std::io::Write;
 use std::str;
-use std::{io::Write, process::Command};
 use substring::Substring;
 
 use termion::cursor::DetectCursorPos;
@@ -16,15 +16,11 @@ pub trait RenderGit {
     fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
     fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
 
-    fn checkout_local_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
-    fn checkout_remote_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
-    fn delete_git_branch<W: Write>(&mut self, screen: &mut W) -> bool;
-
     fn reset_cursor_to_main<W: Write>(&mut self, screen: &mut W);
 
-    fn display_line_log<W: Write>(&self, screen: &mut W, log: &String, x_tmp: u16, y_tmp: u16);
+    fn render_single_line<W: Write>(&self, screen: &mut W, log: &String, x_tmp: u16, y_tmp: u16);
 
-    fn refresh_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
+    fn refresh_frame_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
 
     fn left_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool);
     fn right_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool);
@@ -138,7 +134,7 @@ impl RenderGit for TuiGit {
             self.log_row_bottom = y_tmp;
             let sub_log = log.substring(0, (col - x_tmp as u16) as usize);
             if !sub_log.is_empty() {
-                self.display_line_log(screen, &sub_log.to_string(), x_tmp as u16, y_tmp as u16);
+                self.render_single_line(screen, &sub_log.to_string(), x_tmp as u16, y_tmp as u16);
             }
             self.row_log_map.insert(y_tmp, sub_log.to_string());
             // Spare 2 for check info.
@@ -194,99 +190,6 @@ impl RenderGit for TuiGit {
         screen.flush().unwrap();
     }
 
-    fn delete_git_branch<W: Write>(&mut self, screen: &mut W) -> bool {
-        for branch in self.branch_delete_set.to_owned() {
-            let output = Command::new("git")
-                .args(["branch", "-D", branch.as_str()])
-                .output()
-                .expect("failed to execute process");
-            if !output.status.success() {
-                self.show_in_status_bar(
-                    screen,
-                    &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
-                );
-                return false;
-            } else {
-                self.show_in_status_bar(
-                    screen,
-                    &format!(
-                        "✅ Delete branch {}{}{} finished.",
-                        color::Fg(color::Red),
-                        branch,
-                        color::Fg(color::LightYellow),
-                    )
-                    .to_string(),
-                );
-            }
-        }
-        self.branch_delete_set.clear();
-        self.refresh_with_branch(screen, &self.main_branch.to_string());
-        return true;
-    }
-    fn checkout_remote_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
-        let output = Command::new("git")
-            .args(["fetch", "origin", branch.as_str()])
-            .output()
-            .expect("failed to execute process");
-        if !output.status.success() {
-            self.show_in_status_bar(
-                screen,
-                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
-            );
-            return false;
-        } else {
-            self.show_in_status_bar(
-                screen,
-                &format!(
-                    "✅ Fetch origin branch {}{}{} succeed.",
-                    color::Fg(color::Green),
-                    branch,
-                    color::Fg(color::LightYellow),
-                )
-                .to_string(),
-            );
-        }
-        return self.checkout_local_git_branch(screen, branch);
-    }
-    fn checkout_local_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
-        if branch == &self.main_branch {
-            self.show_in_status_bar(
-                screen,
-                &format!(
-                    "☑ Already in target branch {}{}{}, enter 'q' to quit.",
-                    color::Fg(color::Green),
-                    branch,
-                    color::Fg(color::LightYellow),
-                )
-                .to_string(),
-            );
-            return true;
-        }
-        let output = Command::new("git")
-            .args(["checkout", branch.as_str()])
-            .output()
-            .expect("failed to execute process");
-        if !output.status.success() {
-            self.show_in_status_bar(
-                screen,
-                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
-            );
-        } else {
-            self.main_branch = branch.to_string();
-            self.show_in_status_bar(
-                screen,
-                &format!(
-                    "✅ Checkout to target branch {}{}{}, enter 'q' to quit",
-                    color::Fg(color::Green),
-                    branch,
-                    color::Fg(color::LightYellow),
-                )
-                .to_string(),
-            );
-            self.refresh_with_branch(screen, &self.main_branch.to_string());
-        }
-        output.status.success()
-    }
     fn reset_cursor_to_main<W: Write>(&mut self, screen: &mut W) {
         self.current_pos = Position {
             col: 1,
@@ -296,7 +199,7 @@ impl RenderGit for TuiGit {
         self.show_icon_after_cursor(screen, "🌟");
     }
 
-    fn display_line_log<W: Write>(&self, screen: &mut W, log: &String, x_tmp: u16, y_tmp: u16) {
+    fn render_single_line<W: Write>(&self, screen: &mut W, log: &String, x_tmp: u16, y_tmp: u16) {
         if log.is_empty() {
             return;
         }
@@ -387,7 +290,7 @@ impl RenderGit for TuiGit {
         .unwrap();
     }
 
-    fn refresh_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String) {
+    fn refresh_frame_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String) {
         // Reset with main branch.
         self.current_branch = branch.to_string();
         self.show_title_in_top_panel(screen);
@@ -523,4 +426,3 @@ impl RenderGit for TuiGit {
         screen.flush().unwrap();
     }
 }
-
