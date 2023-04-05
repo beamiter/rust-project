@@ -202,9 +202,6 @@ impl EventGit for TuiGit {
             );
         }
         if let Some(buffer) = buffers_iter.next() {
-            // let mut commit_msg = String::from("\"");
-            // commit_msg = commit_msg + &buffer;
-            // commit_msg.push_str("\"");
             command_vec.push(buffer);
         }
         // self.show_in_status_bar(
