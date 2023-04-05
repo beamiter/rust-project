@@ -10,6 +10,7 @@ pub trait EventGit {
     fn checkout_new_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn checkout_remote_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn delete_git_branch<W: Write>(&mut self, screen: &mut W) -> bool;
+    fn execute_normal_command<W: Write>(&mut self, screen: &mut W, command: &String) -> bool;
 }
 
 impl EventGit for TuiGit {
@@ -22,7 +23,7 @@ impl EventGit for TuiGit {
             if !output.status.success() {
                 self.show_in_status_bar(
                     screen,
-                    &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
+                    &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr)).to_string(),
                 );
                 return false;
             } else {
@@ -50,7 +51,7 @@ impl EventGit for TuiGit {
         if !output.status.success() {
             self.show_in_status_bar(
                 screen,
-                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
+                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr)).to_string(),
             );
             return false;
         } else {
@@ -88,7 +89,7 @@ impl EventGit for TuiGit {
         if !output.status.success() {
             self.show_in_status_bar(
                 screen,
-                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
+                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr)).to_string(),
             );
         } else {
             self.main_branch = branch.to_string();
@@ -127,7 +128,7 @@ impl EventGit for TuiGit {
         if !output.status.success() {
             self.show_in_status_bar(
                 screen,
-                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
+                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr)).to_string(),
             );
         } else {
             self.main_branch = branch.to_string();
@@ -142,6 +143,35 @@ impl EventGit for TuiGit {
                 .to_string(),
             );
             self.refresh_frame_with_branch(screen, &self.main_branch.to_string());
+        }
+        output.status.success()
+    }
+    fn execute_normal_command<W: Write>(&mut self, screen: &mut W, command: &String) -> bool {
+        let command_vec = command.split(' ').collect::<Vec<&str>>();
+        println!("{:?}", command_vec);
+        let output = match command_vec.len() {
+            1 => Command::new(command_vec[0])
+                .output()
+                .expect("failed to execute process"),
+            2 => Command::new(command_vec[0])
+                .arg(command_vec[1])
+                .output()
+                .expect("failed to execute process"),
+            _ => Command::new(command_vec[0])
+                .args(&command_vec[1..])
+                .output()
+                .expect("failed to execute process"),
+        };
+        if !output.status.success() {
+            self.show_in_status_bar(
+                screen,
+                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr)).to_string(),
+            );
+        } else {
+            self.show_in_status_bar(
+                screen,
+                &format!("✅ {:?}", String::from_utf8_lossy(&output.stdout)).to_string(),
+            );
         }
         output.status.success()
     }
