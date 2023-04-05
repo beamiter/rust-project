@@ -151,6 +151,7 @@ fn main() {
                 let mut bufs = vec![];
                 let mut buffer = String::new();
                 tui_git.show_and_stay_in_status_bar(&mut screen, &"cmd: ".to_string());
+                let mut arrow_moved: bool = false;
                 for b in stdin().lock().bytes() {
                     match b {
                         Ok(b'\r') | Ok(b'\n') => {
@@ -164,6 +165,12 @@ fn main() {
                         }
                         Ok(c) => {
                             bufs.push(c);
+                            if let Ok(0x1b) = b {
+                                // Come to "escape".
+                                arrow_moved = true;
+                            }
+                            if arrow_moved && bufs.ends_with(b"[D") {
+                            }
                         }
                         Err(_) => {}
                     }
