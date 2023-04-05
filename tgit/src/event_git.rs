@@ -229,7 +229,15 @@ impl EventGit for TuiGit {
         } else {
             self.show_in_status_bar(
                 screen,
-                &format!("✅ {:?}", String::from_utf8_lossy(&output.stdout)).to_string(),
+                &format!(
+                    "✅ {:?}",
+                    if output.stdout.is_empty() {
+                        "Process finished.".to_string()
+                    } else {
+                        String::from_utf8_lossy(&output.stdout).to_string()
+                    }
+                )
+                .to_string(),
             );
         }
         output.status.success()
