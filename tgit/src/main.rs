@@ -149,13 +149,12 @@ fn main() {
             Key::Char(':') => {
                 // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
                 let mut bufs = vec![];
-                let mut buffer = String::new();
+                let mut buffer: &str = "";
                 tui_git.show_and_stay_in_status_bar(&mut screen, &"cmd: ".to_string());
-                let mut arrow_moved: bool = false;
                 for b in stdin().lock().bytes() {
                     match b {
                         Ok(b'\r') | Ok(b'\n') => {
-                            tui_git.execute_normal_command(&mut screen, &buffer.to_string());
+                            tui_git.execute_normal_command(&mut screen, &buffer);
                             break;
                         }
                         // Backspace '\b'
@@ -165,16 +164,10 @@ fn main() {
                         }
                         Ok(c) => {
                             bufs.push(c);
-                            if let Ok(0x1b) = b {
-                                // Come to "escape".
-                                arrow_moved = true;
-                            }
-                            if arrow_moved && bufs.ends_with(b"[D") {
-                            }
                         }
                         Err(_) => {}
                     }
-                    buffer = String::from_utf8(bufs.clone()).unwrap();
+                    buffer = str::from_utf8(&bufs).unwrap();
                     tui_git.show_and_stay_in_status_bar(
                         &mut screen,
                         &format!("cmd: {}", buffer.to_string()).to_string(),

@@ -2,7 +2,7 @@ extern crate termion;
 use crate::render_git::*;
 use crate::tui_git::*;
 
-use std::{io::Write, process::Command};
+use std::{io::Write, process::Command, str};
 use termion::color;
 
 pub trait EventGit {
@@ -10,7 +10,7 @@ pub trait EventGit {
     fn checkout_new_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn checkout_remote_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn delete_git_branch<W: Write>(&mut self, screen: &mut W) -> bool;
-    fn execute_normal_command<W: Write>(&mut self, screen: &mut W, command: &String) -> bool;
+    fn execute_normal_command<W: Write>(&mut self, screen: &mut W, command: &str) -> bool;
 }
 
 impl EventGit for TuiGit {
@@ -146,19 +146,77 @@ impl EventGit for TuiGit {
         }
         output.status.success()
     }
-    fn execute_normal_command<W: Write>(&mut self, screen: &mut W, command: &String) -> bool {
-        let command_vec = command.split(' ').collect::<Vec<&str>>();
-        self.show_in_status_bar(screen, &format!("❌ {:?}", command).to_string());
-        return false;
+    fn execute_normal_command<W: Write>(&mut self, screen: &mut W, command: &str) -> bool {
+        let mut arrow_escape: Vec<char> = vec![];
+        let mut bufs: Vec<u8> = vec![];
+        bufs.resize(command.len(), b' ');
+        let mut i: usize = 0;
+        for c in command.bytes() {
+            match c {
+                0x1b => {
+                    arrow_escape.push(char::from(c));
+                }
+                b'[' => {
+                    if let Some('\u{1b}') = arrow_escape.last() {
+                        arrow_escape.push(char::from(c));
+                    }
+                }
+                _ => {
+                    if let Some('[') = arrow_escape.last() {
+                        arrow_escape.push(char::from(c));
+                        if i > 0 {
+                            i -= 1;
+                        }
+                        continue;
+                    }
+                    bufs[i] = c;
+                    i += 1;
+                }
+            }
+        }
+        // Truncate the pre-reserved.
+        bufs.truncate(i);
+        let mut bufs_vec = bufs.split(|&x| x == b'"');
+        let mut buffers: Vec<String> = vec![];
+        loop {
+            if let Some(buf) = bufs_vec.next() {
+                if !buf.is_empty() {
+                    buffers.push(String::from_utf8(buf.to_vec()).unwrap());
+                }
+            } else {
+                break;
+            }
+        }
+        if buffers.is_empty() {
+            self.show_in_status_bar(screen, &format!("❌ {:?}", buffers).to_string());
+            return false;
+        }
+        let mut buffers_iter = buffers.into_iter();
+        let mut command_vec: Vec<String> = vec![];
+        if let Some(buffer) = buffers_iter.next() {
+            command_vec.append(
+                &mut buffer
+                    .split_whitespace()
+                    .map(|x| String::from(x))
+                    .collect::<Vec<String>>(),
+            );
+        }
+        if let Some(buffer) = buffers_iter.next() {
+            let mut commit_msg = String::from("\"");
+            commit_msg = commit_msg + &buffer;
+            commit_msg.push_str("\"");
+            command_vec.push(commit_msg);
+        }
+        self.show_in_status_bar(screen, &format!("✅ {:?}", command_vec).to_string());
         let output = match command_vec.len() {
-            1 => Command::new(command_vec[0])
+            1 => Command::new(&command_vec[0])
                 .output()
                 .expect("failed to execute process"),
-            2 => Command::new(command_vec[0])
-                .arg(command_vec[1])
+            2 => Command::new(&command_vec[0])
+                .arg(&command_vec[1])
                 .output()
                 .expect("failed to execute process"),
-            _ => Command::new(command_vec[0])
+            _ => Command::new(&command_vec[0])
                 .args(&command_vec[1..])
                 .output()
                 .expect("failed to execute process"),
