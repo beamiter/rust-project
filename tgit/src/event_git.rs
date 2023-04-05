@@ -227,7 +227,15 @@ impl EventGit for TuiGit {
         if !output.status.success() {
             self.show_in_status_bar(
                 screen,
-                &format!("🔘 {:?}", String::from_utf8_lossy(&output.stderr)).to_string(),
+                &format!(
+                    "🔘 {:?}",
+                    if output.stdout.is_empty() {
+                        format!("{:?} error", command_vec).to_string()
+                    } else {
+                        String::from_utf8_lossy(&output.stderr).to_string()
+                    }
+                )
+                .to_string(),
             );
         } else {
             self.show_in_status_bar(
@@ -235,7 +243,7 @@ impl EventGit for TuiGit {
                 &format!(
                     "🟢 {:?}",
                     if output.stdout.is_empty() {
-                        format!("{:?} finished", command_vec).to_string()
+                        format!("{:?} succeed", command_vec).to_string()
                     } else {
                         String::from_utf8_lossy(&output.stdout).to_string()
                     }
