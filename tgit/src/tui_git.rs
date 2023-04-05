@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use substring::Substring;
 
+// https://en.wikipedia.org/wiki/ANSI_escape_code
 // https://symbl.cc/en/
 pub const UNICODE_TABLE: [&'static str; 12] = [
     "\u{1f407}",

@@ -148,7 +148,8 @@ impl EventGit for TuiGit {
     }
     fn execute_normal_command<W: Write>(&mut self, screen: &mut W, command: &String) -> bool {
         let command_vec = command.split(' ').collect::<Vec<&str>>();
-        println!("{:?}", command_vec);
+        self.show_in_status_bar(screen, &format!("❌ {:?}", command).to_string());
+        return false;
         let output = match command_vec.len() {
             1 => Command::new(command_vec[0])
                 .output()
