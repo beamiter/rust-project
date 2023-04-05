@@ -91,7 +91,9 @@ impl ActionGit for TuiGit {
     }
     fn upper_d_pressed<W: Write>(&mut self, screen: &mut W) {
         match self.layout_mode {
-            LayoutMode::LeftPanel(_) => {}
+            LayoutMode::LeftPanel(_) => {
+                self.layout_mode = LayoutMode::LeftPanel(ContentType::Delete);
+            }
             _ => {
                 return;
             }
@@ -141,13 +143,13 @@ impl ActionGit for TuiGit {
         }
     }
     fn lower_y_pressed<W: Write>(&mut self, screen: &mut W) {
-        if !self.branch_delete_set.is_empty() {
+        if let LayoutMode::LeftPanel(ContentType::Delete) = self.layout_mode {
             self.delete_git_branch(screen);
         }
     }
     fn lower_n_pressed<W: Write>(&mut self, screen: &mut W) {
-        if !self.branch_delete_set.is_empty() {
-            self.show_in_status_bar(screen, &format!("Escape deleting branch").to_string());
+        if let LayoutMode::LeftPanel(ContentType::Delete) = self.layout_mode {
+            // Reset chosen branch background.
             for branch in &self.branch_delete_set {
                 let y = self.branch_row_map.get(branch).unwrap();
                 write!(
@@ -160,6 +162,7 @@ impl ActionGit for TuiGit {
                 .unwrap();
             }
             self.branch_delete_set.clear();
+            self.show_in_status_bar(screen, &format!("Escape deleting branch").to_string());
         }
     }
     fn enter_pressed<W: Write>(&mut self, screen: &mut W) {

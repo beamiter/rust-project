@@ -47,29 +47,58 @@ fn main() {
                 // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
                 let mut bufs = vec![];
                 let mut buffer: &str = "";
-                tui_git.show_and_stay_in_status_bar(&mut screen, &"git fetch and check: ".to_string());
+                tui_git
+                    .show_and_stay_in_status_bar(&mut screen, &"git fetch and check: ".to_string());
                 loop {
                     let b = stdin().lock().bytes().next().unwrap().unwrap();
                     match char::from(b) {
-                        '\r' => {
+                        '\r' | '\n' => {
                             tui_git.checkout_remote_git_branch(&mut screen, &buffer.to_string());
                             break;
                         }
-                        _ => {
-                            // Backslash '\\'
-                            if b == 127 {
-                                if !bufs.is_empty() {
-                                    bufs.remove(bufs.len() - 1);
-                                }
-                            } else {
-                                bufs.push(b);
+                        // Backspace '\b'
+                        '\x7f' => {
+                            if !bufs.is_empty() {
+                                bufs.remove(bufs.len() - 1);
                             }
+                        }
+                        _ => {
+                            bufs.push(b);
                         }
                     }
                     buffer = str::from_utf8(&bufs).unwrap();
                     tui_git.show_and_stay_in_status_bar(
                         &mut screen,
                         &format!("get fetch and check: {}", buffer.to_string()).to_string(),
+                    );
+                }
+            }
+            Key::Char('b') => {
+                // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
+                let mut bufs = vec![];
+                let mut buffer: &str = "";
+                tui_git.show_and_stay_in_status_bar(&mut screen, &"git checkout -b: ".to_string());
+                loop {
+                    let b = stdin().lock().bytes().next().unwrap().unwrap();
+                    match char::from(b) {
+                        '\r' | '\n' => {
+                            tui_git.checkout_new_git_branch(&mut screen, &buffer.to_string());
+                            break;
+                        }
+                        // Backspace '\b'
+                        '\x7f' => {
+                            if !bufs.is_empty() {
+                                bufs.remove(bufs.len() - 1);
+                            }
+                        }
+                        _ => {
+                            bufs.push(b);
+                        }
+                    }
+                    buffer = str::from_utf8(&bufs).unwrap();
+                    tui_git.show_and_stay_in_status_bar(
+                        &mut screen,
+                        &format!("git checkout -b: {}", buffer.to_string()).to_string(),
                     );
                 }
             }
@@ -81,19 +110,18 @@ fn main() {
                 loop {
                     let b = stdin().lock().bytes().next().unwrap().unwrap();
                     match char::from(b) {
-                        '\r' => {
+                        '\r' | '\n' => {
                             tui_git.checkout_local_git_branch(&mut screen, &buffer.to_string());
                             break;
                         }
-                        _ => {
-                            // Backslash '\\'
-                            if b == 127 {
-                                if !bufs.is_empty() {
-                                    bufs.remove(bufs.len() - 1);
-                                }
-                            } else {
-                                bufs.push(b);
+                        // Backspace '\b'
+                        '\x7f' => {
+                            if !bufs.is_empty() {
+                                bufs.remove(bufs.len() - 1);
                             }
+                        }
+                        _ => {
+                            bufs.push(b);
                         }
                     }
                     buffer = str::from_utf8(&bufs).unwrap();
@@ -106,10 +134,10 @@ fn main() {
             Key::Char('d') => {
                 tui_git.lower_d_pressed(&mut screen);
             }
-            Key::Char('y') => {
+            Key::Char('y') | Key::Char('Y') => {
                 tui_git.lower_y_pressed(&mut screen);
             }
-            Key::Char('n') => {
+            Key::Char('n') | Key::Esc | Key::Char('N') => {
                 tui_git.lower_n_pressed(&mut screen);
             }
             Key::Char('D') => {

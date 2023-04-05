@@ -7,6 +7,7 @@ use termion::color;
 
 pub trait EventGit {
     fn checkout_local_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
+    fn checkout_new_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn checkout_remote_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
     fn delete_git_branch<W: Write>(&mut self, screen: &mut W) -> bool;
 }
@@ -82,6 +83,45 @@ impl EventGit for TuiGit {
         }
         let output = Command::new("git")
             .args(["checkout", branch.as_str()])
+            .output()
+            .expect("failed to execute process");
+        if !output.status.success() {
+            self.show_in_status_bar(
+                screen,
+                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr),).to_string(),
+            );
+        } else {
+            self.main_branch = branch.to_string();
+            self.show_in_status_bar(
+                screen,
+                &format!(
+                    "✅ Checkout to target branch {}{}{}, enter 'q' to quit",
+                    color::Fg(color::Green),
+                    branch,
+                    color::Fg(color::LightYellow),
+                )
+                .to_string(),
+            );
+            self.refresh_frame_with_branch(screen, &self.main_branch.to_string());
+        }
+        output.status.success()
+    }
+    fn checkout_new_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool {
+        if branch == &self.main_branch {
+            self.show_in_status_bar(
+                screen,
+                &format!(
+                    "👻 Already in target branch {}{}{}, enter 'q' to quit.",
+                    color::Fg(color::Green),
+                    branch,
+                    color::Fg(color::LightYellow),
+                )
+                .to_string(),
+            );
+            return true;
+        }
+        let output = Command::new("git")
+            .args(["checkout", "-b", branch.as_str()])
             .output()
             .expect("failed to execute process");
         if !output.status.success() {
