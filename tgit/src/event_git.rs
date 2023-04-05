@@ -188,7 +188,7 @@ impl EventGit for TuiGit {
             }
         }
         if buffers.is_empty() {
-            self.show_in_status_bar(screen, &format!("❌ {:?}", buffers).to_string());
+            self.show_in_status_bar(screen, &format!("🔘 buffer is empty").to_string());
             return false;
         }
         let mut buffers_iter = buffers.into_iter();
@@ -207,7 +207,7 @@ impl EventGit for TuiGit {
             commit_msg.push_str("\"");
             command_vec.push(commit_msg);
         }
-        self.show_in_status_bar(screen, &format!("✅ {:?}", command_vec).to_string());
+        self.show_in_status_bar(screen, &format!("🟢 total command seq: {:?}", command_vec).to_string());
         let output = match command_vec.len() {
             1 => Command::new(&command_vec[0])
                 .output()
@@ -224,13 +224,13 @@ impl EventGit for TuiGit {
         if !output.status.success() {
             self.show_in_status_bar(
                 screen,
-                &format!("❌ {:?}", String::from_utf8_lossy(&output.stderr)).to_string(),
+                &format!("🔘 {:?}", String::from_utf8_lossy(&output.stderr)).to_string(),
             );
         } else {
             self.show_in_status_bar(
                 screen,
                 &format!(
-                    "✅ {:?}",
+                    "🟢 {:?}",
                     if output.stdout.is_empty() {
                         "Process finished.".to_string()
                     } else {
