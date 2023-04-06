@@ -265,13 +265,30 @@ impl ActionGit for TuiGit {
             },
             LayoutMode::RightPanel(content) => match content {
                 ContentType::Log => {
-                    self.update_commit_info();
+                    if !self.update_commit_info() {
+                        return;
+                    }
+                    self.log_scroll_offset = 0;
+                    self.layout_mode = LayoutMode::RightPanel(ContentType::Commit);
                     self.right_panel_log_vec = self
                         .commit_info_map
                         .get(&self.current_commit.to_string())
                         .unwrap()
                         .to_vec();
                     self.show_log_in_right_panel(screen);
+                    self.reset_cursor_to_log_top(screen);
+                }
+                ContentType::Commit => {
+                    self.log_scroll_offset = 0;
+                    self.layout_mode = LayoutMode::RightPanel(ContentType::Log);
+                    self.update_git_log(&self.current_branch.to_string());
+                    self.right_panel_log_vec = self
+                        .branch_log_map
+                        .get(&self.current_branch.to_string())
+                        .unwrap()
+                        .to_vec();
+                    self.show_log_in_right_panel(screen);
+                    self.reset_cursor_to_log_top(screen);
                 }
                 _ => {}
             },
@@ -317,13 +334,7 @@ impl ActionGit for TuiGit {
                 self.layout_mode = LayoutMode::LeftPanel(content);
             }
         }
-        // Must update position.
-        self.previous_pos = self.current_pos;
-        self.current_pos = Position::init(
-            1,
-            *self.branch_row_map.get(&self.current_branch).unwrap() as u16,
-        );
-        self.show_icon_after_cursor(screen, "🏆");
+        self.reset_cursor_to_current_branch(screen);
     }
 
     fn move_cursor_right<W: Write>(&mut self, screen: &mut W) {
@@ -340,10 +351,6 @@ impl ActionGit for TuiGit {
                 return;
             }
         }
-        // Must update position.
-        self.previous_pos = self.current_pos;
-        self.current_pos = Position::init(self.log_col_left as u16 - 3, self.log_row_top as u16);
-        // self.show_icon_after_cursor(screen, "✍");
-        self.show_current_cursor(screen);
+        self.reset_cursor_to_log_top(screen);
     }
 }

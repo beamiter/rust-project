@@ -41,6 +41,7 @@ pub enum ContentType {
     Diff,
     Log,
     Status,
+    Commit,
 }
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub enum LayoutMode {
@@ -125,28 +126,29 @@ impl TuiGit {
         }
     }
 
-    pub fn update_commit_info(&mut self) {
+    pub fn update_commit_info(&mut self) -> bool {
         let (_, y) = self.current_pos.unpack();
         self.current_commit.clear();
         if let Some(log) = self.row_log_map.get(&(y as usize)) {
             if log.is_empty() {
-                return;
+                return false;
             }
             let mut log_iter = log.split(' ');
             if log_iter.next().unwrap() != "commit" {
-                return;
+                return false;
             }
             if let Some(val) = log_iter.next() {
                 // Find the right commit name.
                 self.current_commit = val.to_string();
             }
         } else {
-            return;
+            return false;
         }
-        if self.current_commit.is_empty()
-            || self.commit_info_map.get(&self.current_commit).is_some()
-        {
-            return;
+        if self.current_commit.is_empty() {
+            return false;
+        }
+        if self.commit_info_map.get(&self.current_commit).is_some() {
+            return true;
         }
         let output = Command::new("git")
             .args(["show", self.current_commit.as_str()])
@@ -168,9 +170,10 @@ impl TuiGit {
         }
         self.commit_info_map
             .insert(self.current_commit.to_string(), commit_detail);
+        return true;
     }
 
-    pub fn update_git_branch(&mut self) {
+    pub fn update_git_branch(&mut self) -> bool {
         let output = Command::new("git")
             .arg("branch")
             .output()
@@ -204,9 +207,10 @@ impl TuiGit {
                 break;
             }
         }
+        output.status.success()
     }
 
-    pub fn update_git_diff(&mut self, branch: &String) {
+    pub fn update_git_diff(&mut self, branch: &String) -> bool {
         let output = Command::new("git")
             .args(["diff", branch.as_str()])
             .output()
@@ -226,13 +230,13 @@ impl TuiGit {
                 break;
             }
         }
-        // println!("{:?}", self.branch_diff_vec);
+        output.status.success()
     }
 
     // Currently limit the log number to 100.
-    pub fn update_git_log(&mut self, branch: &String) {
+    pub fn update_git_log(&mut self, branch: &String) -> bool {
         if self.branch_log_map.get(branch).is_some() {
-            return;
+            return true;
         }
         let output = Command::new("git")
             .args([
@@ -257,5 +261,6 @@ impl TuiGit {
             }
         }
         self.branch_log_map.insert(branch.to_string(), logs);
+        output.status.success()
     }
 }

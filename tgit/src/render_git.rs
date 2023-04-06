@@ -17,7 +17,9 @@ pub trait RenderGit {
     fn show_and_stay_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
     fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
 
-    fn reset_cursor_to_main<W: Write>(&mut self, screen: &mut W);
+    fn reset_cursor_to_current_branch<W: Write>(&mut self, screen: &mut W);
+    fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W);
+    fn reset_cursor_to_main_branch<W: Write>(&mut self, screen: &mut W);
 
     fn render_single_line<W: Write>(
         &mut self,
@@ -26,6 +28,7 @@ pub trait RenderGit {
         x_tmp: u16,
         y_tmp: u16,
     );
+    // If not render line with discrepancy, return false.
     fn render_discrepancy<W: Write>(
         &mut self,
         screen: &mut W,
@@ -33,6 +36,7 @@ pub trait RenderGit {
         x_tmp: u16,
         y_tmp: u16,
     ) -> bool;
+    // If not render line start with "commit", return false.
     fn render_commit_decoration<W: Write>(
         &mut self,
         screen: &mut W,
@@ -224,13 +228,29 @@ impl RenderGit for TuiGit {
         screen.flush().unwrap();
     }
 
-    fn reset_cursor_to_main<W: Write>(&mut self, screen: &mut W) {
+    fn reset_cursor_to_current_branch<W: Write>(&mut self, screen: &mut W) {
+        // Must update position.
+        self.previous_pos = self.current_pos;
+        self.current_pos = Position::init(
+            1,
+            *self.branch_row_map.get(&self.current_branch).unwrap() as u16,
+        );
+        self.show_icon_after_cursor(screen, "🏆");
+    }
+    fn reset_cursor_to_main_branch<W: Write>(&mut self, screen: &mut W) {
         self.current_pos = Position {
             col: 1,
             row: *self.branch_row_map.get(&self.main_branch).unwrap() as u16,
         };
         self.previous_pos = self.current_pos;
         self.show_icon_after_cursor(screen, "🌟");
+    }
+    fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W) {
+        // Must update position.
+        self.previous_pos = self.current_pos;
+        self.current_pos = Position::init(self.log_col_left as u16 - 3, self.log_row_top as u16);
+        // self.show_icon_after_cursor(screen, "✍");
+        self.show_current_cursor(screen);
     }
 
     fn render_discrepancy<W: Write>(
@@ -241,15 +261,17 @@ impl RenderGit for TuiGit {
         y_tmp: u16,
     ) -> bool {
         // Show "git diff".
-        match log.chars().next().unwrap() {
+        let res = match log.chars().next().unwrap() {
             '-' => {
                 write!(screen, "{}", termion::color::Fg(termion::color::LightRed)).unwrap();
+                true
             }
             '+' => {
                 write!(screen, "{}", termion::color::Fg(termion::color::LightGreen)).unwrap();
+                true
             }
-            _ => {}
-        }
+            _ => false,
+        };
         write!(
             screen,
             "{}{}{}",
@@ -258,7 +280,7 @@ impl RenderGit for TuiGit {
             termion::color::Fg(termion::color::Reset),
         )
         .unwrap();
-        return true;
+        return res;
     }
     fn render_commit_decoration<W: Write>(
         &mut self,
@@ -277,7 +299,7 @@ impl RenderGit for TuiGit {
                 termion::color::Fg(termion::color::Reset),
             )
             .unwrap();
-            return true;
+            return false;
         }
         write!(
             screen,
@@ -365,12 +387,19 @@ impl RenderGit for TuiGit {
         if log.is_empty() {
             return;
         }
-        if let LayoutMode::LeftPanel(ContentType::Diff)
-        | LayoutMode::RightPanel(ContentType::Diff) = self.layout_mode
-        {
-            self.render_discrepancy(screen, log, x_tmp, y_tmp);
-        } else {
-            self.render_commit_decoration(screen, log, x_tmp, y_tmp);
+        match self.layout_mode {
+            LayoutMode::LeftPanel(ContentType::Diff)
+            | LayoutMode::RightPanel(ContentType::Diff) => {
+                self.render_discrepancy(screen, log, x_tmp, y_tmp);
+            }
+            LayoutMode::LeftPanel(ContentType::Log) | LayoutMode::RightPanel(ContentType::Log) => {
+                self.render_commit_decoration(screen, log, x_tmp, y_tmp);
+            }
+            LayoutMode::RightPanel(ContentType::Commit) => {
+                let _ = self.render_commit_decoration(screen, log, x_tmp, y_tmp)
+                    || self.render_discrepancy(screen, log, x_tmp, y_tmp);
+            }
+            _ => {}
         }
     }
 
@@ -388,7 +417,7 @@ impl RenderGit for TuiGit {
             .to_vec();
         self.show_log_in_right_panel(screen);
 
-        self.reset_cursor_to_main(screen);
+        self.reset_cursor_to_main_branch(screen);
         screen.flush().unwrap();
     }
     fn show_current_cursor<W: Write>(&mut self, screen: &mut W) {
