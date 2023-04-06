@@ -84,8 +84,9 @@ fn main() {
             }
             _ => {}
         }
+        // Flush after key pressed.
         screen.flush().unwrap();
     }
-    write!(screen, "{}", termion::cursor::Show).unwrap();
+    // write!(screen, "{}", termion::cursor::Show).unwrap();
     screen.flush().unwrap();
 }

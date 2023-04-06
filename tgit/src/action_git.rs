@@ -268,10 +268,6 @@ impl ActionGit for TuiGit {
                     if !self.update_commit_info() {
                         return;
                     }
-                    self.show_in_bottom_bar(
-                        screen,
-                        &format!("log {:?}", self.snap_shot_map.get(&ContentType::Log)).to_string(),
-                    );
                     self.reset_cursor_to_log_top(screen);
                     self.log_scroll_offset = 0;
                     self.layout_mode = LayoutMode::RightPanel(ContentType::Commit);
@@ -284,11 +280,6 @@ impl ActionGit for TuiGit {
                 }
                 ContentType::Commit => {
                     // Update with log position and scroll offset.
-                    self.show_in_bottom_bar(
-                        screen,
-                        &format!("commit {:?}", self.snap_shot_map.get(&ContentType::Log))
-                            .to_string(),
-                    );
                     self.log_scroll_offset = self
                         .snap_shot_map
                         .get(&ContentType::Log)
@@ -332,10 +323,6 @@ impl ActionGit for TuiGit {
                 self.snap_shot_map.insert(content, snap_shot);
             }
         }
-        self.show_in_bottom_bar(
-            screen,
-            &format!("{:?}", self.snap_shot_map.get(&ContentType::Log)).to_string(),
-        );
     }
 
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W) {
@@ -361,10 +348,6 @@ impl ActionGit for TuiGit {
                 self.snap_shot_map.insert(content, snap_shot);
             }
         }
-        self.show_in_bottom_bar(
-            screen,
-            &format!("{:?}", self.snap_shot_map.get(&ContentType::Log)).to_string(),
-        );
     }
     fn move_cursor_left<W: Write>(&mut self, screen: &mut W) {
         match self.layout_mode {
