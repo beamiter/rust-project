@@ -66,20 +66,20 @@ pub struct TuiGit {
     pub bottom_bar_row: usize,
 
     // data storage;
-    pub branch_vec: Vec<String>,
-    pub branch_row_map: HashMap<String, usize>,
-    pub row_branch_map: HashMap<usize, String>,
-    pub branch_log_map: HashMap<String, Vec<String>>,
-    pub row_log_map: HashMap<usize, String>,
-    pub branch_diff_vec: Vec<String>,
     pub branch_delete_set: HashSet<String>,
+    pub branch_diff_vec: Vec<String>,
+    pub branch_log_map: HashMap<String, Vec<String>>,
+    pub branch_row_map: HashMap<String, usize>,
+    pub branch_vec: Vec<String>,
+    pub commit_info_map: HashMap<String, Vec<String>>,
+    pub row_branch_map: HashMap<usize, String>,
+    pub row_log_map: HashMap<usize, String>,
 
     // Main branch;
     pub main_branch: String,
     pub current_branch: String,
     pub current_log_vec: Vec<String>,
 
-    // 0 for title, 1 for branch, 2 for log and e.t.c.
     pub layout_mode: LayoutMode,
     pub key_move_counter: usize,
 
@@ -93,19 +93,24 @@ impl TuiGit {
             branch_row_bottom: 0,
             branch_col_left: 4,
             branch_col_right: 0,
+
             log_row_top: 2,
             log_row_bottom: 0,
             log_col_left: 0,
             log_scroll_offset: 0,
+
             status_bar_row: 0,
             bottom_bar_row: 0,
-            branch_vec: vec![],
+
             branch_delete_set: HashSet::new(),
-            branch_row_map: HashMap::new(),
-            row_branch_map: HashMap::new(),
-            branch_log_map: HashMap::new(),
-            row_log_map: HashMap::new(),
             branch_diff_vec: vec![],
+            branch_log_map: HashMap::new(),
+            branch_row_map: HashMap::new(),
+            branch_vec: vec![],
+            commit_info_map: HashMap::new(),
+            row_branch_map: HashMap::new(),
+            row_log_map: HashMap::new(),
+
             main_branch: String::new(),
             current_branch: String::new(),
             current_log_vec: vec![],
@@ -115,6 +120,32 @@ impl TuiGit {
             current_pos: Position::new(),
         }
     }
+
+    pub fn update_commit_info(&mut self, commit: &String) {
+        let output = Command::new("git")
+            .args(["show", commit.as_str()])
+            .output()
+            .expect("failed to execute process");
+        let commit_output = String::from_utf8_lossy(&output.stdout);
+        // println!("branch_output {:?}", diff_output);
+        let mut commit_iter = commit_output.split('\n');
+        self.commit_info_map.clear();
+        if self.commit_info_map.get(commit).is_some() {
+            return;
+        }
+        loop {
+            if let Some(val) = commit_iter.next() {
+                if val.is_empty() {
+                    continue;
+                } else {
+                }
+            } else {
+                break;
+            }
+        }
+        // println!("{:?}", self.branch_diff_vec);
+    }
+
     pub fn update_git_branch(&mut self) {
         let output = Command::new("git")
             .arg("branch")
@@ -151,6 +182,29 @@ impl TuiGit {
         }
     }
 
+    pub fn update_git_diff(&mut self, branch: &String) {
+        let output = Command::new("git")
+            .args(["diff", branch.as_str()])
+            .output()
+            .expect("failed to execute process");
+        let diff_output = String::from_utf8_lossy(&output.stdout);
+        // println!("branch_output {:?}", diff_output);
+        let mut diff_iter = diff_output.split('\n');
+        self.branch_diff_vec.clear();
+        loop {
+            if let Some(val) = diff_iter.next() {
+                if val.is_empty() {
+                    continue;
+                } else {
+                    self.branch_diff_vec.push(val.to_string());
+                }
+            } else {
+                break;
+            }
+        }
+        // println!("{:?}", self.branch_diff_vec);
+    }
+
     // Currently limit the log number to 100.
     pub fn update_git_log(&mut self, branch: &String) {
         if self.branch_log_map.get(branch).is_some() {
@@ -181,26 +235,4 @@ impl TuiGit {
         self.branch_log_map.insert(branch.to_string(), logs);
     }
 
-    pub fn update_git_diff(&mut self, branch: &String) {
-        let output = Command::new("git")
-            .args(["diff", branch.as_str()])
-            .output()
-            .expect("failed to execute process");
-        let diff_output = String::from_utf8_lossy(&output.stdout);
-        // println!("branch_output {:?}", diff_output);
-        let mut diff_iter = diff_output.split('\n');
-        self.branch_diff_vec.clear();
-        loop {
-            if let Some(val) = diff_iter.next() {
-                if val.is_empty() {
-                    continue;
-                } else {
-                    self.branch_diff_vec.push(val.to_string());
-                }
-            } else {
-                break;
-            }
-        }
-        // println!("{:?}", self.branch_diff_vec);
-    }
 }

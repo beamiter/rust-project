@@ -263,8 +263,11 @@ impl ActionGit for TuiGit {
                 }
                 _ => {}
             },
-            LayoutMode::RightPanel(_) => {
-                return;
+            LayoutMode::RightPanel(content) => match content {
+                ContentType::Log => {
+                    self.show_in_bottom_bar(screen, &"haha".to_string());
+                }
+                _ => {}
             }
         }
     }
