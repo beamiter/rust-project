@@ -26,6 +26,7 @@ pub trait RenderGit {
     fn left_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool);
     fn right_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool);
 
+    fn show_current_cursor<W: Write>(&mut self, screen: &mut W);
     fn show_icon_after_cursor<W: Write>(&mut self, screen: &mut W, icon: &str);
 }
 
@@ -232,7 +233,12 @@ impl RenderGit for TuiGit {
         } else {
             // Show "git log".
             if log.starts_with("commit") {
-                write!(screen, "{}", termion::color::Fg(termion::color::LightYellow)).unwrap();
+                write!(
+                    screen,
+                    "{}",
+                    termion::color::Fg(termion::color::LightYellow)
+                )
+                .unwrap();
                 let split_log: Vec<_> = log.split('(').collect();
                 if split_log.len() == 2 {
                     write!(
@@ -321,6 +327,14 @@ impl RenderGit for TuiGit {
 
         self.reset_cursor_to_main(screen);
         screen.flush().unwrap();
+    }
+    fn show_current_cursor<W: Write>(&mut self, screen: &mut W) {
+        write!(
+            screen,
+            "{}",
+            termion::cursor::Goto(self.current_pos.col, self.current_pos.row),
+        )
+        .unwrap();
     }
     fn show_icon_after_cursor<W: Write>(&mut self, screen: &mut W, icon: &str) {
         write!(
@@ -422,22 +436,24 @@ impl RenderGit for TuiGit {
             }
         }
         self.current_pos = Position::init(x, y);
-        self.show_in_bottom_bar(
-            screen,
-            &format!(
-                "c: {}, r: {}, r_bottom: {}, log: {}",
-                self.current_pos.col,
-                self.current_pos.row,
-                self.log_row_bottom,
-                self.row_log_map.get(&(y as usize)).unwrap(),
-            )
-            .to_string(),
-        );
-        self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
-        self.show_icon_after_cursor(
-            screen,
-            UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
-        );
+        // Comment following to speed up.
+        // self.show_in_bottom_bar(
+        //     screen,
+        //     &format!(
+        //         "c: {}, r: {}, r_bottom: {}, log: {}",
+        //         self.current_pos.col,
+        //         self.current_pos.row,
+        //         self.log_row_bottom,
+        //         self.row_log_map.get(&(y as usize)).unwrap(),
+        //     )
+        //     .to_string(),
+        // );
+        // self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
+        // self.show_icon_after_cursor(
+        //     screen,
+        //     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
+        // );
+        self.show_current_cursor(screen);
         screen.flush().unwrap();
     }
 }

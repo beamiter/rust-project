@@ -334,6 +334,7 @@ impl ActionGit for TuiGit {
         // Must update position.
         self.previous_pos = self.current_pos;
         self.current_pos = Position::init(self.log_col_left as u16 - 3, self.log_row_top as u16);
-        self.show_icon_after_cursor(screen, "✍");
+        // self.show_icon_after_cursor(screen, "✍");
+        self.show_current_cursor(screen);
     }
 }
