@@ -279,7 +279,12 @@ impl ActionGit for TuiGit {
                     self.reset_cursor_to_log_top(screen);
                 }
                 ContentType::Commit => {
-                    self.log_scroll_offset = 0;
+                    // Update position and scroll offset.
+                    self.log_scroll_offset = self.snap_shot_map.get(&content).unwrap().scroll_offset;
+                    self.previous_pos = self.current_pos;
+                    self.current_pos = self.snap_shot_map.get(&content).unwrap().position;
+                    // self.log_scroll_offset = self.prev_scroll_offset.log;
+                    self.show_in_bottom_bar(screen, &self.log_scroll_offset.to_string());
                     self.layout_mode = LayoutMode::RightPanel(ContentType::Log);
                     self.update_git_log(&self.current_branch.to_string());
                     self.right_panel_log_vec = self

@@ -35,7 +35,7 @@ impl Position {
         return (self.col, self.row);
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum ContentType {
     Delete,
     Diff,
@@ -47,6 +47,20 @@ pub enum ContentType {
 pub enum LayoutMode {
     LeftPanel(ContentType),
     RightPanel(ContentType),
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct SnapShot {
+    pub position: Position,
+    pub scroll_offset: usize,
+}
+impl SnapShot {
+    pub fn new() -> Self {
+        Self {
+            position: Position::new(),
+            scroll_offset: 0,
+        }
+    }
 }
 
 pub struct TuiGit {
@@ -61,6 +75,7 @@ pub struct TuiGit {
     pub log_row_bottom: usize,
     pub log_col_left: usize,
     pub log_scroll_offset: usize,
+    pub snap_shot_map: HashMap<ContentType, SnapShot>,
 
     // bottom bar area;
     pub bottom_bar_row: usize,
@@ -102,6 +117,13 @@ impl TuiGit {
             log_row_bottom: 0,
             log_col_left: 0,
             log_scroll_offset: 0,
+            snap_shot_map: HashMap::from([
+                (ContentType::Delete, SnapShot::new()),
+                (ContentType::Diff, SnapShot::new()),
+                (ContentType::Log, SnapShot::new()),
+                (ContentType::Status, SnapShot::new()),
+                (ContentType::Commit, SnapShot::new()),
+            ]),
 
             status_bar_row: 0,
             bottom_bar_row: 0,
@@ -121,8 +143,9 @@ impl TuiGit {
             right_panel_log_vec: vec![],
             layout_mode: LayoutMode::LeftPanel(ContentType::Log),
             key_move_counter: 0,
-            previous_pos: Position::new(),
-            current_pos: Position::new(),
+            // Goto is 1 based.
+            previous_pos: Position::init(1, 1),
+            current_pos: Position::init(1, 1),
         }
     }
 

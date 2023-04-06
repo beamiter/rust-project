@@ -5,7 +5,6 @@ use std::io::Write;
 use std::str;
 use substring::Substring;
 
-use termion::cursor::DetectCursorPos;
 use termion::{color, style};
 
 pub trait RenderGit {
@@ -132,9 +131,18 @@ impl RenderGit for TuiGit {
         self.branch_col_right =
             self.branch_col_left + *branch_size.iter().max().unwrap() as usize + 3;
         self.log_col_left = self.branch_col_right + 4;
+
+        match self.layout_mode {
+            LayoutMode::LeftPanel(content) | LayoutMode::RightPanel(content) => {
+                let mut snap_shot = SnapShot::new();
+                snap_shot.scroll_offset = self.log_scroll_offset;
+                snap_shot.position = self.current_pos;
+                self.snap_shot_map.insert(content, snap_shot);
+            }
+        }
     }
     fn show_log_in_right_panel<W: Write>(&mut self, screen: &mut W) {
-        let (x, y) = screen.cursor_pos().unwrap();
+        let (x, y) = self.current_pos.unpack();
         let (col, row) = termion::terminal_size().unwrap();
         let x_tmp = self.log_col_left;
         if col <= x_tmp as u16 {
@@ -168,9 +176,19 @@ impl RenderGit for TuiGit {
             y_tmp += 1;
         }
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
+        screen.flush().unwrap();
+
+        match self.layout_mode {
+            LayoutMode::LeftPanel(content) | LayoutMode::RightPanel(content) => {
+                let mut snap_shot = SnapShot::new();
+                snap_shot.scroll_offset = self.log_scroll_offset;
+                snap_shot.position = self.current_pos;
+                self.snap_shot_map.insert(content, snap_shot);
+            }
+        }
     }
     fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
-        let (x, y) = screen.cursor_pos().unwrap();
+        let (x, y) = self.current_pos.unpack();
         let (col, row) = termion::terminal_size().unwrap();
         self.status_bar_row = row as usize - 1;
         write!(
@@ -206,7 +224,7 @@ impl RenderGit for TuiGit {
         screen.flush().unwrap();
     }
     fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
-        let (x, y) = screen.cursor_pos().unwrap();
+        let (x, y) = self.current_pos.unpack();
         let (col, row) = termion::terminal_size().unwrap();
         self.bottom_bar_row = row as usize;
         write!(
