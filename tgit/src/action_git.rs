@@ -265,6 +265,7 @@ impl ActionGit for TuiGit {
             },
             LayoutMode::RightPanel(content) => match content {
                 ContentType::Log => {
+                    self.update_commit_info();
                     self.show_in_bottom_bar(screen, &"haha".to_string());
                 }
                 _ => {}

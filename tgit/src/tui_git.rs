@@ -61,9 +61,10 @@ pub struct TuiGit {
     pub log_col_left: usize,
     pub log_scroll_offset: usize,
 
+    // bottom bar area;
+    pub bottom_bar_row: usize,
     // status bar area;
     pub status_bar_row: usize,
-    pub bottom_bar_row: usize,
 
     // data storage;
     pub branch_delete_set: HashSet<String>,
@@ -72,15 +73,17 @@ pub struct TuiGit {
     pub branch_row_map: HashMap<String, usize>,
     pub branch_vec: Vec<String>,
     pub commit_info_map: HashMap<String, Vec<String>>,
+    pub current_branch: String,
+    pub current_commit: String,
+    pub current_log_vec: Vec<String>,
+    // Main branch;
+    pub main_branch: String,
     pub row_branch_map: HashMap<usize, String>,
     pub row_log_map: HashMap<usize, String>,
 
-    // Main branch;
-    pub main_branch: String,
-    pub current_branch: String,
-    pub current_log_vec: Vec<String>,
-
+    // layout mode;
     pub layout_mode: LayoutMode,
+
     pub key_move_counter: usize,
 
     pub previous_pos: Position,
@@ -113,6 +116,7 @@ impl TuiGit {
 
             main_branch: String::new(),
             current_branch: String::new(),
+            current_commit: String::new(),
             current_log_vec: vec![],
             layout_mode: LayoutMode::LeftPanel(ContentType::Log),
             key_move_counter: 0,
@@ -121,29 +125,49 @@ impl TuiGit {
         }
     }
 
-    pub fn update_commit_info(&mut self, commit: &String) {
+    pub fn update_commit_info(&mut self) {
+        let (_, y) = self.current_pos.unpack();
+        self.current_commit.clear();
+        if let Some(log) = self.row_log_map.get(&(y as usize)) {
+            if log.is_empty() {
+                return;
+            }
+            let mut log_iter = log.split(' ');
+            if log_iter.next().unwrap() != "commit" {
+                return;
+            }
+            if let Some(val) = log_iter.next() {
+                // Find the right commit name.
+                self.current_commit = val.to_string();
+            }
+        } else {
+            return;
+        }
+        if self.current_commit.is_empty()
+            || self.commit_info_map.get(&self.current_commit).is_some()
+        {
+            return;
+        }
         let output = Command::new("git")
-            .args(["show", commit.as_str()])
+            .args(["show", self.current_commit.as_str()])
             .output()
             .expect("failed to execute process");
         let commit_output = String::from_utf8_lossy(&output.stdout);
-        // println!("branch_output {:?}", diff_output);
         let mut commit_iter = commit_output.split('\n');
-        self.commit_info_map.clear();
-        if self.commit_info_map.get(commit).is_some() {
-            return;
-        }
+        let mut commit_detail: Vec<String> = vec![];
         loop {
             if let Some(val) = commit_iter.next() {
                 if val.is_empty() {
                     continue;
                 } else {
+                    commit_detail.push(val.to_string());
                 }
             } else {
                 break;
             }
         }
-        // println!("{:?}", self.branch_diff_vec);
+        self.commit_info_map
+            .insert(self.current_commit.to_string(), commit_detail);
     }
 
     pub fn update_git_branch(&mut self) {
@@ -234,5 +258,4 @@ impl TuiGit {
         }
         self.branch_log_map.insert(branch.to_string(), logs);
     }
-
 }
