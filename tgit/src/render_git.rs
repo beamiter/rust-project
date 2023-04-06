@@ -19,7 +19,27 @@ pub trait RenderGit {
 
     fn reset_cursor_to_main<W: Write>(&mut self, screen: &mut W);
 
-    fn render_single_line<W: Write>(&self, screen: &mut W, log: &String, x_tmp: u16, y_tmp: u16);
+    fn render_single_line<W: Write>(
+        &mut self,
+        screen: &mut W,
+        log: &String,
+        x_tmp: u16,
+        y_tmp: u16,
+    );
+    fn render_discrepancy<W: Write>(
+        &mut self,
+        screen: &mut W,
+        log: &String,
+        x_tmp: u16,
+        y_tmp: u16,
+    ) -> bool;
+    fn render_commit_decoration<W: Write>(
+        &mut self,
+        screen: &mut W,
+        log: &String,
+        x_tmp: u16,
+        y_tmp: u16,
+    ) -> bool;
 
     fn refresh_frame_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
 
@@ -129,14 +149,14 @@ impl RenderGit for TuiGit {
         }
         let mut y_tmp = self.log_row_top;
         self.row_log_map.clear();
-        for log in &self.right_panel_log_vec[self.log_scroll_offset as usize..] {
+        for log in self.right_panel_log_vec[self.log_scroll_offset as usize..].to_vec() {
             // Need to update bottom here.
             self.log_row_bottom = y_tmp;
-            let sub_log = log.substring(0, (col - x_tmp as u16) as usize);
+            let sub_log = log.substring(0, (col - x_tmp as u16) as usize).to_string();
             if !sub_log.is_empty() {
-                self.render_single_line(screen, &sub_log.to_string(), x_tmp as u16, y_tmp as u16);
+                self.render_single_line(screen, &sub_log, x_tmp as u16, y_tmp as u16);
             }
-            self.row_log_map.insert(y_tmp, sub_log.to_string());
+            self.row_log_map.insert(y_tmp, sub_log);
             // Spare 2 for check info.
             if y_tmp as u16 >= row - 2 {
                 break;
@@ -213,93 +233,22 @@ impl RenderGit for TuiGit {
         self.show_icon_after_cursor(screen, "🌟");
     }
 
-    fn render_single_line<W: Write>(&self, screen: &mut W, log: &String, x_tmp: u16, y_tmp: u16) {
-        if log.is_empty() {
-            return;
-        }
-        if let LayoutMode::LeftPanel(ContentType::Diff)
-        | LayoutMode::RightPanel(ContentType::Diff) = self.layout_mode
-        {
-            // Show "git diff".
-            match log.chars().next().unwrap() {
-                '-' => {
-                    write!(screen, "{}", termion::color::Fg(termion::color::LightRed)).unwrap();
-                }
-                '+' => {
-                    write!(screen, "{}", termion::color::Fg(termion::color::LightGreen)).unwrap();
-                }
-                _ => {}
+    fn render_discrepancy<W: Write>(
+        &mut self,
+        screen: &mut W,
+        log: &String,
+        x_tmp: u16,
+        y_tmp: u16,
+    ) -> bool {
+        // Show "git diff".
+        match log.chars().next().unwrap() {
+            '-' => {
+                write!(screen, "{}", termion::color::Fg(termion::color::LightRed)).unwrap();
             }
-        } else {
-            // Show "git log".
-            if log.starts_with("commit") {
-                write!(
-                    screen,
-                    "{}",
-                    termion::color::Fg(termion::color::LightYellow)
-                )
-                .unwrap();
-                let split_log: Vec<_> = log.split('(').collect();
-                if split_log.len() == 2 {
-                    write!(
-                        screen,
-                        "{}{}{}",
-                        termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
-                        split_log.first().unwrap(),
-                        termion::color::Fg(termion::color::Reset),
-                    )
-                    .unwrap();
-                    let split_last: String = split_log
-                        .last()
-                        .unwrap()
-                        .chars()
-                        .filter(|&x| x != ')' && x != '(')
-                        .collect::<String>();
-                    let decoration_split: Vec<_> = split_last.split(", ").collect();
-                    let mut decoration_out: String = format!("{}(", style::Bold);
-                    for decoration in decoration_split {
-                        if decoration.starts_with("HEAD -> ") {
-                            decoration_out += format!(
-                                "{}HEAD -> {}{}{}",
-                                termion::color::Fg(termion::color::LightCyan),
-                                termion::color::Fg(termion::color::LightGreen),
-                                decoration.strip_prefix("HEAD -> ").unwrap(),
-                                termion::color::Fg(termion::color::Reset),
-                            )
-                            .as_str();
-                        } else if decoration.starts_with("origin/") {
-                            decoration_out += format!(
-                                "{}{}{}",
-                                termion::color::Fg(termion::color::LightRed),
-                                decoration,
-                                termion::color::Fg(termion::color::Reset),
-                            )
-                            .as_str();
-                        } else {
-                            decoration_out += format!(
-                                "{}{}{}",
-                                termion::color::Fg(termion::color::LightGreen),
-                                decoration,
-                                termion::color::Fg(termion::color::Reset),
-                            )
-                            .as_str();
-                        }
-                        decoration_out += ", ";
-                    }
-                    if decoration_out.ends_with(", ") {
-                        decoration_out = decoration_out.strip_suffix(", ").unwrap().to_string();
-                    }
-                    decoration_out += format!("){}", style::Reset).as_str();
-                    write!(
-                        screen,
-                        "{}{}",
-                        decoration_out,
-                        termion::color::Fg(termion::color::Reset),
-                    )
-                    .unwrap();
-                    return;
-                }
+            '+' => {
+                write!(screen, "{}", termion::color::Fg(termion::color::LightGreen)).unwrap();
             }
+            _ => {}
         }
         write!(
             screen,
@@ -309,6 +258,120 @@ impl RenderGit for TuiGit {
             termion::color::Fg(termion::color::Reset),
         )
         .unwrap();
+        return true;
+    }
+    fn render_commit_decoration<W: Write>(
+        &mut self,
+        screen: &mut W,
+        log: &String,
+        x_tmp: u16,
+        y_tmp: u16,
+    ) -> bool {
+        // Show "git log".
+        if !log.starts_with("commit") {
+            write!(
+                screen,
+                "{}{}{}",
+                termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
+                log,
+                termion::color::Fg(termion::color::Reset),
+            )
+            .unwrap();
+            return true;
+        }
+        write!(
+            screen,
+            "{}",
+            termion::color::Fg(termion::color::LightYellow)
+        )
+        .unwrap();
+        let split_log: Vec<_> = log.split('(').collect();
+        if split_log.len() != 2 {
+            write!(
+                screen,
+                "{}{}{}",
+                termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
+                log,
+                termion::color::Fg(termion::color::Reset),
+            )
+            .unwrap();
+            return true;
+        }
+        write!(
+            screen,
+            "{}{}{}",
+            termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
+            split_log.first().unwrap(),
+            termion::color::Fg(termion::color::Reset),
+        )
+        .unwrap();
+        let split_last: String = split_log
+            .last()
+            .unwrap()
+            .chars()
+            .filter(|&x| x != ')' && x != '(')
+            .collect::<String>();
+        let decoration_split: Vec<_> = split_last.split(", ").collect();
+        let mut decoration_out: String = format!("{}(", style::Bold);
+        for decoration in decoration_split {
+            if decoration.starts_with("HEAD -> ") {
+                decoration_out += format!(
+                    "{}HEAD -> {}{}{}",
+                    termion::color::Fg(termion::color::LightCyan),
+                    termion::color::Fg(termion::color::LightGreen),
+                    decoration.strip_prefix("HEAD -> ").unwrap(),
+                    termion::color::Fg(termion::color::Reset),
+                )
+                .as_str();
+            } else if decoration.starts_with("origin/") {
+                decoration_out += format!(
+                    "{}{}{}",
+                    termion::color::Fg(termion::color::LightRed),
+                    decoration,
+                    termion::color::Fg(termion::color::Reset),
+                )
+                .as_str();
+            } else {
+                decoration_out += format!(
+                    "{}{}{}",
+                    termion::color::Fg(termion::color::LightGreen),
+                    decoration,
+                    termion::color::Fg(termion::color::Reset),
+                )
+                .as_str();
+            }
+            decoration_out += ", ";
+        }
+        if decoration_out.ends_with(", ") {
+            decoration_out = decoration_out.strip_suffix(", ").unwrap().to_string();
+        }
+        decoration_out += format!("){}", style::Reset).as_str();
+        write!(
+            screen,
+            "{}{}",
+            decoration_out,
+            termion::color::Fg(termion::color::Reset),
+        )
+        .unwrap();
+        return true;
+    }
+    fn render_single_line<W: Write>(
+        &mut self,
+        screen: &mut W,
+        log: &String,
+        x_tmp: u16,
+        y_tmp: u16,
+    ) {
+        if log.is_empty() {
+            return;
+        }
+        if let LayoutMode::LeftPanel(ContentType::Diff)
+        | LayoutMode::RightPanel(ContentType::Diff) = self.layout_mode
+        {
+            self.render_discrepancy(screen, log, x_tmp, y_tmp);
+        } else {
+            self.render_commit_decoration(screen, log, x_tmp, y_tmp);
+        }
     }
 
     fn refresh_frame_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String) {
