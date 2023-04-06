@@ -129,7 +129,7 @@ impl RenderGit for TuiGit {
         }
         let mut y_tmp = self.log_row_top;
         self.row_log_map.clear();
-        for log in &self.current_log_vec[self.log_scroll_offset as usize..] {
+        for log in &self.right_panel_log_vec[self.log_scroll_offset as usize..] {
             // Need to update bottom here.
             self.log_row_bottom = y_tmp;
             let sub_log = log.substring(0, (col - x_tmp as u16) as usize);
@@ -318,7 +318,7 @@ impl RenderGit for TuiGit {
         self.update_git_branch();
         self.show_branch_in_left_panel(screen);
         self.update_git_log(&self.current_branch.to_string());
-        self.current_log_vec = self
+        self.right_panel_log_vec = self
             .branch_log_map
             .get(&self.current_branch.to_string())
             .unwrap()
@@ -394,7 +394,7 @@ impl RenderGit for TuiGit {
         self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
         // Show the log.
         self.update_git_log(&self.current_branch.to_string());
-        self.current_log_vec = self
+        self.right_panel_log_vec = self
             .branch_log_map
             .get(&self.current_branch.to_string())
             .unwrap()
@@ -428,8 +428,10 @@ impl RenderGit for TuiGit {
                 // *row = self.log_row_top;
                 // Hit the bottom.
                 let log_show_range = self.log_row_bottom - self.log_row_top;
-                let current_log_vec_len = self.current_log_vec.len();
-                if usize::from(self.log_scroll_offset + log_show_range + 1) < current_log_vec_len {
+                let right_panel_log_vec_len = self.right_panel_log_vec.len();
+                if usize::from(self.log_scroll_offset + log_show_range + 1)
+                    < right_panel_log_vec_len
+                {
                     self.log_scroll_offset += 1;
                     self.show_log_in_right_panel(screen);
                 }

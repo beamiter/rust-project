@@ -99,7 +99,7 @@ impl ActionGit for TuiGit {
                     ContentType::Diff => {
                         self.layout_mode = LayoutMode::LeftPanel(ContentType::Log);
                         self.update_git_log(&self.current_branch.to_string());
-                        self.current_log_vec = self
+                        self.right_panel_log_vec = self
                             .branch_log_map
                             .get(&self.current_branch.to_string())
                             .unwrap()
@@ -109,7 +109,7 @@ impl ActionGit for TuiGit {
                     ContentType::Log => {
                         self.layout_mode = LayoutMode::LeftPanel(ContentType::Diff);
                         self.update_git_diff(&self.current_branch.to_string());
-                        self.current_log_vec = self.branch_diff_vec.to_vec();
+                        self.right_panel_log_vec = self.branch_diff_vec.to_vec();
                         self.show_log_in_right_panel(screen);
                     }
                     _ => {}
@@ -269,7 +269,7 @@ impl ActionGit for TuiGit {
                     self.show_in_bottom_bar(screen, &"haha".to_string());
                 }
                 _ => {}
-            }
+            },
         }
     }
     fn move_cursor_up<W: Write>(&mut self, screen: &mut W) {

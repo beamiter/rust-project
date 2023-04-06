@@ -75,7 +75,7 @@ pub struct TuiGit {
     pub commit_info_map: HashMap<String, Vec<String>>,
     pub current_branch: String,
     pub current_commit: String,
-    pub current_log_vec: Vec<String>,
+    pub right_panel_log_vec: Vec<String>,
     // Main branch;
     pub main_branch: String,
     pub row_branch_map: HashMap<usize, String>,
@@ -117,7 +117,7 @@ impl TuiGit {
             main_branch: String::new(),
             current_branch: String::new(),
             current_commit: String::new(),
-            current_log_vec: vec![],
+            right_panel_log_vec: vec![],
             layout_mode: LayoutMode::LeftPanel(ContentType::Log),
             key_move_counter: 0,
             previous_pos: Position::new(),
