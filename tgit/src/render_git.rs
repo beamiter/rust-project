@@ -131,15 +131,6 @@ impl RenderGit for TuiGit {
         self.branch_col_right =
             self.branch_col_left + *branch_size.iter().max().unwrap() as usize + 3;
         self.log_col_left = self.branch_col_right + 4;
-
-        match self.layout_mode {
-            LayoutMode::LeftPanel(content) | LayoutMode::RightPanel(content) => {
-                let mut snap_shot = SnapShot::new();
-                snap_shot.scroll_offset = self.log_scroll_offset;
-                snap_shot.position = self.current_pos;
-                self.snap_shot_map.insert(content, snap_shot);
-            }
-        }
     }
     fn show_log_in_right_panel<W: Write>(&mut self, screen: &mut W) {
         let (x, y) = self.current_pos.unpack();
@@ -177,15 +168,6 @@ impl RenderGit for TuiGit {
         }
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
         screen.flush().unwrap();
-
-        match self.layout_mode {
-            LayoutMode::LeftPanel(content) | LayoutMode::RightPanel(content) => {
-                let mut snap_shot = SnapShot::new();
-                snap_shot.scroll_offset = self.log_scroll_offset;
-                snap_shot.position = self.current_pos;
-                self.snap_shot_map.insert(content, snap_shot);
-            }
-        }
     }
     fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
         let (x, y) = self.current_pos.unpack();

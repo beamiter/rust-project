@@ -268,6 +268,11 @@ impl ActionGit for TuiGit {
                     if !self.update_commit_info() {
                         return;
                     }
+                    self.show_in_bottom_bar(
+                        screen,
+                        &format!("log {:?}", self.snap_shot_map.get(&ContentType::Log)).to_string(),
+                    );
+                    self.reset_cursor_to_log_top(screen);
                     self.log_scroll_offset = 0;
                     self.layout_mode = LayoutMode::RightPanel(ContentType::Commit);
                     self.right_panel_log_vec = self
@@ -276,15 +281,21 @@ impl ActionGit for TuiGit {
                         .unwrap()
                         .to_vec();
                     self.show_log_in_right_panel(screen);
-                    self.reset_cursor_to_log_top(screen);
                 }
                 ContentType::Commit => {
-                    // Update position and scroll offset.
-                    self.log_scroll_offset = self.snap_shot_map.get(&content).unwrap().scroll_offset;
+                    // Update with log position and scroll offset.
+                    self.show_in_bottom_bar(
+                        screen,
+                        &format!("commit {:?}", self.snap_shot_map.get(&ContentType::Log))
+                            .to_string(),
+                    );
+                    self.log_scroll_offset = self
+                        .snap_shot_map
+                        .get(&ContentType::Log)
+                        .unwrap()
+                        .scroll_offset;
                     self.previous_pos = self.current_pos;
-                    self.current_pos = self.snap_shot_map.get(&content).unwrap().position;
-                    // self.log_scroll_offset = self.prev_scroll_offset.log;
-                    self.show_in_bottom_bar(screen, &self.log_scroll_offset.to_string());
+                    self.current_pos = self.snap_shot_map.get(&ContentType::Log).unwrap().position;
                     self.layout_mode = LayoutMode::RightPanel(ContentType::Log);
                     self.update_git_log(&self.current_branch.to_string());
                     self.right_panel_log_vec = self
@@ -293,7 +304,6 @@ impl ActionGit for TuiGit {
                         .unwrap()
                         .to_vec();
                     self.show_log_in_right_panel(screen);
-                    self.reset_cursor_to_log_top(screen);
                 }
                 _ => {}
             },
@@ -313,6 +323,19 @@ impl ActionGit for TuiGit {
                 self.right_panel_handler(screen, true);
             }
         }
+        // Update snapshot.
+        match self.layout_mode {
+            LayoutMode::LeftPanel(content) | LayoutMode::RightPanel(content) => {
+                let mut snap_shot = SnapShot::new();
+                snap_shot.scroll_offset = self.log_scroll_offset;
+                snap_shot.position = self.current_pos;
+                self.snap_shot_map.insert(content, snap_shot);
+            }
+        }
+        self.show_in_bottom_bar(
+            screen,
+            &format!("{:?}", self.snap_shot_map.get(&ContentType::Log)).to_string(),
+        );
     }
 
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W) {
@@ -329,6 +352,19 @@ impl ActionGit for TuiGit {
                 self.right_panel_handler(screen, false);
             }
         }
+        // Update snapshot.
+        match self.layout_mode {
+            LayoutMode::LeftPanel(content) | LayoutMode::RightPanel(content) => {
+                let mut snap_shot = SnapShot::new();
+                snap_shot.scroll_offset = self.log_scroll_offset;
+                snap_shot.position = self.current_pos;
+                self.snap_shot_map.insert(content, snap_shot);
+            }
+        }
+        self.show_in_bottom_bar(
+            screen,
+            &format!("{:?}", self.snap_shot_map.get(&ContentType::Log)).to_string(),
+        );
     }
     fn move_cursor_left<W: Write>(&mut self, screen: &mut W) {
         match self.layout_mode {

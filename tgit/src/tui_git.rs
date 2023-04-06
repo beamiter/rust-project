@@ -19,7 +19,7 @@ pub const UNICODE_TABLE: [&'static str; 12] = [
     "\u{1f341}",
 ];
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Position {
     pub col: u16,
     pub row: u16,
@@ -35,7 +35,7 @@ impl Position {
         return (self.col, self.row);
     }
 }
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ContentType {
     Delete,
     Diff,
@@ -43,13 +43,13 @@ pub enum ContentType {
     Status,
     Commit,
 }
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LayoutMode {
     LeftPanel(ContentType),
     RightPanel(ContentType),
 }
 
-#[derive(Clone, Copy, PartialEq, Eq)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SnapShot {
     pub position: Position,
     pub scroll_offset: usize,
