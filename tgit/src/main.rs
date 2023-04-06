@@ -6,15 +6,10 @@ pub mod render_git;
 pub mod tui_git;
 
 use crate::action_git::*;
-use crate::event_git::*;
 use crate::render_git::*;
 use crate::tui_git::*;
 
-use std::str;
-use std::{
-    io::{stdin, stdout, Read, Write},
-    vec,
-};
+use std::io::{stdin, stdout, Write};
 
 use termion::event::Key;
 use termion::input::TermRead;
@@ -41,139 +36,40 @@ fn main() {
     for c in stdin().keys() {
         match c.unwrap() {
             Key::Char('b') => {
-                // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
-                let mut bufs = vec![];
-                let mut buffer: &str = "";
-                tui_git.show_and_stay_in_status_bar(&mut screen, &"git checkout -b: ".to_string());
-                loop {
-                    let b = stdin().lock().bytes().next().unwrap().unwrap();
-                    match char::from(b) {
-                        '\r' | '\n' => {
-                            tui_git.checkout_new_git_branch(&mut screen, &buffer.to_string());
-                            break;
-                        }
-                        // Backspace '\b'
-                        '\x7f' => {
-                            if !bufs.is_empty() {
-                                bufs.remove(bufs.len() - 1);
-                            }
-                        }
-                        _ => {
-                            bufs.push(b);
-                        }
-                    }
-                    buffer = str::from_utf8(&bufs).unwrap();
-                    tui_git.show_and_stay_in_status_bar(
-                        &mut screen,
-                        &format!("git checkout -b: {}", buffer.to_string()).to_string(),
-                    );
-                }
+                tui_git.lower_b_pressed(&mut screen);
             }
             Key::Char('c') => {
-                // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
-                let mut bufs = vec![];
-                let mut buffer: &str = "";
-                tui_git.show_and_stay_in_status_bar(&mut screen, &"git checkout: ".to_string());
-                loop {
-                    let b = stdin().lock().bytes().next().unwrap().unwrap();
-                    match char::from(b) {
-                        '\r' | '\n' => {
-                            tui_git.checkout_local_git_branch(&mut screen, &buffer.to_string());
-                            break;
-                        }
-                        // Backspace '\b'
-                        '\x7f' => {
-                            if !bufs.is_empty() {
-                                bufs.remove(bufs.len() - 1);
-                            }
-                        }
-                        _ => {
-                            bufs.push(b);
-                        }
-                    }
-                    buffer = str::from_utf8(&bufs).unwrap();
-                    tui_git.show_and_stay_in_status_bar(
-                        &mut screen,
-                        &format!("git checkout: {}", buffer.to_string()).to_string(),
-                    );
-                }
+                tui_git.lower_c_pressed(&mut screen);
             }
             Key::Char('d') => {
                 tui_git.lower_d_pressed(&mut screen);
             }
             Key::Char('f') => {
-                // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
-                let mut bufs = vec![];
-                let mut buffer: &str = "";
-                tui_git
-                    .show_and_stay_in_status_bar(&mut screen, &"git fetch and check: ".to_string());
-                loop {
-                    let b = stdin().lock().bytes().next().unwrap().unwrap();
-                    match char::from(b) {
-                        '\r' | '\n' => {
-                            tui_git.checkout_remote_git_branch(&mut screen, &buffer.to_string());
-                            break;
-                        }
-                        // Backspace '\b'
-                        '\x7f' => {
-                            if !bufs.is_empty() {
-                                bufs.remove(bufs.len() - 1);
-                            }
-                        }
-                        _ => {
-                            bufs.push(b);
-                        }
-                    }
-                    buffer = str::from_utf8(&bufs).unwrap();
-                    tui_git.show_and_stay_in_status_bar(
-                        &mut screen,
-                        &format!("get fetch and check: {}", buffer.to_string()).to_string(),
-                    );
-                }
+                tui_git.lower_f_pressed(&mut screen);
             }
             Key::Char('n') | Key::Esc | Key::Char('N') => {
                 tui_git.lower_n_pressed(&mut screen);
             }
             Key::Char('q') => {
-                break;
+                if tui_git.lower_q_pressed(&mut screen) {
+                    break;
+                }
             }
             Key::Char('y') | Key::Char('Y') => {
                 tui_git.lower_y_pressed(&mut screen);
             }
+
             Key::Char('D') => {
                 tui_git.upper_d_pressed(&mut screen);
+            }
+
+            Key::Char(':') => {
+                tui_git.colon_pressed(&mut screen);
             }
             Key::Char('\n') => {
                 tui_git.enter_pressed(&mut screen);
             }
-            Key::Char(':') => {
-                // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
-                let mut bufs = vec![];
-                let mut buffer: &str = "";
-                tui_git.show_and_stay_in_status_bar(&mut screen, &"cmd: ".to_string());
-                for b in stdin().lock().bytes() {
-                    match b {
-                        Ok(b'\r') | Ok(b'\n') => {
-                            tui_git.execute_normal_command(&mut screen, &buffer);
-                            break;
-                        }
-                        // Backspace '\b'
-                        // '\u{1b}' or '\x1b' for escape
-                        Ok(0x7f) => {
-                            bufs.pop();
-                        }
-                        Ok(c) => {
-                            bufs.push(c);
-                        }
-                        Err(_) => {}
-                    }
-                    buffer = str::from_utf8(&bufs).unwrap();
-                    tui_git.show_and_stay_in_status_bar(
-                        &mut screen,
-                        &format!("cmd: {}", buffer.to_string()).to_string(),
-                    );
-                }
-            }
+
             Key::Left | Key::Char('h') => {
                 tui_git.move_cursor_left(&mut screen);
             }
