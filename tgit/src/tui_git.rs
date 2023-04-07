@@ -37,6 +37,7 @@ impl Position {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum ContentType {
+    Branch,
     Delete,
     Diff,
     Log,

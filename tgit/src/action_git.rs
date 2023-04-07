@@ -117,6 +117,7 @@ impl ActionGit for TuiGit {
             }
             _ => {}
         }
+        self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
     }
     fn lower_f_pressed<W: Write>(&mut self, screen: &mut W) {
         // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
@@ -226,6 +227,7 @@ impl ActionGit for TuiGit {
             )
             .unwrap();
         }
+        self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
     }
     fn colon_pressed<W: Write>(&mut self, screen: &mut W) {
         // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
@@ -299,6 +301,7 @@ impl ActionGit for TuiGit {
                 _ => {}
             },
         }
+        self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
     }
     fn move_cursor_up<W: Write>(&mut self, screen: &mut W) {
         match self.layout_mode {
@@ -354,11 +357,26 @@ impl ActionGit for TuiGit {
             LayoutMode::LeftPanel(_) => {
                 return;
             }
-            LayoutMode::RightPanel(content) => {
-                self.layout_mode = LayoutMode::LeftPanel(content);
-            }
+            LayoutMode::RightPanel(content) => match content {
+                ContentType::Log | ContentType::Diff => {
+                    self.layout_mode = LayoutMode::LeftPanel(content);
+                }
+                _ => {
+                    return;
+                }
+            },
         }
         self.reset_cursor_to_current_branch(screen);
+        self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+        // Update snapshot.
+        match self.layout_mode {
+            LayoutMode::LeftPanel(content) | LayoutMode::RightPanel(content) => {
+                let mut snap_shot = SnapShot::new();
+                snap_shot.scroll_offset = self.log_scroll_offset;
+                snap_shot.position = self.current_pos;
+                self.snap_shot_map.insert(content, snap_shot);
+            }
+        }
     }
 
     fn move_cursor_right<W: Write>(&mut self, screen: &mut W) {
@@ -376,5 +394,15 @@ impl ActionGit for TuiGit {
             }
         }
         self.reset_cursor_to_log_top(screen);
+        self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+        // Update snapshot.
+        match self.layout_mode {
+            LayoutMode::LeftPanel(content) | LayoutMode::RightPanel(content) => {
+                let mut snap_shot = SnapShot::new();
+                snap_shot.scroll_offset = self.log_scroll_offset;
+                snap_shot.position = self.current_pos;
+                self.snap_shot_map.insert(content, snap_shot);
+            }
+        }
     }
 }

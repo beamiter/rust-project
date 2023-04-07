@@ -466,17 +466,17 @@ impl RenderGit for TuiGit {
             }
         }
         self.current_pos = Position::init(x, y);
-        self.show_in_bottom_bar(
-            screen,
-            &format!(
-                "c: {}, r: {}, branch: {}, branch_row: {}",
-                self.current_pos.col,
-                self.current_pos.row,
-                self.current_branch,
-                *self.branch_row_map.get(&self.current_branch).unwrap() as u16,
-            )
-            .to_string(),
-        );
+        // self.show_in_bottom_bar(
+        //     screen,
+        //     &format!(
+        //         "c: {}, r: {}, branch: {}, branch_row: {}",
+        //         self.current_pos.col,
+        //         self.current_pos.row,
+        //         self.current_branch,
+        //         *self.branch_row_map.get(&self.current_branch).unwrap() as u16,
+        //     )
+        //     .to_string(),
+        // );
         self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
         self.show_icon_after_cursor(
             screen,
