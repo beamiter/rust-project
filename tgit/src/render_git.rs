@@ -140,8 +140,23 @@ impl RenderGit for TuiGit {
             // No show due to no enough col.
             return;
         }
+        let prev_log_row_bottom = self.log_row_bottom;
+        let mut y_tmp = self.log_row_top;
+        self.row_log_map.clear();
+        for log in self.right_panel_log_vec[self.log_scroll_offset as usize..].to_vec() {
+            // Need to update bottom here.
+            self.log_row_bottom = y_tmp;
+            let sub_log = log.substring(0, (col - x_tmp as u16) as usize).to_string();
+            self.render_single_line(screen, &sub_log, x_tmp as u16, y_tmp as u16);
+            self.row_log_map.insert(y_tmp, sub_log);
+            // Spare 2 for check info.
+            if y_tmp as u16 >= row - 2 {
+                break;
+            }
+            y_tmp += 1;
+        }
         // Clear previous log zone.
-        for clear_y in self.log_row_top..=self.log_row_bottom {
+        for clear_y in y_tmp..=prev_log_row_bottom {
             write!(
                 screen,
                 "{}{}",
@@ -149,22 +164,6 @@ impl RenderGit for TuiGit {
                 termion::clear::UntilNewline,
             )
             .unwrap();
-        }
-        let mut y_tmp = self.log_row_top;
-        self.row_log_map.clear();
-        for log in self.right_panel_log_vec[self.log_scroll_offset as usize..].to_vec() {
-            // Need to update bottom here.
-            self.log_row_bottom = y_tmp;
-            let sub_log = log.substring(0, (col - x_tmp as u16) as usize).to_string();
-            if !sub_log.is_empty() {
-                self.render_single_line(screen, &sub_log, x_tmp as u16, y_tmp as u16);
-            }
-            self.row_log_map.insert(y_tmp, sub_log);
-            // Spare 2 for check info.
-            if y_tmp as u16 >= row - 2 {
-                break;
-            }
-            y_tmp += 1;
         }
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
         screen.flush().unwrap();
@@ -260,7 +259,6 @@ impl RenderGit for TuiGit {
         x_tmp: u16,
         y_tmp: u16,
     ) -> bool {
-        // Show "git diff".
         let res = match log.chars().next().unwrap() {
             '-' => {
                 write!(screen, "{}", termion::color::Fg(termion::color::LightRed)).unwrap();
@@ -289,7 +287,6 @@ impl RenderGit for TuiGit {
         x_tmp: u16,
         y_tmp: u16,
     ) -> bool {
-        // Show "git log".
         if !log.starts_with("commit") {
             write!(
                 screen,
@@ -384,6 +381,14 @@ impl RenderGit for TuiGit {
         x_tmp: u16,
         y_tmp: u16,
     ) {
+        // Clear current line.
+        write!(
+            screen,
+            "{}{}",
+            termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
+            termion::clear::UntilNewline,
+        )
+        .unwrap();
         if log.is_empty() {
             return;
         }
