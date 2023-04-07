@@ -164,6 +164,11 @@ impl ActionGit for TuiGit {
             }
             self.branch_delete_set.clear();
             self.show_in_status_bar(screen, &format!("Escape deleting branch").to_string());
+            // Reset layout_mode.
+            self.layout_mode = LayoutMode::LeftPanel(ContentType::Log);
+            // Refresh frame.
+            self.refresh_frame_with_branch(screen, &self.current_branch.to_string());
+            self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
         }
     }
     fn lower_q_pressed<W: Write>(&mut self, _: &mut W) -> bool {
@@ -172,7 +177,13 @@ impl ActionGit for TuiGit {
     }
     fn lower_y_pressed<W: Write>(&mut self, screen: &mut W) {
         if let LayoutMode::LeftPanel(ContentType::Delete) = self.layout_mode {
-            self.delete_git_branch(screen);
+            if self.delete_git_branch(screen) {
+                // Reset layout_mode.
+                self.layout_mode = LayoutMode::LeftPanel(ContentType::Log);
+                // Refresh frame.
+                self.refresh_frame_with_branch(screen, &self.main_branch.to_string());
+                self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+            }
         }
     }
     fn upper_d_pressed<W: Write>(&mut self, screen: &mut W) {
@@ -305,14 +316,17 @@ impl ActionGit for TuiGit {
     }
     fn move_cursor_up<W: Write>(&mut self, screen: &mut W) {
         match self.layout_mode {
-            LayoutMode::LeftPanel(content) => match content {
-                ContentType::Diff => {
-                    return;
+            LayoutMode::LeftPanel(content) => {
+                match content {
+                    ContentType::Diff => {
+                        return;
+                    }
+                    _ => {
+                        self.left_panel_handler(screen, true);
+                    }
                 }
-                _ => {
-                    self.left_panel_handler(screen, true);
-                }
-            },
+                self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+            }
             LayoutMode::RightPanel(_) => {
                 self.right_panel_handler(screen, true);
             }
@@ -330,14 +344,17 @@ impl ActionGit for TuiGit {
 
     fn move_cursor_down<W: Write>(&mut self, screen: &mut W) {
         match self.layout_mode {
-            LayoutMode::LeftPanel(content) => match content {
-                ContentType::Diff => {
-                    return;
+            LayoutMode::LeftPanel(content) => {
+                match content {
+                    ContentType::Diff => {
+                        return;
+                    }
+                    _ => {
+                        self.left_panel_handler(screen, false);
+                    }
                 }
-                _ => {
-                    self.left_panel_handler(screen, false);
-                }
-            },
+                self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+            }
             LayoutMode::RightPanel(_) => {
                 self.right_panel_handler(screen, false);
             }
