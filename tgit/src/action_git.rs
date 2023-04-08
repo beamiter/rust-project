@@ -278,7 +278,8 @@ impl ActionGit for TuiGit {
             },
             LayoutMode::RightPanel(content) => match content {
                 DisplayType::Log => {
-                    if !self.update_commit_info() {
+                    let current_commit = self.update_commit_info();
+                    if current_commit.is_none() {
                         return;
                     }
                     self.reset_cursor_to_log_top(screen);
@@ -286,7 +287,7 @@ impl ActionGit for TuiGit {
                     self.layout_mode = LayoutMode::RightPanel(DisplayType::Commit);
                     self.right_panel_log_info = self
                         .commit_info_map
-                        .get(&self.current_commit.to_string())
+                        .get(&current_commit.unwrap())
                         .unwrap()
                         .to_vec();
                     self.show_log_in_right_panel(screen);

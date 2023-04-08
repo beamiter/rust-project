@@ -105,7 +105,6 @@ pub struct TuiGit {
     pub branch_vec: Vec<String>,
     pub commit_info_map: HashMap<String, Vec<LogInfoPattern>>,
     pub current_branch: String,
-    pub current_commit: String,
     pub right_panel_log_info: Vec<LogInfoPattern>,
     // Main branch;
     pub main_branch: String,
@@ -156,7 +155,6 @@ impl TuiGit {
 
             main_branch: String::new(),
             current_branch: String::new(),
-            current_commit: String::new(),
             right_panel_log_info: vec![],
             layout_mode: LayoutMode::LeftPanel(DisplayType::Log),
             key_move_counter: 0,
@@ -166,40 +164,41 @@ impl TuiGit {
         }
     }
 
-    pub fn update_commit_info(&mut self) -> bool {
+    pub fn update_commit_info(&mut self) -> Option<String> {
         let (_, y) = self.current_pos.unpack();
-        self.current_commit.clear();
+        let mut current_commit: Option<String> = None;
         if let Some(log) = self.row_log_map.get(&(y as usize)) {
             if *log == LogInfoPattern::None {
-                return false;
+                return None;
             }
             if let LogInfoPattern::Commit(val) = log {
                 let mut iter = val.split(' ');
                 if iter.next().unwrap() != "commit" {
-                    return false;
+                    return None;
                 }
                 if let Some(val) = iter.next() {
                     // Find the right commit name.
-                    self.current_commit = val.to_string();
+                    current_commit = Some(val.to_string());
                 }
             }
         } else {
-            return false;
+            return None;
         }
-        if self.current_commit.is_empty() {
-            return false;
+        if current_commit == None {
+            return None;
         }
-        if self.commit_info_map.get(&self.current_commit).is_some() {
-            return true;
+        let current_commit = current_commit.unwrap();
+        if self.commit_info_map.get(&current_commit).is_some() {
+            return Some(current_commit);
         }
         let output = Command::new("git")
-            .args(["show", self.current_commit.as_str()])
+            .args(["show", &current_commit])
             .output()
             .expect("failed to execute process");
         let commit_output = String::from_utf8_lossy(&output.stdout);
         let mut commit_iter = commit_output.split('\n');
         self.commit_info_map
-            .insert(self.current_commit.to_string(), vec![]);
+            .insert(current_commit.to_string(), vec![]);
         loop {
             if let Some(val) = commit_iter.next() {
                 if val.is_empty() {
@@ -207,22 +206,22 @@ impl TuiGit {
                 } else {
                     if val.starts_with("commit") {
                         self.commit_info_map
-                            .get_mut(&self.current_commit)
+                            .get_mut(&current_commit)
                             .unwrap()
                             .push(LogInfoPattern::Commit(val.to_string()));
                     } else if val.starts_with("-   ") {
                         self.commit_info_map
-                            .get_mut(&self.current_commit)
+                            .get_mut(&current_commit)
                             .unwrap()
                             .push(LogInfoPattern::DiffSubtract(val.to_string()));
                     } else if val.starts_with("+   ") {
                         self.commit_info_map
-                            .get_mut(&self.current_commit)
+                            .get_mut(&current_commit)
                             .unwrap()
                             .push(LogInfoPattern::DiffAdd(val.to_string()));
                     } else {
                         self.commit_info_map
-                            .get_mut(&self.current_commit)
+                            .get_mut(&current_commit)
                             .unwrap()
                             .push(LogInfoPattern::Msg(val.to_string()));
                     }
@@ -231,7 +230,7 @@ impl TuiGit {
                 break;
             }
         }
-        return true;
+        return Some(current_commit.to_string());
     }
 
     pub fn update_git_branch(&mut self) -> bool {
