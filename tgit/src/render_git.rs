@@ -140,7 +140,11 @@ impl RenderGit for TuiGit {
             // No show due to no enough col.
             return;
         }
-        let prev_log_row_bottom = self.log_row_bottom;
+        self.log_scroll_offset_max = if self.right_panel_log_vec.len() + 4 <= row as usize {
+            0
+        } else {
+            self.right_panel_log_vec.len() - row as usize
+        };
         let mut y_tmp = self.log_row_top;
         for log in self.right_panel_log_vec[self.log_scroll_offset as usize..].to_vec() {
             // Need to update bottom here.
@@ -154,8 +158,8 @@ impl RenderGit for TuiGit {
             }
             y_tmp += 1;
         }
-        // Clear previous log zone.
-        for clear_y in y_tmp + 1..=prev_log_row_bottom {
+        // Clear rest log zone.
+        for clear_y in self.log_row_bottom + 1..row as usize {
             write!(
                 screen,
                 "{}{}",
@@ -517,8 +521,10 @@ impl RenderGit for TuiGit {
         } else {
             if y == self.log_row_bottom as u16 {
                 // Hit the bottom.
-                self.log_scroll_offset += 1;
-                self.show_log_in_right_panel(screen);
+                if self.log_scroll_offset < self.log_scroll_offset_max {
+                    self.log_scroll_offset += 1;
+                    self.show_log_in_right_panel(screen);
+                }
             } else if y < self.log_row_bottom as u16 {
                 y = y + 1;
             }

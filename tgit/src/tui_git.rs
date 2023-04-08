@@ -86,6 +86,7 @@ pub struct TuiGit {
     pub log_row_bottom: usize,
     pub log_col_left: usize,
     pub log_scroll_offset: usize,
+    pub log_scroll_offset_max: usize,
     pub snap_shot_map: HashMap<DisplayType, SnapShot>,
 
     // bottom bar area;
@@ -129,6 +130,7 @@ impl TuiGit {
             log_row_bottom: 0,
             log_col_left: 0,
             log_scroll_offset: 0,
+            log_scroll_offset_max: 0,
             snap_shot_map: HashMap::from([
                 (DisplayType::Delete, SnapShot::new()),
                 (DisplayType::Diff, SnapShot::new()),
@@ -280,7 +282,7 @@ impl TuiGit {
                 "--decorate",
                 "--abbrev-commit",
                 branch.as_str(),
-                "-n 20",
+                "-n 100",
             ])
             .output()
             .expect("failed to execute process");
