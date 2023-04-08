@@ -99,8 +99,8 @@ impl ActionGit for TuiGit {
                     DisplayType::Diff => {
                         self.layout_mode = LayoutMode::LeftPanel(DisplayType::Log);
                         self.update_git_log(&self.current_branch.to_string());
-                        self.right_panel_log_vec = self
-                            .branch_log_map
+                        self.right_panel_log_info = self
+                            .branch_log_info_map
                             .get(&self.current_branch.to_string())
                             .unwrap()
                             .to_vec();
@@ -109,7 +109,7 @@ impl ActionGit for TuiGit {
                     DisplayType::Log => {
                         self.layout_mode = LayoutMode::LeftPanel(DisplayType::Diff);
                         self.update_git_diff(&self.current_branch.to_string());
-                        self.right_panel_log_vec = self.branch_diff_vec.to_vec();
+                        self.right_panel_log_info = self.branch_diff_vec.clone();
                         self.show_log_in_right_panel(screen);
                     }
                     _ => {}
@@ -284,7 +284,7 @@ impl ActionGit for TuiGit {
                     self.reset_cursor_to_log_top(screen);
                     self.log_scroll_offset = 0;
                     self.layout_mode = LayoutMode::RightPanel(DisplayType::Commit);
-                    self.right_panel_log_vec = self
+                    self.right_panel_log_info = self
                         .commit_info_map
                         .get(&self.current_commit.to_string())
                         .unwrap()
@@ -302,8 +302,8 @@ impl ActionGit for TuiGit {
                     self.current_pos = self.snap_shot_map.get(&DisplayType::Log).unwrap().position;
                     self.layout_mode = LayoutMode::RightPanel(DisplayType::Log);
                     self.update_git_log(&self.current_branch.to_string());
-                    self.right_panel_log_vec = self
-                        .branch_log_map
+                    self.right_panel_log_info = self
+                        .branch_log_info_map
                         .get(&self.current_branch.to_string())
                         .unwrap()
                         .to_vec();

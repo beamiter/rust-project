@@ -23,26 +23,10 @@ pub trait RenderGit {
     fn render_single_line<W: Write>(
         &mut self,
         screen: &mut W,
-        log: &String,
+        log: &LogInfoPattern,
         x_tmp: u16,
         y_tmp: u16,
     );
-    // If not render line with discrepancy, return false.
-    fn render_discrepancy<W: Write>(
-        &mut self,
-        screen: &mut W,
-        log: &String,
-        x_tmp: u16,
-        y_tmp: u16,
-    ) -> bool;
-    // If not render line start with "commit", return false.
-    fn render_commit_decoration<W: Write>(
-        &mut self,
-        screen: &mut W,
-        log: &String,
-        x_tmp: u16,
-        y_tmp: u16,
-    ) -> bool;
 
     fn refresh_frame_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
 
@@ -136,22 +120,23 @@ impl RenderGit for TuiGit {
         let (x, y) = self.current_pos.unpack();
         let (col, row) = termion::terminal_size().unwrap();
         let x_tmp = self.log_col_left;
+        self.log_col_right = col as usize;
         if col <= x_tmp as u16 {
             // No show due to no enough col.
             return;
         }
-        self.log_scroll_offset_max = if self.right_panel_log_vec.len() + 4 <= row as usize {
+        self.log_scroll_offset_max = if self.right_panel_log_info.len() + 4 <= row as usize {
             0
         } else {
-            self.right_panel_log_vec.len() - row as usize
+            self.right_panel_log_info.len() - row as usize
         };
         let mut y_tmp = self.log_row_top;
-        for log in self.right_panel_log_vec[self.log_scroll_offset as usize..].to_vec() {
+        // Log show len (col - x_tmp as u16).
+        for log in self.right_panel_log_info[self.log_scroll_offset as usize..].to_vec() {
             // Need to update bottom here.
             self.log_row_bottom = y_tmp;
-            let sub_log = log.substring(0, (col - x_tmp as u16) as usize).to_string();
-            self.render_single_line(screen, &sub_log, x_tmp as u16, y_tmp as u16);
-            self.row_log_map.insert(y_tmp, sub_log);
+            self.render_single_line(screen, &log, x_tmp as u16, y_tmp as u16);
+            self.row_log_map.insert(y_tmp, log);
             // Spare 2 for check info.
             if y_tmp as u16 >= row - 2 {
                 break;
@@ -255,132 +240,10 @@ impl RenderGit for TuiGit {
         self.show_current_cursor(screen);
     }
 
-    fn render_discrepancy<W: Write>(
-        &mut self,
-        screen: &mut W,
-        log: &String,
-        x_tmp: u16,
-        y_tmp: u16,
-    ) -> bool {
-        let res = match log.chars().next().unwrap() {
-            '-' => {
-                write!(screen, "{}", termion::color::Fg(termion::color::LightRed)).unwrap();
-                true
-            }
-            '+' => {
-                write!(screen, "{}", termion::color::Fg(termion::color::LightGreen)).unwrap();
-                true
-            }
-            _ => false,
-        };
-        write!(
-            screen,
-            "{}{}{}",
-            termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
-            log,
-            termion::color::Fg(termion::color::Reset),
-        )
-        .unwrap();
-        return res;
-    }
-    fn render_commit_decoration<W: Write>(
-        &mut self,
-        screen: &mut W,
-        log: &String,
-        x_tmp: u16,
-        y_tmp: u16,
-    ) -> bool {
-        if !log.starts_with("commit") {
-            write!(
-                screen,
-                "{}{}{}",
-                termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
-                log,
-                termion::color::Fg(termion::color::Reset),
-            )
-            .unwrap();
-            return false;
-        }
-        write!(
-            screen,
-            "{}",
-            termion::color::Fg(termion::color::LightYellow)
-        )
-        .unwrap();
-        let split_log: Vec<_> = log.split('(').collect();
-        if split_log.len() != 2 {
-            write!(
-                screen,
-                "{}{}{}",
-                termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
-                log,
-                termion::color::Fg(termion::color::Reset),
-            )
-            .unwrap();
-            return true;
-        }
-        write!(
-            screen,
-            "{}{}{}",
-            termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
-            split_log.first().unwrap(),
-            termion::color::Fg(termion::color::Reset),
-        )
-        .unwrap();
-        let split_last: String = split_log
-            .last()
-            .unwrap()
-            .chars()
-            .filter(|&x| x != ')' && x != '(')
-            .collect::<String>();
-        let decoration_split: Vec<_> = split_last.split(", ").collect();
-        let mut decoration_out: String = format!("{}(", style::Bold);
-        for decoration in decoration_split {
-            if decoration.starts_with("HEAD -> ") {
-                decoration_out += format!(
-                    "{}HEAD -> {}{}{}",
-                    termion::color::Fg(termion::color::LightCyan),
-                    termion::color::Fg(termion::color::LightGreen),
-                    decoration.strip_prefix("HEAD -> ").unwrap(),
-                    termion::color::Fg(termion::color::Reset),
-                )
-                .as_str();
-            } else if decoration.starts_with("origin/") {
-                decoration_out += format!(
-                    "{}{}{}",
-                    termion::color::Fg(termion::color::LightRed),
-                    decoration,
-                    termion::color::Fg(termion::color::Reset),
-                )
-                .as_str();
-            } else {
-                decoration_out += format!(
-                    "{}{}{}",
-                    termion::color::Fg(termion::color::LightGreen),
-                    decoration,
-                    termion::color::Fg(termion::color::Reset),
-                )
-                .as_str();
-            }
-            decoration_out += ", ";
-        }
-        if decoration_out.ends_with(", ") {
-            decoration_out = decoration_out.strip_suffix(", ").unwrap().to_string();
-        }
-        decoration_out += format!("){}", style::Reset).as_str();
-        write!(
-            screen,
-            "{}{}",
-            decoration_out,
-            termion::color::Fg(termion::color::Reset),
-        )
-        .unwrap();
-        return true;
-    }
     fn render_single_line<W: Write>(
         &mut self,
         screen: &mut W,
-        log: &String,
+        log: &LogInfoPattern,
         x_tmp: u16,
         y_tmp: u16,
     ) {
@@ -392,20 +255,80 @@ impl RenderGit for TuiGit {
             termion::clear::UntilNewline,
         )
         .unwrap();
-        if log.is_empty() {
-            return;
-        }
-        match self.layout_mode {
-            LayoutMode::LeftPanel(DisplayType::Diff)
-            | LayoutMode::RightPanel(DisplayType::Diff) => {
-                self.render_discrepancy(screen, log, x_tmp, y_tmp);
+        let line_width = self.log_col_right - self.log_col_left + 1;
+        match log {
+            LogInfoPattern::Author(val) | LogInfoPattern::Date(val) | LogInfoPattern::Msg(val) => {
+                write!(screen, "{}", val.substring(0, line_width),).unwrap();
             }
-            LayoutMode::LeftPanel(DisplayType::Log) | LayoutMode::RightPanel(DisplayType::Log) => {
-                self.render_commit_decoration(screen, log, x_tmp, y_tmp);
+            LogInfoPattern::DiffAdd(val) => {
+                write!(
+                    screen,
+                    "{}{}{}",
+                    termion::color::Fg(termion::color::Green),
+                    val.substring(0, line_width),
+                    termion::color::Fg(termion::color::Reset),
+                )
+                .unwrap();
             }
-            LayoutMode::RightPanel(DisplayType::Commit) => {
-                let _ = self.render_commit_decoration(screen, log, x_tmp, y_tmp)
-                    || self.render_discrepancy(screen, log, x_tmp, y_tmp);
+            LogInfoPattern::DiffSubtract(val) => {
+                write!(
+                    screen,
+                    "{}{}{}",
+                    termion::color::Fg(termion::color::Red),
+                    val.substring(0, line_width),
+                    termion::color::Fg(termion::color::Reset),
+                )
+                .unwrap();
+            }
+            LogInfoPattern::Commit(val) => {
+                let val = val.substring(0, line_width);
+                let split_log: Vec<_> = val.split_inclusive(['(', ',', ')']).collect();
+                for tmp in &split_log {
+                    if tmp.starts_with("commit") {
+                        write!(
+                            screen,
+                            "{}{}{}",
+                            termion::color::Fg(termion::color::LightYellow),
+                            tmp,
+                            termion::color::Fg(termion::color::Reset),
+                        )
+                        .unwrap();
+                    } else if tmp.starts_with("HEAD ->") {
+                        write!(
+                            screen,
+                            "{}{}HEAD ->{}{}{}{}",
+                            termion::color::Fg(termion::color::LightCyan),
+                            style::Bold,
+                            termion::color::Fg(termion::color::LightGreen),
+                            tmp.strip_prefix("HEAD ->").unwrap(),
+                            termion::color::Fg(termion::color::Reset),
+                            style::Reset,
+                        )
+                        .unwrap();
+                    } else if tmp.contains("origin") {
+                        write!(
+                            screen,
+                            "{}{}{}{}{}",
+                            termion::color::Fg(termion::color::LightRed),
+                            style::Bold,
+                            tmp,
+                            termion::color::Fg(termion::color::Reset),
+                            style::Reset,
+                        )
+                        .unwrap();
+                    } else {
+                        write!(
+                            screen,
+                            "{}{}{}{}{}",
+                            termion::color::Fg(termion::color::LightGreen),
+                            style::Bold,
+                            tmp,
+                            termion::color::Fg(termion::color::Reset),
+                            style::Reset,
+                        )
+                        .unwrap();
+                    }
+                }
             }
             _ => {}
         }
@@ -418,8 +341,8 @@ impl RenderGit for TuiGit {
         self.update_git_branch();
         self.show_branch_in_left_panel(screen);
         self.update_git_log(&self.current_branch.to_string());
-        self.right_panel_log_vec = self
-            .branch_log_map
+        self.right_panel_log_info = self
+            .branch_log_info_map
             .get(&self.current_branch.to_string())
             .unwrap()
             .to_vec();
@@ -494,8 +417,8 @@ impl RenderGit for TuiGit {
         self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
         // Show the log.
         self.update_git_log(&self.current_branch.to_string());
-        self.right_panel_log_vec = self
-            .branch_log_map
+        self.right_panel_log_info = self
+            .branch_log_info_map
             .get(&self.current_branch.to_string())
             .unwrap()
             .to_vec();

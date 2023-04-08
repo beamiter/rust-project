@@ -63,6 +63,8 @@ impl SnapShot {
         }
     }
 }
+
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub enum LogInfoPattern {
     Author(String),
     Commit(String),
@@ -85,6 +87,7 @@ pub struct TuiGit {
     pub log_row_top: usize,
     pub log_row_bottom: usize,
     pub log_col_left: usize,
+    pub log_col_right: usize,
     pub log_scroll_offset: usize,
     pub log_scroll_offset_max: usize,
     pub snap_shot_map: HashMap<DisplayType, SnapShot>,
@@ -96,19 +99,18 @@ pub struct TuiGit {
 
     // data storage;
     pub branch_delete_set: HashSet<String>,
-    pub branch_diff_vec: Vec<String>,
-    pub branch_log_map: HashMap<String, Vec<String>>,
+    pub branch_diff_vec: Vec<LogInfoPattern>,
     pub branch_log_info_map: HashMap<String, Vec<LogInfoPattern>>,
     pub branch_row_map: HashMap<String, usize>,
     pub branch_vec: Vec<String>,
-    pub commit_info_map: HashMap<String, Vec<String>>,
+    pub commit_info_map: HashMap<String, Vec<LogInfoPattern>>,
     pub current_branch: String,
     pub current_commit: String,
-    pub right_panel_log_vec: Vec<String>,
+    pub right_panel_log_info: Vec<LogInfoPattern>,
     // Main branch;
     pub main_branch: String,
     pub row_branch_map: HashMap<usize, String>,
-    pub row_log_map: HashMap<usize, String>,
+    pub row_log_map: HashMap<usize, LogInfoPattern>,
 
     // layout mode;
     pub layout_mode: LayoutMode,
@@ -129,6 +131,7 @@ impl TuiGit {
             log_row_top: 2,
             log_row_bottom: 0,
             log_col_left: 0,
+            log_col_right: 0,
             log_scroll_offset: 0,
             log_scroll_offset_max: 0,
             snap_shot_map: HashMap::from([
@@ -144,7 +147,6 @@ impl TuiGit {
 
             branch_delete_set: HashSet::new(),
             branch_diff_vec: vec![],
-            branch_log_map: HashMap::new(),
             branch_log_info_map: HashMap::new(),
             branch_row_map: HashMap::new(),
             branch_vec: vec![],
@@ -155,7 +157,7 @@ impl TuiGit {
             main_branch: String::new(),
             current_branch: String::new(),
             current_commit: String::new(),
-            right_panel_log_vec: vec![],
+            right_panel_log_info: vec![],
             layout_mode: LayoutMode::LeftPanel(DisplayType::Log),
             key_move_counter: 0,
             // Goto is 1 based.
@@ -168,16 +170,18 @@ impl TuiGit {
         let (_, y) = self.current_pos.unpack();
         self.current_commit.clear();
         if let Some(log) = self.row_log_map.get(&(y as usize)) {
-            if log.is_empty() {
+            if *log == LogInfoPattern::None {
                 return false;
             }
-            let mut log_iter = log.split(' ');
-            if log_iter.next().unwrap() != "commit" {
-                return false;
-            }
-            if let Some(val) = log_iter.next() {
-                // Find the right commit name.
-                self.current_commit = val.to_string();
+            if let LogInfoPattern::Commit(val) = log {
+                let mut iter = val.split(' ');
+                if iter.next().unwrap() != "commit" {
+                    return false;
+                }
+                if let Some(val) = iter.next() {
+                    // Find the right commit name.
+                    self.current_commit = val.to_string();
+                }
             }
         } else {
             return false;
@@ -194,20 +198,39 @@ impl TuiGit {
             .expect("failed to execute process");
         let commit_output = String::from_utf8_lossy(&output.stdout);
         let mut commit_iter = commit_output.split('\n');
-        let mut commit_detail: Vec<String> = vec![];
+        self.commit_info_map
+            .insert(self.current_commit.to_string(), vec![]);
         loop {
             if let Some(val) = commit_iter.next() {
                 if val.is_empty() {
                     continue;
                 } else {
-                    commit_detail.push(val.to_string());
+                    if val.starts_with("commit") {
+                        self.commit_info_map
+                            .get_mut(&self.current_commit)
+                            .unwrap()
+                            .push(LogInfoPattern::Commit(val.to_string()));
+                    } else if val.starts_with("-   ") {
+                        self.commit_info_map
+                            .get_mut(&self.current_commit)
+                            .unwrap()
+                            .push(LogInfoPattern::DiffSubtract(val.to_string()));
+                    } else if val.starts_with("+   ") {
+                        self.commit_info_map
+                            .get_mut(&self.current_commit)
+                            .unwrap()
+                            .push(LogInfoPattern::DiffAdd(val.to_string()));
+                    } else {
+                        self.commit_info_map
+                            .get_mut(&self.current_commit)
+                            .unwrap()
+                            .push(LogInfoPattern::Msg(val.to_string()));
+                    }
                 }
             } else {
                 break;
             }
         }
-        self.commit_info_map
-            .insert(self.current_commit.to_string(), commit_detail);
         return true;
     }
 
@@ -262,7 +285,16 @@ impl TuiGit {
                 if val.is_empty() {
                     continue;
                 } else {
-                    self.branch_diff_vec.push(val.to_string());
+                    if val.starts_with("-") {
+                        self.branch_diff_vec
+                            .push(LogInfoPattern::DiffSubtract(val.to_string()));
+                    } else if val.starts_with("+") {
+                        self.branch_diff_vec
+                            .push(LogInfoPattern::DiffAdd(val.to_string()));
+                    } else {
+                        self.branch_diff_vec
+                            .push(LogInfoPattern::Msg(val.to_string()));
+                    }
                 }
             } else {
                 break;
@@ -273,7 +305,7 @@ impl TuiGit {
 
     // Currently limit the log number to 100.
     pub fn update_git_log(&mut self, branch: &String) -> bool {
-        if self.branch_log_map.get(branch).is_some() {
+        if self.branch_log_info_map.get(branch).is_some() {
             return true;
         }
         let output = Command::new("git")
@@ -286,7 +318,6 @@ impl TuiGit {
             ])
             .output()
             .expect("failed to execute process");
-        self.branch_log_map.insert(branch.to_string(), vec![]);
         self.branch_log_info_map.insert(branch.to_string(), vec![]);
         // println!("status: {}", output.status);
         // write!(stdout(), "{:?}", String::from_utf8_lossy(&output.stdout)).unwrap();
@@ -294,10 +325,6 @@ impl TuiGit {
         let mut log_iter = log_output.split('\n');
         loop {
             if let Some(val) = log_iter.next() {
-                self.branch_log_map
-                    .get_mut(&branch.to_string())
-                    .unwrap()
-                    .push(val.to_string());
                 if val.starts_with("commit") {
                     self.branch_log_info_map
                         .get_mut(&branch.to_string())
