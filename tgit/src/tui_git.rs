@@ -64,6 +64,7 @@ impl SnapShot {
     }
 }
 
+// Need to parse commit.
 pub struct TuiGit {
     // branch render area;
     pub branch_row_top: usize,
