@@ -142,7 +142,6 @@ impl RenderGit for TuiGit {
         }
         let prev_log_row_bottom = self.log_row_bottom;
         let mut y_tmp = self.log_row_top;
-        self.row_log_map.clear();
         for log in self.right_panel_log_vec[self.log_scroll_offset as usize..].to_vec() {
             // Need to update bottom here.
             self.log_row_bottom = y_tmp;
@@ -156,7 +155,7 @@ impl RenderGit for TuiGit {
             y_tmp += 1;
         }
         // Clear previous log zone.
-        for clear_y in y_tmp..=prev_log_row_bottom {
+        for clear_y in y_tmp + 1..=prev_log_row_bottom {
             write!(
                 screen,
                 "{}{}",
@@ -393,14 +392,14 @@ impl RenderGit for TuiGit {
             return;
         }
         match self.layout_mode {
-            LayoutMode::LeftPanel(ContentType::Diff)
-            | LayoutMode::RightPanel(ContentType::Diff) => {
+            LayoutMode::LeftPanel(DisplayType::Diff)
+            | LayoutMode::RightPanel(DisplayType::Diff) => {
                 self.render_discrepancy(screen, log, x_tmp, y_tmp);
             }
-            LayoutMode::LeftPanel(ContentType::Log) | LayoutMode::RightPanel(ContentType::Log) => {
+            LayoutMode::LeftPanel(DisplayType::Log) | LayoutMode::RightPanel(DisplayType::Log) => {
                 self.render_commit_decoration(screen, log, x_tmp, y_tmp);
             }
-            LayoutMode::RightPanel(ContentType::Commit) => {
+            LayoutMode::RightPanel(DisplayType::Commit) => {
                 let _ = self.render_commit_decoration(screen, log, x_tmp, y_tmp)
                     || self.render_discrepancy(screen, log, x_tmp, y_tmp);
             }
@@ -507,8 +506,6 @@ impl RenderGit for TuiGit {
         let (x, mut y) = self.current_pos.unpack();
         if up {
             if y == self.log_row_top as u16 {
-                // For a close loop browse.
-                // *row = self.log_row_bottom;
                 // Hit the top.
                 if self.log_scroll_offset > 0 {
                     self.log_scroll_offset -= 1;
@@ -518,35 +515,24 @@ impl RenderGit for TuiGit {
                 y = y - 1;
             }
         } else {
-            if y < self.log_row_bottom as u16 {
-                y = y + 1;
-            } else {
-                // For a close loop browse.
-                // *row = self.log_row_top;
+            if y == self.log_row_bottom as u16 {
                 // Hit the bottom.
-                let log_show_range = self.log_row_bottom - self.log_row_top;
-                let right_panel_log_vec_len = self.right_panel_log_vec.len();
-                if usize::from(self.log_scroll_offset + log_show_range + 1)
-                    < right_panel_log_vec_len
-                {
-                    self.log_scroll_offset += 1;
-                    self.show_log_in_right_panel(screen);
-                }
+                self.log_scroll_offset += 1;
+                self.show_log_in_right_panel(screen);
+            } else if y < self.log_row_bottom as u16 {
+                y = y + 1;
             }
         }
         self.current_pos = Position::init(x, y);
         // Comment following to speed up.
-        // self.show_in_bottom_bar(
-        //     screen,
-        //     &format!(
-        //         "c: {}, r: {}, r_bottom: {}, log: {}",
-        //         self.current_pos.col,
-        //         self.current_pos.row,
-        //         self.log_row_bottom,
-        //         self.row_log_map.get(&(y as usize)).unwrap(),
-        //     )
-        //     .to_string(),
-        // );
+        self.show_in_bottom_bar(
+            screen,
+            &format!(
+                "c: {}, r: {}, r_bottom: {}",
+                self.current_pos.col, self.current_pos.row, self.log_row_bottom,
+            )
+            .to_string(),
+        );
         // self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
         // self.show_icon_after_cursor(
         //     screen,

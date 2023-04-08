@@ -96,8 +96,8 @@ impl ActionGit for TuiGit {
             LayoutMode::LeftPanel(content) => {
                 self.log_scroll_offset = 0;
                 match content {
-                    ContentType::Diff => {
-                        self.layout_mode = LayoutMode::LeftPanel(ContentType::Log);
+                    DisplayType::Diff => {
+                        self.layout_mode = LayoutMode::LeftPanel(DisplayType::Log);
                         self.update_git_log(&self.current_branch.to_string());
                         self.right_panel_log_vec = self
                             .branch_log_map
@@ -106,8 +106,8 @@ impl ActionGit for TuiGit {
                             .to_vec();
                         self.show_log_in_right_panel(screen);
                     }
-                    ContentType::Log => {
-                        self.layout_mode = LayoutMode::LeftPanel(ContentType::Diff);
+                    DisplayType::Log => {
+                        self.layout_mode = LayoutMode::LeftPanel(DisplayType::Diff);
                         self.update_git_diff(&self.current_branch.to_string());
                         self.right_panel_log_vec = self.branch_diff_vec.to_vec();
                         self.show_log_in_right_panel(screen);
@@ -149,7 +149,7 @@ impl ActionGit for TuiGit {
         }
     }
     fn lower_n_pressed<W: Write>(&mut self, screen: &mut W) {
-        if let LayoutMode::LeftPanel(ContentType::Delete) = self.layout_mode {
+        if let LayoutMode::LeftPanel(DisplayType::Delete) = self.layout_mode {
             // Reset chosen branch background.
             for branch in &self.branch_delete_set {
                 let y = self.branch_row_map.get(branch).unwrap();
@@ -165,7 +165,7 @@ impl ActionGit for TuiGit {
             self.branch_delete_set.clear();
             self.show_in_status_bar(screen, &format!("Escape deleting branch").to_string());
             // Reset layout_mode.
-            self.layout_mode = LayoutMode::LeftPanel(ContentType::Log);
+            self.layout_mode = LayoutMode::LeftPanel(DisplayType::Log);
             // Refresh frame.
             self.refresh_frame_with_branch(screen, &self.current_branch.to_string());
             self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
@@ -176,10 +176,10 @@ impl ActionGit for TuiGit {
         return quit;
     }
     fn lower_y_pressed<W: Write>(&mut self, screen: &mut W) {
-        if let LayoutMode::LeftPanel(ContentType::Delete) = self.layout_mode {
+        if let LayoutMode::LeftPanel(DisplayType::Delete) = self.layout_mode {
             if self.delete_git_branch(screen) {
                 // Reset layout_mode.
-                self.layout_mode = LayoutMode::LeftPanel(ContentType::Log);
+                self.layout_mode = LayoutMode::LeftPanel(DisplayType::Log);
                 // Refresh frame.
                 self.refresh_frame_with_branch(screen, &self.main_branch.to_string());
                 self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
@@ -189,7 +189,7 @@ impl ActionGit for TuiGit {
     fn upper_d_pressed<W: Write>(&mut self, screen: &mut W) {
         match self.layout_mode {
             LayoutMode::LeftPanel(_) => {
-                self.layout_mode = LayoutMode::LeftPanel(ContentType::Delete);
+                self.layout_mode = LayoutMode::LeftPanel(DisplayType::Delete);
             }
             _ => {
                 return;
@@ -271,19 +271,19 @@ impl ActionGit for TuiGit {
     fn enter_pressed<W: Write>(&mut self, screen: &mut W) {
         match self.layout_mode {
             LayoutMode::LeftPanel(content) => match content {
-                ContentType::Log => {
+                DisplayType::Log => {
                     self.checkout_local_git_branch(screen, &self.current_branch.to_string());
                 }
                 _ => {}
             },
             LayoutMode::RightPanel(content) => match content {
-                ContentType::Log => {
+                DisplayType::Log => {
                     if !self.update_commit_info() {
                         return;
                     }
                     self.reset_cursor_to_log_top(screen);
                     self.log_scroll_offset = 0;
-                    self.layout_mode = LayoutMode::RightPanel(ContentType::Commit);
+                    self.layout_mode = LayoutMode::RightPanel(DisplayType::Commit);
                     self.right_panel_log_vec = self
                         .commit_info_map
                         .get(&self.current_commit.to_string())
@@ -291,16 +291,16 @@ impl ActionGit for TuiGit {
                         .to_vec();
                     self.show_log_in_right_panel(screen);
                 }
-                ContentType::Commit => {
+                DisplayType::Commit => {
                     // Update with log position and scroll offset.
                     self.log_scroll_offset = self
                         .snap_shot_map
-                        .get(&ContentType::Log)
+                        .get(&DisplayType::Log)
                         .unwrap()
                         .scroll_offset;
                     self.previous_pos = self.current_pos;
-                    self.current_pos = self.snap_shot_map.get(&ContentType::Log).unwrap().position;
-                    self.layout_mode = LayoutMode::RightPanel(ContentType::Log);
+                    self.current_pos = self.snap_shot_map.get(&DisplayType::Log).unwrap().position;
+                    self.layout_mode = LayoutMode::RightPanel(DisplayType::Log);
                     self.update_git_log(&self.current_branch.to_string());
                     self.right_panel_log_vec = self
                         .branch_log_map
@@ -318,7 +318,7 @@ impl ActionGit for TuiGit {
         match self.layout_mode {
             LayoutMode::LeftPanel(content) => {
                 match content {
-                    ContentType::Diff => {
+                    DisplayType::Diff => {
                         return;
                     }
                     _ => {
@@ -346,7 +346,7 @@ impl ActionGit for TuiGit {
         match self.layout_mode {
             LayoutMode::LeftPanel(content) => {
                 match content {
-                    ContentType::Diff => {
+                    DisplayType::Diff => {
                         return;
                     }
                     _ => {
@@ -375,7 +375,7 @@ impl ActionGit for TuiGit {
                 return;
             }
             LayoutMode::RightPanel(content) => match content {
-                ContentType::Log | ContentType::Diff => {
+                DisplayType::Log | DisplayType::Diff => {
                     self.layout_mode = LayoutMode::LeftPanel(content);
                 }
                 _ => {
@@ -399,7 +399,7 @@ impl ActionGit for TuiGit {
     fn move_cursor_right<W: Write>(&mut self, screen: &mut W) {
         match self.layout_mode {
             LayoutMode::LeftPanel(content) => match content {
-                ContentType::Delete => {
+                DisplayType::Delete => {
                     return;
                 }
                 _ => {

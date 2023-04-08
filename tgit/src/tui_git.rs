@@ -36,7 +36,7 @@ impl Position {
     }
 }
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub enum ContentType {
+pub enum DisplayType {
     Branch,
     Delete,
     Diff,
@@ -46,8 +46,8 @@ pub enum ContentType {
 }
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum LayoutMode {
-    LeftPanel(ContentType),
-    RightPanel(ContentType),
+    LeftPanel(DisplayType),
+    RightPanel(DisplayType),
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -63,6 +63,15 @@ impl SnapShot {
         }
     }
 }
+pub enum LogInfoPattern {
+    Author(String),
+    Commit(String),
+    Date(String),
+    DiffAdd(String),
+    DiffSubtract(String),
+    Msg(String),
+    None,
+}
 
 // Need to parse commit.
 pub struct TuiGit {
@@ -77,7 +86,7 @@ pub struct TuiGit {
     pub log_row_bottom: usize,
     pub log_col_left: usize,
     pub log_scroll_offset: usize,
-    pub snap_shot_map: HashMap<ContentType, SnapShot>,
+    pub snap_shot_map: HashMap<DisplayType, SnapShot>,
 
     // bottom bar area;
     pub bottom_bar_row: usize,
@@ -88,6 +97,7 @@ pub struct TuiGit {
     pub branch_delete_set: HashSet<String>,
     pub branch_diff_vec: Vec<String>,
     pub branch_log_map: HashMap<String, Vec<String>>,
+    pub branch_log_info_map: HashMap<String, Vec<LogInfoPattern>>,
     pub branch_row_map: HashMap<String, usize>,
     pub branch_vec: Vec<String>,
     pub commit_info_map: HashMap<String, Vec<String>>,
@@ -120,11 +130,11 @@ impl TuiGit {
             log_col_left: 0,
             log_scroll_offset: 0,
             snap_shot_map: HashMap::from([
-                (ContentType::Delete, SnapShot::new()),
-                (ContentType::Diff, SnapShot::new()),
-                (ContentType::Log, SnapShot::new()),
-                (ContentType::Status, SnapShot::new()),
-                (ContentType::Commit, SnapShot::new()),
+                (DisplayType::Delete, SnapShot::new()),
+                (DisplayType::Diff, SnapShot::new()),
+                (DisplayType::Log, SnapShot::new()),
+                (DisplayType::Status, SnapShot::new()),
+                (DisplayType::Commit, SnapShot::new()),
             ]),
 
             status_bar_row: 0,
@@ -133,6 +143,7 @@ impl TuiGit {
             branch_delete_set: HashSet::new(),
             branch_diff_vec: vec![],
             branch_log_map: HashMap::new(),
+            branch_log_info_map: HashMap::new(),
             branch_row_map: HashMap::new(),
             branch_vec: vec![],
             commit_info_map: HashMap::new(),
@@ -143,7 +154,7 @@ impl TuiGit {
             current_branch: String::new(),
             current_commit: String::new(),
             right_panel_log_vec: vec![],
-            layout_mode: LayoutMode::LeftPanel(ContentType::Log),
+            layout_mode: LayoutMode::LeftPanel(DisplayType::Log),
             key_move_counter: 0,
             // Goto is 1 based.
             previous_pos: Position::init(1, 1),
@@ -269,23 +280,61 @@ impl TuiGit {
                 "--decorate",
                 "--abbrev-commit",
                 branch.as_str(),
-                "-n 100",
+                "-n 20",
             ])
             .output()
             .expect("failed to execute process");
+        self.branch_log_map.insert(branch.to_string(), vec![]);
+        self.branch_log_info_map.insert(branch.to_string(), vec![]);
         // println!("status: {}", output.status);
         // write!(stdout(), "{:?}", String::from_utf8_lossy(&output.stdout)).unwrap();
         let log_output = String::from_utf8_lossy(&output.stdout);
         let mut log_iter = log_output.split('\n');
-        let mut logs: Vec<String> = vec![];
         loop {
             if let Some(val) = log_iter.next() {
-                logs.push(val.to_string());
+                self.branch_log_map
+                    .get_mut(&branch.to_string())
+                    .unwrap()
+                    .push(val.to_string());
+                if val.starts_with("commit") {
+                    self.branch_log_info_map
+                        .get_mut(&branch.to_string())
+                        .unwrap()
+                        .push(LogInfoPattern::Commit(val.to_string()));
+                } else if val.starts_with("Author") {
+                    self.branch_log_info_map
+                        .get_mut(&branch.to_string())
+                        .unwrap()
+                        .push(LogInfoPattern::Author(val.to_string()));
+                } else if val.starts_with("Date") {
+                    self.branch_log_info_map
+                        .get_mut(&branch.to_string())
+                        .unwrap()
+                        .push(LogInfoPattern::Date(val.to_string()));
+                } else if !val.is_empty() {
+                    self.branch_log_info_map
+                        .get_mut(&branch.to_string())
+                        .unwrap()
+                        .push(LogInfoPattern::Msg(val.to_string()));
+                } else {
+                    // Only keep the last empty row.
+                    if let LogInfoPattern::Msg(_) = self
+                        .branch_log_info_map
+                        .get_mut(&branch.to_string())
+                        .unwrap()
+                        .last()
+                        .unwrap()
+                    {
+                        self.branch_log_info_map
+                            .get_mut(&branch.to_string())
+                            .unwrap()
+                            .push(LogInfoPattern::None);
+                    }
+                }
             } else {
                 break;
             }
         }
-        self.branch_log_map.insert(branch.to_string(), logs);
         output.status.success()
     }
 }
