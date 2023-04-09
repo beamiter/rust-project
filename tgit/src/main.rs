@@ -11,6 +11,11 @@ use crate::tui_git::*;
 
 use std::io::{stdin, stdout, Write};
 
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
+
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
@@ -23,6 +28,16 @@ fn main() {
     let mut tui_git = TuiGit::new();
     tui_git.update_git_branch();
 
+    // Create a thread to update data in the background.
+    let tui_git_arc = Arc::new(Mutex::new(TuiGit::new()));
+    {
+        let tui_git_arc = Arc::clone(&tui_git_arc);
+        let _ = thread::spawn(move || loop {
+            tui_git_arc.lock().unwrap().update_git_branch();
+            thread::sleep(Duration::from_secs(1));
+        });
+    }
+
     let mut screen = stdout()
         .into_raw_mode()
         .unwrap()
@@ -34,6 +49,12 @@ fn main() {
 
     // Start with the main branch row.
     for c in stdin().keys() {
+        tui_git.branch_vec = (*tui_git_arc.lock().unwrap()).branch_vec.to_vec();
+        tui_git.show_in_status_bar(
+            &mut screen,
+            &format!("{:?}", tui_git.branch_vec).to_string(),
+        );
+        tui_git.show_branch_in_left_panel(&mut screen);
         match c.unwrap() {
             Key::Char('b') => {
                 tui_git.lower_b_pressed(&mut screen);

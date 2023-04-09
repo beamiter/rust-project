@@ -65,7 +65,7 @@ impl RenderGit for TuiGit {
                 screen,
                 "{}{}",
                 termion::cursor::Goto(x_tmp as u16, clear_y as u16),
-                termion::clear::CurrentLine,
+                " ".repeat(self.branch_col_right - self.branch_col_left),
             )
             .unwrap();
         }
@@ -78,9 +78,8 @@ impl RenderGit for TuiGit {
             if *branch == self.main_branch {
                 write!(
                     screen,
-                    "{}{}{}{}{}{}{}{} 🐝",
+                    "{}{}{}{}{}{}{} 🐝",
                     termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
-                    termion::clear::CurrentLine,
                     color::Bg(color::White),
                     color::Fg(color::Green),
                     style::Bold,
@@ -92,9 +91,8 @@ impl RenderGit for TuiGit {
             } else {
                 write!(
                     screen,
-                    "{}{}{}",
+                    "{}{}",
                     termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
-                    termion::clear::CurrentLine,
                     branch
                 )
                 .unwrap();
@@ -131,6 +129,7 @@ impl RenderGit for TuiGit {
             self.right_panel_log_info.len() - row as usize
         };
         let mut y_tmp = self.log_row_top;
+        let prev_log_row_bottom = self.log_row_bottom;
         // Log show len (col - x_tmp as u16).
         for log in self.right_panel_log_info[self.log_scroll_offset as usize..].to_vec() {
             // Need to update bottom here.
@@ -144,7 +143,7 @@ impl RenderGit for TuiGit {
             y_tmp += 1;
         }
         // Clear rest log zone.
-        for clear_y in self.log_row_bottom + 1..row as usize {
+        for clear_y in self.log_row_bottom + 1..=prev_log_row_bottom as usize {
             write!(
                 screen,
                 "{}{}",

@@ -76,6 +76,7 @@ pub enum LogInfoPattern {
 }
 
 // Need to parse commit.
+#[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TuiGit {
     // branch render area;
     pub branch_row_top: usize,
@@ -257,7 +258,7 @@ impl TuiGit {
                             .substring(pos + head_str.len(), self.main_branch.len() - 1)
                             .to_string();
                     }
-                    println!("Main branch: {}", self.main_branch);
+                    // println!("Main branch: {}", self.main_branch);
                     self.update_git_log(&self.main_branch.to_string());
                     self.branch_vec.push(self.main_branch.to_string());
                 } else {
