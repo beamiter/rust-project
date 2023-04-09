@@ -59,6 +59,7 @@ fn main() {
             *update_confirm = false;
             tui_git.main_branch = tui_git_arc.main_branch.to_string();
             tui_git.branch_vec = tui_git_arc.branch_vec.to_vec();
+            tui_git.branch_log_info_map = tui_git_arc.branch_log_info_map.clone();
             tui_git.show_in_status_bar(
                 &mut screen,
                 &format!(
