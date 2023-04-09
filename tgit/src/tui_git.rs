@@ -250,7 +250,7 @@ impl TuiGit {
                 }
                 if val.starts_with('*') {
                     // Remove the '*' symbol and trim white space.
-                    self.main_branch = val[1..val.len()].to_string().trim().to_string();
+                    self.main_branch = val.strip_prefix("*").unwrap().trim().to_string();
                     let head_str: &str = "HEAD detached at ";
                     if let Some(pos) = self.main_branch.find(head_str) {
                         self.main_branch = self
@@ -263,6 +263,42 @@ impl TuiGit {
                     self.branch_vec.push(self.main_branch.to_string());
                 } else {
                     self.branch_vec.push(val.to_string().trim().to_string());
+                }
+            } else {
+                break;
+            }
+        }
+        output.status.success()
+    }
+    pub fn update_git_branch_async(&mut self) -> bool {
+        let output = Command::new("git")
+            .arg("branch")
+            .output()
+            .expect("failed to execute process");
+        let branch_output = String::from_utf8_lossy(&output.stdout);
+        // println!("branch_output {:?}", branch_output);
+        let mut branch_iter = branch_output.split('\n');
+        self.branch_vec.clear();
+        loop {
+            if let Some(val) = branch_iter.next() {
+                if val.is_empty() {
+                    continue;
+                }
+                if val.starts_with('*') {
+                    // Remove the '*' symbol and trim white space.
+                    self.main_branch = val.strip_prefix("*").unwrap().trim().to_string();
+                    let head_str: &str = "HEAD detached at ";
+                    if let Some(pos) = self.main_branch.find(head_str) {
+                        self.main_branch = self
+                            .main_branch
+                            .substring(pos + head_str.len(), self.main_branch.len() - 1)
+                            .to_string();
+                    }
+                    self.branch_vec.push(self.main_branch.to_string());
+                    self.update_git_log_async(&self.branch_vec.last().unwrap().to_string());
+                } else {
+                    self.branch_vec.push(val.to_string().trim().to_string());
+                    self.update_git_log_async(&self.branch_vec.last().unwrap().to_string());
                 }
             } else {
                 break;
@@ -321,6 +357,63 @@ impl TuiGit {
         self.branch_log_info_map.insert(branch.to_string(), vec![]);
         // println!("status: {}", output.status);
         // write!(stdout(), "{:?}", String::from_utf8_lossy(&output.stdout)).unwrap();
+        let log_output = String::from_utf8_lossy(&output.stdout);
+        let mut log_iter = log_output.split('\n');
+        loop {
+            if let Some(val) = log_iter.next() {
+                if val.starts_with("commit") {
+                    self.branch_log_info_map
+                        .get_mut(&branch.to_string())
+                        .unwrap()
+                        .push(LogInfoPattern::Commit(val.to_string()));
+                } else if val.starts_with("Author") {
+                    self.branch_log_info_map
+                        .get_mut(&branch.to_string())
+                        .unwrap()
+                        .push(LogInfoPattern::Author(val.to_string()));
+                } else if val.starts_with("Date") {
+                    self.branch_log_info_map
+                        .get_mut(&branch.to_string())
+                        .unwrap()
+                        .push(LogInfoPattern::Date(val.to_string()));
+                } else if !val.is_empty() {
+                    self.branch_log_info_map
+                        .get_mut(&branch.to_string())
+                        .unwrap()
+                        .push(LogInfoPattern::Msg(val.to_string()));
+                } else {
+                    // Only keep the last empty row.
+                    if let LogInfoPattern::Msg(_) = self
+                        .branch_log_info_map
+                        .get_mut(&branch.to_string())
+                        .unwrap()
+                        .last()
+                        .unwrap()
+                    {
+                        self.branch_log_info_map
+                            .get_mut(&branch.to_string())
+                            .unwrap()
+                            .push(LogInfoPattern::None);
+                    }
+                }
+            } else {
+                break;
+            }
+        }
+        output.status.success()
+    }
+    pub fn update_git_log_async(&mut self, branch: &String) -> bool {
+        let output = Command::new("git")
+            .args([
+                "log",
+                "--decorate",
+                "--abbrev-commit",
+                branch.as_str(),
+                "-n 200",
+            ])
+            .output()
+            .expect("failed to execute process");
+        self.branch_log_info_map.insert(branch.to_string(), vec![]);
         let log_output = String::from_utf8_lossy(&output.stdout);
         let mut log_iter = log_output.split('\n');
         loop {

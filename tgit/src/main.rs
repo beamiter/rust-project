@@ -29,12 +29,15 @@ fn main() {
     tui_git.update_git_branch();
 
     // Create a thread to update data in the background.
+    let update_confirm = Arc::new(Mutex::new(false));
     let tui_git_arc = Arc::new(Mutex::new(TuiGit::new()));
     {
         let tui_git_arc = Arc::clone(&tui_git_arc);
+        let update_confirm = Arc::clone(&update_confirm);
         let _ = thread::spawn(move || loop {
-            tui_git_arc.lock().unwrap().update_git_branch();
-            thread::sleep(Duration::from_secs(1));
+            tui_git_arc.lock().unwrap().update_git_branch_async();
+            *update_confirm.lock().unwrap() = true;
+            thread::sleep(Duration::from_secs(5));
         });
     }
 
@@ -49,12 +52,22 @@ fn main() {
 
     // Start with the main branch row.
     for c in stdin().keys() {
-        tui_git.branch_vec = (*tui_git_arc.lock().unwrap()).branch_vec.to_vec();
-        tui_git.show_in_status_bar(
-            &mut screen,
-            &format!("{:?}", tui_git.branch_vec).to_string(),
-        );
-        tui_git.show_branch_in_left_panel(&mut screen);
+        // Lock the tui_git_arc and update main branch and branch vector.
+        let mut update_confirm = update_confirm.lock().unwrap();
+        if *update_confirm {
+            let tui_git_arc = tui_git_arc.lock().unwrap();
+            *update_confirm = false;
+            tui_git.main_branch = tui_git_arc.main_branch.to_string();
+            tui_git.branch_vec = tui_git_arc.branch_vec.to_vec();
+            tui_git.show_in_status_bar(
+                &mut screen,
+                &format!(
+                    "{:?}, main_branch: {}",
+                    tui_git.branch_vec, tui_git.main_branch
+                )
+                .to_string(),
+            );
+        }
         match c.unwrap() {
             Key::Char('b') => {
                 tui_git.lower_b_pressed(&mut screen);
