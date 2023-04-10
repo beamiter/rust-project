@@ -249,9 +249,10 @@ impl RenderGit for TuiGit {
         // Clear current line.
         write!(
             screen,
-            "{}{}",
-            termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
+            "{}{}|{}",
+            termion::cursor::Goto(x_tmp - 3 as u16, y_tmp as u16),
             termion::clear::UntilNewline,
+            termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
         )
         .unwrap();
         let line_width = self.log_col_right - self.log_col_left + 1;
