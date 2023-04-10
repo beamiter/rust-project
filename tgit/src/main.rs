@@ -26,7 +26,9 @@ use coredump::register_panic_handler;
 fn main() {
     register_panic_handler().unwrap();
     let mut tui_git = TuiGit::new();
-    tui_git.update_git_branch();
+    if !tui_git.update_git_branch() {
+        return;
+    }
 
     // Create a thread to update data in the background.
     let update_confirm = Arc::new(Mutex::new(false));

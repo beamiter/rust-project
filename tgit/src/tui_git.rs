@@ -235,40 +235,49 @@ impl TuiGit {
     }
 
     pub fn update_git_branch(&mut self) -> bool {
-        let output = Command::new("git")
-            .arg("branch")
-            .output()
-            .expect("failed to execute process");
-        let branch_output = String::from_utf8_lossy(&output.stdout);
-        // println!("branch_output {:?}", branch_output);
-        let mut branch_iter = branch_output.split('\n');
-        self.branch_vec.clear();
-        loop {
-            if let Some(val) = branch_iter.next() {
-                if val.is_empty() {
-                    continue;
+        let output = Command::new("git").arg("branch").output();
+        match output {
+            Err(output) => {
+                println!("{}", output.to_string());
+                return false;
+            }
+            Ok(output) => {
+                if !output.status.success() {
+                    println!("{}", String::from_utf8_lossy(&output.stderr).to_string());
+                    return false;
                 }
-                if val.starts_with('*') {
-                    // Remove the '*' symbol and trim white space.
-                    self.main_branch = val.strip_prefix("*").unwrap().trim().to_string();
-                    let head_str: &str = "HEAD detached at ";
-                    if let Some(pos) = self.main_branch.find(head_str) {
-                        self.main_branch = self
-                            .main_branch
-                            .substring(pos + head_str.len(), self.main_branch.len() - 1)
-                            .to_string();
+                let branch_output = String::from_utf8_lossy(&output.stdout);
+                // println!("branch_output {:?}", branch_output);
+                let mut branch_iter = branch_output.split('\n');
+                self.branch_vec.clear();
+                loop {
+                    if let Some(val) = branch_iter.next() {
+                        if val.is_empty() {
+                            continue;
+                        }
+                        if val.starts_with('*') {
+                            // Remove the '*' symbol and trim white space.
+                            self.main_branch = val.strip_prefix("*").unwrap().trim().to_string();
+                            let head_str: &str = "HEAD detached at ";
+                            if let Some(pos) = self.main_branch.find(head_str) {
+                                self.main_branch = self
+                                    .main_branch
+                                    .substring(pos + head_str.len(), self.main_branch.len() - 1)
+                                    .to_string();
+                            }
+                            // println!("Main branch: {}", self.main_branch);
+                            self.update_git_log(&self.main_branch.to_string());
+                            self.branch_vec.push(self.main_branch.to_string());
+                        } else {
+                            self.branch_vec.push(val.to_string().trim().to_string());
+                        }
+                    } else {
+                        break;
                     }
-                    // println!("Main branch: {}", self.main_branch);
-                    self.update_git_log(&self.main_branch.to_string());
-                    self.branch_vec.push(self.main_branch.to_string());
-                } else {
-                    self.branch_vec.push(val.to_string().trim().to_string());
                 }
-            } else {
-                break;
+                output.status.success()
             }
         }
-        output.status.success()
     }
     pub fn update_git_branch_async(&mut self) -> bool {
         let output = Command::new("git")

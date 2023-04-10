@@ -244,7 +244,7 @@ impl ActionGit for TuiGit {
         // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
         let mut bufs = vec![];
         let mut buffer: &str = "";
-        self.show_and_stay_in_status_bar(screen, &"cmd: ".to_string());
+        self.show_and_stay_in_status_bar(screen, &":".to_string());
         for b in stdin().lock().bytes() {
             match b {
                 Ok(b'\r') | Ok(b'\n') => {
@@ -264,7 +264,7 @@ impl ActionGit for TuiGit {
             buffer = str::from_utf8(&bufs).unwrap();
             self.show_and_stay_in_status_bar(
                 screen,
-                &format!("cmd: {}", buffer.to_string()).to_string(),
+                &format!(":{}", buffer.to_string()).to_string(),
             );
         }
     }

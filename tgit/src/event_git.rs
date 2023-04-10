@@ -209,45 +209,51 @@ impl EventGit for TuiGit {
         //     &format!("🟢 total command seq: {:?}", command_vec).to_string(),
         // );
         let output = match command_vec.len() {
-            1 => Command::new(&command_vec[0])
-                .output()
-                .expect("failed to execute process"),
-            2 => Command::new(&command_vec[0])
-                .arg(&command_vec[1])
-                .output()
-                .expect("failed to execute process"),
+            1 => Command::new(&command_vec[0]).output(),
+            2 => Command::new(&command_vec[0]).arg(&command_vec[1]).output(),
             _ => Command::new(&command_vec[0])
                 .args(&command_vec[1..])
-                .output()
-                .expect("failed to execute process"),
+                .output(),
         };
-        if !output.status.success() {
-            self.show_in_status_bar(
-                screen,
-                &format!(
-                    "🔘 {:?}",
-                    if output.stdout.is_empty() {
-                        format!("{:?} error", command_vec).to_string()
-                    } else {
-                        String::from_utf8_lossy(&output.stderr).to_string()
-                    }
-                )
-                .to_string(),
-            );
-        } else {
-            self.show_in_status_bar(
-                screen,
-                &format!(
-                    "🟢 {:?}",
-                    if output.stdout.is_empty() {
-                        format!("{:?} succeed", command_vec).to_string()
-                    } else {
-                        String::from_utf8_lossy(&output.stdout).to_string()
-                    }
-                )
-                .to_string(),
-            );
+        match output {
+            Ok(output) => {
+                if !output.status.success() {
+                    self.show_in_status_bar(
+                        screen,
+                        &format!(
+                            "🔘 {:?}",
+                            if output.stdout.is_empty() {
+                                format!("{:?} error", command_vec).to_string()
+                            } else {
+                                String::from_utf8_lossy(&output.stderr).to_string()
+                            }
+                        )
+                        .to_string(),
+                    );
+                    false
+                } else {
+                    self.show_in_status_bar(
+                        screen,
+                        &format!(
+                            "🟢 {:?}",
+                            if output.stdout.is_empty() {
+                                format!("{:?} succeed", command_vec).to_string()
+                            } else {
+                                String::from_utf8_lossy(&output.stdout).to_string()
+                            }
+                        )
+                        .to_string(),
+                    );
+                    true
+                }
+            }
+            Err(output) => {
+                self.show_in_status_bar(
+                    screen,
+                    &format!("🔘 {:?}", output.to_string(),).to_string(),
+                );
+                false
+            }
         }
-        output.status.success()
     }
 }
