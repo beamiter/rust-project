@@ -60,12 +60,12 @@ impl RenderGit for TuiGit {
             return;
         }
         // Clear previous branch zone.
-        for clear_y in self.branch_row_top..=self.branch_row_bottom {
+        for clear_y in self.branch_row_top..row as usize - 2 {
             write!(
                 screen,
                 "{}{}",
-                termion::cursor::Goto(x_tmp as u16, clear_y as u16),
-                " ".repeat(self.branch_col_right - self.branch_col_left),
+                termion::cursor::Goto(1, clear_y as u16),
+                termion::clear::CurrentLine,
             )
             .unwrap();
         }
