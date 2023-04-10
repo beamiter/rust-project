@@ -164,18 +164,15 @@ impl EventGit for TuiGit {
                 _ => {
                     if let Some('[') = arrow_escape.last() {
                         arrow_escape.push(char::from(c));
-                        if i > 0 {
-                            i -= 1;
-                        }
                         continue;
                     }
                     bufs[i] = c;
-                    i += 1;
                 }
             }
+            i += 1;
         }
         // Truncate the pre-reserved.
-        bufs.truncate(i);
+        bufs.truncate(bufs.len() - arrow_escape.len());
         let mut bufs_vec = bufs.split(|&x| x == b'"');
         let mut buffers: Vec<String> = vec![];
         loop {

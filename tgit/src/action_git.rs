@@ -261,6 +261,10 @@ impl ActionGit for TuiGit {
                 }
                 Err(_) => {}
             }
+            // Up or Down.
+            if bufs.ends_with(&[0x1b, b'[', b'A']) || bufs.ends_with(&[0x1b, b'[', b'B']) {
+                bufs.truncate(bufs.len() - 3);
+            }
             buffer = str::from_utf8(&bufs).unwrap();
             self.show_and_stay_in_status_bar(
                 screen,
