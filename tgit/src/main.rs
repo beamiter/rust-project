@@ -30,14 +30,27 @@ fn main() {
 
     // Create a thread to update data in the background.
     let update_confirm = Arc::new(Mutex::new(false));
+    let terminal_size_changed = Arc::new(Mutex::new(false));
     let tui_git_arc = Arc::new(Mutex::new(TuiGit::new()));
     {
         let tui_git_arc = Arc::clone(&tui_git_arc);
         let update_confirm = Arc::clone(&update_confirm);
-        let _ = thread::spawn(move || loop {
-            tui_git_arc.lock().unwrap().update_git_branch_async();
-            *update_confirm.lock().unwrap() = true;
-            thread::sleep(Duration::from_secs(5));
+        let terminal_size_changed = Arc::clone(&terminal_size_changed);
+        let _ = thread::spawn(move || {
+            let (mut prev_col, mut prev_row) = termion::terminal_size().unwrap();
+            loop {
+                tui_git_arc.lock().unwrap().update_git_branch_async();
+                *update_confirm.lock().unwrap() = true;
+                let (col, row) = termion::terminal_size().unwrap();
+                if prev_col != col || prev_row != row {
+                    *terminal_size_changed.lock().unwrap() = true;
+                } else {
+                    *terminal_size_changed.lock().unwrap() = false;
+                }
+                prev_col = col;
+                prev_row = row;
+                thread::sleep(Duration::from_secs(5));
+            }
         });
     }
 
@@ -60,6 +73,11 @@ fn main() {
             tui_git.main_branch = tui_git_arc.main_branch.to_string();
             tui_git.branch_vec = tui_git_arc.branch_vec.to_vec();
             tui_git.branch_log_info_map = tui_git_arc.branch_log_info_map.clone();
+            let mut terminal_size_changed = terminal_size_changed.lock().unwrap();
+            if *terminal_size_changed {
+                tui_git.refresh_frame_with_branch(&mut screen, &tui_git.main_branch.to_string());
+                *terminal_size_changed = false;
+            }
             tui_git.show_in_status_bar(&mut screen, &"Update data async.".to_string());
         }
         match c.unwrap() {
@@ -98,16 +116,16 @@ fn main() {
                 tui_git.enter_pressed(&mut screen);
             }
 
-            Key::Left | Key::Char('h') => {
+            Key::Left | Key::Char('h') | Key::Char('H') => {
                 tui_git.move_cursor_left(&mut screen);
             }
-            Key::Right | Key::Char('l') => {
+            Key::Right | Key::Char('l') | Key::Char('L') => {
                 tui_git.move_cursor_right(&mut screen);
             }
-            Key::Up | Key::Char('k') => {
+            Key::Up | Key::Char('k') | Key::Char('K') => {
                 tui_git.move_cursor_up(&mut screen);
             }
-            Key::Down | Key::Char('j') => {
+            Key::Down | Key::Char('j') | Key::Char('J') => {
                 tui_git.move_cursor_down(&mut screen);
             }
             _ => {}
