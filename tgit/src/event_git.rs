@@ -247,7 +247,7 @@ impl EventGit for TuiGit {
             Err(output) => {
                 self.show_in_status_bar(
                     screen,
-                    &format!("🔘 {:?}", output.to_string(),).to_string(),
+                    &format!("🔘 {:?} {:?}", command_vec, output.to_string(),).to_string(),
                 );
                 false
             }
