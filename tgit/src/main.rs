@@ -32,15 +32,21 @@ fn main() {
 
     // Create a thread to update data in the background.
     let update_confirm = Arc::new(Mutex::new(false));
+    let hold_confirm = Arc::new(Mutex::new(false));
     let terminal_size_changed = Arc::new(Mutex::new(false));
     let tui_git_arc = Arc::new(Mutex::new(TuiGit::new()));
     {
         let tui_git_arc = Arc::clone(&tui_git_arc);
         let update_confirm = Arc::clone(&update_confirm);
+        let hold_confirm = Arc::clone(&hold_confirm);
         let terminal_size_changed = Arc::clone(&terminal_size_changed);
         let _ = thread::spawn(move || {
             let (mut prev_col, mut prev_row) = termion::terminal_size().unwrap();
             loop {
+                if *hold_confirm.lock().unwrap() {
+                    thread::sleep(Duration::from_secs(2));
+                    continue;
+                }
                 tui_git_arc.lock().unwrap().update_git_branch_async();
                 *update_confirm.lock().unwrap() = true;
                 let (col, row) = termion::terminal_size().unwrap();
@@ -104,7 +110,11 @@ fn main() {
                 }
             }
             Key::Char('y') | Key::Char('Y') => {
+                let mut hold_confirm = hold_confirm.lock().unwrap();
+                *hold_confirm = true;
+                // Hold async data updating.
                 tui_git.lower_y_pressed(&mut screen);
+                *hold_confirm = false;
             }
 
             Key::Char('D') => {
