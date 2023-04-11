@@ -247,9 +247,10 @@ impl RenderGit for TuiGit {
         y_tmp: u16,
     ) {
         // Clear current line.
+        // Refer to https://en.wikipedia.org/wiki/Box-drawing_character#Unicode
         write!(
             screen,
-            "{}{}|{}",
+            "{}{}║{}",
             termion::cursor::Goto(x_tmp - 3 as u16, y_tmp as u16),
             termion::clear::UntilNewline,
             termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
