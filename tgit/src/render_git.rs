@@ -35,14 +35,16 @@ pub trait RenderGit {
 
     fn show_current_cursor<W: Write>(&mut self, screen: &mut W);
     fn show_icon_after_cursor<W: Write>(&mut self, screen: &mut W, icon: &str);
+    fn show_icon_after_cursor_and_wipe<W: Write>(&mut self, screen: &mut W, icon: &str);
 }
 
 impl RenderGit for TuiGit {
+    // https://unix.stackexchange.com/questions/559708/how-to-draw-a-continuous-line-in-terminal
     fn show_title_in_top_panel<W: Write>(&mut self, screen: &mut W) {
-        let (col, _) = termion::terminal_size().unwrap();
+        let (col, row) = termion::terminal_size().unwrap();
         write!(
             screen,
-            "{}{}{}{}Welcome to tui git{}{}{}{}{}\n",
+            "{}{}{}{}Welcome to tui git{}{}{}{}{}{}{}\n",
             termion::cursor::Goto(19, 1),
             termion::clear::CurrentLine,
             color::Fg(color::Magenta),
@@ -50,7 +52,9 @@ impl RenderGit for TuiGit {
             style::Italic,
             color::Fg(color::Reset),
             termion::cursor::Goto(1, 2),
-            "═".repeat(col as usize),
+            "⎽".repeat(col as usize),
+            termion::cursor::Goto(1, row - self.bar_row_height as u16 + 1),
+            "⎺".repeat(col as usize),
             style::Reset,
         )
         .unwrap();
@@ -236,13 +240,12 @@ impl RenderGit for TuiGit {
             row: *self.branch_row_map.get(&self.main_branch).unwrap() as u16,
         };
         self.previous_pos = self.current_pos;
-        self.show_icon_after_cursor(screen, "🌟");
+        self.show_icon_after_cursor_and_wipe(screen, "🌟");
     }
     fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W) {
         // Must update position.
         self.previous_pos = self.current_pos;
         self.current_pos = Position::init(self.log_col_left as u16 - 3, self.log_row_top as u16);
-        // self.show_icon_after_cursor(screen, "✍");
         self.show_current_cursor(screen);
     }
 
@@ -368,14 +371,24 @@ impl RenderGit for TuiGit {
         .unwrap();
     }
     fn show_icon_after_cursor<W: Write>(&mut self, screen: &mut W, icon: &str) {
+        write!(
+            screen,
+            "{}{}{}",
+            termion::cursor::Goto(self.current_pos.col, self.current_pos.row),
+            icon,
+            termion::cursor::Goto(self.current_pos.col, self.current_pos.row),
+        )
+        .unwrap();
+    }
+    fn show_icon_after_cursor_and_wipe<W: Write>(&mut self, screen: &mut W, icon: &str) {
         // Need clear previous position only if with icon drawn.
-        // write!(
-        //     screen,
-        //     "{}{}",
-        //     termion::cursor::Goto(self.previous_pos.col, self.previous_pos.row),
-        //     " ".repeat(2),
-        // )
-        // .unwrap();
+        write!(
+            screen,
+            "{}{}",
+            termion::cursor::Goto(self.previous_pos.col, self.previous_pos.row),
+            " ".repeat(2),
+        )
+        .unwrap();
         write!(
             screen,
             "{}{}{}",
@@ -418,7 +431,8 @@ impl RenderGit for TuiGit {
         //     .to_string(),
         // );
         self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
-        self.show_icon_after_cursor(
+        // (TODO) Add underline for current line.
+        self.show_icon_after_cursor_and_wipe(
             screen,
             UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
         );

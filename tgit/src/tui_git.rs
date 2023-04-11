@@ -148,7 +148,7 @@ impl TuiGit {
                 (DisplayType::Commit, SnapShot::new()),
             ]),
 
-            bar_row_height: 2,
+            bar_row_height: 3,
             bottom_bar_row: 0,
             status_bar_row: 0,
 
