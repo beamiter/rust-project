@@ -39,15 +39,18 @@ pub trait RenderGit {
 
 impl RenderGit for TuiGit {
     fn show_title_in_top_panel<W: Write>(&mut self, screen: &mut W) {
+        let (col, _) = termion::terminal_size().unwrap();
         write!(
             screen,
-            "{}{}{}{}Welcome to tui git{}{}{}\n",
+            "{}{}{}{}Welcome to tui git{}{}{}{}{}\n",
             termion::cursor::Goto(19, 1),
             termion::clear::CurrentLine,
             color::Fg(color::Magenta),
             style::Bold,
             style::Italic,
             color::Fg(color::Reset),
+            termion::cursor::Goto(1, 2),
+            "═".repeat(col as usize),
             style::Reset,
         )
         .unwrap();
@@ -60,7 +63,7 @@ impl RenderGit for TuiGit {
             return;
         }
         // Clear previous branch zone.
-        for clear_y in self.branch_row_top..row as usize - 2 {
+        for clear_y in self.branch_row_top..row as usize - self.bar_row_height {
             write!(
                 screen,
                 "{}{}",
@@ -100,7 +103,7 @@ impl RenderGit for TuiGit {
             self.branch_row_map.insert(branch.to_string(), y_tmp);
             self.row_branch_map.insert(y_tmp, branch.to_string());
             // Spare 2 for check info.
-            if y_tmp as u16 >= row - 2 {
+            if y_tmp as u16 >= row - self.bar_row_height as u16 {
                 break;
             }
             y_tmp += 1;
@@ -110,9 +113,10 @@ impl RenderGit for TuiGit {
             .iter()
             .map(|x| x.len())
             .collect::<Vec<usize>>();
-        self.branch_col_right =
-            self.branch_col_left + *branch_size.iter().max().unwrap() as usize + 3;
-        self.log_col_left = self.branch_col_right + 4;
+        self.branch_col_right = self.branch_col_left
+            + *branch_size.iter().max().unwrap() as usize
+            + self.branch_col_offset;
+        self.log_col_left = self.branch_col_right + self.branch_log_gap;
     }
     fn show_log_in_right_panel<W: Write>(&mut self, screen: &mut W) {
         let (x, y) = self.current_pos.unpack();
@@ -123,11 +127,14 @@ impl RenderGit for TuiGit {
             // No show due to no enough col.
             return;
         }
-        self.log_scroll_offset_max = if self.right_panel_log_info.len() + 4 <= row as usize {
-            0
-        } else {
-            self.right_panel_log_info.len() - row as usize
-        };
+        self.log_scroll_offset_max =
+            if self.right_panel_log_info.len() + self.bar_row_height + self.log_row_top
+                <= row as usize
+            {
+                0
+            } else {
+                self.right_panel_log_info.len() - row as usize
+            };
         let mut y_tmp = self.log_row_top;
         let prev_log_row_bottom = self.log_row_bottom;
         // Log show len (col - x_tmp as u16).
@@ -137,7 +144,7 @@ impl RenderGit for TuiGit {
             self.render_single_line(screen, &log, x_tmp as u16, y_tmp as u16);
             self.row_log_map.insert(y_tmp, log);
             // Spare 2 for check info.
-            if y_tmp as u16 >= row - 2 {
+            if y_tmp as u16 >= row - self.bar_row_height as u16 {
                 break;
             }
             y_tmp += 1;
@@ -361,13 +368,14 @@ impl RenderGit for TuiGit {
         .unwrap();
     }
     fn show_icon_after_cursor<W: Write>(&mut self, screen: &mut W, icon: &str) {
-        write!(
-            screen,
-            "{}{}",
-            termion::cursor::Goto(self.previous_pos.col, self.previous_pos.row),
-            " ".repeat(2),
-        )
-        .unwrap();
+        // Need clear previous position only if with icon drawn.
+        // write!(
+        //     screen,
+        //     "{}{}",
+        //     termion::cursor::Goto(self.previous_pos.col, self.previous_pos.row),
+        //     " ".repeat(2),
+        // )
+        // .unwrap();
         write!(
             screen,
             "{}{}{}",

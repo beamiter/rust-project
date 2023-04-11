@@ -80,10 +80,12 @@ pub enum LogInfoPattern {
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TuiGit {
     // branch render area;
+    pub branch_log_gap: usize,
     pub branch_row_top: usize,
     pub branch_row_bottom: usize,
     pub branch_col_left: usize,
     pub branch_col_right: usize,
+    pub branch_col_offset: usize,
 
     // log render area;
     pub log_row_top: usize,
@@ -94,6 +96,7 @@ pub struct TuiGit {
     pub log_scroll_offset_max: usize,
     pub snap_shot_map: HashMap<DisplayType, SnapShot>,
 
+    pub bar_row_height: usize,
     // bottom bar area;
     pub bottom_bar_row: usize,
     // status bar area;
@@ -124,12 +127,14 @@ pub struct TuiGit {
 impl TuiGit {
     pub fn new() -> TuiGit {
         TuiGit {
-            branch_row_top: 2,
+            branch_log_gap: 4,
+            branch_row_top: 3,
             branch_row_bottom: 0,
             branch_col_left: 4,
             branch_col_right: 0,
+            branch_col_offset: 3,
 
-            log_row_top: 2,
+            log_row_top: 3,
             log_row_bottom: 0,
             log_col_left: 0,
             log_col_right: 0,
@@ -143,8 +148,9 @@ impl TuiGit {
                 (DisplayType::Commit, SnapShot::new()),
             ]),
 
-            status_bar_row: 0,
+            bar_row_height: 2,
             bottom_bar_row: 0,
+            status_bar_row: 0,
 
             branch_delete_set: HashSet::new(),
             branch_diff_vec: vec![],
@@ -152,14 +158,16 @@ impl TuiGit {
             branch_row_map: HashMap::new(),
             branch_vec: vec![],
             commit_info_map: HashMap::new(),
+            current_branch: String::new(),
+            right_panel_log_info: vec![],
+            main_branch: String::new(),
             row_branch_map: HashMap::new(),
             row_log_map: HashMap::new(),
 
-            main_branch: String::new(),
-            current_branch: String::new(),
-            right_panel_log_info: vec![],
             layout_mode: LayoutMode::LeftPanel(DisplayType::Log),
+
             key_move_counter: 0,
+
             // Goto is 1 based.
             previous_pos: Position::init(1, 1),
             current_pos: Position::init(1, 1),
