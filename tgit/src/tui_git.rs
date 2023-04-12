@@ -196,9 +196,6 @@ impl TuiGit {
         let (_, y) = self.current_pos.unpack();
         let mut current_commit: Option<String> = None;
         if let Some(log) = self.row_log_map.get(&(y as usize)) {
-            if *log == LogInfoPattern::None {
-                return None;
-            }
             if let LogInfoPattern::Commit(val) = log {
                 let mut iter = val.split(' ');
                 if iter.next().unwrap() != "commit" {
@@ -209,8 +206,6 @@ impl TuiGit {
                     current_commit = Some(val.to_string());
                 }
             }
-        } else {
-            return None;
         }
         if current_commit == None {
             return None;
