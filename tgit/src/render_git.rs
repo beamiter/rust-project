@@ -30,8 +30,8 @@ pub trait RenderGit {
 
     fn refresh_frame_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
 
-    fn left_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool);
-    fn right_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool);
+    fn left_panel_handler<W: Write>(&mut self, screen: &mut W, dir: MoveDirection);
+    fn right_panel_handler<W: Write>(&mut self, screen: &mut W, dir: MoveDirection);
 
     fn show_current_cursor<W: Write>(&mut self, screen: &mut W);
     fn show_icon_after_cursor<W: Write>(&mut self, screen: &mut W, icon: &str);
@@ -427,24 +427,28 @@ impl RenderGit for TuiGit {
         .unwrap();
     }
 
-    fn left_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool) {
+    fn left_panel_handler<W: Write>(&mut self, screen: &mut W, dir: MoveDirection) {
         // Reset something here.
         self.previous_pos = self.current_pos;
         self.log_scroll_offset = 0;
 
         let (x, mut y) = self.current_pos.unpack();
-        if up {
-            if y > self.branch_row_top as u16 && y <= self.branch_row_bottom as u16 {
-                y = y - 1;
-            } else {
-                y = self.branch_row_bottom as u16;
+        match dir {
+            MoveDirection::Up => {
+                if y > self.branch_row_top as u16 && y <= self.branch_row_bottom as u16 {
+                    y = y - 1;
+                } else {
+                    y = self.branch_row_bottom as u16;
+                }
             }
-        } else {
-            if y >= self.branch_row_top as u16 && y < self.branch_row_bottom as u16 {
-                y = y + 1;
-            } else {
-                y = self.branch_row_top as u16;
+            MoveDirection::Down => {
+                if y >= self.branch_row_top as u16 && y < self.branch_row_bottom as u16 {
+                    y = y + 1;
+                } else {
+                    y = self.branch_row_top as u16;
+                }
             }
+            _ => {}
         }
         self.current_pos = Position::init(x, y);
         // Update current_branch.
@@ -463,31 +467,35 @@ impl RenderGit for TuiGit {
         screen.flush().unwrap();
     }
 
-    fn right_panel_handler<W: Write>(&mut self, screen: &mut W, up: bool) {
+    fn right_panel_handler<W: Write>(&mut self, screen: &mut W, dir: MoveDirection) {
         // Reset something here.
         self.previous_pos = self.current_pos;
 
         let (x, mut y) = self.current_pos.unpack();
-        if up {
-            if y == self.log_row_top as u16 {
-                // Hit the top.
-                if self.log_scroll_offset > 0 {
-                    self.log_scroll_offset -= 1;
-                    self.show_log_in_right_panel(screen);
+        match dir {
+            MoveDirection::Down => {
+                if y == self.log_row_bottom as u16 {
+                    // Hit the bottom.
+                    if self.log_scroll_offset < self.log_scroll_offset_max {
+                        self.log_scroll_offset += 1;
+                        self.show_log_in_right_panel(screen);
+                    }
+                } else if y < self.log_row_bottom as u16 {
+                    y = y + 1;
                 }
-            } else {
-                y = y - 1;
             }
-        } else {
-            if y == self.log_row_bottom as u16 {
-                // Hit the bottom.
-                if self.log_scroll_offset < self.log_scroll_offset_max {
-                    self.log_scroll_offset += 1;
-                    self.show_log_in_right_panel(screen);
+            MoveDirection::Up => {
+                if y == self.log_row_top as u16 {
+                    // Hit the top.
+                    if self.log_scroll_offset > 0 {
+                        self.log_scroll_offset -= 1;
+                        self.show_log_in_right_panel(screen);
+                    }
+                } else {
+                    y = y - 1;
                 }
-            } else if y < self.log_row_bottom as u16 {
-                y = y + 1;
             }
+            _ => {}
         }
         self.current_pos = Position::init(x, y);
         // Comment following to speed up.

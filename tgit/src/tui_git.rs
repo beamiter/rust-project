@@ -58,6 +58,13 @@ pub enum LayoutMode {
     LeftPanel(DisplayType),
     RightPanel(DisplayType),
 }
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum MoveDirection {
+    Up,
+    Down,
+    Left,
+    Right,
+}
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct SnapShot {

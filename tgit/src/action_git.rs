@@ -327,13 +327,13 @@ impl ActionGit for TuiGit {
                         return;
                     }
                     _ => {
-                        self.left_panel_handler(screen, true);
+                        self.left_panel_handler(screen, MoveDirection::Up);
                     }
                 }
                 self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
             }
             LayoutMode::RightPanel(_) => {
-                self.right_panel_handler(screen, true);
+                self.right_panel_handler(screen, MoveDirection::Up);
             }
         }
         // Update snapshot.
@@ -355,13 +355,13 @@ impl ActionGit for TuiGit {
                         return;
                     }
                     _ => {
-                        self.left_panel_handler(screen, false);
+                        self.left_panel_handler(screen, MoveDirection::Down);
                     }
                 }
                 self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
             }
             LayoutMode::RightPanel(_) => {
-                self.right_panel_handler(screen, false);
+                self.right_panel_handler(screen, MoveDirection::Down);
             }
         }
         // Update snapshot.
