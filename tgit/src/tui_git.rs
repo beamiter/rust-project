@@ -2,8 +2,16 @@ use std::collections::{HashMap, HashSet};
 use std::process::Command;
 use substring::Substring;
 
+// The most important wiki.
+// https://en.wikipedia.org/wiki/Unicode_symbols
+
+// https://en.wikipedia.org/wiki/Emoji#In_the_Unicode_standard
+// https://en.wikipedia.org/wiki/Punctuation
+// https://en.wikipedia.org/wiki/Arrow_(symbol)#UnicodeBlocks
+// https://en.wikipedia.org/wiki/Dingbat
 // https://en.wikipedia.org/wiki/Box-drawing_character#Unicode
 // https://en.wikipedia.org/wiki/ANSI_escape_code
+// https://ss64.com/nt/syntax-ansi.html
 // https://symbl.cc/en/
 pub const UNICODE_TABLE: [&'static str; 12] = [
     "\u{1f407}",
@@ -219,12 +227,12 @@ impl TuiGit {
                             .get_mut(&current_commit)
                             .unwrap()
                             .push(LogInfoPattern::Commit(val.to_string()));
-                    } else if val.starts_with("-   ") {
+                    } else if val.starts_with("-") {
                         self.commit_info_map
                             .get_mut(&current_commit)
                             .unwrap()
                             .push(LogInfoPattern::DiffSubtract(val.to_string()));
-                    } else if val.starts_with("+   ") {
+                    } else if val.starts_with("+") {
                         self.commit_info_map
                             .get_mut(&current_commit)
                             .unwrap()

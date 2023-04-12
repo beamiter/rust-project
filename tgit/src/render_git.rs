@@ -82,16 +82,44 @@ impl RenderGit for TuiGit {
         for branch in self.branch_vec.to_vec() {
             // Need to update bottom here.
             self.branch_row_bottom = y_tmp;
-            if *branch == self.main_branch {
+            if *branch == self.main_branch && *branch == self.current_branch {
+                self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
                 write!(
                     screen,
-                    "{}{}{}{}{}{}{} 🐝",
+                    "{}{}{}{}{}{}{}{}{} 🐝",
+                    termion::cursor::Goto(1, y_tmp as u16),
+                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
                     termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
-                    color::Bg(color::White),
+                    color::Fg(color::Green),
+                    style::Bold,
+                    style::Underline,
+                    branch,
+                    color::Fg(color::Reset),
+                    style::Reset,
+                )
+                .unwrap();
+            } else if *branch == self.main_branch {
+                write!(
+                    screen,
+                    "{}{}{}{}{}{} 🐝",
+                    termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
                     color::Fg(color::Green),
                     style::Bold,
                     branch,
                     color::Fg(color::Reset),
+                    style::Reset,
+                )
+                .unwrap();
+            } else if *branch == self.current_branch {
+                self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
+                write!(
+                    screen,
+                    "{}{}{}{}{}{}",
+                    termion::cursor::Goto(1, y_tmp as u16),
+                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
+                    style::Underline,
+                    termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
+                    branch,
                     style::Reset,
                 )
                 .unwrap();
@@ -419,25 +447,11 @@ impl RenderGit for TuiGit {
             }
         }
         self.current_pos = Position::init(x, y);
-        // self.show_in_bottom_bar(
-        //     screen,
-        //     &format!(
-        //         "c: {}, r: {}, branch: {}, branch_row: {}",
-        //         self.current_pos.col,
-        //         self.current_pos.row,
-        //         self.current_branch,
-        //         *self.branch_row_map.get(&self.current_branch).unwrap() as u16,
-        //     )
-        //     .to_string(),
-        // );
-        self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
-        // (TODO) Add underline for current line.
-        self.show_icon_after_cursor_and_wipe(
-            screen,
-            UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
-        );
         // Update current_branch.
         self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
+
+        self.show_branch_in_left_panel(screen);
+
         // Show the log.
         self.update_git_log(&self.current_branch.to_string());
         self.right_panel_log_info = self
@@ -485,11 +499,6 @@ impl RenderGit for TuiGit {
             )
             .to_string(),
         );
-        // self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
-        // self.show_icon_after_cursor(
-        //     screen,
-        //     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
-        // );
         self.show_current_cursor(screen);
         screen.flush().unwrap();
     }
