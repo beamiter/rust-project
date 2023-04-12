@@ -17,9 +17,8 @@ pub trait RenderGit {
     fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
 
     fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W);
-    fn reset_cursor_to_current_branch<W: Write>(&mut self, screen: &mut W);
     fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W);
-    fn reset_cursor_to_main_branch<W: Write>(&mut self, screen: &mut W);
+    fn reset_cursor_to_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
 
     fn render_single_line<W: Write>(
         &mut self,
@@ -60,6 +59,7 @@ impl RenderGit for TuiGit {
         .unwrap();
     }
     fn show_branch_in_left_panel<W: Write>(&mut self, screen: &mut W) {
+        let (x, y) = self.current_pos.unpack();
         let (col, row) = termion::terminal_size().unwrap();
         let x_tmp = self.branch_col_left;
         if col <= x_tmp as u16 {
@@ -145,6 +145,9 @@ impl RenderGit for TuiGit {
             + *branch_size.iter().max().unwrap() as usize
             + self.branch_col_offset;
         self.log_col_left = self.branch_col_right + self.branch_log_gap;
+
+        write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
+        screen.flush().unwrap();
     }
     fn show_log_in_right_panel<W: Write>(&mut self, screen: &mut W) {
         let (x, y) = self.current_pos.unpack();
@@ -187,6 +190,7 @@ impl RenderGit for TuiGit {
             )
             .unwrap();
         }
+
         write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
         screen.flush().unwrap();
     }
@@ -249,23 +253,11 @@ impl RenderGit for TuiGit {
         screen.flush().unwrap();
     }
 
-    fn reset_cursor_to_current_branch<W: Write>(&mut self, screen: &mut W) {
+    fn reset_cursor_to_branch<W: Write>(&mut self, screen: &mut W, branch: &String) {
         // Must update position.
         self.previous_pos = self.current_pos;
-        self.current_pos = Position::init(
-            1,
-            self.get_branch_row(&self.current_branch.to_string())
-                .unwrap() as u16,
-        );
+        self.current_pos = Position::init(1, self.get_branch_row(branch).unwrap() as u16);
         self.show_icon_after_cursor(screen, "🏆");
-    }
-    fn reset_cursor_to_main_branch<W: Write>(&mut self, screen: &mut W) {
-        self.current_pos = Position::init(
-            1,
-            self.get_branch_row(&self.main_branch.to_string()).unwrap() as u16,
-        );
-        self.previous_pos = self.current_pos;
-        self.show_icon_after_cursor_and_wipe(screen, "🌟");
     }
     fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W) {
         // Must update position.
@@ -375,7 +367,6 @@ impl RenderGit for TuiGit {
         self.current_branch = branch.to_string();
         self.show_title_in_top_panel(screen);
         self.update_git_branch();
-        self.reset_cursor_to_main_branch(screen);
 
         self.left_panel_handler(screen, MoveDirection::Still);
 
@@ -387,6 +378,7 @@ impl RenderGit for TuiGit {
             .to_vec();
         self.right_panel_handler(screen, MoveDirection::Still);
 
+        self.reset_cursor_to_branch(screen, branch);
         screen.flush().unwrap();
     }
     fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W) {

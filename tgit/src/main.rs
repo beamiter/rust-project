@@ -43,21 +43,21 @@ fn main() {
         let _ = thread::spawn(move || {
             let (mut prev_col, mut prev_row) = termion::terminal_size().unwrap();
             loop {
-                if *hold_confirm.lock().unwrap() {
-                    thread::sleep(Duration::from_secs(2));
-                    continue;
-                }
-                tui_git_arc.lock().unwrap().update_git_branch_async();
-                *update_confirm.lock().unwrap() = true;
                 let (col, row) = termion::terminal_size().unwrap();
                 if prev_col != col || prev_row != row {
                     *terminal_size_changed.lock().unwrap() = true;
                 } else {
                     *terminal_size_changed.lock().unwrap() = false;
                 }
+                if *hold_confirm.lock().unwrap() {
+                    thread::sleep(Duration::from_secs(1));
+                    continue;
+                }
                 prev_col = col;
                 prev_row = row;
-                thread::sleep(Duration::from_secs(1));
+                tui_git_arc.lock().unwrap().update_git_branch_async();
+                *update_confirm.lock().unwrap() = true;
+                thread::sleep(Duration::from_secs(2));
             }
         });
     }
@@ -73,20 +73,10 @@ fn main() {
 
     // Start with the main branch row.
     for c in stdin().keys() {
-        // Lock the tui_git_arc and update main branch and branch vector.
-        let mut update_confirm = update_confirm.lock().unwrap();
-        if *update_confirm {
-            let tui_git_arc = tui_git_arc.lock().unwrap();
-            *update_confirm = false;
-            tui_git.main_branch = tui_git_arc.main_branch.to_string();
-            tui_git.branch_vec = tui_git_arc.branch_vec.to_vec();
-            tui_git.branch_log_info_map = tui_git_arc.branch_log_info_map.clone();
-            let mut terminal_size_changed = terminal_size_changed.lock().unwrap();
-            if *terminal_size_changed {
-                tui_git.refresh_frame_with_branch(&mut screen, &tui_git.main_branch.to_string());
-                *terminal_size_changed = false;
-            }
-            tui_git.show_in_status_bar(&mut screen, &"Update data async.".to_string());
+        let mut terminal_size_changed = terminal_size_changed.lock().unwrap();
+        if *terminal_size_changed {
+            *terminal_size_changed = false;
+            tui_git.refresh_frame_with_branch(&mut screen, &tui_git.current_branch.to_string());
         }
         let mut hold_confirm = hold_confirm.lock().unwrap();
         *hold_confirm = true;
@@ -109,6 +99,24 @@ fn main() {
             Key::Char('q') => {
                 if tui_git.lower_q_pressed(&mut screen) {
                     break;
+                }
+            }
+            Key::Char('u') => {
+                // Lock the tui_git_arc and update main branch and branch vector.
+                let mut update_confirm = update_confirm.lock().unwrap();
+                if *update_confirm {
+                    *update_confirm = false;
+
+                    let tui_git_arc = tui_git_arc.lock().unwrap();
+                    tui_git.main_branch = tui_git_arc.main_branch.to_string();
+                    tui_git.branch_vec = tui_git_arc.branch_vec.to_vec();
+                    tui_git.branch_log_info_map = tui_git_arc.branch_log_info_map.clone();
+
+                    tui_git.refresh_frame_with_branch(
+                        &mut screen,
+                        &tui_git.current_branch.to_string(),
+                    );
+                    tui_git.show_in_status_bar(&mut screen, &"Update data async.".to_string());
                 }
             }
             Key::Char('y') | Key::Char('Y') => {

@@ -388,7 +388,7 @@ impl ActionGit for TuiGit {
                 }
             },
         }
-        self.reset_cursor_to_current_branch(screen);
+        self.reset_cursor_to_branch(screen, &self.current_branch.to_string());
         self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
         // Update snapshot.
         match self.layout_mode {
