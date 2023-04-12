@@ -333,7 +333,6 @@ impl ActionGit for TuiGit {
                 self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
             }
             LayoutMode::RightPanel(_) => {
-                // self.show_branch_in_left_panel(screen);
                 self.right_panel_handler(screen, true);
             }
         }
@@ -362,7 +361,6 @@ impl ActionGit for TuiGit {
                 self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
             }
             LayoutMode::RightPanel(_) => {
-                // self.show_branch_in_left_panel(screen);
                 self.right_panel_handler(screen, false);
             }
         }
