@@ -375,6 +375,8 @@ impl RenderGit for TuiGit {
         self.current_branch = branch.to_string();
         self.show_title_in_top_panel(screen);
         self.update_git_branch();
+        self.reset_cursor_to_main_branch(screen);
+
         self.left_panel_handler(screen, MoveDirection::Still);
 
         self.update_git_log(&self.current_branch.to_string());
@@ -385,7 +387,6 @@ impl RenderGit for TuiGit {
             .to_vec();
         self.right_panel_handler(screen, MoveDirection::Still);
 
-        self.reset_cursor_to_main_branch(screen);
         screen.flush().unwrap();
     }
     fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W) {
