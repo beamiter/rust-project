@@ -88,6 +88,8 @@ fn main() {
             }
             tui_git.show_in_status_bar(&mut screen, &"Update data async.".to_string());
         }
+        let mut hold_confirm = hold_confirm.lock().unwrap();
+        *hold_confirm = true;
         match c.unwrap() {
             Key::Char('b') => {
                 tui_git.lower_b_pressed(&mut screen);
@@ -110,11 +112,7 @@ fn main() {
                 }
             }
             Key::Char('y') | Key::Char('Y') => {
-                let mut hold_confirm = hold_confirm.lock().unwrap();
-                *hold_confirm = true;
-                // Hold async data updating.
                 tui_git.lower_y_pressed(&mut screen);
-                *hold_confirm = false;
             }
 
             Key::Char('D') => {
@@ -144,6 +142,7 @@ fn main() {
         }
         // Flush after key pressed.
         screen.flush().unwrap();
+        *hold_confirm = false;
     }
     // write!(screen, "{}", termion::cursor::Show).unwrap();
     screen.flush().unwrap();
