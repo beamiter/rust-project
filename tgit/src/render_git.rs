@@ -77,7 +77,6 @@ impl RenderGit for TuiGit {
             .unwrap();
         }
         let mut y_tmp = self.branch_row_top;
-        self.branch_row_map.clear();
         for branch in self.branch_vec.to_vec() {
             // Need to update bottom here.
             self.branch_row_bottom = y_tmp;
@@ -131,7 +130,6 @@ impl RenderGit for TuiGit {
                 )
                 .unwrap();
             }
-            self.branch_row_map.insert(branch.to_string(), y_tmp);
             // Spare 2 for check info.
             if y_tmp as u16 >= row - self.bar_row_height as u16 {
                 break;
@@ -256,15 +254,16 @@ impl RenderGit for TuiGit {
         self.previous_pos = self.current_pos;
         self.current_pos = Position::init(
             1,
-            *self.branch_row_map.get(&self.current_branch).unwrap() as u16,
+            self.get_branch_row(&self.current_branch.to_string())
+                .unwrap() as u16,
         );
         self.show_icon_after_cursor(screen, "🏆");
     }
     fn reset_cursor_to_main_branch<W: Write>(&mut self, screen: &mut W) {
-        self.current_pos = Position {
-            col: 1,
-            row: *self.branch_row_map.get(&self.main_branch).unwrap() as u16,
-        };
+        self.current_pos = Position::init(
+            1,
+            self.get_branch_row(&self.main_branch.to_string()).unwrap() as u16,
+        );
         self.previous_pos = self.current_pos;
         self.show_icon_after_cursor_and_wipe(screen, "🌟");
     }

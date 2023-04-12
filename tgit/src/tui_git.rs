@@ -122,7 +122,6 @@ pub struct TuiGit {
     pub branch_delete_set: HashSet<String>,
     pub branch_diff_vec: Vec<LogInfoPattern>,
     pub branch_log_info_map: HashMap<String, Vec<LogInfoPattern>>,
-    pub branch_row_map: HashMap<String, usize>,
     pub branch_vec: Vec<String>,
     pub commit_info_map: HashMap<String, Vec<LogInfoPattern>>,
     pub current_branch: String,
@@ -170,7 +169,6 @@ impl TuiGit {
             branch_delete_set: HashSet::new(),
             branch_diff_vec: vec![],
             branch_log_info_map: HashMap::new(),
-            branch_row_map: HashMap::new(),
             branch_vec: vec![],
             commit_info_map: HashMap::new(),
             current_branch: String::new(),
@@ -186,6 +184,12 @@ impl TuiGit {
             previous_pos: Position::init(1, 1),
             current_pos: Position::init(1, 1),
         }
+    }
+    pub fn get_branch_row(&mut self, branch: &String) -> Result<usize, String> {
+        if let Ok(ind) = self.branch_vec.binary_search(branch) {
+            return Ok(ind + self.branch_row_top);
+        }
+        Err(format!("Unable to find branch: {} in branch vector!!!", branch).to_string())
     }
 
     pub fn update_commit_info(&mut self) -> Option<String> {

@@ -151,13 +151,13 @@ impl ActionGit for TuiGit {
     fn lower_n_pressed<W: Write>(&mut self, screen: &mut W) {
         if let LayoutMode::LeftPanel(DisplayType::Delete) = self.layout_mode {
             // Reset chosen branch background.
-            for branch in &self.branch_delete_set {
-                let y = self.branch_row_map.get(branch).unwrap();
+            for branch in self.branch_delete_set.clone() {
+                let y = self.get_branch_row(&branch).unwrap();
                 write!(
                     screen,
                     "{}{}{}",
                     termion::color::Bg(termion::color::Reset),
-                    termion::cursor::Goto(self.branch_col_left as u16, *y as u16),
+                    termion::cursor::Goto(self.branch_col_left as u16, y as u16),
                     branch,
                 )
                 .unwrap();
@@ -215,24 +215,24 @@ impl ActionGit for TuiGit {
         // Toggle branch delete.
         if self.branch_delete_set.get(&branch).is_some() {
             self.branch_delete_set.remove(&branch);
-            let y = self.branch_row_map.get(&branch).unwrap();
+            let y = self.get_branch_row(&branch).unwrap();
             write!(
                 screen,
                 "{}{}{}{}",
                 termion::color::Bg(termion::color::Reset),
-                termion::cursor::Goto(self.branch_col_left as u16, *y as u16),
+                termion::cursor::Goto(self.branch_col_left as u16, y as u16),
                 branch,
                 termion::color::Bg(termion::color::Reset),
             )
             .unwrap();
         } else {
             self.branch_delete_set.insert(branch.to_string());
-            let y = self.branch_row_map.get(&branch).unwrap();
+            let y = self.get_branch_row(&branch).unwrap();
             write!(
                 screen,
                 "{}{}{}{}",
                 termion::color::Bg(termion::color::Red),
-                termion::cursor::Goto(self.branch_col_left as u16, *y as u16),
+                termion::cursor::Goto(self.branch_col_left as u16, y as u16),
                 branch,
                 termion::color::Bg(termion::color::Reset),
             )
