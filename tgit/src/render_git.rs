@@ -101,10 +101,9 @@ impl RenderGit for TuiGit {
             } else if *branch == self.main_branch {
                 write!(
                     screen,
-                    "{}{}{}{}{}{} 🐝",
+                    "{}{}{}{}{} 🐝",
                     termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
                     color::Fg(color::Green),
-                    style::Bold,
                     branch,
                     color::Fg(color::Reset),
                     style::Reset,
@@ -114,9 +113,10 @@ impl RenderGit for TuiGit {
                 self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
                 write!(
                     screen,
-                    "{}{}{}{}{}{}",
+                    "{}{}{}{}{}{}{}",
                     termion::cursor::Goto(1, y_tmp as u16),
                     UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
+                    style::Bold,
                     style::Underline,
                     termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
                     branch,
