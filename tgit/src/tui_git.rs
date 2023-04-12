@@ -64,6 +64,7 @@ pub enum MoveDirection {
     Down,
     Left,
     Right,
+    Still,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -128,7 +129,6 @@ pub struct TuiGit {
     pub right_panel_log_info: Vec<LogInfoPattern>,
     // Main branch;
     pub main_branch: String,
-    pub row_branch_map: HashMap<usize, String>,
     pub row_log_map: HashMap<usize, LogInfoPattern>,
 
     // layout mode;
@@ -176,7 +176,6 @@ impl TuiGit {
             current_branch: String::new(),
             right_panel_log_info: vec![],
             main_branch: String::new(),
-            row_branch_map: HashMap::new(),
             row_log_map: HashMap::new(),
 
             layout_mode: LayoutMode::LeftPanel(DisplayType::Log),

@@ -16,6 +16,7 @@ pub trait RenderGit {
     fn show_and_stay_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
     fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
 
+    fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W);
     fn reset_cursor_to_current_branch<W: Write>(&mut self, screen: &mut W);
     fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W);
     fn reset_cursor_to_main_branch<W: Write>(&mut self, screen: &mut W);
@@ -33,7 +34,6 @@ pub trait RenderGit {
     fn left_panel_handler<W: Write>(&mut self, screen: &mut W, dir: MoveDirection);
     fn right_panel_handler<W: Write>(&mut self, screen: &mut W, dir: MoveDirection);
 
-    fn show_current_cursor<W: Write>(&mut self, screen: &mut W);
     fn show_icon_after_cursor<W: Write>(&mut self, screen: &mut W, icon: &str);
     fn show_icon_after_cursor_and_wipe<W: Write>(&mut self, screen: &mut W, icon: &str);
 }
@@ -78,7 +78,6 @@ impl RenderGit for TuiGit {
         }
         let mut y_tmp = self.branch_row_top;
         self.branch_row_map.clear();
-        self.row_branch_map.clear();
         for branch in self.branch_vec.to_vec() {
             // Need to update bottom here.
             self.branch_row_bottom = y_tmp;
@@ -133,7 +132,6 @@ impl RenderGit for TuiGit {
                 .unwrap();
             }
             self.branch_row_map.insert(branch.to_string(), y_tmp);
-            self.row_branch_map.insert(y_tmp, branch.to_string());
             // Spare 2 for check info.
             if y_tmp as u16 >= row - self.bar_row_height as u16 {
                 break;
@@ -274,7 +272,7 @@ impl RenderGit for TuiGit {
         // Must update position.
         self.previous_pos = self.current_pos;
         self.current_pos = Position::init(self.log_col_left as u16 - 3, self.log_row_top as u16);
-        self.show_current_cursor(screen);
+        self.reset_cursor_to_current_pos(screen);
     }
 
     fn render_single_line<W: Write>(
@@ -378,19 +376,20 @@ impl RenderGit for TuiGit {
         self.current_branch = branch.to_string();
         self.show_title_in_top_panel(screen);
         self.update_git_branch();
-        self.show_branch_in_left_panel(screen);
+        self.left_panel_handler(screen, MoveDirection::Still);
+
         self.update_git_log(&self.current_branch.to_string());
         self.right_panel_log_info = self
             .branch_log_info_map
             .get(&self.current_branch.to_string())
             .unwrap()
             .to_vec();
-        self.show_log_in_right_panel(screen);
+        self.right_panel_handler(screen, MoveDirection::Still);
 
         self.reset_cursor_to_main_branch(screen);
         screen.flush().unwrap();
     }
-    fn show_current_cursor<W: Write>(&mut self, screen: &mut W) {
+    fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W) {
         write!(
             screen,
             "{}",
@@ -437,22 +436,34 @@ impl RenderGit for TuiGit {
             MoveDirection::Up => {
                 if y > self.branch_row_top as u16 && y <= self.branch_row_bottom as u16 {
                     y = y - 1;
+                    if let Ok(ind) = self
+                        .branch_vec
+                        .binary_search(&self.current_branch.to_string())
+                    {
+                        self.current_branch = self.branch_vec.to_vec()[ind - 1].to_string();
+                    }
                 } else {
                     y = self.branch_row_bottom as u16;
+                    self.current_branch = self.branch_vec.last().unwrap().to_string();
                 }
             }
             MoveDirection::Down => {
                 if y >= self.branch_row_top as u16 && y < self.branch_row_bottom as u16 {
                     y = y + 1;
+                    if let Ok(ind) = self
+                        .branch_vec
+                        .binary_search(&self.current_branch.to_string())
+                    {
+                        self.current_branch = self.branch_vec.to_vec()[ind + 1].to_string();
+                    }
                 } else {
                     y = self.branch_row_top as u16;
+                    self.current_branch = self.branch_vec.first().unwrap().to_string();
                 }
             }
             _ => {}
         }
         self.current_pos = Position::init(x, y);
-        // Update current_branch.
-        self.current_branch = self.row_branch_map.get(&(y as usize)).unwrap().to_string();
 
         self.show_branch_in_left_panel(screen);
 
@@ -463,7 +474,8 @@ impl RenderGit for TuiGit {
             .get(&self.current_branch.to_string())
             .unwrap()
             .to_vec();
-        self.show_log_in_right_panel(screen);
+
+        self.right_panel_handler(screen, MoveDirection::Still);
         screen.flush().unwrap();
     }
 
@@ -495,10 +507,12 @@ impl RenderGit for TuiGit {
                     y = y - 1;
                 }
             }
-            _ => {}
+            _ => {
+                self.show_log_in_right_panel(screen);
+            }
         }
         self.current_pos = Position::init(x, y);
-        // Comment following to speed up.
+
         self.show_in_bottom_bar(
             screen,
             &format!(
@@ -507,7 +521,6 @@ impl RenderGit for TuiGit {
             )
             .to_string(),
         );
-        self.show_current_cursor(screen);
         screen.flush().unwrap();
     }
 }

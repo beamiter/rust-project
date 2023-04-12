@@ -104,13 +104,13 @@ impl ActionGit for TuiGit {
                             .get(&self.current_branch.to_string())
                             .unwrap()
                             .to_vec();
-                        self.show_log_in_right_panel(screen);
+                        self.right_panel_handler(screen, MoveDirection::Still);
                     }
                     DisplayType::Log => {
                         self.layout_mode = LayoutMode::LeftPanel(DisplayType::Diff);
                         self.update_git_diff(&self.current_branch.to_string());
                         self.right_panel_log_info = self.branch_diff_vec.clone();
-                        self.show_log_in_right_panel(screen);
+                        self.right_panel_handler(screen, MoveDirection::Still);
                     }
                     _ => {}
                 }
@@ -294,7 +294,7 @@ impl ActionGit for TuiGit {
                         .get(&current_commit.unwrap())
                         .unwrap()
                         .to_vec();
-                    self.show_log_in_right_panel(screen);
+                    self.right_panel_handler(screen, MoveDirection::Still);
                 }
                 DisplayType::Commit => {
                     // Update with log position and scroll offset.
@@ -312,7 +312,7 @@ impl ActionGit for TuiGit {
                         .get(&self.current_branch.to_string())
                         .unwrap()
                         .to_vec();
-                    self.show_log_in_right_panel(screen);
+                    self.right_panel_handler(screen, MoveDirection::Still);
                 }
                 _ => {}
             },

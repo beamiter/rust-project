@@ -57,7 +57,7 @@ fn main() {
                 }
                 prev_col = col;
                 prev_row = row;
-                thread::sleep(Duration::from_secs(5));
+                thread::sleep(Duration::from_secs(1));
             }
         });
     }
