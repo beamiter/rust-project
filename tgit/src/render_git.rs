@@ -5,14 +5,18 @@ use std::str;
 use substring::Substring;
 
 use crossterm::cursor::MoveTo;
+use crossterm::queue;
+use crossterm::style::Attribute;
+use crossterm::style::Color;
+use crossterm::style::Print;
+use crossterm::style::ResetColor;
+use crossterm::style::SetAttribute;
+use crossterm::style::SetBackgroundColor;
+use crossterm::style::SetForegroundColor;
+use crossterm::style::Stylize;
 use crossterm::terminal::size;
 use crossterm::terminal::Clear;
 use crossterm::terminal::ClearType;
-use crossterm::style::SetBackgroundColor;
-use crossterm::style::SetForegroundColor;
-use crossterm::style::ResetColor;
-use crossterm::style::Color;
-use crossterm::style::Attribute;
 
 pub trait RenderGit {
     fn show_title_in_top_panel<W: Write>(&mut self, screen: &mut W);
@@ -48,20 +52,15 @@ impl RenderGit for TuiGit {
     // https://unix.stackexchange.com/questions/559708/how-to-draw-a-continuous-line-in-terminal
     fn show_title_in_top_panel<W: Write>(&mut self, screen: &mut W) {
         let (col, row) = size().unwrap();
-        write!(
+        queue!(
             screen,
-            "{}{}{}{}Welcome to tui git{}{}{}{}{}{}{}\n",
             MoveTo(19, 1),
             Clear(ClearType::CurrentLine),
-            SetBackgroundColor(Color::Magenta),
-            Attribute::Bold,
-            Attribute::Italic,
-            ResetColor,
+            Print("Welcome to tui git".bold().italic().magenta().on_grey()),
             MoveTo(1, 2),
-            "⎽".repeat(col as usize),
+            Print("⎽".repeat(col as usize - 1)),
             MoveTo(1, row - self.bar_row_height as u16 + 1),
-            "⎺".repeat(col as usize),
-            Attribute::Reset,
+            Print("⎺".repeat(col as usize - 1)),
         )
         .unwrap();
     }
@@ -384,8 +383,8 @@ impl RenderGit for TuiGit {
         // Reset with main branch.
         self.current_branch = branch.to_string();
         self.show_title_in_top_panel(screen);
-        // self.update_git_branch();
-        //
+        self.update_git_branch();
+
         // self.left_panel_handler(screen, MoveDirection::Still);
         //
         // self.update_git_log(&self.current_branch.to_string());
