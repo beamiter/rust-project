@@ -7,5 +7,8 @@ edition = "2021"
 
 [dependencies]
 coredump = "0.1.2"
+crossterm = { version = "0.26.1", features = ["event-stream"] }
+futures = "0.3.28"
+futures-timer = "3.0.2"
 substring = "1.4.5"
-termion = "2.0.1"
+tokio = { version = "1.27.0", features = ["full"] }

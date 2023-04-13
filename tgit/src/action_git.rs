@@ -1,4 +1,3 @@
-extern crate termion;
 use crate::event_git::*;
 use crate::render_git::*;
 use crate::tui_git::*;
