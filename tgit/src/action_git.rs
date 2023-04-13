@@ -219,8 +219,8 @@ impl ActionGit for TuiGit {
             write!(
                 screen,
                 "{}{}{}{}",
-                termion::color::Bg(termion::color::Reset),
                 termion::cursor::Goto(self.branch_col_left as u16, y as u16),
+                termion::color::Bg(termion::color::Reset),
                 branch,
                 termion::color::Bg(termion::color::Reset),
             )
@@ -230,9 +230,10 @@ impl ActionGit for TuiGit {
             let y = self.get_branch_row(&branch).unwrap();
             write!(
                 screen,
-                "{}{}{}{}",
-                termion::color::Bg(termion::color::Red),
+                "{}❎{}{}{}{}",
+                termion::cursor::Goto(1, y as u16),
                 termion::cursor::Goto(self.branch_col_left as u16, y as u16),
+                termion::color::Bg(termion::color::Red),
                 branch,
                 termion::color::Bg(termion::color::Reset),
             )

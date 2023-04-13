@@ -84,9 +84,10 @@ impl RenderGit for TuiGit {
             if self.branch_delete_set.get(&branch).is_some() {
                 write!(
                     screen,
-                    "{}{}{}{}",
-                    termion::color::Bg(termion::color::Red),
+                    "{}❎{}{}{}{}",
+                    termion::cursor::Goto(1, y_tmp as u16),
                     termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
+                    termion::color::Bg(termion::color::Red),
                     branch,
                     termion::color::Bg(termion::color::Reset),
                 )
@@ -169,14 +170,15 @@ impl RenderGit for TuiGit {
             // No show due to no enough col.
             return;
         }
-        self.log_scroll_offset_max =
-            if self.right_panel_log_info.len() + self.bar_row_height + self.log_row_top
-                <= row as usize
-            {
-                0
-            } else {
-                self.right_panel_log_info.len() - row as usize
-            };
+        self.log_scroll_offset_max = if self.right_panel_log_info.len()
+            + self.bar_row_height
+            + self.log_row_top
+            <= row as usize
+        {
+            0
+        } else {
+            self.right_panel_log_info.len() - row as usize - self.bar_row_height - self.log_row_top
+        };
         let mut y_tmp = self.log_row_top;
         let prev_log_row_bottom = self.log_row_bottom;
         // Log show len (col - x_tmp as u16).

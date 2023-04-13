@@ -91,7 +91,7 @@ fn main() {
             Key::Char('n') | Key::Esc | Key::Char('N') => {
                 tui_git.lower_n_pressed(&mut screen);
             }
-            Key::Char('q') => {
+            Key::Char('q') | Key::Char('Q') => {
                 if tui_git.lower_q_pressed(&mut screen) {
                     break;
                 }
