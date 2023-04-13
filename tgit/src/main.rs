@@ -12,7 +12,6 @@ use std::sync::Mutex;
 use std::thread;
 
 use coredump::register_panic_handler;
-use crossterm::event::poll;
 use crossterm::queue;
 use crossterm::terminal::EnterAlternateScreen;
 use crossterm::terminal::LeaveAlternateScreen;
@@ -20,11 +19,14 @@ use crossterm::terminal::LeaveAlternateScreen;
 use std::{io::stdout, io::Write, time::Duration};
 
 use futures::{future::FutureExt, select, StreamExt};
-// use futures_timer::Delay;
+use futures_timer::Delay;
 
 use crossterm::{
     cursor::position,
-    event::{read, DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode},
+    event::{
+        poll, read, DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEvent,
+        KeyModifiers, MouseEvent,
+    },
     execute,
     terminal::{disable_raw_mode, enable_raw_mode},
 };
@@ -41,34 +43,76 @@ fn flush_resize_events(first_resize: (u16, u16)) -> ((u16, u16), (u16, u16)) {
     }
     (first_resize, last_resize)
 }
+fn match_event_and_break(event: Event) -> bool {
+    println!("Event:: {:?}\r", event);
+    // if event == Event::Key(KeyCode::Char('c').into()) {}
+    // if let Event::Resize(x, y) = event {}
+    // if event == Event::Key(KeyCode::Esc.into()) {}
+    match event {
+        Event::Key(key) => match key {
+            KeyEvent {
+                code,
+                modifiers: KeyModifiers::NONE,
+                ..
+            } => match code {
+                KeyCode::Char('b') => {}
+                KeyCode::Char('c') => {
+                    println!("Cursor position: {:?}\r", position());
+                }
+                KeyCode::Char('d') => {}
+                KeyCode::Char('f') => {}
+                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {}
+                KeyCode::Char('q') => {
+                    return true;
+                }
+                KeyCode::Char('y') | KeyCode::Char('Y') => {}
+                KeyCode::Char('D') => {}
+                KeyCode::Char(':') => {}
+                KeyCode::Enter => {}
+                KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('H') => {}
+                KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('L') => {}
+                KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {}
+                KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {}
+                _ => {}
+            },
+            _ => {}
+        },
+        Event::FocusLost => {}
+        Event::FocusGained => {}
+        Event::Mouse(mouse) => match mouse {
+            MouseEvent { .. } => {}
+        },
+        Event::Paste(_) => {}
+        Event::Resize(x, y) => {
+            let (original_size, new_size) = flush_resize_events((x, y));
+            println!("Resize from: {:?}, to: {:?}\r", original_size, new_size);
+        }
+    }
+    return false;
+}
 
 async fn run_app<W>(write: &mut W) -> std::io::Result<()>
 where
     W: Write,
 {
+    // execute or queue.
     queue!(write, EnterAlternateScreen)?;
     write.flush()?;
     let mut reader = EventStream::new();
+    let mut counter = 0;
     loop {
-        // let mut delay = Delay::new(Duration::from_millis(1_000)).fuse();
+        let mut delay = Delay::new(Duration::from_millis(1_000)).fuse();
         let mut event = reader.next().fuse();
 
         select! {
-            // _ = delay => { println!(".\r"); },
+            _  = delay => {
+                counter += 1;
+                println!("{counter}.\r");
+            },
             maybe_event = event => {
                 match maybe_event {
                     Some(Ok(event)) => {
-                        println!("Event:: {:?}\r", event);
-                        if event == Event::Key(KeyCode::Char('c').into()) {
-                            println!("Cursor position: {:?}\r", position());
-                        }
-
-                        if let Event::Resize(x, y) = event {
-                            let (original_size, new_size) = flush_resize_events((x, y));
-                            println!("Resize from: {:?}, to: {:?}\r", original_size, new_size);
-                        }
-
-                        if event == Event::Key(KeyCode::Esc.into()) {
+                        if match_event_and_break(event) {
                             break;
                         }
                     }
