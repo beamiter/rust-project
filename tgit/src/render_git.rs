@@ -80,7 +80,18 @@ impl RenderGit for TuiGit {
         for branch in self.branch_vec.to_vec() {
             // Need to update bottom here.
             self.branch_row_bottom = y_tmp;
-            if *branch == self.main_branch && *branch == self.current_branch {
+
+            if self.branch_delete_set.get(&branch).is_some() {
+                write!(
+                    screen,
+                    "{}{}{}{}",
+                    termion::color::Bg(termion::color::Red),
+                    termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
+                    branch,
+                    termion::color::Bg(termion::color::Reset),
+                )
+                .unwrap();
+            } else if *branch == self.main_branch && *branch == self.current_branch {
                 self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
                 write!(
                     screen,
