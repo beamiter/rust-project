@@ -74,7 +74,19 @@ fn main() {
     // Start with the main branch row.
     for c in stdin().keys() {
         let mut terminal_size_changed = terminal_size_changed.lock().unwrap();
-        if *terminal_size_changed {
+        // Lock the tui_git_arc and update main branch and branch vector.
+        let mut update_confirm = update_confirm.lock().unwrap();
+        if *update_confirm {
+            *update_confirm = false;
+
+            let tui_git_arc = tui_git_arc.lock().unwrap();
+            tui_git.main_branch = tui_git_arc.main_branch.to_string();
+            tui_git.branch_vec = tui_git_arc.branch_vec.to_vec();
+            tui_git.branch_log_info_map = tui_git_arc.branch_log_info_map.clone();
+
+            tui_git.refresh_frame_with_branch(&mut screen, &tui_git.current_branch.to_string());
+            tui_git.show_in_status_bar(&mut screen, &"Update data async.".to_string());
+        } else if *terminal_size_changed {
             *terminal_size_changed = false;
             tui_git.refresh_frame_with_branch(&mut screen, &tui_git.current_branch.to_string());
         }
@@ -99,24 +111,6 @@ fn main() {
             Key::Char('q') => {
                 if tui_git.lower_q_pressed(&mut screen) {
                     break;
-                }
-            }
-            Key::Char('u') => {
-                // Lock the tui_git_arc and update main branch and branch vector.
-                let mut update_confirm = update_confirm.lock().unwrap();
-                if *update_confirm {
-                    *update_confirm = false;
-
-                    let tui_git_arc = tui_git_arc.lock().unwrap();
-                    tui_git.main_branch = tui_git_arc.main_branch.to_string();
-                    tui_git.branch_vec = tui_git_arc.branch_vec.to_vec();
-                    tui_git.branch_log_info_map = tui_git_arc.branch_log_info_map.clone();
-
-                    tui_git.refresh_frame_with_branch(
-                        &mut screen,
-                        &tui_git.current_branch.to_string(),
-                    );
-                    tui_git.show_in_status_bar(&mut screen, &"Update data async.".to_string());
                 }
             }
             Key::Char('y') | Key::Char('Y') => {
