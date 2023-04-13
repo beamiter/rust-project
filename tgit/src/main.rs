@@ -1,10 +1,10 @@
 // pub mod action_git;
 // pub mod event_git;
-// pub mod render_git;
+pub mod render_git;
 pub mod tui_git;
 
 // use crate::action_git::*;
-// use crate::render_git::*;
+use crate::render_git::*;
 use crate::tui_git::*;
 
 use std::sync::Arc;
@@ -44,7 +44,7 @@ fn flush_resize_events(first_resize: (u16, u16)) -> ((u16, u16), (u16, u16)) {
     (first_resize, last_resize)
 }
 fn match_event_and_break(event: Event) -> bool {
-    println!("Event:: {:?}\r", event);
+    // println!("Event:: {:?}\r", event);
     // if event == Event::Key(KeyCode::Char('c').into()) {}
     // if let Event::Resize(x, y) = event {}
     // if event == Event::Key(KeyCode::Esc.into()) {}
@@ -57,7 +57,7 @@ fn match_event_and_break(event: Event) -> bool {
             } => match code {
                 KeyCode::Char('b') => {}
                 KeyCode::Char('c') => {
-                    println!("Cursor position: {:?}\r", position());
+                    // println!("Cursor position: {:?}\r", position());
                 }
                 KeyCode::Char('d') => {}
                 KeyCode::Char('f') => {}
@@ -85,7 +85,7 @@ fn match_event_and_break(event: Event) -> bool {
         Event::Paste(_) => {}
         Event::Resize(x, y) => {
             let (original_size, new_size) = flush_resize_events((x, y));
-            println!("Resize from: {:?}, to: {:?}\r", original_size, new_size);
+            // println!("Resize from: {:?}, to: {:?}\r", original_size, new_size);
         }
     }
     return false;
@@ -95,20 +95,19 @@ async fn run_app<W>(write: &mut W) -> std::io::Result<()>
 where
     W: Write,
 {
+    let mut tui_git = TuiGit::new();
+    tui_git.update_git_branch();
     // execute or queue.
     queue!(write, EnterAlternateScreen)?;
     write.flush()?;
+    tui_git.refresh_frame_with_branch(write, &tui_git.main_branch.to_string());
     let mut reader = EventStream::new();
-    let mut counter = 0;
     loop {
         let mut delay = Delay::new(Duration::from_millis(1_000)).fuse();
         let mut event = reader.next().fuse();
 
         select! {
-            _  = delay => {
-                counter += 1;
-                println!("{counter}.\r");
-            },
+            _  = delay => {},
             maybe_event = event => {
                 match maybe_event {
                     Some(Ok(event)) => {
@@ -131,27 +130,25 @@ where
 #[tokio::main]
 async fn main() -> std::io::Result<()> {
     register_panic_handler().unwrap();
-    let mut tui_git = TuiGit::new();
-    tui_git.update_git_branch();
 
     // Create a thread to update data in the background.
-    let update_confirm = Arc::new(Mutex::new(false));
-    let hold_confirm = Arc::new(Mutex::new(false));
-    let tui_git_arc = Arc::new(Mutex::new(TuiGit::new()));
-    {
-        let tui_git_arc = Arc::clone(&tui_git_arc);
-        let update_confirm = Arc::clone(&update_confirm);
-        let hold_confirm = Arc::clone(&hold_confirm);
-        let _ = thread::spawn(move || loop {
-            if !*hold_confirm.lock().unwrap() {
-                tui_git_arc.lock().unwrap().update_git_branch_async();
-                *update_confirm.lock().unwrap() = true;
-            } else {
-                *update_confirm.lock().unwrap() = false;
-            }
-            thread::sleep(Duration::from_secs(5));
-        });
-    }
+    // let update_confirm = Arc::new(Mutex::new(false));
+    // let hold_confirm = Arc::new(Mutex::new(false));
+    // let tui_git_arc = Arc::new(Mutex::new(TuiGit::new()));
+    // {
+    //     let tui_git_arc = Arc::clone(&tui_git_arc);
+    //     let update_confirm = Arc::clone(&update_confirm);
+    //     let hold_confirm = Arc::clone(&hold_confirm);
+    //     let _ = thread::spawn(move || loop {
+    //         if !*hold_confirm.lock().unwrap() {
+    //             tui_git_arc.lock().unwrap().update_git_branch_async();
+    //             *update_confirm.lock().unwrap() = true;
+    //         } else {
+    //             *update_confirm.lock().unwrap() = false;
+    //         }
+    //         thread::sleep(Duration::from_secs(5));
+    //     });
+    // }
     enable_raw_mode()?;
 
     let mut stdout = stdout();
@@ -161,8 +158,6 @@ async fn main() -> std::io::Result<()> {
 
     execute!(stdout, DisableMouseCapture)?;
 
-    disable_raw_mode()
-
     // let mut screen = stdout()
     //     .into_raw_mode()
     //     .unwrap()
@@ -170,7 +165,6 @@ async fn main() -> std::io::Result<()> {
     //     .unwrap();
     // // write!(screen, "{}", termion::cursor::Hide).unwrap();
     //
-    // tui_git.refresh_frame_with_branch(&mut screen, &tui_git.main_branch.to_string());
     //
     // // Start with the main branch row.
     // for c in stdin().keys() {
@@ -252,4 +246,5 @@ async fn main() -> std::io::Result<()> {
     // }
     // // write!(screen, "{}", termion::cursor::Show).unwrap();
     // screen.flush().unwrap();
+    disable_raw_mode()
 }
