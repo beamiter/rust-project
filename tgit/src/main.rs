@@ -9,7 +9,8 @@ use crate::action_git::*;
 use crate::render_git::*;
 use crate::tui_git::*;
 
-use std::future;
+use futures::FutureExt;
+use futures_timer::Delay;
 use std::io::{stdin, stdout, Write};
 
 use std::sync::Arc;
@@ -34,12 +35,20 @@ async fn sing_song() {
     println!("sing_song");
 }
 async fn dance() {
-    println!("dance");
+    loop {
+        println!("dance");
+        let delay = Delay::new(Duration::from_millis(1_000)).fuse();
+        delay.await;
+    }
 }
 async fn learn_and_sing() {
-    println!("learn_and_sing");
-    learn_song().await;
-    sing_song().await;
+    loop {
+        println!("learn_and_sing");
+        learn_song().await;
+        sing_song().await;
+        let delay = Delay::new(Duration::from_millis(3_000)).fuse();
+        delay.await;
+    }
 }
 async fn async_main() {
     println!("async_main");
