@@ -253,7 +253,7 @@ impl RenderGit for TuiGit {
             MoveTo(x_tmp as u16, y_tmp as u16),
         )
         .unwrap();
-        let line_width = self.log_col_right - self.log_col_left + 1;
+        let line_width = self.log_col_right - self.log_col_left;
         match log {
             LogInfoPattern::Author(val) | LogInfoPattern::Date(val) | LogInfoPattern::Msg(val) => {
                 queue!(screen, Print(val.substring(0, line_width))).unwrap();
