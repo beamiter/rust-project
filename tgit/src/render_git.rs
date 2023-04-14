@@ -403,6 +403,8 @@ impl RenderGit for TuiGit {
             .to_vec();
 
         self.right_panel_handler(screen, MoveDirection::Still);
+
+        queue!(screen, MoveTo(x, y)).unwrap();
         screen.flush().unwrap();
     }
 
@@ -448,6 +450,7 @@ impl RenderGit for TuiGit {
         //     )
         //     .to_string(),
         // );
+        queue!(screen, MoveTo(x, y)).unwrap();
         screen.flush().unwrap();
     }
 }

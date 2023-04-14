@@ -95,6 +95,8 @@ pub enum LogInfoPattern {
 // Need to parse commit.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TuiGit {
+    pub async_update: bool,
+
     // branch render area;
     pub branch_log_gap: usize,
     pub branch_row_top: usize,
@@ -141,6 +143,8 @@ pub struct TuiGit {
 impl TuiGit {
     pub fn new() -> TuiGit {
         TuiGit {
+            async_update: false,
+
             branch_log_gap: 4,
             branch_row_top: 3,
             branch_row_bottom: 0,
