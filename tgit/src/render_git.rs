@@ -4,31 +4,31 @@ use std::io::Write;
 use std::str;
 use substring::Substring;
 
-use crossterm::cursor::MoveTo;
-use crossterm::queue;
-use crossterm::style::Attribute;
-use crossterm::style::Color;
-use crossterm::style::Print;
-use crossterm::style::ResetColor;
-use crossterm::style::SetAttribute;
-use crossterm::style::SetBackgroundColor;
-use crossterm::style::SetForegroundColor;
-use crossterm::style::Stylize;
-use crossterm::terminal::size;
-use crossterm::terminal::Clear;
-use crossterm::terminal::ClearType;
+pub use crossterm::cursor::MoveTo;
+pub use crossterm::queue;
+pub use crossterm::style::Attribute;
+pub use crossterm::style::Color;
+pub use crossterm::style::Print;
+pub use crossterm::style::ResetColor;
+pub use crossterm::style::SetAttribute;
+pub use crossterm::style::SetBackgroundColor;
+pub use crossterm::style::SetForegroundColor;
+pub use crossterm::style::Stylize;
+pub use crossterm::terminal::size;
+pub use crossterm::terminal::Clear;
+pub use crossterm::terminal::ClearType;
 
 pub trait RenderGit {
     fn show_title_in_top_panel<W: Write>(&mut self, screen: &mut W);
     fn show_branch_in_left_panel<W: Write>(&mut self, screen: &mut W);
     fn show_log_in_right_panel<W: Write>(&mut self, screen: &mut W);
-    //
-    // fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
-    // fn show_and_stay_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
-    // fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
-    //
-    // fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W);
-    // fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W);
+
+    fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
+    fn show_and_stay_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
+    fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
+
+    fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W);
+    fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W);
     fn reset_cursor_to_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
 
     fn render_single_line<W: Write>(
@@ -194,64 +194,48 @@ impl RenderGit for TuiGit {
         screen.flush().unwrap();
     }
 
-    // fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
-    //     let (x, y) = self.current_pos.unpack();
-    //     let (col, row) = termion::terminal_size().unwrap();
-    //     self.status_bar_row = row as usize - 1;
-    //     queue!(
-    //         screen,
-    //         "{}{}{}",
-    //         MoveTo(1, self.status_bar_row as u16),
-    //         termion::clear::CurrentLine,
-    //         color::Fg(color::LightYellow),
-    //     )
-    //     .unwrap();
-    //     queue!(screen, "{}", &log.as_str()[..(col as usize).min(log.len())]).unwrap();
-    //     queue!(
-    //         screen,
-    //         "{}{}",
-    //         color::Fg(color::Reset),
-    //         MoveTo(x, y)
-    //     )
-    //     .unwrap();
-    //     screen.flush().unwrap();
-    // }
-    // fn show_and_stay_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
-    //     let (col, row) = termion::terminal_size().unwrap();
-    //     self.status_bar_row = row as usize - 1;
-    //     queue!(
-    //         screen,
-    //         "{}{}{}",
-    //         MoveTo(1, self.status_bar_row as u16),
-    //         termion::clear::CurrentLine,
-    //         color::Fg(color::LightYellow),
-    //     )
-    //     .unwrap();
-    //     queue!(screen, "{}", &log.as_str()[..(col as usize).min(log.len())]).unwrap();
-    //     screen.flush().unwrap();
-    // }
-    // fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
-    //     let (x, y) = self.current_pos.unpack();
-    //     let (col, row) = termion::terminal_size().unwrap();
-    //     self.bottom_bar_row = row as usize;
-    //     queue!(
-    //         screen,
-    //         "{}{}{}",
-    //         MoveTo(1, self.bottom_bar_row as u16),
-    //         termion::clear::CurrentLine,
-    //         color::Fg(color::Yellow),
-    //     )
-    //     .unwrap();
-    //     queue!(screen, "{}", &log.as_str()[..(col as usize).min(log.len())]).unwrap();
-    //     queue!(
-    //         screen,
-    //         "{}{}",
-    //         color::Fg(color::Reset),
-    //         MoveTo(x, y)
-    //     )
-    //     .unwrap();
-    //     screen.flush().unwrap();
-    // }
+    fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
+        let (x, y) = self.current_pos.unpack();
+        let (col, row) = size().unwrap();
+        self.status_bar_row = row as usize - 1;
+        queue!(
+            screen,
+            MoveTo(1, self.status_bar_row as u16),
+            Clear(ClearType::CurrentLine),
+            Print(String::from(&log.as_str()[..(col as usize).min(log.len())]).yellow()),
+            MoveTo(x, y),
+        )
+        .unwrap();
+        screen.flush().unwrap();
+    }
+
+    fn show_and_stay_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
+        let (col, row) = size().unwrap();
+        self.status_bar_row = row as usize - 1;
+        queue!(
+            screen,
+            MoveTo(1, self.status_bar_row as u16),
+            Clear(ClearType::CurrentLine),
+            Print(String::from(&log.as_str()[..(col as usize).min(log.len())]).yellow()),
+        )
+        .unwrap();
+        screen.flush().unwrap();
+    }
+
+    fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
+        let (x, y) = self.current_pos.unpack();
+        let (col, row) = size().unwrap();
+        self.bottom_bar_row = row as usize;
+        queue!(
+            screen,
+            MoveTo(1, self.bottom_bar_row as u16),
+            Clear(ClearType::CurrentLine),
+            Print(String::from(&log.as_str()[..(col as usize).min(log.len())]).yellow()),
+            MoveTo(x, y)
+        )
+        .unwrap();
+        screen.flush().unwrap();
+    }
 
     fn reset_cursor_to_branch<W: Write>(&mut self, screen: &mut W, branch: &String) {
         // Must update position.
@@ -260,12 +244,12 @@ impl RenderGit for TuiGit {
         self.show_icon_after_cursor(screen, "🏆");
     }
 
-    // fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W) {
-    //     // Must update position.
-    //     self.previous_pos = self.current_pos;
-    //     self.current_pos = Position::init(self.log_col_left as u16 - 3, self.log_row_top as u16);
-    //     self.reset_cursor_to_current_pos(screen);
-    // }
+    fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W) {
+        // Must update position.
+        self.previous_pos = self.current_pos;
+        self.current_pos = Position::init(self.log_col_left as u16 - 3, self.log_row_top as u16);
+        self.reset_cursor_to_current_pos(screen);
+    }
 
     fn render_single_line<W: Write>(
         &mut self,
@@ -338,14 +322,9 @@ impl RenderGit for TuiGit {
         self.reset_cursor_to_branch(screen, branch);
         screen.flush().unwrap();
     }
-    // fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W) {
-    //     queue!(
-    //         screen,
-    //         "{}",
-    //         MoveTo(self.current_pos.col, self.current_pos.row),
-    //     )
-    //     .unwrap();
-    // }
+    fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W) {
+        queue!(screen, MoveTo(self.current_pos.col, self.current_pos.row),).unwrap();
+    }
 
     fn show_icon_after_cursor<W: Write>(&mut self, screen: &mut W, icon: &str) {
         queue!(

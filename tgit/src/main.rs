@@ -1,9 +1,10 @@
-// pub mod action_git;
-// pub mod event_git;
+pub mod action_git;
+pub mod event_git;
 pub mod render_git;
 pub mod tui_git;
 
-// use crate::action_git::*;
+use crate::action_git::*;
+use crate::event_git::*;
 use crate::render_git::*;
 use crate::tui_git::*;
 
@@ -43,7 +44,7 @@ fn flush_resize_events(first_resize: (u16, u16)) -> ((u16, u16), (u16, u16)) {
     }
     (first_resize, last_resize)
 }
-fn match_event_and_break(event: Event) -> bool {
+fn match_event_and_break<W: Write>(tui_git: &mut TuiGit, write: &mut W, event: Event) -> bool {
     // println!("Event:: {:?}\r", event);
     // if event == Event::Key(KeyCode::Char('c').into()) {}
     // if let Event::Resize(x, y) = event {}
@@ -55,7 +56,9 @@ fn match_event_and_break(event: Event) -> bool {
                 modifiers: KeyModifiers::NONE,
                 ..
             } => match code {
-                KeyCode::Char('b') => {}
+                KeyCode::Char('b') => {
+                    tui_git.lower_b_pressed(write);
+                }
                 KeyCode::Char('c') => {
                     // println!("Cursor position: {:?}\r", position());
                 }
@@ -111,7 +114,7 @@ where
             maybe_event = event => {
                 match maybe_event {
                     Some(Ok(event)) => {
-                        if match_event_and_break(event) {
+                        if match_event_and_break(&mut tui_git, write, event) {
                             break;
                         }
                     }
@@ -158,15 +161,6 @@ async fn main() -> std::io::Result<()> {
 
     execute!(stdout, DisableMouseCapture)?;
 
-    // let mut screen = stdout()
-    //     .into_raw_mode()
-    //     .unwrap()
-    //     .into_alternate_screen()
-    //     .unwrap();
-    // // write!(screen, "{}", termion::cursor::Hide).unwrap();
-    //
-    //
-    // // Start with the main branch row.
     // for c in stdin().keys() {
     //     // Lock the tui_git_arc and update main branch and branch vector.
     //     let mut update_confirm = update_confirm.lock().unwrap();

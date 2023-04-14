@@ -152,12 +152,10 @@ impl ActionGit for TuiGit {
             // Reset chosen branch background.
             for branch in self.branch_delete_set.clone() {
                 let y = self.get_branch_row(&branch).unwrap();
-                write!(
+                queue!(
                     screen,
-                    "{}{}{}",
-                    termion::color::Bg(termion::color::Reset),
-                    termion::cursor::Goto(self.branch_col_left as u16, y as u16),
-                    branch,
+                    MoveTo(self.branch_col_left as u16, y as u16),
+                    Print(branch.reset()),
                 )
                 .unwrap();
             }
@@ -198,9 +196,8 @@ impl ActionGit for TuiGit {
             self.show_in_status_bar(
                 screen,
                 &format!(
-                    "{}Cann't delete current branch you are in!{}",
-                    termion::color::Fg(termion::color::LightRed),
-                    termion::color::Fg(termion::color::Reset),
+                    "{}",
+                    Print("Cann't delete current branch you are in!".to_string().red()),
                 )
                 .to_string(),
             );
@@ -215,25 +212,19 @@ impl ActionGit for TuiGit {
         if self.branch_delete_set.get(&branch).is_some() {
             self.branch_delete_set.remove(&branch);
             let y = self.get_branch_row(&branch).unwrap();
-            write!(
+            queue!(
                 screen,
-                "{}{}{}{}",
-                termion::color::Bg(termion::color::Reset),
-                termion::cursor::Goto(self.branch_col_left as u16, y as u16),
-                branch,
-                termion::color::Bg(termion::color::Reset),
+                MoveTo(self.branch_col_left as u16, y as u16),
+                Print(branch),
             )
             .unwrap();
         } else {
             self.branch_delete_set.insert(branch.to_string());
             let y = self.get_branch_row(&branch).unwrap();
-            write!(
+            queue!(
                 screen,
-                "{}{}{}{}",
-                termion::color::Bg(termion::color::Red),
-                termion::cursor::Goto(self.branch_col_left as u16, y as u16),
-                branch,
-                termion::color::Bg(termion::color::Reset),
+                MoveTo(self.branch_col_left as u16, y as u16),
+                Print(branch.on_red()),
             )
             .unwrap();
         }
