@@ -383,15 +383,15 @@ impl RenderGit for TuiGit {
 
         self.left_panel_handler(screen, MoveDirection::Still);
 
-        self.update_git_log(&self.current_branch.to_string());
-        self.right_panel_log_info = self
-            .branch_log_info_map
-            .get(&self.current_branch.to_string())
-            .unwrap()
-            .to_vec();
-        self.right_panel_handler(screen, MoveDirection::Still);
+        // self.update_git_log(&self.current_branch.to_string());
+        // self.right_panel_log_info = self
+        //     .branch_log_info_map
+        //     .get(&self.current_branch.to_string())
+        //     .unwrap()
+        //     .to_vec();
+        // self.right_panel_handler(screen, MoveDirection::Still);
 
-        self.reset_cursor_to_branch(screen, branch);
+        // self.reset_cursor_to_branch(screen, branch);
         screen.flush().unwrap();
     }
     fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W) {
