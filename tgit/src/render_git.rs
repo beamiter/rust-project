@@ -89,7 +89,7 @@ impl RenderGit for TuiGit {
                 queue!(
                     screen,
                     MoveTo(self.branch_col_left as u16, y_tmp as u16),
-                    Print(branch.red()),
+                    Print(branch.red().on_white()),
                 )
                 .unwrap();
             } else if *branch == self.main_branch && *branch == self.current_branch {
@@ -99,7 +99,8 @@ impl RenderGit for TuiGit {
                     MoveTo(0, y_tmp as u16),
                     Print(UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]),
                     MoveTo(self.branch_col_left as u16, y_tmp as u16),
-                    Print(branch.bold().green().underline(Color::White)),
+                    Print(branch.bold().green().underlined()),
+                    Print(" 🐝"),
                 )
                 .unwrap();
             } else if *branch == self.main_branch {
@@ -117,7 +118,7 @@ impl RenderGit for TuiGit {
                     MoveTo(0, y_tmp as u16),
                     Print(UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]),
                     MoveTo(self.branch_col_left as u16, y_tmp as u16),
-                    Print(branch.bold().underline(Color::White)),
+                    Print(branch.bold().underlined()),
                 )
                 .unwrap();
             } else {
