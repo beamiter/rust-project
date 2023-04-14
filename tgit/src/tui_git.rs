@@ -114,9 +114,7 @@ pub struct TuiGit {
     pub log_scroll_offset_max: usize,
     pub snap_shot_map: HashMap<DisplayType, SnapShot>,
 
-    pub bar_row_height: usize,
-    // bottom bar area;
-    pub bottom_bar_row: usize,
+    pub status_bar_height: usize,
     // status bar area;
     pub status_bar_row: usize,
 
@@ -167,8 +165,7 @@ impl TuiGit {
             ]),
 
             // With seperate line.
-            bar_row_height: 3,
-            bottom_bar_row: 0,
+            status_bar_height: 2,
             status_bar_row: 0,
 
             branch_delete_set: HashSet::new(),

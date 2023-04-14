@@ -25,7 +25,6 @@ pub trait RenderGit {
 
     fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
     fn show_and_stay_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
-    fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
 
     fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W);
     fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W);
@@ -59,7 +58,7 @@ impl RenderGit for TuiGit {
             Print("Welcome to tui git".bold().italic().magenta().on_grey()),
             MoveTo(0, 1),
             Print("⎽".repeat(col as usize)),
-            MoveTo(0, row - self.bar_row_height as u16),
+            MoveTo(0, row - self.status_bar_height as u16),
             Print("⎺".repeat(col as usize)),
         )
         .unwrap();
@@ -73,7 +72,7 @@ impl RenderGit for TuiGit {
             return;
         }
         // Clear previous branch zone.
-        for clear_y in self.branch_row_top..row as usize - self.bar_row_height {
+        for clear_y in self.branch_row_top..row as usize - self.status_bar_height {
             queue!(
                 screen,
                 MoveTo(0, clear_y as u16),
@@ -130,7 +129,7 @@ impl RenderGit for TuiGit {
                 .unwrap();
             }
             // Spare 2 for check info.
-            if y_tmp as u16 >= row - self.bar_row_height as u16 {
+            if y_tmp as u16 >= row - self.status_bar_height as u16 {
                 break;
             }
             y_tmp += 1;
@@ -159,7 +158,7 @@ impl RenderGit for TuiGit {
             return;
         }
         self.log_scroll_offset_max =
-            if self.right_panel_log_info.len() + self.bar_row_height + self.log_row_top
+            if self.right_panel_log_info.len() + self.status_bar_height + self.log_row_top
                 <= row as usize
             {
                 0
@@ -175,7 +174,7 @@ impl RenderGit for TuiGit {
             self.render_single_line(screen, &log, x_tmp as u16, y_tmp as u16);
             self.row_log_map.insert(y_tmp, log);
             // Spare 2 for check info.
-            if y_tmp as u16 >= row - self.bar_row_height as u16 - 1 {
+            if y_tmp as u16 >= row - self.status_bar_height as u16 - 1 {
                 break;
             }
             y_tmp += 1;
@@ -217,21 +216,6 @@ impl RenderGit for TuiGit {
             MoveTo(0, self.status_bar_row as u16),
             Clear(ClearType::CurrentLine),
             Print(String::from(&log.as_str()[..(col as usize).min(log.len())]).yellow()),
-        )
-        .unwrap();
-        screen.flush().unwrap();
-    }
-
-    fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
-        let (x, y) = self.current_pos.unpack();
-        let (col, row) = size().unwrap();
-        self.bottom_bar_row = row as usize;
-        queue!(
-            screen,
-            MoveTo(0, self.bottom_bar_row as u16),
-            Clear(ClearType::CurrentLine),
-            Print(String::from(&log.as_str()[..(col as usize).min(log.len())]).yellow()),
-            MoveTo(x, y)
         )
         .unwrap();
         screen.flush().unwrap();

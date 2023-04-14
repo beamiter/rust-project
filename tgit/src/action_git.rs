@@ -116,7 +116,7 @@ impl ActionGit for TuiGit {
             }
             _ => {}
         }
-        self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+        self.show_in_status_bar(screen, &format!("{:?}", self.layout_mode).to_string());
     }
     fn lower_f_pressed<W: Write>(&mut self, screen: &mut W) {
         // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
@@ -165,7 +165,7 @@ impl ActionGit for TuiGit {
             self.layout_mode = LayoutMode::LeftPanel(DisplayType::Log);
             // Refresh frame.
             self.refresh_frame_with_branch(screen, &self.current_branch.to_string());
-            self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+            self.show_in_status_bar(screen, &format!("{:?}", self.layout_mode).to_string());
         }
     }
     fn lower_q_pressed<W: Write>(&mut self, _: &mut W) -> bool {
@@ -179,7 +179,7 @@ impl ActionGit for TuiGit {
                 self.layout_mode = LayoutMode::LeftPanel(DisplayType::Log);
                 // Refresh frame.
                 self.refresh_frame_with_branch(screen, &self.main_branch.to_string());
-                self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+                self.show_in_status_bar(screen, &format!("{:?}", self.layout_mode).to_string());
             }
         }
     }
@@ -197,7 +197,7 @@ impl ActionGit for TuiGit {
                 screen,
                 &format!(
                     "{}",
-                    Print("Cann't delete current branch you are in!".to_string().red()),
+                    Print("Cann't delete current branch you are in.".to_string().red()),
                 )
                 .to_string(),
             );
@@ -205,7 +205,7 @@ impl ActionGit for TuiGit {
         }
         self.show_in_status_bar(
             screen,
-            &"Press 'y' to confirm delete, 'n' to escape\n".to_string(),
+            &"Press 'y' to confirm delete, 'n' to escape.".to_string(),
         );
         let branch = self.current_branch.to_string();
         // Toggle branch delete.
@@ -224,11 +224,11 @@ impl ActionGit for TuiGit {
             queue!(
                 screen,
                 MoveTo(self.branch_col_left as u16, y as u16),
-                Print(branch.on_red()),
+                Print(branch.red().on_white()),
             )
             .unwrap();
         }
-        self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+        self.show_in_status_bar(screen, &format!("{:?}", self.layout_mode).to_string());
     }
     fn colon_pressed<W: Write>(&mut self, screen: &mut W) {
         // https://www.ibm.com/docs/en/rdfi/9.6.0?topic=set-escape-sequences
@@ -307,7 +307,7 @@ impl ActionGit for TuiGit {
                 _ => {}
             },
         }
-        self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+        self.show_in_status_bar(screen, &format!("{:?}", self.layout_mode).to_string());
     }
     fn move_cursor_up<W: Write>(&mut self, screen: &mut W) {
         match self.layout_mode {
@@ -320,7 +320,7 @@ impl ActionGit for TuiGit {
                         self.left_panel_handler(screen, MoveDirection::Up);
                     }
                 }
-                self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+                self.show_in_status_bar(screen, &format!("{:?}", self.layout_mode).to_string());
             }
             LayoutMode::RightPanel(_) => {
                 self.right_panel_handler(screen, MoveDirection::Up);
@@ -348,7 +348,7 @@ impl ActionGit for TuiGit {
                         self.left_panel_handler(screen, MoveDirection::Down);
                     }
                 }
-                self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+                self.show_in_status_bar(screen, &format!("{:?}", self.layout_mode).to_string());
             }
             LayoutMode::RightPanel(_) => {
                 self.right_panel_handler(screen, MoveDirection::Down);
@@ -379,7 +379,7 @@ impl ActionGit for TuiGit {
             },
         }
         self.reset_cursor_to_branch(screen, &self.current_branch.to_string());
-        self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+        self.show_in_status_bar(screen, &format!("{:?}", self.layout_mode).to_string());
         // Update snapshot.
         match self.layout_mode {
             LayoutMode::LeftPanel(content) | LayoutMode::RightPanel(content) => {
@@ -406,7 +406,7 @@ impl ActionGit for TuiGit {
             }
         }
         self.reset_cursor_to_log_top(screen);
-        self.show_in_bottom_bar(screen, &format!("{:?}", self.layout_mode).to_string());
+        self.show_in_status_bar(screen, &format!("{:?}", self.layout_mode).to_string());
         // Update snapshot.
         match self.layout_mode {
             LayoutMode::LeftPanel(content) | LayoutMode::RightPanel(content) => {
