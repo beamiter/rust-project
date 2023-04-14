@@ -99,7 +99,7 @@ impl RenderGit for TuiGit {
                     MoveTo(0, y_tmp as u16),
                     Print(UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]),
                     MoveTo(self.branch_col_left as u16, y_tmp as u16),
-                    Print(branch.bold().green().underlined()),
+                    Print(branch.bold().green().underlined().italic()),
                     Print(" 🐝"),
                 )
                 .unwrap();
