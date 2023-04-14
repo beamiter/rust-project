@@ -54,13 +54,13 @@ impl RenderGit for TuiGit {
         let (col, row) = size().unwrap();
         queue!(
             screen,
-            MoveTo(19, 1),
+            MoveTo(18, 0),
             Clear(ClearType::CurrentLine),
             Print("Welcome to tui git".bold().italic().magenta().on_grey()),
-            MoveTo(1, 2),
-            Print("⎽".repeat(col as usize - 1)),
-            MoveTo(1, row - self.bar_row_height as u16 + 1),
-            Print("⎺".repeat(col as usize - 1)),
+            MoveTo(0, 1),
+            Print("⎽".repeat(col as usize)),
+            MoveTo(0, row - self.bar_row_height as u16),
+            Print("⎺".repeat(col as usize)),
         )
         .unwrap();
     }
@@ -76,7 +76,7 @@ impl RenderGit for TuiGit {
         for clear_y in self.branch_row_top..row as usize - self.bar_row_height {
             queue!(
                 screen,
-                MoveTo(1, clear_y as u16),
+                MoveTo(0, clear_y as u16),
                 Clear(ClearType::CurrentLine)
             )
             .unwrap();
@@ -97,7 +97,7 @@ impl RenderGit for TuiGit {
                 self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
                 queue!(
                     screen,
-                    MoveTo(1, y_tmp as u16),
+                    MoveTo(0, y_tmp as u16),
                     Print(UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]),
                     MoveTo(self.branch_col_left as u16, y_tmp as u16),
                     Print(branch.bold().green().underline(Color::White)),
@@ -115,7 +115,7 @@ impl RenderGit for TuiGit {
                 self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
                 queue!(
                     screen,
-                    MoveTo(1, y_tmp as u16),
+                    MoveTo(0, y_tmp as u16),
                     Print(UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]),
                     MoveTo(self.branch_col_left as u16, y_tmp as u16),
                     Print(branch.bold().underline(Color::White)),
@@ -175,7 +175,7 @@ impl RenderGit for TuiGit {
             self.render_single_line(screen, &log, x_tmp as u16, y_tmp as u16);
             self.row_log_map.insert(y_tmp, log);
             // Spare 2 for check info.
-            if y_tmp as u16 >= row - self.bar_row_height as u16 {
+            if y_tmp as u16 >= row - self.bar_row_height as u16 - 1 {
                 break;
             }
             y_tmp += 1;
@@ -200,7 +200,7 @@ impl RenderGit for TuiGit {
         self.status_bar_row = row as usize - 1;
         queue!(
             screen,
-            MoveTo(1, self.status_bar_row as u16),
+            MoveTo(0, self.status_bar_row as u16),
             Clear(ClearType::CurrentLine),
             Print(String::from(&log.as_str()[..(col as usize).min(log.len())]).yellow()),
             MoveTo(x, y),
@@ -214,7 +214,7 @@ impl RenderGit for TuiGit {
         self.status_bar_row = row as usize - 1;
         queue!(
             screen,
-            MoveTo(1, self.status_bar_row as u16),
+            MoveTo(0, self.status_bar_row as u16),
             Clear(ClearType::CurrentLine),
             Print(String::from(&log.as_str()[..(col as usize).min(log.len())]).yellow()),
         )
@@ -228,7 +228,7 @@ impl RenderGit for TuiGit {
         self.bottom_bar_row = row as usize;
         queue!(
             screen,
-            MoveTo(1, self.bottom_bar_row as u16),
+            MoveTo(0, self.bottom_bar_row as u16),
             Clear(ClearType::CurrentLine),
             Print(String::from(&log.as_str()[..(col as usize).min(log.len())]).yellow()),
             MoveTo(x, y)
@@ -240,7 +240,7 @@ impl RenderGit for TuiGit {
     fn reset_cursor_to_branch<W: Write>(&mut self, screen: &mut W, branch: &String) {
         // Must update position.
         self.previous_pos = self.current_pos;
-        self.current_pos = Position::init(1, self.get_branch_row(branch).unwrap() as u16);
+        self.current_pos = Position::init(0, self.get_branch_row(branch).unwrap() as u16);
         self.show_icon_after_cursor(screen, "🏆");
     }
 
@@ -442,14 +442,6 @@ impl RenderGit for TuiGit {
         }
         self.current_pos = Position::init(x, y);
 
-        // self.show_in_bottom_bar(
-        //     screen,
-        //     &format!(
-        //         "c: {}, r: {}, r_bottom: {}",
-        //         self.current_pos.col, self.current_pos.row, self.log_row_bottom,
-        //     )
-        //     .to_string(),
-        // );
         queue!(screen, MoveTo(x, y)).unwrap();
         screen.flush().unwrap();
     }

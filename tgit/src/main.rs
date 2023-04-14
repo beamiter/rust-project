@@ -64,7 +64,7 @@ fn match_event_and_break<W: Write>(tui_git: &mut TuiGit, write: &mut W, event: E
                 KeyCode::Char('f') => {
                     tui_git.lower_f_pressed(write);
                 }
-                KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => {
+                KeyCode::Char('n') | KeyCode::Esc => {
                     tui_git.lower_n_pressed(write);
                 }
                 KeyCode::Char('q') => {
@@ -72,11 +72,8 @@ fn match_event_and_break<W: Write>(tui_git: &mut TuiGit, write: &mut W, event: E
                         return true;
                     }
                 }
-                KeyCode::Char('y') | KeyCode::Char('Y') => {
+                KeyCode::Char('y') => {
                     tui_git.lower_y_pressed(write);
-                }
-                KeyCode::Char('D') => {
-                    tui_git.upper_d_pressed(write);
                 }
                 KeyCode::Char(':') => {
                     tui_git.colon_pressed(write);
@@ -84,16 +81,44 @@ fn match_event_and_break<W: Write>(tui_git: &mut TuiGit, write: &mut W, event: E
                 KeyCode::Enter => {
                     tui_git.enter_pressed(write);
                 }
-                KeyCode::Left | KeyCode::Char('h') | KeyCode::Char('H') => {
+                KeyCode::Left | KeyCode::Char('h') => {
                     tui_git.move_cursor_left(write);
                 }
-                KeyCode::Right | KeyCode::Char('l') | KeyCode::Char('L') => {
+                KeyCode::Right | KeyCode::Char('l') => {
                     tui_git.move_cursor_right(write);
                 }
-                KeyCode::Up | KeyCode::Char('k') | KeyCode::Char('K') => {
+                KeyCode::Up | KeyCode::Char('k') => {
                     tui_git.move_cursor_up(write);
                 }
-                KeyCode::Down | KeyCode::Char('j') | KeyCode::Char('J') => {
+                KeyCode::Down | KeyCode::Char('j') => {
+                    tui_git.move_cursor_down(write);
+                }
+                _ => {}
+            },
+            KeyEvent {
+                code,
+                modifiers: KeyModifiers::SHIFT,
+                ..
+            } => match code {
+                KeyCode::Char('D') => {
+                    tui_git.upper_d_pressed(write);
+                }
+                KeyCode::Char('N') => {
+                    tui_git.lower_n_pressed(write);
+                }
+                KeyCode::Char('Y') => {
+                    tui_git.lower_y_pressed(write);
+                }
+                KeyCode::Char('H') => {
+                    tui_git.move_cursor_left(write);
+                }
+                KeyCode::Char('L') => {
+                    tui_git.move_cursor_right(write);
+                }
+                KeyCode::Char('K') => {
+                    tui_git.move_cursor_up(write);
+                }
+                KeyCode::Char('J') => {
                     tui_git.move_cursor_down(write);
                 }
                 _ => {}

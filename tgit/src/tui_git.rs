@@ -146,13 +146,13 @@ impl TuiGit {
             async_update: false,
 
             branch_log_gap: 4,
-            branch_row_top: 3,
+            branch_row_top: 2,
             branch_row_bottom: 0,
-            branch_col_left: 4,
+            branch_col_left: 3,
             branch_col_right: 0,
             branch_col_offset: 3,
 
-            log_row_top: 3,
+            log_row_top: 2,
             log_row_bottom: 0,
             log_col_left: 0,
             log_col_right: 0,
@@ -166,6 +166,7 @@ impl TuiGit {
                 (DisplayType::Commit, SnapShot::new()),
             ]),
 
+            // With seperate line.
             bar_row_height: 3,
             bottom_bar_row: 0,
             status_bar_row: 0,
@@ -185,8 +186,9 @@ impl TuiGit {
             key_move_counter: 0,
 
             // Goto is 1 based.
-            previous_pos: Position::init(1, 1),
-            current_pos: Position::init(1, 1),
+            // MoveTo is 0 based.
+            previous_pos: Position::init(0, 0),
+            current_pos: Position::init(0, 0),
         }
     }
     pub fn get_branch_row(&mut self, branch: &String) -> Result<usize, String> {
