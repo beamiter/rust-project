@@ -9,6 +9,7 @@ use crate::action_git::*;
 use crate::render_git::*;
 use crate::tui_git::*;
 
+use std::future;
 use std::io::{stdin, stdout, Write};
 
 use std::sync::Arc;
@@ -18,6 +19,7 @@ use std::time::Duration;
 
 // use async_std::task;
 
+use async_std::task::block_on;
 use termion::event::Key;
 use termion::input::TermRead;
 use termion::raw::IntoRawMode;
@@ -25,8 +27,33 @@ use termion::screen::IntoAlternateScreen;
 
 use coredump::register_panic_handler;
 
+async fn learn_song() {
+    println!("learn_song");
+}
+async fn sing_song() {
+    println!("sing_song");
+}
+async fn dance() {
+    println!("dance");
+}
+async fn learn_and_sing() {
+    println!("learn_and_sing");
+    learn_song().await;
+    sing_song().await;
+}
+async fn async_main() {
+    println!("async_main");
+    let f1 = learn_and_sing();
+    let f2 = dance();
+    futures::join!(f1, f2);
+}
+
+#[allow(unreachable_code)]
 fn main() {
     register_panic_handler().unwrap();
+    block_on(async_main());
+
+    return;
     let tui_git_arc = Arc::new(Mutex::new(TuiGit::new()));
     if !tui_git_arc.lock().unwrap().update_git_branch() {
         return;
