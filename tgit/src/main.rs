@@ -11,7 +11,9 @@ use crate::tui_git::*;
 
 use futures::FutureExt;
 use futures_timer::Delay;
+use std::io::Read;
 use std::io::{stdin, stdout, Write};
+use termion::async_stdin;
 
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -28,12 +30,6 @@ use termion::screen::IntoAlternateScreen;
 
 use coredump::register_panic_handler;
 
-async fn learn_song() {
-    println!("learn_song\r");
-}
-async fn sing_song() {
-    println!("sing_song\r");
-}
 async fn dance() {
     loop {
         println!("dance\r");
@@ -42,7 +38,8 @@ async fn dance() {
     }
 }
 async fn learn_and_sing<W: Write>(tui_git_arc: &mut TuiGit, screen: &mut W) {
-    tui_git_arc.refresh_frame_with_branch(screen, &tui_git_arc.current_branch.to_string());
+    let current_branch = tui_git_arc.current_branch.to_string();
+    tui_git_arc.refresh_frame_with_branch(screen, &current_branch);
     tui_git_arc.show_in_status_bar(screen, &"Update data async.".to_string());
     // for c in stdin().keys() {
     //     // Lock the tui_git_arc and update main branch and branch vector.
@@ -111,37 +108,108 @@ async fn learn_and_sing<W: Write>(tui_git_arc: &mut TuiGit, screen: &mut W) {
     //         }
     //     }
     // }
+    let mut stdin = async_stdin().keys();
     loop {
-        println!("learn_and_sing\r");
-        learn_song().await;
-        sing_song().await;
-        let delay = Delay::new(Duration::from_millis(3_000)).fuse();
+        // println!("learn_and_sing\r");
+        let b = stdin.next();
+        if let Some(Ok(b)) = b {
+            match b {
+                Key::Char('b') => {
+                    tui_git_arc.lower_b_pressed(screen);
+                }
+                Key::Char('c') => {
+                    tui_git_arc.lower_c_pressed(screen);
+                }
+                Key::Char('d') => {
+                    tui_git_arc.lower_d_pressed(screen);
+                }
+                Key::Char('f') => {
+                    tui_git_arc.lower_f_pressed(screen);
+                }
+                Key::Char('n') | Key::Esc | Key::Char('N') => {
+                    tui_git_arc.lower_n_pressed(screen);
+                }
+                Key::Char('q') | Key::Char('Q') => {
+                    if tui_git_arc.lower_q_pressed(screen) {
+                        // let mut terminated = terminated.lock().unwrap();
+                        // *terminated = true;
+                        break;
+                    }
+                }
+                Key::Char('y') | Key::Char('Y') => {
+                    tui_git_arc.lower_y_pressed(screen);
+                }
+
+                Key::Char('D') => {
+                    tui_git_arc.upper_d_pressed(screen);
+                }
+
+                Key::Char(':') => {
+                    tui_git_arc.colon_pressed(screen);
+                }
+                Key::Char('\n') => {
+                    tui_git_arc.enter_pressed(screen);
+                }
+
+                Key::Left | Key::Char('h') | Key::Char('H') => {
+                    tui_git_arc.move_cursor_left(screen);
+                }
+                Key::Right | Key::Char('l') | Key::Char('L') => {
+                    tui_git_arc.move_cursor_right(screen);
+                }
+                Key::Up | Key::Char('k') | Key::Char('K') => {
+                    tui_git_arc.move_cursor_up(screen);
+                }
+                Key::Down | Key::Char('j') | Key::Char('J') => {
+                    tui_git_arc.move_cursor_down(screen);
+                }
+                _ => {}
+            }
+        }
+        let delay = Delay::new(Duration::from_millis(1)).fuse();
         delay.await;
     }
 }
-async fn async_main<W: Write>(tui_git_arc: &mut TuiGit, screen: &mut W) {
+async fn async_main() {
     println!("async_main\r");
-    let f1 = learn_and_sing(tui_git_arc, screen);
-    let f2 = dance();
-    futures::join!(f1, f2);
+
+    let tui_git_arc = Arc::new(Mutex::new(TuiGit::new()));
+    if !tui_git_arc.lock().unwrap().update_git_branch() {
+        return;
+    }
+    let mut screen = Arc::new(Mutex::new(
+        stdout()
+            .into_raw_mode()
+            .unwrap()
+            .into_alternate_screen()
+            .unwrap(),
+    ));
+
+    let tui_git_arc0 = Arc::clone(&tui_git_arc);
+    let screen0 = Arc::clone(&mut screen);
+    let mut tui_git_arc0 = tui_git_arc0.lock().unwrap();
+    let mut screen0 = screen0.lock().unwrap();
+    let f1 = learn_and_sing(&mut tui_git_arc0, &mut *screen0).fuse();
+
+    // let tui_git_arc1 = Arc::clone(&tui_git_arc);
+    // let screen1 = Arc::clone(&mut screen);
+    // let mut tui_git_arc1 = tui_git_arc1.lock().unwrap();
+    // let mut screen1 = screen1.lock().unwrap();
+    let f2 = dance().fuse();
+
+    futures::pin_mut!(f1, f2);
+    futures::select! {
+        () = f1 => {},
+        () = f2 => {},
+    }
+    // futures::join!(f1, f2);
 }
 
 #[allow(unreachable_code)]
 fn main() {
     register_panic_handler().unwrap();
 
-    let mut tui_git_arc = TuiGit::new();
-    if !tui_git_arc.update_git_branch() {
-        return;
-    }
-    let mut screen = stdout()
-        .lock()
-        .into_raw_mode()
-        .unwrap()
-        .into_alternate_screen()
-        .unwrap();
-
-    block_on(async_main(&mut tui_git_arc, &mut screen));
+    block_on(async_main());
 
     return;
     let tui_git_arc = Arc::new(Mutex::new(TuiGit::new()));
@@ -172,17 +240,12 @@ fn main() {
                 break;
             }
             if !*hold_confirm.lock().unwrap() {
-                tui_git_arc.lock().unwrap().update_git_branch_async();
-                let current_branch = tui_git_arc.lock().unwrap().current_branch.to_string();
+                let mut tui_git_arc = tui_git_arc.lock().unwrap();
                 let mut screen = screen.lock().unwrap();
-                tui_git_arc
-                    .lock()
-                    .unwrap()
-                    .refresh_frame_with_branch(&mut *screen, &current_branch);
-                tui_git_arc
-                    .lock()
-                    .unwrap()
-                    .show_in_status_bar(&mut *screen, &"Update data async.".to_string());
+                tui_git_arc.update_git_branch_async();
+                let current_branch = tui_git_arc.current_branch.to_string();
+                tui_git_arc.refresh_frame_with_branch(&mut *screen, &current_branch);
+                tui_git_arc.show_in_status_bar(&mut *screen, &"Update data async.".to_string());
             }
             // async_std::task::sleep::(Duration::from_millis(1_000)).await;
             thread::sleep(Duration::from_secs(4));

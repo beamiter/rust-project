@@ -280,6 +280,9 @@ impl TuiGit {
                         if val.starts_with('*') {
                             // Remove the '*' symbol and trim white space.
                             self.main_branch = val.strip_prefix("*").unwrap().trim().to_string();
+                            if self.current_branch.is_empty() {
+                                self.current_branch = self.main_branch.to_owned();
+                            }
                             let head_str: &str = "HEAD detached at ";
                             if let Some(pos) = self.main_branch.find(head_str) {
                                 self.main_branch = self
