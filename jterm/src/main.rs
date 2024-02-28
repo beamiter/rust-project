@@ -1,13 +1,12 @@
-use std::{ffi::CString, ptr::null};
-
+use std::ffi::CString;
 use x11::xlib::{
-    CWBackPixmap, CWEventMask, Colormap, CopyFromParent, Display, ExposureMask, KeyPressMask,
-    KeyReleaseMask, ParentRelative, Window, XAllocNamedColor, XColor, XConnectionNumber, XCreateGC,
-    XCreateWindow, XDefaultColormap, XDefaultDepth, XDefaultScreen, XDefaultVisual, XFontStruct,
-    XLoadQueryFont, XMapWindow, XOpenDisplay, XRootWindow, XSetWindowAttributes, XStoreName, XSync,
-    XTextWidth, GC,
+    CWBackPixmap, CWEventMask, CopyFromParent, Display, ExposureMask, KeyPressMask, KeyReleaseMask,
+    ParentRelative, Window, XAllocNamedColor, XColor, XConnectionNumber, XCreateGC, XCreateWindow,
+    XDefaultColormap, XDefaultDepth, XDefaultScreen, XDefaultVisual, XFontStruct, XLoadQueryFont,
+    XMapWindow, XOpenDisplay, XRootWindow, XSetWindowAttributes, XStoreName, XSync, XTextWidth, GC,
 };
 
+#[allow(dead_code)]
 #[derive(Default)]
 struct PTY {
     master: i64,
@@ -86,6 +85,7 @@ impl X11 {
             println!("Cannot open display");
             return false;
         }
+        println!("Open display");
 
         self.screen = unsafe { XDefaultScreen(self.dpy) as i64 };
         self.root = unsafe { XRootWindow(self.dpy, self.screen.try_into().unwrap()) };
@@ -99,10 +99,12 @@ impl X11 {
             println!("Could not load font");
             return false;
         }
+        println!("Load font");
         self.font_width = unsafe {
-            let c_string_ptr = CString::new("fixed").expect("new failed");
+            let c_string_ptr = CString::new("m").expect("new failed");
             XTextWidth(self.xfont, c_string_ptr.as_ptr(), 1).into()
         };
+        self.font_height = unsafe { ((*self.xfont).ascent + (*self.xfont).descent) as i64 };
 
         let cmap = unsafe { XDefaultColormap(self.dpy, self.screen.try_into().unwrap()) };
 
@@ -128,6 +130,7 @@ impl X11 {
                 return false;
             }
         }
+        println!("Load bg color");
         self.col_bg = color.pixel;
 
         unsafe {
@@ -144,6 +147,7 @@ impl X11 {
                 return false;
             }
         }
+        println!("Load fg color");
         self.col_fg = color.pixel;
 
         self.buf_w = 80;
@@ -175,18 +179,23 @@ impl X11 {
                 &mut wa,
             )
         };
+        println!("Create Window");
         unsafe {
             let c_string_ptr = CString::new("eduterm").expect("new failed");
             XStoreName(self.dpy, self.termwin, c_string_ptr.as_ptr());
         }
+        println!("Store name");
         unsafe {
             XMapWindow(self.dpy, self.termwin);
         }
+        println!("Map window");
         self.termgc = unsafe { XCreateGC(self.dpy, self.termwin, 0, std::ptr::null_mut()) };
+        println!("Create GC");
 
         unsafe {
             XSync(self.dpy, 0);
         }
+        println!("Sync");
         true
     }
 }
