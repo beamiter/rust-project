@@ -2,9 +2,10 @@ use std::{ffi::CString, ptr::null};
 
 use x11::xlib::{
     CWBackPixmap, CWEventMask, Colormap, CopyFromParent, Display, ExposureMask, KeyPressMask,
-    KeyReleaseMask, ParentRelative, Window, XAllocNamedColor, XColor, XConnectionNumber,
+    KeyReleaseMask, ParentRelative, Window, XAllocNamedColor, XColor, XConnectionNumber, XCreateGC,
     XCreateWindow, XDefaultColormap, XDefaultDepth, XDefaultScreen, XDefaultVisual, XFontStruct,
-    XLoadQueryFont, XOpenDisplay, XRootWindow, XSetWindowAttributes, XTextWidth, GC, XStoreName, XMapWindow, XCreateGC, XSync,
+    XLoadQueryFont, XMapWindow, XOpenDisplay, XRootWindow, XSetWindowAttributes, XStoreName, XSync,
+    XTextWidth, GC,
 };
 
 #[derive(Default)]
@@ -63,26 +64,23 @@ impl X11 {
         }
     }
     fn x11_setup(&mut self) -> bool {
-        let wa: *mut XSetWindowAttributes = std::ptr::null_mut();
-        unsafe {
-            (*wa) = XSetWindowAttributes {
-                background_pixmap: ParentRelative as u64,
-                background_pixel: 0,
-                border_pixmap: 0,
-                border_pixel: 0,
-                bit_gravity: 0,
-                win_gravity: 0,
-                backing_store: 0,
-                backing_planes: 0,
-                backing_pixel: 0,
-                save_under: 0,
-                event_mask: KeyPressMask | KeyReleaseMask | ExposureMask,
-                do_not_propagate_mask: 0,
-                override_redirect: 0,
-                colormap: 0,
-                cursor: 0,
-            };
-        }
+        let mut wa: XSetWindowAttributes = XSetWindowAttributes {
+            background_pixmap: ParentRelative as u64,
+            background_pixel: 0,
+            border_pixmap: 0,
+            border_pixel: 0,
+            bit_gravity: 0,
+            win_gravity: 0,
+            backing_store: 0,
+            backing_planes: 0,
+            backing_pixel: 0,
+            save_under: 0,
+            event_mask: KeyPressMask | KeyReleaseMask | ExposureMask,
+            do_not_propagate_mask: 0,
+            override_redirect: 0,
+            colormap: 0,
+            cursor: 0,
+        };
         self.dpy = unsafe { XOpenDisplay(std::ptr::null()) };
         if self.dpy.is_null() {
             println!("Cannot open display");
@@ -108,24 +106,45 @@ impl X11 {
 
         let cmap = unsafe { XDefaultColormap(self.dpy, self.screen.try_into().unwrap()) };
 
-        let color: *mut XColor = std::ptr::null_mut();
+        let mut color: XColor = XColor {
+            pixel: (0),
+            red: (0),
+            green: (0),
+            blue: (0),
+            flags: (0),
+            pad: (0),
+        };
         unsafe {
             let c_string_ptr = CString::new("#000000").expect("new failed");
-            if XAllocNamedColor(self.dpy, cmap, c_string_ptr.as_ptr(), color, color) < 0 {
+            if XAllocNamedColor(
+                self.dpy,
+                cmap,
+                c_string_ptr.as_ptr(),
+                &mut color,
+                &mut color,
+            ) < 0
+            {
                 println!("Could not load bg color");
                 return false;
             }
         }
-        self.col_bg = unsafe { (*color).pixel };
+        self.col_bg = color.pixel;
 
         unsafe {
             let c_string_ptr = CString::new("#aaaaaa").expect("new failed");
-            if XAllocNamedColor(self.dpy, cmap, c_string_ptr.as_ptr(), color, color) < 0 {
+            if XAllocNamedColor(
+                self.dpy,
+                cmap,
+                c_string_ptr.as_ptr(),
+                &mut color,
+                &mut color,
+            ) < 0
+            {
                 println!("Could not load fg color");
                 return false;
             }
         }
-        self.col_fg = unsafe { (*color).pixel };
+        self.col_fg = color.pixel;
 
         self.buf_w = 80;
         self.buf_h = 25;
@@ -153,7 +172,7 @@ impl X11 {
                 CopyFromParent.try_into().unwrap(),
                 XDefaultVisual(self.dpy, self.screen.try_into().unwrap()),
                 CWBackPixmap | CWEventMask,
-                wa,
+                &mut wa,
             )
         };
         unsafe {
@@ -163,9 +182,7 @@ impl X11 {
         unsafe {
             XMapWindow(self.dpy, self.termwin);
         }
-        self.termgc = unsafe {
-            XCreateGC(self.dpy, self.termwin, 0, std::ptr::null_mut())
-        };
+        self.termgc = unsafe { XCreateGC(self.dpy, self.termwin, 0, std::ptr::null_mut()) };
 
         unsafe {
             XSync(self.dpy, 0);
