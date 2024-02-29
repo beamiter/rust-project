@@ -1,4 +1,10 @@
-use nix::libc::{grantpt, open, posix_openpt, ptsname, unlockpt, O_NOCTTY, O_RDWR};
+use nix::{
+    libc::{
+        close, dup2, execle, fork, grantpt, ioctl, open, pid_t, posix_openpt, ptsname, setsid,
+        unlockpt, O_NOCTTY, O_RDWR, TIOCSCTTY, TIOCSWINSZ,
+    },
+    pty::Winsize,
+};
 use std::ffi::CString;
 use x11::xlib::{
     CWBackPixmap, CWEventMask, CopyFromParent, Display, ExposureMask, KeyPressMask, KeyReleaseMask,
@@ -6,6 +12,8 @@ use x11::xlib::{
     XDefaultColormap, XDefaultDepth, XDefaultScreen, XDefaultVisual, XFontStruct, XLoadQueryFont,
     XMapWindow, XOpenDisplay, XRootWindow, XSetWindowAttributes, XStoreName, XSync, XTextWidth, GC,
 };
+
+const SHELL: &str = "/bin/dash";
 
 #[allow(dead_code)]
 #[derive(Default)]
@@ -48,6 +56,36 @@ impl PTY {
             return false;
         }
         true
+    }
+
+    unsafe fn spawn(&mut self) -> bool {
+        let p: pid_t = fork();
+        if p == 0 {
+            close(self.master.try_into().unwrap());
+
+            setsid();
+            if ioctl(self.slave.try_into().unwrap(), TIOCSCTTY) == -1 {
+                println!("ioctl(TIOCSCTTY)");
+                return false;
+            }
+
+            dup2(self.slave.try_into().unwrap(), 0);
+            dup2(self.slave.try_into().unwrap(), 1);
+            dup2(self.slave.try_into().unwrap(), 2);
+            close(self.slave.try_into().unwrap());
+
+            let c_string_ptr = CString::new(SHELL).expect("new failed");
+            // (TODO): fix the hack
+            execle(c_string_ptr.as_ptr(), c_string_ptr.as_ptr());
+            return false;
+        }
+        if p > 0 {
+            close(self.slave.try_into().unwrap());
+            return true;
+        }
+
+        println!("fork");
+        false
     }
 }
 
@@ -238,6 +276,22 @@ impl X11 {
     }
 }
 
+fn term_set_size(pty: &mut PTY, x11: &mut X11) -> bool {
+    let ws: Winsize = Winsize {
+        ws_col: x11.buf_w as u16,
+        ws_row: x11.buf_h as u16,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    unsafe {
+        if ioctl(pty.master.try_into().unwrap(), TIOCSWINSZ, ws) == -1 {
+            println!("ioctl(TIOCSWINSZ)");
+            return false;
+        }
+    }
+    false
+}
+
 fn main() {
     println!("Hello, world!");
     let mut x11 = X11::new();
@@ -246,4 +300,6 @@ fn main() {
     unsafe {
         pty.pt_pair();
     }
+
+    if !term_set_size(&mut pty, &mut x11) {}
 }
