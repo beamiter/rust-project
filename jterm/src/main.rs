@@ -1,3 +1,4 @@
+use nix::libc::{grantpt, open, posix_openpt, ptsname, unlockpt, O_NOCTTY, O_RDWR};
 use std::ffi::CString;
 use x11::xlib::{
     CWBackPixmap, CWEventMask, CopyFromParent, Display, ExposureMask, KeyPressMask, KeyReleaseMask,
@@ -11,6 +12,43 @@ use x11::xlib::{
 struct PTY {
     master: i64,
     slave: i64,
+}
+
+#[allow(dead_code)]
+impl PTY {
+    fn new() -> Self {
+        PTY {
+            master: 0,
+            slave: 0,
+        }
+    }
+    unsafe fn pt_pair(&mut self) -> bool {
+        self.master = posix_openpt(O_RDWR | O_NOCTTY) as i64;
+        if self.master == -1 {
+            println!("posix_openpt");
+            return false;
+        }
+        if grantpt(self.master.try_into().unwrap()) == -1 {
+            println!("grantpt");
+            return false;
+        }
+        if unlockpt(self.master.try_into().unwrap()) == -1 {
+            println!("grantpt");
+            return false;
+        }
+        let slave_name = ptsname(self.master.try_into().unwrap());
+        if slave_name.is_null() {
+            println!("ptsname");
+            return false;
+        }
+
+        self.slave = open(slave_name, O_RDWR | O_NOCTTY) as i64;
+        if self.slave == -1 {
+            println!("opne(slave_name)");
+            return false;
+        }
+        true
+    }
 }
 
 struct X11 {
@@ -204,4 +242,8 @@ fn main() {
     println!("Hello, world!");
     let mut x11 = X11::new();
     x11.x11_setup();
+    let mut pty = PTY::new();
+    unsafe {
+        pty.pt_pair();
+    }
 }
