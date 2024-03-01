@@ -1,7 +1,10 @@
+use nix::libc::memmove;
+use nix::unistd::read;
 use nix::{
     libc::{
-        close, dup2, execle, fork, grantpt, ioctl, open, pid_t, posix_openpt, ptsname, setsid,
-        unlockpt, O_NOCTTY, O_RDWR, TIOCSCTTY, TIOCSWINSZ,
+        close, dup2, execle, fd_set, fork, grantpt, ioctl, open, pid_t, posix_openpt, ptsname,
+        select, setsid, unlockpt, FD_ISSET, FD_SET, FD_ZERO, O_NOCTTY, O_RDWR, TIOCSCTTY,
+        TIOCSWINSZ,
     },
     pty::Winsize,
 };
@@ -9,8 +12,9 @@ use std::ffi::{c_void, CString};
 use x11::xlib::{
     CWBackPixmap, CWEventMask, CopyFromParent, Display, ExposureMask, KeyPressMask, KeyReleaseMask,
     ParentRelative, Window, XAllocNamedColor, XColor, XConnectionNumber, XCreateGC, XCreateWindow,
-    XDefaultColormap, XDefaultDepth, XDefaultScreen, XDefaultVisual, XFontStruct, XLoadQueryFont,
-    XMapWindow, XOpenDisplay, XRootWindow, XSetWindowAttributes, XStoreName, XSync, XTextWidth, GC,
+    XDefaultColormap, XDefaultDepth, XDefaultScreen, XDefaultVisual, XEvent, XFontStruct,
+    XLoadQueryFont, XMapWindow, XOpenDisplay, XRootWindow, XSetWindowAttributes, XStoreName, XSync,
+    XTextWidth, GC,
 };
 
 const SHELL: &str = "/bin/dash";
@@ -114,7 +118,7 @@ struct X11 {
     font_width: i64,
     font_height: i64,
 
-    buf: Vec<char>,
+    buf: Vec<u8>,
     buf_w: i64,
     buf_h: i64,
     buf_x: i64,
@@ -238,7 +242,7 @@ impl X11 {
         self.buf_h = 25;
         self.buf_x = 0;
         self.buf_y = 0;
-        self.buf = vec!['1'; (self.buf_w * self.buf_h).try_into().unwrap()];
+        self.buf = vec![b'1'; (self.buf_w * self.buf_h).try_into().unwrap()];
         if self.buf.is_empty() {
             println!("calloc");
             return false;
@@ -298,6 +302,87 @@ fn term_set_size(pty: &mut PTY, x11: &mut X11) -> bool {
         }
     }
     false
+}
+
+fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
+    let maxfd = if pty.master > x11.fd {
+        pty.master
+    } else {
+        x11.fd
+    };
+    let mut buf: [u8; 1] = [0];
+    let mut readable: fd_set = unsafe { std::mem::zeroed() };
+    let mut just_wrapped: bool = false;
+    let mut ev: XEvent;
+    loop {
+        unsafe {
+            FD_ZERO(&mut readable);
+            FD_SET(pty.master.try_into().unwrap(), &mut readable);
+            FD_SET(x11.fd.try_into().unwrap(), &mut readable);
+
+            if select(
+                (maxfd + 1).try_into().unwrap(),
+                &mut readable,
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            ) == -1
+            {
+                println!("select");
+                return 1;
+            }
+
+            if FD_ISSET(pty.master.try_into().unwrap(), &mut readable) {
+                match read(pty.master.try_into().unwrap(), &mut buf) {
+                    Ok(bytes_read) => {
+                        println!("Read {} byres", bytes_read);
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to read: {}", e);
+                        return 1;
+                    }
+                }
+
+                if buf[0] == b'\r' {
+                    x11.buf_x = 0;
+                } else {
+                    if buf[0] != b'\n' {
+                        x11.buf[(x11.buf_y * x11.buf_w + x11.buf_x) as usize] = buf[0];
+                        x11.buf_x += 1;
+
+                        if x11.buf_x >= x11.buf_w {
+                            x11.buf_x = 0;
+                            x11.buf_y += 1;
+                            just_wrapped = true;
+                        } else {
+                            just_wrapped = false;
+                        }
+                    } else if !just_wrapped {
+                        x11.buf_y += 1;
+                        just_wrapped = false;
+                    }
+
+                    if x11.buf_y >= x11.buf_h {
+                        memmove(
+                            x11.buf.as_mut_ptr() as *mut c_void,
+                            x11.buf[x11.buf_w as usize] as *const u8 as *const c_void,
+                            (x11.buf_w * (x11.buf_h - 1)).try_into().unwrap(),
+                        );
+
+                        for i in 0..x11.buf_w {
+                            x11.buf[(x11.buf_y * x11.buf_w + i) as usize] = 0;
+                        }
+                    }
+                }
+
+                // x11_redraw(x11);
+            }
+
+            break;
+        }
+    }
+
+    0
 }
 
 fn main() {
