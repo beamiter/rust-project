@@ -5,7 +5,7 @@ use nix::{
     },
     pty::Winsize,
 };
-use std::ffi::CString;
+use std::ffi::{c_void, CString};
 use x11::xlib::{
     CWBackPixmap, CWEventMask, CopyFromParent, Display, ExposureMask, KeyPressMask, KeyReleaseMask,
     ParentRelative, Window, XAllocNamedColor, XColor, XConnectionNumber, XCreateGC, XCreateWindow,
@@ -74,14 +74,22 @@ impl PTY {
             dup2(self.slave.try_into().unwrap(), 2);
             close(self.slave.try_into().unwrap());
 
-            let c_string_ptr = CString::new(SHELL).expect("new failed");
-            // (TODO): fix the hack
-            execle(c_string_ptr.as_ptr(), c_string_ptr.as_ptr());
+            let shell = CString::new(SHELL).unwrap();
+            let arg0 = shell.clone();
+            let term = CString::new("TERM=dumb").unwrap();
+            let env = [term.as_ptr(), std::ptr::null()];
+
+            // (TODO): May change the arg0.
+            execle(
+                shell.as_ptr(),
+                arg0.as_ptr(),
+                std::ptr::null::<c_void>(),
+                env.as_ptr(),
+            );
             return false;
         }
         if p > 0 {
             close(self.slave.try_into().unwrap());
-            return true;
         }
 
         println!("fork");
@@ -302,4 +310,5 @@ fn main() {
     }
 
     if !term_set_size(&mut pty, &mut x11) {}
+    unsafe { if !pty.spawn() {} }
 }
