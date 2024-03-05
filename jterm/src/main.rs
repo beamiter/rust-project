@@ -1,4 +1,4 @@
-use nix::libc::memmove;
+use nix::libc::{iscntrl, memmove};
 use nix::unistd::read;
 use nix::{
     libc::{
@@ -9,12 +9,13 @@ use nix::{
     pty::Winsize,
 };
 use std::ffi::{c_void, CString};
+use std::i64;
 use x11::xlib::{
     CWBackPixmap, CWEventMask, CopyFromParent, Display, ExposureMask, KeyPressMask, KeyReleaseMask,
     ParentRelative, Window, XAllocNamedColor, XColor, XConnectionNumber, XCreateGC, XCreateWindow,
-    XDefaultColormap, XDefaultDepth, XDefaultScreen, XDefaultVisual, XEvent, XFontStruct,
-    XLoadQueryFont, XMapWindow, XOpenDisplay, XRootWindow, XSetWindowAttributes, XStoreName, XSync,
-    XTextWidth, GC,
+    XDefaultColormap, XDefaultDepth, XDefaultScreen, XDefaultVisual, XDrawString, XEvent,
+    XFillRectangle, XFontStruct, XLoadQueryFont, XMapWindow, XNextEvent, XOpenDisplay, XPending,
+    XRootWindow, XSetForeground, XSetWindowAttributes, XStoreName, XSync, XTextWidth, GC,
 };
 
 const SHELL: &str = "/bin/dash";
@@ -286,6 +287,61 @@ impl X11 {
         println!("Sync");
         true
     }
+
+    fn x11_redraw(&mut self) {
+        let mut x: i64 = 0;
+        let mut y: i64 = 0;
+        let mut buf: [u8; 1] = [0];
+
+        unsafe {
+            XSetForeground(self.dpy, self.termgc, self.col_bg);
+            XFillRectangle(
+                self.dpy,
+                self.termwin,
+                self.termgc,
+                0,
+                0,
+                self.w.try_into().unwrap(),
+                self.h.try_into().unwrap(),
+            );
+
+            XSetForeground(self.dpy, self.termgc, self.col_fg);
+        }
+        for y in 0..self.buf_h {
+            for x in 0..self.buf_w {
+                buf[0] = self.buf[(y * self.buf_w + x) as usize];
+                unsafe {
+                    if iscntrl(buf[0].into()) > 0 {
+                        XDrawString(
+                            self.dpy,
+                            self.termwin,
+                            self.termgc,
+                            (x * self.font_width).try_into().unwrap(),
+                            (y * self.font_height + (*self.xfont).ascent as i64)
+                                .try_into()
+                                .unwrap(),
+                            buf.as_mut_ptr() as *mut i8,
+                            1,
+                        );
+                    }
+                }
+            }
+        }
+
+        unsafe {
+            XSetForeground(self.dpy, self.termgc, self.col_fg);
+            XFillRectangle(
+                self.dpy,
+                self.termwin,
+                self.termgc,
+                (self.buf_x * self.font_width).try_into().unwrap(),
+                (self.buf_y * self.font_height).try_into().unwrap(),
+                self.font_width.try_into().unwrap(),
+                self.font_height.try_into().unwrap(),
+            );
+            XSync(self.dpy, 0);
+        }
+    }
 }
 
 fn term_set_size(pty: &mut PTY, x11: &mut X11) -> bool {
@@ -375,7 +431,13 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
                     }
                 }
 
-                // x11_redraw(x11);
+                x11.x11_redraw();
+            }
+
+            if FD_ISSET(x11.fd.try_into().unwrap(), &mut readable) {
+                while XPending(x11.dpy) > 0 {
+                    XNextEvent(x11.dpy, &mut ev);
+                }
             }
 
             break;
