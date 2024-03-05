@@ -11,11 +11,7 @@ use nix::{
 use std::ffi::{c_void, CString};
 use std::i64;
 use x11::xlib::{
-    CWBackPixmap, CWEventMask, CopyFromParent, Display, ExposureMask, KeyPressMask, KeyReleaseMask,
-    ParentRelative, Window, XAllocNamedColor, XColor, XConnectionNumber, XCreateGC, XCreateWindow,
-    XDefaultColormap, XDefaultDepth, XDefaultScreen, XDefaultVisual, XDrawString, XEvent,
-    XFillRectangle, XFontStruct, XLoadQueryFont, XMapWindow, XNextEvent, XOpenDisplay, XPending,
-    XRootWindow, XSetForeground, XSetWindowAttributes, XStoreName, XSync, XTextWidth, GC,
+    CWBackPixmap, CWEventMask, CopyFromParent, Display, Expose, ExposureMask, KeyPress, KeyPressMask, KeyReleaseMask, ParentRelative, Window, XAllocNamedColor, XColor, XConnectionNumber, XCreateGC, XCreateWindow, XDefaultColormap, XDefaultDepth, XDefaultScreen, XDefaultVisual, XDrawString, XEvent, XFillRectangle, XFontStruct, XLoadQueryFont, XMapWindow, XNextEvent, XOpenDisplay, XPending, XRootWindow, XSetForeground, XSetWindowAttributes, XStoreName, XSync, XTextWidth, GC
 };
 
 const SHELL: &str = "/bin/dash";
@@ -369,7 +365,9 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
     let mut buf: [u8; 1] = [0];
     let mut readable: fd_set = unsafe { std::mem::zeroed() };
     let mut just_wrapped: bool = false;
-    let mut ev: XEvent;
+    let mut ev: XEvent = unsafe {
+        std::mem::zeroed()
+    };
     loop {
         unsafe {
             FD_ZERO(&mut readable);
@@ -437,6 +435,16 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
             if FD_ISSET(x11.fd.try_into().unwrap(), &mut readable) {
                 while XPending(x11.dpy) > 0 {
                     XNextEvent(x11.dpy, &mut ev);
+                    match ev.type_ {
+                        Expose => {
+                            x11.x11_redraw();
+                        }
+                        KeyPress => {
+                        }
+                        _ => {
+                            println!("Other cases");
+                        }
+                    }
                 }
             }
 
