@@ -1,5 +1,6 @@
 use nix::libc::{iscntrl, memmove};
 use nix::unistd::read;
+use nix::NixPath;
 use nix::{
     libc::{
         close, dup2, execle, fd_set, fork, grantpt, ioctl, open, pid_t, posix_openpt, ptsname,
@@ -8,10 +9,17 @@ use nix::{
     },
     pty::Winsize,
 };
+use rustix::fd::RawFd;
 use std::ffi::{c_void, CString};
 use std::i64;
+use std::os::raw::c_int;
 use x11::xlib::{
-    CWBackPixmap, CWEventMask, CopyFromParent, Display, Expose, ExposureMask, KeyPress, KeyPressMask, KeyReleaseMask, ParentRelative, Window, XAllocNamedColor, XColor, XConnectionNumber, XCreateGC, XCreateWindow, XDefaultColormap, XDefaultDepth, XDefaultScreen, XDefaultVisual, XDrawString, XEvent, XFillRectangle, XFontStruct, XLoadQueryFont, XMapWindow, XNextEvent, XOpenDisplay, XPending, XRootWindow, XSetForeground, XSetWindowAttributes, XStoreName, XSync, XTextWidth, GC
+    CWBackPixmap, CWEventMask, CopyFromParent, Display, Expose, ExposureMask, KeyPress,
+    KeyPressMask, KeyReleaseMask, KeySym, ParentRelative, Window, XAllocNamedColor, XColor,
+    XConnectionNumber, XCreateGC, XCreateWindow, XDefaultColormap, XDefaultDepth, XDefaultScreen,
+    XDefaultVisual, XDrawString, XEvent, XFillRectangle, XFontStruct, XKeyEvent, XLoadQueryFont,
+    XLookupString, XMapWindow, XNextEvent, XOpenDisplay, XPending, XRootWindow, XSetForeground,
+    XSetWindowAttributes, XStoreName, XSync, XTextWidth, GC,
 };
 
 const SHELL: &str = "/bin/dash";
@@ -356,6 +364,25 @@ fn term_set_size(pty: &mut PTY, x11: &mut X11) -> bool {
     false
 }
 
+fn x11_key(ev: &mut XKeyEvent, pty: &mut PTY) {
+    let mut buf: [u8; 32] = [0; 32];
+    let mut ksym: KeySym = 0;
+
+    let num = unsafe {
+        XLookupString(
+            ev,
+            buf.as_mut_ptr() as *mut i8,
+            buf.len().try_into().unwrap(),
+            &mut ksym,
+            std::ptr::null_mut(),
+        )
+    };
+    for i in 0..num {
+        let pty_master = pty.master as RawFd;
+        nix::unistd::write(pty_master, &buf[i as usize..=i as usize]);
+    }
+}
+
 fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
     let maxfd = if pty.master > x11.fd {
         pty.master
@@ -365,9 +392,7 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
     let mut buf: [u8; 1] = [0];
     let mut readable: fd_set = unsafe { std::mem::zeroed() };
     let mut just_wrapped: bool = false;
-    let mut ev: XEvent = unsafe {
-        std::mem::zeroed()
-    };
+    let mut ev: XEvent = unsafe { std::mem::zeroed() };
     loop {
         unsafe {
             FD_ZERO(&mut readable);
@@ -387,7 +412,7 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
             }
 
             if FD_ISSET(pty.master.try_into().unwrap(), &mut readable) {
-                match read(pty.master.try_into().unwrap(), &mut buf) {
+                match nix::unistd::read(pty.master.try_into().unwrap(), &mut buf) {
                     Ok(bytes_read) => {
                         println!("Read {} byres", bytes_read);
                     }
@@ -439,8 +464,7 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
                         Expose => {
                             x11.x11_redraw();
                         }
-                        KeyPress => {
-                        }
+                        KeyPress => {}
                         _ => {
                             println!("Other cases");
                         }
