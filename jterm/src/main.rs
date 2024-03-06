@@ -1,3 +1,4 @@
+use libc::write;
 use nix::libc::{iscntrl, memmove};
 use nix::unistd::read;
 use nix::NixPath;
@@ -379,7 +380,9 @@ fn x11_key(ev: &mut XKeyEvent, pty: &mut PTY) {
     };
     for i in 0..num {
         let pty_master = pty.master as RawFd;
-        nix::unistd::write(pty_master, &buf[i as usize..=i as usize]);
+        unsafe {
+            libc::write(pty_master, buf[i as usize] as *const u8 as *const c_void, 1);
+        }
     }
 }
 
@@ -464,7 +467,9 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
                         Expose => {
                             x11.x11_redraw();
                         }
-                        KeyPress => {}
+                        KeyPress => {
+                            x11_key(&mut ev.key, pty);
+                        }
                         _ => {
                             println!("Other cases");
                         }
@@ -490,4 +495,6 @@ fn main() {
 
     if !term_set_size(&mut pty, &mut x11) {}
     unsafe { if !pty.spawn() {} }
+
+    run(&mut pty, &mut x11);
 }
