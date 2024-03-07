@@ -1,7 +1,4 @@
-use libc::write;
 use nix::libc::{iscntrl, memmove};
-use nix::unistd::read;
-use nix::NixPath;
 use nix::{
     libc::{
         close, dup2, execle, fd_set, fork, grantpt, ioctl, open, pid_t, posix_openpt, ptsname,
@@ -13,7 +10,6 @@ use nix::{
 use rustix::fd::RawFd;
 use std::ffi::{c_void, CString};
 use std::i64;
-use std::os::raw::c_int;
 use x11::xlib::{
     CWBackPixmap, CWEventMask, CopyFromParent, Display, Expose, ExposureMask, KeyPress,
     KeyPressMask, KeyReleaseMask, KeySym, ParentRelative, Window, XAllocNamedColor, XColor,
@@ -294,8 +290,6 @@ impl X11 {
     }
 
     fn x11_redraw(&mut self) {
-        let mut x: i64 = 0;
-        let mut y: i64 = 0;
         let mut buf: [u8; 1] = [0];
 
         unsafe {
@@ -386,6 +380,8 @@ fn x11_key(ev: &mut XKeyEvent, pty: &mut PTY) {
     }
 }
 
+#[allow(unreachable_code)]
+#[allow(non_upper_case_globals)]
 fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
     let maxfd = if pty.master > x11.fd {
         pty.master
@@ -476,8 +472,6 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
                     }
                 }
             }
-
-            break;
         }
     }
 
@@ -485,7 +479,6 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
 }
 
 fn main() {
-    println!("Hello, world!");
     let mut x11 = X11::new();
     x11.x11_setup();
     let mut pty = PTY::new();
