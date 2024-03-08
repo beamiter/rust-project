@@ -39,26 +39,21 @@ impl PTY {
     unsafe fn pt_pair(&mut self) -> bool {
         self.master = posix_openpt(O_RDWR | O_NOCTTY) as i64;
         if self.master == -1 {
-            println!("posix_openpt");
             return false;
         }
         if grantpt(self.master.try_into().unwrap()) == -1 {
-            println!("grantpt");
             return false;
         }
         if unlockpt(self.master.try_into().unwrap()) == -1 {
-            println!("grantpt");
             return false;
         }
         let slave_name = ptsname(self.master.try_into().unwrap());
         if slave_name.is_null() {
-            println!("ptsname");
             return false;
         }
 
         self.slave = open(slave_name, O_RDWR | O_NOCTTY) as i64;
         if self.slave == -1 {
-            println!("opne(slave_name)");
             return false;
         }
         true
@@ -71,7 +66,6 @@ impl PTY {
 
             setsid();
             if ioctl(self.slave.try_into().unwrap(), TIOCSCTTY) == -1 {
-                println!("ioctl(TIOCSCTTY)");
                 return false;
             }
 
@@ -98,7 +92,6 @@ impl PTY {
             close(self.slave.try_into().unwrap());
         }
 
-        println!("fork");
         false
     }
 }
@@ -175,7 +168,6 @@ impl X11 {
             println!("Cannot open display");
             return false;
         }
-        println!("Open display");
 
         self.screen = unsafe { XDefaultScreen(self.dpy) as i64 };
         self.root = unsafe { XRootWindow(self.dpy, self.screen.try_into().unwrap()) };
@@ -189,7 +181,6 @@ impl X11 {
             println!("Could not load font");
             return false;
         }
-        println!("Load font");
         self.font_width = unsafe {
             let c_string_ptr = CString::new("m").expect("new failed");
             XTextWidth(self.xfont, c_string_ptr.as_ptr(), 1).into()
@@ -220,7 +211,6 @@ impl X11 {
                 return false;
             }
         }
-        println!("Load bg color");
         self.col_bg = color.pixel;
 
         unsafe {
@@ -237,7 +227,6 @@ impl X11 {
                 return false;
             }
         }
-        println!("Load fg color");
         self.col_fg = color.pixel;
 
         self.buf_w = 80;
@@ -269,23 +258,18 @@ impl X11 {
                 &mut wa,
             )
         };
-        println!("Create Window");
         unsafe {
             let c_string_ptr = CString::new("eduterm").expect("new failed");
             XStoreName(self.dpy, self.termwin, c_string_ptr.as_ptr());
         }
-        println!("Store name");
         unsafe {
             XMapWindow(self.dpy, self.termwin);
         }
-        println!("Map window");
         self.termgc = unsafe { XCreateGC(self.dpy, self.termwin, 0, std::ptr::null_mut()) };
-        println!("Create GC");
 
         unsafe {
             XSync(self.dpy, 0);
         }
-        println!("Sync");
         true
     }
 
@@ -356,7 +340,7 @@ fn term_set_size(pty: &mut PTY, x11: &mut X11) -> bool {
             return false;
         }
     }
-    false
+    true
 }
 
 fn x11_key(ev: &mut XKeyEvent, pty: &mut PTY) {
@@ -412,9 +396,7 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
 
             if FD_ISSET(pty.master.try_into().unwrap(), &mut readable) {
                 match nix::unistd::read(pty.master.try_into().unwrap(), &mut buf) {
-                    Ok(bytes_read) => {
-                        println!("Read {} byres", bytes_read);
-                    }
+                    Ok(_) => {}
                     Err(e) => {
                         eprintln!("Failed to read: {}", e);
                         return 1;
@@ -457,8 +439,10 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
             }
 
             if FD_ISSET(x11.fd.try_into().unwrap(), &mut readable) {
-                while XPending(x11.dpy) > 0 {
+                while XPending(x11.dpy) >= 0 {
+                    println!("0 here: {}", ev.type_);
                     XNextEvent(x11.dpy, &mut ev);
+                    println!("00 here: {}", ev.type_);
                     match ev.type_ {
                         Expose => {
                             x11.x11_redraw();
@@ -467,7 +451,7 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
                             x11_key(&mut ev.key, pty);
                         }
                         _ => {
-                            println!("Other cases");
+                            println!("Other cases: {}", ev.type_);
                         }
                     }
                 }
@@ -486,8 +470,14 @@ fn main() {
         pty.pt_pair();
     }
 
-    if !term_set_size(&mut pty, &mut x11) {}
-    unsafe { if !pty.spawn() {} }
+    if !term_set_size(&mut pty, &mut x11) {
+        return;
+    }
+    unsafe {
+        if !pty.spawn() {
+            return;
+        }
+    }
 
     run(&mut pty, &mut x11);
 }
