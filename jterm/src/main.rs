@@ -334,9 +334,12 @@ fn term_set_size(pty: &mut PTY, x11: &mut X11) -> bool {
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
+    println!("ws: {}, {}, {}", ws.ws_col, ws.ws_row, pty.master);
     unsafe {
-        if ioctl(pty.master.try_into().unwrap(), TIOCSWINSZ, ws) == -1 {
-            println!("ioctl(TIOCSWINSZ)");
+        let ans = ioctl(pty.master.try_into().unwrap(), TIOCSWINSZ, ws);
+        println!("{}", ans);
+        if ans == -1 {
+            eprintln!("ioctl(TIOCSWINSZ)");
             return false;
         }
     }
