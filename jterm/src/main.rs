@@ -90,8 +90,10 @@ impl PTY {
         }
         if p > 0 {
             close(self.slave.try_into().unwrap());
+            return true;
         }
 
+        eprint!("fork");
         false
     }
 }
@@ -205,7 +207,7 @@ impl X11 {
                 c_string_ptr.as_ptr(),
                 &mut color,
                 &mut color,
-            ) < 0
+            ) <= 0
             {
                 println!("Could not load bg color");
                 return false;
@@ -221,7 +223,7 @@ impl X11 {
                 c_string_ptr.as_ptr(),
                 &mut color,
                 &mut color,
-            ) < 0
+            ) <= 0
             {
                 println!("Could not load fg color");
                 return false;
@@ -233,7 +235,7 @@ impl X11 {
         self.buf_h = 25;
         self.buf_x = 0;
         self.buf_y = 0;
-        self.buf = vec![b'1'; (self.buf_w * self.buf_h).try_into().unwrap()];
+        self.buf = vec![0; (self.buf_w * self.buf_h).try_into().unwrap()];
         if self.buf.is_empty() {
             println!("calloc");
             return false;
@@ -294,7 +296,8 @@ impl X11 {
             for x in 0..self.buf_w {
                 buf[0] = self.buf[(y * self.buf_w + x) as usize];
                 unsafe {
-                    if iscntrl(buf[0].into()) > 0 {
+                    let ans = iscntrl(buf[0].into());
+                    if ans <= 0 {
                         XDrawString(
                             self.dpy,
                             self.termwin,
@@ -336,7 +339,7 @@ fn term_set_size(pty: &mut PTY, x11: &mut X11) -> bool {
     };
     println!("ws: {}, {}, {}", ws.ws_col, ws.ws_row, pty.master);
     unsafe {
-        let ans = ioctl(pty.master.try_into().unwrap(), TIOCSWINSZ, ws);
+        let ans = ioctl(pty.master.try_into().unwrap(), TIOCSWINSZ, &ws as *const _);
         println!("{}", ans);
         if ans == -1 {
             eprintln!("ioctl(TIOCSWINSZ)");
