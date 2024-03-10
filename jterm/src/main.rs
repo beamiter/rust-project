@@ -261,7 +261,7 @@ impl X11 {
             )
         };
         unsafe {
-            let c_string_ptr = CString::new("eduterm").expect("new failed");
+            let c_string_ptr = CString::new("jterm").expect("new failed");
             XStoreName(self.dpy, self.termwin, c_string_ptr.as_ptr());
         }
         unsafe {
@@ -337,10 +337,8 @@ fn term_set_size(pty: &mut PTY, x11: &mut X11) -> bool {
         ws_xpixel: 0,
         ws_ypixel: 0,
     };
-    println!("ws: {}, {}, {}", ws.ws_col, ws.ws_row, pty.master);
     unsafe {
         let ans = ioctl(pty.master.try_into().unwrap(), TIOCSWINSZ, &ws as *const _);
-        println!("{}", ans);
         if ans == -1 {
             eprintln!("ioctl(TIOCSWINSZ)");
             return false;
@@ -373,7 +371,7 @@ fn x11_key(ev: &mut XKeyEvent, pty: &mut PTY) {
 #[allow(unreachable_code)]
 #[allow(non_upper_case_globals)]
 fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
-    let maxfd = if pty.master > x11.fd {
+    let mut maxfd = if pty.master > x11.fd {
         pty.master
     } else {
         x11.fd
@@ -387,6 +385,7 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
             FD_ZERO(&mut readable);
             FD_SET(pty.master.try_into().unwrap(), &mut readable);
             FD_SET(x11.fd.try_into().unwrap(), &mut readable);
+            maxfd = std::cmp::max(pty.master, x11.fd);
 
             if select(
                 (maxfd + 1).try_into().unwrap(),
@@ -444,8 +443,9 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
                 x11.x11_redraw();
             }
 
+            println!("haha");
             if FD_ISSET(x11.fd.try_into().unwrap(), &mut readable) {
-                while XPending(x11.dpy) >= 0 {
+                while XPending(x11.dpy) > 0 {
                     println!("0 here: {}", ev.type_);
                     XNextEvent(x11.dpy, &mut ev);
                     println!("00 here: {}", ev.type_);
@@ -455,9 +455,10 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
                         }
                         KeyPress => {
                             x11_key(&mut ev.key, pty);
+                            println!("fuck: {}", ev.type_);
                         }
                         _ => {
-                            println!("Other cases: {}", ev.type_);
+                            // println!("Other cases: {}", ev.type_);
                         }
                     }
                 }
