@@ -361,9 +361,27 @@ fn x11_key(ev: &mut XKeyEvent, pty: &mut PTY) {
         )
     };
     for i in 0..num {
-        let pty_master = pty.master as RawFd;
         unsafe {
-            libc::write(pty_master, buf[i as usize] as *const u8 as *const c_void, 1);
+            // Here is the problem, num_write is not correct!!
+            let num_write = libc::write(
+                pty.master as RawFd,
+                // Get a pointer to the i-th element of a buffer
+                buf.as_ptr().add(i.try_into().unwrap()) as *const c_void,
+                1,
+            );
+            if num_write == -1 {
+                let error = std::io::Error::last_os_error();
+                eprintln!("IO Error occurred: {}", error);
+                match error.raw_os_error() {
+                    Some(code) => {
+                        eprintln!("OS Error Code: {}", code);
+                        if code == libc::EAGAIN {
+                            eprintln!("Resource temporarily unavailable");
+                        }
+                    }
+                    None => eprintln!("No OS error code available."),
+                }
+            }
         }
     }
 }
@@ -371,7 +389,7 @@ fn x11_key(ev: &mut XKeyEvent, pty: &mut PTY) {
 #[allow(unreachable_code)]
 #[allow(non_upper_case_globals)]
 fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
-    let mut maxfd = if pty.master > x11.fd {
+    let maxfd = if pty.master > x11.fd {
         pty.master
     } else {
         x11.fd
@@ -385,7 +403,6 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
             FD_ZERO(&mut readable);
             FD_SET(pty.master.try_into().unwrap(), &mut readable);
             FD_SET(x11.fd.try_into().unwrap(), &mut readable);
-            maxfd = std::cmp::max(pty.master, x11.fd);
 
             if select(
                 (maxfd + 1).try_into().unwrap(),
@@ -430,7 +447,8 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
                     if x11.buf_y >= x11.buf_h {
                         memmove(
                             x11.buf.as_mut_ptr() as *mut c_void,
-                            x11.buf[x11.buf_w as usize] as *const u8 as *const c_void,
+                            // Get a pointer to the i-th element of a buffer
+                            x11.buf.as_ptr().add(x11.buf_w as usize) as *const c_void,
                             (x11.buf_w * (x11.buf_h - 1)).try_into().unwrap(),
                         );
 
@@ -443,19 +461,15 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
                 x11.x11_redraw();
             }
 
-            println!("haha");
             if FD_ISSET(x11.fd.try_into().unwrap(), &mut readable) {
                 while XPending(x11.dpy) > 0 {
-                    println!("0 here: {}", ev.type_);
                     XNextEvent(x11.dpy, &mut ev);
-                    println!("00 here: {}", ev.type_);
                     match ev.type_ {
                         Expose => {
                             x11.x11_redraw();
                         }
                         KeyPress => {
                             x11_key(&mut ev.key, pty);
-                            println!("fuck: {}", ev.type_);
                         }
                         _ => {
                             // println!("Other cases: {}", ev.type_);
