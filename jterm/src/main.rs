@@ -451,6 +451,7 @@ fn run(pty: &mut PTY, x11: &mut X11) -> i32 {
                             x11.buf.as_ptr().add(x11.buf_w as usize) as *const c_void,
                             (x11.buf_w * (x11.buf_h - 1)).try_into().unwrap(),
                         );
+                        x11.buf_y = x11.buf_h - 1;
 
                         for i in 0..x11.buf_w {
                             x11.buf[(x11.buf_y * x11.buf_w + i) as usize] = 0;
