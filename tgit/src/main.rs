@@ -1,3 +1,5 @@
+extern crate termion;
+
 pub mod action_git;
 pub mod event_git;
 pub mod render_git;
@@ -7,200 +9,146 @@ use crate::action_git::*;
 use crate::render_git::*;
 use crate::tui_git::*;
 
+use std::io::{stdin, stdout, Write};
+
+use std::sync::Arc;
+use std::sync::Mutex;
+use std::thread;
+use std::time::Duration;
+
+// use async_std::task;
+
+use termion::event::Key;
+use termion::input::TermRead;
+use termion::raw::IntoRawMode;
+use termion::screen::IntoAlternateScreen;
+
 use coredump::register_panic_handler;
 
-use crossterm::queue;
-use crossterm::terminal::EnterAlternateScreen;
-use crossterm::terminal::LeaveAlternateScreen;
-
-use std::{io::stdout, io::Write, time::Duration};
-
-use futures::{future::FutureExt, select, StreamExt};
-use futures_timer::Delay;
-
-use crossterm::{
-    event::{
-        poll, read, DisableMouseCapture, EnableMouseCapture, Event, EventStream, KeyCode, KeyEvent,
-        KeyModifiers, MouseEvent,
-    },
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode},
-};
-
-// Resize events can occur in batches.
-// With a simple loop they can be flushed.
-// This function will keep the first and last resize event.
-#[allow(dead_code)]
-fn flush_resize_events(first_resize: (u16, u16)) -> ((u16, u16), (u16, u16)) {
-    let mut last_resize = first_resize;
-    while let Ok(true) = poll(Duration::from_millis(50)) {
-        if let Ok(Event::Resize(x, y)) = read() {
-            last_resize = (x, y);
-        }
+fn main() {
+    register_panic_handler().unwrap();
+    let tui_git_arc = Arc::new(Mutex::new(TuiGit::new()));
+    if !tui_git_arc.lock().unwrap().update_git_branch() {
+        return;
     }
-    (first_resize, last_resize)
-}
-fn match_event_and_break<W: Write>(tui_git: &mut TuiGit, write: &mut W, event: Event) -> bool {
-    // println!("Event:: {:?}\r", event);
-    // if event == Event::Key(KeyCode::Char('c').into()) {}
-    // if let Event::Resize(x, y) = event {}
-    // if event == Event::Key(KeyCode::Esc.into()) {}
-    match event {
-        Event::Key(key) => match key {
-            KeyEvent {
-                code,
-                modifiers: KeyModifiers::NONE,
-                ..
-            } => match code {
-                KeyCode::Char('b') => {
-                    tui_git.lower_b_pressed(write);
-                }
-                KeyCode::Char('c') => {
-                    tui_git.lower_c_pressed(write);
-                }
-                KeyCode::Char('d') => {
-                    tui_git.lower_d_pressed(write);
-                }
-                KeyCode::Char('f') => {
-                    tui_git.lower_f_pressed(write);
-                }
-                KeyCode::Char('n') | KeyCode::Esc => {
-                    tui_git.lower_n_pressed(write);
-                }
-                KeyCode::Char('q') => {
-                    if tui_git.lower_q_pressed(write) {
-                        return true;
-                    }
-                }
-                KeyCode::Char('y') => {
-                    tui_git.lower_y_pressed(write);
-                }
-                KeyCode::Char(':') => {
-                    tui_git.colon_pressed(write);
-                }
-                KeyCode::Enter => {
-                    tui_git.enter_pressed(write);
-                }
-                KeyCode::Left | KeyCode::Char('h') => {
-                    tui_git.move_cursor_left(write);
-                }
-                KeyCode::Right | KeyCode::Char('l') => {
-                    tui_git.move_cursor_right(write);
-                }
-                KeyCode::Up | KeyCode::Char('k') => {
-                    tui_git.move_cursor_up(write);
-                }
-                KeyCode::Down | KeyCode::Char('j') => {
-                    tui_git.move_cursor_down(write);
-                }
-                _ => {}
-            },
-            KeyEvent {
-                code,
-                modifiers: KeyModifiers::SHIFT,
-                ..
-            } => match code {
-                KeyCode::Char('D') => {
-                    tui_git.upper_d_pressed(write);
-                }
-                KeyCode::Char('N') => {
-                    tui_git.lower_n_pressed(write);
-                }
-                KeyCode::Char('Y') => {
-                    tui_git.lower_y_pressed(write);
-                }
-                KeyCode::Char('H') => {
-                    tui_git.move_cursor_left(write);
-                }
-                KeyCode::Char('L') => {
-                    tui_git.move_cursor_right(write);
-                }
-                KeyCode::Char('K') => {
-                    tui_git.move_cursor_up(write);
-                }
-                KeyCode::Char('J') => {
-                    tui_git.move_cursor_down(write);
-                }
-                _ => {}
-            },
-            _ => {}
-        },
-        Event::FocusLost => {}
-        Event::FocusGained => {}
-        Event::Mouse(mouse) => match mouse {
-            MouseEvent { .. } => {}
-        },
-        Event::Paste(_) => {}
-        Event::Resize(_, _) => {
-            // let (original_size, new_size) = flush_resize_events((x, y));
-            // println!("Resize from: {:?}, to: {:?}\r", original_size, new_size);
-        }
-    }
-    match tui_git.layout_mode {
-        LayoutMode::LeftPanel(DisplayType::Log) => {
-            tui_git.async_update = true;
-        }
-        _ => {
-            tui_git.async_update = false;
-        }
-    }
-    write.flush().unwrap();
-    return false;
-}
+    let mut screen = Arc::new(Mutex::new(
+        stdout()
+            .into_raw_mode()
+            .unwrap()
+            .into_alternate_screen()
+            .unwrap(),
+    ));
 
-async fn run_app<W>(write: &mut W) -> std::io::Result<()>
-where
-    W: Write,
-{
-    let mut tui_git = TuiGit::new();
-    tui_git.update_git_branch();
-    // execute or queue.
-    queue!(write, EnterAlternateScreen)?;
-    write.flush()?;
-    tui_git.refresh_frame_with_branch(write, &tui_git.main_branch.to_string());
-    let mut reader = EventStream::new();
-    loop {
-        let mut delay = Delay::new(Duration::from_millis(5_000)).fuse();
-        let mut event = reader.next().fuse();
+    let mut handles = vec![];
+    // Create a thread to update data in the background.
+    let hold_confirm = Arc::new(Mutex::new(false));
+    let terminated = Arc::new(Mutex::new(false));
+    {
+        let tui_git_arc = Arc::clone(&tui_git_arc);
+        let screen = Arc::clone(&mut screen);
 
-        select! {
-            _  = delay => {
-                if tui_git.async_update {
-                    tui_git.update_git_branch_async();
-                    tui_git.refresh_frame_with_branch(write, &tui_git.current_branch.to_string());
-                }
-            },
-            maybe_event = event => {
-                match maybe_event {
-                    Some(Ok(event)) => {
-                        if match_event_and_break(&mut tui_git, write, event) {
-                            break;
-                        }
-                    }
-                    Some(Err(e)) => println!("Error: {:?}\r", e),
-                    None => break,
+        let hold_confirm = Arc::clone(&hold_confirm);
+        let terminated = Arc::clone(&terminated);
+
+        let handle = thread::spawn(move || loop {
+            if *terminated.lock().unwrap() {
+                break;
+            }
+            if !*hold_confirm.lock().unwrap() {
+                tui_git_arc.lock().unwrap().update_git_branch_async();
+                let current_branch = tui_git_arc.lock().unwrap().current_branch.to_string();
+                let mut screen = screen.lock().unwrap();
+                tui_git_arc
+                    .lock()
+                    .unwrap()
+                    .refresh_frame_with_branch(&mut *screen, &current_branch);
+                tui_git_arc
+                    .lock()
+                    .unwrap()
+                    .show_in_status_bar(&mut *screen, &"Update data async.".to_string());
+            }
+            // async_std::task::sleep::(Duration::from_millis(1_000)).await;
+            thread::sleep(Duration::from_secs(4));
+        });
+        handles.push(handle);
+    }
+
+    // write!(screen, "{}", termion::cursor::Hide).unwrap();
+
+    // Start with the main branch row.
+    for c in stdin().keys() {
+        // Lock the tui_git_arc and update main branch and branch vector.
+        let mut tui_git_arc = tui_git_arc.lock().unwrap();
+        let mut screen = screen.lock().unwrap();
+        let mut hold_confirm = hold_confirm.lock().unwrap();
+        *hold_confirm = true;
+        match c.unwrap() {
+            Key::Char('b') => {
+                tui_git_arc.lower_b_pressed(&mut *screen);
+            }
+            Key::Char('c') => {
+                tui_git_arc.lower_c_pressed(&mut *screen);
+            }
+            Key::Char('d') => {
+                tui_git_arc.lower_d_pressed(&mut *screen);
+            }
+            Key::Char('f') => {
+                tui_git_arc.lower_f_pressed(&mut *screen);
+            }
+            Key::Char('n') | Key::Esc | Key::Char('N') => {
+                tui_git_arc.lower_n_pressed(&mut *screen);
+            }
+            Key::Char('q') | Key::Char('Q') => {
+                if tui_git_arc.lower_q_pressed(&mut *screen) {
+                    let mut terminated = terminated.lock().unwrap();
+                    *terminated = true;
+                    break;
                 }
             }
-        };
+            Key::Char('y') | Key::Char('Y') => {
+                tui_git_arc.lower_y_pressed(&mut *screen);
+            }
+
+            Key::Char('D') => {
+                tui_git_arc.upper_d_pressed(&mut *screen);
+            }
+
+            Key::Char(':') => {
+                tui_git_arc.colon_pressed(&mut *screen);
+            }
+            Key::Char('\n') => {
+                tui_git_arc.enter_pressed(&mut *screen);
+            }
+
+            Key::Left | Key::Char('h') | Key::Char('H') => {
+                tui_git_arc.move_cursor_left(&mut *screen);
+            }
+            Key::Right | Key::Char('l') | Key::Char('L') => {
+                tui_git_arc.move_cursor_right(&mut *screen);
+            }
+            Key::Up | Key::Char('k') | Key::Char('K') => {
+                tui_git_arc.move_cursor_up(&mut *screen);
+            }
+            Key::Down | Key::Char('j') | Key::Char('J') => {
+                tui_git_arc.move_cursor_down(&mut *screen);
+            }
+            _ => {}
+        }
+        // Flush after key pressed.
+        screen.flush().unwrap();
+        match tui_git_arc.layout_mode {
+            LayoutMode::LeftPanel(DisplayType::Log) => {
+                *hold_confirm = false;
+            }
+            _ => {
+                *hold_confirm = true;
+            }
+        }
     }
+    // write!(screen, "{}", termion::cursor::Show).unwrap();
+    // screen.lock().unwrap().flush().unwrap();
 
-    execute!(write, LeaveAlternateScreen)?;
-
-    Ok(())
-}
-
-#[tokio::main]
-async fn main() -> std::io::Result<()> {
-    register_panic_handler().unwrap();
-
-    enable_raw_mode()?;
-
-    let mut stdout = stdout();
-    execute!(stdout, EnableMouseCapture)?;
-
-    run_app(&mut stdout).await?;
-
-    execute!(stdout, DisableMouseCapture)?;
-
-    disable_raw_mode()
+    for handle in handles {
+        handle.join().unwrap();
+    }
 }

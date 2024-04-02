@@ -95,8 +95,6 @@ pub enum LogInfoPattern {
 // Need to parse commit.
 #[derive(Clone, PartialEq, Eq, Debug)]
 pub struct TuiGit {
-    pub async_update: bool,
-
     // branch render area;
     pub branch_log_gap: usize,
     pub branch_row_top: usize,
@@ -114,7 +112,9 @@ pub struct TuiGit {
     pub log_scroll_offset_max: usize,
     pub snap_shot_map: HashMap<DisplayType, SnapShot>,
 
-    pub status_bar_height: usize,
+    pub bar_row_height: usize,
+    // bottom bar area;
+    pub bottom_bar_row: usize,
     // status bar area;
     pub status_bar_row: usize,
 
@@ -141,16 +141,14 @@ pub struct TuiGit {
 impl TuiGit {
     pub fn new() -> TuiGit {
         TuiGit {
-            async_update: false,
-
             branch_log_gap: 4,
-            branch_row_top: 2,
+            branch_row_top: 3,
             branch_row_bottom: 0,
-            branch_col_left: 3,
+            branch_col_left: 4,
             branch_col_right: 0,
             branch_col_offset: 3,
 
-            log_row_top: 2,
+            log_row_top: 3,
             log_row_bottom: 0,
             log_col_left: 0,
             log_col_right: 0,
@@ -164,8 +162,8 @@ impl TuiGit {
                 (DisplayType::Commit, SnapShot::new()),
             ]),
 
-            // With seperate line.
-            status_bar_height: 2,
+            bar_row_height: 3,
+            bottom_bar_row: 0,
             status_bar_row: 0,
 
             branch_delete_set: HashSet::new(),
@@ -183,9 +181,8 @@ impl TuiGit {
             key_move_counter: 0,
 
             // Goto is 1 based.
-            // MoveTo is 0 based.
-            previous_pos: Position::init(0, 0),
-            current_pos: Position::init(0, 0),
+            previous_pos: Position::init(1, 1),
+            current_pos: Position::init(1, 1),
         }
     }
     pub fn get_branch_row(&mut self, branch: &String) -> Result<usize, String> {
@@ -321,6 +318,10 @@ impl TuiGit {
                 if val.starts_with('*') {
                     // Remove the '*' symbol and trim white space.
                     self.main_branch = val.strip_prefix("*").unwrap().trim().to_string();
+                    // Just update current_branch in need.
+                    if self.current_branch.is_empty() {
+                        self.current_branch = self.main_branch.to_string();
+                    }
                     let head_str: &str = "HEAD detached at ";
                     if let Some(pos) = self.main_branch.find(head_str) {
                         self.main_branch = self

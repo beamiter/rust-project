@@ -1,22 +1,11 @@
+extern crate termion;
 use crate::tui_git::*;
 
 use std::io::Write;
 use std::str;
 use substring::Substring;
 
-pub use crossterm::cursor::MoveTo;
-pub use crossterm::queue;
-pub use crossterm::style::Attribute;
-pub use crossterm::style::Color;
-pub use crossterm::style::Print;
-pub use crossterm::style::ResetColor;
-pub use crossterm::style::SetAttribute;
-pub use crossterm::style::SetBackgroundColor;
-pub use crossterm::style::SetForegroundColor;
-pub use crossterm::style::Stylize;
-pub use crossterm::terminal::size;
-pub use crossterm::terminal::Clear;
-pub use crossterm::terminal::ClearType;
+use termion::{color, style};
 
 pub trait RenderGit {
     fn show_title_in_top_panel<W: Write>(&mut self, screen: &mut W);
@@ -25,6 +14,7 @@ pub trait RenderGit {
 
     fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
     fn show_and_stay_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String);
+    fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String);
 
     fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W);
     fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W);
@@ -39,10 +29,10 @@ pub trait RenderGit {
     );
 
     fn refresh_frame_with_branch<W: Write>(&mut self, screen: &mut W, branch: &String);
-    //
+
     fn left_panel_handler<W: Write>(&mut self, screen: &mut W, dir: MoveDirection);
     fn right_panel_handler<W: Write>(&mut self, screen: &mut W, dir: MoveDirection);
-    //
+
     fn show_icon_after_cursor<W: Write>(&mut self, screen: &mut W, icon: &str);
     fn show_icon_after_cursor_and_wipe<W: Write>(&mut self, screen: &mut W, icon: &str);
 }
@@ -50,33 +40,39 @@ pub trait RenderGit {
 impl RenderGit for TuiGit {
     // https://unix.stackexchange.com/questions/559708/how-to-draw-a-continuous-line-in-terminal
     fn show_title_in_top_panel<W: Write>(&mut self, screen: &mut W) {
-        let (col, row) = size().unwrap();
-        queue!(
+        let (col, row) = termion::terminal_size().unwrap();
+        write!(
             screen,
-            MoveTo(18, 0),
-            Clear(ClearType::CurrentLine),
-            Print("Welcome to tui git".bold().italic().magenta().on_grey()),
-            MoveTo(0, 1),
-            Print("⎽".repeat(col as usize)),
-            MoveTo(0, row - self.status_bar_height as u16),
-            Print("⎺".repeat(col as usize)),
+            "{}{}{}{}Welcome to tui git{}{}{}{}{}{}{}\n",
+            termion::cursor::Goto(19, 1),
+            termion::clear::CurrentLine,
+            color::Fg(color::Magenta),
+            style::Bold,
+            style::Italic,
+            color::Fg(color::Reset),
+            termion::cursor::Goto(1, 2),
+            "⎽".repeat(col as usize),
+            termion::cursor::Goto(1, row - self.bar_row_height as u16 + 1),
+            "⎺".repeat(col as usize),
+            style::Reset,
         )
         .unwrap();
     }
     fn show_branch_in_left_panel<W: Write>(&mut self, screen: &mut W) {
         let (x, y) = self.current_pos.unpack();
-        let (col, row) = size().unwrap();
+        let (col, row) = termion::terminal_size().unwrap();
         let x_tmp = self.branch_col_left;
         if col <= x_tmp as u16 {
             // No show due to no enough col.
             return;
         }
         // Clear previous branch zone.
-        for clear_y in self.branch_row_top..row as usize - self.status_bar_height {
-            queue!(
+        for clear_y in self.branch_row_top..row as usize - self.bar_row_height {
+            write!(
                 screen,
-                MoveTo(0, clear_y as u16),
-                Clear(ClearType::CurrentLine)
+                "{}{}",
+                termion::cursor::Goto(1, clear_y as u16),
+                termion::clear::CurrentLine,
             )
             .unwrap();
         }
@@ -86,51 +82,68 @@ impl RenderGit for TuiGit {
             self.branch_row_bottom = y_tmp;
 
             if self.branch_delete_set.get(&branch).is_some() {
-                queue!(
+                write!(
                     screen,
-                    MoveTo(self.branch_col_left as u16, y_tmp as u16),
-                    Print(branch.red().on_white()),
+                    "{}❎{}{}{}{}",
+                    termion::cursor::Goto(1, y_tmp as u16),
+                    termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
+                    termion::color::Bg(termion::color::Red),
+                    branch,
+                    termion::color::Bg(termion::color::Reset),
                 )
                 .unwrap();
             } else if *branch == self.main_branch && *branch == self.current_branch {
                 self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
-                queue!(
+                write!(
                     screen,
-                    MoveTo(0, y_tmp as u16),
-                    Print(UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]),
-                    MoveTo(self.branch_col_left as u16, y_tmp as u16),
-                    Print(branch.bold().green().underlined().italic()),
-                    Print(" 🐝"),
+                    "{}{}{}{}{}{}{}{}{} 🐝",
+                    termion::cursor::Goto(1, y_tmp as u16),
+                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
+                    termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
+                    color::Fg(color::Green),
+                    style::Bold,
+                    style::Underline,
+                    branch,
+                    color::Fg(color::Reset),
+                    style::Reset,
                 )
                 .unwrap();
             } else if *branch == self.main_branch {
-                queue!(
+                write!(
                     screen,
-                    MoveTo(self.branch_col_left as u16, y_tmp as u16),
-                    Print(branch.italic().green()),
-                    Print(" 🐝"),
+                    "{}{}{}{}{} 🐝",
+                    termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
+                    color::Fg(color::Green),
+                    branch,
+                    color::Fg(color::Reset),
+                    style::Reset,
                 )
                 .unwrap();
             } else if *branch == self.current_branch {
                 self.key_move_counter = (self.key_move_counter + 1) % usize::MAX;
-                queue!(
+                write!(
                     screen,
-                    MoveTo(0, y_tmp as u16),
-                    Print(UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()]),
-                    MoveTo(self.branch_col_left as u16, y_tmp as u16),
-                    Print(branch.bold().underlined()),
+                    "{}{}{}{}{}{}{}",
+                    termion::cursor::Goto(1, y_tmp as u16),
+                    UNICODE_TABLE[self.key_move_counter % UNICODE_TABLE.len()],
+                    style::Bold,
+                    style::Underline,
+                    termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
+                    branch,
+                    style::Reset,
                 )
                 .unwrap();
             } else {
-                queue!(
+                write!(
                     screen,
-                    MoveTo(self.branch_col_left as u16, y_tmp as u16),
-                    Print(branch),
+                    "{}{}",
+                    termion::cursor::Goto(self.branch_col_left as u16, y_tmp as u16),
+                    branch
                 )
                 .unwrap();
             }
             // Spare 2 for check info.
-            if y_tmp as u16 >= row - self.status_bar_height as u16 {
+            if y_tmp as u16 >= row - self.bar_row_height as u16 {
                 break;
             }
             y_tmp += 1;
@@ -145,27 +158,27 @@ impl RenderGit for TuiGit {
             + self.branch_col_offset;
         self.log_col_left = self.branch_col_right + self.branch_log_gap;
 
-        queue!(screen, MoveTo(x, y)).unwrap();
+        write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
         screen.flush().unwrap();
     }
-
     fn show_log_in_right_panel<W: Write>(&mut self, screen: &mut W) {
         let (x, y) = self.current_pos.unpack();
-        let (col, row) = size().unwrap();
+        let (col, row) = termion::terminal_size().unwrap();
         let x_tmp = self.log_col_left;
         self.log_col_right = col as usize;
         if col <= x_tmp as u16 {
             // No show due to no enough col.
             return;
         }
-        self.log_scroll_offset_max =
-            if self.right_panel_log_info.len() + self.status_bar_height + self.log_row_top
-                <= row as usize
-            {
-                0
-            } else {
-                self.right_panel_log_info.len() - row as usize
-            };
+        self.log_scroll_offset_max = if self.right_panel_log_info.len()
+            + self.bar_row_height
+            + self.log_row_top
+            <= row as usize
+        {
+            0
+        } else {
+            self.right_panel_log_info.len() - row as usize - self.bar_row_height - self.log_row_top
+        };
         let mut y_tmp = self.log_row_top;
         let prev_log_row_bottom = self.log_row_bottom;
         // Log show len (col - x_tmp as u16).
@@ -175,48 +188,79 @@ impl RenderGit for TuiGit {
             self.render_single_line(screen, &log, x_tmp as u16, y_tmp as u16);
             self.row_log_map.insert(y_tmp, log);
             // Spare 2 for check info.
-            if y_tmp as u16 >= row - self.status_bar_height as u16 - 1 {
+            if y_tmp as u16 >= row - self.bar_row_height as u16 {
                 break;
             }
             y_tmp += 1;
         }
         // Clear rest log zone.
         for clear_y in self.log_row_bottom + 1..=prev_log_row_bottom as usize {
-            queue!(
+            write!(
                 screen,
-                MoveTo(x_tmp as u16, clear_y as u16),
-                Clear(ClearType::CurrentLine),
+                "{}{}",
+                termion::cursor::Goto(x_tmp as u16, clear_y as u16),
+                termion::clear::UntilNewline,
             )
             .unwrap();
         }
 
-        queue!(screen, MoveTo(x, y)).unwrap();
+        write!(screen, "{}", termion::cursor::Goto(x, y)).unwrap();
         screen.flush().unwrap();
     }
-
     fn show_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
         let (x, y) = self.current_pos.unpack();
-        let (col, row) = size().unwrap();
+        let (col, row) = termion::terminal_size().unwrap();
         self.status_bar_row = row as usize - 1;
-        queue!(
+        write!(
             screen,
-            MoveTo(0, self.status_bar_row as u16),
-            Clear(ClearType::CurrentLine),
-            Print(String::from(&log.as_str()[..(col as usize).min(log.len())]).yellow()),
-            MoveTo(x, y),
+            "{}{}{}",
+            termion::cursor::Goto(1, self.status_bar_row as u16),
+            termion::clear::CurrentLine,
+            color::Fg(color::LightYellow),
+        )
+        .unwrap();
+        write!(screen, "{}", &log.as_str()[..(col as usize).min(log.len())]).unwrap();
+        write!(
+            screen,
+            "{}{}",
+            color::Fg(color::Reset),
+            termion::cursor::Goto(x, y)
         )
         .unwrap();
         screen.flush().unwrap();
     }
-
     fn show_and_stay_in_status_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
-        let (col, row) = size().unwrap();
+        let (col, row) = termion::terminal_size().unwrap();
         self.status_bar_row = row as usize - 1;
-        queue!(
+        write!(
             screen,
-            MoveTo(0, self.status_bar_row as u16),
-            Clear(ClearType::CurrentLine),
-            Print(String::from(&log.as_str()[..(col as usize).min(log.len())]).yellow()),
+            "{}{}{}",
+            termion::cursor::Goto(1, self.status_bar_row as u16),
+            termion::clear::CurrentLine,
+            color::Fg(color::LightYellow),
+        )
+        .unwrap();
+        write!(screen, "{}", &log.as_str()[..(col as usize).min(log.len())]).unwrap();
+        screen.flush().unwrap();
+    }
+    fn show_in_bottom_bar<W: Write>(&mut self, screen: &mut W, log: &String) {
+        let (x, y) = self.current_pos.unpack();
+        let (col, row) = termion::terminal_size().unwrap();
+        self.bottom_bar_row = row as usize;
+        write!(
+            screen,
+            "{}{}{}",
+            termion::cursor::Goto(1, self.bottom_bar_row as u16),
+            termion::clear::CurrentLine,
+            color::Fg(color::Yellow),
+        )
+        .unwrap();
+        write!(screen, "{}", &log.as_str()[..(col as usize).min(log.len())]).unwrap();
+        write!(
+            screen,
+            "{}{}",
+            color::Fg(color::Reset),
+            termion::cursor::Goto(x, y)
         )
         .unwrap();
         screen.flush().unwrap();
@@ -225,10 +269,9 @@ impl RenderGit for TuiGit {
     fn reset_cursor_to_branch<W: Write>(&mut self, screen: &mut W, branch: &String) {
         // Must update position.
         self.previous_pos = self.current_pos;
-        self.current_pos = Position::init(0, self.get_branch_row(branch).unwrap() as u16);
+        self.current_pos = Position::init(1, self.get_branch_row(branch).unwrap() as u16);
         self.show_icon_after_cursor(screen, "🏆");
     }
-
     fn reset_cursor_to_log_top<W: Write>(&mut self, screen: &mut W) {
         // Must update position.
         self.previous_pos = self.current_pos;
@@ -245,42 +288,86 @@ impl RenderGit for TuiGit {
     ) {
         // Clear current line.
         // Refer to https://en.wikipedia.org/wiki/Box-drawing_character#Unicode
-        queue!(
+        write!(
             screen,
-            MoveTo(x_tmp - 3 as u16, y_tmp as u16),
-            Clear(ClearType::UntilNewLine),
-            Print("║"),
-            MoveTo(x_tmp as u16, y_tmp as u16),
+            "{}{}║{}",
+            termion::cursor::Goto(x_tmp - 3 as u16, y_tmp as u16),
+            termion::clear::UntilNewline,
+            termion::cursor::Goto(x_tmp as u16, y_tmp as u16),
         )
         .unwrap();
-        let line_width = self.log_col_right - self.log_col_left;
+        let line_width = self.log_col_right - self.log_col_left + 1;
         match log {
             LogInfoPattern::Author(val) | LogInfoPattern::Date(val) | LogInfoPattern::Msg(val) => {
-                queue!(screen, Print(val.substring(0, line_width))).unwrap();
+                write!(screen, "{}", val.substring(0, line_width),).unwrap();
             }
             LogInfoPattern::DiffAdd(val) => {
-                queue!(screen, Print(val.substring(0, line_width).green()),).unwrap();
+                write!(
+                    screen,
+                    "{}{}{}",
+                    termion::color::Fg(termion::color::Green),
+                    val.substring(0, line_width),
+                    termion::color::Fg(termion::color::Reset),
+                )
+                .unwrap();
             }
             LogInfoPattern::DiffSubtract(val) => {
-                queue!(screen, Print(val.substring(0, line_width).red()),).unwrap();
+                write!(
+                    screen,
+                    "{}{}{}",
+                    termion::color::Fg(termion::color::Red),
+                    val.substring(0, line_width),
+                    termion::color::Fg(termion::color::Reset),
+                )
+                .unwrap();
             }
             LogInfoPattern::Commit(val) => {
                 let val = val.substring(0, line_width);
                 let split_log: Vec<_> = val.split_inclusive(['(', ',', ')']).collect();
                 for tmp in &split_log {
                     if tmp.starts_with("commit") {
-                        queue!(screen, Print(tmp.yellow()),).unwrap();
-                    } else if tmp.starts_with("HEAD ->") {
-                        queue!(
+                        write!(
                             screen,
-                            Print(String::from("HEAD ->").cyan().bold()),
-                            Print(tmp.strip_prefix("HEAD ->").unwrap().green().bold()),
+                            "{}{}{}",
+                            termion::color::Fg(termion::color::LightYellow),
+                            tmp,
+                            termion::color::Fg(termion::color::Reset),
+                        )
+                        .unwrap();
+                    } else if tmp.starts_with("HEAD ->") {
+                        write!(
+                            screen,
+                            "{}{}HEAD ->{}{}{}{}",
+                            termion::color::Fg(termion::color::LightCyan),
+                            style::Bold,
+                            termion::color::Fg(termion::color::LightGreen),
+                            tmp.strip_prefix("HEAD ->").unwrap(),
+                            termion::color::Fg(termion::color::Reset),
+                            style::Reset,
                         )
                         .unwrap();
                     } else if tmp.contains("origin") {
-                        queue!(screen, Print(tmp.red().bold()),).unwrap();
+                        write!(
+                            screen,
+                            "{}{}{}{}{}",
+                            termion::color::Fg(termion::color::LightRed),
+                            style::Bold,
+                            tmp,
+                            termion::color::Fg(termion::color::Reset),
+                            style::Reset,
+                        )
+                        .unwrap();
                     } else {
-                        queue!(screen, Print(tmp.green().bold()),).unwrap();
+                        write!(
+                            screen,
+                            "{}{}{}{}{}",
+                            termion::color::Fg(termion::color::LightGreen),
+                            style::Bold,
+                            tmp,
+                            termion::color::Fg(termion::color::Reset),
+                            style::Reset,
+                        )
+                        .unwrap();
                     }
                 }
             }
@@ -308,32 +395,38 @@ impl RenderGit for TuiGit {
         screen.flush().unwrap();
     }
     fn reset_cursor_to_current_pos<W: Write>(&mut self, screen: &mut W) {
-        queue!(screen, MoveTo(self.current_pos.col, self.current_pos.row),).unwrap();
-    }
-
-    fn show_icon_after_cursor<W: Write>(&mut self, screen: &mut W, icon: &str) {
-        queue!(
+        write!(
             screen,
-            MoveTo(self.current_pos.col, self.current_pos.row),
-            Print(icon),
-            MoveTo(self.current_pos.col, self.current_pos.row),
+            "{}",
+            termion::cursor::Goto(self.current_pos.col, self.current_pos.row),
         )
         .unwrap();
     }
-
+    fn show_icon_after_cursor<W: Write>(&mut self, screen: &mut W, icon: &str) {
+        write!(
+            screen,
+            "{}{}{}",
+            termion::cursor::Goto(self.current_pos.col, self.current_pos.row),
+            icon,
+            termion::cursor::Goto(self.current_pos.col, self.current_pos.row),
+        )
+        .unwrap();
+    }
     fn show_icon_after_cursor_and_wipe<W: Write>(&mut self, screen: &mut W, icon: &str) {
         // Need clear previous position only if with icon drawn.
-        queue!(
+        write!(
             screen,
-            MoveTo(self.previous_pos.col, self.previous_pos.row),
-            Print(" ".repeat(2)),
+            "{}{}",
+            termion::cursor::Goto(self.previous_pos.col, self.previous_pos.row),
+            " ".repeat(2),
         )
         .unwrap();
-        queue!(
+        write!(
             screen,
-            MoveTo(self.current_pos.col, self.current_pos.row),
-            Print(icon),
-            MoveTo(self.current_pos.col, self.current_pos.row),
+            "{}{}{}",
+            termion::cursor::Goto(self.current_pos.col, self.current_pos.row),
+            icon,
+            termion::cursor::Goto(self.current_pos.col, self.current_pos.row),
         )
         .unwrap();
     }
@@ -388,8 +481,6 @@ impl RenderGit for TuiGit {
             .to_vec();
 
         self.right_panel_handler(screen, MoveDirection::Still);
-
-        queue!(screen, MoveTo(x, y)).unwrap();
         screen.flush().unwrap();
     }
 
@@ -427,7 +518,14 @@ impl RenderGit for TuiGit {
         }
         self.current_pos = Position::init(x, y);
 
-        queue!(screen, MoveTo(x, y)).unwrap();
+        self.show_in_bottom_bar(
+            screen,
+            &format!(
+                "c: {}, r: {}, r_bottom: {}",
+                self.current_pos.col, self.current_pos.row, self.log_row_bottom,
+            )
+            .to_string(),
+        );
         screen.flush().unwrap();
     }
 }

@@ -1,7 +1,9 @@
+extern crate termion;
 use crate::render_git::*;
 use crate::tui_git::*;
 
 use std::{io::Write, process::Command, str};
+use termion::color;
 
 pub trait EventGit {
     fn checkout_local_git_branch<W: Write>(&mut self, screen: &mut W, branch: &String) -> bool;
@@ -27,7 +29,13 @@ impl EventGit for TuiGit {
             } else {
                 self.show_in_status_bar(
                     screen,
-                    &format!("✅ Delete branch {} finished.", Print(branch.red()),).to_string(),
+                    &format!(
+                        "✅ Delete branch {}{}{} finished.",
+                        color::Fg(color::Red),
+                        branch,
+                        color::Fg(color::LightYellow),
+                    )
+                    .to_string(),
                 );
             }
         }
@@ -50,8 +58,10 @@ impl EventGit for TuiGit {
             self.show_in_status_bar(
                 screen,
                 &format!(
-                    "✅ Fetch origin branch {} succeed.",
-                    Print(branch.clone().green()),
+                    "✅ Fetch origin branch {}{}{} succeed.",
+                    color::Fg(color::Green),
+                    branch,
+                    color::Fg(color::LightYellow),
                 )
                 .to_string(),
             );
@@ -63,8 +73,10 @@ impl EventGit for TuiGit {
             self.show_in_status_bar(
                 screen,
                 &format!(
-                    "👻 Already in target branch {}, enter 'q' to quit.",
-                    Print(branch.clone().green()),
+                    "👻 Already in target branch {}{}{}, enter 'q' to quit.",
+                    color::Fg(color::Green),
+                    branch,
+                    color::Fg(color::LightYellow),
                 )
                 .to_string(),
             );
@@ -84,8 +96,10 @@ impl EventGit for TuiGit {
             self.show_in_status_bar(
                 screen,
                 &format!(
-                    "✅ Checkout to target branch {}, enter 'q' to quit",
-                    Print(branch.clone().green()),
+                    "✅ Checkout to target branch {}{}{}, enter 'q' to quit",
+                    color::Fg(color::Green),
+                    branch,
+                    color::Fg(color::LightYellow),
                 )
                 .to_string(),
             );
@@ -98,8 +112,10 @@ impl EventGit for TuiGit {
             self.show_in_status_bar(
                 screen,
                 &format!(
-                    "👻 Already in target branch {}, enter 'q' to quit.",
-                    Print(branch.clone().green()),
+                    "👻 Already in target branch {}{}{}, enter 'q' to quit.",
+                    color::Fg(color::Green),
+                    branch,
+                    color::Fg(color::LightYellow),
                 )
                 .to_string(),
             );
@@ -119,8 +135,10 @@ impl EventGit for TuiGit {
             self.show_in_status_bar(
                 screen,
                 &format!(
-                    "✅ Checkout to target branch {}, enter 'q' to quit",
-                    Print(branch.clone().green()),
+                    "✅ Checkout to target branch {}{}{}, enter 'q' to quit",
+                    color::Fg(color::Green),
+                    branch,
+                    color::Fg(color::LightYellow),
                 )
                 .to_string(),
             );
