@@ -1,6 +1,7 @@
-extern crate vte;
+extern crate gdk;
 extern crate gtk;
-use glib::{*, ffi::gboolean};
+extern crate vte;
+use glib::{ffi::gboolean, *};
 use gtk::ffi::GtkWidget;
 use vte_sys::VteTerminal;
 
@@ -18,7 +19,7 @@ enum ConfigItemType {
 enum ConfigUnion {
     s(Vec<char>),
     sl(Vec<Vec<char>>),
-    b (gboolean),
+    b(gboolean),
     i(i64),
     ui(u64),
 }
@@ -40,9 +41,27 @@ struct Terminal {
     current_font: usize,
 }
 
-fn cb_spawn_async() {
-    
+fn cb_spawn_async(term: *mut VteTerminal, pid: Pid, err: *mut Error, data: Pointer) {}
+
+fn cfg(s: Vec<char>, n: Vec<char>) {}
+
+fn get_cursor_blink_mode() {}
+
+fn get_cursor_shape() {}
+
+fn get_keyval() -> u64 {
+    0
 }
+
+fn handle_history(term: *mut VteTerminal) {}
+
+fn ini_load() {}
+
+fn safe_emsg(_: *mut Error) {}
+
+fn sig_bell(_: *mut VteTerminal, _: Pointer) {}
+
+fn sig_button_press(_: *mut GtkWidget, _: *mut gdk::Event, _: Pointer) {}
 
 fn main() {
     println!("evil");
