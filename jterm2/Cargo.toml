@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 gdk = "0.18.0"
 glib = "0.19.3"
+glib-sys = "0.19.0"
 gtk = "0.18.1"
 vte = "0.13.0"
 vte-sys = "0.2.2"

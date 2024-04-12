@@ -1,12 +1,16 @@
 extern crate gdk;
 extern crate gtk;
 extern crate vte;
-use glib::{ffi::gboolean, *};
+use gdk::ffi::GdkRGBA;
+use gdk::glib::ffi::GSpawnFlags;
+use glib::*;
+use glib_sys::*;
 use gtk::ffi::GtkWidget;
 use std::env;
 use std::ffi::c_char;
 use std::ffi::CStr;
 use std::ffi::CString;
+use vte_sys::VteRegex;
 use vte_sys::VteTerminal;
 
 const PCRE2_CODE_UNIT_WIDTH: i8 = 8;
@@ -58,7 +62,7 @@ impl Terminal {
     }
 }
 
-fn cb_spawn_async(term: *mut VteTerminal, pid: Pid, err: *mut Error, data: Pointer) {}
+fn cb_spawn_async(term: *mut VteTerminal, pid: Pid, err: *mut GError, data: Pointer) {}
 
 fn cfg(s: *const c_char, n: *const c_char) {}
 
@@ -74,7 +78,7 @@ fn handle_history(term: *mut VteTerminal) {}
 
 fn ini_load() {}
 
-fn safe_emsg(_: *mut Error) {}
+fn safe_emsg(_: *mut GError) {}
 
 fn sig_bell(_: *mut VteTerminal, _: Pointer) {}
 
@@ -100,7 +104,7 @@ fn sig_window_resize(_: *mut VteTerminal, _: u64, _: u64, _: Pointer) {}
 
 fn sig_window_title_changed(_: *mut VteTerminal, _: Pointer) {}
 
-fn term_new(_: *mut Terminal) {
+fn term_new(t: *mut Terminal) {
     let args: Vec<String> = env::args().collect();
     println!(
         "Number of arguments (excluding program name): {}",
@@ -108,6 +112,53 @@ fn term_new(_: *mut Terminal) {
     );
     for (index, argument) in args.iter().enumerate().skip(1) {
         println!("argument {}: {}", index, argument);
+    }
+    let title: &str = "jterm2";
+    let res_class: &str = "Jterm2";
+    let res_name: &str = "jterm2";
+    let c_foreground_gdk = GdkRGBA {
+        red: 0.0,
+        green: 0.0,
+        blue: 0.0,
+        alpha: 0.0,
+    };
+    let c_background_gdk = GdkRGBA {
+        red: 0.0,
+        green: 0.0,
+        blue: 0.0,
+        alpha: 0.0,
+    };
+    let c_gdk = GdkRGBA {
+        red: 0.0,
+        green: 0.0,
+        blue: 0.0,
+        alpha: 0.0,
+    };
+    let url_vregex: *mut VteRegex = std::ptr::null_mut();
+    let err: *mut GError = std::ptr::null_mut();
+    let spawn_flags: GSpawnFlags = 0;
+    let standard16order: Vec<&str> = vec![
+        "dark_black",
+        "dark_red",
+        "dark_green",
+        "dark_yellow",
+        "dark_blue",
+        "dark_magenta",
+        "dark_cyan",
+        "dark_white",
+        "bright_black",
+        "bright_red",
+        "bright_green",
+        "bright_yellow",
+        "bright_blue",
+        "bright_magenta",
+        "bright_cyan",
+        "bright_white",
+    ];
+
+    // Handle arguments.
+    unsafe {
+        (*t).current_font = 0;
     }
 }
 
