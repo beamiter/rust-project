@@ -110,9 +110,6 @@ fn term_new(t: *mut Terminal) {
         "Number of arguments (excluding program name): {}",
         args.len() - 1
     );
-    for (index, argument) in args.iter().enumerate().skip(1) {
-        println!("argument {}: {}", index, argument);
-    }
     let title: &str = "jterm2";
     let res_class: &str = "Jterm2";
     let res_name: &str = "jterm2";
@@ -159,6 +156,9 @@ fn term_new(t: *mut Terminal) {
     // Handle arguments.
     unsafe {
         (*t).current_font = 0;
+    }
+    for (index, argument) in args.iter().enumerate().skip(1) {
+        println!("argument {}: {}", index, argument);
     }
 }
 
