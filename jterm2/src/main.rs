@@ -105,13 +105,8 @@ fn sig_window_resize(_: *mut VteTerminal, _: u64, _: u64, _: Pointer) {}
 fn sig_window_title_changed(_: *mut VteTerminal, _: Pointer) {}
 
 fn term_new(t: *mut Terminal) {
-    let args: Vec<String> = env::args().collect();
-    println!(
-        "Number of arguments (excluding program name): {}",
-        args.len() - 1
-    );
     let title: &str = "jterm2";
-    let res_class: &str = "Jterm2";
+    let mut res_class: &str = "Jterm2";
     let res_name: &str = "jterm2";
     let c_foreground_gdk = GdkRGBA {
         red: 0.0,
@@ -157,8 +152,17 @@ fn term_new(t: *mut Terminal) {
     unsafe {
         (*t).current_font = 0;
     }
-    for (index, argument) in args.iter().enumerate().skip(1) {
-        println!("argument {}: {}", index, argument);
+    let args: Vec<String> = env::args().collect();
+    println!(
+        "Number of arguments (excluding program name): {}",
+        args.len() - 1
+    );
+    let mut iter = args.iter().enumerate().skip(1);
+    while let Some((index, argument)) = iter.next() {
+        if argument == "-class" && index < args.len() - 1 {
+            res_class = argument;
+            iter.next();
+        }
     }
 }
 
