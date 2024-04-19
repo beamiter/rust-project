@@ -105,9 +105,9 @@ fn sig_window_resize(_: *mut VteTerminal, _: u64, _: u64, _: Pointer) {}
 fn sig_window_title_changed(_: *mut VteTerminal, _: Pointer) {}
 
 fn term_new(t: *mut Terminal) {
-    let title: &str = "jterm2";
+    let mut title: &str = "jterm2";
     let mut res_class: &str = "Jterm2";
-    let res_name: &str = "jterm2";
+    let mut res_name: &str = "jterm2";
     let c_foreground_gdk = GdkRGBA {
         red: 0.0,
         green: 0.0,
@@ -157,12 +157,28 @@ fn term_new(t: *mut Terminal) {
         "Number of arguments (excluding program name): {}",
         args.len() - 1
     );
+    let mut config_file: &str = "";
     let mut iter = args.iter().enumerate().skip(1);
-    while let Some((index, argument)) = iter.next() {
-        if argument == "-class" && index < args.len() - 1 {
-            res_class = argument;
-            iter.next();
+    while let Some((idx, arg)) = iter.next() {
+        println!("{}, {}", idx, arg);
+        if arg == "-class" && idx < args.len() - 1 {
+            (_, res_class) = iter.next().unwrap();
+            println!("set res_class: {}", res_class);
+        } else if arg == "-hold" {
+            unsafe {
+                (*t).hold = 1;
+            }
+        } else if arg == "-name" && idx < args.len() - 1 {
+            (_, res_name) = iter.next().unwrap();
+            println!("set res_name: {}", res_name);
+        } else if arg == "-title" && idx < args.len() - 1 {
+            (_, title) = iter.next().unwrap();
+            println!("set title: {}", title);
+        } else if arg == "--config" && idx < args.len() - 1 {
+            (_, config_file) = iter.next().unwrap();
+            println!("set config_file: {}", config_file);
         }
+
     }
 }
 
@@ -179,5 +195,4 @@ fn main() {
         return;
     }
     term_new(&mut t);
-    println!("evil");
 }
