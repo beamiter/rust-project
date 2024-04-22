@@ -2,7 +2,9 @@ extern crate gdk;
 extern crate gtk;
 extern crate vte;
 use gdk::ffi::GdkRGBA;
+use gdk::glib::ffi::g_build_filename;
 use gdk::glib::ffi::GSpawnFlags;
+use gdk::glib::translate::Ptr;
 use glib::*;
 use glib_sys::*;
 use gtk::ffi::GtkWidget;
@@ -14,6 +16,7 @@ use vte_sys::VteRegex;
 use vte_sys::VteTerminal;
 
 const PCRE2_CODE_UNIT_WIDTH: i8 = 8;
+const NAME: &str = "Jterm2";
 
 enum ConfigItemType {
     STRING,
@@ -76,7 +79,31 @@ fn get_keyval() -> u64 {
 
 fn handle_history(term: *mut VteTerminal) {}
 
-fn ini_load() {}
+fn ini_load(config_file: *mut c_char) {
+    let mut ini: *mut GKeyFile = std::ptr::null_mut();
+    let mut err: *mut GError = std::ptr::null_mut();
+    let mut p: *mut c_char = std::ptr::null_mut();
+    let mut ret: gboolean = 0;
+    let mut lst: *const *const c_char = std::ptr::null_mut();
+    let mut int64: i64 = 0;
+    let mut uint64: u64 = 0;
+    let mut len: usize = 0;
+    let mut i: usize = 0;
+    println!("here 0");
+    if config_file.is_null() {
+        println!("here 1");
+        unsafe {
+            println!("{}", *g_get_user_config_dir());
+            p = g_build_filename(g_get_user_config_dir(), NAME, "config.ini");
+            println!("here 11");
+        }
+    } else {
+        println!("here 2");
+        unsafe {
+            p = g_strup(config_file);
+        }
+    }
+}
 
 fn safe_emsg(_: *mut GError) {}
 
@@ -157,29 +184,49 @@ fn term_new(t: *mut Terminal) {
         "Number of arguments (excluding program name): {}",
         args.len() - 1
     );
-    let mut config_file: &str = "";
+    let mut config_file: *mut c_char = std::ptr::null_mut();
     let mut iter = args.iter().enumerate().skip(1);
-    while let Some((idx, arg)) = iter.next() {
-        println!("{}, {}", idx, arg);
-        if arg == "-class" && idx < args.len() - 1 {
-            (_, res_class) = iter.next().unwrap();
-            println!("set res_class: {}", res_class);
+    while let Some((_, arg)) = iter.next() {
+        println!("{}", arg);
+        if arg == "-class" {
+            if let Some((_, res_class)) = iter.next() {
+                println!("set res_class: {}", res_class);
+            }
         } else if arg == "-hold" {
             unsafe {
                 (*t).hold = 1;
             }
-        } else if arg == "-name" && idx < args.len() - 1 {
-            (_, res_name) = iter.next().unwrap();
-            println!("set res_name: {}", res_name);
-        } else if arg == "-title" && idx < args.len() - 1 {
-            (_, title) = iter.next().unwrap();
-            println!("set title: {}", title);
-        } else if arg == "--config" && idx < args.len() - 1 {
-            (_, config_file) = iter.next().unwrap();
-            println!("set config_file: {}", config_file);
+        } else if arg == "-name" {
+            if let Some((_, res_name)) = iter.next() {
+                println!("set res_name: {}", res_name);
+            }
+        } else if arg == "-title" {
+            if let Some((_, title)) = iter.next() {
+                println!("set title: {}", title);
+            }
+        } else if arg == "--config" {
+            if let Some((_, config_file)) = iter.next() {
+                println!("set config_file: {}", config_file);
+            }
+        } else if arg == "--fontindex" {
+            if let Some((_, current_font)) = iter.next() {
+                if let Ok(current_font) = current_font.parse::<usize>() {
+                    unsafe {
+                        println!("current_font: {}", current_font);
+                        (*t).current_font = current_font;
+                    }
+                }
+            }
+        } else if arg == "-e" {
+            if let Some((_, argv_cmdline)) = iter.next() {
+                break;
+            }
+        } else {
+            eprintln!("invalid arguments, check manpage");
         }
-
     }
+
+    ini_load(config_file);
 }
 
 fn term_activate_current_font(_: *mut Terminal, _: gboolean) {}
