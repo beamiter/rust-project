@@ -2,9 +2,7 @@ extern crate gdk;
 extern crate gtk;
 extern crate vte;
 use gdk::ffi::GdkRGBA;
-use gdk::glib::ffi::g_build_filename;
 use gdk::glib::ffi::GSpawnFlags;
-use gdk::glib::translate::Ptr;
 use glib::*;
 use glib_sys::*;
 use gtk::ffi::GtkWidget;
@@ -12,11 +10,12 @@ use std::env;
 use std::ffi::c_char;
 use std::ffi::CStr;
 use std::ffi::CString;
+use std::path::PathBuf;
 use vte_sys::VteRegex;
 use vte_sys::VteTerminal;
 
 const PCRE2_CODE_UNIT_WIDTH: i8 = 8;
-const NAME: &str = "Jterm2";
+const NAME: &str = "jterm2";
 
 enum ConfigItemType {
     STRING,
@@ -82,23 +81,24 @@ fn handle_history(term: *mut VteTerminal) {}
 fn ini_load(config_file: *mut c_char) {
     let mut ini: *mut GKeyFile = std::ptr::null_mut();
     let mut err: *mut GError = std::ptr::null_mut();
-    let mut p: *mut c_char = std::ptr::null_mut();
+    let mut p: *const c_char = std::ptr::null();
     let mut ret: gboolean = 0;
     let mut lst: *const *const c_char = std::ptr::null_mut();
     let mut int64: i64 = 0;
     let mut uint64: u64 = 0;
     let mut len: usize = 0;
     let mut i: usize = 0;
-    println!("here 0");
     if config_file.is_null() {
-        println!("here 1");
         unsafe {
-            println!("{}", *g_get_user_config_dir());
-            p = g_build_filename(g_get_user_config_dir(), NAME, "config.ini");
-            println!("here 11");
+            let c_str = CStr::from_ptr(g_get_user_config_dir());
+            let config_dir = c_str.to_str().unwrap();
+            let mut file_path = PathBuf::from(config_dir);
+            file_path.push(NAME);
+            file_path.push("config.ini");
+            println!("File path is {:?}", file_path);
+            p = file_path.to_str().unwrap().as_ptr() as *const c_char;
         }
     } else {
-        println!("here 2");
         unsafe {
             p = g_strup(config_file);
         }
