@@ -10,6 +10,7 @@ use std::env;
 use std::ffi::c_char;
 use std::ffi::CStr;
 use std::ffi::CString;
+use std::os::raw::c_void;
 use std::path::PathBuf;
 use vte_sys::VteRegex;
 use vte_sys::VteTerminal;
@@ -79,15 +80,7 @@ fn get_keyval() -> u64 {
 fn handle_history(term: *mut VteTerminal) {}
 
 fn ini_load(config_file: *mut c_char) {
-    let mut ini: *mut GKeyFile = std::ptr::null_mut();
-    let mut err: *mut GError = std::ptr::null_mut();
-    let mut p: *const c_char = std::ptr::null();
-    let mut ret: gboolean = 0;
-    let mut lst: *const *const c_char = std::ptr::null_mut();
-    let mut int64: i64 = 0;
-    let mut uint64: u64 = 0;
-    let mut len: usize = 0;
-    let mut i: usize = 0;
+    let mut p: *mut c_char = std::ptr::null_mut();
     if config_file.is_null() {
         unsafe {
             let c_str = CStr::from_ptr(g_get_user_config_dir());
@@ -96,12 +89,24 @@ fn ini_load(config_file: *mut c_char) {
             file_path.push(NAME);
             file_path.push("config.ini");
             println!("File path is {:?}", file_path);
-            p = file_path.to_str().unwrap().as_ptr() as *const c_char;
+            p = file_path.to_str().unwrap().as_ptr() as *mut c_char;
         }
     } else {
         unsafe {
             p = g_strup(config_file);
         }
+    }
+
+    let mut ini = unsafe { g_key_file_new() };
+    unsafe {
+        if g_key_file_load_from_file(ini, p, G_KEY_FILE_NONE, std::ptr::null_mut()) <= 0 {
+            if !config_file.is_null() || g_file_test(p, G_FILE_TEST_EXISTS) > 0 {
+                eprintln!(":Config could not be loaded");
+                g_free(p as *mut c_void);
+                return;
+            }
+        }
+        g_free(p as *mut c_void);
     }
 }
 
