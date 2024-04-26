@@ -108,11 +108,11 @@ fn ini_load(config_file: *mut c_char) {
         if g_key_file_load_from_file(ini, p, G_KEY_FILE_NONE, std::ptr::null_mut()) <= 0 {
             if !config_file.is_null() || g_file_test(p, G_FILE_TEST_EXISTS) > 0 {
                 eprintln!(":Config could not be loaded");
-                g_free(p as *mut c_void);
+                // g_free(p as *mut c_void);
                 return;
             }
         }
-        g_free(p as *mut c_void);
+        // g_free(p as *mut c_void);
     }
 
     let mut err: *mut GError = std::ptr::null_mut();
