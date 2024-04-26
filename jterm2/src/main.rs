@@ -15,11 +15,13 @@ use std::path::PathBuf;
 use vte_sys::VteRegex;
 use vte_sys::VteTerminal;
 
+mod config;
+
 const PCRE2_CODE_UNIT_WIDTH: i8 = 8;
 const NAME: &str = "jterm2";
 
 #[derive(Debug, Clone, Copy)]
-enum ConfigItemType {
+pub enum ConfigItemType {
     String,
     StringList,
     Boolean,
@@ -29,7 +31,7 @@ enum ConfigItemType {
 
 // With tagged variants.
 #[derive(Debug, Clone)]
-enum ConfigValue<'a> {
+pub enum ConfigValue<'a> {
     S(&'a str),
     Sl(&'a [&'a str]),
     B(gboolean),
@@ -38,7 +40,7 @@ enum ConfigValue<'a> {
 }
 
 #[derive(Debug, Clone)]
-struct ConfigItem<'a> {
+pub struct ConfigItem<'a> {
     s: &'a str,
     n: &'a str,
     t: ConfigItemType,
@@ -47,281 +49,6 @@ struct ConfigItem<'a> {
     v: ConfigValue<'a>,
 }
 
-const config: &[ConfigItem] = &[
-    ConfigItem {
-        s: "Options",
-        n: "login_shell",
-        t: ConfigItemType::Boolean,
-        l: None,
-        v: ConfigValue::B(1),
-    },
-    ConfigItem {
-        s: "Options",
-        n: "bold_is_bright",
-        t: ConfigItemType::Boolean,
-        l: None,
-        v: ConfigValue::B(0),
-    },
-    ConfigItem {
-        s: "Options",
-        n: "fonts",
-        t: ConfigItemType::StringList,
-        l: Some(1),
-        v: ConfigValue::Sl(&["Monospace 9"]),
-    },
-    ConfigItem {
-        s: "Options",
-        n: "scrollback_lines",
-        t: ConfigItemType::Int64,
-        l: None,
-        v: ConfigValue::I(5000),
-    },
-    ConfigItem {
-        s: "Options",
-        n: "link_regex",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("[a-z]+://[[:graph:]]+"),
-    },
-    ConfigItem {
-        s: "Options",
-        n: "link_handler",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("jterm2-link-handler"),
-    },
-    ConfigItem {
-        s: "Options",
-        n: "history_handler",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("jterm2-history-handler"),
-    },
-    ConfigItem {
-        s: "Options",
-        n: "cursor_blink_mode",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("VTE_CURSOR_BLINK_OFF"),
-    },
-    ConfigItem {
-        s: "Options",
-        n: "cursor_shape",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("VTE_CURSOR_SHAPE_BLOCK"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "forground",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("$AAAAAA"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "background",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("$000000"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "cursor",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("$00FF00"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "cursor_foreground",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("$000000"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "bold",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S(""), // Assuming NULL equivalent to empty string
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "dark_black",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("000000"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "dark_red",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("AA0000"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "dark_green",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("00AA00"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "dark_yellow",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("AA5500"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "dark_blue",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("0000AA"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "dark_magenta",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("AA00AA"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "dark_cyan",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("00AAAA"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "dark_white",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("AAAAAA"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "bright_black",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("555555"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "bright_red",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("FF5555"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "bright_green",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("55FF55"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "bright_yellow",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("FFFF55"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "bright_blue",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("5555FF"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "bright_magenta",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("FF55FF"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "bright_cyan",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("55FFFF"),
-    },
-    ConfigItem {
-        s: "Colors",
-        n: "bright_white",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("FFFFFF"),
-    },
-    ConfigItem {
-        s: "Controls",
-        n: "button_link",
-        t: ConfigItemType::Uint64,
-        l: None,
-        v: ConfigValue::Ui(3),
-    },
-    ConfigItem {
-        s: "Controls",
-        n: "key_copy_to_clipboard",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("C"),
-    },
-    ConfigItem {
-        s: "Controls",
-        n: "key_paste_from_clipboard",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("V"),
-    },
-    ConfigItem {
-        s: "Controls",
-        n: "key_handle_history",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("H"),
-    },
-    ConfigItem {
-        s: "Controls",
-        n: "key_next_font",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("N"),
-    },
-    ConfigItem {
-        s: "Controls",
-        n: "key_previous_font",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("P"),
-    },
-    ConfigItem {
-        s: "Controls",
-        n: "key_zoom_in",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("I"),
-    },
-    ConfigItem {
-        s: "Controls",
-        n: "key_zoom_out",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("O"),
-    },
-    ConfigItem {
-        s: "Controls",
-        n: "key_zoom_reset",
-        t: ConfigItemType::String,
-        l: None,
-        v: ConfigValue::S("R"),
-    },
-];
 
 struct Terminal {
     hold: gboolean,
