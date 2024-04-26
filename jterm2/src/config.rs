@@ -27,7 +27,7 @@ pub static CONFIG: Lazy<Mutex<Vec<ConfigItem>>> = Lazy::new(|| {
             n: "fonts",
             t: ConfigItemType::StringList,
             l: Some(1),
-            v: ConfigValue::Sl(&["Monospace 9"]),
+            v: ConfigValue::Sl(vec!["Monospace 9"]),
         },
         ConfigItem {
             s: "Options",

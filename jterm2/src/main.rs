@@ -9,8 +9,9 @@ use gtk::ffi::GtkWidget;
 use std::env;
 use std::ffi::c_char;
 use std::ffi::CStr;
-use std::os::raw::c_void;
+use std::i8;
 use std::path::PathBuf;
+use std::slice;
 use vte_sys::VteRegex;
 use vte_sys::VteTerminal;
 
@@ -33,7 +34,7 @@ pub enum ConfigItemType {
 #[derive(Debug, Clone)]
 pub enum ConfigValue<'a> {
     S(&'a str),
-    Sl(&'a [&'a str]),
+    Sl(Vec<&'a str>),
     B(gboolean),
     I(i64),
     Ui(u64),
@@ -130,14 +131,35 @@ fn ini_load(config_file: *mut c_char) {
                 if !p.is_null() {
                     if p == "NULL".as_ptr() as *const i8 {
                         conf.v = ConfigValue::S("");
-                        g_free(p as *mut c_void);
+                        // g_free(p as *mut c_void);
                     } else {
                         let c_str = CStr::from_ptr(p);
                         conf.v = ConfigValue::S(c_str.to_str().expect("convert fail"));
                     }
                 }
             },
-            ConfigItemType::StringList => {}
+            ConfigItemType::StringList => {
+                let mut len: usize = 0;
+                unsafe {
+                    let lst = g_key_file_get_string_list(
+                        ini,
+                        conf.s.as_ptr() as *const i8,
+                        conf.n.as_ptr() as *const i8,
+                        &mut len,
+                        &mut err,
+                    );
+                    if !lst.is_null() {
+                        let slice = slice::from_raw_parts(lst, len);
+                        let mut str_vec: Vec<&str> = Vec::new();
+                        for &c_str in slice {
+                            let tmp = CStr::from_ptr(c_str).to_str().unwrap();
+                            str_vec.push(tmp);
+                        }
+                        conf.v = ConfigValue::Sl(str_vec);
+                        conf.l = Some(len.try_into().unwrap());
+                    }
+                }
+            }
             ConfigItemType::Boolean => {}
             ConfigItemType::Int64 => {}
             ConfigItemType::Uint64 => {}
