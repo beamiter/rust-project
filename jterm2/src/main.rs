@@ -9,13 +9,13 @@ use gtk::ffi::GtkWidget;
 use std::env;
 use std::ffi::c_char;
 use std::ffi::CStr;
-use std::ffi::CString;
 use std::os::raw::c_void;
 use std::path::PathBuf;
 use vte_sys::VteRegex;
 use vte_sys::VteTerminal;
 
 mod config;
+use crate::config::CONFIG;
 
 const PCRE2_CODE_UNIT_WIDTH: i8 = 8;
 const NAME: &str = "jterm2";
@@ -48,7 +48,6 @@ pub struct ConfigItem<'a> {
     l: Option<u64>,
     v: ConfigValue<'a>,
 }
-
 
 struct Terminal {
     hold: gboolean,
@@ -87,7 +86,7 @@ fn get_keyval() -> u64 {
 fn handle_history(term: *mut VteTerminal) {}
 
 fn ini_load(config_file: *mut c_char) {
-    let mut p: *mut c_char = std::ptr::null_mut();
+    let mut p: *const c_char = std::ptr::null_mut();
     if config_file.is_null() {
         unsafe {
             let c_str = CStr::from_ptr(g_get_user_config_dir());
@@ -114,6 +113,35 @@ fn ini_load(config_file: *mut c_char) {
             }
         }
         g_free(p as *mut c_void);
+    }
+
+    let mut err: *mut GError = std::ptr::null_mut();
+    let mut Config = CONFIG.lock().unwrap();
+    for mut conf in (*Config).iter_mut() {
+        // println!("{:?}", config);
+        match conf.t {
+            ConfigItemType::String => unsafe {
+                p = g_key_file_get_string(
+                    ini,
+                    conf.s.as_ptr() as *const i8,
+                    conf.n.as_ptr() as *const i8,
+                    &mut err,
+                );
+                if !p.is_null() {
+                    if p == "NULL".as_ptr() as *const i8 {
+                        conf.v = ConfigValue::S("");
+                        g_free(p as *mut c_void);
+                    } else {
+                        let c_str = CStr::from_ptr(p);
+                        conf.v = ConfigValue::S(c_str.to_str().expect("convert fail"));
+                    }
+                }
+            },
+            ConfigItemType::StringList => {}
+            ConfigItemType::Boolean => {}
+            ConfigItemType::Int64 => {}
+            ConfigItemType::Uint64 => {}
+        }
     }
 }
 
