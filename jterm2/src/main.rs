@@ -3,9 +3,14 @@ extern crate gtk;
 extern crate vte;
 use gdk::ffi::GdkRGBA;
 use gdk::glib::ffi::GSpawnFlags;
+use gdk::glib::translate::from_glib_none;
 use glib::*;
 use glib_sys::*;
+use gtk::ffi::gtk_window_new;
+use gtk::ffi::gtk_window_set_title;
 use gtk::ffi::GtkWidget;
+use gtk::ffi::GtkWindow;
+use gtk::ffi::GTK_WINDOW_TOPLEVEL;
 use std::env;
 use std::ffi::c_char;
 use std::ffi::CStr;
@@ -317,6 +322,16 @@ fn term_new(t: *mut Terminal) {
     }
 
     ini_load(config_file);
+
+    // Create GKT+ widges.
+    unsafe {
+        (*t).win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+        // Cast *mut GtkWidget to *mut GtkWindow;
+        let window_ptr = (*t).win as *mut GtkWindow;
+        // Convert raw pointer to a safe wrapper
+        // let window: gtk::Window = from_glib_none(window_ptr);
+        gtk_window_set_title(window_ptr, title.as_ptr() as *const i8);
+    }
 }
 
 fn term_activate_current_font(_: *mut Terminal, _: gboolean) {}
