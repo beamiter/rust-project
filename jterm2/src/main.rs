@@ -138,31 +138,59 @@ fn ini_load(config_file: *mut c_char) {
                     }
                 }
             },
-            ConfigItemType::StringList => {
+            ConfigItemType::StringList => unsafe {
                 let mut len: usize = 0;
-                unsafe {
-                    let lst = g_key_file_get_string_list(
-                        ini,
-                        conf.s.as_ptr() as *const i8,
-                        conf.n.as_ptr() as *const i8,
-                        &mut len,
-                        &mut err,
-                    );
-                    if !lst.is_null() {
-                        let slice = slice::from_raw_parts(lst, len);
-                        let mut str_vec: Vec<&str> = Vec::new();
-                        for &c_str in slice {
-                            let tmp = CStr::from_ptr(c_str).to_str().unwrap();
-                            str_vec.push(tmp);
-                        }
-                        conf.v = ConfigValue::Sl(str_vec);
-                        conf.l = Some(len.try_into().unwrap());
+                let lst = g_key_file_get_string_list(
+                    ini,
+                    conf.s.as_ptr() as *const i8,
+                    conf.n.as_ptr() as *const i8,
+                    &mut len,
+                    &mut err,
+                );
+                if !lst.is_null() {
+                    let slice = slice::from_raw_parts(lst, len);
+                    let mut str_vec: Vec<&str> = Vec::new();
+                    for &c_str in slice {
+                        let tmp = CStr::from_ptr(c_str).to_str().unwrap();
+                        str_vec.push(tmp);
                     }
+                    conf.v = ConfigValue::Sl(str_vec);
+                    conf.l = Some(len.try_into().unwrap());
                 }
-            }
-            ConfigItemType::Boolean => {}
-            ConfigItemType::Int64 => {}
-            ConfigItemType::Uint64 => {}
+            },
+            ConfigItemType::Boolean => unsafe {
+                let ret = g_key_file_get_boolean(
+                    ini,
+                    conf.s.as_ptr() as *const i8,
+                    conf.n.as_ptr() as *const i8,
+                    &mut err,
+                );
+                if err.is_null() {
+                    conf.v = ConfigValue::B(ret);
+                }
+            },
+            ConfigItemType::Int64 => unsafe {
+                let int64 = g_key_file_get_int64(
+                    ini,
+                    conf.s.as_ptr() as *const i8,
+                    conf.n.as_ptr() as *const i8,
+                    &mut err,
+                );
+                if err.is_null() {
+                    conf.v = ConfigValue::I(int64);
+                }
+            },
+            ConfigItemType::Uint64 => unsafe {
+                let uint64 = g_key_file_get_uint64(
+                    ini,
+                    conf.s.as_ptr() as *const i8,
+                    conf.n.as_ptr() as *const i8,
+                    &mut err,
+                );
+                if err.is_null() {
+                    conf.v = ConfigValue::Ui(uint64);
+                }
+            },
         }
     }
 }
