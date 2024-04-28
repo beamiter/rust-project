@@ -3,7 +3,9 @@ extern crate gtk;
 extern crate vte;
 use gdk::ffi::GdkRGBA;
 use gdk::glib::ffi::GSpawnFlags;
-use gdk::glib::translate::from_glib_none;
+use gdk::glib::gobject_ffi::g_signal_connect_data;
+use gdk::glib::gobject_ffi::GCallback;
+use gdk::glib::gobject_ffi::GObject;
 use glib::*;
 use glib_sys::*;
 use gtk::ffi::gtk_window_new;
@@ -13,6 +15,7 @@ use gtk::ffi::GtkWindow;
 use gtk::ffi::GTK_WINDOW_TOPLEVEL;
 use std::env;
 use std::ffi::c_char;
+use std::ffi::c_void;
 use std::ffi::CStr;
 use std::i8;
 use std::path::PathBuf;
@@ -220,7 +223,7 @@ fn sig_key_press(_: *mut GtkWidget, _: *mut gdk::Event, _: Pointer) -> gboolean 
     0
 }
 
-fn sig_window_destroy(_: *mut GtkWidget, _: Pointer) {}
+fn sig_window_destroy(widget: *mut GtkWidget, data: Pointer) {}
 
 fn sig_window_resize(_: *mut VteTerminal, _: u64, _: u64, _: Pointer) {}
 
@@ -331,6 +334,17 @@ fn term_new(t: *mut Terminal) {
         // Convert raw pointer to a safe wrapper
         // let window: gtk::Window = from_glib_none(window_ptr);
         gtk_window_set_title(window_ptr, title.as_ptr() as *const i8);
+        let object_ptr = (*t).win as *mut GObject;
+        let signal: &str = "destroy";
+        g_signal_connect_data(
+            object_ptr,
+            signal.as_ptr() as *const i8,
+            // (TODO): Add callback.
+            None,
+            t as *mut c_void,
+            None,
+            0,
+        );
     }
 }
 
