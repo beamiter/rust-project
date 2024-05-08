@@ -80,7 +80,7 @@ impl Terminal {
     }
 }
 
-fn cb_spawn_async(term: *mut VteTerminal, pid: Pid, err: *mut GError, data: Pointer) {}
+fn cb_spawn_async(term: *mut VteTerminal, pid: Pid, err: *mut GError, data: gpointer) {}
 
 fn cfg(s: *const c_char, n: *const c_char) {}
 
@@ -205,29 +205,29 @@ fn ini_load(config_file: *mut c_char) {
 
 fn safe_emsg(_: *mut GError) {}
 
-fn sig_bell(_: *mut VteTerminal, _: Pointer) {}
+fn sig_bell(_: *mut VteTerminal, _: gpointer) {}
 
-fn sig_button_press(_: *mut GtkWidget, _: *mut gdk::Event, _: Pointer) {}
+fn sig_button_press(_: *mut GtkWidget, _: *mut gdk::Event, _: gpointer) {}
 
-fn sig_child_exited(_: *mut VteTerminal, _: i64, _: Pointer) {}
+fn sig_child_exited(_: *mut VteTerminal, _: i64, _: gpointer) {}
 
 fn sig_hyperlink_changed(
     _: *mut VteTerminal,
     _: *const c_char,
     _: *mut gdk::Rectangle,
-    _: Pointer,
+    _: gpointer,
 ) {
 }
 
-fn sig_key_press(_: *mut GtkWidget, _: *mut gdk::Event, _: Pointer) -> gboolean {
+fn sig_key_press(_: *mut GtkWidget, _: *mut gdk::Event, _: gpointer) -> gboolean {
     0
 }
 
-fn sig_window_destroy(widget: *mut GtkWidget, data: Pointer) {}
+fn sig_window_destroy(widget: *mut GtkWidget, data: gpointer) {}
 
-fn sig_window_resize(_: *mut VteTerminal, _: u64, _: u64, _: Pointer) {}
+fn sig_window_resize(_: *mut VteTerminal, _: u64, _: u64, _: gpointer) {}
 
-fn sig_window_title_changed(_: *mut VteTerminal, _: Pointer) {}
+fn sig_window_title_changed(_: *mut VteTerminal, _: gpointer) {}
 
 fn term_new(t: *mut Terminal) {
     let mut title: &str = "jterm2";
@@ -336,16 +336,17 @@ fn term_new(t: *mut Terminal) {
         gtk_window_set_title(window_ptr, title.as_ptr() as *const i8);
         let object_ptr = (*t).win as *mut GObject;
         let signal: &str = "destroy";
+        let callback: GCallback = Some(std::mem::transmute(sig_window_destroy as *const ()));
         g_signal_connect_data(
             object_ptr,
             signal.as_ptr() as *const i8,
-            // (TODO): Add callback.
-            None,
+            callback,
             t as *mut c_void,
             None,
             0,
         );
     }
+    println!("fuck haha");
 }
 
 fn term_activate_current_font(_: *mut Terminal, _: gboolean) {}
