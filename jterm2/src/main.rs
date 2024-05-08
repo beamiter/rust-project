@@ -127,6 +127,8 @@ fn ini_load(config_file: *mut c_char) {
     let mut err: *mut GError = std::ptr::null_mut();
     let mut Config = CONFIG.lock().unwrap();
     for mut conf in (*Config).iter_mut() {
+        // Free any existing error before attemping to reuse the GError* variable.
+        err = std::ptr::null_mut();
         // println!("{:?}", config);
         match conf.t {
             ConfigItemType::String => unsafe {
