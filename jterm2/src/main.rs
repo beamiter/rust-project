@@ -26,6 +26,7 @@ use std::env;
 use std::ffi::c_char;
 use std::ffi::c_void;
 use std::ffi::CStr;
+use std::ffi::CString;
 use std::i8;
 use std::path::PathBuf;
 use std::slice;
@@ -429,27 +430,25 @@ fn term_new(t: *mut Terminal) {
         }
         vte_terminal_set_allow_hyperlink((*t).term as *mut VteTerminal, GTRUE);
 
+        // In Rust, to convert a &str (a string slice) into a *const c_char (a pointer to a C-style character array), you need to use the CString type provided by the standard library's std::ffi module. A CString is an owned, null-terminated string that can be used with FFI (Foreign Function Interface).
         if let ConfigValue::S(s) = cfg("Colors", "foreground").unwrap().v {
-            gdk_rgba_parse(&mut c_foreground_gdk, s.as_ptr() as *const c_char);
+            let c_string = CString::new(s).expect("failed");
+            gdk_rgba_parse(&mut c_foreground_gdk, c_string.as_ptr());
             println!("{} foreground: {:?}", s, c_foreground_gdk);
         }
         if let ConfigValue::S(s) = cfg("Colors", "background").unwrap().v {
-            gdk_rgba_parse(&mut c_background_gdk, s.as_ptr() as *const c_char);
+            let c_string = CString::new(s).expect("failed");
+            gdk_rgba_parse(&mut c_background_gdk, c_string.as_ptr());
             println!("{} background: {:?}", s, c_background_gdk);
         }
         let mut c_palette_gdk: [GdkRGBA; 16] = std::mem::zeroed();
         for i in 0..16 {
             if let ConfigValue::S(s) = cfg("Colors", standard16order[i]).unwrap().v {
-                println!(
-                    "{}",
-                    gdk_rgba_parse(
-                        c_palette_gdk.as_mut_ptr().add(i),
-                        s.as_ptr() as *const c_char
-                    )
-                );
+                let c_string = CString::new(s).expect("failed");
+                gdk_rgba_parse(c_palette_gdk.as_mut_ptr().add(i), c_string.as_ptr());
             }
         }
-        // println!("{:?}", c_palette_gdk);
+        println!("{:?}", c_palette_gdk);
     }
     println!("fuck haha");
 }
