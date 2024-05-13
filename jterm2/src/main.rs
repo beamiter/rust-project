@@ -1,5 +1,6 @@
 extern crate gdk;
 extern crate gtk;
+use gdk::ffi::gdk_rgba_parse;
 use gdk::ffi::GdkRGBA;
 use gdk::glib::ffi::GSpawnFlags;
 use gdk::glib::gobject_ffi::g_signal_connect_data;
@@ -21,7 +22,6 @@ use gtk::ffi::GtkRequisition;
 use gtk::ffi::GtkWidget;
 use gtk::ffi::GtkWindow;
 use gtk::ffi::GTK_WINDOW_TOPLEVEL;
-use vte_sys::vte_terminal_set_allow_hyperlink;
 use std::env;
 use std::ffi::c_char;
 use std::ffi::c_void;
@@ -32,6 +32,7 @@ use std::slice;
 use vte_sys::vte_terminal_get_column_count;
 use vte_sys::vte_terminal_get_row_count;
 use vte_sys::vte_terminal_new;
+use vte_sys::vte_terminal_set_allow_hyperlink;
 use vte_sys::vte_terminal_set_bold_is_bright;
 use vte_sys::vte_terminal_set_cursor_blink_mode;
 use vte_sys::vte_terminal_set_cursor_shape;
@@ -294,23 +295,23 @@ fn term_new(t: *mut Terminal) {
     let mut title: &str = "jterm2";
     let mut res_class: &str = "Jterm2";
     let mut res_name: &str = "jterm2";
-    let c_foreground_gdk = GdkRGBA {
-        red: 0.0,
-        green: 0.0,
-        blue: 0.0,
-        alpha: 0.0,
+    let mut c_foreground_gdk: GdkRGBA = GdkRGBA {
+        red: 0.,
+        green: 0.,
+        blue: 0.,
+        alpha: 0.,
     };
-    let c_background_gdk = GdkRGBA {
-        red: 0.0,
-        green: 0.0,
-        blue: 0.0,
-        alpha: 0.0,
+    let mut c_background_gdk: GdkRGBA = GdkRGBA {
+        red: 0.,
+        green: 0.,
+        blue: 0.,
+        alpha: 0.,
     };
-    let c_gdk = GdkRGBA {
-        red: 0.0,
-        green: 0.0,
-        blue: 0.0,
-        alpha: 0.0,
+    let mut c_gdk: GdkRGBA = GdkRGBA {
+        red: 0.,
+        green: 0.,
+        blue: 0.,
+        alpha: 0.,
     };
     let url_vregex: *mut VteRegex = std::ptr::null_mut();
     let err: *mut GError = std::ptr::null_mut();
@@ -427,6 +428,28 @@ fn term_new(t: *mut Terminal) {
             vte_terminal_set_scrollback_lines((*t).term as *mut VteTerminal, i);
         }
         vte_terminal_set_allow_hyperlink((*t).term as *mut VteTerminal, GTRUE);
+
+        if let ConfigValue::S(s) = cfg("Colors", "foreground").unwrap().v {
+            gdk_rgba_parse(&mut c_foreground_gdk, s.as_ptr() as *const c_char);
+            println!("{} foreground: {:?}", s, c_foreground_gdk);
+        }
+        if let ConfigValue::S(s) = cfg("Colors", "background").unwrap().v {
+            gdk_rgba_parse(&mut c_background_gdk, s.as_ptr() as *const c_char);
+            println!("{} background: {:?}", s, c_background_gdk);
+        }
+        let mut c_palette_gdk: [GdkRGBA; 16] = std::mem::zeroed();
+        for i in 0..16 {
+            if let ConfigValue::S(s) = cfg("Colors", standard16order[i]).unwrap().v {
+                println!(
+                    "{}",
+                    gdk_rgba_parse(
+                        c_palette_gdk.as_mut_ptr().add(i),
+                        s.as_ptr() as *const c_char
+                    )
+                );
+            }
+        }
+        // println!("{:?}", c_palette_gdk);
     }
     println!("fuck haha");
 }
