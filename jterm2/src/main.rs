@@ -1,15 +1,23 @@
 extern crate gdk;
 extern crate gtk;
-extern crate vte;
 use gdk::ffi::GdkRGBA;
 use gdk::glib::ffi::GSpawnFlags;
 use gdk::glib::gobject_ffi::g_signal_connect_data;
 use gdk::glib::gobject_ffi::GCallback;
 use gdk::glib::gobject_ffi::GObject;
+use gdk::pango::ffi::pango_font_description_free;
+use gdk::pango::ffi::pango_font_description_from_string;
+use gdk::pango::ffi::PangoFontDescription;
 use glib::*;
 use glib_sys::*;
+use gtk::ffi::GtkRequisition;
+use gtk::ffi::gtk_container_add;
+use gtk::ffi::gtk_widget_get_preferred_size;
+use gtk::ffi::gtk_widget_show_all;
 use gtk::ffi::gtk_window_new;
+use gtk::ffi::gtk_window_resize;
 use gtk::ffi::gtk_window_set_title;
+use gtk::ffi::GtkContainer;
 use gtk::ffi::GtkWidget;
 use gtk::ffi::GtkWindow;
 use gtk::ffi::GTK_WINDOW_TOPLEVEL;
@@ -20,6 +28,12 @@ use std::ffi::CStr;
 use std::i8;
 use std::path::PathBuf;
 use std::slice;
+use vte_sys::vte_terminal_get_column_count;
+use vte_sys::vte_terminal_get_row_count;
+use vte_sys::vte_terminal_new;
+use vte_sys::vte_terminal_set_font;
+use vte_sys::vte_terminal_set_font_scale;
+use vte_sys::vte_terminal_set_size;
 use vte_sys::VteRegex;
 use vte_sys::VteTerminal;
 
@@ -82,7 +96,15 @@ impl Terminal {
 
 fn cb_spawn_async(term: *mut VteTerminal, pid: Pid, err: *mut GError, data: gpointer) {}
 
-fn cfg(s: *const c_char, n: *const c_char) {}
+fn cfg<'a>(s: &'a str, n: &'a str) -> Option<ConfigItem<'a>> {
+    let Config = CONFIG.lock().unwrap();
+    for conf in (*Config).iter() {
+        if conf.s == s && conf.n == n {
+            return Some(conf.clone());
+        }
+    }
+    return None;
+}
 
 fn get_cursor_blink_mode() {}
 
@@ -347,15 +369,63 @@ fn term_new(t: *mut Terminal) {
             None,
             0,
         );
+        let app_id = format!("{}.{}", res_name, res_class);
+        println!("{}", app_id);
+        g_set_prgname(app_id.as_ptr() as *const i8);
+
+        (*t).term = vte_terminal_new() as *mut GtkWidget;
+        gtk_container_add((*t).win as *mut GtkContainer, (*t).term);
+
+        // Appearance
+        term_activate_current_font(t, 0);
+        gtk_widget_show_all((*t).win);
     }
     println!("fuck haha");
 }
 
-fn term_activate_current_font(_: *mut Terminal, _: gboolean) {}
+fn term_activate_current_font(t: *mut Terminal, win_ready: gboolean) {
+    let mut font_desc: *mut PangoFontDescription = std::ptr::null_mut();
+    if let Some(item) = cfg("Options", "fonts") {
+        unsafe {
+            if (*t).current_font >= item.l.unwrap().try_into().unwrap() {
+                eprintln!(": Warning: Invalid font index");
+                return;
+            }
+            if let ConfigValue::Sl(sl) = item.v {
+                let cur_font = sl[(*t).current_font];
+                println!("cur font: {}", cur_font);
+                font_desc = pango_font_description_from_string(cur_font.as_ptr() as *const i8);
+            }
+        }
+    }
+    unsafe {
+        let width = vte_terminal_get_column_count((*t).term as *mut VteTerminal);
+        let height = vte_terminal_get_row_count((*t).term as *mut VteTerminal);
+        println!("width: {}, height: {}", width, height);
+
+        vte_terminal_set_font((*t).term as *mut VteTerminal, font_desc as *const _);
+        pango_font_description_free(font_desc);
+        vte_terminal_set_font_scale((*t).term as *mut VteTerminal, 1.0);
+
+        term_set_size(t, width, height, win_ready);
+    }
+}
 
 fn term_change_font_scale(_: *mut Terminal, _: i64) {}
 
-fn term_set_size(_: *mut Terminal, _: u64, _: u64, _: gboolean) {}
+fn term_set_size(t: *mut Terminal, width: i64, height: i64, win_ready: gboolean) {
+    unsafe {
+        if width > 0 && height > 0 {
+            vte_terminal_set_size((*t).term as *mut VteTerminal, width, height);
+        }
+        if win_ready > 0 {
+            let natural: *mut GtkRequisition = std::ptr::null_mut();
+            gtk_widget_get_preferred_size((*t).term, std::ptr::null_mut(), natural);
+            println!("natural: {:?}", *natural);
+            gtk_window_resize((*t).win as *mut GtkWindow, (*natural).width, (*natural).height);
+        }
+    }
+}
 
 fn main() {
     let mut t = Terminal::new();
