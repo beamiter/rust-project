@@ -10,7 +10,6 @@ use gdk::pango::ffi::pango_font_description_from_string;
 use gdk::pango::ffi::PangoFontDescription;
 use glib::*;
 use glib_sys::*;
-use gtk::ffi::GtkRequisition;
 use gtk::ffi::gtk_container_add;
 use gtk::ffi::gtk_widget_get_preferred_size;
 use gtk::ffi::gtk_widget_show_all;
@@ -18,9 +17,11 @@ use gtk::ffi::gtk_window_new;
 use gtk::ffi::gtk_window_resize;
 use gtk::ffi::gtk_window_set_title;
 use gtk::ffi::GtkContainer;
+use gtk::ffi::GtkRequisition;
 use gtk::ffi::GtkWidget;
 use gtk::ffi::GtkWindow;
 use gtk::ffi::GTK_WINDOW_TOPLEVEL;
+use vte_sys::vte_terminal_set_allow_hyperlink;
 use std::env;
 use std::ffi::c_char;
 use std::ffi::c_void;
@@ -31,11 +32,24 @@ use std::slice;
 use vte_sys::vte_terminal_get_column_count;
 use vte_sys::vte_terminal_get_row_count;
 use vte_sys::vte_terminal_new;
+use vte_sys::vte_terminal_set_bold_is_bright;
+use vte_sys::vte_terminal_set_cursor_blink_mode;
+use vte_sys::vte_terminal_set_cursor_shape;
 use vte_sys::vte_terminal_set_font;
 use vte_sys::vte_terminal_set_font_scale;
+use vte_sys::vte_terminal_set_mouse_autohide;
+use vte_sys::vte_terminal_set_scrollback_lines;
 use vte_sys::vte_terminal_set_size;
+use vte_sys::VteCursorBlinkMode;
+use vte_sys::VteCursorShape;
 use vte_sys::VteRegex;
 use vte_sys::VteTerminal;
+use vte_sys::VTE_CURSOR_BLINK_OFF;
+use vte_sys::VTE_CURSOR_BLINK_ON;
+use vte_sys::VTE_CURSOR_BLINK_SYSTEM;
+use vte_sys::VTE_CURSOR_SHAPE_BLOCK;
+use vte_sys::VTE_CURSOR_SHAPE_IBEAM;
+use vte_sys::VTE_CURSOR_SHAPE_UNDERLINE;
 
 mod config;
 use crate::config::CONFIG;
@@ -100,15 +114,38 @@ fn cfg<'a>(s: &'a str, n: &'a str) -> Option<ConfigItem<'a>> {
     let Config = CONFIG.lock().unwrap();
     for conf in (*Config).iter() {
         if conf.s == s && conf.n == n {
+            println!("s: {}, n: {}", s, n);
             return Some(conf.clone());
         }
     }
     return None;
 }
 
-fn get_cursor_blink_mode() {}
+fn get_cursor_blink_mode() -> VteCursorBlinkMode {
+    if let ConfigValue::S(s) = cfg("Options", "cursor_blink_mode").unwrap().v {
+        if s == "VTE_CURSOR_BLINK_SYSTEM" {
+            return VTE_CURSOR_BLINK_SYSTEM;
+        } else if s == "VTE_CURSOR_BLINK_OFF" {
+            return VTE_CURSOR_BLINK_OFF;
+        } else {
+            return VTE_CURSOR_BLINK_ON;
+        }
+    }
+    return VTE_CURSOR_BLINK_ON;
+}
 
-fn get_cursor_shape() {}
+fn get_cursor_shape() -> VteCursorShape {
+    if let ConfigValue::S(s) = cfg("Options", "cursor_shape").unwrap().v {
+        if s == "VTE_CURSOR_SHAPE_IBEAM" {
+            return VTE_CURSOR_SHAPE_IBEAM;
+        } else if s == "VTE_CURSOR_SHAPE_UNDERLINE" {
+            return VTE_CURSOR_SHAPE_UNDERLINE;
+        } else {
+            return VTE_CURSOR_SHAPE_BLOCK;
+        }
+    }
+    return VTE_CURSOR_SHAPE_BLOCK;
+}
 
 fn get_keyval() -> u64 {
     0
@@ -379,6 +416,17 @@ fn term_new(t: *mut Terminal) {
         // Appearance
         term_activate_current_font(t, 0);
         gtk_widget_show_all((*t).win);
+
+        if let ConfigValue::B(b) = cfg("Options", "bold_is_bright").unwrap().v {
+            vte_terminal_set_bold_is_bright((*t).term as *mut VteTerminal, b);
+        }
+        vte_terminal_set_cursor_blink_mode((*t).term as *mut VteTerminal, get_cursor_blink_mode());
+        vte_terminal_set_cursor_shape((*t).term as *mut VteTerminal, get_cursor_shape());
+        vte_terminal_set_mouse_autohide((*t).term as *mut VteTerminal, GTRUE);
+        if let ConfigValue::I(i) = cfg("Options", "scrollback_lines").unwrap().v {
+            vte_terminal_set_scrollback_lines((*t).term as *mut VteTerminal, i);
+        }
+        vte_terminal_set_allow_hyperlink((*t).term as *mut VteTerminal, GTRUE);
     }
     println!("fuck haha");
 }
@@ -422,7 +470,11 @@ fn term_set_size(t: *mut Terminal, width: i64, height: i64, win_ready: gboolean)
             let natural: *mut GtkRequisition = std::ptr::null_mut();
             gtk_widget_get_preferred_size((*t).term, std::ptr::null_mut(), natural);
             println!("natural: {:?}", *natural);
-            gtk_window_resize((*t).win as *mut GtkWindow, (*natural).width, (*natural).height);
+            gtk_window_resize(
+                (*t).win as *mut GtkWindow,
+                (*natural).width,
+                (*natural).height,
+            );
         }
     }
 }
