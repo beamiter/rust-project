@@ -2,6 +2,7 @@ use gdk_sys::gdk_rgba_parse;
 use gdk_sys::GdkEvent;
 use gdk_sys::GdkRGBA;
 use gdk_sys::GdkRectangle;
+use glib_sys::g_clear_error;
 use glib_sys::g_file_test;
 use glib_sys::g_get_user_config_dir;
 use glib_sys::g_key_file_get_boolean;
@@ -21,6 +22,7 @@ use glib_sys::GSpawnFlags;
 use glib_sys::GTRUE;
 use glib_sys::G_FILE_TEST_EXISTS;
 use glib_sys::G_KEY_FILE_NONE;
+use glib_sys::G_SPAWN_SEARCH_PATH;
 use gobject_sys::g_signal_connect_data;
 use gobject_sys::GCallback;
 use gobject_sys::GObject;
@@ -40,6 +42,8 @@ use gtk_sys::GTK_WINDOW_TOPLEVEL;
 use pango_sys::pango_font_description_free;
 use pango_sys::pango_font_description_from_string;
 use pango_sys::PangoFontDescription;
+use pcre2_sys::PCRE2_CASELESS;
+use pcre2_sys::PCRE2_MULTILINE;
 use std::env;
 use std::ffi::c_char;
 use std::ffi::c_void;
@@ -49,8 +53,10 @@ use std::i8;
 use std::path::PathBuf;
 use std::slice;
 use vte_sys::vte_regex_new_for_match;
+use vte_sys::vte_regex_unref;
 use vte_sys::vte_terminal_get_column_count;
 use vte_sys::vte_terminal_get_row_count;
+use vte_sys::vte_terminal_match_add_regex;
 use vte_sys::vte_terminal_new;
 use vte_sys::vte_terminal_set_allow_hyperlink;
 use vte_sys::vte_terminal_set_bold_is_bright;
@@ -276,9 +282,16 @@ fn ini_load(config_file: *mut c_char) {
     }
 }
 
-fn safe_emsg(_: *mut GError) {}
+unsafe fn safe_emsg(err: *mut GError) -> &'static str {
+    if err.is_null() {
+        return "<GError is NULL>";
+    } else {
+        let c_str = CStr::from_ptr((*err).message);
+        return c_str.to_str().expect("invalid utf-8");
+    }
+}
 
-fn sig_bell(_: *mut VteTerminal, _: gpointer) {}
+fn sig_bell(term: *mut VteTerminal, data: gpointer) {}
 
 fn sig_button_press(_: *mut GtkWidget, _: *mut GdkEvent, _: gpointer) {}
 
@@ -319,8 +332,8 @@ fn term_new(t: *mut Terminal) {
         blue: 0.,
         alpha: 0.,
     };
-    let url_vregex: *mut VteRegex = std::ptr::null_mut();
-    let err: *mut GError = std::ptr::null_mut();
+    let url_vregex: *mut VteRegex;
+    let mut err: *mut GError = std::ptr::null_mut();
     let standard16order: Vec<&str> = vec![
         "dark_black",
         "dark_red",
@@ -349,6 +362,10 @@ fn term_new(t: *mut Terminal) {
         "Number of arguments (excluding program name): {}",
         args.len() - 1
     );
+    let argv_cmdline: &str = "";
+    let mut args_use: &str = "";
+    let mut spawn_flags: GSpawnFlags;
+    let mut args_default = vec![""; 3];
     let config_file: *mut c_char = std::ptr::null_mut();
     let mut iter = args.iter().enumerate().skip(1);
     while let Some((_, arg)) = iter.next() {
@@ -383,7 +400,7 @@ fn term_new(t: *mut Terminal) {
                 }
             }
         } else if arg == "-e" {
-            if let Some((_, _)) = iter.next() {
+            if let Some((_, argv_cmdline)) = iter.next() {
                 break;
             }
         } else {
@@ -403,11 +420,10 @@ fn term_new(t: *mut Terminal) {
         // let window: gtk::Window = from_glib_none(window_ptr);
         c_string = CString::new(title).expect("failed to convert");
         gtk_window_set_title(window_ptr, c_string.as_ptr());
-        let object_ptr = (*t).win as *mut GObject;
         let callback: GCallback = Some(std::mem::transmute(sig_window_destroy as *const ()));
         c_string = CString::new("destroy").expect("failed to convert");
         g_signal_connect_data(
-            object_ptr,
+            (*t).win as *mut GObject,
             c_string.as_ptr(),
             callback,
             t as *mut c_void,
@@ -456,6 +472,7 @@ fn term_new(t: *mut Terminal) {
                 gdk_rgba_parse(c_palette_gdk.as_mut_ptr().add(i), c_string.as_ptr());
             }
         }
+        println!("{:?}", c_palette_gdk);
         let c_foreground_gdk_ptr: *const GdkRGBA = &c_foreground_gdk;
         let c_background_gdk_ptr: *const GdkRGBA = &c_background_gdk;
         vte_terminal_set_colors(
@@ -505,12 +522,96 @@ fn term_new(t: *mut Terminal) {
             url_vregex = vte_regex_new_for_match(
                 c_string.as_ptr(),
                 link_regex.len().try_into().unwrap(),
-                PCRE2_MULTILINE,
+                PCRE2_MULTILINE | PCRE2_CASELESS,
                 &mut err,
             );
+            if url_vregex.is_null() {
+                println!("link regex: {}", safe_emsg(err));
+                g_clear_error(&mut err);
+            } else {
+                vte_terminal_match_add_regex((*t).term as *mut VteTerminal, url_vregex, 0);
+                vte_regex_unref(url_vregex);
+            }
         }
 
-        println!("{:?}", c_palette_gdk);
+        // Signals.
+        let callback: GCallback = Some(std::mem::transmute(sig_bell as *const ()));
+        c_string = CString::new("bell").expect("failed to convert");
+        g_signal_connect_data(
+            (*t).term as *mut GObject,
+            c_string.as_ptr(),
+            callback,
+            t as *mut c_void,
+            None,
+            0,
+        );
+        let callback: GCallback = Some(std::mem::transmute(sig_button_press as *const ()));
+        c_string = CString::new("button-press-event").expect("failed to convert");
+        g_signal_connect_data(
+            (*t).term as *mut GObject,
+            c_string.as_ptr(),
+            callback,
+            t as *mut c_void,
+            None,
+            0,
+        );
+        let callback: GCallback = Some(std::mem::transmute(sig_child_exited as *const ()));
+        c_string = CString::new("child-exited").expect("failed to convert");
+        g_signal_connect_data(
+            (*t).term as *mut GObject,
+            c_string.as_ptr(),
+            callback,
+            t as *mut c_void,
+            None,
+            0,
+        );
+        let callback: GCallback = Some(std::mem::transmute(sig_hyperlink_changed as *const ()));
+        c_string = CString::new("hyperlink-hover-uri-changed").expect("failed to convert");
+        g_signal_connect_data(
+            (*t).term as *mut GObject,
+            c_string.as_ptr(),
+            callback,
+            t as *mut c_void,
+            None,
+            0,
+        );
+        let callback: GCallback = Some(std::mem::transmute(sig_key_press as *const ()));
+        c_string = CString::new("key-press-event").expect("failed to convert");
+        g_signal_connect_data(
+            (*t).term as *mut GObject,
+            c_string.as_ptr(),
+            callback,
+            t as *mut c_void,
+            None,
+            0,
+        );
+        let callback: GCallback = Some(std::mem::transmute(sig_window_resize as *const ()));
+        c_string = CString::new("resize-window").expect("failed to convert");
+        g_signal_connect_data(
+            (*t).term as *mut GObject,
+            c_string.as_ptr(),
+            callback,
+            t as *mut c_void,
+            None,
+            0,
+        );
+        let callback: GCallback = Some(std::mem::transmute(sig_window_title_changed as *const ()));
+        c_string = CString::new("window-title-changed").expect("failed to convert");
+        g_signal_connect_data(
+            (*t).term as *mut GObject,
+            c_string.as_ptr(),
+            callback,
+            t as *mut c_void,
+            None,
+            0,
+        );
+
+        // Spawn child.
+        if !argv_cmdline.is_empty() {
+            args_use = argv_cmdline;
+            spawn_flags = G_SPAWN_SEARCH_PATH;
+        } else {
+        }
     }
     println!("fuck haha");
 }
