@@ -2,6 +2,7 @@ use gdk_sys::gdk_rgba_parse;
 use gdk_sys::GdkEvent;
 use gdk_sys::GdkRGBA;
 use gdk_sys::GdkRectangle;
+use glib_sys::G_SPAWN_FILE_AND_ARGV_ZERO;
 use glib_sys::g_clear_error;
 use glib_sys::g_file_test;
 use glib_sys::g_get_user_config_dir;
@@ -13,6 +14,7 @@ use glib_sys::g_key_file_get_uint64;
 use glib_sys::g_key_file_load_from_file;
 use glib_sys::g_key_file_new;
 use glib_sys::g_set_prgname;
+use glib_sys::g_strdup_printf;
 use glib_sys::g_strup;
 use glib_sys::gboolean;
 use glib_sys::gpointer;
@@ -52,6 +54,7 @@ use std::ffi::CString;
 use std::i8;
 use std::path::PathBuf;
 use std::slice;
+use vte_sys::vte_get_user_shell;
 use vte_sys::vte_regex_new_for_match;
 use vte_sys::vte_regex_unref;
 use vte_sys::vte_terminal_get_column_count;
@@ -611,6 +614,23 @@ fn term_new(t: *mut Terminal) {
             args_use = argv_cmdline;
             spawn_flags = G_SPAWN_SEARCH_PATH;
         } else {
+            if args_default[0].is_empty() {
+                let c_str = CStr::from_ptr(vte_get_user_shell());
+                args_default[0] = c_str.to_str().unwrap();
+                if args_default[0].is_empty() {
+                    args_default[0] = "/bin/sh";
+                }
+                if let ConfigValue::B(b) = cfg("Options", "login_shell").unwrap().v {
+                    if b > 0 {
+                        args_default[1] = format!("-{}", args_default[0]).as_str();
+                    } else {
+                        args_default[1] = args_default[0];
+                    }
+                }
+            }
+            // (TODO)
+            // args_use = args_default;
+            spawn_flags = G_SPAWN_SEARCH_PATH | G_SPAWN_FILE_AND_ARGV_ZERO;
         }
     }
     println!("fuck haha");
