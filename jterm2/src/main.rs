@@ -113,8 +113,8 @@ impl Terminal {
 fn cb_spawn_async(term: *mut VteTerminal, pid: Pid, err: *mut GError, data: gpointer) {}
 
 fn cfg<'a>(s: &'a str, n: &'a str) -> Option<ConfigItem<'a>> {
-    let Config = CONFIG.lock().unwrap();
-    for conf in (*Config).iter() {
+    let config = CONFIG.lock().unwrap();
+    for conf in (*config).iter() {
         if conf.s == s && conf.n == n {
             println!("s: {}, n: {}", s, n);
             return Some(conf.clone());
@@ -185,24 +185,23 @@ fn ini_load(config_file: *mut c_char) {
         // g_free(p as *mut c_void);
     }
 
-    let mut err: *mut GError = std::ptr::null_mut();
-    let mut Config = CONFIG.lock().unwrap();
-    for mut conf in (*Config).iter_mut() {
+    let mut err: *mut GError;
+    let mut config = CONFIG.lock().unwrap();
+    let mut c_string_s: CString;
+    let mut c_string_n: CString;
+    for conf in (*config).iter_mut() {
         // Free any existing error before attemping to reuse the GError* variable.
         err = std::ptr::null_mut();
         // println!("{:?}", config);
+        c_string_s = CString::new(conf.s).expect("failed to convert");
+        c_string_n = CString::new(conf.n).expect("failed to convert");
         match conf.t {
             ConfigItemType::String => unsafe {
-                p = g_key_file_get_string(
-                    ini,
-                    conf.s.as_ptr() as *const i8,
-                    conf.n.as_ptr() as *const i8,
-                    &mut err,
-                );
+                p = g_key_file_get_string(ini, c_string_s.as_ptr(), c_string_n.as_ptr(), &mut err);
                 if !p.is_null() {
-                    if p == "NULL".as_ptr() as *const i8 {
+                    let c_string = CString::new("NULL").unwrap();
+                    if p == c_string.as_ptr() {
                         conf.v = ConfigValue::S("");
-                        // g_free(p as *mut c_void);
                     } else {
                         let c_str = CStr::from_ptr(p);
                         conf.v = ConfigValue::S(c_str.to_str().expect("convert fail"));
@@ -213,8 +212,8 @@ fn ini_load(config_file: *mut c_char) {
                 let mut len: usize = 0;
                 let lst = g_key_file_get_string_list(
                     ini,
-                    conf.s.as_ptr() as *const i8,
-                    conf.n.as_ptr() as *const i8,
+                    c_string_s.as_ptr(),
+                    c_string_n.as_ptr(),
                     &mut len,
                     &mut err,
                 );
@@ -230,34 +229,22 @@ fn ini_load(config_file: *mut c_char) {
                 }
             },
             ConfigItemType::Boolean => unsafe {
-                let ret = g_key_file_get_boolean(
-                    ini,
-                    conf.s.as_ptr() as *const i8,
-                    conf.n.as_ptr() as *const i8,
-                    &mut err,
-                );
+                let ret =
+                    g_key_file_get_boolean(ini, c_string_s.as_ptr(), c_string_n.as_ptr(), &mut err);
                 if err.is_null() {
                     conf.v = ConfigValue::B(ret);
                 }
             },
             ConfigItemType::Int64 => unsafe {
-                let int64 = g_key_file_get_int64(
-                    ini,
-                    conf.s.as_ptr() as *const i8,
-                    conf.n.as_ptr() as *const i8,
-                    &mut err,
-                );
+                let int64 =
+                    g_key_file_get_int64(ini, c_string_s.as_ptr(), c_string_n.as_ptr(), &mut err);
                 if err.is_null() {
                     conf.v = ConfigValue::I(int64);
                 }
             },
             ConfigItemType::Uint64 => unsafe {
-                let uint64 = g_key_file_get_uint64(
-                    ini,
-                    conf.s.as_ptr() as *const i8,
-                    conf.n.as_ptr() as *const i8,
-                    &mut err,
-                );
+                let uint64 =
+                    g_key_file_get_uint64(ini, c_string_s.as_ptr(), c_string_n.as_ptr(), &mut err);
                 if err.is_null() {
                     conf.v = ConfigValue::Ui(uint64);
                 }
@@ -345,7 +332,7 @@ fn term_new(t: *mut Terminal) {
         "Number of arguments (excluding program name): {}",
         args.len() - 1
     );
-    let mut config_file: *mut c_char = std::ptr::null_mut();
+    let config_file: *mut c_char = std::ptr::null_mut();
     let mut iter = args.iter().enumerate().skip(1);
     while let Some((_, arg)) = iter.next() {
         println!("{}", arg);
@@ -379,7 +366,7 @@ fn term_new(t: *mut Terminal) {
                 }
             }
         } else if arg == "-e" {
-            if let Some((_, argv_cmdline)) = iter.next() {
+            if let Some((_, _)) = iter.next() {
                 break;
             }
         } else {
@@ -391,18 +378,20 @@ fn term_new(t: *mut Terminal) {
 
     // Create GKT+ widges.
     unsafe {
+        let mut c_string: CString;
         (*t).win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
         // Cast *mut GtkWidget to *mut GtkWindow;
         let window_ptr = (*t).win as *mut GtkWindow;
         // Convert raw pointer to a safe wrapper
         // let window: gtk::Window = from_glib_none(window_ptr);
-        gtk_window_set_title(window_ptr, title.as_ptr() as *const i8);
+        c_string = CString::new(title).expect("failed to convert");
+        gtk_window_set_title(window_ptr, c_string.as_ptr());
         let object_ptr = (*t).win as *mut GObject;
-        let signal: &str = "destroy";
         let callback: GCallback = Some(std::mem::transmute(sig_window_destroy as *const ()));
+        c_string = CString::new("destroy").expect("failed to convert");
         g_signal_connect_data(
             object_ptr,
-            signal.as_ptr() as *const i8,
+            c_string.as_ptr(),
             callback,
             t as *mut c_void,
             None,
@@ -410,7 +399,8 @@ fn term_new(t: *mut Terminal) {
         );
         let app_id = format!("{}.{}", res_name, res_class);
         println!("{}", app_id);
-        g_set_prgname(app_id.as_ptr() as *const i8);
+        c_string = CString::new(app_id).expect("failed to convert");
+        g_set_prgname(c_string.as_ptr());
 
         (*t).term = vte_terminal_new() as *mut GtkWidget;
         gtk_container_add((*t).win as *mut GtkContainer, (*t).term);
@@ -431,20 +421,21 @@ fn term_new(t: *mut Terminal) {
         vte_terminal_set_allow_hyperlink((*t).term as *mut VteTerminal, GTRUE);
 
         // In Rust, to convert a &str (a string slice) into a *const c_char (a pointer to a C-style character array), you need to use the CString type provided by the standard library's std::ffi module. A CString is an owned, null-terminated string that can be used with FFI (Foreign Function Interface).
+        let mut c_string: CString;
         if let ConfigValue::S(s) = cfg("Colors", "foreground").unwrap().v {
-            let c_string = CString::new(s).expect("failed");
+            c_string = CString::new(s).expect("failed");
             gdk_rgba_parse(&mut c_foreground_gdk, c_string.as_ptr());
             println!("{} foreground: {:?}", s, c_foreground_gdk);
         }
         if let ConfigValue::S(s) = cfg("Colors", "background").unwrap().v {
-            let c_string = CString::new(s).expect("failed");
+            c_string = CString::new(s).expect("failed");
             gdk_rgba_parse(&mut c_background_gdk, c_string.as_ptr());
             println!("{} background: {:?}", s, c_background_gdk);
         }
         let mut c_palette_gdk: [GdkRGBA; 16] = std::mem::zeroed();
         for i in 0..16 {
             if let ConfigValue::S(s) = cfg("Colors", standard16order[i]).unwrap().v {
-                let c_string = CString::new(s).expect("failed");
+                c_string = CString::new(s).expect("failed");
                 gdk_rgba_parse(c_palette_gdk.as_mut_ptr().add(i), c_string.as_ptr());
             }
         }
@@ -464,7 +455,8 @@ fn term_activate_current_font(t: *mut Terminal, win_ready: gboolean) {
             if let ConfigValue::Sl(sl) = item.v {
                 let cur_font = sl[(*t).current_font];
                 println!("cur font: {}", cur_font);
-                font_desc = pango_font_description_from_string(cur_font.as_ptr() as *const i8);
+                let c_string = CString::new(cur_font).unwrap();
+                font_desc = pango_font_description_from_string(c_string.as_ptr());
             }
         }
     }
