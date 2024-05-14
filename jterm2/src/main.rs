@@ -48,11 +48,15 @@ use std::ffi::CString;
 use std::i8;
 use std::path::PathBuf;
 use std::slice;
+use vte_sys::vte_regex_new_for_match;
 use vte_sys::vte_terminal_get_column_count;
 use vte_sys::vte_terminal_get_row_count;
 use vte_sys::vte_terminal_new;
 use vte_sys::vte_terminal_set_allow_hyperlink;
 use vte_sys::vte_terminal_set_bold_is_bright;
+use vte_sys::vte_terminal_set_color_bold;
+use vte_sys::vte_terminal_set_color_cursor;
+use vte_sys::vte_terminal_set_color_cursor_foreground;
 use vte_sys::vte_terminal_set_colors;
 use vte_sys::vte_terminal_set_cursor_blink_mode;
 use vte_sys::vte_terminal_set_cursor_shape;
@@ -294,9 +298,9 @@ fn sig_window_resize(_: *mut VteTerminal, _: u64, _: u64, _: gpointer) {}
 fn sig_window_title_changed(_: *mut VteTerminal, _: gpointer) {}
 
 fn term_new(t: *mut Terminal) {
-    let mut title: &str = "jterm2";
-    let mut res_class: &str = "Jterm2";
-    let mut res_name: &str = "jterm2";
+    let title: &str = "jterm2";
+    let res_class: &str = "Jterm2";
+    let res_name: &str = "jterm2";
     let mut c_foreground_gdk: GdkRGBA = GdkRGBA {
         red: 0.,
         green: 0.,
@@ -317,7 +321,6 @@ fn term_new(t: *mut Terminal) {
     };
     let url_vregex: *mut VteRegex = std::ptr::null_mut();
     let err: *mut GError = std::ptr::null_mut();
-    let spawn_flags: GSpawnFlags = 0;
     let standard16order: Vec<&str> = vec![
         "dark_black",
         "dark_red",
@@ -462,6 +465,51 @@ fn term_new(t: *mut Terminal) {
             c_palette_gdk.as_ptr(),
             16,
         );
+
+        if let ConfigValue::S(s) = cfg("Colors", "bold").unwrap().v {
+            if !s.is_empty() {
+                c_string = CString::new(s).expect("failed");
+                gdk_rgba_parse(&mut c_gdk, c_string.as_ptr());
+                vte_terminal_set_color_bold((*t).term as *mut VteTerminal, &c_gdk);
+                println!("{} : {:?}", s, c_gdk);
+            } else {
+                vte_terminal_set_color_bold((*t).term as *mut VteTerminal, std::ptr::null_mut());
+            }
+        }
+        if let ConfigValue::S(s) = cfg("Colors", "cursor").unwrap().v {
+            if !s.is_empty() {
+                c_string = CString::new(s).expect("failed");
+                gdk_rgba_parse(&mut c_gdk, c_string.as_ptr());
+                vte_terminal_set_color_cursor((*t).term as *mut VteTerminal, &c_gdk);
+                println!("{} : {:?}", s, c_gdk);
+            } else {
+                vte_terminal_set_color_cursor((*t).term as *mut VteTerminal, std::ptr::null_mut());
+            }
+        }
+        if let ConfigValue::S(s) = cfg("Colors", "cursor_foreground").unwrap().v {
+            if !s.is_empty() {
+                c_string = CString::new(s).expect("failed");
+                gdk_rgba_parse(&mut c_gdk, c_string.as_ptr());
+                vte_terminal_set_color_cursor_foreground((*t).term as *mut VteTerminal, &c_gdk);
+                println!("{} : {:?}", s, c_gdk);
+            } else {
+                vte_terminal_set_color_cursor_foreground(
+                    (*t).term as *mut VteTerminal,
+                    std::ptr::null_mut(),
+                );
+            }
+        }
+
+        if let ConfigValue::S(link_regex) = cfg("Options", "link_regex").unwrap().v {
+            c_string = CString::new(link_regex).expect("failed");
+            url_vregex = vte_regex_new_for_match(
+                c_string.as_ptr(),
+                link_regex.len().try_into().unwrap(),
+                PCRE2_MULTILINE,
+                &mut err,
+            );
+        }
+
         println!("{:?}", c_palette_gdk);
     }
     println!("fuck haha");
