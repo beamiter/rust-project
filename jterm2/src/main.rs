@@ -26,6 +26,7 @@ use gobject_sys::GCallback;
 use gobject_sys::GObject;
 use gtk_sys::gtk_container_add;
 use gtk_sys::gtk_init;
+use gtk_sys::gtk_main;
 use gtk_sys::gtk_widget_get_preferred_size;
 use gtk_sys::gtk_widget_show_all;
 use gtk_sys::gtk_window_new;
@@ -519,6 +520,7 @@ fn main() {
     let mut t = Terminal::new();
     unsafe {
         gtk_init(std::ptr::null_mut(), std::ptr::null_mut());
+        term_new(&mut t);
+        // gtk_main();
     }
-    term_new(&mut t);
 }
