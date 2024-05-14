@@ -1,27 +1,44 @@
-extern crate gdk;
-extern crate gtk;
-use gdk::ffi::gdk_rgba_parse;
-use gdk::ffi::GdkRGBA;
-use gdk::glib::ffi::GSpawnFlags;
-use gdk::glib::gobject_ffi::g_signal_connect_data;
-use gdk::glib::gobject_ffi::GCallback;
-use gdk::glib::gobject_ffi::GObject;
-use gdk::pango::ffi::pango_font_description_free;
-use gdk::pango::ffi::pango_font_description_from_string;
-use gdk::pango::ffi::PangoFontDescription;
-use glib::*;
-use glib_sys::*;
-use gtk::ffi::gtk_container_add;
-use gtk::ffi::gtk_widget_get_preferred_size;
-use gtk::ffi::gtk_widget_show_all;
-use gtk::ffi::gtk_window_new;
-use gtk::ffi::gtk_window_resize;
-use gtk::ffi::gtk_window_set_title;
-use gtk::ffi::GtkContainer;
-use gtk::ffi::GtkRequisition;
-use gtk::ffi::GtkWidget;
-use gtk::ffi::GtkWindow;
-use gtk::ffi::GTK_WINDOW_TOPLEVEL;
+use gdk_sys::gdk_rgba_parse;
+use gdk_sys::GdkEvent;
+use gdk_sys::GdkRGBA;
+use gdk_sys::GdkRectangle;
+use glib_sys::g_file_test;
+use glib_sys::g_get_user_config_dir;
+use glib_sys::g_key_file_get_boolean;
+use glib_sys::g_key_file_get_int64;
+use glib_sys::g_key_file_get_string;
+use glib_sys::g_key_file_get_string_list;
+use glib_sys::g_key_file_get_uint64;
+use glib_sys::g_key_file_load_from_file;
+use glib_sys::g_key_file_new;
+use glib_sys::g_set_prgname;
+use glib_sys::g_strup;
+use glib_sys::gboolean;
+use glib_sys::gpointer;
+use glib_sys::GError;
+use glib_sys::GPid;
+use glib_sys::GSpawnFlags;
+use glib_sys::GTRUE;
+use glib_sys::G_FILE_TEST_EXISTS;
+use glib_sys::G_KEY_FILE_NONE;
+use gobject_sys::g_signal_connect_data;
+use gobject_sys::GCallback;
+use gobject_sys::GObject;
+use gtk_sys::gtk_container_add;
+use gtk_sys::gtk_init;
+use gtk_sys::gtk_widget_get_preferred_size;
+use gtk_sys::gtk_widget_show_all;
+use gtk_sys::gtk_window_new;
+use gtk_sys::gtk_window_resize;
+use gtk_sys::gtk_window_set_title;
+use gtk_sys::GtkContainer;
+use gtk_sys::GtkRequisition;
+use gtk_sys::GtkWidget;
+use gtk_sys::GtkWindow;
+use gtk_sys::GTK_WINDOW_TOPLEVEL;
+use pango_sys::pango_font_description_free;
+use pango_sys::pango_font_description_from_string;
+use pango_sys::PangoFontDescription;
 use std::env;
 use std::ffi::c_char;
 use std::ffi::c_void;
@@ -35,6 +52,7 @@ use vte_sys::vte_terminal_get_row_count;
 use vte_sys::vte_terminal_new;
 use vte_sys::vte_terminal_set_allow_hyperlink;
 use vte_sys::vte_terminal_set_bold_is_bright;
+use vte_sys::vte_terminal_set_colors;
 use vte_sys::vte_terminal_set_cursor_blink_mode;
 use vte_sys::vte_terminal_set_cursor_shape;
 use vte_sys::vte_terminal_set_font;
@@ -110,7 +128,7 @@ impl Terminal {
     }
 }
 
-fn cb_spawn_async(term: *mut VteTerminal, pid: Pid, err: *mut GError, data: gpointer) {}
+fn cb_spawn_async(term: *mut VteTerminal, pid: GPid, err: *mut GError, data: gpointer) {}
 
 fn cfg<'a>(s: &'a str, n: &'a str) -> Option<ConfigItem<'a>> {
     let config = CONFIG.lock().unwrap();
@@ -257,19 +275,14 @@ fn safe_emsg(_: *mut GError) {}
 
 fn sig_bell(_: *mut VteTerminal, _: gpointer) {}
 
-fn sig_button_press(_: *mut GtkWidget, _: *mut gdk::Event, _: gpointer) {}
+fn sig_button_press(_: *mut GtkWidget, _: *mut GdkEvent, _: gpointer) {}
 
 fn sig_child_exited(_: *mut VteTerminal, _: i64, _: gpointer) {}
 
-fn sig_hyperlink_changed(
-    _: *mut VteTerminal,
-    _: *const c_char,
-    _: *mut gdk::Rectangle,
-    _: gpointer,
-) {
+fn sig_hyperlink_changed(_: *mut VteTerminal, _: *const c_char, _: *mut GdkRectangle, _: gpointer) {
 }
 
-fn sig_key_press(_: *mut GtkWidget, _: *mut gdk::Event, _: gpointer) -> gboolean {
+fn sig_key_press(_: *mut GtkWidget, _: *mut GdkEvent, _: gpointer) -> gboolean {
     0
 }
 
@@ -439,6 +452,15 @@ fn term_new(t: *mut Terminal) {
                 gdk_rgba_parse(c_palette_gdk.as_mut_ptr().add(i), c_string.as_ptr());
             }
         }
+        let c_foreground_gdk_ptr: *const GdkRGBA = &c_foreground_gdk;
+        let c_background_gdk_ptr: *const GdkRGBA = &c_background_gdk;
+        vte_terminal_set_colors(
+            (*t).term as *mut VteTerminal,
+            c_foreground_gdk_ptr,
+            c_background_gdk_ptr,
+            c_palette_gdk.as_ptr(),
+            16,
+        );
         println!("{:?}", c_palette_gdk);
     }
     println!("fuck haha");
@@ -495,9 +517,8 @@ fn term_set_size(t: *mut Terminal, width: i64, height: i64, win_ready: gboolean)
 
 fn main() {
     let mut t = Terminal::new();
-    if gtk::init().is_err() {
-        eprintln!("Failed to initialize GTK.");
-        return;
+    unsafe {
+        gtk_init(std::ptr::null_mut(), std::ptr::null_mut());
     }
     term_new(&mut t);
 }
