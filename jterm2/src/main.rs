@@ -2,6 +2,7 @@ use gdk_sys::gdk_rgba_parse;
 use gdk_sys::GdkEvent;
 use gdk_sys::GdkRGBA;
 use gdk_sys::GdkRectangle;
+use gdk_sys::GDK_BUTTON_PRESS;
 use glib_sys::g_clear_error;
 use glib_sys::g_file_test;
 use glib_sys::g_get_user_config_dir;
@@ -19,9 +20,11 @@ use glib_sys::gpointer;
 use glib_sys::GError;
 use glib_sys::GPid;
 use glib_sys::GSpawnFlags;
+use glib_sys::GFALSE;
 use glib_sys::GTRUE;
 use glib_sys::G_FILE_TEST_EXISTS;
 use glib_sys::G_KEY_FILE_NONE;
+use glib_sys::G_SPAWN_DEFAULT;
 use glib_sys::G_SPAWN_FILE_AND_ARGV_ZERO;
 use glib_sys::G_SPAWN_SEARCH_PATH;
 use gobject_sys::g_signal_connect_data;
@@ -35,6 +38,7 @@ use gtk_sys::gtk_widget_show_all;
 use gtk_sys::gtk_window_new;
 use gtk_sys::gtk_window_resize;
 use gtk_sys::gtk_window_set_title;
+use gtk_sys::gtk_window_set_urgency_hint;
 use gtk_sys::GtkContainer;
 use gtk_sys::GtkRequisition;
 use gtk_sys::GtkWidget;
@@ -296,9 +300,25 @@ unsafe fn safe_emsg(err: *mut GError) -> &'static str {
     }
 }
 
-fn sig_bell(term: *mut VteTerminal, data: gpointer) {}
+fn sig_bell(_: *mut VteTerminal, data: gpointer) {
+    let t = data as *mut Terminal;
+    unsafe {
+        gtk_window_set_urgency_hint((*t).win as *mut GtkWindow, GFALSE);
+        gtk_window_set_urgency_hint((*t).win as *mut GtkWindow, GTRUE);
+    }
+}
 
-fn sig_button_press(_: *mut GtkWidget, _: *mut GdkEvent, _: gpointer) {}
+fn sig_button_press(_: *mut GtkWidget, event: *mut GdkEvent, _: gpointer) {
+    let url: &str = "";
+    let mut argv: Vec<&str> = vec![""; 4];
+    let mut err: *mut GError = std::ptr::null_mut();
+    let mut retval: gboolean = GFALSE;
+    let spawn_flags = G_SPAWN_DEFAULT | G_SPAWN_SEARCH_PATH;
+    if let ConfigValue::S(s) = cfg("Options", "link_handler").unwrap().v {
+        argv[0] = s;
+    }
+    unsafe { if (*event).type_ == GDK_BUTTON_PRESS {} }
+}
 
 fn sig_child_exited(_: *mut VteTerminal, _: i64, _: gpointer) {}
 
@@ -382,8 +402,8 @@ fn term_new(t: *mut Terminal) {
         "Number of arguments (excluding program name): {}",
         args.len() - 1
     );
-    let argv_cmdline: &str = "";
-    let mut args_use: Vec<&str> = vec![];
+    let mut argv_cmdline: &str = "";
+    let args_use: Vec<&str>;
     let spawn_flags: GSpawnFlags;
     let mut args_default: Vec<String> = vec![String::from(""); 3];
     let config_file: *mut c_char = std::ptr::null_mut();
@@ -420,7 +440,8 @@ fn term_new(t: *mut Terminal) {
                 }
             }
         } else if arg == "-e" {
-            if let Some((_, argv_cmdline)) = iter.next() {
+            if let Some((_, argv_cmdline0)) = iter.next() {
+                argv_cmdline = argv_cmdline0;
                 break;
             }
         } else {
@@ -434,12 +455,8 @@ fn term_new(t: *mut Terminal) {
     unsafe {
         let mut c_string: CString;
         (*t).win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-        // Cast *mut GtkWidget to *mut GtkWindow;
-        let window_ptr = (*t).win as *mut GtkWindow;
-        // Convert raw pointer to a safe wrapper
-        // let window: gtk::Window = from_glib_none(window_ptr);
         c_string = CString::new(title).expect("failed to convert");
-        gtk_window_set_title(window_ptr, c_string.as_ptr());
+        gtk_window_set_title((*t).win as *mut GtkWindow, c_string.as_ptr());
         let callback: GCallback = Some(std::mem::transmute(sig_window_destroy as *const ()));
         c_string = CString::new("destroy").expect("failed to convert");
         g_signal_connect_data(
