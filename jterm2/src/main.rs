@@ -2,7 +2,6 @@ use gdk_sys::gdk_rgba_parse;
 use gdk_sys::GdkEvent;
 use gdk_sys::GdkRGBA;
 use gdk_sys::GdkRectangle;
-use glib_sys::G_SPAWN_FILE_AND_ARGV_ZERO;
 use glib_sys::g_clear_error;
 use glib_sys::g_file_test;
 use glib_sys::g_get_user_config_dir;
@@ -14,7 +13,6 @@ use glib_sys::g_key_file_get_uint64;
 use glib_sys::g_key_file_load_from_file;
 use glib_sys::g_key_file_new;
 use glib_sys::g_set_prgname;
-use glib_sys::g_strdup_printf;
 use glib_sys::g_strup;
 use glib_sys::gboolean;
 use glib_sys::gpointer;
@@ -24,6 +22,7 @@ use glib_sys::GSpawnFlags;
 use glib_sys::GTRUE;
 use glib_sys::G_FILE_TEST_EXISTS;
 use glib_sys::G_KEY_FILE_NONE;
+use glib_sys::G_SPAWN_FILE_AND_ARGV_ZERO;
 use glib_sys::G_SPAWN_SEARCH_PATH;
 use gobject_sys::g_signal_connect_data;
 use gobject_sys::GCallback;
@@ -74,16 +73,19 @@ use vte_sys::vte_terminal_set_font_scale;
 use vte_sys::vte_terminal_set_mouse_autohide;
 use vte_sys::vte_terminal_set_scrollback_lines;
 use vte_sys::vte_terminal_set_size;
+use vte_sys::vte_terminal_spawn_async;
 use vte_sys::VteCursorBlinkMode;
 use vte_sys::VteCursorShape;
 use vte_sys::VteRegex;
 use vte_sys::VteTerminal;
+use vte_sys::VteTerminalSpawnAsyncCallback;
 use vte_sys::VTE_CURSOR_BLINK_OFF;
 use vte_sys::VTE_CURSOR_BLINK_ON;
 use vte_sys::VTE_CURSOR_BLINK_SYSTEM;
 use vte_sys::VTE_CURSOR_SHAPE_BLOCK;
 use vte_sys::VTE_CURSOR_SHAPE_IBEAM;
 use vte_sys::VTE_CURSOR_SHAPE_UNDERLINE;
+use vte_sys::VTE_PTY_DEFAULT;
 
 mod config;
 use crate::config::CONFIG;
@@ -313,6 +315,21 @@ fn sig_window_resize(_: *mut VteTerminal, _: u64, _: u64, _: gpointer) {}
 
 fn sig_window_title_changed(_: *mut VteTerminal, _: gpointer) {}
 
+fn convert_vec_str_to_raw(vec: Vec<&str>) -> *mut *mut c_char {
+    let cstrings: Vec<CString> = vec
+        .into_iter()
+        .map(|s| CString::new(s).expect("CString::new failed"))
+        .collect();
+    let mut c_char_ptrs: Vec<*mut c_char> = cstrings
+        .iter()
+        .map(|cstring| cstring.as_ptr() as *mut c_char)
+        .collect();
+    // Add a null pointer at the end if needed for a null-terminated array.
+    c_char_ptrs.push(std::ptr::null_mut());
+    let ptr = c_char_ptrs.as_mut_ptr();
+    ptr
+}
+
 fn term_new(t: *mut Terminal) {
     let title: &str = "jterm2";
     let res_class: &str = "Jterm2";
@@ -366,9 +383,9 @@ fn term_new(t: *mut Terminal) {
         args.len() - 1
     );
     let argv_cmdline: &str = "";
-    let mut args_use: &str = "";
-    let mut spawn_flags: GSpawnFlags;
-    let mut args_default = vec![""; 3];
+    let mut args_use: Vec<&str> = vec![];
+    let spawn_flags: GSpawnFlags;
+    let mut args_default: Vec<String> = vec![String::from(""); 3];
     let config_file: *mut c_char = std::ptr::null_mut();
     let mut iter = args.iter().enumerate().skip(1);
     while let Some((_, arg)) = iter.next() {
@@ -611,27 +628,45 @@ fn term_new(t: *mut Terminal) {
 
         // Spawn child.
         if !argv_cmdline.is_empty() {
-            args_use = argv_cmdline;
+            args_use = vec![argv_cmdline];
             spawn_flags = G_SPAWN_SEARCH_PATH;
         } else {
             if args_default[0].is_empty() {
                 let c_str = CStr::from_ptr(vte_get_user_shell());
-                args_default[0] = c_str.to_str().unwrap();
+                args_default[0] = String::from(c_str.to_str().unwrap());
                 if args_default[0].is_empty() {
-                    args_default[0] = "/bin/sh";
+                    args_default[0] = String::from("/bin/sh");
                 }
                 if let ConfigValue::B(b) = cfg("Options", "login_shell").unwrap().v {
                     if b > 0 {
-                        args_default[1] = format!("-{}", args_default[0]).as_str();
+                        args_default[1] = format!("-{}", args_default[0]);
                     } else {
-                        args_default[1] = args_default[0];
+                        args_default[1] = args_default[0].to_string();
                     }
                 }
             }
-            // (TODO)
-            // args_use = args_default;
+            args_use = args_default.iter().map(|s| s.as_str()).collect();
             spawn_flags = G_SPAWN_SEARCH_PATH | G_SPAWN_FILE_AND_ARGV_ZERO;
         }
+
+        let callback: VteTerminalSpawnAsyncCallback =
+            Some(std::mem::transmute(cb_spawn_async as *const ()));
+        let args_use_ptr = convert_vec_str_to_raw(args_use);
+        vte_terminal_spawn_async(
+            (*t).term as *mut VteTerminal,
+            VTE_PTY_DEFAULT,
+            std::ptr::null(),
+            args_use_ptr,
+            std::ptr::null_mut(),
+            spawn_flags,
+            None,
+            std::ptr::null_mut(),
+            None,
+            -1,
+            std::ptr::null_mut(),
+            callback,
+            t as gpointer,
+        );
     }
     println!("fuck haha");
 }
