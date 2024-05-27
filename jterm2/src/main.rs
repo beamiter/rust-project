@@ -14,6 +14,7 @@ use glib_sys::g_key_file_get_uint64;
 use glib_sys::g_key_file_load_from_file;
 use glib_sys::g_key_file_new;
 use glib_sys::g_set_prgname;
+use glib_sys::g_spawn_async;
 use glib_sys::g_strup;
 use glib_sys::gboolean;
 use glib_sys::gpointer;
@@ -62,7 +63,9 @@ use vte_sys::vte_regex_new_for_match;
 use vte_sys::vte_regex_unref;
 use vte_sys::vte_terminal_get_column_count;
 use vte_sys::vte_terminal_get_row_count;
+use vte_sys::vte_terminal_hyperlink_check_event;
 use vte_sys::vte_terminal_match_add_regex;
+use vte_sys::vte_terminal_match_check_event;
 use vte_sys::vte_terminal_new;
 use vte_sys::vte_terminal_set_allow_hyperlink;
 use vte_sys::vte_terminal_set_bold_is_bright;
@@ -308,8 +311,8 @@ fn sig_bell(_: *mut VteTerminal, data: gpointer) {
     }
 }
 
-fn sig_button_press(_: *mut GtkWidget, event: *mut GdkEvent, _: gpointer) {
-    let url: &str = "";
+fn sig_button_press(widget: *mut GtkWidget, event: *mut GdkEvent, _: gpointer) -> gboolean {
+    let mut url: *mut c_char;
     let mut argv: Vec<&str> = vec![""; 4];
     let mut err: *mut GError = std::ptr::null_mut();
     let mut retval: gboolean = GFALSE;
@@ -317,7 +320,50 @@ fn sig_button_press(_: *mut GtkWidget, event: *mut GdkEvent, _: gpointer) {
     if let ConfigValue::S(s) = cfg("Options", "link_handler").unwrap().v {
         argv[0] = s;
     }
-    unsafe { if (*event).type_ == GDK_BUTTON_PRESS {} }
+    unsafe {
+        if (*event).type_ == GDK_BUTTON_PRESS {
+            if let ConfigValue::Ui(ui) = cfg("Controls", "button_link").unwrap().v {
+                if (*event).button.button == ui as u32 {
+                    url = vte_terminal_hyperlink_check_event(widget as *mut VteTerminal, event);
+                    if !url.is_null() {
+                        argv[1] = "explicit";
+                    } else {
+                        url = vte_terminal_match_check_event(
+                            widget as *mut VteTerminal,
+                            event,
+                            std::ptr::null_mut(),
+                        );
+                        if !url.is_null() {
+                            argv[1] = "match";
+                        }
+                    }
+
+                    if !url.is_null() {
+                        let c_str = CStr::from_ptr(url);
+                        argv[2] = c_str.to_str().unwrap();
+                        // This is fantastic converter.
+                        let argv_ptr = convert_vec_str_to_raw(argv);
+                        if g_spawn_async(
+                            std::ptr::null(),
+                            argv_ptr,
+                            std::ptr::null_mut(),
+                            spawn_flags,
+                            None,
+                            std::ptr::null_mut(),
+                            std::ptr::null_mut(),
+                            &mut err,
+                        ) <= 0
+                        {
+                            eprint!(": Could not spawn link handler: {}", safe_emsg(err));
+                        } else {
+                            retval = GTRUE;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    return retval;
 }
 
 fn sig_child_exited(_: *mut VteTerminal, _: i64, _: gpointer) {}
