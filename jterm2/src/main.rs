@@ -34,6 +34,7 @@ use gobject_sys::GObject;
 use gtk_sys::gtk_container_add;
 use gtk_sys::gtk_init;
 use gtk_sys::gtk_main;
+use gtk_sys::gtk_widget_destroy;
 use gtk_sys::gtk_widget_get_preferred_size;
 use gtk_sys::gtk_widget_show_all;
 use gtk_sys::gtk_window_new;
@@ -366,7 +367,32 @@ fn sig_button_press(widget: *mut GtkWidget, event: *mut GdkEvent, _: gpointer) -
     return retval;
 }
 
-fn sig_child_exited(_: *mut VteTerminal, _: i64, _: gpointer) {}
+fn sig_child_exited(term: *mut VteTerminal, status: i64, data: gpointer) {
+    let t = data as *mut Terminal;
+    let mut c_background_gdk: GdkRGBA = GdkRGBA {
+        red: 0.,
+        green: 0.,
+        blue: 0.,
+        alpha: 0.,
+    };
+
+    unsafe {
+        (*t).has_child_exit_status = GTRUE;
+        (*t).child_exit_status = status;
+
+        if (*t).hold >= 0 {
+            if let ConfigValue::S(s) = cfg("Colors", "background").unwrap().v {
+                let mut c_string = CString::new(s).expect("failed");
+                gdk_rgba_parse(&mut c_background_gdk, c_string.as_ptr());
+                vte_terminal_set_color_cursor(term, &c_background_gdk);
+                c_string = CString::new("CHILD HAS QUIT").expect("failed");
+                gtk_window_set_title((*t).win as *mut GtkWindow, c_string.as_ptr());
+            }
+        } else {
+            gtk_widget_destroy((*t).win);
+        }
+    }
+}
 
 fn sig_hyperlink_changed(_: *mut VteTerminal, _: *const c_char, _: *mut GdkRectangle, _: gpointer) {
 }
