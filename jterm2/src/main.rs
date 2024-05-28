@@ -1,8 +1,11 @@
+use gdk_sys::gdk_keyval_from_name;
 use gdk_sys::gdk_rgba_parse;
 use gdk_sys::GdkEvent;
+use gdk_sys::GdkEventKey;
 use gdk_sys::GdkRGBA;
 use gdk_sys::GdkRectangle;
 use gdk_sys::GDK_BUTTON_PRESS;
+use gdk_sys::GDK_CONTROL_MASK;
 use glib_sys::g_clear_error;
 use glib_sys::g_file_test;
 use glib_sys::g_get_user_config_dir;
@@ -36,6 +39,8 @@ use gtk_sys::gtk_init;
 use gtk_sys::gtk_main;
 use gtk_sys::gtk_widget_destroy;
 use gtk_sys::gtk_widget_get_preferred_size;
+use gtk_sys::gtk_widget_set_has_tooltip;
+use gtk_sys::gtk_widget_set_tooltip_text;
 use gtk_sys::gtk_widget_show_all;
 use gtk_sys::gtk_window_new;
 use gtk_sys::gtk_window_resize;
@@ -62,6 +67,7 @@ use std::slice;
 use vte_sys::vte_get_user_shell;
 use vte_sys::vte_regex_new_for_match;
 use vte_sys::vte_regex_unref;
+use vte_sys::vte_terminal_copy_clipboard_format;
 use vte_sys::vte_terminal_get_column_count;
 use vte_sys::vte_terminal_get_row_count;
 use vte_sys::vte_terminal_hyperlink_check_event;
@@ -93,6 +99,7 @@ use vte_sys::VTE_CURSOR_BLINK_SYSTEM;
 use vte_sys::VTE_CURSOR_SHAPE_BLOCK;
 use vte_sys::VTE_CURSOR_SHAPE_IBEAM;
 use vte_sys::VTE_CURSOR_SHAPE_UNDERLINE;
+use vte_sys::VTE_FORMAT_TEXT;
 use vte_sys::VTE_PTY_DEFAULT;
 
 mod config;
@@ -191,7 +198,13 @@ fn get_cursor_shape() -> VteCursorShape {
     return VTE_CURSOR_SHAPE_BLOCK;
 }
 
-fn get_keyval() -> u64 {
+fn get_keyval(name: &str) -> u32 {
+    if let ConfigValue::S(cfg_s) = cfg("Controls", name).unwrap().v {
+        unsafe {
+            let c_str = CString::new(cfg_s).expect("failed to convert");
+            return gdk_keyval_from_name(c_str.as_ptr());
+        }
+    }
     0
 }
 
@@ -394,10 +407,35 @@ fn sig_child_exited(term: *mut VteTerminal, status: i64, data: gpointer) {
     }
 }
 
-fn sig_hyperlink_changed(_: *mut VteTerminal, _: *const c_char, _: *mut GdkRectangle, _: gpointer) {
+fn sig_hyperlink_changed(
+    term: *mut VteTerminal,
+    uri: *const c_char,
+    _: *mut GdkRectangle,
+    _: gpointer,
+) {
+    unsafe {
+        if uri.is_null() {
+            gtk_widget_set_has_tooltip(term as *mut GtkWidget, GFALSE);
+        } else {
+            gtk_widget_set_tooltip_text(term as *mut GtkWidget, uri);
+        }
+    }
 }
 
-fn sig_key_press(_: *mut GtkWidget, _: *mut GdkEvent, _: gpointer) -> gboolean {
+fn sig_key_press(widget: *mut GtkWidget, event: *mut GdkEvent, data: gpointer) -> gboolean {
+    let term: *mut VteTerminal = widget as *mut VteTerminal;
+    let t: *mut Terminal = data as *mut Terminal;
+    let mut kv: u32 = 0;
+    let event_key = event as *mut GdkEventKey;
+    unsafe {
+        if (*event_key).state & GDK_CONTROL_MASK > 0 {
+            kv = (*event_key).keyval;
+            if kv == get_keyval("key_copy_to_clipboard") {
+                vte_terminal_copy_clipboard_format(term, VTE_FORMAT_TEXT);
+                return GTRUE;
+            }
+        }
+    }
     0
 }
 
