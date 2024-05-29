@@ -74,6 +74,7 @@ use vte_sys::vte_terminal_hyperlink_check_event;
 use vte_sys::vte_terminal_match_add_regex;
 use vte_sys::vte_terminal_match_check_event;
 use vte_sys::vte_terminal_new;
+use vte_sys::vte_terminal_paste_clipboard;
 use vte_sys::vte_terminal_set_allow_hyperlink;
 use vte_sys::vte_terminal_set_bold_is_bright;
 use vte_sys::vte_terminal_set_color_bold;
@@ -208,6 +209,7 @@ fn get_keyval(name: &str) -> u32 {
     0
 }
 
+// (TODO)
 fn handle_history(term: *mut VteTerminal) {}
 
 fn ini_load(config_file: *mut c_char) {
@@ -425,7 +427,7 @@ fn sig_hyperlink_changed(
 fn sig_key_press(widget: *mut GtkWidget, event: *mut GdkEvent, data: gpointer) -> gboolean {
     let term: *mut VteTerminal = widget as *mut VteTerminal;
     let t: *mut Terminal = data as *mut Terminal;
-    let mut kv: u32 = 0;
+    let kv: u32;
     let event_key = event as *mut GdkEventKey;
     unsafe {
         if (*event_key).state & GDK_CONTROL_MASK > 0 {
@@ -434,9 +436,44 @@ fn sig_key_press(widget: *mut GtkWidget, event: *mut GdkEvent, data: gpointer) -
                 vte_terminal_copy_clipboard_format(term, VTE_FORMAT_TEXT);
                 return GTRUE;
             }
+            if kv == get_keyval("key_paste_from_clipboard") {
+                vte_terminal_paste_clipboard(term);
+                return GTRUE;
+            }
+            if kv == get_keyval("key_handle_history") {
+                handle_history(term);
+                return GTRUE;
+            }
+            if kv == get_keyval("key_next_font") {
+                (*t).current_font += 1;
+                (*t).current_font %= cfg("Options", "fonts").unwrap().l.unwrap() as usize;
+                term_activate_current_font(t, GTRUE);
+                return GTRUE;
+            }
+            if kv == get_keyval("key_previous_font") {
+                if (*t).current_font == 0 {
+                    (*t).current_font = cfg("Options", "fonts").unwrap().l.unwrap() as usize - 1;
+                } else {
+                    (*t).current_font -= 1;
+                }
+                term_activate_current_font(t, GTRUE);
+                return GTRUE;
+            }
+            if kv == get_keyval("key_zoom_in") {
+                term_change_font_scale(t, 1);
+                return GTRUE;
+            }
+            if kv == get_keyval("key_zoom_out") {
+                term_change_font_scale(t, -1);
+                return GTRUE;
+            }
+            if kv == get_keyval("key_zoom_reset") {
+                term_change_font_scale(t, 0);
+                return GTRUE;
+            }
         }
     }
-    0
+    return GFALSE;
 }
 
 fn sig_window_destroy(widget: *mut GtkWidget, data: gpointer) {}
@@ -827,6 +864,7 @@ fn term_activate_current_font(t: *mut Terminal, win_ready: gboolean) {
     }
 }
 
+// (TODO)
 fn term_change_font_scale(_: *mut Terminal, _: i64) {}
 
 fn term_set_size(t: *mut Terminal, width: i64, height: i64, win_ready: gboolean) {
