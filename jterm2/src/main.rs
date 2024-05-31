@@ -6,8 +6,17 @@ use gdk_sys::GdkRGBA;
 use gdk_sys::GdkRectangle;
 use gdk_sys::GDK_BUTTON_PRESS;
 use gdk_sys::GDK_CONTROL_MASK;
+use gio_sys::g_file_get_path;
+use gio_sys::g_file_new_tmp;
+use gio_sys::g_io_stream_close;
+use gio_sys::g_io_stream_get_output_stream;
+use gio_sys::GFile;
+use gio_sys::GFileIOStream;
+use gio_sys::GIOStream;
+use gio_sys::GOutputStream;
 use glib_sys::g_clear_error;
 use glib_sys::g_file_test;
+use glib_sys::g_free;
 use glib_sys::g_get_user_config_dir;
 use glib_sys::g_key_file_get_boolean;
 use glib_sys::g_key_file_get_int64;
@@ -31,6 +40,7 @@ use glib_sys::G_KEY_FILE_NONE;
 use glib_sys::G_SPAWN_DEFAULT;
 use glib_sys::G_SPAWN_FILE_AND_ARGV_ZERO;
 use glib_sys::G_SPAWN_SEARCH_PATH;
+use gobject_sys::g_object_unref;
 use gobject_sys::g_signal_connect_data;
 use gobject_sys::GCallback;
 use gobject_sys::GObject;
@@ -89,6 +99,7 @@ use vte_sys::vte_terminal_set_mouse_autohide;
 use vte_sys::vte_terminal_set_scrollback_lines;
 use vte_sys::vte_terminal_set_size;
 use vte_sys::vte_terminal_spawn_async;
+use vte_sys::vte_terminal_write_contents_sync;
 use vte_sys::VteCursorBlinkMode;
 use vte_sys::VteCursorShape;
 use vte_sys::VteRegex;
@@ -102,6 +113,7 @@ use vte_sys::VTE_CURSOR_SHAPE_IBEAM;
 use vte_sys::VTE_CURSOR_SHAPE_UNDERLINE;
 use vte_sys::VTE_FORMAT_TEXT;
 use vte_sys::VTE_PTY_DEFAULT;
+use vte_sys::VTE_WRITE_DEFAULT;
 
 mod config;
 use crate::config::CONFIG;
@@ -210,10 +222,115 @@ fn get_keyval(name: &str) -> u32 {
 }
 
 // (TODO)
-fn handle_history(term: *mut VteTerminal) {}
+fn handle_history(term: *mut VteTerminal) {
+    let tmpfile: *mut GFile;
+    let io_stream: *mut GFileIOStream = std::ptr::null_mut();
+    let out_stream: *mut GOutputStream;
+    let err: *mut GError = std::ptr::null_mut();
+    let mut argv: Vec<&str> = vec![""; 3];
+    let spawn_flags = G_SPAWN_DEFAULT | G_SPAWN_SEARCH_PATH;
+
+    if let ConfigValue::S(s) = cfg("Options", "history_handler").unwrap().v {
+        argv[0] = s;
+    }
+
+    unsafe {
+        tmpfile = g_file_new_tmp(std::ptr::null(), io_stream as *mut _, err as *mut _);
+        if tmpfile.is_null() {
+            eprintln!("Could not write history: {}", safe_emsg(err));
+
+            if !argv[1].is_empty() {
+                let c_string = CString::new(argv[1]).expect("failed to convert");
+                g_free(c_string.into_raw() as *mut c_void);
+            }
+            if !io_stream.is_null() {
+                g_object_unref(io_stream as *mut GObject);
+            }
+            if !tmpfile.is_null() {
+                g_object_unref(tmpfile as *mut GObject);
+            }
+            g_clear_error(err as *mut _);
+        }
+
+        out_stream = g_io_stream_get_output_stream(io_stream as *mut GIOStream);
+        if vte_terminal_write_contents_sync(
+            term,
+            out_stream,
+            VTE_WRITE_DEFAULT,
+            std::ptr::null_mut(),
+            err as *mut _,
+        ) <= 0
+        {
+            eprintln!("Could not write history: {}", safe_emsg(err));
+            if !argv[1].is_empty() {
+                let c_string = CString::new(argv[1]).expect("failed to convert");
+                g_free(c_string.into_raw() as *mut c_void);
+            }
+            if !io_stream.is_null() {
+                g_object_unref(io_stream as *mut GObject);
+            }
+            if !tmpfile.is_null() {
+                g_object_unref(tmpfile as *mut GObject);
+            }
+            g_clear_error(err as *mut _);
+        }
+
+        if g_io_stream_close(
+            io_stream as *mut GIOStream,
+            std::ptr::null_mut(),
+            err as *mut _,
+        ) <= 0
+        {
+            eprintln!("Could not write history: {}", safe_emsg(err));
+            if !argv[1].is_empty() {
+                let c_string = CString::new(argv[1]).expect("failed to convert");
+                g_free(c_string.into_raw() as *mut c_void);
+            }
+            if !io_stream.is_null() {
+                g_object_unref(io_stream as *mut GObject);
+            }
+            if !tmpfile.is_null() {
+                g_object_unref(tmpfile as *mut GObject);
+            }
+            g_clear_error(err as *mut _);
+        }
+
+        let c_str = CStr::from_ptr(g_file_get_path(tmpfile));
+        argv[1] = c_str.to_str().unwrap();
+        let argv_ptr = convert_vec_str_to_raw(argv.clone());
+        if g_spawn_async(
+            std::ptr::null(),
+            argv_ptr,
+            std::ptr::null_mut(),
+            spawn_flags,
+            None,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            err as *mut _,
+        ) <= 0
+        {
+            eprintln!("Could not launch history handler: {}", safe_emsg(err));
+        }
+    }
+
+    //free_and_out.
+    unsafe {
+        if !argv[1].is_empty() {
+            let c_string = CString::new(argv[1]).expect("failed to convert");
+            g_free(c_string.into_raw() as *mut c_void);
+        }
+        if !io_stream.is_null() {
+            g_object_unref(io_stream as *mut GObject);
+        }
+        if !tmpfile.is_null() {
+            g_object_unref(tmpfile as *mut GObject);
+        }
+        g_clear_error(err as *mut _);
+    }
+}
 
 fn ini_load(config_file: *mut c_char) {
-    let mut p: *const c_char = std::ptr::null_mut();
+    let mut p: *const c_char;
     if config_file.is_null() {
         unsafe {
             let c_str = CStr::from_ptr(g_get_user_config_dir());
@@ -230,7 +347,7 @@ fn ini_load(config_file: *mut c_char) {
         }
     }
 
-    let mut ini = unsafe { g_key_file_new() };
+    let ini = unsafe { g_key_file_new() };
     unsafe {
         if g_key_file_load_from_file(ini, p, G_KEY_FILE_NONE, std::ptr::null_mut()) <= 0 {
             if !config_file.is_null() || g_file_test(p, G_FILE_TEST_EXISTS) > 0 {
