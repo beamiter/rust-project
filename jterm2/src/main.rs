@@ -221,7 +221,6 @@ fn get_keyval(name: &str) -> u32 {
     0
 }
 
-// (TODO)
 fn handle_history(term: *mut VteTerminal) {
     let tmpfile: *mut GFile;
     let io_stream: *mut GFileIOStream = std::ptr::null_mut();
