@@ -61,6 +61,8 @@ use gtk_sys::GtkRequisition;
 use gtk_sys::GtkWidget;
 use gtk_sys::GtkWindow;
 use gtk_sys::GTK_WINDOW_TOPLEVEL;
+use nix::libc::WEXITSTATUS;
+use nix::libc::WIFEXITED;
 use pango_sys::pango_font_description_free;
 use pango_sys::pango_font_description_from_string;
 use pango_sys::PangoFontDescription;
@@ -73,13 +75,16 @@ use std::ffi::CStr;
 use std::ffi::CString;
 use std::i8;
 use std::path::PathBuf;
+use std::process;
 use std::slice;
 use vte_sys::vte_get_user_shell;
 use vte_sys::vte_regex_new_for_match;
 use vte_sys::vte_regex_unref;
 use vte_sys::vte_terminal_copy_clipboard_format;
 use vte_sys::vte_terminal_get_column_count;
+use vte_sys::vte_terminal_get_font_scale;
 use vte_sys::vte_terminal_get_row_count;
+use vte_sys::vte_terminal_get_window_title;
 use vte_sys::vte_terminal_hyperlink_check_event;
 use vte_sys::vte_terminal_match_add_regex;
 use vte_sys::vte_terminal_match_check_event;
@@ -118,6 +123,7 @@ use vte_sys::VTE_WRITE_DEFAULT;
 mod config;
 use crate::config::CONFIG;
 
+#[allow(dead_code)]
 const PCRE2_CODE_UNIT_WIDTH: i8 = 8;
 const NAME: &str = "jterm2";
 
@@ -155,7 +161,7 @@ struct Terminal {
     term: *mut GtkWidget,
     win: *mut GtkWidget,
     has_child_exit_status: gboolean,
-    child_exit_status: i64,
+    child_exit_status: i32,
     current_font: usize,
 }
 
@@ -172,7 +178,16 @@ impl Terminal {
     }
 }
 
-fn cb_spawn_async(term: *mut VteTerminal, pid: GPid, err: *mut GError, data: gpointer) {}
+fn cb_spawn_async(_: *mut VteTerminal, pid: GPid, err: *mut GError, data: gpointer) {
+    let t = data as *mut Terminal;
+
+    if pid == -1 && !err.is_null() {
+        unsafe {
+            eprintln!("Spawning child failed: {}", safe_emsg(err));
+            gtk_widget_destroy((*t).win);
+        }
+    }
+}
 
 fn cfg<'a>(s: &'a str, n: &'a str) -> Option<ConfigItem<'a>> {
     let config = CONFIG.lock().unwrap();
@@ -498,7 +513,7 @@ fn sig_button_press(widget: *mut GtkWidget, event: *mut GdkEvent, _: gpointer) -
     return retval;
 }
 
-fn sig_child_exited(term: *mut VteTerminal, status: i64, data: gpointer) {
+fn sig_child_exited(term: *mut VteTerminal, status: i32, data: gpointer) {
     let t = data as *mut Terminal;
     let mut c_background_gdk: GdkRGBA = GdkRGBA {
         red: 0.,
@@ -592,11 +607,54 @@ fn sig_key_press(widget: *mut GtkWidget, event: *mut GdkEvent, data: gpointer) -
     return GFALSE;
 }
 
-fn sig_window_destroy(widget: *mut GtkWidget, data: gpointer) {}
+fn sig_window_destroy(_: *mut GtkWidget, data: gpointer) {
+    let t = data as *mut Terminal;
+    let exit_code: i32;
 
-fn sig_window_resize(_: *mut VteTerminal, _: u64, _: u64, _: gpointer) {}
+    /* Figure out exit code of our child. We deal with the full status
+     * code as returned by wait(2) here, but there's no point in
+     * returning the full integer, since we can't/won't try to fake
+     * stuff like "the child had a segfault" and it's not possible to
+     * discriminate between child exit codes and other errors related to
+     * jterm2's internals (GTK error, X11 died, something like that). */
+    unsafe {
+        if (*t).has_child_exit_status >= 0 {
+            if !WIFEXITED((*t).child_exit_status) || WEXITSTATUS((*t).child_exit_status) > 0 {
+                exit_code = 1;
+            } else {
+                exit_code = 0;
+            }
+        } else {
+            /* If there is no child exit status, it means the user has
+             * forcibly closed the terminal window. We interpret this as
+             * "ABANDON MISSION!!1!", so we won't return an exit code of 0
+             * in this case.
+             *
+             * This will also happen if we fail to start the child in the
+             * first place. */
+            exit_code = 1;
+        }
+    }
 
-fn sig_window_title_changed(_: *mut VteTerminal, _: gpointer) {}
+    process::exit(exit_code);
+}
+
+fn sig_window_resize(_: *mut VteTerminal, width: i64, height: i64, data: gpointer) {
+    let t = data as *mut Terminal;
+
+    term_set_size(t, width, height, GTRUE);
+}
+
+fn sig_window_title_changed(term: *mut VteTerminal, data: gpointer) {
+    let t = data as *mut Terminal;
+
+    unsafe {
+        gtk_window_set_title(
+            (*t).win as *mut GtkWindow,
+            vte_terminal_get_window_title(term),
+        )
+    }
+}
 
 fn convert_vec_str_to_raw(vec: Vec<&str>) -> *mut *mut c_char {
     let cstrings: Vec<CString> = vec
@@ -980,8 +1038,22 @@ fn term_activate_current_font(t: *mut Terminal, win_ready: gboolean) {
     }
 }
 
-// (TODO)
-fn term_change_font_scale(_: *mut Terminal, _: i64) {}
+fn term_change_font_scale(t: *mut Terminal, direction: i64) {
+    let mut s: f64;
+    unsafe {
+        let width = vte_terminal_get_column_count((*t).term as *mut VteTerminal);
+        let height = vte_terminal_get_row_count((*t).term as *mut VteTerminal);
+
+        if direction != 0 {
+            s = vte_terminal_get_font_scale((*t).term as *mut VteTerminal);
+            s *= if direction > 0 { 1.1 } else { 1.0 / 1.0 };
+        } else {
+            s = 1.;
+        }
+        vte_terminal_set_font_scale((*t).term as *mut VteTerminal, s);
+        term_set_size(t, width, height, GTRUE);
+    }
+}
 
 fn term_set_size(t: *mut Terminal, width: i64, height: i64, win_ready: gboolean) {
     unsafe {
@@ -1006,6 +1078,6 @@ fn main() {
     unsafe {
         gtk_init(std::ptr::null_mut(), std::ptr::null_mut());
         term_new(&mut t);
-        // gtk_main();
+        gtk_main();
     }
 }

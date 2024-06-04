@@ -283,3 +283,10 @@ pub static CONFIG: Lazy<Mutex<Vec<ConfigItem>>> = Lazy::new(|| {
         },
     ])
 });
+
+#[allow(unused_macros)]
+macro_rules! wifexited {
+    ($status:expr) => {
+        (($status) & 0x7f) == 0
+    };
+}
