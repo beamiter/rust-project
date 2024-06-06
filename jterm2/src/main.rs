@@ -837,7 +837,9 @@ fn term_new(t: *mut Terminal) {
         }
         vte_terminal_set_allow_hyperlink((*t).term as *mut VteTerminal, GTRUE);
 
-        // In Rust, to convert a &str (a string slice) into a *const c_char (a pointer to a C-style character array), you need to use the CString type provided by the standard library's std::ffi module. A CString is an owned, null-terminated string that can be used with FFI (Foreign Function Interface).
+        // In Rust, to convert a &str (a string slice) into a *const c_char (a pointer to a C-style character array),
+        // you need to use the CString type provided by the standard library's std::ffi module. A CString is an owned,
+        // null-terminated string that can be used with FFI (Foreign Function Interface).
         let mut c_string: CString;
         if let ConfigValue::S(s) = cfg("Colors", "foreground").unwrap().v {
             c_string = CString::new(s).expect("failed");
