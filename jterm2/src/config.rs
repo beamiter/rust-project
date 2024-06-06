@@ -83,7 +83,7 @@ pub static CONFIG: Lazy<Mutex<Vec<ConfigItem>>> = Lazy::new(|| {
             n: "background",
             t: ConfigItemType::String,
             l: None,
-            v: ConfigValue::S("#292121"),
+            v: ConfigValue::S("#121616"),
         },
         ConfigItem {
             s: "Colors",
@@ -139,7 +139,7 @@ pub static CONFIG: Lazy<Mutex<Vec<ConfigItem>>> = Lazy::new(|| {
             n: "dark_blue",
             t: ConfigItemType::String,
             l: None,
-            v: ConfigValue::S("#0000AA"),
+            v: ConfigValue::S("#6767d6"),
         },
         ConfigItem {
             s: "Colors",
