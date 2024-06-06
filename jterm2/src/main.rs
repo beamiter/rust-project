@@ -537,7 +537,6 @@ fn sig_child_exited(term: *mut VteTerminal, status: i32, data: gpointer) {
                 gtk_window_set_title((*t).win as *mut GtkWindow, c_string.as_ptr());
             }
         } else {
-            println!("sig child exited!!!");
             gtk_widget_destroy((*t).win);
         }
     }
