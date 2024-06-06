@@ -27,6 +27,7 @@ use glib_sys::g_key_file_load_from_file;
 use glib_sys::g_key_file_new;
 use glib_sys::g_set_prgname;
 use glib_sys::g_spawn_async;
+use glib_sys::g_strdup_printf;
 use glib_sys::g_strup;
 use glib_sys::gboolean;
 use glib_sys::gpointer;
@@ -193,7 +194,7 @@ fn cfg<'a>(s: &'a str, n: &'a str) -> Option<ConfigItem<'a>> {
     let config = CONFIG.lock().unwrap();
     for conf in (*config).iter() {
         if conf.s == s && conf.n == n {
-            println!("s: {}, n: {}", s, n);
+            // println!("s: {}, n: {}", s, n);
             return Some(conf.clone());
         }
     }
@@ -366,11 +367,11 @@ fn ini_load(config_file: *mut c_char) {
         if g_key_file_load_from_file(ini, p, G_KEY_FILE_NONE, std::ptr::null_mut()) <= 0 {
             if !config_file.is_null() || g_file_test(p, G_FILE_TEST_EXISTS) > 0 {
                 eprintln!(":Config could not be loaded");
-                // g_free(p as *mut c_void);
-                return;
+                g_free(p as *mut c_void);
             }
+            return;
         }
-        // g_free(p as *mut c_void);
+        g_free(p as *mut c_void);
     }
 
     let mut err: *mut GError;
@@ -526,15 +527,17 @@ fn sig_child_exited(term: *mut VteTerminal, status: i32, data: gpointer) {
         (*t).has_child_exit_status = GTRUE;
         (*t).child_exit_status = status;
 
-        if (*t).hold >= 0 {
+        if (*t).hold > 0 {
             if let ConfigValue::S(s) = cfg("Colors", "background").unwrap().v {
                 let mut c_string = CString::new(s).expect("failed");
                 gdk_rgba_parse(&mut c_background_gdk, c_string.as_ptr());
                 vte_terminal_set_color_cursor(term, &c_background_gdk);
                 c_string = CString::new("CHILD HAS QUIT").expect("failed");
+                println!("{}", c_string.to_string_lossy());
                 gtk_window_set_title((*t).win as *mut GtkWindow, c_string.as_ptr());
             }
         } else {
+            println!("sig child exited!!!");
             gtk_widget_destroy((*t).win);
         }
     }
@@ -661,13 +664,32 @@ fn convert_vec_str_to_raw(vec: Vec<&str>) -> *mut *mut c_char {
         .into_iter()
         .map(|s| CString::new(s).expect("CString::new failed"))
         .collect();
+    for str in &cstrings {
+        println!("{}", str.to_string_lossy());
+    }
     let mut c_char_ptrs: Vec<*mut c_char> = cstrings
         .iter()
-        .map(|cstring| cstring.as_ptr() as *mut c_char)
+        .map(|cstring| {
+            if cstring.is_empty() {
+                std::ptr::null_mut()
+            } else {
+                cstring.as_ptr() as *mut c_char
+            }
+        })
         .collect();
     // Add a null pointer at the end if needed for a null-terminated array.
     c_char_ptrs.push(std::ptr::null_mut());
     let ptr = c_char_ptrs.as_mut_ptr();
+    unsafe {
+        // Iterate over each *const c_char
+        let mut current_ptr = ptr;
+        while !(*current_ptr).is_null() {
+            // Convert *const c_char to &CStr, then to &str to be printed
+            let cstr = CStr::from_ptr(*current_ptr);
+            println!("{}", cstr.to_string_lossy());
+            current_ptr = current_ptr.add(1);
+        }
+    }
     ptr
 }
 
@@ -718,16 +740,17 @@ fn term_new(t: *mut Terminal) {
     unsafe {
         (*t).current_font = 0;
     }
+    let spawn_flags: GSpawnFlags;
+    let mut argv_cmdline: *mut *mut c_char = std::ptr::null_mut();
+    let args_use: *mut *mut c_char;
+    let mut args_default: Vec<*mut c_char> = vec![std::ptr::null_mut(); 3];
+    let config_file: *mut c_char = std::ptr::null_mut();
+
     let args: Vec<String> = env::args().collect();
     println!(
         "Number of arguments (excluding program name): {}",
         args.len() - 1
     );
-    let mut argv_cmdline: &str = "";
-    let args_use: Vec<&str>;
-    let spawn_flags: GSpawnFlags;
-    let mut args_default: Vec<String> = vec![String::from(""); 3];
-    let config_file: *mut c_char = std::ptr::null_mut();
     let mut iter = args.iter().enumerate().skip(1);
     while let Some((_, arg)) = iter.next() {
         println!("{}", arg);
@@ -762,7 +785,11 @@ fn term_new(t: *mut Terminal) {
             }
         } else if arg == "-e" {
             if let Some((_, argv_cmdline0)) = iter.next() {
-                argv_cmdline = argv_cmdline0;
+                let cstring = CString::new(argv_cmdline0.to_string()).expect("failed to convert");
+                let c_str_ptr = cstring.as_ptr();
+                let mut mut_c_str_ptr = c_str_ptr as *mut c_char;
+                let raw_ptr_to_raw_ptr: *mut *mut c_char = &mut mut_c_str_ptr as *mut *mut c_char;
+                argv_cmdline = raw_ptr_to_raw_ptr;
                 break;
             }
         } else {
@@ -816,12 +843,12 @@ fn term_new(t: *mut Terminal) {
         if let ConfigValue::S(s) = cfg("Colors", "foreground").unwrap().v {
             c_string = CString::new(s).expect("failed");
             gdk_rgba_parse(&mut c_foreground_gdk, c_string.as_ptr());
-            println!("{} foreground: {:?}", s, c_foreground_gdk);
+            // println!("{} foreground: {:?}", s, c_foreground_gdk);
         }
         if let ConfigValue::S(s) = cfg("Colors", "background").unwrap().v {
             c_string = CString::new(s).expect("failed");
             gdk_rgba_parse(&mut c_background_gdk, c_string.as_ptr());
-            println!("{} background: {:?}", s, c_background_gdk);
+            // println!("{} background: {:?}", s, c_background_gdk);
         }
         let mut c_palette_gdk: [GdkRGBA; 16] = std::mem::zeroed();
         for i in 0..16 {
@@ -830,7 +857,7 @@ fn term_new(t: *mut Terminal) {
                 gdk_rgba_parse(c_palette_gdk.as_mut_ptr().add(i), c_string.as_ptr());
             }
         }
-        println!("{:?}", c_palette_gdk);
+        // println!("{:?}", c_palette_gdk);
         let c_foreground_gdk_ptr: *const GdkRGBA = &c_foreground_gdk;
         let c_background_gdk_ptr: *const GdkRGBA = &c_background_gdk;
         vte_terminal_set_colors(
@@ -846,7 +873,7 @@ fn term_new(t: *mut Terminal) {
                 c_string = CString::new(s).expect("failed");
                 gdk_rgba_parse(&mut c_gdk, c_string.as_ptr());
                 vte_terminal_set_color_bold((*t).term as *mut VteTerminal, &c_gdk);
-                println!("{} : {:?}", s, c_gdk);
+                // println!("{} : {:?}", s, c_gdk);
             } else {
                 vte_terminal_set_color_bold((*t).term as *mut VteTerminal, std::ptr::null_mut());
             }
@@ -856,7 +883,7 @@ fn term_new(t: *mut Terminal) {
                 c_string = CString::new(s).expect("failed");
                 gdk_rgba_parse(&mut c_gdk, c_string.as_ptr());
                 vte_terminal_set_color_cursor((*t).term as *mut VteTerminal, &c_gdk);
-                println!("{} : {:?}", s, c_gdk);
+                // println!("{} : {:?}", s, c_gdk);
             } else {
                 vte_terminal_set_color_cursor((*t).term as *mut VteTerminal, std::ptr::null_mut());
             }
@@ -866,7 +893,7 @@ fn term_new(t: *mut Terminal) {
                 c_string = CString::new(s).expect("failed");
                 gdk_rgba_parse(&mut c_gdk, c_string.as_ptr());
                 vte_terminal_set_color_cursor_foreground((*t).term as *mut VteTerminal, &c_gdk);
-                println!("{} : {:?}", s, c_gdk);
+                // println!("{} : {:?}", s, c_gdk);
             } else {
                 vte_terminal_set_color_cursor_foreground(
                     (*t).term as *mut VteTerminal,
@@ -965,36 +992,47 @@ fn term_new(t: *mut Terminal) {
         );
 
         // Spawn child.
-        if !argv_cmdline.is_empty() {
-            args_use = vec![argv_cmdline];
+        if !argv_cmdline.is_null() {
+            args_use = argv_cmdline;
             spawn_flags = G_SPAWN_SEARCH_PATH;
         } else {
-            if args_default[0].is_empty() {
-                let c_str = CStr::from_ptr(vte_get_user_shell());
-                args_default[0] = String::from(c_str.to_str().unwrap());
-                if args_default[0].is_empty() {
-                    args_default[0] = String::from("/bin/sh");
+            if args_default[0].is_null() {
+                args_default[0] = vte_get_user_shell();
+                if args_default[0].is_null() {
+                    c_string = CString::new("/bin/sh").expect("failed to convert");
+                    args_default[0] = c_string.as_ptr() as *mut c_char;
                 }
                 if let ConfigValue::B(b) = cfg("Options", "login_shell").unwrap().v {
                     if b > 0 {
-                        args_default[1] = format!("-{}", args_default[0]);
+                        c_string = CString::new("-%s").expect("failed to convert");
+                        args_default[1] = g_strdup_printf(c_string.as_ptr(), args_default[0]);
                     } else {
-                        args_default[1] = args_default[0].to_string();
+                        args_default[1] = args_default[0];
                     }
                 }
             }
-            args_use = args_default.iter().map(|s| s.as_str()).collect();
+            args_use = args_default.as_mut_ptr();
             spawn_flags = G_SPAWN_SEARCH_PATH | G_SPAWN_FILE_AND_ARGV_ZERO;
         }
 
         let callback: VteTerminalSpawnAsyncCallback =
             Some(std::mem::transmute(cb_spawn_async as *const ()));
-        let args_use_ptr = convert_vec_str_to_raw(args_use);
+        // Iterate over each *const c_char
+        let mut current_ptr = args_use;
+        let mut i = 0;
+        while !(*current_ptr).is_null() {
+            print!("{}: ", i);
+            i += 1;
+            // Convert *const c_char to &CStr, then to &str to be printed
+            let cstr = CStr::from_ptr(*current_ptr);
+            println!("{:?}", cstr.to_string_lossy());
+            current_ptr = current_ptr.add(1);
+        }
         vte_terminal_spawn_async(
             (*t).term as *mut VteTerminal,
             VTE_PTY_DEFAULT,
             std::ptr::null(),
-            args_use_ptr,
+            args_use,
             std::ptr::null_mut(),
             spawn_flags,
             None,
@@ -1006,7 +1044,6 @@ fn term_new(t: *mut Terminal) {
             t as gpointer,
         );
     }
-    println!("fuck haha");
 }
 
 fn term_activate_current_font(t: *mut Terminal, win_ready: gboolean) {
