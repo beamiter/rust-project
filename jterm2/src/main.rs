@@ -1066,7 +1066,6 @@ fn term_activate_current_font(t: *mut Terminal, win_ready: gboolean) {
     unsafe {
         let width = vte_terminal_get_column_count((*t).term as *mut VteTerminal);
         let height = vte_terminal_get_row_count((*t).term as *mut VteTerminal);
-        println!("width: {}, height: {}", width, height);
 
         vte_terminal_set_font((*t).term as *mut VteTerminal, font_desc as *const _);
         pango_font_description_free(font_desc);
@@ -1084,7 +1083,7 @@ fn term_change_font_scale(t: *mut Terminal, direction: i64) {
 
         if direction != 0 {
             s = vte_terminal_get_font_scale((*t).term as *mut VteTerminal);
-            s *= if direction > 0 { 1.1 } else { 1.0 / 1.0 };
+            s *= if direction > 0 { 1.1 } else { 1.0 / 1.1 };
         } else {
             s = 1.;
         }
@@ -1099,14 +1098,13 @@ fn term_set_size(t: *mut Terminal, width: i64, height: i64, win_ready: gboolean)
             vte_terminal_set_size((*t).term as *mut VteTerminal, width, height);
         }
         if win_ready > 0 {
-            let natural: *mut GtkRequisition = std::ptr::null_mut();
-            gtk_widget_get_preferred_size((*t).term, std::ptr::null_mut(), natural);
-            println!("natural: {:?}", *natural);
-            gtk_window_resize(
-                (*t).win as *mut GtkWindow,
-                (*natural).width,
-                (*natural).height,
+            let mut natural: GtkRequisition = std::mem::zeroed();
+            gtk_widget_get_preferred_size(
+                (*t).term,
+                std::ptr::null_mut(),
+                &mut natural as *mut GtkRequisition,
             );
+            gtk_window_resize((*t).win as *mut GtkWindow, natural.width, natural.height);
         }
     }
 }
