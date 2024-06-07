@@ -55,7 +55,7 @@ pub static CONFIG: Lazy<Mutex<Vec<ConfigItem>>> = Lazy::new(|| {
             n: "history_handler",
             t: ConfigItemType::String,
             l: None,
-            v: ConfigValue::S("jterm2-history-handler"),
+            v: ConfigValue::S("cat"),
         },
         ConfigItem {
             s: "Options",

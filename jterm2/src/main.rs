@@ -239,24 +239,25 @@ fn get_keyval(name: &str) -> u32 {
 
 fn handle_history(term: *mut VteTerminal) {
     let tmpfile: *mut GFile;
-    let io_stream: *mut GFileIOStream = std::ptr::null_mut();
+    let mut io_stream: *mut GFileIOStream = std::ptr::null_mut();
     let out_stream: *mut GOutputStream;
-    let err: *mut GError = std::ptr::null_mut();
-    let mut argv: Vec<&str> = vec![""; 3];
+    let mut err: *mut GError = std::ptr::null_mut();
+    let mut argv: Vec<*mut c_char> = vec![std::ptr::null_mut(); 3];
     let spawn_flags = G_SPAWN_DEFAULT | G_SPAWN_SEARCH_PATH;
 
+    let cstring: CString;
     if let ConfigValue::S(s) = cfg("Options", "history_handler").unwrap().v {
-        argv[0] = s;
+        cstring = CString::new(s).expect("fail to convert");
+        argv[0] = cstring.as_ptr() as *mut c_char;
     }
 
     unsafe {
-        tmpfile = g_file_new_tmp(std::ptr::null(), io_stream as *mut _, err as *mut _);
+        tmpfile = g_file_new_tmp(std::ptr::null(), &mut io_stream, &mut err);
         if tmpfile.is_null() {
             eprintln!("Could not write history: {}", safe_emsg(err));
 
-            if !argv[1].is_empty() {
-                let c_string = CString::new(argv[1]).expect("failed to convert");
-                g_free(c_string.into_raw() as *mut c_void);
+            if !argv[1].is_null() {
+                g_free(argv[1] as *mut c_void);
             }
             if !io_stream.is_null() {
                 g_object_unref(io_stream as *mut GObject);
@@ -264,7 +265,7 @@ fn handle_history(term: *mut VteTerminal) {
             if !tmpfile.is_null() {
                 g_object_unref(tmpfile as *mut GObject);
             }
-            g_clear_error(err as *mut _);
+            g_clear_error(&mut err);
         }
 
         out_stream = g_io_stream_get_output_stream(io_stream as *mut GIOStream);
@@ -273,13 +274,12 @@ fn handle_history(term: *mut VteTerminal) {
             out_stream,
             VTE_WRITE_DEFAULT,
             std::ptr::null_mut(),
-            err as *mut _,
+            &mut err,
         ) <= 0
         {
             eprintln!("Could not write history: {}", safe_emsg(err));
-            if !argv[1].is_empty() {
-                let c_string = CString::new(argv[1]).expect("failed to convert");
-                g_free(c_string.into_raw() as *mut c_void);
+            if !argv[1].is_null() {
+                g_free(argv[1] as *mut c_void);
             }
             if !io_stream.is_null() {
                 g_object_unref(io_stream as *mut GObject);
@@ -287,19 +287,13 @@ fn handle_history(term: *mut VteTerminal) {
             if !tmpfile.is_null() {
                 g_object_unref(tmpfile as *mut GObject);
             }
-            g_clear_error(err as *mut _);
+            g_clear_error(&mut err);
         }
 
-        if g_io_stream_close(
-            io_stream as *mut GIOStream,
-            std::ptr::null_mut(),
-            err as *mut _,
-        ) <= 0
-        {
+        if g_io_stream_close(io_stream as *mut GIOStream, std::ptr::null_mut(), &mut err) <= 0 {
             eprintln!("Could not write history: {}", safe_emsg(err));
-            if !argv[1].is_empty() {
-                let c_string = CString::new(argv[1]).expect("failed to convert");
-                g_free(c_string.into_raw() as *mut c_void);
+            if !argv[1].is_null() {
+                g_free(argv[1] as *mut c_void);
             }
             if !io_stream.is_null() {
                 g_object_unref(io_stream as *mut GObject);
@@ -307,21 +301,19 @@ fn handle_history(term: *mut VteTerminal) {
             if !tmpfile.is_null() {
                 g_object_unref(tmpfile as *mut GObject);
             }
-            g_clear_error(err as *mut _);
+            g_clear_error(&mut err);
         }
 
-        let c_str = CStr::from_ptr(g_file_get_path(tmpfile));
-        argv[1] = c_str.to_str().unwrap();
-        let argv_ptr = convert_vec_str_to_raw(argv.clone());
+        argv[1] = g_file_get_path(tmpfile);
         if g_spawn_async(
             std::ptr::null(),
-            argv_ptr,
+            argv.as_mut_ptr(),
             std::ptr::null_mut(),
             spawn_flags,
             None,
             std::ptr::null_mut(),
             std::ptr::null_mut(),
-            err as *mut _,
+            &mut err,
         ) <= 0
         {
             eprintln!("Could not launch history handler: {}", safe_emsg(err));
@@ -330,9 +322,8 @@ fn handle_history(term: *mut VteTerminal) {
 
     //free_and_out.
     unsafe {
-        if !argv[1].is_empty() {
-            let c_string = CString::new(argv[1]).expect("failed to convert");
-            g_free(c_string.into_raw() as *mut c_void);
+        if !argv[1].is_null() {
+            g_free(argv[1] as *mut c_void);
         }
         if !io_stream.is_null() {
             g_object_unref(io_stream as *mut GObject);
@@ -340,7 +331,7 @@ fn handle_history(term: *mut VteTerminal) {
         if !tmpfile.is_null() {
             g_object_unref(tmpfile as *mut GObject);
         }
-        g_clear_error(err as *mut _);
+        g_clear_error(&mut err);
     }
 }
 
