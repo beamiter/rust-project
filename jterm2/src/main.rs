@@ -450,14 +450,17 @@ fn sig_bell(_: *mut VteTerminal, data: gpointer) {
     }
 }
 
+#[allow(unused_assignments)]
 fn sig_button_press(widget: *mut GtkWidget, event: *mut GdkEvent, _: gpointer) -> gboolean {
     let mut url: *mut c_char;
-    let mut argv: Vec<&str> = vec![""; 4];
+    let mut argv: Vec<*mut c_char> = vec![std::ptr::null_mut(); 3];
     let mut err: *mut GError = std::ptr::null_mut();
     let mut retval: gboolean = GFALSE;
     let spawn_flags = G_SPAWN_DEFAULT | G_SPAWN_SEARCH_PATH;
+    let mut cstring = CString::new("").expect("fail to convert");
     if let ConfigValue::S(s) = cfg("Options", "link_handler").unwrap().v {
-        argv[0] = s;
+        cstring = CString::new(s).expect("fail to convert");
+        argv[0] = cstring.as_ptr() as *mut c_char;
     }
     unsafe {
         if (*event).type_ == GDK_BUTTON_PRESS {
@@ -465,7 +468,8 @@ fn sig_button_press(widget: *mut GtkWidget, event: *mut GdkEvent, _: gpointer) -
                 if (*event).button.button == ui as u32 {
                     url = vte_terminal_hyperlink_check_event(widget as *mut VteTerminal, event);
                     if !url.is_null() {
-                        argv[1] = "explicit";
+                        cstring = CString::new("explicit").expect("fail to convert");
+                        argv[1] = cstring.as_ptr() as *mut c_char;
                     } else {
                         url = vte_terminal_match_check_event(
                             widget as *mut VteTerminal,
@@ -473,18 +477,17 @@ fn sig_button_press(widget: *mut GtkWidget, event: *mut GdkEvent, _: gpointer) -
                             std::ptr::null_mut(),
                         );
                         if !url.is_null() {
-                            argv[1] = "match";
+                            cstring = CString::new("match").expect("fail to convert");
+                            argv[1] = cstring.as_ptr() as *mut c_char;
                         }
                     }
 
                     if !url.is_null() {
-                        let c_str = CStr::from_ptr(url);
-                        argv[2] = c_str.to_str().unwrap();
+                        argv[2] = url;
                         // This is fantastic converter.
-                        let argv_ptr = convert_vec_str_to_raw(argv);
                         if g_spawn_async(
                             std::ptr::null(),
-                            argv_ptr,
+                            argv.as_mut_ptr(),
                             std::ptr::null_mut(),
                             spawn_flags,
                             None,
@@ -647,40 +650,6 @@ fn sig_window_title_changed(term: *mut VteTerminal, data: gpointer) {
             vte_terminal_get_window_title(term),
         )
     }
-}
-
-fn convert_vec_str_to_raw(vec: Vec<&str>) -> *mut *mut c_char {
-    let cstrings: Vec<CString> = vec
-        .into_iter()
-        .map(|s| CString::new(s).expect("CString::new failed"))
-        .collect();
-    for str in &cstrings {
-        println!("{}", str.to_string_lossy());
-    }
-    let mut c_char_ptrs: Vec<*mut c_char> = cstrings
-        .iter()
-        .map(|cstring| {
-            if cstring.is_empty() {
-                std::ptr::null_mut()
-            } else {
-                cstring.as_ptr() as *mut c_char
-            }
-        })
-        .collect();
-    // Add a null pointer at the end if needed for a null-terminated array.
-    c_char_ptrs.push(std::ptr::null_mut());
-    let ptr = c_char_ptrs.as_mut_ptr();
-    unsafe {
-        // Iterate over each *const c_char
-        let mut current_ptr = ptr;
-        while !(*current_ptr).is_null() {
-            // Convert *const c_char to &CStr, then to &str to be printed
-            let cstr = CStr::from_ptr(*current_ptr);
-            println!("{}", cstr.to_string_lossy());
-            current_ptr = current_ptr.add(1);
-        }
-    }
-    ptr
 }
 
 fn term_new(t: *mut Terminal) {
