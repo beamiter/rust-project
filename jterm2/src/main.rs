@@ -6,6 +6,8 @@ use gdk_sys::GdkRGBA;
 use gdk_sys::GdkRectangle;
 use gdk_sys::GDK_BUTTON_PRESS;
 use gdk_sys::GDK_CONTROL_MASK;
+use gdk_sys::GDK_KEY_E;
+use gdk_sys::GDK_SHIFT_MASK;
 use gio_sys::g_file_get_path;
 use gio_sys::g_file_new_tmp;
 use gio_sys::g_io_stream_close;
@@ -41,11 +43,17 @@ use glib_sys::G_KEY_FILE_NONE;
 use glib_sys::G_SPAWN_DEFAULT;
 use glib_sys::G_SPAWN_FILE_AND_ARGV_ZERO;
 use glib_sys::G_SPAWN_SEARCH_PATH;
+use gobject_sys::g_cclosure_new;
 use gobject_sys::g_object_unref;
 use gobject_sys::g_signal_connect_data;
 use gobject_sys::GCallback;
 use gobject_sys::GObject;
+use gtk_sys::gtk_accel_group_connect;
+use gtk_sys::gtk_accel_group_new;
+use gtk_sys::gtk_color_chooser_dialog_new;
+use gtk_sys::gtk_color_chooser_get_rgba;
 use gtk_sys::gtk_container_add;
+use gtk_sys::gtk_dialog_run;
 use gtk_sys::gtk_init;
 use gtk_sys::gtk_main;
 use gtk_sys::gtk_widget_destroy;
@@ -53,14 +61,21 @@ use gtk_sys::gtk_widget_get_preferred_size;
 use gtk_sys::gtk_widget_set_has_tooltip;
 use gtk_sys::gtk_widget_set_tooltip_text;
 use gtk_sys::gtk_widget_show_all;
+use gtk_sys::gtk_window_add_accel_group;
 use gtk_sys::gtk_window_new;
 use gtk_sys::gtk_window_resize;
+use gtk_sys::gtk_window_set_default_size;
 use gtk_sys::gtk_window_set_title;
 use gtk_sys::gtk_window_set_urgency_hint;
+use gtk_sys::GtkAccelGroup;
+use gtk_sys::GtkColorChooser;
 use gtk_sys::GtkContainer;
+use gtk_sys::GtkDialog;
 use gtk_sys::GtkRequisition;
 use gtk_sys::GtkWidget;
 use gtk_sys::GtkWindow;
+use gtk_sys::GTK_ACCEL_VISIBLE;
+use gtk_sys::GTK_RESPONSE_OK;
 use gtk_sys::GTK_WINDOW_TOPLEVEL;
 use nix::libc::WEXITSTATUS;
 use nix::libc::WIFEXITED;
@@ -161,6 +176,7 @@ struct Terminal {
     hold: gboolean,
     term: *mut GtkWidget,
     win: *mut GtkWidget,
+    accel_group: *mut GtkAccelGroup,
     has_child_exit_status: gboolean,
     child_exit_status: i32,
     current_font: usize,
@@ -172,6 +188,7 @@ impl Terminal {
             hold: 0,
             term: std::ptr::null_mut(),
             win: std::ptr::null_mut(),
+            accel_group: std::ptr::null_mut(),
             has_child_exit_status: 0,
             child_exit_status: 0,
             current_font: 0,
@@ -635,6 +652,40 @@ fn sig_window_destroy(_: *mut GtkWidget, data: gpointer) {
     process::exit(exit_code);
 }
 
+fn show_256_colors_panel(_: *mut GtkWidget, _: gpointer) {
+    unsafe {
+        let color_window: *mut GtkWidget = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+        let cstring = CString::new("256 Colors").expect("fail to convert");
+        gtk_window_set_title(color_window as *mut GtkWindow, cstring.as_ptr());
+        gtk_window_set_default_size(color_window as *mut GtkWindow, 400, 300);
+        gtk_widget_show_all(color_window);
+    }
+}
+
+fn on_activate_color_chooser(_: *mut GtkWidget, data: gpointer) {
+    unsafe {
+        let cstring = CString::new("choose color").expect("fail to convert");
+        let dialog: *mut GtkWidget =
+            gtk_color_chooser_dialog_new(cstring.as_ptr(), data as *mut GtkWindow);
+
+        let mut color: GdkRGBA = GdkRGBA {
+            red: 0.,
+            green: 0.,
+            blue: 0.,
+            alpha: 0.,
+        };
+        if gtk_dialog_run(dialog as *mut GtkDialog) == GTK_RESPONSE_OK {
+            gtk_color_chooser_get_rgba(dialog as *mut GtkColorChooser, &mut color);
+            println!(
+                "RGBA({}, {}, {}, {})",
+                color.red, color.green, color.blue, color.alpha
+            );
+        }
+
+        gtk_widget_destroy(dialog);
+    }
+}
+
 fn sig_window_resize(_: *mut VteTerminal, width: i64, height: i64, data: gpointer) {
     let t = data as *mut Terminal;
 
@@ -781,6 +832,28 @@ fn term_new(t: *mut Terminal) {
 
         (*t).term = vte_terminal_new() as *mut GtkWidget;
         gtk_container_add((*t).win as *mut GtkContainer, (*t).term);
+
+        (*t).accel_group = gtk_accel_group_new();
+        gtk_window_add_accel_group((*t).win as *mut GtkWindow, (*t).accel_group);
+
+        let callback: GCallback = Some(std::mem::transmute(on_activate_color_chooser as *const ()));
+        let closure = g_cclosure_new(callback, (*t).win as *mut c_void, None);
+        gtk_accel_group_connect(
+            (*t).accel_group,
+            GDK_KEY_E as u32,
+            GDK_CONTROL_MASK | GDK_SHIFT_MASK,
+            GTK_ACCEL_VISIBLE,
+            closure,
+        );
+        let callback: GCallback = Some(std::mem::transmute(show_256_colors_panel as *const ()));
+        let closure = g_cclosure_new(callback, (*t).win as *mut c_void, None);
+        gtk_accel_group_connect(
+            (*t).accel_group,
+            GDK_KEY_E as u32,
+            GDK_CONTROL_MASK,
+            GTK_ACCEL_VISIBLE,
+            closure,
+        );
 
         // Appearance
         term_activate_current_font(t, 0);
