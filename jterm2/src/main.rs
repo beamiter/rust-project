@@ -50,12 +50,16 @@ use gobject_sys::GCallback;
 use gobject_sys::GObject;
 use gtk_sys::gtk_accel_group_connect;
 use gtk_sys::gtk_accel_group_new;
+use gtk_sys::gtk_color_button_new_with_rgba;
 use gtk_sys::gtk_color_chooser_dialog_new;
 use gtk_sys::gtk_color_chooser_get_rgba;
 use gtk_sys::gtk_container_add;
 use gtk_sys::gtk_dialog_run;
+use gtk_sys::gtk_grid_attach;
+use gtk_sys::gtk_grid_new;
 use gtk_sys::gtk_init;
 use gtk_sys::gtk_main;
+use gtk_sys::gtk_main_quit;
 use gtk_sys::gtk_widget_destroy;
 use gtk_sys::gtk_widget_get_preferred_size;
 use gtk_sys::gtk_widget_set_has_tooltip;
@@ -71,6 +75,7 @@ use gtk_sys::GtkAccelGroup;
 use gtk_sys::GtkColorChooser;
 use gtk_sys::GtkContainer;
 use gtk_sys::GtkDialog;
+use gtk_sys::GtkGrid;
 use gtk_sys::GtkRequisition;
 use gtk_sys::GtkWidget;
 use gtk_sys::GtkWindow;
@@ -93,6 +98,7 @@ use std::i8;
 use std::path::PathBuf;
 use std::process;
 use std::slice;
+use std::sync::Mutex;
 use vte_sys::vte_get_user_shell;
 use vte_sys::vte_regex_new_for_match;
 use vte_sys::vte_regex_unref;
@@ -172,10 +178,13 @@ pub struct ConfigItem<'a> {
     v: ConfigValue<'a>,
 }
 
+pub static mut PALETTE: Mutex<[GdkRGBA; 16]> = Mutex::new(unsafe { std::mem::zeroed() });
+
 struct Terminal {
     hold: gboolean,
     term: *mut GtkWidget,
     win: *mut GtkWidget,
+    palette: [GdkRGBA; 16],
     accel_group: *mut GtkAccelGroup,
     has_child_exit_status: gboolean,
     child_exit_status: i32,
@@ -188,6 +197,7 @@ impl Terminal {
             hold: 0,
             term: std::ptr::null_mut(),
             win: std::ptr::null_mut(),
+            palette: unsafe { std::mem::zeroed() },
             accel_group: std::ptr::null_mut(),
             has_child_exit_status: 0,
             child_exit_status: 0,
@@ -620,6 +630,7 @@ fn sig_key_press(widget: *mut GtkWidget, event: *mut GdkEvent, data: gpointer) -
     return GFALSE;
 }
 
+#[allow(dead_code)]
 fn sig_window_destroy(_: *mut GtkWidget, data: gpointer) {
     let t = data as *mut Terminal;
     let exit_code: i32;
@@ -654,11 +665,40 @@ fn sig_window_destroy(_: *mut GtkWidget, data: gpointer) {
 
 fn show_256_colors_panel(_: *mut GtkWidget, _: gpointer) {
     unsafe {
+        // let t = data as *mut Terminal;
+        let mut c_palette_gdk = PALETTE.lock().unwrap();
         let color_window: *mut GtkWidget = gtk_window_new(GTK_WINDOW_TOPLEVEL);
         let cstring = CString::new("256 Colors").expect("fail to convert");
         gtk_window_set_title(color_window as *mut GtkWindow, cstring.as_ptr());
         gtk_window_set_default_size(color_window as *mut GtkWindow, 400, 300);
+        let callback: GCallback = Some(std::mem::transmute(gtk_widget_destroy as *const ()));
+        let c_string = CString::new("destroy").expect("failed to convert");
+        g_signal_connect_data(
+            color_window as *mut GObject,
+            c_string.as_ptr(),
+            callback,
+            std::ptr::null_mut(),
+            None,
+            0,
+        );
+
+        let grid: *mut GtkWidget = gtk_grid_new();
+        gtk_container_add(color_window as *mut GtkContainer, grid);
+        let mut color_buttons: [*mut GtkWidget; 16] = std::mem::zeroed();
+        for i in 0..16 {
+            color_buttons[i] = gtk_color_button_new_with_rgba(c_palette_gdk.as_mut_ptr().add(i));
+            gtk_grid_attach(
+                grid as *mut GtkGrid,
+                color_buttons[i],
+                i as i32 % 8,
+                1 + i as i32 / 8,
+                1,
+                1,
+            );
+        }
+
         gtk_widget_show_all(color_window);
+        // gtk_widget_destroy(color_window);
     }
 }
 
@@ -815,7 +855,8 @@ fn term_new(t: *mut Terminal) {
         (*t).win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
         c_string = CString::new(title).expect("failed to convert");
         gtk_window_set_title((*t).win as *mut GtkWindow, c_string.as_ptr());
-        let callback: GCallback = Some(std::mem::transmute(sig_window_destroy as *const ()));
+        // let callback: GCallback = Some(std::mem::transmute(sig_window_destroy as *const ()));
+        let callback: GCallback = Some(std::mem::transmute(gtk_main_quit as *const ()));
         c_string = CString::new("destroy").expect("failed to convert");
         g_signal_connect_data(
             (*t).win as *mut GObject,
@@ -842,15 +883,6 @@ fn term_new(t: *mut Terminal) {
             (*t).accel_group,
             GDK_KEY_E as u32,
             GDK_CONTROL_MASK | GDK_SHIFT_MASK,
-            GTK_ACCEL_VISIBLE,
-            closure,
-        );
-        let callback: GCallback = Some(std::mem::transmute(show_256_colors_panel as *const ()));
-        let closure = g_cclosure_new(callback, (*t).win as *mut c_void, None);
-        gtk_accel_group_connect(
-            (*t).accel_group,
-            GDK_KEY_E as u32,
-            GDK_CONTROL_MASK,
             GTK_ACCEL_VISIBLE,
             closure,
         );
@@ -884,22 +916,30 @@ fn term_new(t: *mut Terminal) {
             gdk_rgba_parse(&mut c_background_gdk, c_string.as_ptr());
             // println!("{} background: {:?}", s, c_background_gdk);
         }
-        let mut c_palette_gdk: [GdkRGBA; 16] = std::mem::zeroed();
-        for i in 0..16 {
+        for i in 0..standard16order.len() {
             if let ConfigValue::S(s) = cfg("Colors", standard16order[i]).unwrap().v {
                 c_string = CString::new(s).expect("failed");
-                gdk_rgba_parse(c_palette_gdk.as_mut_ptr().add(i), c_string.as_ptr());
+                gdk_rgba_parse((*t).palette.as_mut_ptr().add(i), c_string.as_ptr());
             }
         }
-        // println!("{:?}", c_palette_gdk);
+        let callback: GCallback = Some(std::mem::transmute(show_256_colors_panel as *const ()));
+        PALETTE = (*t).palette.into();
+        let closure = g_cclosure_new(callback, (*t).win as *mut c_void, None);
+        gtk_accel_group_connect(
+            (*t).accel_group,
+            GDK_KEY_E as u32,
+            GDK_CONTROL_MASK,
+            GTK_ACCEL_VISIBLE,
+            closure,
+        );
         let c_foreground_gdk_ptr: *const GdkRGBA = &c_foreground_gdk;
         let c_background_gdk_ptr: *const GdkRGBA = &c_background_gdk;
         vte_terminal_set_colors(
             (*t).term as *mut VteTerminal,
             c_foreground_gdk_ptr,
             c_background_gdk_ptr,
-            c_palette_gdk.as_ptr(),
-            16,
+            (*t).palette.as_mut_ptr(),
+            (*t).palette.len(),
         );
 
         if let ConfigValue::S(s) = cfg("Colors", "bold").unwrap().v {
