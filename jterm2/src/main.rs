@@ -50,12 +50,14 @@ use gobject_sys::GCallback;
 use gobject_sys::GObject;
 use gtk_sys::gtk_accel_group_connect;
 use gtk_sys::gtk_accel_group_new;
+use gtk_sys::gtk_button_new_with_label;
 use gtk_sys::gtk_color_button_new_with_rgba;
 use gtk_sys::gtk_color_chooser_dialog_new;
 use gtk_sys::gtk_color_chooser_get_rgba;
 use gtk_sys::gtk_container_add;
 use gtk_sys::gtk_dialog_run;
 use gtk_sys::gtk_grid_attach;
+use gtk_sys::gtk_grid_attach_next_to;
 use gtk_sys::gtk_grid_new;
 use gtk_sys::gtk_init;
 use gtk_sys::gtk_main;
@@ -72,6 +74,7 @@ use gtk_sys::gtk_window_set_default_size;
 use gtk_sys::gtk_window_set_title;
 use gtk_sys::gtk_window_set_urgency_hint;
 use gtk_sys::GtkAccelGroup;
+use gtk_sys::GtkColorButton;
 use gtk_sys::GtkColorChooser;
 use gtk_sys::GtkContainer;
 use gtk_sys::GtkDialog;
@@ -80,6 +83,10 @@ use gtk_sys::GtkRequisition;
 use gtk_sys::GtkWidget;
 use gtk_sys::GtkWindow;
 use gtk_sys::GTK_ACCEL_VISIBLE;
+use gtk_sys::GTK_POS_BOTTOM;
+use gtk_sys::GTK_POS_LEFT;
+use gtk_sys::GTK_POS_RIGHT;
+use gtk_sys::GTK_POS_TOP;
 use gtk_sys::GTK_RESPONSE_OK;
 use gtk_sys::GTK_WINDOW_TOPLEVEL;
 use nix::libc::WEXITSTATUS;
@@ -663,16 +670,30 @@ fn sig_window_destroy(_: *mut GtkWidget, data: gpointer) {
     process::exit(exit_code);
 }
 
+fn on_confirm_button_clicked(_: *mut GtkWidget, data: gpointer) {
+    unsafe {
+        let mut c_palette_gdk = PALETTE.lock().unwrap();
+        println!("{:?}", c_palette_gdk);
+    }
+    println!("Confirm button clicked");
+}
+
+fn on_color_button_clicked(color_button: *mut GtkColorButton, data: gpointer) {
+    unsafe {
+        let color = data as *mut GdkRGBA;
+        gtk_color_chooser_get_rgba(color_button as *mut GtkColorChooser, color);
+    }
+}
+
 fn show_256_colors_panel(_: *mut GtkWidget, _: gpointer) {
     unsafe {
-        // let t = data as *mut Terminal;
         let mut c_palette_gdk = PALETTE.lock().unwrap();
         let color_window: *mut GtkWidget = gtk_window_new(GTK_WINDOW_TOPLEVEL);
-        let cstring = CString::new("256 Colors").expect("fail to convert");
-        gtk_window_set_title(color_window as *mut GtkWindow, cstring.as_ptr());
+        let mut c_string = CString::new("256 Colors").expect("fail to convert");
+        gtk_window_set_title(color_window as *mut GtkWindow, c_string.as_ptr());
         gtk_window_set_default_size(color_window as *mut GtkWindow, 400, 300);
         let callback: GCallback = Some(std::mem::transmute(gtk_widget_destroy as *const ()));
-        let c_string = CString::new("destroy").expect("failed to convert");
+        c_string = CString::new("destroy").expect("failed to convert");
         g_signal_connect_data(
             color_window as *mut GObject,
             c_string.as_ptr(),
@@ -687,6 +708,17 @@ fn show_256_colors_panel(_: *mut GtkWidget, _: gpointer) {
         let mut color_buttons: [*mut GtkWidget; 16] = std::mem::zeroed();
         for i in 0..16 {
             color_buttons[i] = gtk_color_button_new_with_rgba(c_palette_gdk.as_mut_ptr().add(i));
+            let callback: GCallback =
+                Some(std::mem::transmute(on_color_button_clicked as *const ()));
+            c_string = CString::new("color-set").expect("failed to convert");
+            g_signal_connect_data(
+                color_buttons[i] as *mut GObject,
+                c_string.as_ptr(),
+                callback,
+                c_palette_gdk.as_mut_ptr().add(i) as *mut c_void,
+                None,
+                0,
+            );
             gtk_grid_attach(
                 grid as *mut GtkGrid,
                 color_buttons[i],
@@ -696,7 +728,26 @@ fn show_256_colors_panel(_: *mut GtkWidget, _: gpointer) {
                 1,
             );
         }
-
+        c_string = CString::new("y").expect("failed to convert");
+        let button = gtk_button_new_with_label(c_string.as_ptr());
+        c_string = CString::new("clicked").expect("failed to convert");
+        let callback: GCallback = Some(std::mem::transmute(on_confirm_button_clicked as *const ()));
+        g_signal_connect_data(
+            button as *mut GObject,
+            c_string.as_ptr(),
+            callback,
+            std::ptr::null_mut(),
+            None,
+            0,
+        );
+        gtk_grid_attach_next_to(
+            grid as *mut GtkGrid,
+            button,
+            color_buttons[8],
+            GTK_POS_BOTTOM,
+            1,
+            1,
+        );
         gtk_widget_show_all(color_window);
         // gtk_widget_destroy(color_window);
     }
