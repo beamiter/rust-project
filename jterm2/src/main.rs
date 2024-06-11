@@ -1,6 +1,7 @@
 use config::PALETTE;
 use gdk_sys::gdk_keyval_from_name;
 use gdk_sys::gdk_rgba_parse;
+use gdk_sys::GdkColor;
 use gdk_sys::GdkEvent;
 use gdk_sys::GdkEventKey;
 use gdk_sys::GdkModifierType;
@@ -686,6 +687,14 @@ fn on_close_button_clicked(_: *mut GtkWidget, data: gpointer) {
     }
 }
 
+fn gdk_rgba_to_color(rgba: *mut GdkRGBA, color: *mut GdkColor) {
+    unsafe {
+        (*color).red = ((*rgba).red * (65535 as f64)) as u16;
+        (*color).green = ((*rgba).green * (65535 as f64)) as u16;
+        (*color).blue = ((*rgba).blue * (65535 as f64)) as u16;
+    }
+}
+
 fn on_color_button_clicked(color_button: *mut GtkColorButton, data: gpointer) {
     unsafe {
         let i = data as usize;
@@ -698,9 +707,27 @@ fn on_color_button_clicked(color_button: *mut GtkColorButton, data: gpointer) {
         };
         // gtk_color_chooser_get_rgba(color_button as *mut GtkColorChooser, &mut tmp_color);
         gtk_color_button_get_rgba(color_button, &mut tmp_color);
-        // println!("tmp color: {:?}", tmp_color);
+        let mut other_color: GdkColor = GdkColor {
+            pixel: 0,
+            red: 0,
+            green: 0,
+            blue: 0,
+        };
         let mut c_palette_gdk = PALETTE.lock().unwrap();
         c_palette_gdk[i] = tmp_color;
+        gdk_rgba_to_color(&mut tmp_color, &mut other_color);
+        println!(
+            "Lowercase hex: r:{}, g:{}, b:{}",
+            format!("{:x}", other_color.red),
+            format!("{:x}", other_color.green),
+            format!("{:x}", other_color.blue),
+        );
+        println!(
+            "Uppercase hex: r:{}, g:{}, b:{}",
+            format!("{:X}", other_color.red),
+            format!("{:X}", other_color.green),
+            format!("{:X}", other_color.blue),
+        );
     }
 }
 
