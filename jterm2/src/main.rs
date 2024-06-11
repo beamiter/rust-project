@@ -689,9 +689,9 @@ fn on_close_button_clicked(_: *mut GtkWidget, data: gpointer) {
 
 fn gdk_rgba_to_color(rgba: *mut GdkRGBA, color: *mut GdkColor) {
     unsafe {
-        (*color).red = ((*rgba).red * (65535 as f64)) as u16;
-        (*color).green = ((*rgba).green * (65535 as f64)) as u16;
-        (*color).blue = ((*rgba).blue * (65535 as f64)) as u16;
+        (*color).red = ((*rgba).red * (255 as f64)) as u16;
+        (*color).green = ((*rgba).green * (255 as f64)) as u16;
+        (*color).blue = ((*rgba).blue * (255 as f64)) as u16;
     }
 }
 
@@ -716,18 +716,14 @@ fn on_color_button_clicked(color_button: *mut GtkColorButton, data: gpointer) {
         let mut c_palette_gdk = PALETTE.lock().unwrap();
         c_palette_gdk[i] = tmp_color;
         gdk_rgba_to_color(&mut tmp_color, &mut other_color);
-        println!(
-            "Lowercase hex: r:{}, g:{}, b:{}",
-            format!("{:x}", other_color.red),
-            format!("{:x}", other_color.green),
-            format!("{:x}", other_color.blue),
-        );
-        println!(
-            "Uppercase hex: r:{}, g:{}, b:{}",
-            format!("{:X}", other_color.red),
-            format!("{:X}", other_color.green),
-            format!("{:X}", other_color.blue),
-        );
+        let hex_r = format!("{:x}", other_color.red);
+        let hex_g = format!("{:x}", other_color.green);
+        let hex_b = format!("{:x}", other_color.blue);
+        println!("Lowercase hex: #{}{}{}", hex_r, hex_g, hex_b,);
+        let hex_r = format!("{:X}", other_color.red);
+        let hex_g = format!("{:X}", other_color.green);
+        let hex_b = format!("{:X}", other_color.blue);
+        println!("Uppercase hex: #{}{}{}", hex_r, hex_g, hex_b,);
     }
 }
 
