@@ -720,6 +720,9 @@ fn on_color_button_clicked(color_button: *mut GtkColorButton, data: gpointer) {
         let hex_g = format!("{:x}", other_color.green);
         let hex_b = format!("{:x}", other_color.blue);
         println!("Lowercase hex: #{}{}{}", hex_r, hex_g, hex_b,);
+        // let c_string =
+        //     CString::new(format!("#{}{}{}", hex_r, hex_g, hex_b)).expect("convert failed");
+        // gtk_button_set_label(color_button as *mut GtkButton, c_string.as_ptr());
         let hex_r = format!("{:X}", other_color.red);
         let hex_g = format!("{:X}", other_color.green);
         let hex_b = format!("{:X}", other_color.blue);
