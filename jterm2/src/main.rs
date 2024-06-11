@@ -81,6 +81,7 @@ use gtk_sys::GtkWidget;
 use gtk_sys::GtkWindow;
 use gtk_sys::GTK_ACCEL_VISIBLE;
 use gtk_sys::GTK_POS_BOTTOM;
+use gtk_sys::GTK_POS_RIGHT;
 use gtk_sys::GTK_WINDOW_TOPLEVEL;
 use nix::libc::WEXITSTATUS;
 use nix::libc::WIFEXITED;
@@ -679,10 +680,16 @@ fn on_confirm_button_clicked(_: *mut GtkWidget, data: gpointer) {
     }
 }
 
+fn on_close_button_clicked(_: *mut GtkWidget, data: gpointer) {
+    unsafe {
+        gtk_widget_destroy(data as *mut GtkWidget);
+    }
+}
+
 fn on_color_button_clicked(color_button: *mut GtkColorButton, data: gpointer) {
     unsafe {
         let i = data as usize;
-        println!("index: {}", i);
+        // println!("index: {}", i);
         let mut tmp_color: GdkRGBA = GdkRGBA {
             red: 0.,
             green: 0.,
@@ -705,9 +712,7 @@ fn show_256_colors_panel(
     data: gpointer,
 ) {
     unsafe {
-        let t = data as *mut Terminal;
-        PALETTE = (*t).palette.into();
-        let mut c_palette_gdk = (*t).palette;
+        let mut c_palette_gdk = PALETTE.lock().unwrap();
         let color_window: *mut GtkWidget = gtk_window_new(GTK_WINDOW_TOPLEVEL);
         let mut c_string = CString::new("256 Colors").expect("fail to convert");
         gtk_window_set_title(color_window as *mut GtkWindow, c_string.as_ptr());
@@ -749,12 +754,13 @@ fn show_256_colors_panel(
                 1,
             );
         }
-        c_string = CString::new("y").expect("failed to convert");
-        let button = gtk_button_new_with_label(c_string.as_ptr());
+        c_string = CString::new("Y").expect("failed to convert");
+        let button_y = gtk_button_new_with_label(c_string.as_ptr());
         c_string = CString::new("clicked").expect("failed to convert");
         let callback: GCallback = Some(std::mem::transmute(on_confirm_button_clicked as *const ()));
+        let t = data as *mut Terminal;
         g_signal_connect_data(
-            button as *mut GObject,
+            button_y as *mut GObject,
             c_string.as_ptr(),
             callback,
             t as *mut c_void,
@@ -763,9 +769,29 @@ fn show_256_colors_panel(
         );
         gtk_grid_attach_next_to(
             grid as *mut GtkGrid,
-            button,
+            button_y,
             color_buttons[8],
             GTK_POS_BOTTOM,
+            1,
+            1,
+        );
+        c_string = CString::new("C").expect("failed to convert");
+        let button_c = gtk_button_new_with_label(c_string.as_ptr());
+        c_string = CString::new("clicked").expect("failed to convert");
+        let callback: GCallback = Some(std::mem::transmute(on_close_button_clicked as *const ()));
+        g_signal_connect_data(
+            button_c as *mut GObject,
+            c_string.as_ptr(),
+            callback,
+            color_window as *mut c_void,
+            None,
+            0,
+        );
+        gtk_grid_attach_next_to(
+            grid as *mut GtkGrid,
+            button_c,
+            button_y,
+            GTK_POS_RIGHT,
             1,
             1,
         );
@@ -961,6 +987,8 @@ fn term_new(t: *mut Terminal) {
             (*t).palette.as_mut_ptr(),
             (*t).palette.len(),
         );
+        // Init global PALETTE.
+        PALETTE = (*t).palette.into();
 
         if let ConfigValue::S(s) = cfg("Colors", "bold").unwrap().v {
             if !s.is_empty() {
