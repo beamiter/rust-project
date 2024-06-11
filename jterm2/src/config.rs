@@ -1,3 +1,4 @@
+use gdk_sys::GdkRGBA;
 use std::sync::Mutex;
 
 use crate::ConfigItem;
@@ -290,3 +291,6 @@ macro_rules! wifexited {
         (($status) & 0x7f) == 0
     };
 }
+
+#[allow(dead_code)]
+pub static mut PALETTE: Mutex<[GdkRGBA; 16]> = Mutex::new(unsafe { std::mem::zeroed() });
