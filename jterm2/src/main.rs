@@ -52,16 +52,22 @@ use gobject_sys::GCallback;
 use gobject_sys::GObject;
 use gtk_sys::gtk_accel_group_connect;
 use gtk_sys::gtk_accel_group_new;
+use gtk_sys::gtk_box_new;
+use gtk_sys::gtk_box_pack_start;
 use gtk_sys::gtk_button_new_with_label;
 use gtk_sys::gtk_color_button_get_rgba;
 use gtk_sys::gtk_color_button_new_with_rgba;
 use gtk_sys::gtk_container_add;
+use gtk_sys::gtk_container_set_border_width;
 use gtk_sys::gtk_grid_attach;
 use gtk_sys::gtk_grid_attach_next_to;
 use gtk_sys::gtk_grid_new;
 use gtk_sys::gtk_init;
 use gtk_sys::gtk_main;
 use gtk_sys::gtk_main_quit;
+use gtk_sys::gtk_text_buffer_new;
+use gtk_sys::gtk_text_buffer_set_text;
+use gtk_sys::gtk_text_view_new_with_buffer;
 use gtk_sys::gtk_widget_destroy;
 use gtk_sys::gtk_widget_get_preferred_size;
 use gtk_sys::gtk_widget_set_has_tooltip;
@@ -74,6 +80,7 @@ use gtk_sys::gtk_window_set_default_size;
 use gtk_sys::gtk_window_set_title;
 use gtk_sys::gtk_window_set_urgency_hint;
 use gtk_sys::GtkAccelGroup;
+use gtk_sys::GtkBox;
 use gtk_sys::GtkColorButton;
 use gtk_sys::GtkContainer;
 use gtk_sys::GtkGrid;
@@ -81,6 +88,7 @@ use gtk_sys::GtkRequisition;
 use gtk_sys::GtkWidget;
 use gtk_sys::GtkWindow;
 use gtk_sys::GTK_ACCEL_VISIBLE;
+use gtk_sys::GTK_ORIENTATION_VERTICAL;
 use gtk_sys::GTK_POS_BOTTOM;
 use gtk_sys::GTK_POS_RIGHT;
 use gtk_sys::GTK_WINDOW_TOPLEVEL;
@@ -666,6 +674,13 @@ fn sig_window_destroy(_: *mut GtkWidget, data: gpointer) {
     process::exit(exit_code);
 }
 
+fn on_button_clicked(_: *mut GtkWidget, data: gpointer) {
+    let window = data as *mut GtkWidget;
+    unsafe {
+        gtk_widget_destroy(window);
+    }
+}
+
 fn on_confirm_button_clicked(_: *mut GtkWidget, data: gpointer) {
     unsafe {
         let mut c_palette_gdk = PALETTE.lock().unwrap();
@@ -678,6 +693,60 @@ fn on_confirm_button_clicked(_: *mut GtkWidget, data: gpointer) {
             c_palette_gdk.as_mut_ptr(),
             c_palette_gdk.len(),
         );
+        let c_string = CString::new("Information").expect("failed to convert");
+        let text_view_window = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+        gtk_window_set_title(text_view_window as *mut GtkWindow, c_string.as_ptr());
+        gtk_container_set_border_width(text_view_window as *mut GtkContainer, 10);
+        gtk_window_set_default_size(text_view_window as *mut GtkWindow, 200, 150);
+
+        let vbox = gtk_box_new(GTK_ORIENTATION_VERTICAL, 5);
+        gtk_container_add(text_view_window as *mut GtkContainer, vbox);
+
+        let mut tmp_string = String::new();
+        let mut other_color: GdkColor = GdkColor {
+            pixel: 0,
+            red: 0,
+            green: 0,
+            blue: 0,
+        };
+        for i in 0..c_palette_gdk.len() / 2 {
+            gdk_rgba_to_color(&mut c_palette_gdk[i], &mut other_color);
+            let hex_r = format!("{:x}", other_color.red);
+            let hex_g = format!("{:x}", other_color.green);
+            let hex_b = format!("{:x}", other_color.blue);
+            let hex = format!("#{}{}{},", hex_r, hex_g, hex_b,);
+            tmp_string += &hex;
+        }
+        tmp_string += "\n";
+        for i in c_palette_gdk.len() / 2..c_palette_gdk.len() {
+            gdk_rgba_to_color(&mut c_palette_gdk[i], &mut other_color);
+            let hex_r = format!("{:x}", other_color.red);
+            let hex_g = format!("{:x}", other_color.green);
+            let hex_b = format!("{:x}", other_color.blue);
+            let hex = format!("#{}{}{},", hex_r, hex_g, hex_b,);
+            tmp_string += &hex;
+        }
+        let c_string = CString::new(tmp_string).expect("failed to convert");
+        let shared_buffer = gtk_text_buffer_new(std::ptr::null_mut());
+        gtk_text_buffer_set_text(shared_buffer, c_string.as_ptr(), -1);
+        let text_view = gtk_text_view_new_with_buffer(shared_buffer);
+        gtk_box_pack_start(vbox as *mut GtkBox, text_view, GTRUE, GTRUE, 0);
+
+        let c_string = CString::new("Close").expect("failed to convert");
+        let close_button = gtk_button_new_with_label(c_string.as_ptr());
+        gtk_box_pack_start(vbox as *mut GtkBox, close_button, GFALSE, GFALSE, 0);
+        let callback: GCallback = Some(std::mem::transmute(on_button_clicked as *const ()));
+        let c_string = CString::new("clicked").expect("failed to convert");
+        g_signal_connect_data(
+            close_button as *mut GObject,
+            c_string.as_ptr(),
+            callback,
+            text_view_window as *mut c_void,
+            None,
+            0,
+        );
+
+        gtk_widget_show_all(text_view_window);
     }
 }
 
