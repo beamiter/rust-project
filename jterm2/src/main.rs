@@ -64,6 +64,7 @@ use gtk_sys::gtk_container_set_border_width;
 use gtk_sys::gtk_grid_attach;
 use gtk_sys::gtk_grid_attach_next_to;
 use gtk_sys::gtk_grid_new;
+use gtk_sys::gtk_image_get_pixbuf;
 use gtk_sys::gtk_image_new_from_file;
 use gtk_sys::gtk_init;
 use gtk_sys::gtk_main;
@@ -77,7 +78,9 @@ use gtk_sys::gtk_widget_destroy;
 use gtk_sys::gtk_widget_get_preferred_size;
 use gtk_sys::gtk_widget_get_screen;
 use gtk_sys::gtk_widget_set_has_tooltip;
+use gtk_sys::gtk_widget_set_hexpand;
 use gtk_sys::gtk_widget_set_tooltip_text;
+use gtk_sys::gtk_widget_set_vexpand;
 use gtk_sys::gtk_widget_set_visual;
 use gtk_sys::gtk_widget_show;
 use gtk_sys::gtk_widget_show_all;
@@ -92,6 +95,7 @@ use gtk_sys::GtkBox;
 use gtk_sys::GtkColorButton;
 use gtk_sys::GtkContainer;
 use gtk_sys::GtkGrid;
+use gtk_sys::GtkImage;
 use gtk_sys::GtkOverlay;
 use gtk_sys::GtkRequisition;
 use gtk_sys::GtkWidget;
@@ -132,11 +136,9 @@ use vte_sys::vte_terminal_new;
 use vte_sys::vte_terminal_paste_clipboard;
 use vte_sys::vte_terminal_set_allow_hyperlink;
 use vte_sys::vte_terminal_set_bold_is_bright;
-use vte_sys::vte_terminal_set_color_background;
 use vte_sys::vte_terminal_set_color_bold;
 use vte_sys::vte_terminal_set_color_cursor;
 use vte_sys::vte_terminal_set_color_cursor_foreground;
-use vte_sys::vte_terminal_set_color_foreground;
 use vte_sys::vte_terminal_set_colors;
 use vte_sys::vte_terminal_set_cursor_blink_mode;
 use vte_sys::vte_terminal_set_cursor_shape;
@@ -1036,11 +1038,18 @@ fn term_new(t: *mut Terminal) {
         let overlay = gtk_overlay_new();
         gtk_container_add((*t).win as *mut GtkContainer, overlay);
 
-        c_string = CString::new("/usr/share/backgrounds/brad-huchteman-stone-mountain.jpg")
-            .expect("failed to convert");
-        let background_image = gtk_image_new_from_file(c_string.as_ptr());
-        gtk_overlay_add_overlay(overlay as *mut GtkOverlay, background_image);
-        gtk_widget_show(background_image);
+        // c_string = CString::new("/usr/share/backgrounds/brad-huchteman-stone-mountain.jpg")
+        //     .expect("failed to convert");
+        // let background_image = gtk_image_new_from_file(c_string.as_ptr());
+        // let pixbuf = gtk_image_get_pixbuf(background_image as *mut GtkImage);
+        // if pixbuf.is_null() {
+        //     println!(
+        //         "Failed to load the image from {}: ",
+        //         c_string.to_string_lossy()
+        //     );
+        // }
+        // gtk_overlay_add_overlay(overlay as *mut GtkOverlay, background_image);
+        // gtk_widget_show(background_image);
 
         (*t).term = vte_terminal_new() as *mut GtkWidget;
         let screen = gtk_widget_get_screen((*t).term);
@@ -1052,8 +1061,12 @@ fn term_new(t: *mut Terminal) {
         );
         if !visual.is_null() && (gdk_screen_is_composited(screen) > 0) {
             gtk_widget_set_visual((*t).win, visual);
+        } else {
+            println!("Screen dose not support alpha channels.");
         }
         gtk_overlay_add_overlay(overlay as *mut GtkOverlay, (*t).term);
+        gtk_widget_set_hexpand((*t).term, GTRUE);
+        gtk_widget_set_vexpand((*t).term, GTRUE);
         // gtk_container_add((*t).win as *mut GtkContainer, (*t).term);
         gtk_widget_show((*t).term);
 
