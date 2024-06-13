@@ -1,6 +1,8 @@
 use config::PALETTE;
 use gdk_sys::gdk_keyval_from_name;
 use gdk_sys::gdk_rgba_parse;
+use gdk_sys::gdk_screen_get_rgba_visual;
+use gdk_sys::gdk_screen_is_composited;
 use gdk_sys::GdkColor;
 use gdk_sys::GdkEvent;
 use gdk_sys::GdkEventKey;
@@ -62,16 +64,22 @@ use gtk_sys::gtk_container_set_border_width;
 use gtk_sys::gtk_grid_attach;
 use gtk_sys::gtk_grid_attach_next_to;
 use gtk_sys::gtk_grid_new;
+use gtk_sys::gtk_image_new_from_file;
 use gtk_sys::gtk_init;
 use gtk_sys::gtk_main;
 use gtk_sys::gtk_main_quit;
+use gtk_sys::gtk_overlay_add_overlay;
+use gtk_sys::gtk_overlay_new;
 use gtk_sys::gtk_text_buffer_new;
 use gtk_sys::gtk_text_buffer_set_text;
 use gtk_sys::gtk_text_view_new_with_buffer;
 use gtk_sys::gtk_widget_destroy;
 use gtk_sys::gtk_widget_get_preferred_size;
+use gtk_sys::gtk_widget_get_screen;
 use gtk_sys::gtk_widget_set_has_tooltip;
 use gtk_sys::gtk_widget_set_tooltip_text;
+use gtk_sys::gtk_widget_set_visual;
+use gtk_sys::gtk_widget_show;
 use gtk_sys::gtk_widget_show_all;
 use gtk_sys::gtk_window_add_accel_group;
 use gtk_sys::gtk_window_new;
@@ -84,6 +92,7 @@ use gtk_sys::GtkBox;
 use gtk_sys::GtkColorButton;
 use gtk_sys::GtkContainer;
 use gtk_sys::GtkGrid;
+use gtk_sys::GtkOverlay;
 use gtk_sys::GtkRequisition;
 use gtk_sys::GtkWidget;
 use gtk_sys::GtkWindow;
@@ -123,9 +132,11 @@ use vte_sys::vte_terminal_new;
 use vte_sys::vte_terminal_paste_clipboard;
 use vte_sys::vte_terminal_set_allow_hyperlink;
 use vte_sys::vte_terminal_set_bold_is_bright;
+use vte_sys::vte_terminal_set_color_background;
 use vte_sys::vte_terminal_set_color_bold;
 use vte_sys::vte_terminal_set_color_cursor;
 use vte_sys::vte_terminal_set_color_cursor_foreground;
+use vte_sys::vte_terminal_set_color_foreground;
 use vte_sys::vte_terminal_set_colors;
 use vte_sys::vte_terminal_set_cursor_blink_mode;
 use vte_sys::vte_terminal_set_cursor_shape;
@@ -953,10 +964,6 @@ fn term_new(t: *mut Terminal) {
     let config_file: *mut c_char = std::ptr::null_mut();
 
     let args: Vec<String> = env::args().collect();
-    println!(
-        "Number of arguments (excluding program name): {}",
-        args.len() - 1
-    );
     let mut iter = args.iter().enumerate().skip(1);
     while let Some((_, arg)) = iter.next() {
         println!("{}", arg);
@@ -1023,12 +1030,32 @@ fn term_new(t: *mut Terminal) {
             0,
         );
         let app_id = format!("{}.{}", res_name, res_class);
-        println!("{}", app_id);
         c_string = CString::new(app_id).expect("failed to convert");
         g_set_prgname(c_string.as_ptr());
 
+        let overlay = gtk_overlay_new();
+        gtk_container_add((*t).win as *mut GtkContainer, overlay);
+
+        c_string = CString::new("/usr/share/backgrounds/brad-huchteman-stone-mountain.jpg")
+            .expect("failed to convert");
+        let background_image = gtk_image_new_from_file(c_string.as_ptr());
+        gtk_overlay_add_overlay(overlay as *mut GtkOverlay, background_image);
+        gtk_widget_show(background_image);
+
         (*t).term = vte_terminal_new() as *mut GtkWidget;
-        gtk_container_add((*t).win as *mut GtkContainer, (*t).term);
+        let screen = gtk_widget_get_screen((*t).term);
+        let visual = gdk_screen_get_rgba_visual(screen);
+        println!(
+            "******** visual {}, composite {}",
+            !visual.is_null(),
+            gdk_screen_is_composited(screen)
+        );
+        if !visual.is_null() && (gdk_screen_is_composited(screen) > 0) {
+            gtk_widget_set_visual((*t).win, visual);
+        }
+        gtk_overlay_add_overlay(overlay as *mut GtkOverlay, (*t).term);
+        // gtk_container_add((*t).win as *mut GtkContainer, (*t).term);
+        gtk_widget_show((*t).term);
 
         (*t).accel_group = gtk_accel_group_new();
         gtk_window_add_accel_group((*t).win as *mut GtkWindow, (*t).accel_group);
@@ -1075,6 +1102,8 @@ fn term_new(t: *mut Terminal) {
                 gdk_rgba_parse((*t).palette.as_mut_ptr().add(i), c_string.as_ptr());
             }
         }
+        (*t).foreground.alpha = 0.9;
+        (*t).background.alpha = 0.9;
         vte_terminal_set_colors(
             (*t).term as *mut VteTerminal,
             &(*t).foreground,
@@ -1082,6 +1111,8 @@ fn term_new(t: *mut Terminal) {
             (*t).palette.as_mut_ptr(),
             (*t).palette.len(),
         );
+        // vte_terminal_set_color_foreground((*t).term as *mut VteTerminal, &c_gdk0);
+        // vte_terminal_set_color_background((*t).term as *mut VteTerminal, &c_gdk1);
         // Init global PALETTE.
         PALETTE = (*t).palette.into();
 
