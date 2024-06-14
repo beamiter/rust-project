@@ -653,6 +653,14 @@ fn sig_key_press(widget: *mut GtkWidget, event: *mut GdkEvent, data: gpointer) -
                 term_change_font_scale(t, -1);
                 return GTRUE;
             }
+            if kv == get_keyval("transparency_zoom_in") {
+                term_change_transparency_scale(t, 1);
+                return GTRUE;
+            }
+            if kv == get_keyval("transparency_zoom_out") {
+                term_change_transparency_scale(t, -1);
+                return GTRUE;
+            }
             if kv == get_keyval("key_zoom_reset") {
                 term_change_font_scale(t, 0);
                 return GTRUE;
@@ -1368,6 +1376,27 @@ fn term_activate_current_font(t: *mut Terminal, win_ready: gboolean) {
     }
 }
 
+fn term_change_transparency_scale(t: *mut Terminal, direction: i64) {
+    let mut s: f64 = 1.;
+    unsafe {
+        if direction != 0 {
+            s *= if direction > 0 { 1.05 } else { 1.0 / 1.05 };
+        } else {
+            s = 1.;
+        }
+        (*t).foreground.alpha = (s * (*t).foreground.alpha).min(1.0);
+        (*t).background.alpha = (s * (*t).background.alpha).min(1.0);
+        // println!("foreground: {}, background: {}", (*t).foreground.alpha, (*t).background.alpha);
+        vte_terminal_set_colors(
+            (*t).term as *mut VteTerminal,
+            &(*t).foreground,
+            &(*t).background,
+            (*t).palette.as_mut_ptr(),
+            (*t).palette.len(),
+        );
+    }
+}
+
 fn term_change_font_scale(t: *mut Terminal, direction: i64) {
     let mut s: f64;
     unsafe {
@@ -1376,7 +1405,7 @@ fn term_change_font_scale(t: *mut Terminal, direction: i64) {
 
         if direction != 0 {
             s = vte_terminal_get_font_scale((*t).term as *mut VteTerminal);
-            s *= if direction > 0 { 1.1 } else { 1.0 / 1.1 };
+            s *= if direction > 0 { 1.05 } else { 1.0 / 1.05 };
         } else {
             s = 1.;
         }

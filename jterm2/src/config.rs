@@ -277,6 +277,20 @@ pub static CONFIG: Lazy<Mutex<Vec<ConfigItem>>> = Lazy::new(|| {
         },
         ConfigItem {
             s: "Controls",
+            n: "transparency_zoom_in",
+            t: ConfigItemType::String,
+            l: None,
+            v: ConfigValue::S("J"),
+        },
+        ConfigItem {
+            s: "Controls",
+            n: "transparency_zoom_out",
+            t: ConfigItemType::String,
+            l: None,
+            v: ConfigValue::S("K"),
+        },
+        ConfigItem {
+            s: "Controls",
             n: "key_zoom_reset",
             t: ConfigItemType::String,
             l: None,
