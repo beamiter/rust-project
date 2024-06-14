@@ -1,5 +1,11 @@
+use cairo_sys::cairo_paint;
+use cairo_sys::cairo_t;
 use config::PALETTE;
+use gdk_pixbuf_sys::gdk_pixbuf_new_from_file;
+use gdk_sys::gdk_cairo_set_source_pixbuf;
+use gdk_sys::gdk_cursor_new_from_pixbuf;
 use gdk_sys::gdk_keyval_from_name;
+use gdk_sys::gdk_pixbuf_get_from_window;
 use gdk_sys::gdk_rgba_parse;
 use gdk_sys::gdk_screen_get_rgba_visual;
 use gdk_sys::gdk_screen_is_composited;
@@ -77,6 +83,7 @@ use gtk_sys::gtk_text_view_new_with_buffer;
 use gtk_sys::gtk_widget_destroy;
 use gtk_sys::gtk_widget_get_preferred_size;
 use gtk_sys::gtk_widget_get_screen;
+use gtk_sys::gtk_widget_set_app_paintable;
 use gtk_sys::gtk_widget_set_has_tooltip;
 use gtk_sys::gtk_widget_set_hexpand;
 use gtk_sys::gtk_widget_set_tooltip_text;
@@ -87,6 +94,7 @@ use gtk_sys::gtk_widget_show_all;
 use gtk_sys::gtk_window_add_accel_group;
 use gtk_sys::gtk_window_new;
 use gtk_sys::gtk_window_resize;
+use gtk_sys::gtk_window_set_application;
 use gtk_sys::gtk_window_set_default_size;
 use gtk_sys::gtk_window_set_title;
 use gtk_sys::gtk_window_set_urgency_hint;
@@ -924,6 +932,19 @@ fn sig_window_title_changed(term: *mut VteTerminal, data: gpointer) {
     }
 }
 
+fn on_draw(_: *mut GtkWidget, cr: *mut cairo_t, data: gpointer) -> i32 {
+    let c_string = CString::new("/usr/share/backgrounds/brad-huchteman-stone-mountain.jpg")
+        .expect("failed to convert");
+    unsafe {
+        let pixbuf = gdk_pixbuf_new_from_file(c_string.as_ptr(), std::ptr::null_mut());
+        gdk_cairo_set_source_pixbuf(cr, pixbuf, 0., 0.);
+        cairo_paint(cr);
+
+        g_object_unref(pixbuf as *mut GObject);
+        return GFALSE;
+    }
+}
+
 fn term_new(t: *mut Terminal) {
     let title: &str = "jterm2";
     let res_class: &str = "Jterm2";
@@ -1035,12 +1056,24 @@ fn term_new(t: *mut Terminal) {
         c_string = CString::new(app_id).expect("failed to convert");
         g_set_prgname(c_string.as_ptr());
 
-        let overlay = gtk_overlay_new();
-        gtk_container_add((*t).win as *mut GtkContainer, overlay);
-
+        // let overlay = gtk_overlay_new();
+        // gtk_container_add((*t).win as *mut GtkContainer, overlay);
         // c_string = CString::new("/usr/share/backgrounds/brad-huchteman-stone-mountain.jpg")
         //     .expect("failed to convert");
         // let background_image = gtk_image_new_from_file(c_string.as_ptr());
+        // gtk_container_add((*t).win as *mut GtkContainer, background_image);
+        // gtk_widget_set_app_paintable((*t).win, GTRUE);
+        // gtk_widget_show(background_image);
+        // let callback: GCallback = Some(std::mem::transmute(on_draw as *const ()));
+        // c_string = CString::new("draw").expect("failed to convert");
+        // g_signal_connect_data(
+        //     (*t).win as *mut GObject,
+        //     c_string.as_ptr(),
+        //     callback,
+        //     std::ptr::null_mut(),
+        //     None,
+        //     0,
+        // );
         // let pixbuf = gtk_image_get_pixbuf(background_image as *mut GtkImage);
         // if pixbuf.is_null() {
         //     println!(
@@ -1064,10 +1097,10 @@ fn term_new(t: *mut Terminal) {
         } else {
             println!("Screen dose not support alpha channels.");
         }
-        gtk_overlay_add_overlay(overlay as *mut GtkOverlay, (*t).term);
-        gtk_widget_set_hexpand((*t).term, GTRUE);
-        gtk_widget_set_vexpand((*t).term, GTRUE);
-        // gtk_container_add((*t).win as *mut GtkContainer, (*t).term);
+        // gtk_overlay_add_overlay(overlay as *mut GtkOverlay, (*t).term);
+        // gtk_widget_set_hexpand((*t).term, GTRUE);
+        // gtk_widget_set_vexpand((*t).term, GTRUE);
+        gtk_container_add((*t).win as *mut GtkContainer, (*t).term);
         gtk_widget_show((*t).term);
 
         (*t).accel_group = gtk_accel_group_new();
