@@ -1156,8 +1156,8 @@ fn term_new(t: *mut Terminal) {
                 gdk_rgba_parse((*t).palette.as_mut_ptr().add(i), c_string.as_ptr());
             }
         }
-        (*t).foreground.alpha = 0.9;
-        (*t).background.alpha = 0.9;
+        (*t).foreground.alpha = 0.8;
+        (*t).background.alpha = 0.8;
         vte_terminal_set_colors(
             (*t).term as *mut VteTerminal,
             &(*t).foreground,
