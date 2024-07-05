@@ -1,12 +1,7 @@
-use cairo_sys::cairo_paint;
-use cairo_sys::cairo_t;
 use config::PALETTE;
-use gdk_pixbuf_sys::gdk_pixbuf_new_from_file;
-use gdk_sys::gdk_cairo_set_source_pixbuf;
-use gdk_sys::gdk_cursor_new_from_pixbuf;
 use gdk_sys::gdk_keyval_from_name;
-use gdk_sys::gdk_pixbuf_get_from_window;
 use gdk_sys::gdk_rgba_parse;
+use gdk_sys::gdk_screen_get_default;
 use gdk_sys::gdk_screen_get_rgba_visual;
 use gdk_sys::gdk_screen_is_composited;
 use gdk_sys::GdkColor;
@@ -15,6 +10,7 @@ use gdk_sys::GdkEventKey;
 use gdk_sys::GdkModifierType;
 use gdk_sys::GdkRGBA;
 use gdk_sys::GdkRectangle;
+use gdk_sys::GdkVisual;
 use gdk_sys::GDK_BUTTON_PRESS;
 use gdk_sys::GDK_CONTROL_MASK;
 use gdk_sys::GDK_KEY_E;
@@ -70,31 +66,25 @@ use gtk_sys::gtk_container_set_border_width;
 use gtk_sys::gtk_grid_attach;
 use gtk_sys::gtk_grid_attach_next_to;
 use gtk_sys::gtk_grid_new;
-use gtk_sys::gtk_image_get_pixbuf;
-use gtk_sys::gtk_image_new_from_file;
 use gtk_sys::gtk_init;
 use gtk_sys::gtk_main;
 use gtk_sys::gtk_main_quit;
-use gtk_sys::gtk_overlay_add_overlay;
-use gtk_sys::gtk_overlay_new;
 use gtk_sys::gtk_text_buffer_new;
 use gtk_sys::gtk_text_buffer_set_text;
 use gtk_sys::gtk_text_view_new_with_buffer;
 use gtk_sys::gtk_widget_destroy;
 use gtk_sys::gtk_widget_get_preferred_size;
-use gtk_sys::gtk_widget_get_screen;
-use gtk_sys::gtk_widget_set_app_paintable;
+use gtk_sys::gtk_widget_is_drawable;
 use gtk_sys::gtk_widget_set_has_tooltip;
 use gtk_sys::gtk_widget_set_hexpand;
+use gtk_sys::gtk_widget_set_name;
 use gtk_sys::gtk_widget_set_tooltip_text;
 use gtk_sys::gtk_widget_set_vexpand;
 use gtk_sys::gtk_widget_set_visual;
-use gtk_sys::gtk_widget_show;
 use gtk_sys::gtk_widget_show_all;
 use gtk_sys::gtk_window_add_accel_group;
 use gtk_sys::gtk_window_new;
 use gtk_sys::gtk_window_resize;
-use gtk_sys::gtk_window_set_application;
 use gtk_sys::gtk_window_set_default_size;
 use gtk_sys::gtk_window_set_title;
 use gtk_sys::gtk_window_set_urgency_hint;
@@ -103,8 +93,6 @@ use gtk_sys::GtkBox;
 use gtk_sys::GtkColorButton;
 use gtk_sys::GtkContainer;
 use gtk_sys::GtkGrid;
-use gtk_sys::GtkImage;
-use gtk_sys::GtkOverlay;
 use gtk_sys::GtkRequisition;
 use gtk_sys::GtkWidget;
 use gtk_sys::GtkWindow;
@@ -940,19 +928,6 @@ fn sig_window_title_changed(term: *mut VteTerminal, data: gpointer) {
     }
 }
 
-fn on_draw(_: *mut GtkWidget, cr: *mut cairo_t, data: gpointer) -> i32 {
-    let c_string = CString::new("/usr/share/backgrounds/brad-huchteman-stone-mountain.jpg")
-        .expect("failed to convert");
-    unsafe {
-        let pixbuf = gdk_pixbuf_new_from_file(c_string.as_ptr(), std::ptr::null_mut());
-        gdk_cairo_set_source_pixbuf(cr, pixbuf, 0., 0.);
-        cairo_paint(cr);
-
-        g_object_unref(pixbuf as *mut GObject);
-        return GFALSE;
-    }
-}
-
 fn term_new(t: *mut Terminal) {
     let title: &str = "jterm2";
     let res_class: &str = "Jterm2";
@@ -1047,6 +1022,8 @@ fn term_new(t: *mut Terminal) {
     unsafe {
         let mut c_string: CString;
         (*t).win = gtk_window_new(GTK_WINDOW_TOPLEVEL);
+        c_string = CString::new("win_name").expect("failed to convert");
+        gtk_widget_set_name((*t).win, c_string.as_ptr());
         c_string = CString::new(title).expect("failed to convert");
         gtk_window_set_title((*t).win as *mut GtkWindow, c_string.as_ptr());
         // let callback: GCallback = Some(std::mem::transmute(sig_window_destroy as *const ()));
@@ -1064,53 +1041,31 @@ fn term_new(t: *mut Terminal) {
         c_string = CString::new(app_id).expect("failed to convert");
         g_set_prgname(c_string.as_ptr());
 
-        // let overlay = gtk_overlay_new();
-        // gtk_container_add((*t).win as *mut GtkContainer, overlay);
-        // c_string = CString::new("/usr/share/backgrounds/brad-huchteman-stone-mountain.jpg")
-        //     .expect("failed to convert");
-        // let background_image = gtk_image_new_from_file(c_string.as_ptr());
-        // gtk_container_add((*t).win as *mut GtkContainer, background_image);
-        // gtk_widget_set_app_paintable((*t).win, GTRUE);
-        // gtk_widget_show(background_image);
-        // let callback: GCallback = Some(std::mem::transmute(on_draw as *const ()));
-        // c_string = CString::new("draw").expect("failed to convert");
-        // g_signal_connect_data(
-        //     (*t).win as *mut GObject,
-        //     c_string.as_ptr(),
-        //     callback,
-        //     std::ptr::null_mut(),
-        //     None,
-        //     0,
-        // );
-        // let pixbuf = gtk_image_get_pixbuf(background_image as *mut GtkImage);
-        // if pixbuf.is_null() {
-        //     println!(
-        //         "Failed to load the image from {}: ",
-        //         c_string.to_string_lossy()
-        //     );
-        // }
-        // gtk_overlay_add_overlay(overlay as *mut GtkOverlay, background_image);
-        // gtk_widget_show(background_image);
-
         (*t).term = vte_terminal_new() as *mut GtkWidget;
-        let screen = gtk_widget_get_screen((*t).term);
-        let visual = gdk_screen_get_rgba_visual(screen);
+        gtk_widget_set_hexpand((*t).term, GTRUE);
+        gtk_widget_set_vexpand((*t).term, GTRUE);
+        c_string = CString::new("term_name").expect("failed to convert");
+        gtk_widget_set_name((*t).term, c_string.as_ptr());
+
+        // let screen: *mut GdkScreen = gtk_widget_get_screen((*t).term);
+        // let screen: *mut GdkScreen = gtk_widget_get_screen((*t).win);
+        let screen = gdk_screen_get_default();
+        let visual: *mut GdkVisual = gdk_screen_get_rgba_visual(screen);
         println!(
-            "******** visual {}, composite {}",
+            "******** visual {}, composite {}, drawable {}, {}",
             !visual.is_null(),
-            gdk_screen_is_composited(screen)
+            gdk_screen_is_composited(screen),
+            gtk_widget_is_drawable((*t).win),
+            gtk_widget_is_drawable((*t).term)
         );
+        // Required to get terminal transparency working.
         if !visual.is_null() && (gdk_screen_is_composited(screen) > 0) {
             gtk_widget_set_visual((*t).win, visual);
         } else {
             println!("Screen dose not support alpha channels.");
         }
-        // gtk_overlay_add_overlay(overlay as *mut GtkOverlay, (*t).term);
-        // gtk_widget_set_hexpand((*t).term, GTRUE);
-        // gtk_widget_set_vexpand((*t).term, GTRUE);
-        gtk_container_add((*t).win as *mut GtkContainer, (*t).term);
-        gtk_widget_show((*t).term);
 
+        gtk_container_add((*t).win as *mut GtkContainer, (*t).term);
         (*t).accel_group = gtk_accel_group_new();
         gtk_window_add_accel_group((*t).win as *mut GtkWindow, (*t).accel_group);
         let callback: GCallback = Some(std::mem::transmute(show_256_colors_panel as *const ()));
