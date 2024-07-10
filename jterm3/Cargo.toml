@@ -7,4 +7,9 @@ edition = "2021"
 
 [dependencies]
 gtk = "0.8.1"
-vte-rs = "0.4.0"
+gdk = "0.12.1"
+vte-rs = { version = "0.4.0", features = ["v0_48"] }
+pango = "0.8.0"
+vte-sys = {version = "0.2.2", features = ["v0_58"]}
+glib = "=0.9.3"
+gio = "=0.8.1"
