@@ -228,7 +228,7 @@ impl Terminal {
 
 fn cb_spawn_async(_: *mut VteTerminal, pid: GPid, err: *mut GError, data: gpointer) {
     let t = data as *mut Terminal;
-
+    println!("cb spawn async: {}", pid);
     if pid == -1 && !err.is_null() {
         unsafe {
             eprintln!("Spawning child failed: {}", safe_emsg(err));

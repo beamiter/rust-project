@@ -7,8 +7,6 @@ use gdk::{Screen, RGBA};
 use gtk::{prelude::*, AccelGroup, Window, WindowType};
 use vte::{Terminal, TerminalExt};
 
-use gio::Cancellable;
-
 trait TerminalTrait {
     fn term_activate_current_font(&self, window: &Window, font: &str, win_ready: bool) {}
     fn term_set_size(&self, window: &Window, width: i64, height: i64, win_ready: bool) {}
@@ -91,31 +89,45 @@ fn main() {
     terminal.set_color_foreground(&foreground.unwrap());
     let background = RGBA::from_str("#121616");
     terminal.set_color_background(&background.unwrap());
-    let argv = &[std::path::Path::new("/bin/bash")];
+    let argv = &[
+        std::path::Path::new("/bin/bash"),
+        std::path::Path::new("-/bin/bash"),
+    ];
     let envv: &[&std::path::Path] = &[];
     let spawn_flags = glib::SpawnFlags::SEARCH_PATH | glib::SpawnFlags::FILE_AND_ARGV_ZERO;
-    let binding = gio::Cancellable::new();
-    // Essential to let spawn async work!
-    let cancellable: Option<&gio::Cancellable> = Some(&binding);
-    let child_setup: Option<Box<dyn Fn() + 'static>> = Some(Box::new(|| {
+    let cancellable: Option<&gio::Cancellable> = None;
+    let mut binding = || {
         println!("Process terminated");
-    }));
-    let callback: Option<Box<dyn FnOnce(&Terminal, glib::Pid, &glib::Error) + 'static>> =
-        Some(Box::new(|_term, _pid, _error| {
-            println!("Child process has exited");
-        }));
+    };
+    let child_setup: Option<&mut dyn (FnMut())> = Some(&mut binding);
+    let _callback: Option<Box<dyn FnOnce(&Terminal, glib::Pid, &glib::Error) + 'static>> =
+        Some(Box::new(
+            |_terminal: &Terminal, pid: glib::Pid, error: &glib::Error| {
+                println!("pid: {}", pid.0);
+                println!("error: {:?}", error);
+            },
+        ));
     let working_directory = Some("~/");
-    terminal.spawn_async(
+    let _ = terminal.spawn_sync(
         vte::PtyFlags::DEFAULT,
         working_directory,
         argv,
         envv,
         spawn_flags,
         child_setup,
-        -1,
         cancellable,
-        callback,
     );
+    // terminal.spawn_async(
+    //     vte::PtyFlags::DEFAULT,
+    //     working_directory,
+    //     argv,
+    //     envv,
+    //     spawn_flags,
+    //     child_setup,
+    //     -1,
+    //     cancellable,
+    //     None,
+    // );
 
     window.show_all();
 
