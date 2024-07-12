@@ -4,7 +4,5 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
-gtk4 = "=0.8.2"
+gtk4 = "0.8.2"
 vte4 = "0.7.1"
-# gtk4 = { version = "=0.8.2", features = ["v4_14"] }
-# vte4 = { version = "0.7.1", features = ["v0_74"] }
