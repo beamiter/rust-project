@@ -1,0 +1,7 @@
+pub const UTF_INVALID: u32 = 0xFFFD;
+pub const UTF_SIZ: usize = 4;
+
+pub const UTFBYTE: [u8; UTF_SIZ + 1] = [0x80, 0, 0xC0, 0xE0, 0xF0];
+pub const UTFMASK: [u8; UTF_SIZ + 1] = [0xc0, 0x80, 0xE0, 0xF0, 0xF8];
+pub const UTFMIN: [u64; UTF_SIZ + 1] = [0, 0, 0x80, 0x800, 0x10000];
+pub const UTFMAX: [u64; UTF_SIZ + 1] = [0x10FFFF, 0x7F, 0x7FF, 0xFFF, 0x10FFFF];
