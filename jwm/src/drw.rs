@@ -1,21 +1,32 @@
 use std::{
+    char,
     ffi::CString,
     i32,
     process::exit,
     ptr::{null, null_mut},
+    sync::atomic::{AtomicU32, Ordering},
     u32, usize,
 };
 
+use lazy_static::lazy_static;
+use std::sync::Mutex;
+
 pub use fontconfig_sys;
 
-use fontconfig_sys::{FcChar8, FcNameParse, FcPattern, FcPatternDestroy};
+use fontconfig_sys::{
+    constants::{FC_CHARSET, FC_SCALABLE},
+    FcChar8, FcCharSet, FcCharSetAddChar, FcCharSetCreate, FcCharSetDestroy, FcConfigSubstitute,
+    FcDefaultSubstitute, FcMatchPattern, FcNameParse, FcPattern, FcPatternAddBool,
+    FcPatternAddCharSet, FcPatternDestroy, FcPatternDuplicate,
+};
 use x11::{
     xft::{
-        XftColor, XftColorAllocName, XftFont, XftFontClose, XftFontOpenName, XftFontOpenPattern,
-        XftTextExtents8,
+        FcResult, XftCharExists, XftColor, XftColorAllocName, XftDraw, XftDrawCreate,
+        XftDrawDestroy, XftDrawStringUtf8, XftFont, XftFontClose, XftFontMatch, XftFontOpenName,
+        XftFontOpenPattern, XftTextExtents8,
     },
     xlib::{
-        self, CapButt, Cursor, Drawable, False, Font, JoinMiter, LineSolid, Window, XCopyArea,
+        self, CapButt, Cursor, Drawable, False, JoinMiter, LineSolid, Window, XCopyArea,
         XCreateFontCursor, XCreateGC, XCreatePixmap, XDefaultColormap, XDefaultDepth,
         XDefaultVisual, XDrawRectangle, XFillRectangle, XFreeCursor, XFreeGC, XFreePixmap,
         XSetForeground, XSetLineAttributes, XSync, GC,
@@ -36,6 +47,19 @@ macro_rules! BETWEEN {
         $a <= $x && $x <= $b
     };
 }
+
+const NOMATCHES_LEN: usize = 64;
+struct NoMathes {
+    codepoint: [u64; NOMATCHES_LEN],
+    idx: u32,
+}
+lazy_static! {
+    static ref NOMATCHES: Mutex<NoMathes> = Mutex::new(NoMathes {
+        codepoint: [0; NOMATCHES_LEN],
+        idx: 0,
+    });
+}
+static ELLIPSIS_WIDTH: AtomicU32 = AtomicU32::new(0);
 
 pub struct Cur {
     cursor: Cursor,
@@ -65,10 +89,11 @@ impl Fnt {
     }
 }
 
+#[repr(C)]
 pub enum _Col {
-    ColFg,
-    ColBg,
-    ColBorder,
+    ColFg = 0,
+    ColBg = 1,
+    ColBorder = 2,
 }
 
 pub type Clr = XftColor;
@@ -81,7 +106,7 @@ pub struct Drw {
     root: Window,
     drawable: Drawable,
     gc: GC,
-    scheme: *mut Clr,
+    scheme: Vec<*mut Clr>,
     fonts: *mut Fnt,
 }
 
@@ -95,7 +120,7 @@ impl Drw {
             root: 0,
             drawable: 0,
             gc: null_mut(),
-            scheme: null_mut(),
+            scheme: vec![],
             fonts: null_mut(),
         }
     }
@@ -302,21 +327,19 @@ pub fn drw_clr_create(drw: *mut Drw, dest: *mut Clr, clrname: &str) {
     }
 }
 
-// (TODO): Be array.
-pub fn drw_scm_create(drw: *mut Drw, clrnames: &[&str], clrcount: u64) -> *mut Clr {
+pub fn drw_scm_create(drw: *mut Drw, clrnames: &[&str], clrcount: u64) -> Vec<*mut Clr> {
     unsafe {
-        // (TODO): is array!
-        let mut ret: Clr = std::mem::zeroed();
-
         // Need at least two colors for a scheme.
         if drw.is_null() || clrnames.is_empty() || clrcount < 2 {
-            return null_mut();
+            return vec![];
         }
-
+        let mut ret: Vec<*mut Clr> = vec![];
         for i in 0..clrcount {
-            drw_clr_create(drw, &mut ret, clrnames[i as usize]);
+            let mut one_ret: Clr = std::mem::zeroed();
+            drw_clr_create(drw, &mut one_ret, clrnames[i as usize]);
+            ret.push(&mut one_ret);
         }
-        return &mut ret;
+        return ret;
     }
 }
 
@@ -355,7 +378,8 @@ pub fn drw_setfontset(drw: *mut Drw, set: *mut Fnt) {
 pub fn drw_setscheme(drw: *mut Drw, scm: *mut Clr) {
     if !drw.is_null() {
         unsafe {
-            (*drw).scheme = scm;
+            (*drw).scheme.clear();
+            (*drw).scheme.push(scm);
         }
     }
 }
@@ -363,17 +387,16 @@ pub fn drw_setscheme(drw: *mut Drw, scm: *mut Clr) {
 // Drawing functions.
 pub fn drw_rect(drw: *mut Drw, x: i32, y: i32, w: u32, h: u32, filled: i32, invert: i32) {
     unsafe {
-        if drw.is_null() || (*drw).scheme.is_null() {
+        if drw.is_null() || (*drw).scheme.is_empty() {
             return;
         }
-        // (TODO): is scheme array?
         XSetForeground(
             (*drw).dpy,
             (*drw).gc,
             if invert > 0 {
-                (*(*drw).scheme).pixel
+                (*(*drw).scheme[_Col::ColBg as usize]).pixel
             } else {
-                (*(*drw).scheme).pixel
+                (*(*drw).scheme[_Col::ColFg as usize]).pixel
             },
         );
         if filled > 0 {
@@ -386,16 +409,222 @@ pub fn drw_rect(drw: *mut Drw, x: i32, y: i32, w: u32, h: u32, filled: i32, inve
 
 pub fn drw_text(
     drw: *mut Drw,
-    x: i32,
-    y: i32,
-    w: u32,
-    h: u32,
+    mut x: i32,
+    mut y: i32,
+    mut w: u32,
+    mut h: u32,
     lpad: u32,
-    text: &str,
+    mut text: &str,
     invert: i32,
 ) -> i32 {
-    // (TODO)
-    0
+    let mut i: i32 = 0;
+    let mut ty: i32 = 0;
+    let mut ellipsis_x: i32 = 0;
+
+    let mut tmpw: u32 = 0;
+    let mut ew: u32 = 0;
+    let mut ellipsis_w: u32 = 0;
+    let mut ellipsis_len: u32 = 0;
+
+    let mut d: *mut XftDraw = null_mut();
+
+    let mut usedfont: *mut Fnt = null_mut();
+    let mut curfont: *mut Fnt = null_mut();
+    let mut nextfont: *mut Fnt = null_mut();
+    let mut utf8strlen: i32 = 0;
+    let mut utf8charlen: i32 = 0;
+    let render: bool = x > 0 || y > 0 || w > 0 || h > 0;
+    let mut utf8codepoint: u64 = 0;
+    let mut utf8str: &str;
+    let mut fccharset: *mut FcCharSet = null_mut();
+    let mut fcpattern: *mut FcPattern = null_mut();
+    let mut match0: *mut FcPattern = null_mut();
+    let mut result: FcResult = FcResult::NoId;
+    let mut charexists: i32 = 0;
+    let mut overflow: i32 = 0;
+
+    // Lock the mutex before accesing.
+    let mut nomatches = NOMATCHES.lock().unwrap();
+
+    unsafe {
+        if drw.is_null()
+            || (render && ((*drw).scheme.is_empty() || w <= 0)
+                || text.is_empty()
+                || (*drw).fonts.is_null())
+        {
+            return 0;
+        }
+
+        if !render {
+            w = if invert > 0 {
+                invert.try_into().unwrap()
+            } else {
+                (!invert).try_into().unwrap()
+            };
+        } else {
+            let idx = if invert > 0 { _Col::ColFg } else { _Col::ColBg } as usize;
+            XSetForeground((*drw).dpy, (*drw).gc, (*(*drw).scheme[idx]).pixel);
+            XFillRectangle((*drw).dpy, (*drw).drawable, (*drw).gc, x, y, w, h);
+            let d = XftDrawCreate(
+                (*drw).dpy,
+                (*drw).drawable,
+                XDefaultVisual((*drw).dpy, (*drw).screen),
+                XDefaultColormap((*drw).dpy, (*drw).screen),
+            );
+            x += lpad as i32;
+            w -= lpad;
+        }
+
+        usedfont = (*drw).fonts;
+        let ellipsis_width = ELLIPSIS_WIDTH.load(Ordering::SeqCst);
+        if ellipsis_width > 0 && render {
+            ELLIPSIS_WIDTH.store(drw_fontset_getwidth(drw, "..."), Ordering::SeqCst);
+        }
+        loop {
+            ew = 0;
+            ellipsis_len = 0;
+            utf8strlen = 0;
+            utf8str = text;
+            nextfont = null_mut();
+
+            while !text.is_empty() {
+                utf8charlen = utf8decode(text, &mut utf8codepoint, UTF_SIZ) as i32;
+                curfont = (*drw).fonts;
+                while !curfont.is_null() {
+                    charexists = (charexists > 0
+                        || XftCharExists(
+                            (*drw).dpy,
+                            (*curfont).xfont,
+                            utf8codepoint.try_into().unwrap(),
+                        ) > 0) as i32;
+                    if charexists > 0 {
+                        drw_font_gettexts(curfont, text, utf8charlen as u32, &mut tmpw, null_mut());
+                        if ew + ellipsis_width <= w {
+                            ellipsis_x = x + ew as i32;
+                            ellipsis_w = w - ew;
+                            ellipsis_len = utf8strlen as u32;
+                        }
+
+                        if ew + tmpw > w {
+                            if !render {
+                                x += tmpw as i32;
+                            } else {
+                                utf8strlen = ellipsis_len as i32;
+                            }
+                        } else if curfont == usedfont {
+                            utf8strlen += utf8charlen;
+                            text = &text[utf8charlen as usize..];
+                            ew += tmpw;
+                        } else {
+                            nextfont = curfont;
+                        }
+                        break;
+                    }
+
+                    curfont = (*curfont).next;
+                }
+
+                if overflow > 0 || charexists <= 0 || !nextfont.is_null() {
+                    break;
+                } else {
+                    charexists = 0;
+                }
+            }
+
+            if utf8strlen > 0 {
+                if render {
+                    ty = y + ((h - (*usedfont).h) / 2) as i32 + (*(*usedfont).xfont).ascent;
+                    let idx = if invert > 0 { _Col::ColBg } else { _Col::ColFg } as usize;
+                    let cstring = CString::new(utf8str).expect("fail to create");
+                    XftDrawStringUtf8(
+                        d,
+                        (*drw).scheme[idx],
+                        (*usedfont).xfont,
+                        x,
+                        ty,
+                        cstring.as_ptr() as *const _,
+                        utf8strlen,
+                    );
+                    x += ew as i32;
+                    w -= ew;
+                }
+            }
+
+            if render && overflow > 0 {
+                drw_text(drw, ellipsis_x, y, ellipsis_w, h, 0, "...", invert);
+            }
+
+            if text.is_empty() || overflow > 0 {
+                break;
+            } else if !nextfont.is_null() {
+                charexists = 0;
+                usedfont = nextfont;
+            } else {
+                // Regardless of whether or not a fallback font is found, the character must be
+                // drawn.
+                charexists = 1;
+
+                for i in 0..NOMATCHES_LEN {
+                    // avoid calling XftFontMatch if we know we won't find a match.
+                    if utf8codepoint == nomatches.codepoint[i] {
+                        usedfont = (*drw).fonts;
+                        continue;
+                    }
+                }
+
+                fccharset = FcCharSetCreate();
+                FcCharSetAddChar(fccharset, utf8codepoint as u32);
+
+                if (*(*drw).fonts).pattern.is_null() {
+                    // The first font in the cache must be loaded from a font string.
+                    exit(0);
+                }
+
+                fcpattern = FcPatternDuplicate((*(*drw).fonts).pattern);
+                FcPatternAddCharSet(fcpattern, FC_CHARSET.as_ptr(), fccharset);
+                FcPatternAddBool(fcpattern, FC_SCALABLE.as_ptr(), 1);
+
+                FcConfigSubstitute(null_mut(), fcpattern, FcMatchPattern);
+                FcDefaultSubstitute(fcpattern);
+                match0 = XftFontMatch(
+                    (*drw).dpy,
+                    (*drw).screen,
+                    fcpattern as *mut _,
+                    &mut result as *mut _,
+                ) as *mut _;
+
+                FcCharSetDestroy(fccharset);
+                FcPatternDestroy(fcpattern);
+
+                if !match0.is_null() {
+                    usedfont = xfont_create(drw, "", match0);
+                    if !usedfont.is_null()
+                        && XftCharExists((*drw).dpy, (*usedfont).xfont, utf8codepoint as u32) > 0
+                    {
+                        curfont = (*drw).fonts;
+                        loop {
+                            if (*curfont).xfont.is_null() {
+                                break;
+                            }
+                            curfont = (*curfont).next;
+                        }
+                        (*curfont).next = usedfont;
+                    } else {
+                        xfont_free(usedfont);
+                        nomatches.idx += 1;
+                        let idx = nomatches.idx as usize;
+                        nomatches.codepoint[idx % NOMATCHES_LEN] = utf8codepoint;
+                        usedfont = (*drw).fonts;
+                    }
+                }
+            }
+        }
+        if !d.is_null() {
+            XftDrawDestroy(d);
+        }
+    }
+
+    return x + if render { w as i32 } else { 0 };
 }
 
 // Map functions
