@@ -109,7 +109,6 @@ pub struct Drw {
     scheme: Vec<*mut Clr>,
     fonts: *mut Fnt,
 }
-
 impl Drw {
     fn new() -> Self {
         Drw {

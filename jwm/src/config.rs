@@ -1,6 +1,9 @@
-use lazy_static::lazy_static;
+use std::ptr::null;
 
-use crate::dwm::{self, Rule};
+use lazy_static::lazy_static;
+use x11::xlib::Mod1Mask;
+
+use crate::dwm::{self, Layout, Rule};
 
 pub const borderpx: u32 = 1;
 pub const snap: u32 = 32;
@@ -11,6 +14,11 @@ lazy_static! {
     static ref rules: Vec<Rule> = vec![
         Rule::new("Gimp", "", "", 0, 1, -1),
         Rule::new("Firefox", "", "", 1 << 8, 0, -1)
+    ];
+    static ref layouts: Vec<Layout> = vec![
+        Layout::new("[]=", None),
+        Layout::new("><>", None),
+        Layout::new("[M]", None),
     ];
 }
 pub const dmenufont: &str = "monospace:size=10";
@@ -31,3 +39,5 @@ pub const mfact: f32 = 0.55;
 pub const nmaster: i32 = 1;
 pub const resizehints: i32 = 1;
 pub const lockfullscreen: i32 = 1;
+
+pub const MODKEY: u32 = Mod1Mask;

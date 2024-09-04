@@ -1,8 +1,8 @@
 use std::os::raw::c_long;
 
 use x11::xlib::{
-    ButtonPressMask, ButtonReleaseMask, ControlMask, LockMask, Mod1Mask, Mod2Mask, Mod3Mask,
-    Mod4Mask, Mod5Mask, PointerMotionMask, ShiftMask,
+    ButtonPressMask, ButtonReleaseMask, ControlMask, KeySym, LockMask, Mod1Mask, Mod2Mask,
+    Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask, ShiftMask, Window,
 };
 
 use crate::config;
@@ -78,13 +78,237 @@ pub struct Button {
     click: u32,
     mask: u32,
     button: u32,
-    func: fn(*const Arg),
+    func: Option<fn(*const Arg)>,
     arg: Arg,
+}
+impl Button {
+    pub fn new(click: u32, mask: u32, button: u32, func: Option<fn(*const Arg)>, arg: Arg) -> Self {
+        Self {
+            click,
+            mask,
+            button,
+            func,
+            arg,
+        }
+    }
+}
+
+pub struct Key {
+    mod0: u32,
+    keysym: KeySym,
+    func: Option<fn(*const Arg)>,
+    arg: Arg,
+}
+impl Key {
+    pub fn new(mod0: u32, keysym: KeySym, func: Option<fn(*const Arg)>, arg: Arg) -> Self {
+        Self {
+            mod0,
+            keysym,
+            func,
+            arg,
+        }
+    }
 }
 
 pub struct Layout {
     symbol: &'static str,
-    // arrange: fn(*mut Monitor),
+    arrange: Option<fn(*mut Monitor)>,
+}
+impl Layout {
+    pub fn new(symbol: &'static str, arrange: Option<fn(*mut Monitor)>) -> Self {
+        Self { symbol, arrange }
+    }
+}
+
+pub struct Client {
+    name: &'static str,
+    mina: f32,
+    maxa: f32,
+    x: i32,
+    y: i32,
+    w: i32,
+    h: i32,
+    oldx: i32,
+    oldy: i32,
+    oldw: i32,
+    oldh: i32,
+    basew: i32,
+    baseh: i32,
+    incw: i32,
+    inch: i32,
+    maxw: i32,
+    maxh: i32,
+    minw: i32,
+    minh: i32,
+    hintsvalid: i32,
+    bw: i32,
+    oldbw: i32,
+    tags: u32,
+    isfixed: i32,
+    isfloating: i32,
+    isurgent: i32,
+    nerverfocus: i32,
+    oldstate: i32,
+    isfullscreen: i32,
+    next: *mut Client,
+    snext: *mut Client,
+    mon: *mut Monitor,
+    win: Window,
+}
+impl Client {
+    pub fn new(
+        name: &'static str,
+        mina: f32,
+        maxa: f32,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+        oldx: i32,
+        oldy: i32,
+        oldw: i32,
+        oldh: i32,
+        basew: i32,
+        baseh: i32,
+        incw: i32,
+        inch: i32,
+        maxw: i32,
+        maxh: i32,
+        minw: i32,
+        minh: i32,
+        hintsvalid: i32,
+        bw: i32,
+        oldbw: i32,
+        tags: u32,
+        isfixed: i32,
+        isfloating: i32,
+        isurgent: i32,
+        nerverfocus: i32,
+        oldstate: i32,
+        isfullscreen: i32,
+        next: *mut Client,
+        snext: *mut Client,
+        mon: *mut Monitor,
+        win: Window,
+    ) -> Self {
+        Self {
+            name,
+            mina,
+            maxa,
+            x,
+            y,
+            w,
+            h,
+            oldx,
+            oldy,
+            oldw,
+            oldh,
+            basew,
+            baseh,
+            incw,
+            inch,
+            maxw,
+            maxh,
+            minw,
+            minh,
+            hintsvalid,
+            bw,
+            oldbw,
+            tags,
+            isfixed,
+            isfloating,
+            isurgent,
+            nerverfocus,
+            oldstate,
+            isfullscreen,
+            next,
+            snext,
+            mon,
+            win,
+        }
+    }
+}
+
+pub struct Monitor {
+    ltsymbol: [u8; 16],
+    mfact: f32,
+    nmaster: i32,
+    num: i32,
+    by: i32,
+    mx: i32,
+    my: i32,
+    mw: i32,
+    mh: i32,
+    wx: i32,
+    wy: i32,
+    ww: i32,
+    wh: i32,
+    seltags: u32,
+    sellt: u32,
+    tagset: [u32; 2],
+    showbar: i32,
+    topbar: i32,
+    clients: *mut Client,
+    sel: *mut Client,
+    stack: *mut Client,
+    next: *mut Monitor,
+    barwin: Window,
+    lt: [*mut Layout; 2],
+}
+impl Monitor {
+    pub fn new(
+        ltsymbol: [u8; 16],
+        mfact: f32,
+        nmaster: i32,
+        num: i32,
+        by: i32,
+        mx: i32,
+        my: i32,
+        mw: i32,
+        mh: i32,
+        wx: i32,
+        wy: i32,
+        ww: i32,
+        wh: i32,
+        seltags: u32,
+        sellt: u32,
+        tagset: [u32; 2],
+        showbar: i32,
+        topbar: i32,
+        clients: *mut Client,
+        sel: *mut Client,
+        stack: *mut Client,
+        next: *mut Monitor,
+        barwin: Window,
+        lt: [*mut Layout; 2],
+    ) -> Self {
+        Self {
+            ltsymbol,
+            mfact,
+            nmaster,
+            num,
+            by,
+            mx,
+            my,
+            mw,
+            mh,
+            wx,
+            wy,
+            ww,
+            wh,
+            seltags,
+            sellt,
+            tagset,
+            showbar,
+            topbar,
+            clients,
+            sel,
+            stack,
+            next,
+            barwin,
+            lt,
+        }
+    }
 }
 
 pub struct Rule {
@@ -95,7 +319,6 @@ pub struct Rule {
     isfloating: i32,
     monitor: i32,
 }
-
 impl Rule {
     pub fn new(
         class: &'static str,
