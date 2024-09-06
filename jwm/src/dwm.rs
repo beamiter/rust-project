@@ -71,7 +71,8 @@ pub enum Arg {
     i(i32),
     ui(u32),
     f(f32),
-    v(*const u8),
+    v(Vec<&'static str>),
+    lo(Layout),
 }
 
 pub struct Button {
@@ -110,6 +111,7 @@ impl Key {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Layout {
     symbol: &'static str,
     arrange: Option<fn(*mut Monitor)>,
@@ -120,6 +122,7 @@ impl Layout {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Client {
     name: &'static str,
     mina: f32,
@@ -229,6 +232,7 @@ impl Client {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Monitor {
     ltsymbol: [u8; 16],
     mfact: f32,
@@ -338,3 +342,18 @@ impl Rule {
         }
     }
 }
+
+// function declarations.
+pub fn spawn(arg: *const Arg) {}
+pub fn togglebar(arg: *const Arg) {}
+pub fn togglefloating(arg: *const Arg) {}
+pub fn focusmon(arg: *const Arg) {}
+pub fn tagmon(arg: *const Arg) {}
+pub fn focusstack(arg: *const Arg) {}
+pub fn incnmaster(arg: *const Arg) {}
+pub fn setmfact(arg: *const Arg) {}
+pub fn setlayout(arg: *const Arg) {}
+pub fn zoom(arg: *const Arg) {}
+pub fn view(arg: *const Arg) {}
+pub fn tag(arg: *const Arg) {}
+pub fn killclient(arg: *const Arg) {}
