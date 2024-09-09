@@ -1,23 +1,36 @@
-use std::os::raw::c_long;
+use std::{os::raw::c_long, usize};
 
 use x11::xlib::{
     ButtonPressMask, ButtonReleaseMask, ControlMask, KeySym, LockMask, Mod1Mask, Mod2Mask,
     Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask, ShiftMask, Window,
 };
 
+use std::cmp::{max, min};
+use std::sync::Mutex;
+
 use crate::config;
+use crate::drw::{self, Drw};
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
 #[inline]
 fn CLEANMASK(mask: u32) -> u32 {
     return mask
-        & !(numlockmask | LockMask)
+        & unsafe { !(*numlockmask.lock().unwrap() | LockMask) }
         & (ShiftMask | ControlMask | Mod1Mask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask);
 }
 pub const MOUSEMASK: c_long = BUTTONMASK | PointerMotionMask;
 pub const VERSION: &str = "6.5";
 
-pub static numlockmask: u32 = 0;
+// Variables.
+pub const broken: &str = "broken";
+pub static mut stext: Mutex<&str> = Mutex::new("");
+pub static mut screen: Mutex<i32> = Mutex::new(0);
+pub static mut sw: Mutex<i32> = Mutex::new(0);
+pub static mut sh: Mutex<i32> = Mutex::new(0);
+pub static mut bh: Mutex<i32> = Mutex::new(0);
+pub static mut lrpad: Mutex<i32> = Mutex::new(0);
+pub static mut numlockmask: Mutex<u32> = Mutex::new(0);
+pub static mut running: Mutex<i32> = Mutex::new(0);
 
 #[repr(C)]
 pub enum _CUR {
@@ -313,6 +326,33 @@ impl Monitor {
             lt,
         }
     }
+}
+
+pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: *const Monitor) -> i32 {
+    unsafe {
+        max(0, min(x + w, (*m).wx + (*m).ww) - max(x, (*m).wx))
+            * max(0, min(y + h, (*m).wy + (*m).wh) - max(y, (*m).wy))
+    }
+}
+
+pub fn ISVISIBLE(C: *const Client) -> u32 {
+    unsafe { (*C).tags & (*(*C).mon).tagset[(*(*C).mon).seltags as usize] }
+}
+
+pub fn WIDTH(X: *const Client) -> i32 {
+    unsafe { (*X).w + 2 * (*X).bw }
+}
+
+pub fn HEIGHT(X: *const Client) -> i32 {
+    unsafe { (*X).h + 2 * (*X).bw }
+}
+
+pub fn TAGMASK() -> i32 {
+    (1 << config::tags.len()) - 1
+}
+
+pub fn TEXTW(drw: *mut Drw, X: &str) -> u32 {
+    unsafe { drw::drw_fontset_getwidth(drw, X) + *lrpad.lock().unwrap() as u32 }
 }
 
 pub struct Rule {
