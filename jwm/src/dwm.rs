@@ -20,7 +20,7 @@ pub const VERSION: &str = "6.5";
 pub static numlockmask: u32 = 0;
 
 #[repr(C)]
-enum _CUR {
+pub enum _CUR {
     CurNormal = 0,
     CurResize = 1,
     CurMove = 2,
@@ -28,13 +28,13 @@ enum _CUR {
 }
 
 #[repr(C)]
-enum _SCHEME {
+pub enum _SCHEME {
     SchemeNorm = 0,
     SchemeSel = 1,
 }
 
 #[repr(C)]
-enum _NET {
+pub enum _NET {
     NetSupported = 0,
     NetWMName = 1,
     NetWMState = 2,
@@ -48,7 +48,7 @@ enum _NET {
 }
 
 #[repr(C)]
-enum _WM {
+pub enum _WM {
     WMProtocols = 0,
     WMDelete = 1,
     WMState = 2,
@@ -57,7 +57,7 @@ enum _WM {
 }
 
 #[repr(C)]
-enum _CLICK {
+pub enum _CLICK {
     ClkTagBar = 0,
     ClkLtSymbol = 1,
     ClkStatusText = 2,
@@ -355,5 +355,10 @@ pub fn setmfact(arg: *const Arg) {}
 pub fn setlayout(arg: *const Arg) {}
 pub fn zoom(arg: *const Arg) {}
 pub fn view(arg: *const Arg) {}
+pub fn toggleview(arg: *const Arg) {}
+pub fn toggletag(arg: *const Arg) {}
 pub fn tag(arg: *const Arg) {}
+pub fn quit(arg: *const Arg) {}
 pub fn killclient(arg: *const Arg) {}
+pub fn movemouse(arg: *const Arg) {}
+pub fn resizemouse(arg: *const Arg) {}

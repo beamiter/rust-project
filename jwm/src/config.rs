@@ -4,13 +4,13 @@ use lazy_static::lazy_static;
 use x11::{
     keysym::{
         XK_Return, XK_Tab, XK_b, XK_c, XK_comma, XK_d, XK_f, XK_h, XK_i, XK_j, XK_k, XK_l, XK_m,
-        XK_p, XK_period, XK_space, XK_t, XK_0, XK_1, XK_2, XK_3, XK_4, XK_5, XK_6, XK_7, XK_8,
-        XK_9,
+        XK_p, XK_period, XK_q, XK_space, XK_t, XK_0, XK_1, XK_2, XK_3, XK_4, XK_5, XK_6, XK_7,
+        XK_8, XK_9,
     },
-    xlib::{Mod1Mask, ShiftMapIndex, ShiftMask},
+    xlib::{Button1, Button2, Button3, ControlMask, Mod1Mask, ShiftMapIndex, ShiftMask},
 };
 
-use crate::dwm::{self, Arg, Key, Layout, Rule};
+use crate::dwm::{self, Arg, Button, Key, Layout, Rule, _CLICK};
 
 pub const borderpx: u32 = 1;
 pub const snap: u32 = 32;
@@ -52,6 +52,30 @@ lazy_static! {
     ];
 }
 
+fn TAGKEYS(KEY: u32, TAG: i32) -> Vec<Key> {
+    vec![
+        Key::new(MODKEY, KEY.into(), Some(dwm::view), dwm::Arg::ui(1 << TAG)),
+        Key::new(
+            MODKEY | ControlMask,
+            KEY.into(),
+            Some(dwm::toggleview),
+            dwm::Arg::ui(1 << TAG),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            KEY.into(),
+            Some(dwm::tag),
+            dwm::Arg::ui(1 << TAG),
+        ),
+        Key::new(
+            MODKEY | ControlMask | ShiftMask,
+            KEY.into(),
+            Some(dwm::toggletag),
+            dwm::Arg::ui(1 << TAG),
+        ),
+    ]
+}
+
 pub const MODKEY: u32 = Mod1Mask;
 // (TODO): TAGKEYS.
 pub const dmenumon: &'static str = "0";
@@ -74,8 +98,8 @@ lazy_static! {
     ];
     static ref termcmd: Vec<&'static str> = vec!["st", ""];
 
-    // modifier         key         function          argument
-    static ref keys: Vec<Key> = vec![
+    static ref keys: Vec<Key> =  {let mut m = vec![
+        // modifier     key           function          argument
         Key::new(MODKEY, XK_p.into(), Some(dwm::spawn), dwm::Arg::v(dmenucmd.clone())),
         Key::new(MODKEY | ShiftMask, XK_Return.into(), Some(dwm::spawn), dwm::Arg::v(termcmd.clone())),
         Key::new(MODKEY, XK_b.into(), Some(dwm::togglebar), dwm::Arg::i(0)),
@@ -99,5 +123,31 @@ lazy_static! {
         Key::new(MODKEY, XK_period.into(), Some(dwm::focusmon), dwm::Arg::i(1)),
         Key::new(MODKEY|ShiftMask, XK_comma.into(), Some(dwm::tagmon), dwm::Arg::i(-1)),
         Key::new(MODKEY|ShiftMask, XK_period.into(), Some(dwm::tagmon), dwm::Arg::i(1)),
+    ];
+        m.extend(TAGKEYS(XK_1, 0));
+        m.extend(TAGKEYS(XK_2, 1));
+        m.extend(TAGKEYS(XK_3, 2));
+        m.extend(TAGKEYS(XK_4, 3));
+        m.extend(TAGKEYS(XK_5, 4));
+        m.extend(TAGKEYS(XK_6, 5));
+        m.extend(TAGKEYS(XK_7, 6));
+        m.extend(TAGKEYS(XK_8, 7));
+        m.extend(TAGKEYS(XK_9, 8));
+        m.push(Key::new(MODKEY | ShiftMask, XK_q.into(), Some(dwm::quit), dwm::Arg::i(0)));
+        m
+    };
+
+    static ref buttons: Vec<Button> = vec![
+        Button::new(_CLICK::ClkLtSymbol as u32, 0, Button1, Some(dwm::setlayout), dwm::Arg::i(0)),
+        Button::new(_CLICK::ClkLtSymbol as u32, 0, Button3, Some(dwm::setlayout), dwm::Arg::lo(layouts[2].clone())),
+        Button::new(_CLICK::ClkWinTitle as u32, 0, Button2, Some(dwm::zoom), dwm::Arg::i(0)),
+        Button::new(_CLICK::ClkStatusText as u32, 0, Button2, Some(dwm::spawn), dwm::Arg::v(termcmd.clone())),
+        Button::new(_CLICK::ClkClientWin as u32, MODKEY, Button1, Some(dwm::movemouse), dwm::Arg::i(0)),
+        Button::new(_CLICK::ClkClientWin as u32, MODKEY, Button2, Some(dwm::togglefloating), dwm::Arg::i(0)),
+        Button::new(_CLICK::ClkClientWin as u32, MODKEY, Button2, Some(dwm::resizemouse), dwm::Arg::i(0)),
+        Button::new(_CLICK::ClkTagBar as u32, 0, Button1, Some(dwm::view), dwm::Arg::i(0)),
+        Button::new(_CLICK::ClkTagBar as u32, 0, Button3, Some(dwm::toggleview), dwm::Arg::i(0)),
+        Button::new(_CLICK::ClkTagBar as u32, MODKEY, Button1, Some(dwm::tag), dwm::Arg::i(0)),
+        Button::new(_CLICK::ClkTagBar as u32, MODKEY, Button3, Some(dwm::toggletag), dwm::Arg::i(0)),
     ];
 }
