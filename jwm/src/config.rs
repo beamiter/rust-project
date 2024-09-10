@@ -17,7 +17,7 @@ pub const snap: u32 = 32;
 pub const showbar: i32 = 1;
 pub const topbar: i32 = 1;
 lazy_static! {
-    static ref fonts: Vec<&'static str> = vec!["monospace:size=10"];
+    pub static ref fonts: Vec<&'static str> = vec!["monospace:size=10"];
 }
 pub const dmenufont: &str = "monospace:size=10";
 pub const col_gray1: &str = "#222222";
@@ -32,7 +32,7 @@ pub const colors: [&[&'static str; 3]; 2] = [
 ];
 
 lazy_static! {
-    static ref rules: Vec<Rule> = vec![
+    pub static ref rules: Vec<Rule> = vec![
         Rule::new("Gimp", "", "", 0, 1, -1),
         Rule::new("Firefox", "", "", 1 << 8, 0, -1)
     ];
@@ -45,7 +45,7 @@ pub const resizehints: i32 = 1;
 pub const lockfullscreen: i32 = 1;
 
 lazy_static! {
-    static ref layouts: Vec<Layout> = vec![
+    pub static ref layouts: Vec<Layout> = vec![
         Layout::new("[]=", None),
         Layout::new("><>", None),
         Layout::new("[M]", None),
@@ -80,7 +80,7 @@ pub const MODKEY: u32 = Mod1Mask;
 // (TODO): TAGKEYS.
 pub const dmenumon: &'static str = "0";
 lazy_static! {
-    static ref dmenucmd: Vec<&'static str> = vec![
+   pub  static ref dmenucmd: Vec<&'static str> = vec![
         "dmenu_run",
         "-m",
         dmenumon,
@@ -96,9 +96,9 @@ lazy_static! {
         col_gray4,
         "",
     ];
-    static ref termcmd: Vec<&'static str> = vec!["st", ""];
+    pub static ref termcmd: Vec<&'static str> = vec!["st", ""];
 
-    static ref keys: Vec<Key> =  {let mut m = vec![
+    pub static ref keys: Vec<Key> =  {let mut m = vec![
         // modifier     key           function          argument
         Key::new(MODKEY, XK_p.into(), Some(dwm::spawn), dwm::Arg::v(dmenucmd.clone())),
         Key::new(MODKEY | ShiftMask, XK_Return.into(), Some(dwm::spawn), dwm::Arg::v(termcmd.clone())),
@@ -137,7 +137,7 @@ lazy_static! {
         m
     };
 
-    static ref buttons: Vec<Button> = vec![
+    pub static ref buttons: Vec<Button> = vec![
         Button::new(_CLICK::ClkLtSymbol as u32, 0, Button1, Some(dwm::setlayout), dwm::Arg::i(0)),
         Button::new(_CLICK::ClkLtSymbol as u32, 0, Button3, Some(dwm::setlayout), dwm::Arg::lo(layouts[2].clone())),
         Button::new(_CLICK::ClkWinTitle as u32, 0, Button2, Some(dwm::zoom), dwm::Arg::i(0)),

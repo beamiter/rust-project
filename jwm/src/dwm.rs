@@ -1,16 +1,18 @@
+use std::ffi::CStr;
 use std::ptr::null_mut;
 use std::{os::raw::c_long, usize};
 
 use x11::xlib::{
     Atom, ButtonPressMask, ButtonReleaseMask, ControlMask, Display, KeySym, LockMask, Mod1Mask,
-    Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask, ShiftMask, Window,
+    Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask, ShiftMask, Window, XClassHint,
+    XFree, XGetClassHint,
 };
 
 use lazy_static::lazy_static;
 use std::cmp::{max, min};
 use std::sync::Mutex;
 
-use crate::config;
+use crate::config::{self, rules, tags};
 use crate::drw::{drw_fontset_getwidth, Clr, Cur, Drw};
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
@@ -39,9 +41,7 @@ pub static mut netatom: Mutex<[Atom; _NET::NetLast as usize]> =
 pub static mut running: Mutex<i32> = Mutex::new(0);
 pub static mut cursor: Mutex<[*mut Cur; _CUR::CurLast as usize]> =
     Mutex::new([null_mut(); _CUR::CurLast as usize]);
-lazy_static! {
-    static ref scheme: Vec<Vec<Clr>> = vec![];
-}
+pub static mut scheme: Mutex<Vec<Vec<Clr>>> = Mutex::new(vec![]);
 pub static mut dpy: *mut Display = null_mut();
 pub static mut drw: *mut Drw = null_mut();
 pub static mut mons: *mut Monitor = null_mut();
@@ -176,7 +176,7 @@ pub struct Client {
     hintsvalid: i32,
     bw: i32,
     oldbw: i32,
-    tags: u32,
+    tags0: u32,
     isfixed: i32,
     isfloating: i32,
     isurgent: i32,
@@ -212,7 +212,7 @@ impl Client {
         hintsvalid: i32,
         bw: i32,
         oldbw: i32,
-        tags: u32,
+        tags0: u32,
         isfixed: i32,
         isfloating: i32,
         isurgent: i32,
@@ -247,7 +247,7 @@ impl Client {
             hintsvalid,
             bw,
             oldbw,
-            tags,
+            tags0,
             isfixed,
             isfloating,
             isurgent,
@@ -353,7 +353,7 @@ pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: *const Monitor) -> i32 {
 }
 
 pub fn ISVISIBLE(C: *const Client) -> u32 {
-    unsafe { (*C).tags & (*(*C).mon).tagset[(*(*C).mon).seltags as usize] }
+    unsafe { (*C).tags0 & (*(*C).mon).tagset[(*(*C).mon).seltags as usize] }
 }
 
 pub fn WIDTH(X: *const Client) -> i32 {
@@ -364,8 +364,8 @@ pub fn HEIGHT(X: *const Client) -> i32 {
     unsafe { (*X).h + 2 * (*X).bw }
 }
 
-pub fn TAGMASK() -> i32 {
-    (1 << config::tags.len()) - 1
+pub fn TAGMASK() -> u32 {
+    (1 << tags.len()) - 1
 }
 
 pub fn TEXTW(drw0: *mut Drw, X: &str) -> u32 {
@@ -376,7 +376,7 @@ pub struct Rule {
     class: &'static str,
     instance: &'static str,
     title: &'static str,
-    tags: usize,
+    tags0: usize,
     isfloating: i32,
     monitor: i32,
 }
@@ -385,7 +385,7 @@ impl Rule {
         class: &'static str,
         instance: &'static str,
         title: &'static str,
-        tags: usize,
+        tags0: usize,
         isfloating: i32,
         monitor: i32,
     ) -> Self {
@@ -393,14 +393,68 @@ impl Rule {
             class,
             instance,
             title,
-            tags,
+            tags0,
             isfloating,
             monitor,
         }
     }
 }
 
-// function declarations.
+// function declarations and implementations.
+pub fn applyrules(c: *mut Client) {
+    unsafe {
+        (*c).isfloating = 0;
+        (*c).tags0 = 0;
+        let mut ch: XClassHint = std::mem::zeroed();
+        XGetClassHint(dpy, (*c).win, &mut ch);
+        let mut class: &str = "";
+        let mut instance: &str = "";
+        if !ch.res_class.is_null() {
+            let c_str = CStr::from_ptr(ch.res_class);
+            class = c_str.to_str().unwrap();
+        } else {
+            class = broken;
+        };
+        if !ch.res_name.is_null() {
+            let c_str = CStr::from_ptr(ch.res_name);
+            instance = c_str.to_str().unwrap();
+        } else {
+            instance = broken;
+        }
+
+        for r in &*rules {
+            if (r.title.is_empty() || (*c).name.find(r.title).is_some())
+                && (r.class.is_empty() || class.find(r.class).is_some())
+                && (r.instance.is_empty() || instance.find(r.instance).is_some())
+            {
+                (*c).isfloating = r.isfloating;
+                (*c).tags0 |= r.tags0 as u32;
+                let mut m = mons;
+                loop {
+                    if m.is_null() || (*m).num == r.monitor {
+                        break;
+                    }
+                    m = (*m).next;
+                }
+                if !m.is_null() {
+                    (*c).mon = m;
+                }
+            }
+        }
+        if !ch.res_class.is_null() {
+            XFree(ch.res_class as *mut _);
+        }
+        if !ch.res_name.is_null() {
+            XFree(ch.res_name as *mut _);
+        }
+        (*c).tags0 = if ((*c).tags0 & TAGMASK()) > 0 {
+            (*c).tags0 & TAGMASK()
+        } else {
+            (*(*c).mon).tagset[(*(*c).mon).seltags as usize]
+        }
+    }
+}
+
 pub fn spawn(arg: *const Arg) {}
 pub fn togglebar(arg: *const Arg) {}
 pub fn togglefloating(arg: *const Arg) {}
