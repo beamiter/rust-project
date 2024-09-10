@@ -1,15 +1,17 @@
+use std::ptr::null_mut;
 use std::{os::raw::c_long, usize};
 
 use x11::xlib::{
-    ButtonPressMask, ButtonReleaseMask, ControlMask, KeySym, LockMask, Mod1Mask, Mod2Mask,
-    Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask, ShiftMask, Window,
+    Atom, ButtonPressMask, ButtonReleaseMask, ControlMask, Display, KeySym, LockMask, Mod1Mask,
+    Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, PointerMotionMask, ShiftMask, Window,
 };
 
+use lazy_static::lazy_static;
 use std::cmp::{max, min};
 use std::sync::Mutex;
 
 use crate::config;
-use crate::drw::{self, Drw};
+use crate::drw::{drw_fontset_getwidth, Clr, Cur, Drw};
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
 #[inline]
@@ -30,7 +32,22 @@ pub static mut sh: Mutex<i32> = Mutex::new(0);
 pub static mut bh: Mutex<i32> = Mutex::new(0);
 pub static mut lrpad: Mutex<i32> = Mutex::new(0);
 pub static mut numlockmask: Mutex<u32> = Mutex::new(0);
+pub static mut wmatom: Mutex<[Atom; _WM::WMLast as usize]> =
+    Mutex::new(unsafe { std::mem::zeroed() });
+pub static mut netatom: Mutex<[Atom; _NET::NetLast as usize]> =
+    Mutex::new(unsafe { std::mem::zeroed() });
 pub static mut running: Mutex<i32> = Mutex::new(0);
+pub static mut cursor: Mutex<[*mut Cur; _CUR::CurLast as usize]> =
+    Mutex::new([null_mut(); _CUR::CurLast as usize]);
+lazy_static! {
+    static ref scheme: Vec<Vec<Clr>> = vec![];
+}
+pub static mut dpy: *mut Display = null_mut();
+pub static mut drw: *mut Drw = null_mut();
+pub static mut mons: *mut Monitor = null_mut();
+pub static mut selmon: *mut Monitor = null_mut();
+pub static mut root: Window = 0;
+pub static mut wmcheckwin: Window = 0;
 
 #[repr(C)]
 pub enum _CUR {
@@ -351,8 +368,8 @@ pub fn TAGMASK() -> i32 {
     (1 << config::tags.len()) - 1
 }
 
-pub fn TEXTW(drw: *mut Drw, X: &str) -> u32 {
-    unsafe { drw::drw_fontset_getwidth(drw, X) + *lrpad.lock().unwrap() as u32 }
+pub fn TEXTW(drw0: *mut Drw, X: &str) -> u32 {
+    unsafe { drw_fontset_getwidth(drw0, X) + *lrpad.lock().unwrap() as u32 }
 }
 
 pub struct Rule {
