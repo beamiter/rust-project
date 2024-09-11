@@ -33,8 +33,8 @@ pub const colors: [&[&'static str; 3]; 2] = [
 
 lazy_static! {
     pub static ref rules: Vec<Rule> = vec![
-        Rule::new("Gimp", "", "", 0, 1, -1),
-        Rule::new("Firefox", "", "", 1 << 8, 0, -1)
+        Rule::new("Gimp", "", "", 0, true, -1),
+        Rule::new("Firefox", "", "", 1 << 8, false, -1)
     ];
 }
 pub const tags: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
