@@ -8,9 +8,6 @@ use std::{
     u32, usize,
 };
 
-use lazy_static::lazy_static;
-use std::sync::Mutex;
-
 pub use fontconfig_sys;
 
 use fontconfig_sys::{
@@ -53,12 +50,10 @@ struct NoMathes {
     codepoint: [u64; NOMATCHES_LEN],
     idx: u32,
 }
-lazy_static! {
-    static ref NOMATCHES: Mutex<NoMathes> = Mutex::new(NoMathes {
-        codepoint: [0; NOMATCHES_LEN],
-        idx: 0,
-    });
-}
+pub static mut NOMATCHES: NoMathes = NoMathes {
+    codepoint: [0; NOMATCHES_LEN],
+    idx: 0,
+};
 static ELLIPSIS_WIDTH: AtomicU32 = AtomicU32::new(0);
 
 pub struct Cur {
@@ -441,9 +436,6 @@ pub fn drw_text(
     let mut charexists: i32 = 0;
     let mut overflow: i32 = 0;
 
-    // Lock the mutex before accesing.
-    let mut nomatches = NOMATCHES.lock().unwrap();
-
     unsafe {
         if drw.is_null()
             || (render && ((*drw).scheme.is_empty() || w <= 0)
@@ -564,7 +556,7 @@ pub fn drw_text(
 
                 for i in 0..NOMATCHES_LEN {
                     // avoid calling XftFontMatch if we know we won't find a match.
-                    if utf8codepoint == nomatches.codepoint[i] {
+                    if utf8codepoint == NOMATCHES.codepoint[i] {
                         usedfont = (*drw).fonts;
                         continue;
                     }
@@ -609,9 +601,9 @@ pub fn drw_text(
                         (*curfont).next = usedfont;
                     } else {
                         xfont_free(usedfont);
-                        nomatches.idx += 1;
-                        let idx = nomatches.idx as usize;
-                        nomatches.codepoint[idx % NOMATCHES_LEN] = utf8codepoint;
+                        NOMATCHES.idx += 1;
+                        let idx = NOMATCHES.idx as usize;
+                        NOMATCHES.codepoint[idx % NOMATCHES_LEN] = utf8codepoint;
                         usedfont = (*drw).fonts;
                     }
                 }

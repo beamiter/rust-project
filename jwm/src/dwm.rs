@@ -11,9 +11,7 @@ use x11::xlib::{
     XWindowChanges, CWX, CWY,
 };
 
-use lazy_static::lazy_static;
 use std::cmp::{max, min};
-use std::sync::Mutex;
 
 use crate::config::{self, resizehints, rules, tags};
 use crate::drw::{drw_fontset_getwidth, drw_setscheme, drw_text, Clr, Cur, Drw};
