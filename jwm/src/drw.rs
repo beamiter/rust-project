@@ -62,7 +62,7 @@ lazy_static! {
 static ELLIPSIS_WIDTH: AtomicU32 = AtomicU32::new(0);
 
 pub struct Cur {
-    cursor: Cursor,
+    pub cursor: Cursor,
 }
 impl Cur {
     fn new() -> Self {
@@ -71,11 +71,11 @@ impl Cur {
 }
 
 pub struct Fnt {
-    dpy: *mut xlib::Display,
-    h: u32,
-    xfont: *mut XftFont,
-    pattern: *mut FcPattern,
-    next: *mut Fnt,
+    pub dpy: *mut xlib::Display,
+    pub h: u32,
+    pub xfont: *mut XftFont,
+    pub pattern: *mut FcPattern,
+    pub next: *mut Fnt,
 }
 impl Fnt {
     fn new() -> Self {
@@ -99,15 +99,15 @@ pub enum _Col {
 pub type Clr = XftColor;
 
 pub struct Drw {
-    w: u32,
-    h: u32,
-    dpy: *mut xlib::Display,
-    screen: i32,
-    root: Window,
-    drawable: Drawable,
-    gc: GC,
-    scheme: Vec<*mut Clr>,
-    fonts: *mut Fnt,
+    pub w: u32,
+    pub h: u32,
+    pub dpy: *mut xlib::Display,
+    pub screen: i32,
+    pub root: Window,
+    pub drawable: Drawable,
+    pub gc: GC,
+    pub scheme: Vec<*mut Clr>,
+    pub fonts: *mut Fnt,
 }
 impl Drw {
     fn new() -> Self {
@@ -374,11 +374,10 @@ pub fn drw_setfontset(drw: *mut Drw, set: *mut Fnt) {
     }
 }
 
-pub fn drw_setscheme(drw: *mut Drw, scm: *mut Clr) {
+pub fn drw_setscheme(drw: *mut Drw, scm: Vec<*mut Clr>) {
     if !drw.is_null() {
         unsafe {
-            (*drw).scheme.clear();
-            (*drw).scheme.push(scm);
+            (*drw).scheme = scm;
         }
     }
 }
