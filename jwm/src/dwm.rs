@@ -177,7 +177,7 @@ pub struct Client {
     pub tags0: u32,
     pub isfixed: i32,
     pub isfloating: bool,
-    pub isurgent: i32,
+    pub isurgent: bool,
     pub nerverfocus: i32,
     pub oldstate: i32,
     pub isfullscreen: bool,
@@ -213,7 +213,7 @@ impl Client {
         tags0: u32,
         isfixed: i32,
         isfloating: bool,
-        isurgent: i32,
+        isurgent: bool,
         nerverfocus: i32,
         oldstate: i32,
         isfullscreen: bool,
@@ -723,6 +723,34 @@ pub fn drawbar(m: *mut Monitor) {
                 0,
                 stext,
                 0,
+            );
+        }
+        c = (*m).clients;
+        while !c.is_null() {
+            occ |= (*c).tags0;
+            if (*c).isurgent {
+                urg |= (*c).tags0;
+            }
+            c = (*c).next;
+        }
+        x = 0;
+        for i in 0..tags.len() {
+            w = TEXTW(drw, tags[i]) as i32;
+            let idx = if (*m).tagset[(*m).seltags as usize] & 1 << i > 0 {
+                _SCHEME::SchemeSel as usize
+            } else {
+                _SCHEME::SchemeNorm as usize
+            };
+            drw_setscheme(drw, scheme[idx].clone());
+            drw_text(
+                drw,
+                x,
+                0,
+                w as u32,
+                bh.try_into().unwrap(),
+                (lrpad / 2) as u32,
+                tags[i],
+                (urg & 1 << i) as i32,
             );
         }
     }
