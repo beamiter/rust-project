@@ -14,7 +14,7 @@ use x11::xlib::{
 use std::cmp::{max, min};
 
 use crate::config::{self, resizehints, rules, tags};
-use crate::drw::{drw_fontset_getwidth, drw_setscheme, drw_text, Clr, Cur, Drw};
+use crate::drw::{drw_fontset_getwidth, drw_map, drw_rect, drw_setscheme, drw_text, Clr, Cur, Drw};
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
 #[inline]
@@ -175,7 +175,7 @@ pub struct Client {
     pub bw: i32,
     pub oldbw: i32,
     pub tags0: u32,
-    pub isfixed: i32,
+    pub isfixed: bool,
     pub isfloating: bool,
     pub isurgent: bool,
     pub nerverfocus: i32,
@@ -211,7 +211,7 @@ impl Client {
         bw: i32,
         oldbw: i32,
         tags0: u32,
-        isfixed: i32,
+        isfixed: bool,
         isfloating: bool,
         isurgent: bool,
         nerverfocus: i32,
@@ -502,10 +502,8 @@ pub fn updatesizehints(c: *mut Client) {
             (*c).maxa = 0.;
             (*c).mina = 0.;
         }
-        (*c).isfixed = ((*c).maxw > 0
-            && (*c).maxh > 0
-            && ((*c).maxw == (*c).minw)
-            && ((*c).maxh == (*c).minh)) as i32;
+        (*c).isfixed =
+            (*c).maxw > 0 && (*c).maxh > 0 && ((*c).maxw == (*c).minw) && ((*c).maxh == (*c).minh);
         (*c).hintsvalid = 1;
     }
 }
@@ -752,7 +750,85 @@ pub fn drawbar(m: *mut Monitor) {
                 tags[i],
                 (urg & 1 << i) as i32,
             );
+            if (occ & 1 << i) > 0 {
+                drw_rect(
+                    drw,
+                    x + boxs as i32,
+                    0,
+                    boxs,
+                    boxw,
+                    ((m == selmon)
+                        && !(*selmon).sel.is_null()
+                        && ((*(*selmon).sel).tags0 & 1 << i > 0)) as i32,
+                    (urg & 1 << i).try_into().unwrap(),
+                );
+                x += w;
+            }
         }
+        w = TEXTW(drw, (*m).ltsymbol) as i32;
+        drw_setscheme(drw, scheme[_SCHEME::SchemeNorm as usize].clone());
+        x = drw_text(
+            drw,
+            x,
+            0,
+            w.try_into().unwrap(),
+            bh.try_into().unwrap(),
+            (lrpad / 2).try_into().unwrap(),
+            (*m).ltsymbol,
+            0,
+        );
+
+        w = (*m).ww - tw - x;
+        if w > bh {
+            if !(*m).sel.is_null() {
+                let idx = if m == selmon {
+                    _SCHEME::SchemeSel
+                } else {
+                    _SCHEME::SchemeNorm
+                } as usize;
+                drw_setscheme(drw, scheme[idx].clone());
+                drw_text(
+                    drw,
+                    x,
+                    0,
+                    w.try_into().unwrap(),
+                    bh.try_into().unwrap(),
+                    (lrpad / 2).try_into().unwrap(),
+                    (*m).ltsymbol,
+                    0,
+                );
+                if (*(*m).sel).isfloating {
+                    drw_rect(
+                        drw,
+                        x + boxs as i32,
+                        boxs as i32,
+                        boxw,
+                        boxw,
+                        (*(*m).sel).isfixed as i32,
+                        0,
+                    );
+                }
+            } else {
+                drw_setscheme(drw, scheme[_SCHEME::SchemeNorm as usize].clone());
+                drw_rect(
+                    drw,
+                    x,
+                    0,
+                    w.try_into().unwrap(),
+                    bh.try_into().unwrap(),
+                    1,
+                    1,
+                );
+            }
+        }
+        drw_map(
+            drw,
+            (*m).barwin,
+            0,
+            0,
+            (*m).ww.try_into().unwrap(),
+            bh.try_into().unwrap(),
+        );
     }
 }
 
