@@ -1,14 +1,18 @@
-use std::ffi::CStr;
+use std::ffi::{c_char, CStr};
+use std::mem::zeroed;
 use std::ptr::null_mut;
 use std::{os::raw::c_long, usize};
 
+use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
-    Atom, ButtonPressMask, ButtonReleaseMask, CWBorderWidth, CWHeight, CWWidth, ConfigureNotify,
-    ControlMask, Display, KeySym, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask,
-    PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask, ShiftMask,
-    StructureNotifyMask, Window, XClassHint, XConfigureEvent, XConfigureWindow, XEvent, XFree,
-    XGetClassHint, XGetWMNormalHints, XMoveWindow, XRaiseWindow, XSendEvent, XSizeHints, XSync,
-    XWindowChanges, CWX, CWY,
+    Atom, Below, ButtonPressMask, ButtonReleaseMask, CWBorderWidth, CWHeight, CWSibling,
+    CWStackMode, CWWidth, ConfigureNotify, ControlMask, Display, EnterWindowMask, False, KeySym,
+    LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, PAspect, PBaseSize, PMaxSize,
+    PMinSize, PResizeInc, PSize, PointerMotionMask, ShiftMask, StructureNotifyMask, Success,
+    Window, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow, XEvent, XFree,
+    XFreeModifiermap, XGetClassHint, XGetModifierMapping, XGetWMNormalHints, XGetWindowProperty,
+    XKeysymToKeycode, XMoveWindow, XQueryPointer, XRaiseWindow, XSendEvent, XSizeHints, XSync,
+    XWindowChanges, CWX, CWY, XA_ATOM,
 };
 
 use std::cmp::{max, min};
@@ -35,8 +39,8 @@ pub static mut sh: i32 = 0;
 pub static mut bh: i32 = 0;
 pub static mut lrpad: i32 = 0;
 pub static mut numlockmask: u32 = 0;
-pub static mut wmatom: [Atom; _WM::WMLast as usize] = unsafe { std::mem::zeroed() };
-pub static mut netatom: [Atom; _NET::NetLast as usize] = unsafe { std::mem::zeroed() };
+pub static mut wmatom: [Atom; _WM::WMLast as usize] = unsafe { zeroed() };
+pub static mut netatom: [Atom; _NET::NetLast as usize] = unsafe { zeroed() };
 pub static mut running: i32 = 0;
 pub static mut cursor: [*mut Cur; _CUR::CurLast as usize] = [null_mut(); _CUR::CurLast as usize];
 pub static mut scheme: Vec<Vec<*mut Clr>> = vec![];
@@ -403,7 +407,7 @@ pub fn applyrules(c: *mut Client) {
     unsafe {
         (*c).isfloating = false;
         (*c).tags0 = 0;
-        let mut ch: XClassHint = std::mem::zeroed();
+        let mut ch: XClassHint = zeroed();
         XGetClassHint(dpy, (*c).win, &mut ch);
         let mut class: &str = "";
         let mut instance: &str = "";
@@ -456,7 +460,7 @@ pub fn applyrules(c: *mut Client) {
 pub fn updatesizehints(c: *mut Client) {
     let mut msize: u32 = 0;
     unsafe {
-        let mut size: XSizeHints = std::mem::zeroed();
+        let mut size: XSizeHints = zeroed();
 
         if XGetWMNormalHints(dpy, (*c).win, &mut size, msize as *mut i64) <= 0 {
             size.flags = PSize;
@@ -608,7 +612,7 @@ pub fn applysizehints(
 
 pub fn configure(c: *mut Client) {
     unsafe {
-        let mut ce: XConfigureEvent = std::mem::zeroed();
+        let mut ce: XConfigureEvent = zeroed();
 
         ce.type_ = ConfigureNotify;
         ce.display = dpy;
@@ -628,7 +632,7 @@ pub fn configure(c: *mut Client) {
 
 pub fn resizeclient(c: *mut Client, x: i32, y: i32, w: i32, h: i32) {
     unsafe {
-        let mut wc: XWindowChanges = std::mem::zeroed();
+        let mut wc: XWindowChanges = zeroed();
         (*c).oldx = (*c).x;
         (*c).x = x;
         wc.x = x;
@@ -833,14 +837,34 @@ pub fn drawbar(m: *mut Monitor) {
 }
 
 pub fn restack(m: *mut Monitor) {
-    // (TODO)
+    drawbar(m);
 
     unsafe {
+        let mut wc: XWindowChanges = zeroed();
         if (*m).sel.is_null() {
             return;
         }
         if (*(*m).sel).isfloating || (*(*m).lt[(*m).sellt]).arrange.is_none() {
             XRaiseWindow(dpy, (*(*m).sel).win);
+        }
+        if (*(*m).lt[(*m).sellt]).arrange.is_some() {
+            wc.stack_mode = Below;
+            wc.sibling = (*m).barwin;
+            let mut c = (*m).stack;
+            while !c.is_null() {
+                if !(*c).isfloating && ISVISIBLE(c) > 0 {
+                    XConfigureWindow(dpy, (*c).win, (CWSibling | CWStackMode) as u32, &mut wc);
+                    wc.sibling = (*c).win;
+                }
+                c = (*c).snext;
+            }
+        }
+        XSync(dpy, 0);
+        let mut ev: XEvent = zeroed();
+        loop {
+            if XCheckMaskEvent(dpy, EnterWindowMask, &mut ev) <= 0 {
+                break;
+            }
         }
     }
 }
@@ -861,18 +885,167 @@ pub fn arrange(mut m: *mut Monitor) {
         }
         if !m.is_null() {
             arrangemon(m);
-            // (TODO)
+            restack(m);
         } else {
             m = mons;
-            loop {
-                if m.is_null() {
-                    break;
-                }
+            while !m.is_null() {
                 arrangemon((*m).next);
                 m = (*m).next;
             }
         }
     }
+}
+
+pub fn attach(c: *mut Client) {
+    unsafe {
+        (*c).next = (*(*c).mon).clients;
+        (*(*c).mon).clients = c;
+    }
+}
+pub fn attachstack(c: *mut Client) {
+    unsafe {
+        (*c).snext = (*(*c).mon).stack;
+        (*(*c).mon).stack = c;
+    }
+}
+
+pub fn getatomprop(c: *mut Client, prop: Atom) -> u64 {
+    let mut di: i32 = 0;
+    let mut dl: u64 = 0;
+    let mut da: Atom = 0;
+    let mut atom: Atom = 0;
+    let mut p: *mut u8 = null_mut();
+    unsafe {
+        di = 3;
+        if XGetWindowProperty(
+            dpy,
+            (*c).win,
+            prop,
+            0,
+            size_of::<Atom>() as i64,
+            False,
+            XA_ATOM,
+            &mut da,
+            &mut di,
+            &mut dl,
+            &mut dl,
+            &mut p,
+        ) == Success as i32
+            && !p.is_null()
+        {
+            atom = *p as u64;
+        }
+    }
+    return atom;
+}
+
+pub fn getrootptr(x: &mut i32, y: &mut i32) -> i32 {
+    let mut di: i32 = 0;
+    let mut dui: u32 = 0;
+    unsafe {
+        let mut dummy: Window = zeroed();
+
+        return XQueryPointer(
+            dpy, root, &mut dummy, &mut dummy, x, y, &mut di, &mut di, &mut dui,
+        );
+    }
+}
+
+pub fn getstate(w: Window) -> i64 {
+    let mut format: i32 = 0;
+    let mut result: i64 = -1;
+    let mut p: *mut u8 = null_mut();
+    let mut n: u64 = 0;
+    let mut extra: u64 = 0;
+    let mut real: Atom = 0;
+    unsafe {
+        if XGetWindowProperty(
+            dpy,
+            w,
+            wmatom[_WM::WMState as usize],
+            0,
+            2,
+            False,
+            wmatom[_WM::WMState as usize],
+            &mut real,
+            &mut format,
+            &mut n,
+            &mut extra,
+            &mut p,
+        ) != Success as i32
+        {
+            return -1;
+        }
+        if n != 0 {
+            result = *p as i64;
+        }
+        XFree(p as *mut _);
+    }
+    return result;
+}
+
+pub fn recttomon(x: i32, y: i32, w: i32, h: i32) -> *mut Monitor {
+    let mut a: i32 = 0;
+    let mut area: i32 = 0;
+
+    unsafe {
+        let mut r: *mut Monitor = selmon;
+        let mut m = mons;
+        while !m.is_null() {
+            a = INTERSECT(x, y, w, h, m);
+            if a > area {
+                area = a;
+                r = m;
+            }
+            m = (*m).next;
+        }
+        return r;
+    }
+}
+
+pub fn wintoclient(w: Window) -> *mut Client {
+    unsafe {
+        let mut m = mons;
+        while !m.is_null() {
+            let mut c = (*m).clients;
+            while !c.is_null() {
+                if (*c).win == w {
+                    return c;
+                }
+                c = (*c).next;
+            }
+            m = (*m).next;
+        }
+    }
+    null_mut()
+}
+
+pub fn wintomon(w: Window) -> *mut Monitor {
+    let mut x: i32 = 0;
+    let mut y: i32 = 0;
+    unsafe {
+        if w == root && getrootptr(&mut x, &mut y) > 0 {
+            return recttomon(x, y, 1, 1);
+        }
+        let mut m = mons;
+        while !m.is_null() {
+            if w == (*m).barwin {
+                return m;
+            }
+            m = (*m).next;
+        }
+        let c = wintoclient(w);
+        if !c.is_null() {
+            return (*c).mon;
+        }
+        return selmon;
+    }
+}
+
+pub fn buttonpress(e: *mut XEvent) {
+    let click = _CLICK::ClkRootWin;
+    // focus monitor if necessary.
+    // (TODO)
 }
 
 pub fn spawn(arg: *const Arg) {}
@@ -889,7 +1062,39 @@ pub fn view(arg: *const Arg) {}
 pub fn toggleview(arg: *const Arg) {}
 pub fn toggletag(arg: *const Arg) {}
 pub fn tag(arg: *const Arg) {}
-pub fn quit(arg: *const Arg) {}
+pub fn quit(arg: *const Arg) {
+    unsafe {
+        running = 0;
+    }
+}
 pub fn killclient(arg: *const Arg) {}
 pub fn movemouse(arg: *const Arg) {}
 pub fn resizemouse(arg: *const Arg) {}
+pub fn updatenumlockmask() {
+    unsafe {
+        numlockmask = 0;
+        let mut modmap = XGetModifierMapping(dpy);
+        for i in 0..8 {
+            for j in 0..(*modmap).max_keypermod {
+                if *(*modmap)
+                    .modifiermap
+                    .wrapping_add((i * (*modmap).max_keypermod + j) as usize)
+                    == XKeysymToKeycode(dpy, XK_Num_Lock as u64)
+                {
+                    numlockmask = 1 << i;
+                }
+            }
+        }
+        XFreeModifiermap(modmap);
+    }
+}
+pub fn grabbuttons(c: *mut Client, focused: i32) {
+    // (TODO)
+    updatenumlockmask();
+}
+pub fn unfocus(c: *mut Client, setfocus: i32) {
+    if c.is_null() {
+        return;
+    }
+    // (TODO)
+}
