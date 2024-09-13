@@ -1,24 +1,31 @@
 use std::ffi::{c_char, CStr};
 use std::mem::zeroed;
+use std::ops::Deref;
 use std::ptr::null_mut;
 use std::{os::raw::c_long, usize};
 
 use x11::keysym::XK_Num_Lock;
+use x11::xinput::_XAnyClassinfo;
 use x11::xlib::{
-    Atom, Below, ButtonPressMask, ButtonReleaseMask, CWBorderWidth, CWHeight, CWSibling,
-    CWStackMode, CWWidth, ConfigureNotify, ControlMask, Display, EnterWindowMask, False, KeySym,
-    LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, PAspect, PBaseSize, PMaxSize,
-    PMinSize, PResizeInc, PSize, PointerMotionMask, ShiftMask, StructureNotifyMask, Success,
-    Window, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow, XEvent, XFree,
-    XFreeModifiermap, XGetClassHint, XGetModifierMapping, XGetWMNormalHints, XGetWindowProperty,
-    XKeysymToKeycode, XMoveWindow, XQueryPointer, XRaiseWindow, XSendEvent, XSizeHints, XSync,
-    XWindowChanges, CWX, CWY, XA_ATOM,
+    AnyButton, AnyKey, AnyModifier, Atom, Below, ButtonPressMask, ButtonReleaseMask, CWBorderWidth,
+    CWHeight, CWSibling, CWStackMode, CWWidth, ConfigureNotify, ControlMask, CurrentTime, Display,
+    EnterWindowMask, False, GrabModeSync, GrayScale, KeySym, LockMask, Mod1Mask, Mod2Mask,
+    Mod3Mask, Mod4Mask, Mod5Mask, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize,
+    PointerMotionMask, ReplayPointer, RevertToPointerRoot, ShiftMask, StructureNotifyMask, Success,
+    True, Window, XAllowEvents, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
+    XDeleteProperty, XDisplayKeycodes, XEvent, XFree, XFreeModifiermap, XGetClassHint,
+    XGetKeyboardMapping, XGetModifierMapping, XGetWMNormalHints, XGetWindowProperty, XGrabButton,
+    XGrabKey, XKeysymToKeycode, XMoveWindow, XQueryPointer, XRaiseWindow, XSendEvent,
+    XSetInputFocus, XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey, XWindowChanges,
+    CWX, CWY, XA_ATOM,
 };
 
 use std::cmp::{max, min};
 
-use crate::config::{self, resizehints, rules, tags};
-use crate::drw::{drw_fontset_getwidth, drw_map, drw_rect, drw_setscheme, drw_text, Clr, Cur, Drw};
+use crate::config::{self, buttons, keys, resizehints, rules, tags};
+use crate::drw::{
+    drw_fontset_getwidth, drw_map, drw_rect, drw_setscheme, drw_text, Clr, Cur, Drw, _Col,
+};
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
 #[inline]
@@ -88,6 +95,7 @@ pub enum _WM {
     WMLast = 4,
 }
 
+#[derive(Debug, Clone, Copy)]
 #[repr(C)]
 pub enum _CLICK {
     ClkTagBar = 0,
@@ -1044,8 +1052,70 @@ pub fn wintomon(w: Window) -> *mut Monitor {
 
 pub fn buttonpress(e: *mut XEvent) {
     let click = _CLICK::ClkRootWin;
-    // focus monitor if necessary.
+    let mut i: u32 = 0;
+    let mut x: u32 = 0;
+    let mut arg: Arg = Arg::i(0);
     // (TODO)
+    unsafe {
+        let mut c: *mut Client = null_mut();
+        let mut ev = (*e).button;
+        let mut click = _CLICK::ClkRootWin;
+        // focus monitor if necessary.
+        let mut m = wintomon(ev.window);
+        if m != selmon {
+            unfocus((*selmon).sel, true);
+            selmon = m;
+            focus(null_mut());
+        }
+        if ev.window == (*selmon).barwin {
+            loop {
+                x += TEXTW(drw, tags[i as usize]);
+                if ev.x >= x as i32
+                    && ({
+                        i += 1;
+                        i
+                    } < tags.len() as u32)
+                {
+                    break;
+                }
+            }
+            if i < tags.len() as u32 {
+                click = _CLICK::ClkTagBar;
+                arg = Arg::ui(1 << i);
+            } else if ev.x < (x + TEXTW(drw, (*selmon).ltsymbol)) as i32 {
+                click = _CLICK::ClkLtSymbol;
+            } else if ev.x > (*selmon).ww - TEXTW(drw, stext) as i32 {
+                click = _CLICK::ClkStatusText;
+            } else {
+                click = _CLICK::ClkWinTitle;
+            }
+        } else if {
+            c = wintoclient(ev.window);
+            !c.is_null()
+        } {
+            focus(c);
+            restack(selmon);
+            XAllowEvents(dpy, ReplayPointer, CurrentTime);
+            click = _CLICK::ClkClientWin;
+        }
+        for i in 0..buttons.len() {
+            if click as u32 == buttons[i].click
+                && buttons[i].func.is_some()
+                && buttons[i].button == ev.button
+                && CLEANMASK(buttons[i].mask) == CLEANMASK(ev.state)
+            {
+                buttons[i].func.unwrap()(
+                    if let Arg::i(0) = arg
+                        && (click as u32 == _CLICK::ClkTagBar as u32)
+                    {
+                        &mut arg
+                    } else {
+                        &mut buttons[i].arg
+                    },
+                );
+            }
+        }
+    }
 }
 
 pub fn spawn(arg: *const Arg) {}
@@ -1054,7 +1124,14 @@ pub fn togglefloating(arg: *const Arg) {}
 pub fn focusmon(arg: *const Arg) {}
 pub fn tagmon(arg: *const Arg) {}
 pub fn focusstack(arg: *const Arg) {}
-pub fn incnmaster(arg: *const Arg) {}
+pub fn incnmaster(arg: *const Arg) {
+    unsafe {
+        if let Arg::i(i0) = *arg {
+            (*selmon).nmaster = 0.max((*selmon).nmaster + i0);
+        }
+    }
+}
+// (TODO): XINERAMA
 pub fn setmfact(arg: *const Arg) {}
 pub fn setlayout(arg: *const Arg) {}
 pub fn zoom(arg: *const Arg) {}
@@ -1088,13 +1165,95 @@ pub fn updatenumlockmask() {
         XFreeModifiermap(modmap);
     }
 }
-pub fn grabbuttons(c: *mut Client, focused: i32) {
-    // (TODO)
+pub fn grabbuttons(c: *mut Client, focused: bool) {
     updatenumlockmask();
+    unsafe {
+        let modifiers = [0, LockMask, numlockmask, numlockmask | LockMask];
+        XUngrabButton(dpy, AnyButton as u32, AnyModifier, (*c).win);
+        if !focused {
+            XGrabButton(
+                dpy,
+                AnyButton as u32,
+                AnyModifier,
+                (*c).win,
+                False,
+                BUTTONMASK as u32,
+                GrabModeSync,
+                GrabModeSync,
+                0,
+                0,
+            );
+        }
+        for i in 0..buttons.len() {
+            if buttons[i].click == _CLICK::ClkClientWin as u32 {
+                for j in 0..modifiers.len() {
+                    XGrabButton(
+                        dpy,
+                        buttons[i].button,
+                        buttons[i].mask | modifiers[j],
+                        (*c).win,
+                        False,
+                        BUTTONMASK as u32,
+                        GrabModeSync,
+                        GrabModeSync,
+                        0,
+                        0,
+                    );
+                }
+            }
+        }
+    }
 }
-pub fn unfocus(c: *mut Client, setfocus: i32) {
+pub fn grabkeys() {
+    updatenumlockmask();
+    unsafe {
+        let modifiers = [0, LockMask, numlockmask, numlockmask | LockMask];
+
+        XUngrabKey(dpy, AnyKey, AnyModifier, root);
+        let mut start: i32 = 0;
+        let mut end: i32 = 0;
+        let mut skip: i32 = 0;
+        XDisplayKeycodes(dpy, &mut start, &mut end);
+        let syms = XGetKeyboardMapping(dpy, start as u8, end - start + 1, &mut skip);
+        if syms.is_null() {
+            return;
+        }
+        for k in start..=end {
+            for i in 0..keys.len() {
+                // skip modifier codes, we do that ourselves.
+                if keys[i].keysym == *syms.wrapping_add(((k - start) * skip) as usize) {
+                    for j in 0..modifiers.len() {
+                        XGrabKey(
+                            dpy,
+                            k,
+                            keys[i].mod0 | modifiers[j],
+                            root,
+                            True,
+                            GrayScale,
+                            GrabModeSync,
+                        );
+                    }
+                }
+            }
+        }
+        XFree(syms as *mut _);
+    }
+}
+pub fn focus(c: *mut Client) {}
+pub fn unfocus(c: *mut Client, setfocus: bool) {
     if c.is_null() {
         return;
     }
-    // (TODO)
+    grabbuttons(c, false);
+    unsafe {
+        XSetWindowBorder(
+            dpy,
+            (*c).win,
+            (*scheme[_SCHEME::SchemeNorm as usize][_Col::ColBorder as usize]).pixel,
+        );
+        if setfocus {
+            XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
+            XDeleteProperty(dpy, root, netatom[_NET::NetActiveWindow as usize]);
+        }
+    }
 }
