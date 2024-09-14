@@ -1,31 +1,17 @@
-use std::ffi::{c_char, c_int, c_void, CStr};
+use std::ffi::{c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
-use std::ops::Deref;
-use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::{os::raw::c_long, usize};
 
 use x11::keysym::XK_Num_Lock;
-use x11::xinput::_XAnyClassinfo;
 use x11::xlib::{
-    AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadMatch, BadWindow, Below,
-    ButtonPressMask, ButtonReleaseMask, CWBorderWidth, CWHeight, CWSibling, CWStackMode, CWWidth,
-    ConfigureNotify, ControlMask, CurrentTime, Display, EnterWindowMask, False, GrabModeSync,
-    GrayScale, KeySym, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, PAspect,
-    PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask, ReplayPointer,
-    RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask, Success, True,
-    Window, XAllowEvents, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
-    XDefaultRootWindow, XDeleteProperty, XDisplayKeycodes, XErrorEvent, XEvent, XFree,
-    XFreeModifiermap, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetWMNormalHints,
-    XGetWindowProperty, XGrabButton, XGrabKey, XKeysymToKeycode, XMoveWindow, XQueryPointer,
-    XRaiseWindow, XSelectInput, XSendEvent, XSetErrorHandler, XSetInputFocus, XSetWindowBorder,
-    XSizeHints, XSync, XUngrabButton, XUngrabKey, XWindowChanges, CWX, CWY, XA_ATOM,
+    AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadMatch, BadWindow, Below, ButtonPressMask, ButtonReleaseMask, CWBackPixmap, CWBorderWidth, CWEventMask, CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify, ControlMask, CopyFromParent, CurrentTime, Display, EnterWindowMask, ExposureMask, False, GrabModeSync, GrayScale, KeySym, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, ParentRelative, PointerMotionMask, PropModeReplace, ReplayPointer, RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask, Success, True, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow, XDefaultVisual, XDefineCursor, XDeleteProperty, XDisplayKeycodes, XErrorEvent, XEvent, XFree, XFreeModifiermap, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowProperty, XGrabButton, XGrabKey, XKeysymToKeycode, XMapRaised, XMoveWindow, XQueryPointer, XRaiseWindow, XSelectInput, XSendEvent, XSetClassHint, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey, XUrgencyHint, XWindowChanges, CWX, CWY, XA_ATOM, XA_WINDOW
 };
 
 use std::cmp::{max, min};
 
-use crate::config::{self, buttons, keys, resizehints, rules, tags};
+use crate::config::{buttons, keys, resizehints, rules, tags};
 use crate::drw::{
     drw_fontset_getwidth, drw_map, drw_rect, drw_setscheme, drw_text, Clr, Cur, Drw, _Col,
 };
@@ -206,7 +192,7 @@ pub struct Client {
     pub isfixed: bool,
     pub isfloating: bool,
     pub isurgent: bool,
-    pub nerverfocus: i32,
+    pub nerverfocus: bool,
     pub oldstate: i32,
     pub isfullscreen: bool,
     pub next: *mut Client,
@@ -242,7 +228,7 @@ impl Client {
         isfixed: bool,
         isfloating: bool,
         isurgent: bool,
-        nerverfocus: i32,
+        nerverfocus: bool,
         oldstate: i32,
         isfullscreen: bool,
         next: *mut Client,
@@ -307,7 +293,7 @@ pub struct Monitor {
     pub sellt: usize,
     pub tagset: [u32; 2],
     pub showbar: bool,
-    pub topbar: i32,
+    pub topbar: bool,
     pub clients: *mut Client,
     pub sel: *mut Client,
     pub stack: *mut Client,
@@ -334,7 +320,7 @@ impl Monitor {
         sellt: usize,
         tagset: [u32; 2],
         showbar: bool,
-        topbar: i32,
+        topbar: bool,
         clients: *mut Client,
         sel: *mut Client,
         stack: *mut Client,
@@ -688,6 +674,23 @@ pub fn resize(c: *mut Client, x: &mut i32, y: &mut i32, w: &mut i32, h: &mut i32
     }
 }
 
+pub fn seturgent(c: *mut Client, urg: bool) {
+    unsafe {
+        (*c).isurgent = urg;
+        let mut wmh = XGetWMHints(dpy, (*c).win);
+        if wmh.is_null() {
+            return;
+        }
+        (*wmh).flags = if urg {
+            (*wmh).flags | XUrgencyHint
+        } else {
+            (*wmh).flags & !XUrgencyHint
+        };
+        XSetWMHints(dpy, (*c).win, wmh);
+        XFree(wmh as *mut _);
+    }
+}
+
 pub fn showhide(c: *mut Client) {
     if c.is_null() {
         return;
@@ -718,7 +721,54 @@ pub fn arrangemon(m: *mut Monitor) {
         }
     }
 }
+pub fn detach(c: *mut Client) {
+    unsafe {
+        let mut tc: *mut *mut Client = &mut (*(*c).mon).clients;
+        while !tc.is_null() && *tc != c {
+            tc = &mut (*(*tc)).next;
+        }
+        *tc = (*c).next;
+    }
+}
+pub fn detachstack(c: *mut Client) {
+    unsafe {
+        let mut tc: *mut *mut Client = &mut (*(*c).mon).stack;
+        while !tc.is_null() && *tc != c {
+            tc = &mut (*(*tc)).snext;
+        }
+        *tc = (*c).snext;
 
+        if c == (*(*c).mon).sel {
+            let mut t = (*(*c).mon).stack;
+            while !t.is_null() && (ISVISIBLE(t) <= 0) {
+                (*(*c).mon).sel = t;
+                t = (*t).snext;
+            }
+        }
+    }
+}
+pub fn dirtomon(dir: i32) -> *mut Monitor {
+    unsafe {
+        let mut m: *mut Monitor = null_mut();
+        if dir > 0 {
+            m = (*selmon).next;
+            if !m.is_null() {
+                m = mons;
+            }
+        } else if selmon == mons {
+            m = mons;
+            while !m.is_null() && !(*m).next.is_null() {
+                m = (*m).next;
+            }
+        } else {
+            m = mons;
+            while !m.is_null() && (*m).next != selmon {
+                m = (*m).next;
+            }
+        }
+        m
+    }
+}
 pub fn drawbar(m: *mut Monitor) {
     let mut x: i32 = 0;
     let mut w: i32 = 0;
@@ -1188,6 +1238,58 @@ pub fn checkotherwm() {
 }
 
 pub fn spawn(arg: *const Arg) {}
+pub fn updatebars() {
+    unsafe {
+        let mut wa: XSetWindowAttributes = zeroed();
+        wa.override_redirect = True;
+        wa.background_pixmap = ParentRelative as u64;
+        wa.event_mask = ButtonPressMask | ExposureMask;
+        let mut ch: XClassHint = zeroed();
+        let c_string = CString::new("jwm").expect("fail to convert");
+        ch.res_name = c_string.as_ptr() as *mut _;
+        ch.res_class = c_string.as_ptr() as *mut _;
+        let mut m = mons;
+        while !m.is_null() {
+            if (*m).barwin > 0 {
+                continue;
+            }
+            (*m).barwin = XCreateWindow(
+                dpy,
+                root,
+                (*m).wx,
+                (*m).by,
+                (*m).ww.try_into().unwrap(),
+                bh.try_into().unwrap(),
+                0,
+                XDefaultDepth(dpy, screen),
+                CopyFromParent as u32,
+                XDefaultVisual(dpy, screen),
+                CWOverrideRedirect | CWBackPixmap | CWEventMask,
+                &mut wa,
+            );
+            XDefineCursor(dpy, (*m).barwin, (*cursor[_CUR::CurNormal as usize]).cursor);
+            XMapRaised(dpy, (*m).barwin);
+            XSetClassHint(dpy, (*m).barwin, &mut ch);
+            m = (*m).next;
+        }
+    }
+}
+pub fn updatebarpos(m: *mut Monitor) {
+    unsafe {
+        (*m).wy = (*m).my;
+        (*m).wh = (*m).mh;
+        if (*m).showbar {
+            (*m).wh -= bh;
+            (*m).by = if (*m).topbar {
+                (*m).wy
+            } else {
+                (*m).wy + (*m).wh
+            };
+        } else {
+            (*m).by = -bh;
+        }
+    }
+}
 pub fn togglebar(arg: *const Arg) {}
 pub fn togglefloating(arg: *const Arg) {}
 pub fn focusmon(arg: *const Arg) {}
@@ -1200,11 +1302,24 @@ pub fn incnmaster(arg: *const Arg) {
         }
     }
 }
-// (TODO): XINERAMA
 pub fn setmfact(arg: *const Arg) {}
 pub fn setlayout(arg: *const Arg) {}
 pub fn zoom(arg: *const Arg) {}
-pub fn view(arg: *const Arg) {}
+pub fn view(arg: *const Arg) {
+    unsafe {
+        let val = if let Arg::ui(hh) = *arg { hh } else { 0 };
+        if (val & TAGMASK()) == (*selmon).tagset[(*selmon).seltags as usize] {
+            return;
+        }
+        // toggle sel tagset.
+        (*selmon).seltags ^= 1;
+        if val & TAGMASK() > 0 {
+            (*selmon).tagset[(*selmon).seltags as usize] = val & TAGMASK();
+        }
+        focus(null_mut());
+        arrange(selmon);
+    }
+}
 pub fn toggleview(arg: *const Arg) {}
 pub fn toggletag(arg: *const Arg) {}
 pub fn tag(arg: *const Arg) {}
@@ -1308,7 +1423,129 @@ pub fn grabkeys() {
         XFree(syms as *mut _);
     }
 }
-pub fn focus(c: *mut Client) {}
+pub fn sendevent(c: *mut Client, proto: Atom) -> i32 {
+    let mut protocols: *mut Atom = null_mut();
+    let mut n: i32 = 0;
+    let mut exists: bool = false;
+    unsafe {
+        let mut ev: XEvent = zeroed();
+        if XGetWMProtocols(dpy, (*c).win, &mut protocols, &mut n) > 0 {
+            while !exists && {
+                let tmp = n;
+                n -= 1;
+                tmp
+            } > 0
+            {
+                exists = *protocols.wrapping_add(n as usize) == proto;
+            }
+            XFree(protocols as *mut _);
+        }
+        if exists {
+            ev.type_ = ClientMessage;
+            ev.client_message.window = (*c).win;
+            ev.client_message.message_type = wmatom[_WM::WMProtocols as usize];
+            ev.client_message.format = 32;
+            // This data is cool!
+            ev.client_message.data.as_longs_mut()[0] = proto as i64;
+            ev.client_message.data.as_longs_mut()[1] = CurrentTime as i64;
+            XSendEvent(dpy, (*c).win, False, NoEventMask, &mut ev);
+        }
+    }
+    return exists as i32;
+}
+pub fn setfocus(c: *mut Client) {
+    unsafe {
+        if !(*c).nerverfocus {
+            XSetInputFocus(dpy, (*c).win, RevertToPointerRoot, CurrentTime);
+            XChangeProperty(
+                dpy,
+                root,
+                netatom[_NET::NetActiveWindow as usize],
+                XA_WINDOW,
+                32,
+                PropModeReplace,
+                &mut (*c).win as *const u64 as *const _,
+                1,
+            );
+        }
+        sendevent(c, wmatom[_WM::WMTakeFocus as usize]);
+    }
+}
+pub fn drawbars() {
+    unsafe {
+        let mut m = mons;
+        while !m.is_null() {
+            drawbar(m);
+            m = (*m).next;
+        }
+    }
+}
+pub fn enternotify(e: *mut XEvent) {
+    unsafe {
+        let ev = (*e).crossing;
+        if (ev.mode != NotifyNormal || ev.detail == NotifyInferior) && ev.window != root {
+            return;
+        }
+        let mut c = wintoclient(ev.window);
+        let mut m = if !c.is_null() {
+            (*c).mon
+        } else {
+            wintomon(ev.window)
+        };
+        if m != selmon {
+            unfocus((*selmon).sel, true);
+            selmon = m;
+        } else if c.is_null() || c == (*selmon).sel {
+            return;
+        }
+        focus(c);
+    }
+}
+pub fn expose(e: *mut XEvent) {
+    unsafe {
+        let mut ev = (*e).expose;
+        let m = wintomon(ev.window);
+
+        if ev.count == 0 && !m.is_null() {
+            drawbar(m);
+        }
+    }
+}
+pub fn focus(mut c: *mut Client) {
+    unsafe {
+        if c.is_null() || ISVISIBLE(c) <= 0 {
+            c = (*selmon).stack;
+            while !c.is_null() && ISVISIBLE(c) <= 0 {
+                c = (*c).snext;
+            }
+        }
+        if !(*selmon).sel.is_null() && (*selmon).sel != c {
+            unfocus((*selmon).sel, false);
+        }
+        if !c.is_null() {
+            if (*c).mon != selmon {
+                selmon = (*c).mon;
+            }
+            if (*c).isurgent {
+                seturgent(c, false);
+            }
+            detachstack(c);
+            attachstack(c);
+            grabbuttons(c, true);
+            XSetWindowBorder(
+                dpy,
+                (*c).win,
+                (*scheme[_SCHEME::SchemeSel as usize][_Col::ColBorder as usize]).pixel,
+            );
+            setfocus(c);
+        } else {
+            XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
+            XDeleteProperty(dpy, root, netatom[_NET::NetActiveWindow as usize]);
+        }
+        (*selmon).sel = c;
+        drawbars();
+    }
+}
 pub fn unfocus(c: *mut Client, setfocus: bool) {
     if c.is_null() {
         return;
