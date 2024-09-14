@@ -1,23 +1,26 @@
-use std::ffi::{c_char, CStr};
+use std::ffi::{c_char, c_int, c_void, CStr};
+use std::mem::transmute;
 use std::mem::zeroed;
 use std::ops::Deref;
+use std::os::raw::c_void;
 use std::ptr::null_mut;
 use std::{os::raw::c_long, usize};
 
 use x11::keysym::XK_Num_Lock;
 use x11::xinput::_XAnyClassinfo;
 use x11::xlib::{
-    AnyButton, AnyKey, AnyModifier, Atom, Below, ButtonPressMask, ButtonReleaseMask, CWBorderWidth,
-    CWHeight, CWSibling, CWStackMode, CWWidth, ConfigureNotify, ControlMask, CurrentTime, Display,
-    EnterWindowMask, False, GrabModeSync, GrayScale, KeySym, LockMask, Mod1Mask, Mod2Mask,
-    Mod3Mask, Mod4Mask, Mod5Mask, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize,
-    PointerMotionMask, ReplayPointer, RevertToPointerRoot, ShiftMask, StructureNotifyMask, Success,
-    True, Window, XAllowEvents, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
-    XDeleteProperty, XDisplayKeycodes, XEvent, XFree, XFreeModifiermap, XGetClassHint,
-    XGetKeyboardMapping, XGetModifierMapping, XGetWMNormalHints, XGetWindowProperty, XGrabButton,
-    XGrabKey, XKeysymToKeycode, XMoveWindow, XQueryPointer, XRaiseWindow, XSendEvent,
-    XSetInputFocus, XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey, XWindowChanges,
-    CWX, CWY, XA_ATOM,
+    AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadMatch, BadWindow, Below,
+    ButtonPressMask, ButtonReleaseMask, CWBorderWidth, CWHeight, CWSibling, CWStackMode, CWWidth,
+    ConfigureNotify, ControlMask, CurrentTime, Display, EnterWindowMask, False, GrabModeSync,
+    GrayScale, KeySym, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, PAspect,
+    PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask, ReplayPointer,
+    RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask, Success, True,
+    Window, XAllowEvents, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
+    XDefaultRootWindow, XDeleteProperty, XDisplayKeycodes, XErrorEvent, XEvent, XFree,
+    XFreeModifiermap, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetWMNormalHints,
+    XGetWindowProperty, XGrabButton, XGrabKey, XKeysymToKeycode, XMoveWindow, XQueryPointer,
+    XRaiseWindow, XSelectInput, XSendEvent, XSetErrorHandler, XSetInputFocus, XSetWindowBorder,
+    XSizeHints, XSync, XUngrabButton, XUngrabKey, XWindowChanges, CWX, CWY, XA_ATOM,
 };
 
 use std::cmp::{max, min};
@@ -25,6 +28,10 @@ use std::cmp::{max, min};
 use crate::config::{self, buttons, keys, resizehints, rules, tags};
 use crate::drw::{
     drw_fontset_getwidth, drw_map, drw_rect, drw_setscheme, drw_text, Clr, Cur, Drw, _Col,
+};
+use crate::xproto::{
+    X_ConfigureWindow, X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle, X_PolySegment,
+    X_PolyText8, X_SetInputFocus,
 };
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
@@ -57,6 +64,8 @@ pub static mut mons: *mut Monitor = null_mut();
 pub static mut selmon: *mut Monitor = null_mut();
 pub static mut root: Window = 0;
 pub static mut wmcheckwin: Window = 0;
+pub static mut xerrorxlib: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int> =
+    None;
 
 #[repr(C)]
 #[derive(Debug, Clone)]
@@ -1063,7 +1072,6 @@ pub fn buttonpress(e: *mut XEvent) {
     let mut i: u32 = 0;
     let mut x: u32 = 0;
     let mut arg: Arg = Arg::ui(0);
-    // (TODO)
     unsafe {
         let mut c: *mut Client = null_mut();
         let mut ev = (*e).button;
@@ -1127,6 +1135,55 @@ pub fn buttonpress(e: *mut XEvent) {
                 });
             }
         }
+    }
+}
+
+pub fn xerrordummy(dpy0: *mut Display, ee: *mut XErrorEvent) -> i32 {
+    0
+}
+// #[no_mangle]
+// pub extern "C" fn xerrorstart(dpy0: *mut Display, ee: *mut XErrorEvent) -> i32 {
+//     eprintln!("jwm: another window manager is already running");
+//     return -1;
+// }
+// Or use the method above.
+pub fn xerrorstart(dpy0: *mut Display, ee: *mut XErrorEvent) -> i32 {
+    eprintln!("jwm: another window manager is already running");
+    return -1;
+}
+// There's no way to check accesses to destroyed windows, thus those cases are ignored (especially
+// on UnmapNotify's). Other types of errors call xlibs default error handler, which may call exit.
+pub fn xerror(dpy0: *mut Display, ee: *mut XErrorEvent) -> i32 {
+    unsafe {
+        if (*ee).error_code == BadWindow
+            || ((*ee).request_code == X_SetInputFocus && (*ee).error_code == BadMatch)
+            || ((*ee).request_code == X_PolyText8 && (*ee).error_code == BadDrawable)
+            || ((*ee).request_code == X_PolyFillRectangle && (*ee).error_code == BadDrawable)
+            || ((*ee).request_code == X_PolySegment && (*ee).error_code == BadDrawable)
+            || ((*ee).request_code == X_ConfigureWindow && (*ee).error_code == BadMatch)
+            || ((*ee).request_code == X_GrabButton && (*ee).error_code == BadAccess)
+            || ((*ee).request_code == X_GrabKey && (*ee).error_code == BadAccess)
+            || ((*ee).request_code == X_CopyArea && (*ee).error_code == BadDrawable)
+        {
+            return 0;
+        }
+        println!(
+            "jwm: fatal error: request code = {}, error code = {}",
+            (*ee).request_code,
+            (*ee).error_code
+        );
+        // may call exit.
+        return xerrorxlib.unwrap()(dpy, ee);
+    }
+}
+pub fn checkotherwm() {
+    unsafe {
+        xerrorxlib = XSetErrorHandler(Some(transmute(xerrorstart as *const ())));
+        // this causes an error if some other window manager is running.
+        XSelectInput(dpy, XDefaultRootWindow(dpy), SubstructureRedirectMask);
+        XSync(dpy, False);
+        // Attention what transmut does is great;
+        XSetErrorHandler(Some(transmute(xerror as *const ())));
     }
 }
 

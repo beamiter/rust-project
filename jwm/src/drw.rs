@@ -56,6 +56,7 @@ pub static mut NOMATCHES: NoMathes = NoMathes {
 };
 static ELLIPSIS_WIDTH: AtomicU32 = AtomicU32::new(0);
 
+#[derive(Debug, Clone)]
 pub struct Cur {
     pub cursor: Cursor,
 }
@@ -65,6 +66,7 @@ impl Cur {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Fnt {
     pub dpy: *mut xlib::Display,
     pub h: u32,
@@ -93,6 +95,7 @@ pub enum _Col {
 
 pub type Clr = XftColor;
 
+#[derive(Debug, Clone)]
 pub struct Drw {
     pub w: u32,
     pub h: u32,
