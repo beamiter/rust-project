@@ -9,20 +9,20 @@ use x11::xlib::{
     AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadMatch, BadWindow, Below,
     ButtonPressMask, ButtonReleaseMask, CWBackPixmap, CWBorderWidth, CWEventMask, CWHeight,
     CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify,
-    ControlMask, CopyFromParent, CurrentTime, Display, EnterWindowMask, ExposureMask, False,
-    GrabModeSync, GrayScale, KeySym, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask,
-    NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc,
-    PSize, ParentRelative, PointerMotionMask, PropModeAppend, PropModeReplace, ReplayPointer,
-    RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask, Success, True,
-    Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint, XConfigureEvent,
-    XConfigureWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow, XDefaultVisual,
-    XDefineCursor, XDeleteProperty, XDisplayKeycodes, XErrorEvent, XEvent, XFree, XFreeModifiermap,
-    XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetWMHints, XGetWMNormalHints,
-    XGetWMProtocols, XGetWindowProperty, XGrabButton, XGrabKey, XGrabServer, XKeysymToKeycode,
-    XMapRaised, XMoveWindow, XQueryPointer, XRaiseWindow, XSelectInput, XSendEvent, XSetClassHint,
-    XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes, XSetWindowBorder,
-    XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabServer, XUrgencyHint, XWindowChanges, CWX,
-    CWY, XA_ATOM, XA_WINDOW,
+    ControlMask, CopyFromParent, CurrentTime, DestroyAll, Display, EnterWindowMask, ExposureMask,
+    False, GrabModeSync, GrayScale, KeySym, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask,
+    Mod5Mask, NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize,
+    PResizeInc, PSize, ParentRelative, PointerMotionMask, PropModeAppend, PropModeReplace,
+    ReplayPointer, RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask,
+    Success, True, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint,
+    XConfigureEvent, XConfigureWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow,
+    XDefaultVisual, XDefineCursor, XDeleteProperty, XDisplayKeycodes, XErrorEvent, XEvent, XFree,
+    XFreeModifiermap, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetWMHints,
+    XGetWMNormalHints, XGetWMProtocols, XGetWindowProperty, XGrabButton, XGrabKey, XGrabServer,
+    XKeysymToKeycode, XKillClient, XMapRaised, XMoveWindow, XQueryPointer, XRaiseWindow,
+    XSelectInput, XSendEvent, XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus,
+    XSetWMHints, XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XUngrabButton,
+    XUngrabKey, XUngrabServer, XUrgencyHint, XWindowChanges, CWX, CWY, XA_ATOM, XA_WINDOW,
 };
 
 use std::cmp::{max, min};
@@ -383,7 +383,7 @@ pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: *const Monitor) -> i32 {
 }
 
 pub fn ISVISIBLE(C: *const Client) -> u32 {
-    unsafe { (*C).tags0 & (*(*C).mon).tagset[(*(*C).mon).seltags as usize] }
+    unsafe { (*C).tags0 & (*(*C).mon).tagset[(*(*C).mon).seltags] }
 }
 
 pub fn WIDTH(X: *const Client) -> i32 {
@@ -481,7 +481,7 @@ pub fn applyrules(c: *mut Client) {
         (*c).tags0 = if ((*c).tags0 & TAGMASK()) > 0 {
             (*c).tags0 & TAGMASK()
         } else {
-            (*(*c).mon).tagset[(*(*c).mon).seltags as usize]
+            (*(*c).mon).tagset[(*(*c).mon).seltags]
         }
     }
 }
@@ -547,7 +547,7 @@ pub fn applysizehints(
     y: &mut i32,
     w: &mut i32,
     h: &mut i32,
-    interact: i32,
+    interact: bool,
 ) -> bool {
     unsafe {
         let mut baseismin: bool = false;
@@ -556,7 +556,7 @@ pub fn applysizehints(
         // set minimum possible.
         *w = 1.max(*w);
         *h = 1.max(*h);
-        if interact > 0 {
+        if interact {
             if *x > sw {
                 *x = sw - WIDTH(c);
             }
@@ -589,11 +589,7 @@ pub fn applysizehints(
         if *w < bh {
             *w = bh;
         }
-        if resizehints > 0
-            || (*c).isfloating
-            || (*(*(*c).mon).lt[(*(*c).mon).sellt as usize])
-                .arrange
-                .is_none()
+        if resizehints || (*c).isfloating || (*(*(*c).mon).lt[(*(*c).mon).sellt]).arrange.is_none()
         {
             if (*c).hintsvalid <= 0 {
                 updatesizehints(c);
@@ -686,7 +682,7 @@ pub fn resizeclient(c: *mut Client, x: i32, y: i32, w: i32, h: i32) {
     }
 }
 
-pub fn resize(c: *mut Client, x: &mut i32, y: &mut i32, w: &mut i32, h: &mut i32, interact: i32) {
+pub fn resize(c: *mut Client, x: &mut i32, y: &mut i32, w: &mut i32, h: &mut i32, interact: bool) {
     if applysizehints(c, x, y, w, h, interact) {
         resizeclient(c, *x, *y, *w, *h);
     }
@@ -720,7 +716,7 @@ pub fn showhide(c: *mut Client) {
             if ((*(*(*c).mon).lt[(*(*c).mon).sellt]).arrange.is_some() || (*c).isfloating)
                 && !(*c).isfullscreen
             {
-                resize(c, &mut (*c).x, &mut (*c).y, &mut (*c).w, &mut (*c).h, 0);
+                resize(c, &mut (*c).x, &mut (*c).y, &mut (*c).w, &mut (*c).h, false);
             }
             showhide((*c).snext);
         } else {
@@ -845,7 +841,7 @@ pub fn drawbar(m: *mut Monitor) {
         x = 0;
         for i in 0..tags.len() {
             w = TEXTW(drw, tags[i]) as i32;
-            let idx = if (*m).tagset[(*m).seltags as usize] & 1 << i > 0 {
+            let idx = if (*m).tagset[(*m).seltags] & 1 << i > 0 {
                 _SCHEME::SchemeSel as usize
             } else {
                 _SCHEME::SchemeNorm as usize
@@ -1151,7 +1147,7 @@ pub fn wintomon(w: Window) -> *mut Monitor {
 
 pub fn buttonpress(e: *mut XEvent) {
     let click = _CLICK::ClkRootWin;
-    let mut i: u32 = 0;
+    let mut i: usize = 0;
     let mut x: u32 = 0;
     let mut arg: Arg = Arg::ui(0);
     unsafe {
@@ -1167,17 +1163,17 @@ pub fn buttonpress(e: *mut XEvent) {
         }
         if ev.window == (*selmon).barwin {
             loop {
-                x += TEXTW(drw, tags[i as usize]);
+                x += TEXTW(drw, tags[i]);
                 if ev.x >= x as i32
                     && ({
                         i += 1;
                         i
-                    } < tags.len() as u32)
+                    } < tags.len())
                 {
                     break;
                 }
             }
-            if i < tags.len() as u32 {
+            if i < tags.len() {
                 click = _CLICK::ClkTagBar;
                 arg = Arg::ui(1 << i);
             } else if ev.x < (x + TEXTW(drw, (*selmon).ltsymbol)) as i32 {
@@ -1363,13 +1359,13 @@ pub fn zoom(arg: *const Arg) {}
 pub fn view(arg: *const Arg) {
     unsafe {
         let val = if let Arg::ui(hh) = *arg { hh } else { 0 };
-        if (val & TAGMASK()) == (*selmon).tagset[(*selmon).seltags as usize] {
+        if (val & TAGMASK()) == (*selmon).tagset[(*selmon).seltags] {
             return;
         }
         // toggle sel tagset.
         (*selmon).seltags ^= 1;
         if val & TAGMASK() > 0 {
-            (*selmon).tagset[(*selmon).seltags as usize] = val & TAGMASK();
+            (*selmon).tagset[(*selmon).seltags] = val & TAGMASK();
         }
         focus(null_mut());
         arrange(selmon);
@@ -1383,7 +1379,42 @@ pub fn quit(arg: *const Arg) {
         running = 0;
     }
 }
-pub fn killclient(arg: *const Arg) {}
+pub fn killclient(arg: *const Arg) {
+    unsafe {
+        if (*selmon).sel.is_null() {
+            return;
+        }
+        if !sendevent((*selmon).sel, wmatom[_WM::WMDelete as usize]) {
+            XGrabServer(dpy);
+            XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
+            XSetCloseDownMode(dpy, DestroyAll);
+            XKillClient(dpy, (*(*selmon).sel).win);
+            XSync(dpy, False);
+            XSetErrorHandler(Some(transmute(xerror as *const ())));
+            XUngrabServer(dpy);
+        }
+    }
+}
+pub fn nexttiled(mut c: *mut Client) -> *mut Client {
+    unsafe {
+        loop {
+            if !c.is_null() && ((*c).isfloating || ISVISIBLE(c) < 0) {
+                c = (*c).next;
+            } else {
+                break;
+            }
+        }
+        return c;
+    }
+}
+pub fn pop(mut c: *mut Client) {
+    detach(c);
+    attach(c);
+    focus(c);
+    unsafe {
+        arrange((*c).mon);
+    }
+}
 pub fn movemouse(arg: *const Arg) {}
 pub fn resizemouse(arg: *const Arg) {}
 pub fn updatenumlockmask() {
@@ -1478,7 +1509,7 @@ pub fn grabkeys() {
         XFree(syms as *mut _);
     }
 }
-pub fn sendevent(c: *mut Client, proto: Atom) -> i32 {
+pub fn sendevent(c: *mut Client, proto: Atom) -> bool {
     let mut protocols: *mut Atom = null_mut();
     let mut n: i32 = 0;
     let mut exists: bool = false;
@@ -1506,7 +1537,7 @@ pub fn sendevent(c: *mut Client, proto: Atom) -> i32 {
             XSendEvent(dpy, (*c).win, False, NoEventMask, &mut ev);
         }
     }
-    return exists as i32;
+    return exists;
 }
 pub fn setfocus(c: *mut Client) {
     unsafe {
@@ -1628,7 +1659,7 @@ pub fn sendmon(c: *mut Client, m: *mut Monitor) {
         detachstack(c);
         (*c).mon = m;
         // assign tags of target monitor.
-        (*c).tags0 = (*m).tagset[(*m).seltags as usize];
+        (*c).tags0 = (*m).tagset[(*m).seltags];
         attach(c);
         attachstack(c);
         focus(null_mut());

@@ -41,8 +41,8 @@ pub const tags: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 
 pub const mfact: f32 = 0.55;
 pub const nmaster: i32 = 1;
-pub const resizehints: i32 = 1;
-pub const lockfullscreen: i32 = 1;
+pub const resizehints: bool = true;
+pub const lockfullscreen: bool = true;
 
 lazy_static! {
     pub static ref layouts: Vec<Layout> = vec![

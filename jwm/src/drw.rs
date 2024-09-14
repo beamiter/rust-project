@@ -46,7 +46,7 @@ macro_rules! BETWEEN {
 }
 
 const NOMATCHES_LEN: usize = 64;
-struct NoMathes {
+pub struct NoMathes {
     codepoint: [u64; NOMATCHES_LEN],
     idx: u32,
 }
@@ -176,7 +176,7 @@ pub fn drw_free(drw: *mut Drw) {
 
 fn xfont_create(drw: *mut Drw, fontname: &str, fontpattern: *mut FcPattern) -> *mut Fnt {
     let mut font = Fnt::new();
-    let mut xfont: *mut XftFont = null_mut();
+    let xfont: *mut XftFont;
     let mut pattern: *mut FcPattern = null_mut();
 
     unsafe {
@@ -227,10 +227,7 @@ fn xfont_free(font: *mut Fnt) {
 
 // Fnt abstraction
 pub fn drw_fontset_create(drw: *mut Drw, fonts: &[&str], fontcount: u64) -> *mut Fnt {
-    let mut cur: *mut Fnt = null_mut();
     let mut ret: *mut Fnt = null_mut();
-
-    let mut i: usize = 0;
 
     if drw.is_null() || fonts.is_empty() {
         return null_mut();
@@ -238,7 +235,7 @@ pub fn drw_fontset_create(drw: *mut Drw, fonts: &[&str], fontcount: u64) -> *mut
 
     unsafe {
         for i in 1..=fontcount {
-            cur = xfont_create(drw, fonts[(i - 1) as usize], null_mut());
+            let cur = xfont_create(drw, fonts[(i - 1) as usize], null_mut());
             if !cur.is_null() {
                 (*cur).next = ret;
                 ret = cur;
@@ -413,16 +410,12 @@ pub fn drw_text(
     mut text: &str,
     invert: i32,
 ) -> i32 {
-    let mut i: i32 = 0;
-    let mut ty: i32 = 0;
     let mut ellipsis_x: i32 = 0;
 
     let mut tmpw: u32 = 0;
-    let mut ew: u32 = 0;
     let mut ellipsis_w: u32 = 0;
-    let mut ellipsis_len: u32 = 0;
 
-    let mut d: *mut XftDraw = null_mut();
+    let d: *mut XftDraw = null_mut();
 
     let mut usedfont: *mut Fnt = null_mut();
     let mut curfont: *mut Fnt = null_mut();
@@ -458,7 +451,7 @@ pub fn drw_text(
             let idx = if invert > 0 { _Col::ColFg } else { _Col::ColBg } as usize;
             XSetForeground((*drw).dpy, (*drw).gc, (*(*drw).scheme[idx]).pixel);
             XFillRectangle((*drw).dpy, (*drw).drawable, (*drw).gc, x, y, w, h);
-            let d = XftDrawCreate(
+            XftDrawCreate(
                 (*drw).dpy,
                 (*drw).drawable,
                 XDefaultVisual((*drw).dpy, (*drw).screen),
@@ -474,8 +467,8 @@ pub fn drw_text(
             ELLIPSIS_WIDTH.store(drw_fontset_getwidth(drw, "..."), Ordering::SeqCst);
         }
         loop {
-            ew = 0;
-            ellipsis_len = 0;
+            let mut ew = 0;
+            let mut ellipsis_len = 0;
             utf8strlen = 0;
             utf8str = text;
             nextfont = null_mut();
@@ -526,7 +519,7 @@ pub fn drw_text(
 
             if utf8strlen > 0 {
                 if render {
-                    ty = y + ((h - (*usedfont).h) / 2) as i32 + (*(*usedfont).xfont).ascent;
+                    let ty = y + ((h - (*usedfont).h) / 2) as i32 + (*(*usedfont).xfont).ascent;
                     let idx = if invert > 0 { _Col::ColBg } else { _Col::ColFg } as usize;
                     let cstring = CString::new(utf8str).expect("fail to create");
                     XftDrawStringUtf8(
