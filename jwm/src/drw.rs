@@ -1,9 +1,13 @@
+#![allow(non_upper_case_globals)]
+#![allow(non_snake_case)]
+// #![allow(unused_mut)]
+
 use std::{
     char,
     ffi::CString,
     i32,
     process::exit,
-    ptr::{null, null_mut},
+    ptr::null_mut,
     sync::atomic::{AtomicU32, Ordering},
     u32, usize,
 };
@@ -400,6 +404,7 @@ pub fn drw_rect(drw: *mut Drw, x: i32, y: i32, w: u32, h: u32, filled: i32, inve
     }
 }
 
+#[allow(unused_mut)]
 pub fn drw_text(
     drw: *mut Drw,
     mut x: i32,
@@ -417,17 +422,16 @@ pub fn drw_text(
 
     let d: *mut XftDraw = null_mut();
 
-    let mut usedfont: *mut Fnt = null_mut();
-    let mut curfont: *mut Fnt = null_mut();
-    let mut nextfont: *mut Fnt = null_mut();
-    let mut utf8strlen: i32 = 0;
-    let mut utf8charlen: i32 = 0;
+    let mut curfont: *mut Fnt;
+    let mut nextfont: *mut Fnt;
+    let mut utf8strlen: i32;
+    let mut utf8charlen: i32;
     let render: bool = x > 0 || y > 0 || w > 0 || h > 0;
     let mut utf8codepoint: u64 = 0;
     let mut utf8str: &str;
-    let mut fccharset: *mut FcCharSet = null_mut();
-    let mut fcpattern: *mut FcPattern = null_mut();
-    let mut match0: *mut FcPattern = null_mut();
+    let mut fccharset: *mut FcCharSet;
+    let mut fcpattern: *mut FcPattern;
+    let mut match0: *mut FcPattern;
     let mut result: FcResult = FcResult::NoId;
     let mut charexists: i32 = 0;
     let mut overflow: i32 = 0;
@@ -461,7 +465,7 @@ pub fn drw_text(
             w -= lpad;
         }
 
-        usedfont = (*drw).fonts;
+        let mut usedfont = (*drw).fonts;
         let ellipsis_width = ELLIPSIS_WIDTH.load(Ordering::SeqCst);
         if ellipsis_width > 0 && render {
             ELLIPSIS_WIDTH.store(drw_fontset_getwidth(drw, "..."), Ordering::SeqCst);

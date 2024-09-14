@@ -1,3 +1,8 @@
+#![allow(non_upper_case_globals)]
+#![allow(non_snake_case)]
+#![allow(unused)]
+#![allow(unused_mut)]
+
 pub const X_CreateWindow: u8 = 1;
 pub const X_ChangeWindowAttributes: u8 = 2;
 pub const X_GetWindowAttributes: u8 = 3;

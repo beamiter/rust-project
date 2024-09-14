@@ -1,4 +1,7 @@
-use std::ptr::null;
+#![allow(non_upper_case_globals)]
+#![allow(non_snake_case)]
+#![allow(unused_mut)]
+#![allow(unused)]
 
 use lazy_static::lazy_static;
 use x11::{
@@ -7,10 +10,10 @@ use x11::{
         XK_p, XK_period, XK_q, XK_space, XK_t, XK_0, XK_1, XK_2, XK_3, XK_4, XK_5, XK_6, XK_7,
         XK_8, XK_9,
     },
-    xlib::{Button1, Button2, Button3, ControlMask, Mod1Mask, ShiftMapIndex, ShiftMask},
+    xlib::{Button1, Button2, Button3, ControlMask, Mod1Mask, ShiftMask},
 };
 
-use crate::dwm::{self, Arg, Button, Key, Layout, Rule, _CLICK};
+use crate::dwm::{self, Button, Key, Layout, Rule, _CLICK};
 
 pub const borderpx: u32 = 1;
 pub const snap: u32 = 32;
@@ -77,7 +80,6 @@ fn TAGKEYS(KEY: u32, TAG: i32) -> Vec<Key> {
 }
 
 pub const MODKEY: u32 = Mod1Mask;
-// (TODO): TAGKEYS.
 pub const dmenumon: &'static str = "0";
 lazy_static! {
    pub  static ref dmenucmd: Vec<&'static str> = vec![

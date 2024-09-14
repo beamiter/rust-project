@@ -1,3 +1,7 @@
+#![allow(non_upper_case_globals)]
+#![allow(non_snake_case)]
+// #![allow(unused_mut)]
+
 use std::ffi::{c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
@@ -142,6 +146,7 @@ pub struct Button {
     pub arg: Arg,
 }
 impl Button {
+    #[allow(unused)]
     pub fn new(click: u32, mask: u32, button: u32, func: Option<fn(*const Arg)>, arg: Arg) -> Self {
         Self {
             click,
@@ -161,6 +166,7 @@ pub struct Key {
     pub arg: Arg,
 }
 impl Key {
+    #[allow(unused)]
     pub fn new(mod0: u32, keysym: KeySym, func: Option<fn(*const Arg)>, arg: Arg) -> Self {
         Self {
             mod0,
@@ -177,6 +183,7 @@ pub struct Layout {
     pub arrange: Option<fn(*mut Monitor)>,
 }
 impl Layout {
+    #[allow(unused)]
     pub fn new(symbol: &'static str, arrange: Option<fn(*mut Monitor)>) -> Self {
         Self { symbol, arrange }
     }
@@ -203,7 +210,7 @@ pub struct Client {
     pub maxh: i32,
     pub minw: i32,
     pub minh: i32,
-    pub hintsvalid: i32,
+    pub hintsvalid: bool,
     pub bw: i32,
     pub oldbw: i32,
     pub tags0: u32,
@@ -219,75 +226,42 @@ pub struct Client {
     pub win: Window,
 }
 impl Client {
-    pub fn new(
-        name: &'static str,
-        mina: f32,
-        maxa: f32,
-        x: i32,
-        y: i32,
-        w: i32,
-        h: i32,
-        oldx: i32,
-        oldy: i32,
-        oldw: i32,
-        oldh: i32,
-        basew: i32,
-        baseh: i32,
-        incw: i32,
-        inch: i32,
-        maxw: i32,
-        maxh: i32,
-        minw: i32,
-        minh: i32,
-        hintsvalid: i32,
-        bw: i32,
-        oldbw: i32,
-        tags0: u32,
-        isfixed: bool,
-        isfloating: bool,
-        isurgent: bool,
-        nerverfocus: bool,
-        oldstate: i32,
-        isfullscreen: bool,
-        next: *mut Client,
-        snext: *mut Client,
-        mon: *mut Monitor,
-        win: Window,
-    ) -> Self {
+    #[allow(unused)]
+    pub fn new() -> Self {
         Self {
-            name,
-            mina,
-            maxa,
-            x,
-            y,
-            w,
-            h,
-            oldx,
-            oldy,
-            oldw,
-            oldh,
-            basew,
-            baseh,
-            incw,
-            inch,
-            maxw,
-            maxh,
-            minw,
-            minh,
-            hintsvalid,
-            bw,
-            oldbw,
-            tags0,
-            isfixed,
-            isfloating,
-            isurgent,
-            nerverfocus,
-            oldstate,
-            isfullscreen,
-            next,
-            snext,
-            mon,
-            win,
+            name: "",
+            mina: 0.,
+            maxa: 0.,
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+            oldx: 0,
+            oldy: 0,
+            oldw: 0,
+            oldh: 0,
+            basew: 0,
+            baseh: 0,
+            incw: 0,
+            inch: 0,
+            maxw: 0,
+            maxh: 0,
+            minw: 0,
+            minh: 0,
+            hintsvalid: false,
+            bw: 0,
+            oldbw: 0,
+            tags0: 0,
+            isfixed: false,
+            isfloating: false,
+            isurgent: false,
+            nerverfocus: false,
+            oldstate: 0,
+            isfullscreen: false,
+            next: null_mut(),
+            snext: null_mut(),
+            mon: null_mut(),
+            win: 0,
         }
     }
 }
@@ -320,62 +294,39 @@ pub struct Monitor {
     pub lt: [*mut Layout; 2],
 }
 impl Monitor {
-    pub fn new(
-        ltsymbol: &'static str,
-        mfact0: f32,
-        nmaster0: i32,
-        num: i32,
-        by: i32,
-        mx: i32,
-        my: i32,
-        mw: i32,
-        mh: i32,
-        wx: i32,
-        wy: i32,
-        ww: i32,
-        wh: i32,
-        seltags: usize,
-        sellt: usize,
-        tagset: [u32; 2],
-        showbar0: bool,
-        topbar0: bool,
-        clients: *mut Client,
-        sel: *mut Client,
-        stack: *mut Client,
-        next: *mut Monitor,
-        barwin: Window,
-        lt: [*mut Layout; 2],
-    ) -> Self {
+    #[allow(unused)]
+    pub fn new() -> Self {
         Self {
-            ltsymbol,
-            mfact0,
-            nmaster0,
-            num,
-            by,
-            mx,
-            my,
-            mw,
-            mh,
-            wx,
-            wy,
-            ww,
-            wh,
-            seltags,
-            sellt,
-            tagset,
-            showbar0,
-            topbar0,
-            clients,
-            sel,
-            stack,
-            next,
-            barwin,
-            lt,
+            ltsymbol: "",
+            mfact0: 0.0,
+            nmaster0: 0,
+            num: 0,
+            by: 0,
+            mx: 0,
+            my: 0,
+            mw: 0,
+            mh: 0,
+            wx: 0,
+            wy: 0,
+            ww: 0,
+            wh: 0,
+            seltags: 0,
+            sellt: 0,
+            tagset: [0; 2],
+            showbar0: false,
+            topbar0: false,
+            clients: null_mut(),
+            sel: null_mut(),
+            stack: null_mut(),
+            next: null_mut(),
+            barwin: 0,
+            lt: [null_mut(); 2],
         }
     }
 }
 
-pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: *const Monitor) -> i32 {
+#[allow(unused)]
+pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: *mut Monitor) -> i32 {
     unsafe {
         max(0, min(x + w, (*m).wx + (*m).ww) - max(x, (*m).wx))
             * max(0, min(y + h, (*m).wy + (*m).wh) - max(y, (*m).wy))
@@ -412,6 +363,7 @@ pub struct Rule {
     pub monitor: i32,
 }
 impl Rule {
+    #[allow(unused)]
     pub fn new(
         class: &'static str,
         instance: &'static str,
@@ -438,20 +390,18 @@ pub fn applyrules(c: *mut Client) {
         (*c).tags0 = 0;
         let mut ch: XClassHint = zeroed();
         XGetClassHint(dpy, (*c).win, &mut ch);
-        let mut class: &str = "";
-        let mut instance: &str = "";
-        if !ch.res_class.is_null() {
+        let class = if !ch.res_class.is_null() {
             let c_str = CStr::from_ptr(ch.res_class);
-            class = c_str.to_str().unwrap();
+            c_str.to_str().unwrap()
         } else {
-            class = broken;
+            broken
         };
-        if !ch.res_name.is_null() {
+        let instance = if !ch.res_name.is_null() {
             let c_str = CStr::from_ptr(ch.res_name);
-            instance = c_str.to_str().unwrap();
+            c_str.to_str().unwrap()
         } else {
-            instance = broken;
-        }
+            broken
+        };
 
         for r in &*rules {
             if (r.title.is_empty() || (*c).name.find(r.title).is_some())
@@ -487,7 +437,7 @@ pub fn applyrules(c: *mut Client) {
 }
 
 pub fn updatesizehints(c: *mut Client) {
-    let mut msize: u32 = 0;
+    let msize: u32 = 0;
     unsafe {
         let mut size: XSizeHints = zeroed();
 
@@ -537,7 +487,7 @@ pub fn updatesizehints(c: *mut Client) {
         }
         (*c).isfixed =
             (*c).maxw > 0 && (*c).maxh > 0 && ((*c).maxw == (*c).minw) && ((*c).maxh == (*c).minh);
-        (*c).hintsvalid = 1;
+        (*c).hintsvalid = true;
     }
 }
 
@@ -550,7 +500,6 @@ pub fn applysizehints(
     interact: bool,
 ) -> bool {
     unsafe {
-        let mut baseismin: bool = false;
         let m = (*c).mon;
 
         // set minimum possible.
@@ -591,11 +540,11 @@ pub fn applysizehints(
         }
         if resizehints || (*c).isfloating || (*(*(*c).mon).lt[(*(*c).mon).sellt]).arrange.is_none()
         {
-            if (*c).hintsvalid <= 0 {
+            if !(*c).hintsvalid {
                 updatesizehints(c);
             }
             // see last two sentences in ICCCM 4.1.2.3
-            baseismin = (*c).basew == (*c).minw && (*c).baseh == (*c).minh;
+            let baseismin = (*c).basew == (*c).minw && (*c).baseh == (*c).minh;
             if !baseismin {
                 // temporarily remove base dimensions.
                 (*w) -= (*c).basew;
@@ -691,7 +640,7 @@ pub fn resize(c: *mut Client, x: &mut i32, y: &mut i32, w: &mut i32, h: &mut i32
 pub fn seturgent(c: *mut Client, urg: bool) {
     unsafe {
         (*c).isurgent = urg;
-        let mut wmh = XGetWMHints(dpy, (*c).win);
+        let wmh = XGetWMHints(dpy, (*c).win);
         if wmh.is_null() {
             return;
         }
@@ -727,19 +676,17 @@ pub fn showhide(c: *mut Client) {
     }
 }
 pub fn createmon() -> *mut Monitor {
-    unsafe {
-        let mut m: Monitor = zeroed();
-        m.tagset[0] = 1;
-        m.tagset[1] = 1;
-        m.mfact0 = mfact;
-        m.nmaster0 = nmaster;
-        m.showbar0 = showbar;
-        m.topbar0 = topbar;
-        m.lt[0] = &mut layouts[0].clone();
-        m.lt[1] = &mut layouts[1 % layouts.len()].clone();
-        m.ltsymbol = layouts[0].symbol;
-        return &mut m;
-    }
+    let mut m: Monitor = Monitor::new();
+    m.tagset[0] = 1;
+    m.tagset[1] = 1;
+    m.mfact0 = mfact;
+    m.nmaster0 = nmaster;
+    m.showbar0 = showbar;
+    m.topbar0 = topbar;
+    m.lt[0] = &mut layouts[0].clone();
+    m.lt[1] = &mut layouts[1 % layouts.len()].clone();
+    m.ltsymbol = layouts[0].symbol;
+    return &mut m;
 }
 pub fn arrangemon(m: *mut Monitor) {
     unsafe {
@@ -777,7 +724,7 @@ pub fn detachstack(c: *mut Client) {
 }
 pub fn dirtomon(dir: i32) -> *mut Monitor {
     unsafe {
-        let mut m: *mut Monitor = null_mut();
+        let mut m: *mut Monitor;
         if dir > 0 {
             m = (*selmon).next;
             if !m.is_null() {
@@ -798,16 +745,13 @@ pub fn dirtomon(dir: i32) -> *mut Monitor {
     }
 }
 pub fn drawbar(m: *mut Monitor) {
-    let mut x: i32 = 0;
-    let mut w: i32 = 0;
     let mut tw: i32 = 0;
-    let mut i: u32 = 0;
+    let mut _i: u32 = 0;
     let mut occ: u32 = 0;
     let mut urg: u32 = 0;
     unsafe {
         let boxs = (*(*drw).fonts).h / 9;
         let boxw = (*(*drw).fonts).h / 6 + 2;
-        let mut c: *mut Client = null_mut();
 
         if !(*m).showbar0 {
             return;
@@ -830,7 +774,7 @@ pub fn drawbar(m: *mut Monitor) {
                 0,
             );
         }
-        c = (*m).clients;
+        let mut c = (*m).clients;
         while !c.is_null() {
             occ |= (*c).tags0;
             if (*c).isurgent {
@@ -838,7 +782,8 @@ pub fn drawbar(m: *mut Monitor) {
             }
             c = (*c).next;
         }
-        x = 0;
+        let mut x = 0;
+        let mut w;
         for i in 0..tags.len() {
             w = TEXTW(drw, tags[i]) as i32;
             let idx = if (*m).tagset[(*m).seltags] & 1 << i > 0 {
@@ -1013,13 +958,12 @@ pub fn attachstack(c: *mut Client) {
 }
 
 pub fn getatomprop(c: *mut Client, prop: Atom) -> u64 {
-    let mut di: i32 = 0;
     let mut dl: u64 = 0;
     let mut da: Atom = 0;
     let mut atom: Atom = 0;
     let mut p: *mut u8 = null_mut();
     unsafe {
-        di = 3;
+        let mut di = 3;
         if XGetWindowProperty(
             dpy,
             (*c).win,
@@ -1088,14 +1032,13 @@ pub fn getstate(w: Window) -> i64 {
 }
 
 pub fn recttomon(x: i32, y: i32, w: i32, h: i32) -> *mut Monitor {
-    let mut a: i32 = 0;
     let mut area: i32 = 0;
 
     unsafe {
         let mut r: *mut Monitor = selmon;
         let mut m = mons;
         while !m.is_null() {
-            a = INTERSECT(x, y, w, h, m);
+            let a = INTERSECT(x, y, w, h, m);
             if a > area {
                 area = a;
                 r = m;
@@ -1146,16 +1089,15 @@ pub fn wintomon(w: Window) -> *mut Monitor {
 }
 
 pub fn buttonpress(e: *mut XEvent) {
-    let click = _CLICK::ClkRootWin;
     let mut i: usize = 0;
     let mut x: u32 = 0;
     let mut arg: Arg = Arg::ui(0);
     unsafe {
-        let mut c: *mut Client = null_mut();
-        let mut ev = (*e).button;
+        let c: *mut Client;
+        let ev = (*e).button;
         let mut click = _CLICK::ClkRootWin;
         // focus monitor if necessary.
-        let mut m = wintomon(ev.window);
+        let m = wintomon(ev.window);
         if m != selmon {
             unfocus((*selmon).sel, true);
             selmon = m;
@@ -1216,7 +1158,7 @@ pub fn buttonpress(e: *mut XEvent) {
     }
 }
 
-pub fn xerrordummy(dpy0: *mut Display, ee: *mut XErrorEvent) -> i32 {
+pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
     0
 }
 // #[no_mangle]
@@ -1225,13 +1167,13 @@ pub fn xerrordummy(dpy0: *mut Display, ee: *mut XErrorEvent) -> i32 {
 //     return -1;
 // }
 // Or use the method above.
-pub fn xerrorstart(dpy0: *mut Display, ee: *mut XErrorEvent) -> i32 {
+pub fn xerrorstart(_: *mut Display, _: *mut XErrorEvent) -> i32 {
     eprintln!("jwm: another window manager is already running");
     return -1;
 }
 // There's no way to check accesses to destroyed windows, thus those cases are ignored (especially
 // on UnmapNotify's). Other types of errors call xlibs default error handler, which may call exit.
-pub fn xerror(dpy0: *mut Display, ee: *mut XErrorEvent) -> i32 {
+pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
     unsafe {
         if (*ee).error_code == BadWindow
             || ((*ee).request_code == X_SetInputFocus && (*ee).error_code == BadMatch)
@@ -1420,7 +1362,7 @@ pub fn resizemouse(arg: *const Arg) {}
 pub fn updatenumlockmask() {
     unsafe {
         numlockmask = 0;
-        let mut modmap = XGetModifierMapping(dpy);
+        let modmap = XGetModifierMapping(dpy);
         for i in 0..8 {
             for j in 0..(*modmap).max_keypermod {
                 if *(*modmap)
@@ -1572,8 +1514,8 @@ pub fn enternotify(e: *mut XEvent) {
         if (ev.mode != NotifyNormal || ev.detail == NotifyInferior) && ev.window != root {
             return;
         }
-        let mut c = wintoclient(ev.window);
-        let mut m = if !c.is_null() {
+        let c = wintoclient(ev.window);
+        let m = if !c.is_null() {
             (*c).mon
         } else {
             wintomon(ev.window)
@@ -1589,7 +1531,7 @@ pub fn enternotify(e: *mut XEvent) {
 }
 pub fn expose(e: *mut XEvent) {
     unsafe {
-        let mut ev = (*e).expose;
+        let ev = (*e).expose;
         let m = wintomon(ev.window);
 
         if ev.count == 0 && !m.is_null() {
