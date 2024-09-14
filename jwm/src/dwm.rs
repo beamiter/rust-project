@@ -6,18 +6,36 @@ use std::{os::raw::c_long, usize};
 
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
-    AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadMatch, BadWindow, Below, ButtonPressMask, ButtonReleaseMask, CWBackPixmap, CWBorderWidth, CWEventMask, CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify, ControlMask, CopyFromParent, CurrentTime, Display, EnterWindowMask, ExposureMask, False, GrabModeSync, GrayScale, KeySym, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, ParentRelative, PointerMotionMask, PropModeReplace, ReplayPointer, RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask, Success, True, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow, XDefaultVisual, XDefineCursor, XDeleteProperty, XDisplayKeycodes, XErrorEvent, XEvent, XFree, XFreeModifiermap, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowProperty, XGrabButton, XGrabKey, XKeysymToKeycode, XMapRaised, XMoveWindow, XQueryPointer, XRaiseWindow, XSelectInput, XSendEvent, XSetClassHint, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey, XUrgencyHint, XWindowChanges, CWX, CWY, XA_ATOM, XA_WINDOW
+    AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadMatch, BadWindow, Below,
+    ButtonPressMask, ButtonReleaseMask, CWBackPixmap, CWBorderWidth, CWEventMask, CWHeight,
+    CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify,
+    ControlMask, CopyFromParent, CurrentTime, Display, EnterWindowMask, ExposureMask, False,
+    GrabModeSync, GrayScale, KeySym, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask,
+    NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc,
+    PSize, ParentRelative, PointerMotionMask, PropModeAppend, PropModeReplace, ReplayPointer,
+    RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask, Success, True,
+    Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint, XConfigureEvent,
+    XConfigureWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow, XDefaultVisual,
+    XDefineCursor, XDeleteProperty, XDisplayKeycodes, XErrorEvent, XEvent, XFree, XFreeModifiermap,
+    XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetWMHints, XGetWMNormalHints,
+    XGetWMProtocols, XGetWindowProperty, XGrabButton, XGrabKey, XGrabServer, XKeysymToKeycode,
+    XMapRaised, XMoveWindow, XQueryPointer, XRaiseWindow, XSelectInput, XSendEvent, XSetClassHint,
+    XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes, XSetWindowBorder,
+    XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabServer, XUrgencyHint, XWindowChanges, CWX,
+    CWY, XA_ATOM, XA_WINDOW,
 };
 
 use std::cmp::{max, min};
 
-use crate::config::{buttons, keys, resizehints, rules, tags};
+use crate::config::{
+    buttons, keys, layouts, mfact, nmaster, resizehints, rules, showbar, tags, topbar,
+};
 use crate::drw::{
     drw_fontset_getwidth, drw_map, drw_rect, drw_setscheme, drw_text, Clr, Cur, Drw, _Col,
 };
 use crate::xproto::{
-    X_ConfigureWindow, X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle, X_PolySegment,
-    X_PolyText8, X_SetInputFocus,
+    WithdrawnState, X_ConfigureWindow, X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle,
+    X_PolySegment, X_PolyText8, X_SetInputFocus,
 };
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
@@ -277,8 +295,8 @@ impl Client {
 #[derive(Debug, Clone)]
 pub struct Monitor {
     pub ltsymbol: &'static str,
-    pub mfact: f32,
-    pub nmaster: i32,
+    pub mfact0: f32,
+    pub nmaster0: i32,
     pub num: i32,
     pub by: i32,
     pub mx: i32,
@@ -289,11 +307,11 @@ pub struct Monitor {
     pub wy: i32,
     pub ww: i32,
     pub wh: i32,
-    pub seltags: u32,
+    pub seltags: usize,
     pub sellt: usize,
     pub tagset: [u32; 2],
-    pub showbar: bool,
-    pub topbar: bool,
+    pub showbar0: bool,
+    pub topbar0: bool,
     pub clients: *mut Client,
     pub sel: *mut Client,
     pub stack: *mut Client,
@@ -304,8 +322,8 @@ pub struct Monitor {
 impl Monitor {
     pub fn new(
         ltsymbol: &'static str,
-        mfact: f32,
-        nmaster: i32,
+        mfact0: f32,
+        nmaster0: i32,
         num: i32,
         by: i32,
         mx: i32,
@@ -316,11 +334,11 @@ impl Monitor {
         wy: i32,
         ww: i32,
         wh: i32,
-        seltags: u32,
+        seltags: usize,
         sellt: usize,
         tagset: [u32; 2],
-        showbar: bool,
-        topbar: bool,
+        showbar0: bool,
+        topbar0: bool,
         clients: *mut Client,
         sel: *mut Client,
         stack: *mut Client,
@@ -330,8 +348,8 @@ impl Monitor {
     ) -> Self {
         Self {
             ltsymbol,
-            mfact,
-            nmaster,
+            mfact0,
+            nmaster0,
             num,
             by,
             mx,
@@ -345,8 +363,8 @@ impl Monitor {
             seltags,
             sellt,
             tagset,
-            showbar,
-            topbar,
+            showbar0,
+            topbar0,
             clients,
             sel,
             stack,
@@ -712,7 +730,21 @@ pub fn showhide(c: *mut Client) {
         }
     }
 }
-
+pub fn createmon() -> *mut Monitor {
+    unsafe {
+        let mut m: Monitor = zeroed();
+        m.tagset[0] = 1;
+        m.tagset[1] = 1;
+        m.mfact0 = mfact;
+        m.nmaster0 = nmaster;
+        m.showbar0 = showbar;
+        m.topbar0 = topbar;
+        m.lt[0] = &mut layouts[0].clone();
+        m.lt[1] = &mut layouts[1 % layouts.len()].clone();
+        m.ltsymbol = layouts[0].symbol;
+        return &mut m;
+    }
+}
 pub fn arrangemon(m: *mut Monitor) {
     unsafe {
         (*m).ltsymbol = (*(*m).lt[(*m).sellt]).symbol;
@@ -781,7 +813,7 @@ pub fn drawbar(m: *mut Monitor) {
         let boxw = (*(*drw).fonts).h / 6 + 2;
         let mut c: *mut Client = null_mut();
 
-        if !(*m).showbar {
+        if !(*m).showbar0 {
             return;
         }
 
@@ -1278,15 +1310,38 @@ pub fn updatebarpos(m: *mut Monitor) {
     unsafe {
         (*m).wy = (*m).my;
         (*m).wh = (*m).mh;
-        if (*m).showbar {
+        if (*m).showbar0 {
             (*m).wh -= bh;
-            (*m).by = if (*m).topbar {
+            (*m).by = if (*m).topbar0 {
                 (*m).wy
             } else {
                 (*m).wy + (*m).wh
             };
         } else {
             (*m).by = -bh;
+        }
+    }
+}
+pub fn updateclientlist() {
+    unsafe {
+        XDeleteProperty(dpy, root, netatom[_NET::NetClientList as usize]);
+        let mut m = mons;
+        while !m.is_null() {
+            let mut c = (*m).clients;
+            while !c.is_null() {
+                XChangeProperty(
+                    dpy,
+                    root,
+                    netatom[_NET::NetClientList as usize],
+                    XA_WINDOW,
+                    32,
+                    PropModeAppend,
+                    (*c).win as *const _,
+                    1,
+                );
+                c = (*c).next;
+            }
+            m = (*m).next;
         }
     }
 }
@@ -1298,7 +1353,7 @@ pub fn focusstack(arg: *const Arg) {}
 pub fn incnmaster(arg: *const Arg) {
     unsafe {
         if let Arg::i(i0) = *arg {
-            (*selmon).nmaster = 0.max((*selmon).nmaster + i0);
+            (*selmon).nmaster0 = 0.max((*selmon).nmaster0 + i0);
         }
     }
 }
@@ -1464,7 +1519,7 @@ pub fn setfocus(c: *mut Client) {
                 XA_WINDOW,
                 32,
                 PropModeReplace,
-                &mut (*c).win as *const u64 as *const _,
+                (*c).win as *const _,
                 1,
             );
         }
@@ -1561,5 +1616,104 @@ pub fn unfocus(c: *mut Client, setfocus: bool) {
             XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
             XDeleteProperty(dpy, root, netatom[_NET::NetActiveWindow as usize]);
         }
+    }
+}
+pub fn sendmon(c: *mut Client, m: *mut Monitor) {
+    unsafe {
+        if (*c).mon == m {
+            return;
+        }
+        unfocus(c, true);
+        detach(c);
+        detachstack(c);
+        (*c).mon = m;
+        // assign tags of target monitor.
+        (*c).tags0 = (*m).tagset[(*m).seltags as usize];
+        attach(c);
+        attachstack(c);
+        focus(null_mut());
+        arrange(null_mut());
+    }
+}
+pub fn setclientstate(c: *mut Client, state: i64) {
+    unsafe {
+        XChangeProperty(
+            dpy,
+            (*c).win,
+            wmatom[_WM::WMState as usize],
+            wmatom[_WM::WMState as usize],
+            32,
+            PropModeReplace,
+            state as *const _,
+            2,
+        );
+    }
+}
+pub fn unmanage(c: *mut Client, destroyed: bool) {
+    unsafe {
+        let m = (*c).mon;
+        let mut wc: XWindowChanges = zeroed();
+
+        detach(c);
+        detachstack(c);
+        if !destroyed {
+            wc.border_width = (*c).oldbw;
+            // avoid race conditions.
+            XGrabServer(dpy);
+            XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
+            XSelectInput(dpy, (*c).win, NoEventMask);
+            // restore border.
+            XConfigureWindow(dpy, (*c).win, CWBorderWidth as u32, &mut wc);
+            XUngrabButton(dpy, AnyButton as u32, AnyModifier, (*c).win);
+            setclientstate(c, WithdrawnState as i64);
+            XSync(dpy, False);
+            XSetErrorHandler(Some(transmute(xerror as *const ())));
+            XUngrabServer(dpy);
+        }
+        XFree(c as *mut _);
+        focus(null_mut());
+        updateclientlist();
+        arrange(m);
+    }
+}
+pub fn unmapnotify(e: *mut XEvent) {
+    unsafe {
+        let ev = (*e).unmap;
+        let c = wintoclient(ev.window);
+        if !c.is_null() {
+            if ev.send_event > 0 {
+                setclientstate(c, WithdrawnState as i64);
+            } else {
+                unmanage(c, false);
+            }
+        }
+    }
+}
+
+pub fn updategeom() -> bool {
+    let mut dirty: bool = false;
+    unsafe {
+        if mons.is_null() {
+            mons = createmon();
+        }
+        if (*mons).mw != sw || (*mons).mh != sh {
+            dirty = true;
+            (*mons).mw = sw;
+            (*mons).ww = sw;
+            (*mons).mh = sh;
+            (*mons).wh = sh;
+            updatebarpos(mons);
+        }
+        if dirty {
+            // Is it necessary?
+            selmon = mons;
+            selmon = wintomon(root);
+        }
+    }
+    return dirty;
+}
+pub fn updatestatus() {
+    unsafe {
+        // (TODO)
     }
 }

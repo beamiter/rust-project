@@ -118,3 +118,8 @@ pub const X_GetPointerMapping: u8 = 117;
 pub const X_SetModifierMapping: u8 = 118;
 pub const X_GetModifierMapping: u8 = 119;
 pub const X_NoOperation: u8 = 127;
+
+// definitions for initial window state.
+pub const WithdrawnState: u8 = 0;
+pub const NormalState: u8 = 1;
+pub const IconicState: u8 = 2;

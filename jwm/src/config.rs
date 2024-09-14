@@ -14,8 +14,8 @@ use crate::dwm::{self, Arg, Button, Key, Layout, Rule, _CLICK};
 
 pub const borderpx: u32 = 1;
 pub const snap: u32 = 32;
-pub const showbar: i32 = 1;
-pub const topbar: i32 = 1;
+pub const showbar: bool = true;
+pub const topbar: bool = true;
 lazy_static! {
     pub static ref fonts: Vec<&'static str> = vec!["monospace:size=10"];
 }
