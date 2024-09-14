@@ -59,6 +59,7 @@ pub static mut root: Window = 0;
 pub static mut wmcheckwin: Window = 0;
 
 #[repr(C)]
+#[derive(Debug, Clone)]
 pub enum _CUR {
     CurNormal = 0,
     CurResize = 1,
@@ -67,12 +68,14 @@ pub enum _CUR {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone)]
 pub enum _SCHEME {
     SchemeNorm = 0,
     SchemeSel = 1,
 }
 
 #[repr(C)]
+#[derive(Debug, Clone)]
 pub enum _NET {
     NetSupported = 0,
     NetWMName = 1,
@@ -87,6 +90,7 @@ pub enum _NET {
 }
 
 #[repr(C)]
+#[derive(Debug, Clone)]
 pub enum _WM {
     WMProtocols = 0,
     WMDelete = 1,
@@ -107,6 +111,7 @@ pub enum _CLICK {
     ClkLast = 6,
 }
 
+#[derive(Debug, Clone)]
 pub enum Arg {
     i(i32),
     ui(u32),
@@ -115,6 +120,7 @@ pub enum Arg {
     lo(Layout),
 }
 
+#[derive(Debug, Clone)]
 pub struct Button {
     pub click: u32,
     pub mask: u32,
@@ -134,6 +140,7 @@ impl Button {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct Key {
     pub mod0: u32,
     pub keysym: KeySym,
@@ -382,6 +389,7 @@ pub fn TEXTW(drw0: *mut Drw, X: &str) -> u32 {
     unsafe { drw_fontset_getwidth(drw0, X) + lrpad as u32 }
 }
 
+#[derive(Debug, Clone)]
 pub struct Rule {
     pub class: &'static str,
     pub instance: &'static str,
@@ -1054,7 +1062,7 @@ pub fn buttonpress(e: *mut XEvent) {
     let click = _CLICK::ClkRootWin;
     let mut i: u32 = 0;
     let mut x: u32 = 0;
-    let mut arg: Arg = Arg::i(0);
+    let mut arg: Arg = Arg::ui(0);
     // (TODO)
     unsafe {
         let mut c: *mut Client = null_mut();
@@ -1104,15 +1112,19 @@ pub fn buttonpress(e: *mut XEvent) {
                 && buttons[i].button == ev.button
                 && CLEANMASK(buttons[i].mask) == CLEANMASK(ev.state)
             {
-                buttons[i].func.unwrap()(
-                    if let Arg::i(0) = arg
-                        && (click as u32 == _CLICK::ClkTagBar as u32)
-                    {
+                buttons[i].func.unwrap()({
+                    if click as u32 == _CLICK::ClkTagBar as u32 && {
+                        if let Arg::ui(0) = arg {
+                            true
+                        } else {
+                            false
+                        }
+                    } {
                         &mut arg
                     } else {
-                        &mut buttons[i].arg
-                    },
-                );
+                        &mut buttons[i].arg.clone()
+                    }
+                });
             }
         }
     }
