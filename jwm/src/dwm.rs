@@ -2,7 +2,7 @@
 #![allow(non_snake_case)]
 // #![allow(unused_mut)]
 
-use std::ffi::{c_int, CStr, CString};
+use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
 use std::ptr::null_mut;
@@ -21,12 +21,13 @@ use x11::xlib::{
     Success, True, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint,
     XConfigureEvent, XConfigureWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow,
     XDefaultVisual, XDefineCursor, XDeleteProperty, XDisplayKeycodes, XErrorEvent, XEvent, XFree,
-    XFreeModifiermap, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetWMHints,
-    XGetWMNormalHints, XGetWMProtocols, XGetWindowProperty, XGrabButton, XGrabKey, XGrabServer,
-    XKeysymToKeycode, XKillClient, XMapRaised, XMoveWindow, XQueryPointer, XRaiseWindow,
-    XSelectInput, XSendEvent, XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus,
-    XSetWMHints, XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XUngrabButton,
-    XUngrabKey, XUngrabServer, XUrgencyHint, XWindowChanges, CWX, CWY, XA_ATOM, XA_WINDOW,
+    XFreeModifiermap, XFreeStringList, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping,
+    XGetTextProperty, XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowProperty,
+    XGrabButton, XGrabKey, XGrabServer, XKeysymToKeycode, XKillClient, XMapRaised, XMoveWindow,
+    XQueryPointer, XRaiseWindow, XSelectInput, XSendEvent, XSetClassHint, XSetCloseDownMode,
+    XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes, XSetWindowBorder,
+    XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabServer, XUrgencyHint,
+    XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_NAME,
 };
 
 use std::cmp::{max, min};
@@ -1340,7 +1341,7 @@ pub fn killclient(arg: *const Arg) {
 pub fn nexttiled(mut c: *mut Client) -> *mut Client {
     unsafe {
         loop {
-            if !c.is_null() && ((*c).isfloating || ISVISIBLE(c) < 0) {
+            if !c.is_null() && ((*c).isfloating || ISVISIBLE(c) <= 0) {
                 c = (*c).next;
             } else {
                 break;
@@ -1349,7 +1350,7 @@ pub fn nexttiled(mut c: *mut Client) -> *mut Client {
         return c;
     }
 }
-pub fn pop(mut c: *mut Client) {
+pub fn pop(c: *mut Client) {
     detach(c);
     attach(c);
     focus(c);
@@ -1685,8 +1686,37 @@ pub fn updategeom() -> bool {
     }
     return dirty;
 }
+#[allow(unused_assignments)]
+pub fn gettextprop(w: Window, atom: Atom, mut text: &str, size: u32) -> bool {
+    if text.is_empty() || size == 0 {
+        return false;
+    }
+    unsafe {
+        let mut name: XTextProperty = zeroed();
+        if XGetTextProperty(dpy, w, &mut name, atom) <= 0 || name.nitems <= 0 {
+            return false;
+        }
+        let mut list: *mut *mut c_char = null_mut();
+        let mut n: i32 = 0;
+        if name.encoding == XA_STRING {
+            let c_str = CStr::from_ptr(name.value as *const _);
+            // Not same as strncpy!
+            text = c_str.to_str().unwrap();
+        } else if XmbTextPropertyToTextList(dpy, &mut name, &mut list, &mut n) >= Success as i32 {
+            // may be buggy.
+            let c_str = CStr::from_ptr(*list);
+            text = c_str.to_str().unwrap();
+            XFreeStringList(list);
+        }
+        XFree(name.value as *mut _);
+    }
+    true
+}
 pub fn updatestatus() {
     unsafe {
-        // (TODO)
+        if !gettextprop(root, XA_WM_NAME, &stext, stext.len() as u32) {
+            stext = "jwm-1.0";
+        }
+        drawbar(selmon);
     }
 }
