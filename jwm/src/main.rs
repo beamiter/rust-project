@@ -4,5 +4,6 @@ mod dwm;
 mod xproto;
 
 fn main() {
-    println!("Hello, world!");
+    let str = "\0";
+    println!("Hello, world, {}", str.chars().nth(0).unwrap());
 }

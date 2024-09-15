@@ -5,7 +5,7 @@
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
-use std::ptr::null_mut;
+use std::ptr::{addr_of, null_mut};
 use std::{os::raw::c_long, usize};
 
 use x11::keysym::XK_Num_Lock;
@@ -219,7 +219,7 @@ pub struct Client {
     pub isfloating: bool,
     pub isurgent: bool,
     pub nerverfocus: bool,
-    pub oldstate: i32,
+    pub oldstate: bool,
     pub isfullscreen: bool,
     pub next: *mut Client,
     pub snext: *mut Client,
@@ -257,7 +257,7 @@ impl Client {
             isfloating: false,
             isurgent: false,
             nerverfocus: false,
-            oldstate: 0,
+            oldstate: false,
             isfullscreen: false,
             next: null_mut(),
             snext: null_mut(),
@@ -604,7 +604,55 @@ pub fn configure(c: *mut Client) {
         XSendEvent(dpy, (*c).win, 0, StructureNotifyMask, &mut xe);
     }
 }
-
+pub fn setfullscreen(c: *mut Client, fullscreen: bool) {
+    unsafe {
+        if fullscreen && !(*c).isfullscreen {
+            XChangeProperty(
+                dpy,
+                (*c).win,
+                netatom[_NET::NetWMState as usize],
+                XA_ATOM,
+                32,
+                PropModeReplace,
+                netatom[_NET::NetWMFullscreen as usize] as *const _,
+                1,
+            );
+            (*c).isfullscreen = true;
+            (*c).oldstate = (*c).isfloating;
+            (*c).oldbw = (*c).bw;
+            (*c).bw = 0;
+            (*c).isfloating = true;
+            resizeclient(
+                c,
+                (*(*c).mon).mx,
+                (*(*c).mon).my,
+                (*(*c).mon).mw,
+                (*(*c).mon).mh,
+            );
+            XRaiseWindow(dpy, (*c).win);
+        } else if !fullscreen && (*c).isfullscreen {
+            XChangeProperty(
+                dpy,
+                (*c).win,
+                netatom[_NET::NetWMState as usize],
+                XA_ATOM,
+                32,
+                PropModeReplace,
+                0 as *const _,
+                0,
+            );
+            (*c).isfullscreen = false;
+            (*c).isfloating = (*c).oldstate;
+            (*c).bw = (*c).oldbw;
+            (*c).x = (*c).oldx;
+            (*c).y = (*c).oldy;
+            (*c).w = (*c).oldw;
+            (*c).h = (*c).oldh;
+            resizeclient(c, (*c).x, (*c).y, (*c).w, (*c).h);
+            arrange((*c).mon);
+        }
+    }
+}
 pub fn resizeclient(c: *mut Client, x: i32, y: i32, w: i32, h: i32) {
     unsafe {
         let mut wc: XWindowChanges = zeroed();
@@ -959,12 +1007,12 @@ pub fn attachstack(c: *mut Client) {
 }
 
 pub fn getatomprop(c: *mut Client, prop: Atom) -> u64 {
+    let mut di = 0;
     let mut dl: u64 = 0;
     let mut da: Atom = 0;
     let mut atom: Atom = 0;
     let mut p: *mut u8 = null_mut();
     unsafe {
-        let mut di = 3;
         if XGetWindowProperty(
             dpy,
             (*c).win,
@@ -982,6 +1030,7 @@ pub fn getatomprop(c: *mut Client, prop: Atom) -> u64 {
             && !p.is_null()
         {
             atom = *p as u64;
+            XFree(p as *mut _);
         }
     }
     return atom;
@@ -1297,7 +1346,8 @@ pub fn incnmaster(arg: *const Arg) {
     }
 }
 pub fn setmfact(arg: *const Arg) {}
-pub fn setlayout(arg: *const Arg) {}
+pub fn setlayout(arg: *const Arg) {
+}
 pub fn zoom(arg: *const Arg) {}
 pub fn view(arg: *const Arg) {
     unsafe {
@@ -1687,7 +1737,7 @@ pub fn updategeom() -> bool {
     return dirty;
 }
 #[allow(unused_assignments)]
-pub fn gettextprop(w: Window, atom: Atom, mut text: &str, size: u32) -> bool {
+pub fn gettextprop(w: Window, atom: Atom, mut text: &str, size: usize) -> bool {
     if text.is_empty() || size == 0 {
         return false;
     }
@@ -1696,6 +1746,7 @@ pub fn gettextprop(w: Window, atom: Atom, mut text: &str, size: u32) -> bool {
         if XGetTextProperty(dpy, w, &mut name, atom) <= 0 || name.nitems <= 0 {
             return false;
         }
+        text = "\0";
         let mut list: *mut *mut c_char = null_mut();
         let mut n: i32 = 0;
         if name.encoding == XA_STRING {
@@ -1708,15 +1759,32 @@ pub fn gettextprop(w: Window, atom: Atom, mut text: &str, size: u32) -> bool {
             text = c_str.to_str().unwrap();
             XFreeStringList(list);
         }
+        // No need to end with '\0'
         XFree(name.value as *mut _);
     }
     true
 }
 pub fn updatestatus() {
     unsafe {
-        if !gettextprop(root, XA_WM_NAME, &stext, stext.len() as u32) {
+        if !gettextprop(root, XA_WM_NAME, *addr_of!(stext), stext.len()) {
             stext = "jwm-1.0";
         }
         drawbar(selmon);
+    }
+}
+pub fn upodatetitle(c: *mut Client) {
+    unsafe {
+        if !gettextprop(
+            (*c).win,
+            netatom[_NET::NetWMName as usize],
+            (*c).name,
+            (*c).name.len(),
+        ) {
+            gettextprop((*c).win, XA_WM_NAME, (*c).name, (*c).name.len());
+        }
+        // hack to mark broken clients
+        if (*c).name.chars().nth(0).unwrap() == '\0' {
+            (*c).name = broken;
+        }
     }
 }
