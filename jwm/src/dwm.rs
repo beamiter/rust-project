@@ -135,7 +135,7 @@ pub enum Arg {
     ui(u32),
     f(f32),
     v(Vec<&'static str>),
-    lo(Layout),
+    lt(Layout),
 }
 
 #[derive(Debug, Clone)]
@@ -732,8 +732,8 @@ pub fn createmon() -> *mut Monitor {
     m.nmaster0 = nmaster;
     m.showbar0 = showbar;
     m.topbar0 = topbar;
-    m.lt[0] = &mut layouts[0].clone();
-    m.lt[1] = &mut layouts[1 % layouts.len()].clone();
+    // m.lt[0] = &mut layouts[0].clone();
+    // m.lt[1] = &mut layouts[1 % layouts.len()].clone();
     m.ltsymbol = layouts[0].symbol;
     return &mut m;
 }
@@ -1346,8 +1346,7 @@ pub fn incnmaster(arg: *const Arg) {
     }
 }
 pub fn setmfact(arg: *const Arg) {}
-pub fn setlayout(arg: *const Arg) {
-}
+pub fn setlayout(arg: *const Arg) {}
 pub fn zoom(arg: *const Arg) {}
 pub fn view(arg: *const Arg) {
     unsafe {

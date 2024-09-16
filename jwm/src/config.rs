@@ -114,9 +114,9 @@ lazy_static! {
         Key::new(MODKEY, XK_Return.into(), Some(dwm::zoom), dwm::Arg::i(0)),
         Key::new(MODKEY, XK_Tab.into(), Some(dwm::view), dwm::Arg::i(0)),
         Key::new(MODKEY | ShiftMask, XK_c.into(), Some(dwm::killclient), dwm::Arg::i(0)),
-        Key::new(MODKEY , XK_t.into(), Some(dwm::setlayout), dwm::Arg::lo(layouts[0].clone())),
-        Key::new(MODKEY , XK_f.into(), Some(dwm::setlayout), dwm::Arg::lo(layouts[1].clone())),
-        Key::new(MODKEY , XK_m.into(), Some(dwm::setlayout), dwm::Arg::lo(layouts[2].clone())),
+        Key::new(MODKEY , XK_t.into(), Some(dwm::setlayout), dwm::Arg::lt(layouts[0].clone())),
+        Key::new(MODKEY , XK_f.into(), Some(dwm::setlayout), dwm::Arg::lt(layouts[1].clone())),
+        Key::new(MODKEY , XK_m.into(), Some(dwm::setlayout), dwm::Arg::lt(layouts[2].clone())),
         Key::new(MODKEY , XK_space.into(), Some(dwm::setlayout), dwm::Arg::i(0)),
         Key::new(MODKEY | ShiftMask, XK_space.into(), Some(dwm::togglefloating), dwm::Arg::i(0)),
         Key::new(MODKEY, XK_0.into(), Some(dwm::view), dwm::Arg::ui(0)),
@@ -141,7 +141,7 @@ lazy_static! {
 
     pub static ref buttons: Vec<Button> = vec![
         Button::new(_CLICK::ClkLtSymbol as u32, 0, Button1, Some(dwm::setlayout), dwm::Arg::i(0)),
-        Button::new(_CLICK::ClkLtSymbol as u32, 0, Button3, Some(dwm::setlayout), dwm::Arg::lo(layouts[2].clone())),
+        Button::new(_CLICK::ClkLtSymbol as u32, 0, Button3, Some(dwm::setlayout), dwm::Arg::lt(layouts[2].clone())),
         Button::new(_CLICK::ClkWinTitle as u32, 0, Button2, Some(dwm::zoom), dwm::Arg::i(0)),
         Button::new(_CLICK::ClkStatusText as u32, 0, Button2, Some(dwm::spawn), dwm::Arg::v(termcmd.clone())),
         Button::new(_CLICK::ClkClientWin as u32, MODKEY, Button1, Some(dwm::movemouse), dwm::Arg::i(0)),
