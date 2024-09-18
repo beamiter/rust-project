@@ -23,11 +23,12 @@ use x11::xlib::{
     XDefaultVisual, XDefineCursor, XDeleteProperty, XDisplayKeycodes, XErrorEvent, XEvent, XFree,
     XFreeModifiermap, XFreeStringList, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping,
     XGetTextProperty, XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowProperty,
-    XGrabButton, XGrabKey, XGrabServer, XKeysymToKeycode, XKillClient, XMapRaised, XMoveWindow,
-    XQueryPointer, XRaiseWindow, XSelectInput, XSendEvent, XSetClassHint, XSetCloseDownMode,
-    XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes, XSetWindowBorder,
-    XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabServer, XUrgencyHint,
-    XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_NAME,
+    XGrabButton, XGrabKey, XGrabServer, XKeysymToKeycode, XKillClient, XMapRaised,
+    XMoveResizeWindow, XMoveWindow, XQueryPointer, XRaiseWindow, XSelectInput, XSendEvent,
+    XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints,
+    XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton,
+    XUngrabKey, XUngrabServer, XUrgencyHint, XWindowChanges, XmbTextPropertyToTextList, CWX, CWY,
+    XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_NAME,
 };
 
 use std::cmp::{max, min};
@@ -178,7 +179,7 @@ impl Key {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
     pub symbol: &'static str,
     pub arrange: Option<fn(*mut Monitor)>,
@@ -680,9 +681,9 @@ pub fn resizeclient(c: *mut Client, x: i32, y: i32, w: i32, h: i32) {
     }
 }
 
-pub fn resize(c: *mut Client, x: &mut i32, y: &mut i32, w: &mut i32, h: &mut i32, interact: bool) {
-    if applysizehints(c, x, y, w, h, interact) {
-        resizeclient(c, *x, *y, *w, *h);
+pub fn resize(c: *mut Client, mut x: i32, mut y: i32, mut w: i32, mut h: i32, interact: bool) {
+    if applysizehints(c, &mut x, &mut y, &mut w, &mut h, interact) {
+        resizeclient(c, x, y, w, h);
     }
 }
 
@@ -714,7 +715,7 @@ pub fn showhide(c: *mut Client) {
             if ((*(*(*c).mon).lt[(*(*c).mon).sellt]).arrange.is_some() || (*c).isfloating)
                 && !(*c).isfullscreen
             {
-                resize(c, &mut (*c).x, &mut (*c).y, &mut (*c).w, &mut (*c).h, false);
+                resize(c, (*c).x, (*c).y, (*c).w, (*c).h, false);
             }
             showhide((*c).snext);
         } else {
@@ -1333,39 +1334,189 @@ pub fn updateclientlist() {
         }
     }
 }
-pub fn togglebar(arg: *const Arg) {}
-pub fn togglefloating(arg: *const Arg) {}
-pub fn focusmon(arg: *const Arg) {}
-pub fn tagmon(arg: *const Arg) {}
-pub fn focusstack(arg: *const Arg) {}
-pub fn incnmaster(arg: *const Arg) {
+pub fn togglebar(arg: *const Arg) {
     unsafe {
-        if let Arg::i(i0) = *arg {
-            (*selmon).nmaster0 = 0.max((*selmon).nmaster0 + i0);
+        (*selmon).showbar0 = !(*selmon).showbar0;
+        updatebarpos(selmon);
+        XMoveResizeWindow(
+            dpy,
+            (*selmon).barwin,
+            (*selmon).wx,
+            (*selmon).by,
+            (*selmon).ww as u32,
+            bh as u32,
+        );
+        arrange(selmon);
+    }
+}
+pub fn togglefloating(arg: *const Arg) {
+    unsafe {
+        if (*selmon).sel.is_null() {
+            return;
+        }
+        // no support for fullscreen windows.
+        if (*(*selmon).sel).isfullscreen {
+            return;
+        }
+        (*(*selmon).sel).isfloating = !(*(*selmon).sel).isfloating || (*(*selmon).sel).isfixed;
+        if (*(*selmon).sel).isfloating {
+            resize(
+                (*selmon).sel,
+                (*(*selmon).sel).x,
+                (*(*selmon).sel).y,
+                (*(*selmon).sel).w,
+                (*(*selmon).sel).h,
+                false,
+            );
+        }
+        arrange(selmon);
+    }
+}
+pub fn focusin(e: *mut XEvent) {
+    unsafe {
+        let ev = (*e).focus_change;
+        if !(*selmon).sel.is_null() && ev.window != (*(*selmon).sel).win {
+            setfocus((*selmon).sel);
         }
     }
 }
-pub fn setmfact(arg: *const Arg) {}
-pub fn setlayout(arg: *const Arg) {}
+pub fn focusmon(arg: *const Arg) {
+    unsafe {
+        if (*mons).next.is_null() {
+            return;
+        }
+        if let Arg::i(i) = *arg {
+            let m = dirtomon(i);
+            if m == selmon {
+                return;
+            }
+            unfocus((*selmon).sel, false);
+            selmon = m;
+            focus(null_mut());
+        }
+    }
+}
+pub fn tag(arg: *const Arg) {
+    unsafe {
+        if let Arg::ui(ui) = *arg {
+            if !(*selmon).sel.is_null() && (ui & TAGMASK()) > 0 {
+                (*(*selmon).sel).tags0 = ui & TAGMASK();
+                focus(null_mut());
+                arrange(selmon);
+            }
+        }
+    }
+}
+pub fn tagmon(arg: *const Arg) {
+    unsafe {
+        if (*selmon).sel.is_null() || (*mons).next.is_null() {
+            return;
+        }
+        if let Arg::i(i) = *arg {
+            sendmon((*selmon).sel, dirtomon(i));
+        }
+    }
+}
+pub fn focusstack(arg: *const Arg) {}
+pub fn incnmaster(arg: *const Arg) {
+    unsafe {
+        if let Arg::i(i) = *arg {
+            (*selmon).nmaster0 = 0.max((*selmon).nmaster0 + i);
+        }
+    }
+}
+pub fn setmfact(arg: *const Arg) {
+    unsafe {
+        if arg.is_null() || (*(*selmon).lt[(*selmon).sellt]).arrange.is_none() {
+            return;
+        }
+    }
+    unsafe {
+        if let Arg::f(f) = *arg {
+            let f = if f < 1.0 {
+                f + (*selmon).mfact0
+            } else {
+                f - 1.0
+            };
+            if f < 0.05 || f > 0.95 {
+                return;
+            }
+            (*selmon).mfact0 = f;
+        }
+        arrange(selmon);
+    }
+}
+pub fn setlayout(arg: *const Arg) {
+    unsafe {
+        if arg.is_null()
+            || if let Arg::lt(ref lt) = *arg {
+                if *lt != *(*selmon).lt[(*selmon).sellt] {
+                    true
+                } else {
+                    false
+                }
+            } else {
+                true
+            }
+        {
+            (*selmon).sellt ^= 1;
+        }
+        if !arg.is_null() {
+            if let Arg::lt(ref lt) = *arg {
+                (*selmon).lt[(*selmon).sellt] = lt as *const _ as *mut _;
+            }
+        }
+        (*selmon).ltsymbol = (*(*selmon).lt[(*selmon).sellt]).symbol;
+        if !(*selmon).sel.is_null() {
+            arrange(selmon);
+        } else {
+            drawbar(selmon);
+        }
+    }
+}
 pub fn zoom(arg: *const Arg) {}
 pub fn view(arg: *const Arg) {
     unsafe {
-        let val = if let Arg::ui(hh) = *arg { hh } else { 0 };
-        if (val & TAGMASK()) == (*selmon).tagset[(*selmon).seltags] {
+        let ui = if let Arg::ui(ui) = *arg { ui } else { 0 };
+        if (ui & TAGMASK()) == (*selmon).tagset[(*selmon).seltags] {
             return;
         }
         // toggle sel tagset.
         (*selmon).seltags ^= 1;
-        if val & TAGMASK() > 0 {
-            (*selmon).tagset[(*selmon).seltags] = val & TAGMASK();
+        if ui & TAGMASK() > 0 {
+            (*selmon).tagset[(*selmon).seltags] = ui & TAGMASK();
         }
         focus(null_mut());
         arrange(selmon);
     }
 }
-pub fn toggleview(arg: *const Arg) {}
-pub fn toggletag(arg: *const Arg) {}
-pub fn tag(arg: *const Arg) {}
+pub fn toggleview(arg: *const Arg) {
+    unsafe {
+        if let Arg::ui(ui) = *arg {
+            let newtagset = (*selmon).tagset[(*selmon).seltags] ^ (ui & TAGMASK());
+            if newtagset > 0 {
+                (*selmon).tagset[(*selmon).seltags] = newtagset;
+                focus(null_mut());
+                arrange(selmon);
+            }
+        }
+    }
+}
+pub fn toggletag(arg: *const Arg) {
+    unsafe {
+        if (*selmon).sel.is_null() {
+            return;
+        }
+        if let Arg::ui(ui) = *arg {
+            let newtags = (*(*selmon).sel).tags0 ^ (ui & TAGMASK());
+            if newtags > 0 {
+                (*(*selmon).sel).tags0 = newtags;
+                focus(null_mut());
+                arrange(selmon);
+            }
+        }
+    }
+}
 pub fn quit(arg: *const Arg) {
     unsafe {
         running = 0;
