@@ -2,10 +2,13 @@
 #![allow(non_snake_case)]
 // #![allow(unused_mut)]
 
+use lazy_static::lazy_static;
+use std::cell::{Cell, RefCell};
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
-use std::ptr::{addr_of, null_mut};
+use std::ptr::{addr_of, addr_of_mut, null_mut};
+use std::rc::Rc;
 use std::{os::raw::c_long, usize};
 
 use x11::keysym::XK_Num_Lock;
@@ -14,27 +17,29 @@ use x11::xlib::{
     ButtonPressMask, ButtonReleaseMask, CWBackPixmap, CWBorderWidth, CWEventMask, CWHeight,
     CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify,
     ControlMask, CopyFromParent, CurrentTime, DestroyAll, Display, EnterWindowMask, ExposureMask,
-    False, GrabModeSync, GrayScale, KeySym, LockMask, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask,
-    Mod5Mask, NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize,
-    PResizeInc, PSize, ParentRelative, PointerMotionMask, PropModeAppend, PropModeReplace,
-    ReplayPointer, RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask,
-    Success, True, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint,
-    XConfigureEvent, XConfigureWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow,
-    XDefaultVisual, XDefineCursor, XDeleteProperty, XDisplayKeycodes, XErrorEvent, XEvent, XFree,
-    XFreeModifiermap, XFreeStringList, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping,
-    XGetTextProperty, XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowProperty,
-    XGrabButton, XGrabKey, XGrabServer, XKeysymToKeycode, XKillClient, XMapRaised,
-    XMoveResizeWindow, XMoveWindow, XQueryPointer, XRaiseWindow, XSelectInput, XSendEvent,
-    XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints,
-    XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton,
-    XUngrabKey, XUngrabServer, XUrgencyHint, XWindowChanges, XmbTextPropertyToTextList, CWX, CWY,
-    XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_NAME,
+    False, GrabModeSync, GrayScale, InputHint, KeySym, LockMask, MappingKeyboard, Mod1Mask,
+    Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, NoEventMask, NotifyInferior, NotifyNormal, PAspect,
+    PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, ParentRelative, PointerMotionMask,
+    PropModeAppend, PropModeReplace, ReplayPointer, RevertToPointerRoot, ShiftMask,
+    StructureNotifyMask, SubstructureRedirectMask, Success, True, Window, XAllowEvents,
+    XChangeProperty, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow, XCreateWindow,
+    XDefaultDepth, XDefaultRootWindow, XDefaultVisual, XDefineCursor, XDeleteProperty,
+    XDisplayKeycodes, XErrorEvent, XEvent, XFree, XFreeModifiermap, XFreeStringList, XGetClassHint,
+    XGetKeyboardMapping, XGetModifierMapping, XGetTextProperty, XGetWMHints, XGetWMNormalHints,
+    XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabServer,
+    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMoveResizeWindow, XMoveWindow,
+    XQueryPointer, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSendEvent, XSetClassHint,
+    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
+    XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabServer,
+    XUrgencyHint, XWindowAttributes, XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM,
+    XA_STRING, XA_WINDOW, XA_WM_NAME,
 };
 
 use std::cmp::{max, min};
 
 use crate::config::{
-    buttons, keys, layouts, mfact, nmaster, resizehints, rules, showbar, tags, topbar,
+    buttons, keys, layouts, lockfullscreen, mfact, nmaster, resizehints, rules, showbar, tags,
+    topbar,
 };
 use crate::drw::{
     drw_fontset_getwidth, drw_map, drw_rect, drw_setscheme, drw_text, Clr, Cur, Drw, _Col,
@@ -72,10 +77,15 @@ pub static mut dpy: *mut Display = null_mut();
 pub static mut drw: *mut Drw = null_mut();
 pub static mut mons: *mut Monitor = null_mut();
 pub static mut selmon: *mut Monitor = null_mut();
+pub static mut motionmon: *mut Monitor = null_mut();
 pub static mut root: Window = 0;
 pub static mut wmcheckwin: Window = 0;
 pub static mut xerrorxlib: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int> =
     None;
+
+lazy_static! {
+    pub static ref global_string: String = String::from("");
+}
 
 #[repr(C)]
 #[derive(Debug, Clone)]
@@ -967,6 +977,10 @@ pub fn restack(m: *mut Monitor) {
     }
 }
 
+pub fn run() {}
+
+pub fn scan() {}
+
 pub fn arrange(mut m: *mut Monitor) {
     unsafe {
         if !m.is_null() {
@@ -1334,6 +1348,7 @@ pub fn updateclientlist() {
         }
     }
 }
+pub fn tile(m: *mut Monitor) {}
 pub fn togglebar(arg: *const Arg) {
     unsafe {
         (*selmon).showbar0 = !(*selmon).showbar0;
@@ -1417,7 +1432,47 @@ pub fn tagmon(arg: *const Arg) {
         }
     }
 }
-pub fn focusstack(arg: *const Arg) {}
+pub fn focusstack(arg: *const Arg) {
+    unsafe {
+        if (*selmon).sel.is_null() || ((*(*selmon).sel).isfullscreen && lockfullscreen) {
+            return;
+        }
+        let mut c: *mut Client = null_mut();
+        let i = if let Arg::i(i) = *arg { i } else { -1 };
+        if i > 0 {
+            c = (*(*selmon).sel).next;
+            while !c.is_null() && ISVISIBLE(c) <= 0 {
+                c = (*c).next;
+            }
+            if c.is_null() {
+                c = (*selmon).clients;
+                while !c.is_null() && ISVISIBLE(c) <= 0 {
+                    c = (*c).next;
+                }
+            }
+        } else {
+            let mut cl = (*selmon).clients;
+            while cl != (*selmon).sel {
+                cl = (*cl).next;
+                if ISVISIBLE(cl) > 0 {
+                    c = cl;
+                }
+            }
+            if c.is_null() {
+                while !cl.is_null() {
+                    if ISVISIBLE(cl) > 0 {
+                        c = cl;
+                    }
+                    cl = (*cl).next;
+                }
+            }
+        }
+        if !c.is_null() {
+            focus(c);
+            restack(selmon);
+        }
+    }
+}
 pub fn incnmaster(arg: *const Arg) {
     unsafe {
         if let Arg::i(i) = *arg {
@@ -1474,7 +1529,22 @@ pub fn setlayout(arg: *const Arg) {
         }
     }
 }
-pub fn zoom(arg: *const Arg) {}
+pub fn zoom(arg: *const Arg) {
+    unsafe {
+        let mut c = (*selmon).sel;
+
+        if (*(*selmon).lt[(*selmon).sellt]).arrange.is_none() || c.is_null() || (*c).isfloating {
+            return;
+        }
+        if c == nexttiled((*selmon).clients) && {
+            c = nexttiled((*c).next);
+            c.is_null()
+        } {
+            return;
+        }
+        pop(c);
+    }
+}
 pub fn view(arg: *const Arg) {
     unsafe {
         let ui = if let Arg::ui(ui) = *arg { ui } else { 0 };
@@ -1522,6 +1592,7 @@ pub fn quit(arg: *const Arg) {
         running = 0;
     }
 }
+pub fn setup() {}
 pub fn killclient(arg: *const Arg) {
     unsafe {
         if (*selmon).sel.is_null() {
@@ -1823,6 +1894,85 @@ pub fn setclientstate(c: *mut Client, state: i64) {
         );
     }
 }
+pub fn keypress(e: *mut XEvent) {
+    unsafe {
+        let ev = (*e).key;
+        let keysym = XKeycodeToKeysym(dpy, ev.keycode as u8, 0);
+        for i in 0..keys.len() {
+            if keysym == keys[i].keysym
+                && CLEANMASK(keys[i].mod0) == CLEANMASK(ev.state)
+                && keys[i].func.is_some()
+            {
+                keys[i].func.unwrap()(&keys[i].arg);
+            }
+        }
+    }
+}
+pub fn manage(w: Window, wa: *mut XWindowAttributes) {}
+pub fn mappingnotify(e: *mut XEvent) {
+    unsafe {
+        let mut ev = (*e).mapping;
+        XRefreshKeyboardMapping(&mut ev);
+        if ev.request == MappingKeyboard {
+            grabkeys();
+        }
+    }
+}
+pub fn maprequest(e: *mut XEvent) {
+    unsafe {
+        let ev = (*e).map_request;
+        static mut wa: XWindowAttributes = unsafe { zeroed() };
+        if XGetWindowAttributes(dpy, ev.window, addr_of_mut!(wa)) <= 0 || wa.override_redirect > 0 {
+            return;
+        }
+        if wintoclient(ev.window).is_null() {
+            manage(ev.window, addr_of_mut!(wa));
+        }
+    }
+}
+pub fn monocle(m: *mut Monitor) {
+    unsafe {
+        let mut n: u32 = 0;
+        let mut c = (*m).clients;
+        while !c.is_null() {
+            if ISVISIBLE(c) > 0 {
+                n += 1;
+            }
+            c = (*c).next;
+        }
+        if n > 0 {
+            // override layout symbol
+            // (TODO)!!!
+        }
+        let mut c = nexttiled((*m).clients);
+        while !c.is_null() {
+            resize(
+                c,
+                (*m).wx,
+                (*m).wy,
+                (*m).ww - 2 * (*c).bw,
+                (*m).wh - 2 * (*c).bw,
+                false,
+            );
+            c = nexttiled((*c).next);
+        }
+    }
+}
+pub fn motionnotify(e: *mut XEvent) {
+    unsafe {
+        let ev = (*e).motion;
+        if ev.window != root {
+            return;
+        }
+        let m = recttomon(ev.x_root, ev.y_root, 1, 1);
+        if m != motionmon && !motionmon.is_null() {
+            unfocus((*selmon).sel, true);
+            selmon = m;
+            focus(null_mut());
+        }
+        motionmon = m;
+    }
+}
 pub fn unmanage(c: *mut Client, destroyed: bool) {
     unsafe {
         let m = (*c).mon;
@@ -1920,6 +2070,42 @@ pub fn updatestatus() {
             stext = "jwm-1.0";
         }
         drawbar(selmon);
+    }
+}
+pub fn updatewindowtype(c: *mut Client) {
+    unsafe {
+        let state = getatomprop(c, netatom[_NET::NetWMState as usize]);
+        let wtype = getatomprop(c, netatom[_NET::NetWMWindowType as usize]);
+
+        if state == netatom[_NET::NetWMFullscreen as usize] {
+            setfullscreen(c, true);
+        }
+        if wtype == netatom[_NET::NetWMWindowTypeDialog as usize] {
+            (*c).isfloating = true;
+        }
+    }
+}
+pub fn updatewmhints(c: *mut Client) {
+    unsafe {
+        let wmh = XGetWMHints(dpy, (*c).win);
+        if !wmh.is_null() {
+            if c == (*selmon).sel && ((*wmh).flags & XUrgencyHint) > 0 {
+                (*wmh).flags &= !XUrgencyHint;
+                XSetWMHints(dpy, (*c).win, wmh);
+            } else {
+                (*c).isurgent = if (*wmh).flags & XUrgencyHint > 0 {
+                    true
+                } else {
+                    false
+                };
+            }
+            if (*wmh).flags & InputHint > 0 {
+                (*c).nerverfocus = (*wmh).input <= 0;
+            } else {
+                (*c).nerverfocus = false;
+            }
+            XFree(wmh as *mut _);
+        }
     }
 }
 pub fn upodatetitle(c: *mut Client) {
