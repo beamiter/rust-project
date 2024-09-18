@@ -16,23 +16,23 @@ use x11::xlib::{
     CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify,
     ConfigureRequest, ControlMask, CopyFromParent, CurrentTime, DestroyAll, DestroyNotify, Display,
     EnterNotify, EnterWindowMask, Expose, ExposureMask, False, FocusIn, GrabModeSync, GrayScale,
-    InputHint, KeyPress, KeySym, LASTEvent, LockMask, MapRequest, MappingKeyboard, MappingNotify,
-    Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify, NoEventMask, NotifyInferior,
-    NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, ParentRelative,
-    PointerMotionMask, PropModeAppend, PropModeReplace, PropertyNotify, ReplayPointer,
-    RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask, Success, True,
-    UnmapNotify, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint,
+    InputHint, IsViewable, KeyPress, KeySym, LASTEvent, LockMask, MapRequest, MappingKeyboard,
+    MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify, NoEventMask,
+    NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize,
+    ParentRelative, PointerMotionMask, PropModeAppend, PropModeReplace, PropertyNotify,
+    ReplayPointer, RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask,
+    Success, True, UnmapNotify, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint,
     XConfigureEvent, XConfigureWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow,
     XDefaultVisual, XDefineCursor, XDeleteProperty, XDestroyWindow, XDisplayKeycodes, XErrorEvent,
     XEvent, XFree, XFreeModifiermap, XFreeStringList, XGetClassHint, XGetKeyboardMapping,
-    XGetModifierMapping, XGetTextProperty, XGetWMHints, XGetWMNormalHints, XGetWMProtocols,
-    XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabServer, XKeycodeToKeysym,
-    XKeysymToKeycode, XKillClient, XMapRaised, XMoveResizeWindow, XMoveWindow, XQueryPointer,
-    XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSendEvent, XSetClassHint,
-    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
-    XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabServer,
-    XUnmapWindow, XUrgencyHint, XWindowAttributes, XWindowChanges, XmbTextPropertyToTextList, CWX,
-    CWY, XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_NAME,
+    XGetModifierMapping, XGetTextProperty, XGetTransientForHint, XGetWMHints, XGetWMNormalHints,
+    XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabServer,
+    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMoveResizeWindow, XMoveWindow,
+    XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput,
+    XSendEvent, XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints,
+    XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton,
+    XUngrabKey, XUngrabServer, XUnmapWindow, XUrgencyHint, XWindowAttributes, XWindowChanges,
+    XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_NAME,
 };
 
 use std::cmp::{max, min};
@@ -45,8 +45,8 @@ use crate::drw::{
     drw_fontset_getwidth, drw_map, drw_rect, drw_setscheme, drw_text, Clr, Cur, Drw, _Col,
 };
 use crate::xproto::{
-    WithdrawnState, X_ConfigureWindow, X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle,
-    X_PolySegment, X_PolyText8, X_SetInputFocus,
+    IconicState, WithdrawnState, X_ConfigureWindow, X_CopyArea, X_GrabButton, X_GrabKey,
+    X_PolyFillRectangle, X_PolySegment, X_PolyText8, X_SetInputFocus,
 };
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
@@ -70,7 +70,7 @@ pub static mut lrpad: i32 = 0;
 pub static mut numlockmask: u32 = 0;
 pub static mut wmatom: [Atom; _WM::WMLast as usize] = unsafe { zeroed() };
 pub static mut netatom: [Atom; _NET::NetLast as usize] = unsafe { zeroed() };
-pub static mut running: i32 = 0;
+pub static mut running: bool = false;
 pub static mut cursor: [*mut Cur; _CUR::CurLast as usize] = [null_mut(); _CUR::CurLast as usize];
 pub static mut scheme: Vec<Vec<*mut Clr>> = vec![];
 pub static mut dpy: *mut Display = null_mut();
@@ -1048,9 +1048,59 @@ pub fn restack(m: *mut Monitor) {
     }
 }
 
-pub fn run() {}
+pub fn run() {
+    // main event loop
+    unsafe {
+        let mut ev: XEvent = zeroed();
+        XSync(dpy, False);
+        while running && XNextEvent(dpy, &mut ev) <= 0 {
+            if let Some(ha) = handler[ev.type_ as usize] {
+                // call handler
+                ha(&mut ev);
+            }
+        }
+    }
+}
 
-pub fn scan() {}
+pub fn scan() {
+    let mut num: u32 = 0;
+    let mut d1: Window = 0;
+    let mut d2: Window = 0;
+    let mut wins: *mut Window = null_mut();
+    unsafe {
+        let mut wa: XWindowAttributes = zeroed();
+        if XQueryTree(dpy, root, &mut d1, &mut d2, &mut wins, &mut num) > 0 {
+            for i in 0..num as usize {
+                if XGetWindowAttributes(dpy, *wins.wrapping_add(i), &mut wa) <= 0
+                    || wa.override_redirect > 0
+                    || XGetTransientForHint(dpy, *wins.wrapping_add(i), &mut d1) > 0
+                {
+                    continue;
+                }
+                if wa.map_state == IsViewable
+                    || getstate(*wins.wrapping_add(i)) == IconicState as i64
+                {
+                    manage(*wins.wrapping_add(i), &mut wa);
+                }
+            }
+            for i in 0..num as usize {
+                // now the transients
+                if XGetWindowAttributes(dpy, *wins.wrapping_add(i), &mut wa) <= 0 {
+                    continue;
+                }
+                if XGetTransientForHint(dpy, *wins.wrapping_add(i), &mut d1) > 0
+                    && (wa.map_state == IsViewable
+                        || getstate(*wins.wrapping_add(i)) == IconicState as i64)
+                {
+                    manage(*wins.wrapping_add(i), &mut wa);
+                }
+            }
+        }
+        if !wins.is_null() {
+            XFree(wins as *mut _);
+        }
+    }
+}
 
 pub fn arrange(mut m: *mut Monitor) {
     unsafe {
@@ -1419,8 +1469,68 @@ pub fn updateclientlist() {
         }
     }
 }
-pub fn tile(m: *mut Monitor) {}
-pub fn togglebar(arg: *const Arg) {
+pub fn tile(m: *mut Monitor) {
+    let mut n: u32 = 0;
+    unsafe {
+        let mut c = nexttiled((*m).clients);
+        while !c.is_null() {
+            c = nexttiled((*c).next);
+            n += 1;
+        }
+        if n == 0 {
+            return;
+        }
+
+        let mut mw: u32 = 0;
+        if n > (*m).nmaster0 as u32 {
+            mw = if (*m).nmaster0 > 0 {
+                ((*m).ww as f32 * (*m).mfact0) as u32
+            } else {
+                0
+            };
+        } else {
+            mw = (*m).ww as u32;
+        }
+        let mut my: u32 = 0;
+        let mut ty: u32 = 0;
+        let mut i: u32 = 0;
+        let mut h: u32 = 0;
+        c = nexttiled((*m).clients);
+        while !c.is_null() {
+            if i < (*m).nmaster0 as u32 {
+                h = ((*m).wh as u32 - my) / (n.min((*m).nmaster0 as u32) - i);
+                resize(
+                    c,
+                    (*m).wx,
+                    (*m).wy + my as i32,
+                    mw as i32 - (2 * (*c).bw),
+                    h as i32 - (2 * (*c).bw),
+                    false,
+                );
+                if my + (HEIGHT(c) as u32) < (*m).wh as u32 {
+                    my += HEIGHT(c) as u32;
+                }
+            } else {
+                h = ((*m).wh as u32 - ty) / (n - i);
+                resize(
+                    c,
+                    (*m).wx + mw as i32,
+                    (*m).wy + ty as i32,
+                    (*m).ww - mw as i32 - (2 * (*c).bw),
+                    h as i32 - (2 * (*c).bw),
+                    false,
+                );
+                if ty as i32 + HEIGHT(c) < (*m).wh {
+                    ty += HEIGHT(c) as u32;
+                }
+            }
+
+            c = nexttiled((*c).next);
+            i += 1;
+        }
+    }
+}
+pub fn togglebar(_arg: *const Arg) {
     unsafe {
         (*selmon).showbar0 = !(*selmon).showbar0;
         updatebarpos(selmon);
@@ -1435,7 +1545,7 @@ pub fn togglebar(arg: *const Arg) {
         arrange(selmon);
     }
 }
-pub fn togglefloating(arg: *const Arg) {
+pub fn togglefloating(_arg: *const Arg) {
     unsafe {
         if (*selmon).sel.is_null() {
             return;
@@ -1600,7 +1710,7 @@ pub fn setlayout(arg: *const Arg) {
         }
     }
 }
-pub fn zoom(arg: *const Arg) {
+pub fn zoom(_arg: *const Arg) {
     unsafe {
         let mut c = (*selmon).sel;
 
@@ -1658,13 +1768,13 @@ pub fn toggletag(arg: *const Arg) {
         }
     }
 }
-pub fn quit(arg: *const Arg) {
+pub fn quit(_arg: *const Arg) {
     unsafe {
-        running = 0;
+        running = false;
     }
 }
 pub fn setup() {}
-pub fn killclient(arg: *const Arg) {
+pub fn killclient(_arg: *const Arg) {
     unsafe {
         if (*selmon).sel.is_null() {
             return;
