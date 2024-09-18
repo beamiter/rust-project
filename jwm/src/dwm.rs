@@ -2,6 +2,7 @@
 #![allow(non_snake_case)]
 // #![allow(unused_mut)]
 
+use fontconfig_sys::FcNameUnregisterConstants;
 use lazy_static::lazy_static;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
@@ -38,11 +39,12 @@ use x11::xlib::{
 use std::cmp::{max, min};
 
 use crate::config::{
-    buttons, keys, layouts, lockfullscreen, mfact, nmaster, resizehints, rules, showbar, tags,
-    topbar,
+    self, buttons, keys, layouts, lockfullscreen, mfact, nmaster, resizehints, rules, showbar,
+    tags, topbar,
 };
 use crate::drw::{
     drw_fontset_getwidth, drw_map, drw_rect, drw_setscheme, drw_text, Clr, Cur, Drw, _Col,
+    drw_resize,
 };
 use crate::xproto::{
     IconicState, WithdrawnState, X_ConfigureWindow, X_CopyArea, X_GrabButton, X_GrabKey,
@@ -655,7 +657,42 @@ pub fn clientmessage(e: *mut XEvent) {
     }
 }
 
-pub fn configurenotify(e: *mut XEvent) {}
+pub fn configurenotify(e: *mut XEvent) {
+    // (TODO): updategeom handling sucks, needs to be simplified
+    unsafe {
+        let ev = (*e).configure;
+        if ev.window == root {
+            let dirty = sw != ev.width || sh != ev.height;
+            sw = ev.width;
+            sh = ev.height;
+            if updategeom() || dirty {
+                drw_resize(drw, sw as u32, bh as u32);
+                updatebars();
+                let mut m = mons;
+                while !m.is_null() {
+                    let mut c = (*m).clients;
+                    while !c.is_null() {
+                        if (*c).isfullscreen {
+                            resizeclient(c, (*m).mx, (*m).my, (*m).mw, (*m).mh);
+                        }
+                        c = (*c).next;
+                    }
+                    XMoveResizeWindow(
+                        dpy,
+                        (*m).barwin,
+                        (*m).wx,
+                        (*m).by,
+                        (*m).ww as u32,
+                        bh as u32,
+                    );
+                    m = (*m).next;
+                }
+                focus(null_mut());
+                arrange(null_mut());
+            }
+        }
+    }
+}
 
 pub fn configure(c: *mut Client) {
     unsafe {
@@ -796,7 +833,64 @@ pub fn showhide(c: *mut Client) {
         }
     }
 }
-pub fn configurerequest(e: *mut XEvent) {}
+pub fn configurerequest(e: *mut XEvent) {
+    unsafe {
+        let ev = (*e).configure_request;
+        let mut c = wintoclient(ev.window);
+        if !c.is_null() {
+            if ev.value_mask & CWBorderWidth as u64 > 0 {
+                (*c).bw = ev.border_width;
+            } else if (*c).isfloating || (*((*selmon).lt[(*selmon).sellt])).arrange.is_none() {
+                let m = (*c).mon;
+                if ev.value_mask & CWX as u64 > 0 {
+                    (*c).oldx = (*c).x;
+                    (*c).x = (*m).mx + ev.x;
+                }
+                if ev.value_mask & CWY as u64 > 0 {
+                    (*c).oldy = (*c).y;
+                    (*c).y = (*m).my + ev.y;
+                }
+                if ev.value_mask & CWWidth as u64 > 0 {
+                    (*c).oldw = (*c).w;
+                    (*c).w = ev.width;
+                }
+                if ev.value_mask & CWHeight as u64 > 0 {
+                    (*c).oldh = (*c).h;
+                    (*c).h = ev.height;
+                }
+                if ((*c).x + (*c).w) > (*m).mx + (*m).mw && (*c).isfloating {
+                    // center in x direction
+                    (*c).x = (*m).mx + ((*m).mw / 2 - WIDTH(c) / 2);
+                }
+                if ((*c).y + (*c).h) > (*m).my + (*m).mh && (*c).isfloating {
+                    // center in y direction
+                    (*c).y = (*m).my + ((*m).mh / 2 - HEIGHT(c) / 2);
+                }
+                if (ev.value_mask & (CWX | CWY) as u64) > 0
+                    && (ev.value_mask & (CWWidth | CWHeight) as u64) <= 0
+                {
+                    configure(c);
+                }
+                if ISVISIBLE(c) > 0 {
+                    XMoveResizeWindow(dpy, (*c).win, (*c).x, (*c).y, (*c).w as u32, (*c).h as u32);
+                }
+            } else {
+                configure(c);
+            }
+        } else {
+            let mut wc: XWindowChanges = zeroed();
+            wc.x = ev.x;
+            wc.y = ev.y;
+            wc.width = ev.width;
+            wc.height = ev.height;
+            wc.border_width = ev.border_width;
+            wc.sibling = ev.above;
+            wc.stack_mode = ev.detail;
+            XConfigureWindow(dpy, ev.window, ev.value_mask as u32, &mut wc);
+        }
+        XSync(dpy, False);
+    }
+}
 pub fn createmon() -> *mut Monitor {
     let mut m: Monitor = Monitor::new();
     m.tagset[0] = 1;
