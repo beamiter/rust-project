@@ -3,36 +3,36 @@
 // #![allow(unused_mut)]
 
 use lazy_static::lazy_static;
-use std::cell::{Cell, RefCell};
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
 use std::ptr::{addr_of, addr_of_mut, null_mut};
-use std::rc::Rc;
 use std::{os::raw::c_long, usize};
 
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
     AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadMatch, BadWindow, Below,
-    ButtonPressMask, ButtonReleaseMask, CWBackPixmap, CWBorderWidth, CWEventMask, CWHeight,
-    CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify,
-    ControlMask, CopyFromParent, CurrentTime, DestroyAll, Display, EnterWindowMask, ExposureMask,
-    False, GrabModeSync, GrayScale, InputHint, KeySym, LockMask, MappingKeyboard, Mod1Mask,
-    Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, NoEventMask, NotifyInferior, NotifyNormal, PAspect,
-    PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, ParentRelative, PointerMotionMask,
-    PropModeAppend, PropModeReplace, ReplayPointer, RevertToPointerRoot, ShiftMask,
-    StructureNotifyMask, SubstructureRedirectMask, Success, True, Window, XAllowEvents,
-    XChangeProperty, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow, XCreateWindow,
-    XDefaultDepth, XDefaultRootWindow, XDefaultVisual, XDefineCursor, XDeleteProperty,
-    XDisplayKeycodes, XErrorEvent, XEvent, XFree, XFreeModifiermap, XFreeStringList, XGetClassHint,
-    XGetKeyboardMapping, XGetModifierMapping, XGetTextProperty, XGetWMHints, XGetWMNormalHints,
-    XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabServer,
-    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMoveResizeWindow, XMoveWindow,
-    XQueryPointer, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSendEvent, XSetClassHint,
+    ButtonPress, ButtonPressMask, ButtonReleaseMask, CWBackPixmap, CWBorderWidth, CWEventMask,
+    CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify,
+    ConfigureRequest, ControlMask, CopyFromParent, CurrentTime, DestroyAll, DestroyNotify, Display,
+    EnterNotify, EnterWindowMask, Expose, ExposureMask, False, FocusIn, GrabModeSync, GrayScale,
+    InputHint, KeyPress, KeySym, LASTEvent, LockMask, MapRequest, MappingKeyboard, MappingNotify,
+    Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify, NoEventMask, NotifyInferior,
+    NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, ParentRelative,
+    PointerMotionMask, PropModeAppend, PropModeReplace, PropertyNotify, ReplayPointer,
+    RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask, Success, True,
+    UnmapNotify, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint,
+    XConfigureEvent, XConfigureWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow,
+    XDefaultVisual, XDefineCursor, XDeleteProperty, XDestroyWindow, XDisplayKeycodes, XErrorEvent,
+    XEvent, XFree, XFreeModifiermap, XFreeStringList, XGetClassHint, XGetKeyboardMapping,
+    XGetModifierMapping, XGetTextProperty, XGetWMHints, XGetWMNormalHints, XGetWMProtocols,
+    XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabServer, XKeycodeToKeysym,
+    XKeysymToKeycode, XKillClient, XMapRaised, XMoveResizeWindow, XMoveWindow, XQueryPointer,
+    XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSendEvent, XSetClassHint,
     XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
     XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabServer,
-    XUrgencyHint, XWindowAttributes, XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM,
-    XA_STRING, XA_WINDOW, XA_WM_NAME,
+    XUnmapWindow, XUrgencyHint, XWindowAttributes, XWindowChanges, XmbTextPropertyToTextList, CWX,
+    CWY, XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_NAME,
 };
 
 use std::cmp::{max, min};
@@ -84,7 +84,24 @@ pub static mut xerrorxlib: Option<unsafe extern "C" fn(*mut Display, *mut XError
     None;
 
 lazy_static! {
-    pub static ref global_string: String = String::from("");
+    pub static ref handler: [Option<fn(*mut XEvent)>; LASTEvent as usize] = {
+        let mut res: [Option<fn(*mut XEvent)>; LASTEvent as usize] = [None; LASTEvent as usize];
+        res[ButtonPress as usize] = Some(buttonpress);
+        res[ClientMessage as usize] = Some(clientmessage);
+        res[ConfigureRequest as usize] = Some(configurerequest);
+        res[ConfigureNotify as usize] = Some(configurenotify);
+        res[DestroyNotify as usize] = Some(destroynotify);
+        res[EnterNotify as usize] = Some(enternotify);
+        res[Expose as usize] = Some(expose);
+        res[FocusIn as usize] = Some(focusin);
+        res[KeyPress as usize] = Some(keypress);
+        res[MappingNotify as usize] = Some(mappingnotify);
+        res[MapRequest as usize] = Some(maprequest);
+        res[MotionNotify as usize] = Some(motionnotify);
+        res[PropertyNotify as usize] = Some(propertynotify);
+        res[UnmapNotify as usize] = Some(unmapnotify);
+        res
+    };
 }
 
 #[repr(C)]
@@ -595,6 +612,50 @@ pub fn applysizehints(
         return *x != (*c).x || (*y) != (*c).y || *w != (*c).w || *h != (*c).h;
     }
 }
+pub fn cleanupmon(mon: *mut Monitor) {
+    unsafe {
+        if mon == mons {
+            mons = (*mons).next;
+        } else {
+            let mut m = mons;
+            while !m.is_null() && (*m).next != mon {
+                (*m).next = (*mon).next;
+                m = (*m).next;
+            }
+        }
+        XUnmapWindow(dpy, (*mon).barwin);
+        XDestroyWindow(dpy, (*mon).barwin);
+        XFree(mon as *mut _);
+    }
+}
+pub fn clientmessage(e: *mut XEvent) {
+    unsafe {
+        let cme = (*e).client_message;
+        let c = wintoclient(cme.window);
+
+        if c.is_null() {
+            return;
+        }
+        if cme.message_type == netatom[_NET::NetWMState as usize] {
+            if cme.data.get_long(1) == netatom[_NET::NetWMFullscreen as usize] as i64
+                || cme.data.get_long(2) == netatom[_NET::NetWMFullscreen as usize] as i64
+            {
+                // _NET_WM_STATE_ADD
+                // _NET_WM_STATE_TOGGLE
+                setfullscreen(
+                    c,
+                    cme.data.get_long(0) == 1 || cme.data.get_long(0) == 2 && !(*c).isfullscreen,
+                );
+            }
+        } else if cme.message_type == netatom[_NET::NetActiveWindow as usize] {
+            if c != (*selmon).sel && !(*c).isurgent {
+                seturgent(c, true);
+            }
+        }
+    }
+}
+
+pub fn configurenotify(e: *mut XEvent) {}
 
 pub fn configure(c: *mut Client) {
     unsafe {
@@ -735,6 +796,7 @@ pub fn showhide(c: *mut Client) {
         }
     }
 }
+pub fn configurerequest(e: *mut XEvent) {}
 pub fn createmon() -> *mut Monitor {
     let mut m: Monitor = Monitor::new();
     m.tagset[0] = 1;
@@ -747,6 +809,15 @@ pub fn createmon() -> *mut Monitor {
     // m.lt[1] = &mut layouts[1 % layouts.len()].clone();
     m.ltsymbol = layouts[0].symbol;
     return &mut m;
+}
+pub fn destroynotify(e: *mut XEvent) {
+    unsafe {
+        let ev = (*e).destroy_window;
+        let c = wintoclient(ev.window);
+        if !c.is_null() {
+            unmanage(c, true);
+        }
+    }
 }
 pub fn arrangemon(m: *mut Monitor) {
     unsafe {
@@ -1629,6 +1700,7 @@ pub fn pop(c: *mut Client) {
         arrange((*c).mon);
     }
 }
+pub fn propertynotify(e: *mut XEvent) {}
 pub fn movemouse(arg: *const Arg) {}
 pub fn resizemouse(arg: *const Arg) {}
 pub fn updatenumlockmask() {
