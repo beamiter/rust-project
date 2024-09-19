@@ -2,12 +2,10 @@
 #![allow(non_snake_case)]
 // #![allow(unused_mut)]
 
-use fontconfig_sys::FcNameUnregisterConstants;
 use lazy_static::lazy_static;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
-use std::process::Termination;
 use std::ptr::{addr_of, addr_of_mut, null_mut};
 use std::{os::raw::c_long, usize};
 
@@ -24,7 +22,7 @@ use x11::xlib::{
     PMinSize, PResizeInc, PSize, ParentRelative, PointerMotionMask, PropModeAppend,
     PropModeReplace, PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer,
     RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask, Success, True,
-    UnmapNotify, WidthValue, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint,
+    UnmapNotify, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint,
     XConfigureEvent, XConfigureWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow,
     XDefaultVisual, XDefineCursor, XDeleteProperty, XDestroyWindow, XDisplayKeycodes, XErrorEvent,
     XEvent, XFree, XFreeModifiermap, XFreeStringList, XGetClassHint, XGetKeyboardMapping,
@@ -46,8 +44,8 @@ use crate::config::{
     showbar, tags, topbar,
 };
 use crate::drw::{
-    drw_fontset_getwidth, drw_map, drw_rect, drw_setscheme, drw_text, Clr, Cur, Drw, _Col,
-    drw_resize,
+    drw_fontset_getwidth, drw_map, drw_rect, drw_resize, drw_setscheme, drw_text, Clr, Col, Cur,
+    Drw,
 };
 use crate::xproto::{
     IconicState, NormalState, WithdrawnState, X_ConfigureWindow, X_CopyArea, X_GrabButton,
@@ -73,16 +71,15 @@ pub static mut sh: i32 = 0;
 pub static mut bh: i32 = 0;
 pub static mut lrpad: i32 = 0;
 pub static mut numlockmask: u32 = 0;
-pub static mut wmatom: [Atom; _WM::WMLast as usize] = unsafe { zeroed() };
-pub static mut netatom: [Atom; _NET::NetLast as usize] = unsafe { zeroed() };
+pub static mut wmatom: [Atom; WM::WMLast as usize] = unsafe { zeroed() };
+pub static mut netatom: [Atom; NET::NetLast as usize] = unsafe { zeroed() };
 pub static mut running: bool = false;
-pub static mut cursor: [*mut Cur; _CUR::CurLast as usize] = [null_mut(); _CUR::CurLast as usize];
+pub static mut cursor: [*mut Cur; CUR::CurLast as usize] = [null_mut(); CUR::CurLast as usize];
 pub static mut scheme: Vec<Vec<*mut Clr>> = vec![];
 pub static mut dpy: *mut Display = null_mut();
 pub static mut drw: *mut Drw = null_mut();
 pub static mut mons: *mut Monitor = null_mut();
 pub static mut selmon: *mut Monitor = null_mut();
-pub static mut motionmon: *mut Monitor = null_mut();
 pub static mut root: Window = 0;
 pub static mut wmcheckwin: Window = 0;
 pub static mut xerrorxlib: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int> =
@@ -111,7 +108,7 @@ lazy_static! {
 
 #[repr(C)]
 #[derive(Debug, Clone)]
-pub enum _CUR {
+pub enum CUR {
     CurNormal = 0,
     CurResize = 1,
     CurMove = 2,
@@ -120,14 +117,14 @@ pub enum _CUR {
 
 #[repr(C)]
 #[derive(Debug, Clone)]
-pub enum _SCHEME {
+pub enum SCHEME {
     SchemeNorm = 0,
     SchemeSel = 1,
 }
 
 #[repr(C)]
 #[derive(Debug, Clone)]
-pub enum _NET {
+pub enum NET {
     NetSupported = 0,
     NetWMName = 1,
     NetWMState = 2,
@@ -142,7 +139,7 @@ pub enum _NET {
 
 #[repr(C)]
 #[derive(Debug, Clone)]
-pub enum _WM {
+pub enum WM {
     WMProtocols = 0,
     WMDelete = 1,
     WMState = 2,
@@ -641,18 +638,18 @@ pub fn clientmessage(e: *mut XEvent) {
         if c.is_null() {
             return;
         }
-        if cme.message_type == netatom[_NET::NetWMState as usize] {
-            if cme.data.get_long(1) == netatom[_NET::NetWMFullscreen as usize] as i64
-                || cme.data.get_long(2) == netatom[_NET::NetWMFullscreen as usize] as i64
+        if cme.message_type == netatom[NET::NetWMState as usize] {
+            if cme.data.get_long(1) == netatom[NET::NetWMFullscreen as usize] as i64
+                || cme.data.get_long(2) == netatom[NET::NetWMFullscreen as usize] as i64
             {
-                // _NET_WM_STATE_ADD
-                // _NET_WM_STATE_TOGGLE
+                // NET_WM_STATE_ADD
+                // NET_WM_STATE_TOGGLE
                 setfullscreen(
                     c,
                     cme.data.get_long(0) == 1 || cme.data.get_long(0) == 2 && !(*c).isfullscreen,
                 );
             }
-        } else if cme.message_type == netatom[_NET::NetActiveWindow as usize] {
+        } else if cme.message_type == netatom[NET::NetActiveWindow as usize] {
             if c != (*selmon).sel && !(*c).isurgent {
                 seturgent(c, true);
             }
@@ -722,11 +719,11 @@ pub fn setfullscreen(c: *mut Client, fullscreen: bool) {
             XChangeProperty(
                 dpy,
                 (*c).win,
-                netatom[_NET::NetWMState as usize],
+                netatom[NET::NetWMState as usize],
                 XA_ATOM,
                 32,
                 PropModeReplace,
-                netatom[_NET::NetWMFullscreen as usize] as *const _,
+                netatom[NET::NetWMFullscreen as usize] as *const _,
                 1,
             );
             (*c).isfullscreen = true;
@@ -746,7 +743,7 @@ pub fn setfullscreen(c: *mut Client, fullscreen: bool) {
             XChangeProperty(
                 dpy,
                 (*c).win,
-                netatom[_NET::NetWMState as usize],
+                netatom[NET::NetWMState as usize],
                 XA_ATOM,
                 32,
                 PropModeReplace,
@@ -988,7 +985,7 @@ pub fn drawbar(m: *mut Monitor) {
         // draw status first so it can be overdrawn by tags later.
         if m == selmon {
             // status is only drawn on selected monitor.
-            drw_setscheme(drw, scheme[_SCHEME::SchemeNorm as usize].clone());
+            drw_setscheme(drw, scheme[SCHEME::SchemeNorm as usize].clone());
             // 2px right padding.
             tw = TEXTW(drw, stext) as i32 - lrpad + 2;
             drw_text(
@@ -1015,9 +1012,9 @@ pub fn drawbar(m: *mut Monitor) {
         for i in 0..tags.len() {
             w = TEXTW(drw, tags[i]) as i32;
             let idx = if (*m).tagset[(*m).seltags] & 1 << i > 0 {
-                _SCHEME::SchemeSel as usize
+                SCHEME::SchemeSel as usize
             } else {
-                _SCHEME::SchemeNorm as usize
+                SCHEME::SchemeNorm as usize
             };
             drw_setscheme(drw, scheme[idx].clone());
             drw_text(
@@ -1046,7 +1043,7 @@ pub fn drawbar(m: *mut Monitor) {
             }
         }
         w = TEXTW(drw, (*m).ltsymbol) as i32;
-        drw_setscheme(drw, scheme[_SCHEME::SchemeNorm as usize].clone());
+        drw_setscheme(drw, scheme[SCHEME::SchemeNorm as usize].clone());
         x = drw_text(
             drw,
             x,
@@ -1062,9 +1059,9 @@ pub fn drawbar(m: *mut Monitor) {
         if w > bh {
             if !(*m).sel.is_null() {
                 let idx = if m == selmon {
-                    _SCHEME::SchemeSel
+                    SCHEME::SchemeSel
                 } else {
-                    _SCHEME::SchemeNorm
+                    SCHEME::SchemeNorm
                 } as usize;
                 drw_setscheme(drw, scheme[idx].clone());
                 drw_text(
@@ -1089,7 +1086,7 @@ pub fn drawbar(m: *mut Monitor) {
                     );
                 }
             } else {
-                drw_setscheme(drw, scheme[_SCHEME::SchemeNorm as usize].clone());
+                drw_setscheme(drw, scheme[SCHEME::SchemeNorm as usize].clone());
                 drw_rect(
                     drw,
                     x,
@@ -1292,11 +1289,11 @@ pub fn getstate(w: Window) -> i64 {
         if XGetWindowProperty(
             dpy,
             w,
-            wmatom[_WM::WMState as usize],
+            wmatom[WM::WMState as usize],
             0,
             2,
             False,
-            wmatom[_WM::WMState as usize],
+            wmatom[WM::WMState as usize],
             &mut real,
             &mut format,
             &mut n,
@@ -1520,7 +1517,7 @@ pub fn updatebars() {
                 CWOverrideRedirect | CWBackPixmap | CWEventMask,
                 &mut wa,
             );
-            XDefineCursor(dpy, (*m).barwin, (*cursor[_CUR::CurNormal as usize]).cursor);
+            XDefineCursor(dpy, (*m).barwin, (*cursor[CUR::CurNormal as usize]).cursor);
             XMapRaised(dpy, (*m).barwin);
             XSetClassHint(dpy, (*m).barwin, &mut ch);
             m = (*m).next;
@@ -1545,7 +1542,7 @@ pub fn updatebarpos(m: *mut Monitor) {
 }
 pub fn updateclientlist() {
     unsafe {
-        XDeleteProperty(dpy, root, netatom[_NET::NetClientList as usize]);
+        XDeleteProperty(dpy, root, netatom[NET::NetClientList as usize]);
         let mut m = mons;
         while !m.is_null() {
             let mut c = (*m).clients;
@@ -1553,7 +1550,7 @@ pub fn updateclientlist() {
                 XChangeProperty(
                     dpy,
                     root,
-                    netatom[_NET::NetClientList as usize],
+                    netatom[NET::NetClientList as usize],
                     XA_WINDOW,
                     32,
                     PropModeAppend,
@@ -1876,7 +1873,7 @@ pub fn killclient(_arg: *const Arg) {
         if (*selmon).sel.is_null() {
             return;
         }
-        if !sendevent((*selmon).sel, wmatom[_WM::WMDelete as usize]) {
+        if !sendevent((*selmon).sel, wmatom[WM::WMDelete as usize]) {
             XGrabServer(dpy);
             XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
             XSetCloseDownMode(dpy, DestroyAll);
@@ -1939,13 +1936,13 @@ pub fn propertynotify(e: *mut XEvent) {
                 }
                 _ => {}
             }
-            if ev.atom == XA_WM_NAME || ev.atom == netatom[_NET::NetWMName as usize] {
+            if ev.atom == XA_WM_NAME || ev.atom == netatom[NET::NetWMName as usize] {
                 upodatetitle(c);
                 if c == (*(*c).mon).sel {
                     drawbar((*c).mon);
                 }
             }
-            if ev.atom == netatom[_NET::NetWMWindowType as usize] {
+            if ev.atom == netatom[NET::NetWMWindowType as usize] {
                 updatewindowtype(c);
             }
         }
@@ -2065,7 +2062,7 @@ pub fn sendevent(c: *mut Client, proto: Atom) -> bool {
         if exists {
             ev.type_ = ClientMessage;
             ev.client_message.window = (*c).win;
-            ev.client_message.message_type = wmatom[_WM::WMProtocols as usize];
+            ev.client_message.message_type = wmatom[WM::WMProtocols as usize];
             ev.client_message.format = 32;
             // This data is cool!
             ev.client_message.data.as_longs_mut()[0] = proto as i64;
@@ -2082,7 +2079,7 @@ pub fn setfocus(c: *mut Client) {
             XChangeProperty(
                 dpy,
                 root,
-                netatom[_NET::NetActiveWindow as usize],
+                netatom[NET::NetActiveWindow as usize],
                 XA_WINDOW,
                 32,
                 PropModeReplace,
@@ -2090,7 +2087,7 @@ pub fn setfocus(c: *mut Client) {
                 1,
             );
         }
-        sendevent(c, wmatom[_WM::WMTakeFocus as usize]);
+        sendevent(c, wmatom[WM::WMTakeFocus as usize]);
     }
 }
 pub fn drawbars() {
@@ -2157,12 +2154,12 @@ pub fn focus(mut c: *mut Client) {
             XSetWindowBorder(
                 dpy,
                 (*c).win,
-                (*scheme[_SCHEME::SchemeSel as usize][_Col::ColBorder as usize]).pixel,
+                (*scheme[SCHEME::SchemeSel as usize][Col::ColBorder as usize]).pixel,
             );
             setfocus(c);
         } else {
             XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
-            XDeleteProperty(dpy, root, netatom[_NET::NetActiveWindow as usize]);
+            XDeleteProperty(dpy, root, netatom[NET::NetActiveWindow as usize]);
         }
         (*selmon).sel = c;
         drawbars();
@@ -2177,11 +2174,11 @@ pub fn unfocus(c: *mut Client, setfocus: bool) {
         XSetWindowBorder(
             dpy,
             (*c).win,
-            (*scheme[_SCHEME::SchemeNorm as usize][_Col::ColBorder as usize]).pixel,
+            (*scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize]).pixel,
         );
         if setfocus {
             XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
-            XDeleteProperty(dpy, root, netatom[_NET::NetActiveWindow as usize]);
+            XDeleteProperty(dpy, root, netatom[NET::NetActiveWindow as usize]);
         }
     }
 }
@@ -2207,8 +2204,8 @@ pub fn setclientstate(c: *mut Client, state: i64) {
         XChangeProperty(
             dpy,
             (*c).win,
-            wmatom[_WM::WMState as usize],
-            wmatom[_WM::WMState as usize],
+            wmatom[WM::WMState as usize],
+            wmatom[WM::WMState as usize],
             32,
             PropModeReplace,
             state as *const _,
@@ -2274,7 +2271,7 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
         XSetWindowBorder(
             dpy,
             w,
-            (*scheme[_SCHEME::SchemeNorm as usize][_Col::ColBorder as usize]).pixel,
+            (*scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize]).pixel,
         );
         configure(&mut c);
         updatewindowtype(&mut c);
@@ -2298,7 +2295,7 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
         XChangeProperty(
             dpy,
             root,
-            netatom[_NET::NetClientList as usize],
+            netatom[NET::NetClientList as usize],
             XA_WINDOW,
             32,
             PropModeAppend,
@@ -2339,6 +2336,8 @@ pub fn maprequest(e: *mut XEvent) {
 }
 pub fn monocle(m: *mut Monitor) {
     unsafe {
+        // This idea is cool!.
+        static mut formatted_string: String = String::new();
         let mut n: u32 = 0;
         let mut c = (*m).clients;
         while !c.is_null() {
@@ -2349,7 +2348,8 @@ pub fn monocle(m: *mut Monitor) {
         }
         if n > 0 {
             // override layout symbol
-            // (TODO)!!!
+            formatted_string = format!("[{}]", n);
+            (*m).ltsymbol = formatted_string.as_str();
         }
         let mut c = nexttiled((*m).clients);
         while !c.is_null() {
@@ -2367,6 +2367,8 @@ pub fn monocle(m: *mut Monitor) {
 }
 pub fn motionnotify(e: *mut XEvent) {
     unsafe {
+        // This idea is cool
+        static mut motionmon: *mut Monitor = null_mut();
         let ev = (*e).motion;
         if ev.window != root {
             return;
@@ -2481,13 +2483,13 @@ pub fn updatestatus() {
 }
 pub fn updatewindowtype(c: *mut Client) {
     unsafe {
-        let state = getatomprop(c, netatom[_NET::NetWMState as usize]);
-        let wtype = getatomprop(c, netatom[_NET::NetWMWindowType as usize]);
+        let state = getatomprop(c, netatom[NET::NetWMState as usize]);
+        let wtype = getatomprop(c, netatom[NET::NetWMWindowType as usize]);
 
-        if state == netatom[_NET::NetWMFullscreen as usize] {
+        if state == netatom[NET::NetWMFullscreen as usize] {
             setfullscreen(c, true);
         }
-        if wtype == netatom[_NET::NetWMWindowTypeDialog as usize] {
+        if wtype == netatom[NET::NetWMWindowTypeDialog as usize] {
             (*c).isfloating = true;
         }
     }
@@ -2519,7 +2521,7 @@ pub fn upodatetitle(c: *mut Client) {
     unsafe {
         if !gettextprop(
             (*c).win,
-            netatom[_NET::NetWMName as usize],
+            netatom[NET::NetWMName as usize],
             (*c).name,
             (*c).name.len(),
         ) {

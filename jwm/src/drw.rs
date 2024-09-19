@@ -91,7 +91,7 @@ impl Fnt {
 }
 
 #[repr(C)]
-pub enum _Col {
+pub enum Col {
     ColFg = 0,
     ColBg = 1,
     ColBorder = 2,
@@ -391,9 +391,9 @@ pub fn drw_rect(drw: *mut Drw, x: i32, y: i32, w: u32, h: u32, filled: i32, inve
             (*drw).dpy,
             (*drw).gc,
             if invert > 0 {
-                (*(*drw).scheme[_Col::ColBg as usize]).pixel
+                (*(*drw).scheme[Col::ColBg as usize]).pixel
             } else {
-                (*(*drw).scheme[_Col::ColFg as usize]).pixel
+                (*(*drw).scheme[Col::ColFg as usize]).pixel
             },
         );
         if filled > 0 {
@@ -452,7 +452,7 @@ pub fn drw_text(
                 (!invert).try_into().unwrap()
             };
         } else {
-            let idx = if invert > 0 { _Col::ColFg } else { _Col::ColBg } as usize;
+            let idx = if invert > 0 { Col::ColFg } else { Col::ColBg } as usize;
             XSetForeground((*drw).dpy, (*drw).gc, (*(*drw).scheme[idx]).pixel);
             XFillRectangle((*drw).dpy, (*drw).drawable, (*drw).gc, x, y, w, h);
             XftDrawCreate(
@@ -524,7 +524,7 @@ pub fn drw_text(
             if utf8strlen > 0 {
                 if render {
                     let ty = y + ((h - (*usedfont).h) / 2) as i32 + (*(*usedfont).xfont).ascent;
-                    let idx = if invert > 0 { _Col::ColBg } else { _Col::ColFg } as usize;
+                    let idx = if invert > 0 { Col::ColBg } else { Col::ColFg } as usize;
                     let cstring = CString::new(utf8str).expect("fail to create");
                     XftDrawStringUtf8(
                         d,
