@@ -12,36 +12,37 @@ use std::{os::raw::c_long, usize};
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
     AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadMatch, BadWindow, Below,
-    ButtonPress, ButtonPressMask, ButtonReleaseMask, CWBackPixmap, CWBorderWidth, CWEventMask,
-    CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify,
-    ConfigureRequest, ControlMask, CopyFromParent, CurrentTime, DestroyAll, DestroyNotify, Display,
-    EnterNotify, EnterWindowMask, Expose, ExposureMask, False, FocusChangeMask, FocusIn,
-    GrabModeSync, GrayScale, InputHint, IsViewable, KeyPress, KeySym, LASTEvent, LockMask,
-    MapRequest, MappingKeyboard, MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask,
-    MotionNotify, NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize,
-    PMinSize, PResizeInc, PSize, ParentRelative, PointerMotionMask, PropModeAppend,
-    PropModeReplace, PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer,
-    RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask, Success, True,
-    UnmapNotify, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint,
-    XConfigureEvent, XConfigureWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow,
-    XDefaultVisual, XDefineCursor, XDeleteProperty, XDestroyWindow, XDisplayKeycodes, XErrorEvent,
-    XEvent, XFree, XFreeModifiermap, XFreeStringList, XGetClassHint, XGetKeyboardMapping,
-    XGetModifierMapping, XGetTextProperty, XGetTransientForHint, XGetWMHints, XGetWMNormalHints,
-    XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabServer,
-    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMapWindow, XMoveResizeWindow,
+    ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBackPixmap, CWBorderWidth,
+    CWEventMask, CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage,
+    ConfigureNotify, ConfigureRequest, ControlMask, CopyFromParent, CurrentTime, DestroyAll,
+    DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose, ExposureMask, False,
+    FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess, GrayScale, InputHint,
+    IsViewable, KeyPress, KeySym, LASTEvent, LockMask, MapRequest, MappingKeyboard, MappingNotify,
+    Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify, NoEventMask, NotifyInferior,
+    NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, ParentRelative,
+    PointerMotionMask, PropModeAppend, PropModeReplace, PropertyChangeMask, PropertyDelete,
+    PropertyNotify, ReplayPointer, RevertToPointerRoot, ShiftMask, StructureNotifyMask,
+    SubstructureRedirectMask, Success, Time, True, UnmapNotify, Window, XAllowEvents,
+    XChangeProperty, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow, XCreateWindow,
+    XDefaultDepth, XDefaultRootWindow, XDefaultVisual, XDefineCursor, XDeleteProperty,
+    XDestroyWindow, XDisplayKeycodes, XErrorEvent, XEvent, XFree, XFreeModifiermap,
+    XFreeStringList, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetTextProperty,
+    XGetTransientForHint, XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes,
+    XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym,
+    XKeysymToKeycode, XKillClient, XMapRaised, XMapWindow, XMaskEvent, XMoveResizeWindow,
     XMoveWindow, XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping,
     XSelectInput, XSendEvent, XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus,
     XSetWMHints, XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XTextProperty,
-    XUngrabButton, XUngrabKey, XUngrabServer, XUnmapWindow, XUrgencyHint, XWindowAttributes,
-    XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW,
-    XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer, XUnmapWindow, XUrgencyHint,
+    XWindowAttributes, XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING,
+    XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
 
 use crate::config::{
     self, borderpx, buttons, keys, layouts, lockfullscreen, mfact, nmaster, resizehints, rules,
-    showbar, tags, topbar,
+    showbar, snap, tags, topbar,
 };
 use crate::drw::{
     drw_fontset_getwidth, drw_map, drw_rect, drw_resize, drw_setscheme, drw_text, Clr, Col, Cur,
@@ -1948,7 +1949,98 @@ pub fn propertynotify(e: *mut XEvent) {
         }
     }
 }
-pub fn movemouse(arg: *const Arg) {}
+pub fn movemouse(_arg: *const Arg) {
+    unsafe {
+        let c = (*selmon).sel;
+        if c.is_null() {
+            return;
+        }
+        if (*c).isfullscreen {
+            // no support mmoving fullscreen windows by mouse
+            return;
+        }
+        restack(selmon);
+        let ocx = (*c).x;
+        let ocy = (*c).y;
+        if XGrabPointer(
+            dpy,
+            root,
+            False,
+            MOUSEMASK as u32,
+            GrabModeAsync,
+            GrabModeAsync,
+            0,
+            (*cursor[CUR::CurMove as usize]).cursor,
+            CurrentTime,
+        ) != GrabSuccess
+        {
+            return;
+        }
+        let mut x: i32 = 0;
+        let mut y: i32 = 0;
+        let mut lasttime: Time = 0;
+        if getrootptr(&mut x, &mut y) <= 0 {
+            return;
+        }
+        let mut ev: XEvent = zeroed();
+        loop {
+            XMaskEvent(
+                dpy,
+                MOUSEMASK | ExposureMask | SubstructureRedirectMask,
+                &mut ev,
+            );
+            match ev.type_ {
+                ConfigureRequest | Expose | MapRequest => {
+                    if let Some(ha) = handler[ev.type_ as usize] {
+                        ha(&mut ev);
+                    }
+                }
+                MotionNotify => {
+                    if ev.motion.time - lasttime <= (1000 / 60) {
+                        continue;
+                    }
+                    lasttime = ev.motion.time;
+
+                    let mut nx = ocx + ev.motion.x - x;
+                    let mut ny = ocy + ev.motion.y - y;
+                    if ((*selmon).wx - nx).abs() < snap as i32 {
+                        nx = (*selmon).wx;
+                    } else if (((*selmon).wx + (*selmon).ww) - (nx + WIDTH(c))).abs() < snap as i32
+                    {
+                        nx = (*selmon).wx + (*selmon).ww - WIDTH(c);
+                    }
+                    if ((*selmon).wy - ny).abs() < snap as i32 {
+                        ny = (*selmon).wy;
+                    } else if (((*selmon).wy + (*selmon).wh) - (ny + HEIGHT(c))).abs() < snap as i32
+                    {
+                        ny = (*selmon).wy + (*selmon).wh - HEIGHT(c);
+                    }
+                    if !(*c).isfloating
+                        && (*(*selmon).lt[(*selmon).sellt]).arrange.is_some()
+                        && (nx - (*c).x).abs() > snap as i32
+                        || (ny - (*c).y).abs() > snap as i32
+                    {
+                        togglefloating(null_mut());
+                    }
+                    if (*(*selmon).lt[(*selmon).sellt]).arrange.is_none() || (*c).isfloating {
+                        resize(c, nx, ny, (*c).w, (*c).h, true);
+                    }
+                }
+                _ => {}
+            }
+            if ev.type_ == ButtonRelease {
+                break;
+            }
+        }
+        XUngrabPointer(dpy, CurrentTime);
+        let m = recttomon((*c).x, (*c).y, (*c).w, (*c).h);
+        if m != selmon {
+            sendmon(c, m);
+            selmon = m;
+            focus(null_mut());
+        }
+    }
+}
 pub fn resizemouse(arg: *const Arg) {}
 pub fn updatenumlockmask() {
     unsafe {
