@@ -4,8 +4,7 @@
 
 use lazy_static::lazy_static;
 use libc::{
-    exit, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT, SA_RESTART, SIGCHLD,
-    SIG_IGN, WNOHANG,
+    close, execvp, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT, SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG
 };
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
@@ -15,40 +14,14 @@ use std::{os::raw::c_long, usize};
 
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
-    AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadMatch, BadWindow, Below,
-    ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBackPixmap, CWBorderWidth,
-    CWCursor, CWEventMask, CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth,
-    ClientMessage, ConfigureNotify, ConfigureRequest, ControlMask, CopyFromParent, CurrentTime,
-    DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose, ExposureMask, False,
-    FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess, GrayScale, InputHint,
-    IsViewable, KeyPress, KeySym, LASTEvent, LeaveWindowMask, LockMask, MapRequest,
-    MappingKeyboard, MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify,
-    NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc,
-    PSize, ParentRelative, PointerMotionMask, PropModeAppend, PropModeReplace, PropertyChangeMask,
-    PropertyDelete, PropertyNotify, ReplayPointer, RevertToPointerRoot, ShiftMask,
-    StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask, Success, Time, True,
-    UnmapNotify, Window, XAllowEvents, XChangeProperty, XChangeWindowAttributes, XCheckMaskEvent,
-    XClassHint, XConfigureEvent, XConfigureWindow, XCreateSimpleWindow, XCreateWindow,
-    XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDefineCursor,
-    XDeleteProperty, XDestroyWindow, XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent,
-    XEvent, XFree, XFreeModifiermap, XFreeStringList, XGetClassHint, XGetKeyboardMapping,
-    XGetModifierMapping, XGetTextProperty, XGetTransientForHint, XGetWMHints, XGetWMNormalHints,
-    XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer,
-    XGrabServer, XInternAtom, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised,
-    XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree,
-    XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetClassHint,
-    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
-    XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabPointer,
-    XUngrabServer, XUnmapWindow, XUrgencyHint, XWarpPointer, XWindowAttributes, XWindowChanges,
-    XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME,
-    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadMatch, BadWindow, Below, ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBackPixmap, CWBorderWidth, CWCursor, CWEventMask, CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify, ConfigureRequest, ControlMask, CopyFromParent, CurrentTime, DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose, ExposureMask, False, FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess, GrayScale, InputHint, IsViewable, KeyPress, KeySym, LASTEvent, LeaveWindowMask, LockMask, MapRequest, MappingKeyboard, MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify, NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, ParentRelative, PointerMotionMask, PropModeAppend, PropModeReplace, PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer, RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask, Success, Time, True, UnmapNotify, Window, XAllowEvents, XChangeProperty, XChangeWindowAttributes, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow, XConnectionNumber, XCreateSimpleWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDefineCursor, XDeleteProperty, XDestroyWindow, XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap, XFreeStringList, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetTextProperty, XGetTransientForHint, XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XInternAtom, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer, XUnmapWindow, XUrgencyHint, XWarpPointer, XWindowAttributes, XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR
 };
 
 use std::cmp::{max, min};
 
 use crate::config::{
-    self, borderpx, buttons, colors, fonts, keys, layouts, lockfullscreen, mfact, nmaster,
-    resizehints, rules, showbar, snap, tags, topbar,
+    self, borderpx, buttons, colors, dmenucmd, dmenumon, fonts, keys, layouts, lockfullscreen,
+    mfact, nmaster, resizehints, rules, showbar, snap, tags, topbar,
 };
 use crate::drw::{
     self, drw_create, drw_cur_create, drw_fontset_create, drw_fontset_getwidth, drw_map, drw_rect,
@@ -1495,7 +1468,36 @@ pub fn checkotherwm() {
     }
 }
 
-pub fn spawn(arg: *const Arg) {}
+pub fn spawn(arg: *const Arg) {
+    unsafe {
+        let mut sa: sigaction = zeroed();
+        static mut tmp: String = String::new();
+
+        if let Arg::v(ref v) = *arg {
+            if *v == *dmenucmd {
+                // (TODO) other way?
+                tmp = ((b'0' + (*selmon).num as u8) as char).to_string();
+                dmenumon = tmp.as_str();
+            }
+        }
+        if fork() == 0 {
+            if !dpy.is_null() {
+                close(XConnectionNumber(dpy));
+            }
+            setsid();
+
+            sigemptyset(&mut sa.sa_mask);
+            sa.sa_flags = 0;
+            sa.sa_sigaction = SIG_DFL;
+            sigaction(SIGCHLD, &sa, null_mut());
+
+            // (TODO)
+            // execvp(, argv);
+            eprintln!("jwm: ececvp failed");
+            exit(0);
+        }
+    }
+}
 pub fn updatebars() {
     unsafe {
         let mut wa: XSetWindowAttributes = zeroed();

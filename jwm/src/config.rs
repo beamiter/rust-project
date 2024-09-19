@@ -80,12 +80,12 @@ fn TAGKEYS(KEY: u32, TAG: i32) -> Vec<Key> {
 }
 
 pub const MODKEY: u32 = Mod1Mask;
-pub const dmenumon: &'static str = "0";
+pub static mut dmenumon: &'static str = "0";
 lazy_static! {
    pub  static ref dmenucmd: Vec<&'static str> = vec![
         "dmenu_run",
         "-m",
-        dmenumon,
+        unsafe {dmenumon},
         "-fn",
         dmenufont,
         "-nb",
