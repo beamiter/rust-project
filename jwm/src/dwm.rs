@@ -34,8 +34,8 @@ use x11::xlib::{
     XSelectInput, XSendEvent, XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus,
     XSetWMHints, XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XTextProperty,
     XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer, XUnmapWindow, XUrgencyHint,
-    XWindowAttributes, XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING,
-    XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XWarpPointer, XWindowAttributes, XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM,
+    XA_STRING, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -1907,7 +1907,7 @@ pub fn pop(c: *mut Client) {
 }
 pub fn propertynotify(e: *mut XEvent) {
     unsafe {
-        let mut c: *mut Client = null_mut();
+        let c: *mut Client;
         let ev = (*e).property;
         let mut trans: Window = 0;
         if ev.window == root && ev.atom == XA_WM_NAME {
@@ -2041,7 +2041,109 @@ pub fn movemouse(_arg: *const Arg) {
         }
     }
 }
-pub fn resizemouse(arg: *const Arg) {}
+pub fn resizemouse(_arg: *const Arg) {
+    unsafe {
+        let c = (*selmon).sel;
+        if c.is_null() {
+            return;
+        }
+        if (*c).isfullscreen {
+            // no support mmoving fullscreen windows by mouse
+            return;
+        }
+        restack(selmon);
+        let ocx = (*c).x;
+        let ocy = (*c).y;
+        if XGrabPointer(
+            dpy,
+            root,
+            False,
+            MOUSEMASK as u32,
+            GrabModeAsync,
+            GrabModeAsync,
+            0,
+            (*cursor[CUR::CurMove as usize]).cursor,
+            CurrentTime,
+        ) != GrabSuccess
+        {
+            return;
+        }
+        XWarpPointer(
+            dpy,
+            0,
+            (*c).win,
+            0,
+            0,
+            0,
+            0,
+            (*c).w + (*c).bw - 1,
+            (*c).h + (*c).bw - 1,
+        );
+        let mut lasttime: Time = 0;
+        let mut ev: XEvent = zeroed();
+        loop {
+            XMaskEvent(
+                dpy,
+                MOUSEMASK | ExposureMask | SubstructureRedirectMask,
+                &mut ev,
+            );
+            match ev.type_ {
+                ConfigureRequest | Expose | MapRequest => {
+                    if let Some(ha) = handler[ev.type_ as usize] {
+                        ha(&mut ev);
+                    }
+                }
+                MotionNotify => {
+                    if ev.motion.time - lasttime <= (1000 / 60) {
+                        continue;
+                    }
+                    lasttime = ev.motion.time;
+                    let nw = (ev.motion.x - ocx - 2 * (*c).bw + 1).max(1);
+                    let nh = (ev.motion.y - ocy - 2 * (*c).bw + 1).max(1);
+                    if (*(*c).mon).wx + nw >= (*selmon).wx
+                        && (*(*c).mon).wx + nw <= (*selmon).wx + (*selmon).ww
+                        && (*(*c).mon).wy + nh >= (*selmon).wy
+                        && (*(*c).mon).wy + nh <= (*selmon).wy + (*selmon).wh
+                    {
+                        if !(*c).isfloating
+                            && (*(*selmon).lt[(*selmon).sellt]).arrange.is_some()
+                            && ((nw - (*c).w).abs() > snap as i32
+                                || (nh - (*c).h).abs() > snap as i32)
+                        {
+                            togglefloating(null_mut());
+                        }
+                    }
+                    if (*(*selmon).lt[(*selmon).sellt]).arrange.is_none() || (*c).isfloating {
+                        resize(c, (*c).x, (*c).y, nw, nh, true);
+                    }
+                }
+                _ => {}
+            }
+            if ev.type_ == ButtonRelease {
+                break;
+            }
+        }
+        XWarpPointer(
+            dpy,
+            0,
+            (*c).win,
+            0,
+            0,
+            0,
+            0,
+            (*c).w + (*c).bw - 1,
+            (*c).h + (*c).bw - 1,
+        );
+        XUngrabPointer(dpy, CurrentTime);
+        while XCheckMaskEvent(dpy, EnterWindowMask, &mut ev) > 0 {}
+        let m = recttomon((*c).x, (*c).y, (*c).w, (*c).h);
+        if m != selmon {
+            sendmon(c, m);
+            selmon = m;
+            focus(null_mut());
+        }
+    }
+}
 pub fn updatenumlockmask() {
     unsafe {
         numlockmask = 0;
