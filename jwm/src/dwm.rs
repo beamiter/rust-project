@@ -10,33 +10,33 @@ use libc::{
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
-use std::ptr::{addr_of, addr_of_mut, null, null_mut};
+use std::ptr::{addr_of, addr_of_mut, null_mut};
 use std::{os::raw::c_long, usize};
 
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
     AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadMatch, BadWindow, Below,
     ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBackPixmap, CWBorderWidth,
-    CWEventMask, CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage,
-    ConfigureNotify, ConfigureRequest, ControlMask, CopyFromParent, CurrentTime, DestroyAll,
-    DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose, ExposureMask, False,
+    CWCursor, CWEventMask, CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth,
+    ClientMessage, ConfigureNotify, ConfigureRequest, ControlMask, CopyFromParent, CurrentTime,
+    DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose, ExposureMask, False,
     FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess, GrayScale, InputHint,
-    IsViewable, KeyPress, KeySym, LASTEvent, LockMask, MapRequest, MappingKeyboard, MappingNotify,
-    Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify, NoEventMask, NotifyInferior,
-    NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, ParentRelative,
-    PointerMotionMask, PropModeAppend, PropModeReplace, PropertyChangeMask, PropertyDelete,
-    PropertyNotify, ReplayPointer, RevertToPointerRoot, ShiftMask, StructureNotifyMask,
-    SubstructureRedirectMask, Success, Time, True, UnmapNotify, Window, XAllowEvents,
-    XChangeProperty, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
-    XCreateSimpleWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow, XDefaultScreen,
-    XDefaultVisual, XDefineCursor, XDeleteProperty, XDestroyWindow, XDisplayHeight,
-    XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap, XFreeStringList,
-    XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetTextProperty,
-    XGetTransientForHint, XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes,
-    XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XInternAtom,
-    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMapWindow, XMaskEvent,
-    XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow,
-    XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetClassHint,
+    IsViewable, KeyPress, KeySym, LASTEvent, LeaveWindowMask, LockMask, MapRequest,
+    MappingKeyboard, MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify,
+    NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc,
+    PSize, ParentRelative, PointerMotionMask, PropModeAppend, PropModeReplace, PropertyChangeMask,
+    PropertyDelete, PropertyNotify, ReplayPointer, RevertToPointerRoot, ShiftMask,
+    StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask, Success, Time, True,
+    UnmapNotify, Window, XAllowEvents, XChangeProperty, XChangeWindowAttributes, XCheckMaskEvent,
+    XClassHint, XConfigureEvent, XConfigureWindow, XCreateSimpleWindow, XCreateWindow,
+    XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDefineCursor,
+    XDeleteProperty, XDestroyWindow, XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent,
+    XEvent, XFree, XFreeModifiermap, XFreeStringList, XGetClassHint, XGetKeyboardMapping,
+    XGetModifierMapping, XGetTextProperty, XGetTransientForHint, XGetWMHints, XGetWMNormalHints,
+    XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer,
+    XGrabServer, XInternAtom, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised,
+    XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree,
+    XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetClassHint,
     XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
     XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabPointer,
     XUngrabServer, XUnmapWindow, XUrgencyHint, XWarpPointer, XWindowAttributes, XWindowChanges,
@@ -1877,8 +1877,7 @@ pub fn quit(_arg: *const Arg) {
 }
 pub fn setup() {
     unsafe {
-        let wa: XSetWindowAttributes = zeroed();
-        let mut utf8string: Atom = 0;
+        let mut wa: XSetWindowAttributes = zeroed();
         let mut sa: sigaction = zeroed();
         // do not transform children into zombies whien they terminate
         sigemptyset(&mut sa.sa_mask);
@@ -1904,7 +1903,7 @@ pub fn setup() {
         updategeom();
         // init atoms
         let mut c_string = CString::new("UTF8_STRING").expect("fail to convert");
-        utf8string = XInternAtom(dpy, c_string.as_ptr(), False);
+        let utf8string = XInternAtom(dpy, c_string.as_ptr(), False);
         c_string = CString::new("WM_PROTOCOLS").expect("fail to convert");
         wmatom[WM::WMProtocols as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
         c_string = CString::new("WM_DELETE_WINDOW").expect("fail to convert");
@@ -1947,6 +1946,63 @@ pub fn setup() {
         updatestatus();
         // supporting window fot NetWMCheck
         wmcheckwin = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
+        XChangeProperty(
+            dpy,
+            wmcheckwin,
+            netatom[NET::NetWMCheck as usize],
+            XA_WINDOW,
+            32,
+            PropModeReplace,
+            addr_of_mut!(wmcheckwin) as *const _,
+            1,
+        );
+        c_string = CString::new("jwm").unwrap();
+        XChangeProperty(
+            dpy,
+            wmcheckwin,
+            netatom[NET::NetWMName as usize],
+            utf8string,
+            8,
+            PropModeReplace,
+            c_string.as_ptr() as *const _,
+            1,
+        );
+        XChangeProperty(
+            dpy,
+            root,
+            netatom[NET::NetWMCheck as usize],
+            XA_WINDOW,
+            32,
+            PropModeReplace,
+            addr_of_mut!(wmcheckwin) as *const _,
+            1,
+        );
+        // EWMH support per view
+        XChangeProperty(
+            dpy,
+            root,
+            netatom[NET::NetSupported as usize],
+            XA_ATOM,
+            32,
+            PropModeReplace,
+            netatom.as_ptr() as *const _,
+            NET::NetLast as i32,
+        );
+        XDeleteProperty(dpy, root, netatom[NET::NetClientList as usize]);
+        // select events
+        wa.cursor = (*cursor[CUR::CurNormal as usize]).cursor;
+        wa.event_mask = SubstructureRedirectMask
+            | SubstructureNotifyMask
+            | ButtonReleaseMask
+            | PointerMotionMask
+            | EnterWindowMask
+            | LeaveWindowMask
+            | StructureNotifyMask
+            | PropertyChangeMask;
+        XChangeWindowAttributes(dpy, root, CWEventMask | CWCursor, &mut wa);
+        XSelectInput(dpy, root, wa.event_mask);
+        grabkeys();
+        focus(null_mut());
     }
 }
 pub fn killclient(_arg: *const Arg) {
