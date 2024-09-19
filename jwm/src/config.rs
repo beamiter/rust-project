@@ -20,7 +20,7 @@ pub const snap: u32 = 32;
 pub const showbar: bool = true;
 pub const topbar: bool = true;
 lazy_static! {
-    pub static ref fonts: Vec<&'static str> = vec!["monospace:size=10"];
+    pub static ref fonts: [&'static str; 1] = ["monospace:size=10"];
 }
 pub const dmenufont: &str = "monospace:size=10";
 pub const col_gray1: &str = "#222222";

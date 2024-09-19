@@ -3,10 +3,14 @@
 // #![allow(unused_mut)]
 
 use lazy_static::lazy_static;
+use libc::{
+    exit, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT, SA_RESTART, SIGCHLD,
+    SIG_IGN, WNOHANG,
+};
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
-use std::ptr::{addr_of, addr_of_mut, null_mut};
+use std::ptr::{addr_of, addr_of_mut, null, null_mut};
 use std::{os::raw::c_long, usize};
 
 use x11::keysym::XK_Num_Lock;
@@ -23,34 +27,37 @@ use x11::xlib::{
     PointerMotionMask, PropModeAppend, PropModeReplace, PropertyChangeMask, PropertyDelete,
     PropertyNotify, ReplayPointer, RevertToPointerRoot, ShiftMask, StructureNotifyMask,
     SubstructureRedirectMask, Success, Time, True, UnmapNotify, Window, XAllowEvents,
-    XChangeProperty, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow, XCreateWindow,
-    XDefaultDepth, XDefaultRootWindow, XDefaultVisual, XDefineCursor, XDeleteProperty,
-    XDestroyWindow, XDisplayKeycodes, XErrorEvent, XEvent, XFree, XFreeModifiermap,
-    XFreeStringList, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetTextProperty,
+    XChangeProperty, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
+    XCreateSimpleWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow, XDefaultScreen,
+    XDefaultVisual, XDefineCursor, XDeleteProperty, XDestroyWindow, XDisplayHeight,
+    XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap, XFreeStringList,
+    XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetTextProperty,
     XGetTransientForHint, XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes,
-    XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym,
-    XKeysymToKeycode, XKillClient, XMapRaised, XMapWindow, XMaskEvent, XMoveResizeWindow,
-    XMoveWindow, XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping,
-    XSelectInput, XSendEvent, XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus,
-    XSetWMHints, XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XTextProperty,
-    XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer, XUnmapWindow, XUrgencyHint,
-    XWarpPointer, XWindowAttributes, XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM,
-    XA_STRING, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XInternAtom,
+    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMapWindow, XMaskEvent,
+    XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow,
+    XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetClassHint,
+    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
+    XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabPointer,
+    XUngrabServer, XUnmapWindow, XUrgencyHint, XWarpPointer, XWindowAttributes, XWindowChanges,
+    XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME,
+    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
 
 use crate::config::{
-    self, borderpx, buttons, keys, layouts, lockfullscreen, mfact, nmaster, resizehints, rules,
-    showbar, snap, tags, topbar,
+    self, borderpx, buttons, colors, fonts, keys, layouts, lockfullscreen, mfact, nmaster,
+    resizehints, rules, showbar, snap, tags, topbar,
 };
 use crate::drw::{
-    drw_fontset_getwidth, drw_map, drw_rect, drw_resize, drw_setscheme, drw_text, Clr, Col, Cur,
-    Drw,
+    self, drw_create, drw_cur_create, drw_fontset_create, drw_fontset_getwidth, drw_map, drw_rect,
+    drw_resize, drw_scm_create, drw_setscheme, drw_text, Clr, Col, Cur, Drw,
 };
 use crate::xproto::{
-    IconicState, NormalState, WithdrawnState, X_ConfigureWindow, X_CopyArea, X_GrabButton,
-    X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8, X_SetInputFocus,
+    IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
+    X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8,
+    X_SetInputFocus,
 };
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
@@ -1868,7 +1875,80 @@ pub fn quit(_arg: *const Arg) {
         running = false;
     }
 }
-pub fn setup() {}
+pub fn setup() {
+    unsafe {
+        let wa: XSetWindowAttributes = zeroed();
+        let mut utf8string: Atom = 0;
+        let mut sa: sigaction = zeroed();
+        // do not transform children into zombies whien they terminate
+        sigemptyset(&mut sa.sa_mask);
+        sa.sa_flags = SA_NOCLDSTOP | SA_NOCLDWAIT | SA_RESTART;
+        sa.sa_sigaction = SIG_IGN;
+        sigaction(SIGCHLD, &sa, null_mut());
+
+        // clean up any zombies (inherited from .xinitrc etc) immediately
+        while waitpid(-1, null_mut(), WNOHANG) > 0 {}
+
+        // init screen
+        screen = XDefaultScreen(dpy);
+        sw = XDisplayWidth(dpy, screen);
+        sh = XDisplayHeight(dpy, screen);
+        root = XRootWindow(dpy, screen);
+        drw = drw_create(dpy, screen, root, sw as u32, sh as u32);
+        if drw_fontset_create(drw, &*fonts, fonts.len() as u64).is_null() {
+            eprintln!("no fonts could be loaded");
+            exit(0);
+        }
+        lrpad = (*(*drw).fonts).h as i32;
+        bh = (*(*drw).fonts).h as i32 + 2;
+        updategeom();
+        // init atoms
+        let mut c_string = CString::new("UTF8_STRING").expect("fail to convert");
+        utf8string = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("WM_PROTOCOLS").expect("fail to convert");
+        wmatom[WM::WMProtocols as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("WM_DELETE_WINDOW").expect("fail to convert");
+        wmatom[WM::WMDelete as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("WM_STATE").expect("fail to convert");
+        wmatom[WM::WMState as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("WM_TAKE_FOCUS").expect("fail to convert");
+        wmatom[WM::WMTakeFocus as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+
+        c_string = CString::new("_NET_ACTIVE_WINDOW").expect("fail to convert");
+        netatom[NET::NetActiveWindow as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("_NET_SUPPORTED").expect("fail to convert");
+        netatom[NET::NetSupported as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("_NET_WM_NAME").expect("fail to convert");
+        netatom[NET::NetWMName as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("_NET_WM_STATE").expect("fail to convert");
+        netatom[NET::NetWMState as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("_NET_SUPPORTING_WM_CHECK").expect("fail to convert");
+        netatom[NET::NetWMCheck as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("_NET_WM_STATE_FULLSCREEN").expect("fail to convert");
+        netatom[NET::NetWMFullscreen as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("_NET_WM_WINDOW_TYPE").expect("fail to convert");
+        netatom[NET::NetWMWindowType as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("_NET_WM_WINDOW_TYPE_DIALOG").expect("fail to convert");
+        netatom[NET::NetWMWindowTypeDialog as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("_NET_CLIENT_LIST").expect("fail to convert");
+        netatom[NET::NetClientList as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+
+        // init cursors
+        cursor[CUR::CurNormal as usize] = drw_cur_create(drw, XC_left_ptr as i32);
+        cursor[CUR::CurResize as usize] = drw_cur_create(drw, XC_sizing as i32);
+        cursor[CUR::CurMove as usize] = drw_cur_create(drw, XC_fleur as i32);
+        // init appearance
+        scheme = vec![vec![null_mut()]; colors.len()];
+        for i in 0..colors.len() {
+            scheme[i] = drw_scm_create(drw, colors[i], 3);
+        }
+        // init bars
+        updatebars();
+        updatestatus();
+        // supporting window fot NetWMCheck
+        wmcheckwin = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
+    }
+}
 pub fn killclient(_arg: *const Arg) {
     unsafe {
         if (*selmon).sel.is_null() {
