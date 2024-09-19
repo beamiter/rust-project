@@ -7,6 +7,7 @@ use lazy_static::lazy_static;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
+use std::process::Termination;
 use std::ptr::{addr_of, addr_of_mut, null_mut};
 use std::{os::raw::c_long, usize};
 
@@ -16,39 +17,41 @@ use x11::xlib::{
     ButtonPress, ButtonPressMask, ButtonReleaseMask, CWBackPixmap, CWBorderWidth, CWEventMask,
     CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify,
     ConfigureRequest, ControlMask, CopyFromParent, CurrentTime, DestroyAll, DestroyNotify, Display,
-    EnterNotify, EnterWindowMask, Expose, ExposureMask, False, FocusIn, GrabModeSync, GrayScale,
-    InputHint, IsViewable, KeyPress, KeySym, LASTEvent, LockMask, MapRequest, MappingKeyboard,
-    MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify, NoEventMask,
-    NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize,
-    ParentRelative, PointerMotionMask, PropModeAppend, PropModeReplace, PropertyNotify,
-    ReplayPointer, RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask,
-    Success, True, UnmapNotify, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint,
+    EnterNotify, EnterWindowMask, Expose, ExposureMask, False, FocusChangeMask, FocusIn,
+    GrabModeSync, GrayScale, InputHint, IsViewable, KeyPress, KeySym, LASTEvent, LockMask,
+    MapRequest, MappingKeyboard, MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask,
+    MotionNotify, NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize,
+    PMinSize, PResizeInc, PSize, ParentRelative, PointerMotionMask, PropModeAppend,
+    PropModeReplace, PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer,
+    RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureRedirectMask, Success, True,
+    UnmapNotify, WidthValue, Window, XAllowEvents, XChangeProperty, XCheckMaskEvent, XClassHint,
     XConfigureEvent, XConfigureWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow,
     XDefaultVisual, XDefineCursor, XDeleteProperty, XDestroyWindow, XDisplayKeycodes, XErrorEvent,
     XEvent, XFree, XFreeModifiermap, XFreeStringList, XGetClassHint, XGetKeyboardMapping,
     XGetModifierMapping, XGetTextProperty, XGetTransientForHint, XGetWMHints, XGetWMNormalHints,
     XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabServer,
-    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMoveResizeWindow, XMoveWindow,
-    XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput,
-    XSendEvent, XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints,
-    XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton,
-    XUngrabKey, XUngrabServer, XUnmapWindow, XUrgencyHint, XWindowAttributes, XWindowChanges,
-    XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_NAME,
+    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMapWindow, XMoveResizeWindow,
+    XMoveWindow, XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping,
+    XSelectInput, XSendEvent, XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus,
+    XSetWMHints, XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XTextProperty,
+    XUngrabButton, XUngrabKey, XUngrabServer, XUnmapWindow, XUrgencyHint, XWindowAttributes,
+    XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW,
+    XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
 
 use crate::config::{
-    self, buttons, keys, layouts, lockfullscreen, mfact, nmaster, resizehints, rules, showbar,
-    tags, topbar,
+    self, borderpx, buttons, keys, layouts, lockfullscreen, mfact, nmaster, resizehints, rules,
+    showbar, tags, topbar,
 };
 use crate::drw::{
     drw_fontset_getwidth, drw_map, drw_rect, drw_setscheme, drw_text, Clr, Cur, Drw, _Col,
     drw_resize,
 };
 use crate::xproto::{
-    IconicState, WithdrawnState, X_ConfigureWindow, X_CopyArea, X_GrabButton, X_GrabKey,
-    X_PolyFillRectangle, X_PolySegment, X_PolyText8, X_SetInputFocus,
+    IconicState, NormalState, WithdrawnState, X_ConfigureWindow, X_CopyArea, X_GrabButton,
+    X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8, X_SetInputFocus,
 };
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
@@ -1904,7 +1907,50 @@ pub fn pop(c: *mut Client) {
         arrange((*c).mon);
     }
 }
-pub fn propertynotify(e: *mut XEvent) {}
+pub fn propertynotify(e: *mut XEvent) {
+    unsafe {
+        let mut c: *mut Client = null_mut();
+        let ev = (*e).property;
+        let mut trans: Window = 0;
+        if ev.window == root && ev.atom == XA_WM_NAME {
+            updatestatus();
+        } else if ev.state == PropertyDelete {
+            // ignore
+            return;
+        } else if {
+            c = wintoclient(ev.window);
+            !c.is_null()
+        } {
+            match ev.atom {
+                XA_WM_TRANSIENT_FOR => {
+                    if !(*c).isfloating && XGetTransientForHint(dpy, (*c).win, &mut trans) > 0 && {
+                        (*c).isfloating = !wintoclient(trans).is_null();
+                        (*c).isfloating
+                    } {
+                        arrange((*c).mon);
+                    }
+                }
+                XA_WM_NORMAL_HINTS => {
+                    (*c).hintsvalid = false;
+                }
+                XA_WM_HINTS => {
+                    updatewmhints(c);
+                    drawbars();
+                }
+                _ => {}
+            }
+            if ev.atom == XA_WM_NAME || ev.atom == netatom[_NET::NetWMName as usize] {
+                upodatetitle(c);
+                if c == (*(*c).mon).sel {
+                    drawbar((*c).mon);
+                }
+            }
+            if ev.atom == netatom[_NET::NetWMWindowType as usize] {
+                updatewindowtype(c);
+            }
+        }
+    }
+}
 pub fn movemouse(arg: *const Arg) {}
 pub fn resizemouse(arg: *const Arg) {}
 pub fn updatenumlockmask() {
@@ -2184,7 +2230,92 @@ pub fn keypress(e: *mut XEvent) {
         }
     }
 }
-pub fn manage(w: Window, wa: *mut XWindowAttributes) {}
+pub fn manage(w: Window, wa: *mut XWindowAttributes) {
+    let mut c: Client = Client::new();
+    let mut t: *mut Client = null_mut();
+    let mut trans: Window = 0;
+    unsafe {
+        let mut wc: XWindowChanges = zeroed();
+        c.win = w;
+        c.x = (*wa).x;
+        c.oldx = (*wa).x;
+        c.y = (*wa).y;
+        c.oldy = (*wa).y;
+        c.w = (*wa).width;
+        c.oldw = (*wa).width;
+        c.h = (*wa).height;
+        c.oldh = (*wa).height;
+        c.oldbw = (*wa).border_width;
+
+        upodatetitle(&mut c);
+        if XGetTransientForHint(dpy, w, &mut trans) > 0 && {
+            t = wintoclient(trans);
+            !t.is_null()
+        } {
+            c.mon = (*t).mon;
+            c.tags0 = (*t).tags0;
+        } else {
+            c.mon = selmon;
+            applyrules(&mut c);
+        }
+
+        if c.x + WIDTH(&mut c) > (*c.mon).wx + (*c.mon).ww {
+            c.x = (*c.mon).wx + (*c.mon).ww - WIDTH(&mut c);
+        }
+        if c.y + HEIGHT(&mut c) > (*c.mon).wy + (*c.mon).wh {
+            c.y = (*c.mon).wy + (*c.mon).wh - HEIGHT(&mut c);
+        }
+        c.x = c.x.max((*c.mon).wx);
+        c.y = c.y.max((*c.mon).wy);
+        c.bw = borderpx as i32;
+
+        wc.border_width = c.bw;
+        XConfigureWindow(dpy, w, CWBorderWidth as u32, &mut wc);
+        XSetWindowBorder(
+            dpy,
+            w,
+            (*scheme[_SCHEME::SchemeNorm as usize][_Col::ColBorder as usize]).pixel,
+        );
+        configure(&mut c);
+        updatewindowtype(&mut c);
+        updatesizehints(&mut c);
+        updatewmhints(&mut c);
+        XSelectInput(
+            dpy,
+            w,
+            EnterWindowMask | FocusChangeMask | PropertyChangeMask | StructureNotifyMask,
+        );
+        grabbuttons(&mut c, false);
+        if !c.isfloating {
+            c.oldstate = trans != 0 || c.isfixed;
+            c.isfloating = c.oldstate;
+        }
+        if c.isfloating {
+            XRaiseWindow(dpy, c.win);
+        }
+        attach(&mut c);
+        attachstack(&mut c);
+        XChangeProperty(
+            dpy,
+            root,
+            netatom[_NET::NetClientList as usize],
+            XA_WINDOW,
+            32,
+            PropModeAppend,
+            c.win as *const _,
+            1,
+        );
+        XMoveResizeWindow(dpy, c.win, c.x + 2 * sw, c.y, c.w as u32, c.h as u32);
+        setclientstate(&mut c, NormalState as i64);
+        if c.mon == selmon {
+            unfocus((*selmon).sel, false);
+        }
+        (*c.mon).sel = &mut c;
+        arrange(c.mon);
+        XMapWindow(dpy, c.win);
+        focus(null_mut());
+    }
+}
 pub fn mappingnotify(e: *mut XEvent) {
     unsafe {
         let mut ev = (*e).mapping;
