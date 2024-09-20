@@ -157,7 +157,7 @@ pub enum WM {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-pub enum _CLICK {
+pub enum CLICK {
     ClkTagBar = 0,
     ClkLtSymbol = 1,
     ClkStatusText = 2,
@@ -1384,7 +1384,7 @@ pub fn buttonpress(e: *mut XEvent) {
     unsafe {
         let c: *mut Client;
         let ev = (*e).button;
-        let mut click = _CLICK::ClkRootWin;
+        let mut click = CLICK::ClkRootWin;
         // focus monitor if necessary.
         let m = wintomon(ev.window);
         if m != selmon {
@@ -1405,14 +1405,14 @@ pub fn buttonpress(e: *mut XEvent) {
                 }
             }
             if i < tags.len() {
-                click = _CLICK::ClkTagBar;
+                click = CLICK::ClkTagBar;
                 arg = Arg::ui(1 << i);
             } else if ev.x < (x + TEXTW(drw, (*selmon).ltsymbol)) as i32 {
-                click = _CLICK::ClkLtSymbol;
+                click = CLICK::ClkLtSymbol;
             } else if ev.x > (*selmon).ww - TEXTW(drw, stext) as i32 {
-                click = _CLICK::ClkStatusText;
+                click = CLICK::ClkStatusText;
             } else {
-                click = _CLICK::ClkWinTitle;
+                click = CLICK::ClkWinTitle;
             }
         } else if {
             c = wintoclient(ev.window);
@@ -1421,7 +1421,7 @@ pub fn buttonpress(e: *mut XEvent) {
             focus(c);
             restack(selmon);
             XAllowEvents(dpy, ReplayPointer, CurrentTime);
-            click = _CLICK::ClkClientWin;
+            click = CLICK::ClkClientWin;
         }
         for i in 0..buttons.len() {
             if click as u32 == buttons[i].click
@@ -1430,7 +1430,7 @@ pub fn buttonpress(e: *mut XEvent) {
                 && CLEANMASK(buttons[i].mask) == CLEANMASK(ev.state)
             {
                 buttons[i].func.unwrap()({
-                    if click as u32 == _CLICK::ClkTagBar as u32 && {
+                    if click as u32 == CLICK::ClkTagBar as u32 && {
                         if let Arg::ui(0) = arg {
                             true
                         } else {
@@ -1458,7 +1458,9 @@ pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
 // Or use the method above.
 pub fn xerrorstart(_: *mut Display, _: *mut XErrorEvent) -> i32 {
     eprintln!("jwm: another window manager is already running");
-    return -1;
+    unsafe {
+        exit(1);
+    }
 }
 // There's no way to check accesses to destroyed windows, thus those cases are ignored (especially
 // on UnmapNotify's). Other types of errors call xlibs default error handler, which may call exit.
@@ -1493,6 +1495,7 @@ pub fn checkotherwm() {
         XSync(dpy, False);
         // Attention what transmut does is great;
         XSetErrorHandler(Some(transmute(xerror as *const ())));
+        XSync(dpy, False);
     }
 }
 
@@ -2348,7 +2351,7 @@ pub fn grabbuttons(c: *mut Client, focused: bool) {
             );
         }
         for i in 0..buttons.len() {
-            if buttons[i].click == _CLICK::ClkClientWin as u32 {
+            if buttons[i].click == CLICK::ClkClientWin as u32 {
                 for j in 0..modifiers.len() {
                     XGrabButton(
                         dpy,

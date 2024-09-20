@@ -13,7 +13,7 @@ use x11::{
     xlib::{Button1, Button2, Button3, ControlMask, Mod1Mask, ShiftMask},
 };
 
-use crate::dwm::{self, Button, Key, Layout, Rule, _CLICK};
+use crate::dwm::{self, Button, Key, Layout, Rule, CLICK};
 
 pub const borderpx: u32 = 1;
 pub const snap: u32 = 32;
@@ -140,16 +140,16 @@ lazy_static! {
     };
 
     pub static ref buttons: Vec<Button> = vec![
-        Button::new(_CLICK::ClkLtSymbol as u32, 0, Button1, Some(dwm::setlayout), dwm::Arg::i(0)),
-        Button::new(_CLICK::ClkLtSymbol as u32, 0, Button3, Some(dwm::setlayout), dwm::Arg::lt(layouts[2].clone())),
-        Button::new(_CLICK::ClkWinTitle as u32, 0, Button2, Some(dwm::zoom), dwm::Arg::i(0)),
-        Button::new(_CLICK::ClkStatusText as u32, 0, Button2, Some(dwm::spawn), dwm::Arg::v(termcmd.clone())),
-        Button::new(_CLICK::ClkClientWin as u32, MODKEY, Button1, Some(dwm::movemouse), dwm::Arg::i(0)),
-        Button::new(_CLICK::ClkClientWin as u32, MODKEY, Button2, Some(dwm::togglefloating), dwm::Arg::i(0)),
-        Button::new(_CLICK::ClkClientWin as u32, MODKEY, Button2, Some(dwm::resizemouse), dwm::Arg::i(0)),
-        Button::new(_CLICK::ClkTagBar as u32, 0, Button1, Some(dwm::view), dwm::Arg::i(0)),
-        Button::new(_CLICK::ClkTagBar as u32, 0, Button3, Some(dwm::toggleview), dwm::Arg::i(0)),
-        Button::new(_CLICK::ClkTagBar as u32, MODKEY, Button1, Some(dwm::tag), dwm::Arg::i(0)),
-        Button::new(_CLICK::ClkTagBar as u32, MODKEY, Button3, Some(dwm::toggletag), dwm::Arg::i(0)),
+        Button::new(CLICK::ClkLtSymbol as u32, 0, Button1, Some(dwm::setlayout), dwm::Arg::i(0)),
+        Button::new(CLICK::ClkLtSymbol as u32, 0, Button3, Some(dwm::setlayout), dwm::Arg::lt(layouts[2].clone())),
+        Button::new(CLICK::ClkWinTitle as u32, 0, Button2, Some(dwm::zoom), dwm::Arg::i(0)),
+        Button::new(CLICK::ClkStatusText as u32, 0, Button2, Some(dwm::spawn), dwm::Arg::v(termcmd.clone())),
+        Button::new(CLICK::ClkClientWin as u32, MODKEY, Button1, Some(dwm::movemouse), dwm::Arg::i(0)),
+        Button::new(CLICK::ClkClientWin as u32, MODKEY, Button2, Some(dwm::togglefloating), dwm::Arg::i(0)),
+        Button::new(CLICK::ClkClientWin as u32, MODKEY, Button2, Some(dwm::resizemouse), dwm::Arg::i(0)),
+        Button::new(CLICK::ClkTagBar as u32, 0, Button1, Some(dwm::view), dwm::Arg::i(0)),
+        Button::new(CLICK::ClkTagBar as u32, 0, Button3, Some(dwm::toggleview), dwm::Arg::i(0)),
+        Button::new(CLICK::ClkTagBar as u32, MODKEY, Button1, Some(dwm::tag), dwm::Arg::i(0)),
+        Button::new(CLICK::ClkTagBar as u32, MODKEY, Button3, Some(dwm::toggletag), dwm::Arg::i(0)),
     ];
 }

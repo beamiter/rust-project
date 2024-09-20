@@ -20,7 +20,7 @@ fn main() {
             eprintln!("jwm: cannot open display");
             exit(1);
         }
-        checkotherwm();
+        // checkotherwm();
         setup();
         scan();
         run();
