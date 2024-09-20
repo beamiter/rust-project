@@ -85,8 +85,8 @@ pub static mut running: bool = false;
 pub static mut cursor: [*mut Cur; CUR::CurLast as usize] = [null_mut(); CUR::CurLast as usize];
 pub static mut scheme: Vec<Vec<*mut Clr>> = vec![];
 pub static mut dpy: *mut Display = null_mut();
-pub static mut drw: *mut Drw = null_mut();
-// pub static mut drw: Lazy<Box<Drw>> = Lazy::new(|| Box::new(Drw::new()));
+// pub static mut drw: *mut Drw = null_mut();
+pub static mut drw: Lazy<Box<Drw>> = Lazy::new(|| Box::new(Drw::new()));
 pub static mut mons: *mut Monitor = null_mut();
 pub static mut selmon: *mut Monitor = null_mut();
 pub static mut root: Window = 0;
@@ -674,7 +674,7 @@ pub fn configurenotify(e: *mut XEvent) {
             sw = ev.width;
             sh = ev.height;
             if updategeom() || dirty {
-                drw_resize(drw, sw as u32, bh as u32);
+                drw_resize(drw.as_mut(), sw as u32, bh as u32);
                 updatebars();
                 let mut m = mons;
                 while !m.is_null() {
@@ -993,11 +993,11 @@ pub fn drawbar(m: *mut Monitor) {
         // draw status first so it can be overdrawn by tags later.
         if m == selmon {
             // status is only drawn on selected monitor.
-            drw_setscheme(drw, scheme[SCHEME::SchemeNorm as usize].clone());
+            drw_setscheme(drw.as_mut(), scheme[SCHEME::SchemeNorm as usize].clone());
             // 2px right padding.
-            tw = TEXTW(drw, stext) as i32 - lrpad + 2;
+            tw = TEXTW(drw.as_mut(), stext) as i32 - lrpad + 2;
             drw_text(
-                drw,
+                drw.as_mut(),
                 (*m).ww - tw,
                 0,
                 tw.try_into().unwrap(),
@@ -1018,15 +1018,15 @@ pub fn drawbar(m: *mut Monitor) {
         let mut x = 0;
         let mut w;
         for i in 0..tags.len() {
-            w = TEXTW(drw, tags[i]) as i32;
+            w = TEXTW(drw.as_mut(), tags[i]) as i32;
             let idx = if (*m).tagset[(*m).seltags] & 1 << i > 0 {
                 SCHEME::SchemeSel as usize
             } else {
                 SCHEME::SchemeNorm as usize
             };
-            drw_setscheme(drw, scheme[idx].clone());
+            drw_setscheme(drw.as_mut(), scheme[idx].clone());
             drw_text(
-                drw,
+                drw.as_mut(),
                 x,
                 0,
                 w as u32,
@@ -1037,7 +1037,7 @@ pub fn drawbar(m: *mut Monitor) {
             );
             if (occ & 1 << i) > 0 {
                 drw_rect(
-                    drw,
+                    drw.as_mut(),
                     x + boxs as i32,
                     0,
                     boxs,
@@ -1050,10 +1050,10 @@ pub fn drawbar(m: *mut Monitor) {
                 x += w;
             }
         }
-        w = TEXTW(drw, (*m).ltsymbol) as i32;
-        drw_setscheme(drw, scheme[SCHEME::SchemeNorm as usize].clone());
+        w = TEXTW(drw.as_mut(), (*m).ltsymbol) as i32;
+        drw_setscheme(drw.as_mut(), scheme[SCHEME::SchemeNorm as usize].clone());
         x = drw_text(
-            drw,
+            drw.as_mut(),
             x,
             0,
             w.try_into().unwrap(),
@@ -1071,9 +1071,9 @@ pub fn drawbar(m: *mut Monitor) {
                 } else {
                     SCHEME::SchemeNorm
                 } as usize;
-                drw_setscheme(drw, scheme[idx].clone());
+                drw_setscheme(drw.as_mut(), scheme[idx].clone());
                 drw_text(
-                    drw,
+                    drw.as_mut(),
                     x,
                     0,
                     w.try_into().unwrap(),
@@ -1084,7 +1084,7 @@ pub fn drawbar(m: *mut Monitor) {
                 );
                 if (*(*m).sel).isfloating {
                     drw_rect(
-                        drw,
+                        drw.as_mut(),
                         x + boxs as i32,
                         boxs as i32,
                         boxw,
@@ -1094,9 +1094,9 @@ pub fn drawbar(m: *mut Monitor) {
                     );
                 }
             } else {
-                drw_setscheme(drw, scheme[SCHEME::SchemeNorm as usize].clone());
+                drw_setscheme(drw.as_mut(), scheme[SCHEME::SchemeNorm as usize].clone());
                 drw_rect(
-                    drw,
+                    drw.as_mut(),
                     x,
                     0,
                     w.try_into().unwrap(),
@@ -1107,7 +1107,7 @@ pub fn drawbar(m: *mut Monitor) {
             }
         }
         drw_map(
-            drw,
+            drw.as_mut(),
             (*m).barwin,
             0,
             0,
@@ -1393,7 +1393,7 @@ pub fn buttonpress(e: *mut XEvent) {
         }
         if ev.window == (*selmon).barwin {
             loop {
-                x += TEXTW(drw, tags[i]);
+                x += TEXTW(drw.as_mut(), tags[i]);
                 if ev.x >= x as i32
                     && ({
                         i += 1;
@@ -1406,9 +1406,9 @@ pub fn buttonpress(e: *mut XEvent) {
             if i < tags.len() {
                 click = CLICK::ClkTagBar;
                 arg = Arg::ui(1 << i);
-            } else if ev.x < (x + TEXTW(drw, (*selmon).ltsymbol)) as i32 {
+            } else if ev.x < (x + TEXTW(drw.as_mut(), (*selmon).ltsymbol)) as i32 {
                 click = CLICK::ClkLtSymbol;
-            } else if ev.x > (*selmon).ww - TEXTW(drw, stext) as i32 {
+            } else if ev.x > (*selmon).ww - TEXTW(drw.as_mut(), stext) as i32 {
                 click = CLICK::ClkStatusText;
             } else {
                 click = CLICK::ClkWinTitle;
@@ -1925,8 +1925,8 @@ pub fn setup() {
         sw = XDisplayWidth(dpy, screen);
         sh = XDisplayHeight(dpy, screen);
         root = XRootWindow(dpy, screen);
-        drw = drw_create(dpy, screen, root, sw as u32, sh as u32);
-        if drw_fontset_create(drw, &*fonts, fonts.len() as u64).is_null() {
+        *drw = drw_create(dpy, screen, root, sw as u32, sh as u32);
+        if drw_fontset_create(drw.as_mut(), &*fonts, fonts.len() as u64).is_null() {
             eprintln!("no fonts could be loaded");
             exit(0);
         }
@@ -1965,13 +1965,13 @@ pub fn setup() {
         netatom[NET::NetClientList as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
 
         // init cursors
-        cursor[CUR::CurNormal as usize] = drw_cur_create(drw, XC_left_ptr as i32);
-        cursor[CUR::CurResize as usize] = drw_cur_create(drw, XC_sizing as i32);
-        cursor[CUR::CurMove as usize] = drw_cur_create(drw, XC_fleur as i32);
+        cursor[CUR::CurNormal as usize] = drw_cur_create(drw.as_mut(), XC_left_ptr as i32);
+        cursor[CUR::CurResize as usize] = drw_cur_create(drw.as_mut(), XC_sizing as i32);
+        cursor[CUR::CurMove as usize] = drw_cur_create(drw.as_mut(), XC_fleur as i32);
         // init appearance
         scheme = vec![vec![null_mut()]; colors.len()];
         for i in 0..colors.len() {
-            scheme[i] = drw_scm_create(drw, colors[i], 3);
+            scheme[i] = drw_scm_create(drw.as_mut(), colors[i], 3);
         }
         // init bars
         updatebars();
