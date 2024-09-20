@@ -128,7 +128,7 @@ impl Drw {
 }
 
 // Drawable abstraction
-pub fn drw_create(dpy: *mut xlib::Display, screen: i32, root: Window, w: u32, h: u32) -> Box<Drw> {
+pub fn drw_create(dpy: *mut xlib::Display, screen: i32, root: Window, w: u32, h: u32) -> Drw {
     let mut drw = Drw::new();
 
     drw.dpy = dpy;
@@ -147,7 +147,7 @@ pub fn drw_create(dpy: *mut xlib::Display, screen: i32, root: Window, w: u32, h:
         drw.gc = XCreateGC(dpy, root, 0, null_mut());
         XSetLineAttributes(dpy, drw.gc, 1, LineSolid, CapButt, JoinMiter);
     }
-    return Box::new(drw);
+    return drw;
 }
 
 pub fn drw_resize(drw: *mut Drw, w: u32, h: u32) {
