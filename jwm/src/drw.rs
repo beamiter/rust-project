@@ -112,7 +112,7 @@ pub struct Drw {
     pub fonts: *mut Fnt,
 }
 impl Drw {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Drw {
             w: 0,
             h: 0,

@@ -2,11 +2,11 @@
 #![allow(non_snake_case)]
 // #![allow(unused_mut)]
 
-use lazy_static::lazy_static;
 use libc::{
     close, execvp, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
     SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
+use once_cell::sync::Lazy;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
@@ -47,11 +47,11 @@ use x11::xlib::{
 use std::cmp::{max, min};
 
 use crate::config::{
-    self, borderpx, buttons, colors, dmenucmd, dmenumon, fonts, keys, layouts, lockfullscreen,
-    mfact, nmaster, resizehints, rules, showbar, snap, tags, topbar,
+    borderpx, buttons, colors, dmenucmd, dmenumon, fonts, keys, layouts, lockfullscreen, mfact,
+    nmaster, resizehints, rules, showbar, snap, tags, topbar,
 };
 use crate::drw::{
-    self, drw_create, drw_cur_create, drw_fontset_create, drw_fontset_getwidth, drw_map, drw_rect,
+    drw_create, drw_cur_create, drw_fontset_create, drw_fontset_getwidth, drw_map, drw_rect,
     drw_resize, drw_scm_create, drw_setscheme, drw_text, Clr, Col, Cur, Drw,
 };
 use crate::xproto::{
@@ -86,6 +86,7 @@ pub static mut cursor: [*mut Cur; CUR::CurLast as usize] = [null_mut(); CUR::Cur
 pub static mut scheme: Vec<Vec<*mut Clr>> = vec![];
 pub static mut dpy: *mut Display = null_mut();
 pub static mut drw: *mut Drw = null_mut();
+// pub static mut drw: Lazy<Box<Drw>> = Lazy::new(|| Box::new(Drw::new()));
 pub static mut mons: *mut Monitor = null_mut();
 pub static mut selmon: *mut Monitor = null_mut();
 pub static mut root: Window = 0;
@@ -93,26 +94,24 @@ pub static mut wmcheckwin: Window = 0;
 pub static mut xerrorxlib: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int> =
     None;
 
-lazy_static! {
-    pub static ref handler: [Option<fn(*mut XEvent)>; LASTEvent as usize] = {
-        let mut res: [Option<fn(*mut XEvent)>; LASTEvent as usize] = [None; LASTEvent as usize];
-        res[ButtonPress as usize] = Some(buttonpress);
-        res[ClientMessage as usize] = Some(clientmessage);
-        res[ConfigureRequest as usize] = Some(configurerequest);
-        res[ConfigureNotify as usize] = Some(configurenotify);
-        res[DestroyNotify as usize] = Some(destroynotify);
-        res[EnterNotify as usize] = Some(enternotify);
-        res[Expose as usize] = Some(expose);
-        res[FocusIn as usize] = Some(focusin);
-        res[KeyPress as usize] = Some(keypress);
-        res[MappingNotify as usize] = Some(mappingnotify);
-        res[MapRequest as usize] = Some(maprequest);
-        res[MotionNotify as usize] = Some(motionnotify);
-        res[PropertyNotify as usize] = Some(propertynotify);
-        res[UnmapNotify as usize] = Some(unmapnotify);
-        res
-    };
-}
+pub static mut handler: Lazy<[Option<fn(*mut XEvent)>; LASTEvent as usize]> = Lazy::new(|| {
+    let mut res: [Option<fn(*mut XEvent)>; LASTEvent as usize] = [None; LASTEvent as usize];
+    res[ButtonPress as usize] = Some(buttonpress);
+    res[ClientMessage as usize] = Some(clientmessage);
+    res[ConfigureRequest as usize] = Some(configurerequest);
+    res[ConfigureNotify as usize] = Some(configurenotify);
+    res[DestroyNotify as usize] = Some(destroynotify);
+    res[EnterNotify as usize] = Some(enternotify);
+    res[Expose as usize] = Some(expose);
+    res[FocusIn as usize] = Some(focusin);
+    res[KeyPress as usize] = Some(keypress);
+    res[MappingNotify as usize] = Some(mappingnotify);
+    res[MapRequest as usize] = Some(maprequest);
+    res[MotionNotify as usize] = Some(motionnotify);
+    res[PropertyNotify as usize] = Some(propertynotify);
+    res[UnmapNotify as usize] = Some(unmapnotify);
+    return res;
+});
 
 #[repr(C)]
 #[derive(Debug, Clone)]
