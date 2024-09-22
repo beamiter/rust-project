@@ -7,10 +7,12 @@ use libc::{
     SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
 use once_cell::sync::Lazy;
+use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
 use std::ptr::{addr_of, addr_of_mut, null_mut};
+use std::rc::Rc;
 use std::{os::raw::c_long, usize};
 
 use x11::keysym::XK_Num_Lock;
@@ -86,8 +88,8 @@ pub static mut cursor: [*mut Cur; CUR::CurLast as usize] = [null_mut(); CUR::Cur
 pub static mut scheme: Vec<Vec<*mut Clr>> = vec![];
 pub static mut dpy: *mut Display = null_mut();
 pub static mut drw: Option<Box<Drw>> = None;
-pub static mut mons: *mut Monitor = null_mut();
-pub static mut selmon: *mut Monitor = null_mut();
+pub static mut mons: Option<Rc<RefCell<Monitor>>> = None;
+pub static mut selmon: Option<Rc<RefCell<Monitor>>> = None;
 pub static mut root: Window = 0;
 pub static mut wmcheckwin: Window = 0;
 pub static mut xerrorxlib: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int> =
@@ -303,7 +305,7 @@ impl Client {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Monitor {
     pub ltsymbol: &'static str,
     pub mfact0: f32,
@@ -898,7 +900,8 @@ pub fn configurerequest(e: *mut XEvent) {
         XSync(dpy, False);
     }
 }
-pub fn createmon() -> *mut Monitor {
+// (TODO)
+pub fn createmon() -> Monitor {
     let mut m: Monitor = Monitor::new();
     m.tagset[0] = 1;
     m.tagset[1] = 1;
@@ -909,7 +912,7 @@ pub fn createmon() -> *mut Monitor {
     // m.lt[0] = &mut layouts[0].clone();
     // m.lt[1] = &mut layouts[1 % layouts.len()].clone();
     m.ltsymbol = layouts[0].symbol;
-    return &mut m;
+    return m;
 }
 pub fn destroynotify(e: *mut XEvent) {
     unsafe {
@@ -2803,16 +2806,19 @@ pub fn unmapnotify(e: *mut XEvent) {
 pub fn updategeom() -> bool {
     let mut dirty: bool = false;
     unsafe {
-        if mons.is_null() {
-            mons = createmon();
+        if mons.is_none() {
+            mons = Some(Rc::new(RefCell::new(createmon())));
         }
-        if (*mons).mw != sw || (*mons).mh != sh {
+        // Be careful not to import borrow_mut!
+        // Rc/RefCell is cool
+        let mut mons_mut = mons.as_ref().unwrap().borrow_mut();
+        if mons_mut.mw != sw || mons_mut.mh != sh {
             dirty = true;
-            (*mons).mw = sw;
-            (*mons).ww = sw;
-            (*mons).mh = sh;
-            (*mons).wh = sh;
-            updatebarpos(mons);
+            mons_mut.mw = sw;
+            mons_mut.ww = sw;
+            mons_mut.mh = sh;
+            mons_mut.wh = sh;
+            updatebarpos(&mut *mons_mut);
         }
         if dirty {
             // Is it necessary?

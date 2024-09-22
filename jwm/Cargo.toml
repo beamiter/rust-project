@@ -2,7 +2,7 @@
 name = "jwm"
 version = "0.1.0"
 edition = "2021"
-build = "src/build.rs"
+# build = "src/build.rs"
 
 [dependencies]
 lazy_static = "1.5.0"
