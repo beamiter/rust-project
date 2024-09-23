@@ -1010,9 +1010,8 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
     unsafe {
         let boxs = (*(drw.as_mut().unwrap().as_ref()).fonts).h / 9;
         let boxw = (*(drw.as_mut().unwrap().as_ref()).fonts).h / 6 + 2;
-        let m_mut = m.as_ref().unwrap().borrow_mut();
 
-        if !m_mut.showbar0 {
+        if !m.as_ref().unwrap().borrow_mut().showbar0 {
             return;
         }
 
@@ -1027,7 +1026,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             tw = TEXTW(drw.as_mut().unwrap().as_mut(), stext) as i32 - lrpad + 2;
             drw_text(
                 drw.as_mut().unwrap().as_mut(),
-                m_mut.ww - tw,
+                m.as_ref().unwrap().borrow_mut().ww - tw,
                 0,
                 tw.try_into().unwrap(),
                 bh.try_into().unwrap(),
@@ -1036,7 +1035,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 0,
             );
         }
-        let mut c = m_mut.clients;
+        let mut c = m.as_ref().unwrap().borrow_mut().clients;
         while !c.is_null() {
             occ |= (*c).tags0;
             if (*c).isurgent {
@@ -1048,7 +1047,11 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         let mut w;
         for i in 0..tags.len() {
             w = TEXTW(drw.as_mut().unwrap().as_mut(), tags[i]) as i32;
-            let idx = if m_mut.tagset[m_mut.seltags] & 1 << i > 0 {
+            let idx = if m.as_ref().unwrap().borrow_mut().tagset
+                [m.as_ref().unwrap().borrow_mut().seltags]
+                & 1 << i
+                > 0
+            {
                 SCHEME::SchemeSel as usize
             } else {
                 SCHEME::SchemeNorm as usize
@@ -1080,7 +1083,10 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 x += w;
             }
         }
-        w = TEXTW(drw.as_mut().unwrap().as_mut(), m_mut.ltsymbol) as i32;
+        w = TEXTW(
+            drw.as_mut().unwrap().as_mut(),
+            m.as_ref().unwrap().borrow_mut().ltsymbol,
+        ) as i32;
         drw_setscheme(
             drw.as_mut().unwrap().as_mut(),
             scheme[SCHEME::SchemeNorm as usize].clone(),
@@ -1092,13 +1098,13 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             w.try_into().unwrap(),
             bh.try_into().unwrap(),
             (lrpad / 2).try_into().unwrap(),
-            m_mut.ltsymbol,
+            m.as_ref().unwrap().borrow_mut().ltsymbol,
             0,
         );
 
-        w = m_mut.ww - tw - x;
+        w = m.as_ref().unwrap().borrow_mut().ww - tw - x;
         if w > bh {
-            if !m_mut.sel.is_null() {
+            if !m.as_ref().unwrap().borrow_mut().sel.is_null() {
                 let idx = if m == selmon {
                     SCHEME::SchemeSel
                 } else {
@@ -1112,17 +1118,17 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     w.try_into().unwrap(),
                     bh.try_into().unwrap(),
                     (lrpad / 2).try_into().unwrap(),
-                    m_mut.ltsymbol,
+                    m.as_ref().unwrap().borrow_mut().ltsymbol,
                     0,
                 );
-                if (*(m_mut).sel).isfloating {
+                if (*(m.as_ref().unwrap().borrow_mut()).sel).isfloating {
                     drw_rect(
                         drw.as_mut().unwrap().as_mut(),
                         x + boxs as i32,
                         boxs as i32,
                         boxw,
                         boxw,
-                        (*(m_mut).sel).isfixed as i32,
+                        (*(m.as_ref().unwrap().borrow_mut()).sel).isfixed as i32,
                         0,
                     );
                 }
@@ -1144,10 +1150,10 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         }
         drw_map(
             drw.as_mut().unwrap().as_mut(),
-            m_mut.barwin,
+            m.as_ref().unwrap().borrow_mut().barwin,
             0,
             0,
-            m_mut.ww.try_into().unwrap(),
+            m.as_ref().unwrap().borrow_mut().ww.try_into().unwrap(),
             bh.try_into().unwrap(),
         );
     }
@@ -2882,17 +2888,18 @@ pub fn updategeom() -> bool {
         }
         // Be careful not to import borrow_mut!
         // Rc/RefCell is cool
-        let mut mons_mut = mons.as_ref().unwrap().borrow_mut();
-        if mons_mut.mw != sw || mons_mut.mh != sh {
-            dirty = true;
-            mons_mut.mw = sw;
-            mons_mut.ww = sw;
-            mons_mut.mh = sh;
-            mons_mut.wh = sh;
-            updatebarpos(&mut *mons_mut);
+        {
+            let mut mons_mut = mons.as_ref().unwrap().borrow_mut();
+            if mons_mut.mw != sw || mons_mut.mh != sh {
+                dirty = true;
+                mons_mut.mw = sw;
+                mons_mut.ww = sw;
+                mons_mut.mh = sh;
+                mons_mut.wh = sh;
+                updatebarpos(&mut *mons_mut);
+            }
         }
         if dirty {
-            // Is it necessary?
             selmon = mons.clone();
             selmon = wintomon(root);
         }

@@ -449,7 +449,7 @@ pub fn drw_text(
             w = if invert > 0 {
                 invert.try_into().unwrap()
             } else {
-                (!invert).try_into().unwrap()
+                (-invert).try_into().unwrap()
             };
         } else {
             let idx = if invert > 0 { Col::ColFg } else { Col::ColBg } as usize;
@@ -656,10 +656,7 @@ pub fn utf8validate(u: &mut u64, mut i: usize) -> usize {
         *u = UTF_INVALID;
     }
     i = 1;
-    loop {
-        if *u > UTFMAX[i] {
-            break;
-        }
+    while *u > UTFMAX[i] {
         i += 1;
     }
     return i;
