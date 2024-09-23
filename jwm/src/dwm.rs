@@ -328,7 +328,7 @@ pub struct Monitor {
     pub clients: *mut Client,
     pub sel: *mut Client,
     pub stack: *mut Client,
-    pub next: *mut Monitor,
+    pub next: Option<Rc<RefCell<Monitor>>>,
     pub barwin: Window,
     pub lt: [*mut Layout; 2],
 }
@@ -357,7 +357,7 @@ impl Monitor {
             clients: null_mut(),
             sel: null_mut(),
             stack: null_mut(),
-            next: null_mut(),
+            next: None,
             barwin: 0,
             lt: [null_mut(); 2],
         }
@@ -449,15 +449,17 @@ pub fn applyrules(c: *mut Client) {
             {
                 (*c).isfloating = r.isfloating;
                 (*c).tags0 |= r.tags0 as u32;
-                let mut m = mons;
+                let mut m = mons.clone();
+                // or here: let mut m = Some(mons.as_ref().unwrap().clone());
                 loop {
-                    if m.is_null() || (*m).num == r.monitor {
+                    if m.is_none() || m.as_ref().unwrap().borrow_mut().num == r.monitor {
                         break;
                     }
-                    m = (*m).next;
+                    let next = m.as_ref().unwrap().borrow_mut().next.clone();
+                    m = next;
                 }
-                if !m.is_null() {
-                    (*c).mon = m;
+                if m.is_some() {
+                    (*c).mon = &mut *m.as_ref().unwrap().borrow_mut();
                 }
             }
         }
@@ -624,20 +626,20 @@ pub fn applysizehints(
 }
 pub fn cleanup() {}
 pub fn cleanupmon(mon: *mut Monitor) {
-    unsafe {
-        if mon == mons {
-            mons = (*mons).next;
-        } else {
-            let mut m = mons;
-            while !m.is_null() && (*m).next != mon {
-                (*m).next = (*mon).next;
-                m = (*m).next;
-            }
-        }
-        XUnmapWindow(dpy, (*mon).barwin);
-        XDestroyWindow(dpy, (*mon).barwin);
-        XFree(mon as *mut _);
-    }
+    // unsafe {
+    //     if mon == mons {
+    //         mons = (*mons).next;
+    //     } else {
+    //         let mut m = mons;
+    //         while !m.is_null() && (*m).next != mon {
+    //             (*m).next = (*mon).next;
+    //             m = (*m).next;
+    //         }
+    //     }
+    //     XUnmapWindow(dpy, (*mon).barwin);
+    //     XDestroyWindow(dpy, (*mon).barwin);
+    //     XFree(mon as *mut _);
+    // }
 }
 pub fn clientmessage(e: *mut XEvent) {
     unsafe {
@@ -659,7 +661,7 @@ pub fn clientmessage(e: *mut XEvent) {
                 );
             }
         } else if cme.message_type == netatom[NET::NetActiveWindow as usize] {
-            if c != (*selmon).sel && !(*c).isurgent {
+            if c != selmon.as_ref().unwrap().borrow_mut().sel && !(*c).isurgent {
                 seturgent(c, true);
             }
         }
@@ -677,27 +679,34 @@ pub fn configurenotify(e: *mut XEvent) {
             if updategeom() || dirty {
                 drw_resize(drw.as_mut().unwrap().as_mut(), sw as u32, bh as u32);
                 updatebars();
-                let mut m = mons;
-                while !m.is_null() {
-                    let mut c = (*m).clients;
+                let mut m = mons.clone();
+                while m.is_some() {
+                    let mut c = m.as_ref().unwrap().borrow_mut().clients;
                     while !c.is_null() {
                         if (*c).isfullscreen {
-                            resizeclient(c, (*m).mx, (*m).my, (*m).mw, (*m).mh);
+                            resizeclient(
+                                c,
+                                m.as_ref().unwrap().borrow_mut().mx,
+                                m.as_ref().unwrap().borrow_mut().my,
+                                m.as_ref().unwrap().borrow_mut().mw,
+                                m.as_ref().unwrap().borrow_mut().mh,
+                            );
                         }
                         c = (*c).next;
                     }
                     XMoveResizeWindow(
                         dpy,
-                        (*m).barwin,
-                        (*m).wx,
-                        (*m).by,
-                        (*m).ww as u32,
+                        m.as_ref().unwrap().borrow_mut().barwin,
+                        m.as_ref().unwrap().borrow_mut().wx,
+                        m.as_ref().unwrap().borrow_mut().by,
+                        m.as_ref().unwrap().borrow_mut().ww as u32,
                         bh as u32,
                     );
-                    m = (*m).next;
+                    let next = m.as_ref().unwrap().borrow_mut().next.clone();
+                    m = next;
                 }
                 focus(null_mut());
-                arrange(null_mut());
+                arrange(None);
             }
         }
     }
@@ -845,11 +854,14 @@ pub fn showhide(c: *mut Client) {
 pub fn configurerequest(e: *mut XEvent) {
     unsafe {
         let ev = (*e).configure_request;
-        let mut c = wintoclient(ev.window);
+        let c = wintoclient(ev.window);
         if !c.is_null() {
+            let selmon_borrow = selmon.as_ref().unwrap().borrow_mut();
             if ev.value_mask & CWBorderWidth as u64 > 0 {
                 (*c).bw = ev.border_width;
-            } else if (*c).isfloating || (*((*selmon).lt[(*selmon).sellt])).arrange.is_none() {
+            } else if (*c).isfloating
+                || (*(selmon_borrow.lt[selmon_borrow.sellt])).arrange.is_none()
+            {
                 let m = (*c).mon;
                 if ev.value_mask & CWX as u64 > 0 {
                     (*c).oldx = (*c).x;
@@ -957,29 +969,31 @@ pub fn detachstack(c: *mut Client) {
         }
     }
 }
-pub fn dirtomon(dir: i32) -> *mut Monitor {
+pub fn dirtomon(dir: i32) -> Option<Rc<RefCell<Monitor>>> {
     unsafe {
-        let mut m: *mut Monitor;
+        let mut m: Option<Rc<RefCell<Monitor>>>;
         if dir > 0 {
-            m = (*selmon).next;
-            if !m.is_null() {
-                m = mons;
+            m = selmon.as_ref().unwrap().borrow_mut().next.clone();
+            if m.is_some() {
+                m = mons.clone();
             }
         } else if selmon == mons {
-            m = mons;
-            while !m.is_null() && !(*m).next.is_null() {
-                m = (*m).next;
+            m = mons.clone();
+            while m.is_some() && m.as_ref().unwrap().borrow_mut().next.is_some() {
+                let next = m.as_ref().unwrap().borrow_mut().next.clone();
+                m = next;
             }
         } else {
-            m = mons;
-            while !m.is_null() && (*m).next != selmon {
-                m = (*m).next;
+            m = mons.clone();
+            while m.is_some() && m.as_ref().unwrap().borrow_mut().next != selmon {
+                let next = m.as_ref().unwrap().borrow_mut().next.clone();
+                m = next;
             }
         }
         m
     }
 }
-pub fn drawbar(m: *mut Monitor) {
+pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
     let mut tw: i32 = 0;
     let mut _i: u32 = 0;
     let mut occ: u32 = 0;
@@ -987,8 +1001,9 @@ pub fn drawbar(m: *mut Monitor) {
     unsafe {
         let boxs = (*(drw.as_mut().unwrap().as_ref()).fonts).h / 9;
         let boxw = (*(drw.as_mut().unwrap().as_ref()).fonts).h / 6 + 2;
+        let m_mut = m.as_ref().unwrap().borrow_mut();
 
-        if !(*m).showbar0 {
+        if !m_mut.showbar0 {
             return;
         }
 
@@ -1003,7 +1018,7 @@ pub fn drawbar(m: *mut Monitor) {
             tw = TEXTW(drw.as_mut().unwrap().as_mut(), stext) as i32 - lrpad + 2;
             drw_text(
                 drw.as_mut().unwrap().as_mut(),
-                (*m).ww - tw,
+                m_mut.ww - tw,
                 0,
                 tw.try_into().unwrap(),
                 bh.try_into().unwrap(),
@@ -1012,7 +1027,7 @@ pub fn drawbar(m: *mut Monitor) {
                 0,
             );
         }
-        let mut c = (*m).clients;
+        let mut c = m_mut.clients;
         while !c.is_null() {
             occ |= (*c).tags0;
             if (*c).isurgent {
@@ -1024,7 +1039,7 @@ pub fn drawbar(m: *mut Monitor) {
         let mut w;
         for i in 0..tags.len() {
             w = TEXTW(drw.as_mut().unwrap().as_mut(), tags[i]) as i32;
-            let idx = if (*m).tagset[(*m).seltags] & 1 << i > 0 {
+            let idx = if m_mut.tagset[m_mut.seltags] & 1 << i > 0 {
                 SCHEME::SchemeSel as usize
             } else {
                 SCHEME::SchemeNorm as usize
@@ -1041,6 +1056,7 @@ pub fn drawbar(m: *mut Monitor) {
                 (urg & 1 << i) as i32,
             );
             if (occ & 1 << i) > 0 {
+                let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
                 drw_rect(
                     drw.as_mut().unwrap().as_mut(),
                     x + boxs as i32,
@@ -1048,14 +1064,14 @@ pub fn drawbar(m: *mut Monitor) {
                     boxs,
                     boxw,
                     ((m == selmon)
-                        && !(*selmon).sel.is_null()
-                        && ((*(*selmon).sel).tags0 & 1 << i > 0)) as i32,
+                        && !selmon_mut.sel.is_null()
+                        && ((*selmon_mut.sel).tags0 & 1 << i > 0)) as i32,
                     (urg & 1 << i).try_into().unwrap(),
                 );
                 x += w;
             }
         }
-        w = TEXTW(drw.as_mut().unwrap().as_mut(), (*m).ltsymbol) as i32;
+        w = TEXTW(drw.as_mut().unwrap().as_mut(), m_mut.ltsymbol) as i32;
         drw_setscheme(
             drw.as_mut().unwrap().as_mut(),
             scheme[SCHEME::SchemeNorm as usize].clone(),
@@ -1067,13 +1083,13 @@ pub fn drawbar(m: *mut Monitor) {
             w.try_into().unwrap(),
             bh.try_into().unwrap(),
             (lrpad / 2).try_into().unwrap(),
-            (*m).ltsymbol,
+            m_mut.ltsymbol,
             0,
         );
 
-        w = (*m).ww - tw - x;
+        w = m_mut.ww - tw - x;
         if w > bh {
-            if !(*m).sel.is_null() {
+            if !m_mut.sel.is_null() {
                 let idx = if m == selmon {
                     SCHEME::SchemeSel
                 } else {
@@ -1087,17 +1103,17 @@ pub fn drawbar(m: *mut Monitor) {
                     w.try_into().unwrap(),
                     bh.try_into().unwrap(),
                     (lrpad / 2).try_into().unwrap(),
-                    (*m).ltsymbol,
+                    m_mut.ltsymbol,
                     0,
                 );
-                if (*(*m).sel).isfloating {
+                if (*(m_mut).sel).isfloating {
                     drw_rect(
                         drw.as_mut().unwrap().as_mut(),
                         x + boxs as i32,
                         boxs as i32,
                         boxw,
                         boxw,
-                        (*(*m).sel).isfixed as i32,
+                        (*(m_mut).sel).isfixed as i32,
                         0,
                     );
                 }
@@ -1119,30 +1135,31 @@ pub fn drawbar(m: *mut Monitor) {
         }
         drw_map(
             drw.as_mut().unwrap().as_mut(),
-            (*m).barwin,
+            m_mut.barwin,
             0,
             0,
-            (*m).ww.try_into().unwrap(),
+            m_mut.ww.try_into().unwrap(),
             bh.try_into().unwrap(),
         );
     }
 }
 
-pub fn restack(m: *mut Monitor) {
-    drawbar(m);
+pub fn restack(m: Option<Rc<RefCell<Monitor>>>) {
+    drawbar(m.clone());
 
     unsafe {
         let mut wc: XWindowChanges = zeroed();
-        if (*m).sel.is_null() {
+        let m_mut = m.as_ref().unwrap().borrow_mut();
+        if m_mut.sel.is_null() {
             return;
         }
-        if (*(*m).sel).isfloating || (*(*m).lt[(*m).sellt]).arrange.is_none() {
-            XRaiseWindow(dpy, (*(*m).sel).win);
+        if (*m_mut.sel).isfloating || (*m_mut.lt[m_mut.sellt]).arrange.is_none() {
+            XRaiseWindow(dpy, (*m_mut.sel).win);
         }
-        if (*(*m).lt[(*m).sellt]).arrange.is_some() {
+        if (*m_mut.lt[m_mut.sellt]).arrange.is_some() {
             wc.stack_mode = Below;
-            wc.sibling = (*m).barwin;
-            let mut c = (*m).stack;
+            wc.sibling = m_mut.barwin;
+            let mut c = m_mut.stack;
             while !c.is_null() {
                 if !(*c).isfloating && ISVISIBLE(c) > 0 {
                     XConfigureWindow(dpy, (*c).win, (CWSibling | CWStackMode) as u32, &mut wc);
@@ -1215,28 +1232,30 @@ pub fn scan() {
     }
 }
 
-pub fn arrange(mut m: *mut Monitor) {
+pub fn arrange(mut m: Option<Rc<RefCell<Monitor>>>) {
     unsafe {
-        if !m.is_null() {
-            showhide((*m).stack);
+        if m.is_some() {
+            showhide(m.as_ref().unwrap().borrow_mut().stack);
         } else {
-            m = mons;
+            m = mons.clone();
             loop {
-                if m.is_null() {
+                if m.is_none() {
                     break;
                 }
-                showhide((*m).stack);
-                m = (*m).next;
+                showhide(m.as_ref().unwrap().borrow_mut().stack);
+                let next = m.as_ref().unwrap().borrow_mut().next.clone();
+                m = next;
             }
         }
-        if !m.is_null() {
-            arrangemon(m);
+        if m.is_some() {
+            arrangemon(&mut *m.as_ref().unwrap().borrow_mut());
             restack(m);
         } else {
-            m = mons;
-            while !m.is_null() {
-                arrangemon((*m).next);
-                m = (*m).next;
+            m = mons.clone();
+            while m.is_some() {
+                let next = m.as_ref().unwrap().borrow_mut().next.clone();
+                arrangemon(&mut *next.as_ref().unwrap().borrow_mut());
+                m = next;
             }
         }
     }
@@ -1330,19 +1349,20 @@ pub fn getstate(w: Window) -> i64 {
     return result;
 }
 
-pub fn recttomon(x: i32, y: i32, w: i32, h: i32) -> *mut Monitor {
+pub fn recttomon(x: i32, y: i32, w: i32, h: i32) -> Option<Rc<RefCell<Monitor>>> {
     let mut area: i32 = 0;
 
     unsafe {
-        let mut r: *mut Monitor = selmon;
-        let mut m = mons;
-        while !m.is_null() {
-            let a = INTERSECT(x, y, w, h, m);
+        let mut r = selmon.clone();
+        let mut m = mons.clone();
+        while m.is_some() {
+            let a = INTERSECT(x, y, w, h, &mut *m.as_ref().unwrap().borrow_mut());
             if a > area {
                 area = a;
-                r = m;
+                r = m.clone();
             }
-            m = (*m).next;
+            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            m = next;
         }
         return r;
     }
@@ -1350,22 +1370,23 @@ pub fn recttomon(x: i32, y: i32, w: i32, h: i32) -> *mut Monitor {
 
 pub fn wintoclient(w: Window) -> *mut Client {
     unsafe {
-        let mut m = mons;
-        while !m.is_null() {
-            let mut c = (*m).clients;
+        let mut m = mons.clone();
+        while m.is_some() {
+            let mut c = m.as_ref().unwrap().borrow_mut().clients;
             while !c.is_null() {
                 if (*c).win == w {
                     return c;
                 }
                 c = (*c).next;
             }
-            m = (*m).next;
+            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            m = next;
         }
     }
     null_mut()
 }
 
-pub fn wintomon(w: Window) -> *mut Monitor {
+pub fn wintomon(w: Window) -> Option<Rc<RefCell<Monitor>>> {
     let mut x: i32 = 0;
     let mut y: i32 = 0;
     unsafe {
@@ -1373,11 +1394,11 @@ pub fn wintomon(w: Window) -> *mut Monitor {
             return recttomon(x, y, 1, 1);
         }
         let mut m = mons;
-        while !m.is_null() {
-            if w == (*m).barwin {
+        while m.is_some() {
+            if w == m.as_ref().unwrap().borrow_mut().barwin {
                 return m;
             }
-            m = (*m).next;
+            m = m.as_ref().unwrap().borrow_mut().next;
         }
         let c = wintoclient(w);
         if !c.is_null() {
@@ -1398,11 +1419,12 @@ pub fn buttonpress(e: *mut XEvent) {
         // focus monitor if necessary.
         let m = wintomon(ev.window);
         if m != selmon {
-            unfocus((*selmon).sel, true);
+            unfocus(selmon.as_ref().unwrap().borrow_mut().sel, true);
             selmon = m;
             focus(null_mut());
         }
-        if ev.window == (*selmon).barwin {
+        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        if ev.window == selmon_mut.barwin {
             loop {
                 x += TEXTW(drw.as_mut().unwrap().as_mut(), tags[i]);
                 if ev.x >= x as i32
@@ -1417,10 +1439,10 @@ pub fn buttonpress(e: *mut XEvent) {
             if i < tags.len() {
                 click = CLICK::ClkTagBar;
                 arg = Arg::ui(1 << i);
-            } else if ev.x < (x + TEXTW(drw.as_mut().unwrap().as_mut(), (*selmon).ltsymbol)) as i32
+            } else if ev.x < (x + TEXTW(drw.as_mut().unwrap().as_mut(), selmon_mut.ltsymbol)) as i32
             {
                 click = CLICK::ClkLtSymbol;
-            } else if ev.x > (*selmon).ww - TEXTW(drw.as_mut().unwrap().as_mut(), stext) as i32 {
+            } else if ev.x > selmon_mut.ww - TEXTW(drw.as_mut().unwrap().as_mut(), stext) as i32 {
                 click = CLICK::ClkStatusText;
             } else {
                 click = CLICK::ClkWinTitle;
@@ -1430,7 +1452,7 @@ pub fn buttonpress(e: *mut XEvent) {
             !c.is_null()
         } {
             focus(c);
-            restack(selmon);
+            restack(selmon.clone());
             XAllowEvents(dpy, ReplayPointer, CurrentTime);
             click = CLICK::ClkClientWin;
         }
@@ -1518,7 +1540,8 @@ pub fn spawn(arg: *const Arg) {
         if let Arg::v(ref v) = *arg {
             if *v == *dmenucmd {
                 // (TODO) other way?
-                tmp = ((b'0' + (*selmon).num as u8) as char).to_string();
+                tmp =
+                    ((b'0' + selmon.as_ref().unwrap().borrow_mut().num as u8) as char).to_string();
                 dmenumon = tmp.as_str();
             }
         }
@@ -1550,17 +1573,18 @@ pub fn updatebars() {
         let c_string = CString::new("jwm").expect("fail to convert");
         ch.res_name = c_string.as_ptr() as *mut _;
         ch.res_class = c_string.as_ptr() as *mut _;
-        let mut m = mons;
-        while !m.is_null() {
-            if (*m).barwin > 0 {
+        let mut m = mons.clone();
+        while m.is_some() {
+            let mut m_mut = m.as_ref().unwrap().borrow_mut().clone();
+            if m_mut.barwin > 0 {
                 continue;
             }
-            (*m).barwin = XCreateWindow(
+            m_mut.barwin = XCreateWindow(
                 dpy,
                 root,
-                (*m).wx,
-                (*m).by,
-                (*m).ww.try_into().unwrap(),
+                m_mut.wx,
+                m_mut.by,
+                m_mut.ww.try_into().unwrap(),
                 bh.try_into().unwrap(),
                 0,
                 XDefaultDepth(dpy, screen),
@@ -1569,10 +1593,10 @@ pub fn updatebars() {
                 CWOverrideRedirect | CWBackPixmap | CWEventMask,
                 &mut wa,
             );
-            XDefineCursor(dpy, (*m).barwin, (*cursor[CUR::CurNormal as usize]).cursor);
-            XMapRaised(dpy, (*m).barwin);
-            XSetClassHint(dpy, (*m).barwin, &mut ch);
-            m = (*m).next;
+            XDefineCursor(dpy, m_mut.barwin, (*cursor[CUR::CurNormal as usize]).cursor);
+            XMapRaised(dpy, m_mut.barwin);
+            XSetClassHint(dpy, m_mut.barwin, &mut ch);
+            m = m_mut.next;
         }
     }
 }
@@ -1595,9 +1619,9 @@ pub fn updatebarpos(m: *mut Monitor) {
 pub fn updateclientlist() {
     unsafe {
         XDeleteProperty(dpy, root, netatom[NET::NetClientList as usize]);
-        let mut m = mons;
-        while !m.is_null() {
-            let mut c = (*m).clients;
+        let mut m = mons.clone();
+        while m.is_some() {
+            let mut c = m.as_ref().unwrap().borrow_mut().clients;
             while !c.is_null() {
                 XChangeProperty(
                     dpy,
@@ -1611,7 +1635,8 @@ pub fn updateclientlist() {
                 );
                 c = (*c).next;
             }
-            m = (*m).next;
+            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            m = next;
         }
     }
 }
@@ -1627,7 +1652,7 @@ pub fn tile(m: *mut Monitor) {
             return;
         }
 
-        let mut mw: u32 = 0;
+        let mw: u32;
         if n > (*m).nmaster0 as u32 {
             mw = if (*m).nmaster0 > 0 {
                 ((*m).ww as f32 * (*m).mfact0) as u32
@@ -1640,7 +1665,7 @@ pub fn tile(m: *mut Monitor) {
         let mut my: u32 = 0;
         let mut ty: u32 = 0;
         let mut i: u32 = 0;
-        let mut h: u32 = 0;
+        let mut h: u32;
         c = nexttiled((*m).clients);
         while !c.is_null() {
             if i < (*m).nmaster0 as u32 {
@@ -1678,53 +1703,57 @@ pub fn tile(m: *mut Monitor) {
 }
 pub fn togglebar(_arg: *const Arg) {
     unsafe {
-        (*selmon).showbar0 = !(*selmon).showbar0;
-        updatebarpos(selmon);
+        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        selmon_mut.showbar0 = !selmon_mut.showbar0;
+        updatebarpos(&mut *selmon_mut);
         XMoveResizeWindow(
             dpy,
-            (*selmon).barwin,
-            (*selmon).wx,
-            (*selmon).by,
-            (*selmon).ww as u32,
+            selmon_mut.barwin,
+            selmon_mut.wx,
+            selmon_mut.by,
+            selmon_mut.ww as u32,
             bh as u32,
         );
-        arrange(selmon);
+        arrange(selmon.clone());
     }
 }
 pub fn togglefloating(_arg: *const Arg) {
     unsafe {
-        if (*selmon).sel.is_null() {
+        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        if selmon_mut.sel.is_null() {
             return;
         }
         // no support for fullscreen windows.
-        if (*(*selmon).sel).isfullscreen {
+        if (*selmon_mut.sel).isfullscreen {
             return;
         }
-        (*(*selmon).sel).isfloating = !(*(*selmon).sel).isfloating || (*(*selmon).sel).isfixed;
-        if (*(*selmon).sel).isfloating {
+        (*selmon_mut.sel).isfloating = !(*selmon_mut.sel).isfloating || (*selmon_mut.sel).isfixed;
+        if (*selmon_mut.sel).isfloating {
             resize(
-                (*selmon).sel,
-                (*(*selmon).sel).x,
-                (*(*selmon).sel).y,
-                (*(*selmon).sel).w,
-                (*(*selmon).sel).h,
+                selmon_mut.sel,
+                (*selmon_mut.sel).x,
+                (*selmon_mut.sel).y,
+                (*selmon_mut.sel).w,
+                (*selmon_mut.sel).h,
                 false,
             );
         }
-        arrange(selmon);
+        arrange(selmon.clone());
     }
 }
 pub fn focusin(e: *mut XEvent) {
     unsafe {
+        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         let ev = (*e).focus_change;
-        if !(*selmon).sel.is_null() && ev.window != (*(*selmon).sel).win {
-            setfocus((*selmon).sel);
+        if !selmon_mut.sel.is_null() && ev.window != (*selmon_mut.sel).win {
+            setfocus(selmon_mut.sel);
         }
     }
 }
 pub fn focusmon(arg: *const Arg) {
     unsafe {
-        if (*mons).next.is_null() {
+        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        if mons.as_ref().unwrap().borrow_mut().next.is_none() {
             return;
         }
         if let Arg::i(i) = *arg {
@@ -1732,7 +1761,7 @@ pub fn focusmon(arg: *const Arg) {
             if m == selmon {
                 return;
             }
-            unfocus((*selmon).sel, false);
+            unfocus(selmon_mut.sel, false);
             selmon = m;
             focus(null_mut());
         }
@@ -1741,45 +1770,48 @@ pub fn focusmon(arg: *const Arg) {
 pub fn tag(arg: *const Arg) {
     unsafe {
         if let Arg::ui(ui) = *arg {
-            if !(*selmon).sel.is_null() && (ui & TAGMASK()) > 0 {
-                (*(*selmon).sel).tags0 = ui & TAGMASK();
+            let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+            if !selmon_mut.sel.is_null() && (ui & TAGMASK()) > 0 {
+                (*selmon_mut.sel).tags0 = ui & TAGMASK();
                 focus(null_mut());
-                arrange(selmon);
+                arrange(selmon.clone());
             }
         }
     }
 }
 pub fn tagmon(arg: *const Arg) {
     unsafe {
-        if (*selmon).sel.is_null() || (*mons).next.is_null() {
+        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        if selmon_mut.sel.is_null() || (*mons).next.is_null() {
             return;
         }
         if let Arg::i(i) = *arg {
-            sendmon((*selmon).sel, dirtomon(i));
+            sendmon(selmon_mut.sel, dirtomon(i));
         }
     }
 }
 pub fn focusstack(arg: *const Arg) {
     unsafe {
-        if (*selmon).sel.is_null() || ((*(*selmon).sel).isfullscreen && lockfullscreen) {
+        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        if selmon_mut.sel.is_null() || ((*selmon_mut.sel).isfullscreen && lockfullscreen) {
             return;
         }
         let mut c: *mut Client = null_mut();
         let i = if let Arg::i(i) = *arg { i } else { -1 };
         if i > 0 {
-            c = (*(*selmon).sel).next;
+            c = (*selmon_mut.sel).next;
             while !c.is_null() && ISVISIBLE(c) <= 0 {
                 c = (*c).next;
             }
             if c.is_null() {
-                c = (*selmon).clients;
+                c = selmon_mut.clients;
                 while !c.is_null() && ISVISIBLE(c) <= 0 {
                     c = (*c).next;
                 }
             }
         } else {
-            let mut cl = (*selmon).clients;
-            while cl != (*selmon).sel {
+            let mut cl = selmon_mut.clients;
+            while cl != selmon_mut.sel {
                 cl = (*cl).next;
                 if ISVISIBLE(cl) > 0 {
                     c = cl;
@@ -1796,43 +1828,44 @@ pub fn focusstack(arg: *const Arg) {
         }
         if !c.is_null() {
             focus(c);
-            restack(selmon);
+            restack(selmon.clone());
         }
     }
 }
 pub fn incnmaster(arg: *const Arg) {
     unsafe {
         if let Arg::i(i) = *arg {
-            (*selmon).nmaster0 = 0.max((*selmon).nmaster0 + i);
+            let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+            selmon_mut.nmaster0 = 0.max(selmon_mut.nmaster0 + i);
         }
     }
 }
 pub fn setmfact(arg: *const Arg) {
     unsafe {
-        if arg.is_null() || (*(*selmon).lt[(*selmon).sellt]).arrange.is_none() {
+        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        if arg.is_null() || (*selmon_mut.lt[selmon_mut.sellt]).arrange.is_none() {
             return;
         }
-    }
-    unsafe {
         if let Arg::f(f) = *arg {
             let f = if f < 1.0 {
-                f + (*selmon).mfact0
+                f + selmon_mut.mfact0
             } else {
                 f - 1.0
             };
             if f < 0.05 || f > 0.95 {
                 return;
             }
-            (*selmon).mfact0 = f;
+            selmon_mut.mfact0 = f;
         }
-        arrange(selmon);
+        arrange(selmon.clone());
     }
 }
 pub fn setlayout(arg: *const Arg) {
     unsafe {
+        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         if arg.is_null()
             || if let Arg::lt(ref lt) = *arg {
-                if *lt != *(*selmon).lt[(*selmon).sellt] {
+                if *lt != *selmon_mut.lt[selmon_mut.sellt] {
                     true
                 } else {
                     false
@@ -1841,29 +1874,31 @@ pub fn setlayout(arg: *const Arg) {
                 true
             }
         {
-            (*selmon).sellt ^= 1;
+            selmon_mut.sellt ^= 1;
         }
         if !arg.is_null() {
             if let Arg::lt(ref lt) = *arg {
-                (*selmon).lt[(*selmon).sellt] = lt as *const _ as *mut _;
+                let index = selmon_mut.sellt;
+                selmon_mut.lt[index] = lt as *const _ as *mut _;
             }
         }
-        (*selmon).ltsymbol = (*(*selmon).lt[(*selmon).sellt]).symbol;
-        if !(*selmon).sel.is_null() {
-            arrange(selmon);
+        selmon_mut.ltsymbol = (*selmon_mut.lt[selmon_mut.sellt]).symbol;
+        if !selmon_mut.sel.is_null() {
+            arrange(selmon.clone());
         } else {
-            drawbar(selmon);
+            drawbar(selmon.clone());
         }
     }
 }
 pub fn zoom(_arg: *const Arg) {
     unsafe {
-        let mut c = (*selmon).sel;
+        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        let mut c = selmon_mut.sel;
 
-        if (*(*selmon).lt[(*selmon).sellt]).arrange.is_none() || c.is_null() || (*c).isfloating {
+        if (*selmon_mut.lt[selmon_mut.sellt]).arrange.is_none() || c.is_null() || (*c).isfloating {
             return;
         }
-        if c == nexttiled((*selmon).clients) && {
+        if c == nexttiled(selmon_mut.clients) && {
             c = nexttiled((*c).next);
             c.is_null()
         } {
@@ -1875,41 +1910,46 @@ pub fn zoom(_arg: *const Arg) {
 pub fn view(arg: *const Arg) {
     unsafe {
         let ui = if let Arg::ui(ui) = *arg { ui } else { 0 };
-        if (ui & TAGMASK()) == (*selmon).tagset[(*selmon).seltags] {
+        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        if (ui & TAGMASK()) == selmon_mut.tagset[selmon_mut.seltags] {
             return;
         }
         // toggle sel tagset.
-        (*selmon).seltags ^= 1;
+        selmon_mut.seltags ^= 1;
         if ui & TAGMASK() > 0 {
-            (*selmon).tagset[(*selmon).seltags] = ui & TAGMASK();
+            let index = selmon_mut.seltags;
+            selmon_mut.tagset[index] = ui & TAGMASK();
         }
         focus(null_mut());
-        arrange(selmon);
+        arrange(selmon.clone());
     }
 }
 pub fn toggleview(arg: *const Arg) {
     unsafe {
         if let Arg::ui(ui) = *arg {
-            let newtagset = (*selmon).tagset[(*selmon).seltags] ^ (ui & TAGMASK());
+            let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+            let newtagset = selmon_mut.tagset[selmon_mut.seltags] ^ (ui & TAGMASK());
             if newtagset > 0 {
-                (*selmon).tagset[(*selmon).seltags] = newtagset;
+                let index = selmon_mut.seltags;
+                selmon_mut.tagset[index] = newtagset;
                 focus(null_mut());
-                arrange(selmon);
+                arrange(selmon.clone());
             }
         }
     }
 }
 pub fn toggletag(arg: *const Arg) {
     unsafe {
-        if (*selmon).sel.is_null() {
+        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        if selmon_mut.sel.is_null() {
             return;
         }
         if let Arg::ui(ui) = *arg {
-            let newtags = (*(*selmon).sel).tags0 ^ (ui & TAGMASK());
+            let newtags = (*selmon_mut.sel).tags0 ^ (ui & TAGMASK());
             if newtags > 0 {
-                (*(*selmon).sel).tags0 = newtags;
+                (*selmon_mut.sel).tags0 = newtags;
                 focus(null_mut());
-                arrange(selmon);
+                arrange(selmon.clone());
             }
         }
     }
@@ -2057,14 +2097,15 @@ pub fn setup() {
 }
 pub fn killclient(_arg: *const Arg) {
     unsafe {
-        if (*selmon).sel.is_null() {
+        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        if selmon_mut.sel.is_null() {
             return;
         }
-        if !sendevent((*selmon).sel, wmatom[WM::WMDelete as usize]) {
+        if !sendevent(selmon_mut.sel, wmatom[WM::WMDelete as usize]) {
             XGrabServer(dpy);
             XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
             XSetCloseDownMode(dpy, DestroyAll);
-            XKillClient(dpy, (*(*selmon).sel).win);
+            XKillClient(dpy, (*selmon_mut.sel).win);
             XSync(dpy, False);
             XSetErrorHandler(Some(transmute(xerror as *const ())));
             XUngrabServer(dpy);
@@ -2137,7 +2178,8 @@ pub fn propertynotify(e: *mut XEvent) {
 }
 pub fn movemouse(_arg: *const Arg) {
     unsafe {
-        let c = (*selmon).sel;
+        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        let c = selmon_mut.sel;
         if c.is_null() {
             return;
         }
@@ -2189,26 +2231,28 @@ pub fn movemouse(_arg: *const Arg) {
 
                     let mut nx = ocx + ev.motion.x - x;
                     let mut ny = ocy + ev.motion.y - y;
-                    if ((*selmon).wx - nx).abs() < snap as i32 {
-                        nx = (*selmon).wx;
-                    } else if (((*selmon).wx + (*selmon).ww) - (nx + WIDTH(c))).abs() < snap as i32
+                    if (selmon_mut.wx - nx).abs() < snap as i32 {
+                        nx = selmon_mut.wx;
+                    } else if ((selmon_mut.wx + selmon_mut.ww) - (nx + WIDTH(c))).abs()
+                        < snap as i32
                     {
-                        nx = (*selmon).wx + (*selmon).ww - WIDTH(c);
+                        nx = selmon_mut.wx + selmon_mut.ww - WIDTH(c);
                     }
-                    if ((*selmon).wy - ny).abs() < snap as i32 {
-                        ny = (*selmon).wy;
-                    } else if (((*selmon).wy + (*selmon).wh) - (ny + HEIGHT(c))).abs() < snap as i32
+                    if (selmon_mut.wy - ny).abs() < snap as i32 {
+                        ny = selmon_mut.wy;
+                    } else if ((selmon_mut.wy + selmon_mut.wh) - (ny + HEIGHT(c))).abs()
+                        < snap as i32
                     {
-                        ny = (*selmon).wy + (*selmon).wh - HEIGHT(c);
+                        ny = selmon_mut.wy + selmon_mut.wh - HEIGHT(c);
                     }
                     if !(*c).isfloating
-                        && (*(*selmon).lt[(*selmon).sellt]).arrange.is_some()
+                        && (*selmon_mut.lt[selmon_mut.sellt]).arrange.is_some()
                         && (nx - (*c).x).abs() > snap as i32
                         || (ny - (*c).y).abs() > snap as i32
                     {
                         togglefloating(null_mut());
                     }
-                    if (*(*selmon).lt[(*selmon).sellt]).arrange.is_none() || (*c).isfloating {
+                    if (*selmon_mut.lt[selmon_mut.sellt]).arrange.is_none() || (*c).isfloating {
                         resize(c, nx, ny, (*c).w, (*c).h, true);
                     }
                 }
@@ -2229,7 +2273,8 @@ pub fn movemouse(_arg: *const Arg) {
 }
 pub fn resizemouse(_arg: *const Arg) {
     unsafe {
-        let c = (*selmon).sel;
+        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+        let c = selmon_mut.sel;
         if c.is_null() {
             return;
         }
@@ -2286,20 +2331,20 @@ pub fn resizemouse(_arg: *const Arg) {
                     lasttime = ev.motion.time;
                     let nw = (ev.motion.x - ocx - 2 * (*c).bw + 1).max(1);
                     let nh = (ev.motion.y - ocy - 2 * (*c).bw + 1).max(1);
-                    if (*(*c).mon).wx + nw >= (*selmon).wx
-                        && (*(*c).mon).wx + nw <= (*selmon).wx + (*selmon).ww
-                        && (*(*c).mon).wy + nh >= (*selmon).wy
-                        && (*(*c).mon).wy + nh <= (*selmon).wy + (*selmon).wh
+                    if (*(*c).mon).wx + nw >= selmon_mut.wx
+                        && (*(*c).mon).wx + nw <= selmon_mut.wx + selmon_mut.ww
+                        && (*(*c).mon).wy + nh >= selmon_mut.wy
+                        && (*(*c).mon).wy + nh <= selmon_mut.wy + selmon_mut.wh
                     {
                         if !(*c).isfloating
-                            && (*(*selmon).lt[(*selmon).sellt]).arrange.is_some()
+                            && (*selmon_mut.lt[selmon_mut.sellt]).arrange.is_some()
                             && ((nw - (*c).w).abs() > snap as i32
                                 || (nh - (*c).h).abs() > snap as i32)
                         {
                             togglefloating(null_mut());
                         }
                     }
-                    if (*(*selmon).lt[(*selmon).sellt]).arrange.is_none() || (*c).isfloating {
+                    if (*selmon_mut.lt[selmon_mut.sellt]).arrange.is_none() || (*c).isfloating {
                         resize(c, (*c).x, (*c).y, nw, nh, true);
                     }
                 }
@@ -2472,10 +2517,11 @@ pub fn setfocus(c: *mut Client) {
 }
 pub fn drawbars() {
     unsafe {
-        let mut m = mons;
-        while !m.is_null() {
-            drawbar(m);
-            m = (*m).next;
+        let mut m = mons.clone();
+        while m.is_some() {
+            drawbar(m.clone());
+            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            m = next;
         }
     }
 }
@@ -2491,10 +2537,11 @@ pub fn enternotify(e: *mut XEvent) {
         } else {
             wintomon(ev.window)
         };
+        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         if m != selmon {
-            unfocus((*selmon).sel, true);
+            unfocus(selmon_mut.sel, true);
             selmon = m;
-        } else if c.is_null() || c == (*selmon).sel {
+        } else if c.is_null() || c == selmon_mut.sel {
             return;
         }
         focus(c);
@@ -2505,21 +2552,22 @@ pub fn expose(e: *mut XEvent) {
         let ev = (*e).expose;
         let m = wintomon(ev.window);
 
-        if ev.count == 0 && !m.is_null() {
+        if ev.count == 0 && m.is_some() {
             drawbar(m);
         }
     }
 }
 pub fn focus(mut c: *mut Client) {
     unsafe {
+        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         if c.is_null() || ISVISIBLE(c) <= 0 {
-            c = (*selmon).stack;
+            c = selmon_mut.stack;
             while !c.is_null() && ISVISIBLE(c) <= 0 {
                 c = (*c).snext;
             }
         }
-        if !(*selmon).sel.is_null() && (*selmon).sel != c {
-            unfocus((*selmon).sel, false);
+        if !selmon_mut.sel.is_null() && selmon_mut.sel != c {
+            unfocus(selmon_mut.sel, false);
         }
         if !c.is_null() {
             if (*c).mon != selmon {
@@ -2541,7 +2589,7 @@ pub fn focus(mut c: *mut Client) {
             XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
             XDeleteProperty(dpy, root, netatom[NET::NetActiveWindow as usize]);
         }
-        (*selmon).sel = c;
+        selmon_mut.sel = c;
         drawbars();
     }
 }
@@ -2576,7 +2624,7 @@ pub fn sendmon(c: *mut Client, m: *mut Monitor) {
         attach(c);
         attachstack(c);
         focus(null_mut());
-        arrange(null_mut());
+        arrange(None);
     }
 }
 pub fn setclientstate(c: *mut Client, state: i64) {
@@ -2684,8 +2732,9 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
         );
         XMoveResizeWindow(dpy, c.win, c.x + 2 * sw, c.y, c.w as u32, c.h as u32);
         setclientstate(&mut c, NormalState as i64);
+        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         if c.mon == selmon {
-            unfocus((*selmon).sel, false);
+            unfocus(selmon_mut.sel, false);
         }
         (*c.mon).sel = &mut c;
         arrange(c.mon);
@@ -2748,15 +2797,16 @@ pub fn monocle(m: *mut Monitor) {
 pub fn motionnotify(e: *mut XEvent) {
     unsafe {
         // This idea is cool
-        static mut motionmon: *mut Monitor = null_mut();
+        static mut motionmon: Option<Rc<RefCell<Monitor>>> = None;
         let ev = (*e).motion;
         if ev.window != root {
             return;
         }
         let m = recttomon(ev.x_root, ev.y_root, 1, 1);
-        if m != motionmon && !motionmon.is_null() {
-            unfocus((*selmon).sel, true);
-            selmon = m;
+        if m != motionmon && motionmon.is_some() {
+            let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+            unfocus(selmon_mut.sel, true);
+            selmon = m.clone();
             focus(null_mut());
         }
         motionmon = m;
@@ -2822,7 +2872,7 @@ pub fn updategeom() -> bool {
         }
         if dirty {
             // Is it necessary?
-            selmon = mons;
+            selmon = mons.clone();
             selmon = wintomon(root);
         }
     }
@@ -2861,7 +2911,7 @@ pub fn updatestatus() {
         if !gettextprop(root, XA_WM_NAME, *addr_of!(stext), stext.len()) {
             stext = "jwm-1.0";
         }
-        drawbar(selmon);
+        drawbar(selmon.clone());
     }
 }
 pub fn updatewindowtype(c: *mut Client) {
@@ -2880,8 +2930,9 @@ pub fn updatewindowtype(c: *mut Client) {
 pub fn updatewmhints(c: *mut Client) {
     unsafe {
         let wmh = XGetWMHints(dpy, (*c).win);
+        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         if !wmh.is_null() {
-            if c == (*selmon).sel && ((*wmh).flags & XUrgencyHint) > 0 {
+            if c == selmon_mut.sel && ((*wmh).flags & XUrgencyHint) > 0 {
                 (*wmh).flags &= !XUrgencyHint;
                 XSetWMHints(dpy, (*c).win, wmh);
             } else {
