@@ -453,10 +453,11 @@ pub fn drw_text(
         }
 
         if !render {
+            // (todo): buggy
             w = if invert > 0 {
-                invert.try_into().unwrap()
+                invert as u32
             } else {
-                (-invert).try_into().unwrap()
+                (!invert) as u32
             };
         } else {
             let idx = if invert > 0 { Col::ColFg } else { Col::ColBg } as usize;
@@ -474,7 +475,7 @@ pub fn drw_text(
 
         let mut usedfont = (*drw).fonts.clone();
         let ellipsis_width = ELLIPSIS_WIDTH.load(Ordering::SeqCst);
-        if ellipsis_width > 0 && render {
+        if ellipsis_width <= 0 && render {
             ELLIPSIS_WIDTH.store(drw_fontset_getwidth(drw, "..."), Ordering::SeqCst);
         }
         loop {
@@ -551,9 +552,9 @@ pub fn drw_text(
                         cstring.as_ptr() as *const _,
                         utf8strlen,
                     );
-                    x += ew as i32;
-                    w -= ew;
                 }
+                x += ew as i32;
+                w -= ew;
             }
 
             if render && overflow > 0 {
