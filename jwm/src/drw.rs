@@ -427,7 +427,7 @@ pub fn drw_text(
     let mut tmpw: u32 = 0;
     let mut ellipsis_w: u32 = 0;
 
-    let d: *mut XftDraw = null_mut();
+    let mut d: *mut XftDraw = null_mut();
 
     let mut curfont: Option<Rc<RefCell<Fnt>>>;
     let mut nextfont: Option<Rc<RefCell<Fnt>>>;
@@ -463,7 +463,7 @@ pub fn drw_text(
             let idx = if invert > 0 { Col::ColFg } else { Col::ColBg } as usize;
             XSetForeground((*drw).dpy, (*drw).gc, (*(*drw).scheme[idx]).pixel);
             XFillRectangle((*drw).dpy, (*drw).drawable, (*drw).gc, x, y, w, h);
-            XftDrawCreate(
+            d = XftDrawCreate(
                 (*drw).dpy,
                 (*drw).drawable,
                 XDefaultVisual((*drw).dpy, (*drw).screen),
@@ -538,9 +538,11 @@ pub fn drw_text(
 
             if utf8strlen > 0 {
                 if render {
-                    let ty = y
-                        + ((h - usedfont.as_ref().unwrap().borrow_mut().h) / 2) as i32
-                        + (*(usedfont.as_ref().unwrap().borrow_mut()).xfont).ascent;
+                    let mut ty = y;
+                    {
+                        ty += ((h - usedfont.as_ref().unwrap().borrow_mut().h) / 2) as i32;
+                        ty += (*usedfont.as_ref().unwrap().borrow_mut().xfont).ascent;
+                    }
                     let idx = if invert > 0 { Col::ColBg } else { Col::ColFg } as usize;
                     let cstring = CString::new(utf8str).expect("fail to create");
                     XftDrawStringUtf8(

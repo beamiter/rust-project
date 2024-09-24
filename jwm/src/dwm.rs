@@ -1052,11 +1052,8 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         let mut w;
         for i in 0..tags.len() {
             w = TEXTW(drw.as_mut().unwrap().as_mut(), tags[i]) as i32;
-            let idx = if m.as_ref().unwrap().borrow_mut().tagset
-                [m.as_ref().unwrap().borrow_mut().seltags]
-                & 1 << i
-                > 0
-            {
+            let st = m.as_ref().unwrap().borrow_mut().seltags;
+            let idx = if m.as_ref().unwrap().borrow_mut().tagset[st] & 1 << i > 0 {
                 SCHEME::SchemeSel as usize
             } else {
                 SCHEME::SchemeNorm as usize
@@ -1153,12 +1150,14 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 );
             }
         }
+        let win = m.as_ref().unwrap().borrow_mut().barwin;
+        let mw: u32 = m.as_ref().unwrap().borrow_mut().ww as u32;
         drw_map(
             drw.as_mut().unwrap().as_mut(),
-            m.as_ref().unwrap().borrow_mut().barwin,
+            win,
             0,
             0,
-            m.as_ref().unwrap().borrow_mut().ww.try_into().unwrap(),
+            mw,
             bh.try_into().unwrap(),
         );
     }
