@@ -1008,8 +1008,13 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
     let mut occ: u32 = 0;
     let mut urg: u32 = 0;
     unsafe {
-        let boxs = (*(drw.as_mut().unwrap().as_ref()).fonts).h / 9;
-        let boxw = (*(drw.as_mut().unwrap().as_ref()).fonts).h / 6 + 2;
+        let boxs;
+        let boxw;
+        {
+            let h = drw.as_ref().unwrap().fonts.as_ref().unwrap().borrow_mut().h;
+            boxs = h / 9;
+            boxw = h / 6 + 2;
+        }
 
         if !m.as_ref().unwrap().borrow_mut().showbar0 {
             return;
@@ -1996,13 +2001,16 @@ pub fn setup() {
         drw = Some(Box::new(drw_create(
             dpy, screen, root, sw as u32, sh as u32,
         )));
-        if drw_fontset_create(drw.as_mut().unwrap().as_mut(), &*fonts, fonts.len() as u64).is_null()
+        if drw_fontset_create(drw.as_mut().unwrap().as_mut(), &*fonts, fonts.len() as u64).is_none()
         {
             eprintln!("no fonts could be loaded");
             exit(0);
         }
-        lrpad = (*(drw.as_mut().unwrap().as_ref()).fonts).h as i32;
-        bh = (*(drw.as_mut().unwrap().as_ref()).fonts).h as i32 + 2;
+        {
+            let h = drw.as_ref().unwrap().fonts.as_ref().unwrap().borrow_mut().h as i32;
+            lrpad = h;
+            bh = h + 2;
+        }
         updategeom();
         // init atoms
         let mut c_string = CString::new("UTF8_STRING").expect("fail to convert");
