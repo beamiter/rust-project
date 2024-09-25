@@ -14,7 +14,6 @@ mod xproto;
 
 fn main() {
     let log_file = std::fs::File::create("/home/mm/jwm.log").unwrap();
-    // SimpleLogger::init(LevelFilter::Info, Config::default()).unwrap();
     WriteLogger::init(LevelFilter::Info, Config::default(), log_file).unwrap();
     unsafe {
         let c_string = CString::new("").unwrap();
