@@ -259,6 +259,7 @@ pub fn drw_fontset_create(
     }
 }
 
+#[allow(dead_code)]
 pub fn drw_fontset_free(font: Option<Rc<RefCell<Fnt>>>) {
     if font.is_some() {
         drw_fontset_free(font.as_ref().unwrap().borrow_mut().next.clone());
@@ -275,6 +276,7 @@ pub fn drw_fontset_getwidth(drw: *mut Drw, text: &str) -> u32 {
     }
 }
 
+#[allow(dead_code)]
 pub fn drw_fontset_getwidth_clamp(drw: *mut Drw, text: &str, n: u32) -> u32 {
     let mut tmp: u32 = 0;
     unsafe {
@@ -372,6 +374,7 @@ pub fn drw_cur_free(drw: *mut Drw, cursor: *mut Cur) {
 }
 
 // Drawing context manipulation.
+#[allow(dead_code)]
 pub fn drw_setfontset(drw: *mut Drw, set: Option<Rc<RefCell<Fnt>>>) {
     if !drw.is_null() {
         unsafe {

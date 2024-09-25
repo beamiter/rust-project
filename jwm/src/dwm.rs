@@ -54,9 +54,8 @@ use crate::config::{
     nmaster, resizehints, rules, showbar, snap, tags, topbar,
 };
 use crate::drw::{
-    self, drw_create, drw_cur_create, drw_cur_free, drw_fontset_create, drw_fontset_getwidth,
-    drw_free, drw_map, drw_rect, drw_resize, drw_scm_create, drw_setscheme, drw_text, Clr, Col,
-    Cur, Drw,
+    drw_create, drw_cur_create, drw_cur_free, drw_fontset_create, drw_fontset_getwidth, drw_free,
+    drw_map, drw_rect, drw_resize, drw_scm_create, drw_setscheme, drw_text, Clr, Col, Cur, Drw,
 };
 use crate::xproto::{
     IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
@@ -72,7 +71,6 @@ fn CLEANMASK(mask: u32) -> u32 {
         & (ShiftMask | ControlMask | Mod1Mask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask);
 }
 pub const MOUSEMASK: c_long = BUTTONMASK | PointerMotionMask;
-pub const VERSION: &str = "6.5";
 
 // Variables.
 pub const broken: &str = "broken";
@@ -169,13 +167,13 @@ pub enum CLICK {
     ClkLast = 6,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Arg {
-    i(i32),
-    ui(u32),
-    f(f32),
-    v(Vec<&'static str>),
-    lt(Layout),
+    I(i32),
+    Ui(u32),
+    F(f32),
+    V(Vec<&'static str>),
+    Lt(Layout),
 }
 
 #[derive(Debug, Clone)]
@@ -638,7 +636,7 @@ pub fn applysizehints(
 }
 pub fn cleanup() {
     // Bitwise or to get max value.
-    let mut a: Arg = Arg::ui(!0);
+    let mut a: Arg = Arg::Ui(!0);
     let mut foo: Layout = Layout::new("", None);
     unsafe {
         view(&mut a);
@@ -682,7 +680,8 @@ pub fn cleanupmon(mon: Option<Rc<RefCell<Monitor>>>) {
         } else {
             let mut m = mons.clone();
             while m.is_some() && m.as_ref().unwrap().borrow_mut().next != mon {
-                m.as_ref().unwrap().borrow_mut().next = mon.as_ref().unwrap().borrow_mut().next.clone();
+                m.as_ref().unwrap().borrow_mut().next =
+                    mon.as_ref().unwrap().borrow_mut().next.clone();
                 let next = m.as_ref().unwrap().borrow_mut().next.clone();
                 m = next;
             }
@@ -1477,7 +1476,7 @@ pub fn wintomon(w: Window) -> Option<Rc<RefCell<Monitor>>> {
 pub fn buttonpress(e: *mut XEvent) {
     let mut i: usize = 0;
     let mut x: u32 = 0;
-    let mut arg: Arg = Arg::ui(0);
+    let mut arg: Arg = Arg::Ui(0);
     unsafe {
         let c: *mut Client;
         let ev = (*e).button;
@@ -1504,7 +1503,7 @@ pub fn buttonpress(e: *mut XEvent) {
             }
             if i < tags.len() {
                 click = CLICK::ClkTagBar;
-                arg = Arg::ui(1 << i);
+                arg = Arg::Ui(1 << i);
             } else if ev.x < (x + TEXTW(drw.as_mut().unwrap().as_mut(), selmon_mut.ltsymbol)) as i32
             {
                 click = CLICK::ClkLtSymbol;
@@ -1530,7 +1529,7 @@ pub fn buttonpress(e: *mut XEvent) {
             {
                 buttons[i].func.unwrap()({
                     if click as u32 == CLICK::ClkTagBar as u32 && {
-                        if let Arg::ui(0) = arg {
+                        if let Arg::Ui(0) = arg {
                             true
                         } else {
                             false
@@ -1555,6 +1554,7 @@ pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
 //     return -1;
 // }
 // Or use the method above.
+#[allow(dead_code)]
 pub fn xerrorstart(_: *mut Display, _: *mut XErrorEvent) -> i32 {
     eprintln!("jwm: another window manager is already running");
     unsafe {
@@ -1586,6 +1586,7 @@ pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
         return xerrorxlib.unwrap()(dpy, ee);
     }
 }
+#[allow(dead_code)]
 pub fn checkotherwm() {
     unsafe {
         xerrorxlib = XSetErrorHandler(Some(transmute(xerrorstart as *const ())));
@@ -1603,7 +1604,7 @@ pub fn spawn(arg: *const Arg) {
         let mut sa: sigaction = zeroed();
         static mut tmp: String = String::new();
 
-        if let Arg::v(ref v) = *arg {
+        if let Arg::V(ref v) = *arg {
             if *v == *dmenucmd {
                 // (TODO) other way?
                 tmp =
@@ -1716,6 +1717,7 @@ pub fn updateclientlist() {
         }
     }
 }
+#[allow(dead_code)]
 pub fn tile(m: *mut Monitor) {
     let mut n: u32 = 0;
     unsafe {
@@ -1832,7 +1834,7 @@ pub fn focusmon(arg: *const Arg) {
         if mons.as_ref().unwrap().borrow_mut().next.is_none() {
             return;
         }
-        if let Arg::i(i) = *arg {
+        if let Arg::I(i) = *arg {
             let m = dirtomon(i);
             if m == selmon {
                 return;
@@ -1845,7 +1847,7 @@ pub fn focusmon(arg: *const Arg) {
 }
 pub fn tag(arg: *const Arg) {
     unsafe {
-        if let Arg::ui(ui) = *arg {
+        if let Arg::Ui(ui) = *arg {
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
             if !selmon_mut.sel.is_null() && (ui & TAGMASK()) > 0 {
                 (*selmon_mut.sel).tags0 = ui & TAGMASK();
@@ -1861,7 +1863,7 @@ pub fn tagmon(arg: *const Arg) {
         if selmon_mut.sel.is_null() || (mons.as_ref().unwrap().borrow_mut()).next.is_none() {
             return;
         }
-        if let Arg::i(i) = *arg {
+        if let Arg::I(i) = *arg {
             sendmon(selmon_mut.sel, &dirtomon(i));
         }
     }
@@ -1873,7 +1875,7 @@ pub fn focusstack(arg: *const Arg) {
             return;
         }
         let mut c: *mut Client = null_mut();
-        let i = if let Arg::i(i) = *arg { i } else { -1 };
+        let i = if let Arg::I(i) = *arg { i } else { -1 };
         if i > 0 {
             c = (*selmon_mut.sel).next;
             while !c.is_null() && ISVISIBLE(c) <= 0 {
@@ -1910,7 +1912,7 @@ pub fn focusstack(arg: *const Arg) {
 }
 pub fn incnmaster(arg: *const Arg) {
     unsafe {
-        if let Arg::i(i) = *arg {
+        if let Arg::I(i) = *arg {
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
             selmon_mut.nmaster0 = 0.max(selmon_mut.nmaster0 + i);
         }
@@ -1922,7 +1924,7 @@ pub fn setmfact(arg: *const Arg) {
         if arg.is_null() || (*selmon_mut.lt[selmon_mut.sellt]).arrange.is_none() {
             return;
         }
-        if let Arg::f(f) = *arg {
+        if let Arg::F(f) = *arg {
             let f = if f < 1.0 {
                 f + selmon_mut.mfact0
             } else {
@@ -1940,7 +1942,7 @@ pub fn setlayout(arg: *const Arg) {
     unsafe {
         let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         if arg.is_null()
-            || if let Arg::lt(ref lt) = *arg {
+            || if let Arg::Lt(ref lt) = *arg {
                 if *lt != *selmon_mut.lt[selmon_mut.sellt] {
                     true
                 } else {
@@ -1953,7 +1955,7 @@ pub fn setlayout(arg: *const Arg) {
             selmon_mut.sellt ^= 1;
         }
         if !arg.is_null() {
-            if let Arg::lt(ref lt) = *arg {
+            if let Arg::Lt(ref lt) = *arg {
                 let index = selmon_mut.sellt;
                 selmon_mut.lt[index] = lt as *const _ as *mut _;
             }
@@ -1985,7 +1987,7 @@ pub fn zoom(_arg: *const Arg) {
 }
 pub fn view(arg: *const Arg) {
     unsafe {
-        let ui = if let Arg::ui(ui) = *arg { ui } else { 0 };
+        let ui = if let Arg::Ui(ui) = *arg { ui } else { 0 };
         let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         if (ui & TAGMASK()) == selmon_mut.tagset[selmon_mut.seltags] {
             return;
@@ -2002,7 +2004,7 @@ pub fn view(arg: *const Arg) {
 }
 pub fn toggleview(arg: *const Arg) {
     unsafe {
-        if let Arg::ui(ui) = *arg {
+        if let Arg::Ui(ui) = *arg {
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
             let newtagset = selmon_mut.tagset[selmon_mut.seltags] ^ (ui & TAGMASK());
             if newtagset > 0 {
@@ -2020,7 +2022,7 @@ pub fn toggletag(arg: *const Arg) {
         if selmon_mut.sel.is_null() {
             return;
         }
-        if let Arg::ui(ui) = *arg {
+        if let Arg::Ui(ui) = *arg {
             let newtags = (*selmon_mut.sel).tags0 ^ (ui & TAGMASK());
             if newtags > 0 {
                 (*selmon_mut.sel).tags0 = newtags;
@@ -2853,6 +2855,7 @@ pub fn maprequest(e: *mut XEvent) {
         }
     }
 }
+#[allow(dead_code)]
 pub fn monocle(m: *mut Monitor) {
     unsafe {
         // This idea is cool!.
