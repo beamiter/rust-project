@@ -1012,13 +1012,30 @@ pub fn arrangemon(m: *mut Monitor) {
         }
     }
 }
-pub fn detach(c: *mut Client) {
-    unsafe {
-        let mut tc = (*c).mon.as_ref().unwrap().borrow_mut().clients.clone();
-        while tc.is_some() && *tc != c {
-            tc = &mut (*(*tc)).next;
+// This is cool!
+pub fn detach(c: &Rc<RefCell<Client>>) {
+    let mut current_opt = c
+        .borrow_mut()
+        .mon
+        .as_ref()
+        .unwrap()
+        .borrow_mut()
+        .clients
+        .as_ref()
+        .map(Rc::clone);
+    let mut prev_opt: Option<Rc<RefCell<Client>>> = None;
+    while let Some(current) = current_opt {
+        if Rc::ptr_eq(&current, c) {
+            let next_opt = { current.borrow_mut().next.clone() };
+
+            if let Some(prev) = prev_opt {
+                prev.borrow_mut().next = next_opt;
+            } else {
+                c.borrow_mut().mon.as_ref().unwrap().borrow_mut().clients = next_opt;
+            }
         }
-        *tc = (*c).next;
+        prev_opt = Some(Rc::clone(&current));
+        current_opt = current.borrow().next.as_ref().map(Rc::clone);
     }
 }
 pub fn detachstack(c: *mut Client) {
