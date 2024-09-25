@@ -6,6 +6,7 @@ use libc::{
     close, execvp, exit, fork, free, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP,
     SA_NOCLDWAIT, SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
+use log::info;
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
@@ -2172,7 +2173,9 @@ pub fn setup() {
             | PropertyChangeMask;
         XChangeWindowAttributes(dpy, root, CWEventMask | CWCursor, &mut wa);
         XSelectInput(dpy, root, wa.event_mask);
+        info!("grabkeys");
         grabkeys();
+        info!("focus");
         focus(null_mut());
     }
 }
