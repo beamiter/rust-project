@@ -3,8 +3,8 @@
 // #![allow(unused_mut)]
 
 use libc::{
-    close, execvp, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
-    SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
+    close, execvp, exit, fork, free, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP,
+    SA_NOCLDWAIT, SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
@@ -26,24 +26,25 @@ use x11::xlib::{
     IsViewable, KeyPress, KeySym, LASTEvent, LeaveWindowMask, LockMask, MapRequest,
     MappingKeyboard, MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify,
     NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc,
-    PSize, ParentRelative, PointerMotionMask, PropModeAppend, PropModeReplace, PropertyChangeMask,
-    PropertyDelete, PropertyNotify, ReplayPointer, RevertToPointerRoot, ShiftMask,
-    StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask, Success, Time, True,
-    UnmapNotify, Window, XAllowEvents, XChangeProperty, XChangeWindowAttributes, XCheckMaskEvent,
-    XClassHint, XConfigureEvent, XConfigureWindow, XConnectionNumber, XCreateSimpleWindow,
-    XCreateWindow, XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual,
-    XDefineCursor, XDeleteProperty, XDestroyWindow, XDisplayHeight, XDisplayKeycodes,
-    XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap, XFreeStringList, XGetClassHint,
-    XGetKeyboardMapping, XGetModifierMapping, XGetTextProperty, XGetTransientForHint, XGetWMHints,
-    XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton,
-    XGrabKey, XGrabPointer, XGrabServer, XInternAtom, XKeycodeToKeysym, XKeysymToKeycode,
-    XKillClient, XMapRaised, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent,
-    XQueryPointer, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput,
-    XSendEvent, XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints,
-    XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton,
-    XUngrabKey, XUngrabPointer, XUngrabServer, XUnmapWindow, XUrgencyHint, XWarpPointer,
-    XWindowAttributes, XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING,
-    XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    PSize, ParentRelative, PointerMotionMask, PointerRoot, PropModeAppend, PropModeReplace,
+    PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer, RevertToPointerRoot,
+    ShiftMask, StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask, Success,
+    Time, True, UnmapNotify, Window, XAllowEvents, XChangeProperty, XChangeWindowAttributes,
+    XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow, XConnectionNumber,
+    XCreateSimpleWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow, XDefaultScreen,
+    XDefaultVisual, XDefineCursor, XDeleteProperty, XDestroyWindow, XDisplayHeight,
+    XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap, XFreeStringList,
+    XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetTextProperty,
+    XGetTransientForHint, XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes,
+    XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XInternAtom,
+    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMapWindow, XMaskEvent,
+    XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow,
+    XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetClassHint,
+    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
+    XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabPointer,
+    XUngrabServer, XUnmapWindow, XUrgencyHint, XWarpPointer, XWindowAttributes, XWindowChanges,
+    XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME,
+    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -53,8 +54,9 @@ use crate::config::{
     nmaster, resizehints, rules, showbar, snap, tags, topbar,
 };
 use crate::drw::{
-    drw_create, drw_cur_create, drw_fontset_create, drw_fontset_getwidth, drw_map, drw_rect,
-    drw_resize, drw_scm_create, drw_setscheme, drw_text, Clr, Col, Cur, Drw,
+    self, drw_create, drw_cur_create, drw_cur_free, drw_fontset_create, drw_fontset_getwidth,
+    drw_free, drw_map, drw_rect, drw_resize, drw_scm_create, drw_setscheme, drw_text, Clr, Col,
+    Cur, Drw,
 };
 use crate::xproto::{
     IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
@@ -634,22 +636,62 @@ pub fn applysizehints(
         return *x != (*c).x || (*y) != (*c).y || *w != (*c).w || *h != (*c).h;
     }
 }
-pub fn cleanup() {}
-pub fn cleanupmon(mon: *mut Monitor) {
-    // unsafe {
-    //     if mon == mons {
-    //         mons = (*mons).next;
-    //     } else {
-    //         let mut m = mons;
-    //         while !m.is_null() && (*m).next != mon {
-    //             (*m).next = (*mon).next;
-    //             m = (*m).next;
-    //         }
-    //     }
-    //     XUnmapWindow(dpy, (*mon).barwin);
-    //     XDestroyWindow(dpy, (*mon).barwin);
-    //     XFree(mon as *mut _);
-    // }
+pub fn cleanup() {
+    // Bitwise or to get max value.
+    let mut a: Arg = Arg::ui(!0);
+    let mut foo: Layout = Layout::new("", None);
+    unsafe {
+        view(&mut a);
+        let mut selmon_mut = selmon.as_mut().unwrap().borrow_mut();
+        let idx = selmon_mut.sellt;
+        selmon_mut.lt[idx] = &mut foo;
+        let mut m = mons.clone();
+        while m.is_some() {
+            while !m.as_ref().unwrap().borrow_mut().stack.is_null() {
+                unmanage(m.as_ref().unwrap().borrow_mut().stack, false);
+            }
+            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            m = next;
+        }
+        XUngrabKey(dpy, AnyKey, AnyModifier, root);
+        while mons.is_some() {
+            cleanupmon(mons.clone());
+        }
+        for i in 0..CUR::CurLast as usize {
+            drw_cur_free(
+                drw.as_mut().unwrap().as_mut(),
+                cursor[i].as_mut().unwrap().as_mut(),
+            );
+        }
+        for i in 0..colors.len() {
+            free(scheme[i].as_mut_ptr() as *mut _);
+        }
+        free(scheme.as_mut_ptr() as *mut _);
+        XDestroyWindow(dpy, wmcheckwin);
+        drw_free(drw.as_mut().unwrap().as_mut());
+        XSync(dpy, False);
+        XSetInputFocus(dpy, PointerRoot as u64, RevertToPointerRoot, CurrentTime);
+        XDeleteProperty(dpy, root, netatom[NET::NetActiveWindow as usize]);
+    }
+}
+pub fn cleanupmon(mon: Option<Rc<RefCell<Monitor>>>) {
+    unsafe {
+        if Rc::ptr_eq(mon.as_ref().unwrap(), mons.as_ref().unwrap()) {
+            let next = mons.as_ref().unwrap().borrow_mut().next.clone();
+            mons = next;
+        } else {
+            let mut m = mons.clone();
+            while m.is_some() && m.as_ref().unwrap().borrow_mut().next != mon {
+                m.as_ref().unwrap().borrow_mut().next = mon.as_ref().unwrap().borrow_mut().next.clone();
+                let next = m.as_ref().unwrap().borrow_mut().next.clone();
+                m = next;
+            }
+        }
+        let barwin = mons.as_ref().unwrap().borrow_mut().barwin;
+        XUnmapWindow(dpy, barwin);
+        XDestroyWindow(dpy, barwin);
+        free(&mut *mon.as_ref().unwrap().borrow_mut() as *mut Monitor as *mut _);
+    }
 }
 pub fn clientmessage(e: *mut XEvent) {
     unsafe {
@@ -679,7 +721,6 @@ pub fn clientmessage(e: *mut XEvent) {
 }
 
 pub fn configurenotify(e: *mut XEvent) {
-    // (TODO): updategeom handling sucks, needs to be simplified
     unsafe {
         let ev = (*e).configure;
         if ev.window == root {
@@ -921,7 +962,6 @@ pub fn configurerequest(e: *mut XEvent) {
         XSync(dpy, False);
     }
 }
-// (TODO)
 pub fn createmon() -> Monitor {
     let mut m: Monitor = Monitor::new();
     m.tagset[0] = 1;
@@ -930,8 +970,8 @@ pub fn createmon() -> Monitor {
     m.nmaster0 = nmaster;
     m.showbar0 = showbar;
     m.topbar0 = topbar;
-    // m.lt[0] = &mut layouts[0].clone();
-    // m.lt[1] = &mut layouts[1 % layouts.len()].clone();
+    m.lt[0] = &mut layouts[0].clone();
+    m.lt[1] = &mut layouts[1 % layouts.len()].clone();
     m.ltsymbol = layouts[0].symbol;
     return m;
 }

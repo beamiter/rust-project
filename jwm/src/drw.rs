@@ -453,7 +453,6 @@ pub fn drw_text(
         }
 
         if !render {
-            // (todo): buggy
             w = if invert > 0 {
                 invert as u32
             } else {
