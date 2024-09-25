@@ -2923,7 +2923,7 @@ pub fn unmanage(c: *mut Client, destroyed: bool) {
             XSetErrorHandler(Some(transmute(xerror as *const ())));
             XUngrabServer(dpy);
         }
-        XFree(c as *mut _);
+        free(c as *mut _);
         focus(null_mut());
         updateclientlist();
         arrange(m);
