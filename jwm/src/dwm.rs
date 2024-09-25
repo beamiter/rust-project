@@ -1168,17 +1168,23 @@ pub fn restack(m: Option<Rc<RefCell<Monitor>>>) {
 
     unsafe {
         let mut wc: XWindowChanges = zeroed();
-        let m_mut = m.as_ref().unwrap().borrow_mut();
-        if m_mut.sel.is_null() {
+        if m.as_ref().unwrap().borrow_mut().sel.is_null() {
             return;
         }
-        if (*m_mut.sel).isfloating || (*m_mut.lt[m_mut.sellt]).arrange.is_none() {
-            XRaiseWindow(dpy, (*m_mut.sel).win);
+        if (*m.as_ref().unwrap().borrow_mut().sel).isfloating
+            || (*m.as_ref().unwrap().borrow_mut().lt[m.as_ref().unwrap().borrow_mut().sellt])
+                .arrange
+                .is_none()
+        {
+            XRaiseWindow(dpy, (*m.as_ref().unwrap().borrow_mut().sel).win);
         }
-        if (*m_mut.lt[m_mut.sellt]).arrange.is_some() {
+        if (*m.as_ref().unwrap().borrow_mut().lt[m.as_ref().unwrap().borrow_mut().sellt])
+            .arrange
+            .is_some()
+        {
             wc.stack_mode = Below;
-            wc.sibling = m_mut.barwin;
-            let mut c = m_mut.stack;
+            wc.sibling = m.as_ref().unwrap().borrow_mut().barwin;
+            let mut c = m.as_ref().unwrap().borrow_mut().stack;
             while !c.is_null() {
                 if !(*c).isfloating && ISVISIBLE(c) > 0 {
                     XConfigureWindow(dpy, (*c).win, (CWSibling | CWStackMode) as u32, &mut wc);
@@ -1595,17 +1601,22 @@ pub fn updatebars() {
         ch.res_class = c_string.as_ptr() as *mut _;
         let mut m = mons.clone();
         while m.is_some() {
-            let mut m_mut = m.as_ref().unwrap().borrow_mut().clone();
-            if m_mut.barwin > 0 {
+            if Rc::ptr_eq(mons.as_ref().unwrap(), m.as_ref().unwrap()) {
+                println!("equal!");
+            }
+            if m.as_ref().unwrap().borrow_mut().barwin > 0 {
                 continue;
             }
-            m_mut.barwin = XCreateWindow(
+            let wx = m.as_ref().unwrap().borrow_mut().wx;
+            let by = m.as_ref().unwrap().borrow_mut().by;
+            let ww = m.as_ref().unwrap().borrow_mut().ww as u32;
+            m.as_ref().unwrap().borrow_mut().barwin = XCreateWindow(
                 dpy,
                 root,
-                m_mut.wx,
-                m_mut.by,
-                m_mut.ww.try_into().unwrap(),
-                bh.try_into().unwrap(),
+                wx,
+                by,
+                ww,
+                bh as u32,
                 0,
                 XDefaultDepth(dpy, screen),
                 CopyFromParent as u32,
@@ -1615,12 +1626,13 @@ pub fn updatebars() {
             );
             XDefineCursor(
                 dpy,
-                m_mut.barwin,
+                m.as_ref().unwrap().borrow_mut().barwin,
                 cursor[CUR::CurNormal as usize].as_ref().unwrap().cursor,
             );
-            XMapRaised(dpy, m_mut.barwin);
-            XSetClassHint(dpy, m_mut.barwin, &mut ch);
-            m = m_mut.next;
+            XMapRaised(dpy, m.as_ref().unwrap().borrow_mut().barwin);
+            XSetClassHint(dpy, m.as_ref().unwrap().borrow_mut().barwin, &mut ch);
+            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            m = next;
         }
     }
 }

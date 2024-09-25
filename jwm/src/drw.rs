@@ -668,7 +668,6 @@ pub fn drw_map(drw: *mut Drw, win: Window, x: i32, y: i32, w: u32, h: u32) {
             y,
         );
         XSync((*drw).dpy, False);
-        println!("haha");
     }
 }
 
