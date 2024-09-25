@@ -84,7 +84,7 @@ pub static mut numlockmask: u32 = 0;
 pub static mut wmatom: [Atom; WM::WMLast as usize] = unsafe { zeroed() };
 pub static mut netatom: [Atom; NET::NetLast as usize] = unsafe { zeroed() };
 pub static mut running: bool = false;
-pub static mut cursor: [*mut Cur; CUR::CurLast as usize] = [null_mut(); CUR::CurLast as usize];
+pub static mut cursor: [Option<Box<Cur>>; CUR::CurLast as usize] = [None, None, None];
 pub static mut scheme: Vec<Vec<*mut Clr>> = vec![];
 pub static mut dpy: *mut Display = null_mut();
 pub static mut drw: Option<Box<Drw>> = None;
@@ -1613,7 +1613,11 @@ pub fn updatebars() {
                 CWOverrideRedirect | CWBackPixmap | CWEventMask,
                 &mut wa,
             );
-            XDefineCursor(dpy, m_mut.barwin, (*cursor[CUR::CurNormal as usize]).cursor);
+            XDefineCursor(
+                dpy,
+                m_mut.barwin,
+                cursor[CUR::CurNormal as usize].as_ref().unwrap().cursor,
+            );
             XMapRaised(dpy, m_mut.barwin);
             XSetClassHint(dpy, m_mut.barwin, &mut ch);
             m = m_mut.next;
@@ -2103,7 +2107,7 @@ pub fn setup() {
         );
         XDeleteProperty(dpy, root, netatom[NET::NetClientList as usize]);
         // select events
-        wa.cursor = (*cursor[CUR::CurNormal as usize]).cursor;
+        wa.cursor = cursor[CUR::CurNormal as usize].as_ref().unwrap().cursor;
         wa.event_mask = SubstructureRedirectMask
             | SubstructureNotifyMask
             | ButtonReleaseMask
@@ -2221,7 +2225,7 @@ pub fn movemouse(_arg: *const Arg) {
             GrabModeAsync,
             GrabModeAsync,
             0,
-            (*cursor[CUR::CurMove as usize]).cursor,
+            cursor[CUR::CurMove as usize].as_ref().unwrap().cursor,
             CurrentTime,
         ) != GrabSuccess
         {
@@ -2316,7 +2320,7 @@ pub fn resizemouse(_arg: *const Arg) {
             GrabModeAsync,
             GrabModeAsync,
             0,
-            (*cursor[CUR::CurMove as usize]).cursor,
+            cursor[CUR::CurMove as usize].as_ref().unwrap().cursor,
             CurrentTime,
         ) != GrabSuccess
         {

@@ -62,12 +62,12 @@ pub static mut NOMATCHES: NoMathes = NoMathes {
 };
 static ELLIPSIS_WIDTH: AtomicU32 = AtomicU32::new(0);
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Copy)]
 pub struct Cur {
     pub cursor: Cursor,
 }
 impl Cur {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Cur { cursor: 0 }
     }
 }
@@ -81,7 +81,7 @@ pub struct Fnt {
     pub next: Option<Rc<RefCell<Fnt>>>,
 }
 impl Fnt {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Fnt {
             dpy: null_mut(),
             h: 0,
@@ -349,16 +349,16 @@ pub fn drw_scm_create(drw: *mut Drw, clrnames: &[&str], clrcount: u64) -> Vec<*m
 }
 
 // Cursor abstraction
-pub fn drw_cur_create(drw: *mut Drw, shape: i32) -> *mut Cur {
+pub fn drw_cur_create(drw: *mut Drw, shape: i32) -> Option<Box<Cur>> {
     let mut cur: Cur = Cur::new();
 
     if drw.is_null() {
-        return null_mut();
+        return None;
     }
     unsafe {
         cur.cursor = XCreateFontCursor((*drw).dpy, shape as u32);
     }
-    return &mut cur;
+    return Some(Box::new(cur));
 }
 
 pub fn drw_cur_free(drw: *mut Drw, cursor: *mut Cur) {
@@ -668,6 +668,7 @@ pub fn drw_map(drw: *mut Drw, win: Window, x: i32, y: i32, w: u32, h: u32) {
             y,
         );
         XSync((*drw).dpy, False);
+        println!("haha");
     }
 }
 
