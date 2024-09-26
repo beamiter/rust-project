@@ -12,7 +12,7 @@ use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
-use std::ptr::{addr_of, addr_of_mut, null_mut};
+use std::ptr::{addr_of, addr_of_mut, null, null_mut};
 use std::rc::Rc;
 use std::{os::raw::c_long, usize};
 
@@ -1859,22 +1859,30 @@ pub fn spawn(arg: *const Arg) {
                     ((b'0' + selmon.as_ref().unwrap().borrow_mut().num as u8) as char).to_string();
                 dmenumon = tmp.as_str();
             }
-        }
-        if fork() == 0 {
-            if !dpy.is_null() {
-                close(XConnectionNumber(dpy));
+            if fork() == 0 {
+                if !dpy.is_null() {
+                    close(XConnectionNumber(dpy));
+                }
+                setsid();
+
+                sigemptyset(&mut sa.sa_mask);
+                sa.sa_flags = 0;
+                sa.sa_sigaction = SIG_DFL;
+                sigaction(SIGCHLD, &sa, null_mut());
+
+                let c_args: Vec<CString> = v
+                    .iter()
+                    .map(|&arg| CString::new(arg).expect("fail to create"))
+                    .collect();
+                let arg_ptrs: Vec<*const i8> = c_args
+                    .iter()
+                    .map(|arg| arg.as_ptr())
+                    .chain(Some(null()))
+                    .collect();
+                execvp(arg_ptrs[0], arg_ptrs[1..].as_ptr());
+                eprintln!("jwm: ececvp failed: {}", v[0]);
+                exit(0);
             }
-            setsid();
-
-            sigemptyset(&mut sa.sa_mask);
-            sa.sa_flags = 0;
-            sa.sa_sigaction = SIG_DFL;
-            sigaction(SIGCHLD, &sa, null_mut());
-
-            // (TODO)
-            // execvp(, argv);
-            eprintln!("jwm: ececvp failed");
-            exit(0);
         }
     }
 }
@@ -2527,17 +2535,19 @@ pub fn propertynotify(e: *mut XEvent) {
             }
             if ev.atom == XA_WM_NAME || ev.atom == netatom[NET::NetWMName as usize] {
                 updatetitle(c.as_ref().unwrap());
-                // (TODO)
-                if c == c
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .mon
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .sel
-                {
+                if Rc::ptr_eq(
+                    c.as_ref().unwrap(),
+                    c.as_ref()
+                        .unwrap()
+                        .borrow_mut()
+                        .mon
+                        .as_ref()
+                        .unwrap()
+                        .borrow_mut()
+                        .sel
+                        .as_ref()
+                        .unwrap(),
+                ) {
                     drawbar((*c.as_ref().unwrap().borrow_mut()).mon.clone());
                 }
             }
