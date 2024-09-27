@@ -1,7 +1,7 @@
 use std::{ffi::CString, process::exit, ptr::null_mut};
 
-use simplelog::*;
 use log::{info, warn};
+use simplelog::*;
 
 use dwm::{checkotherwm, cleanup, dpy, run, scan, setup};
 use libc::{setlocale, LC_CTYPE};
@@ -11,6 +11,16 @@ mod config;
 mod drw;
 mod dwm;
 mod xproto;
+
+// Xnest and Xephyr is all you need!
+// Xnest:
+// Xnest :1 -geometry 1024x768 &
+// export DISPLAY=:1
+// exec jwm
+
+// Xephyr:
+// Xephyr :1 -screen 1024x768 &
+// DISPLAY=:1 jwm
 
 fn main() {
     let log_file = std::fs::File::create("/home/mm/jwm.log").unwrap();
@@ -27,7 +37,7 @@ fn main() {
         }
         warn!("begin");
         info!("checkotherwm");
-        // checkotherwm();
+        checkotherwm();
         info!("setup");
         setup();
         info!("scan");
