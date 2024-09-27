@@ -752,16 +752,14 @@ pub fn cleanupmon(mon: Option<Rc<RefCell<Monitor>>>) {
                     mon.as_ref().unwrap(),
                 )
             {
-                m.as_ref().unwrap().borrow_mut().next =
-                    mon.as_ref().unwrap().borrow_mut().next.clone();
                 let next = m.as_ref().unwrap().borrow_mut().next.clone();
                 m = next;
             }
+            m.as_ref().unwrap().borrow_mut().next = mon.as_ref().unwrap().borrow_mut().next.clone();
         }
-        let barwin = mons.as_ref().unwrap().borrow_mut().barwin;
+        let barwin = mon.as_ref().unwrap().borrow_mut().barwin;
         XUnmapWindow(dpy, barwin);
         XDestroyWindow(dpy, barwin);
-        free(&mut *mon.as_ref().unwrap().borrow_mut() as *mut Monitor as *mut _);
     }
 }
 pub fn clientmessage(e: *mut XEvent) {
@@ -1127,9 +1125,8 @@ pub fn arrangemon(m: &Rc<RefCell<Monitor>>) {
     let mut mm = m.borrow_mut();
     let sellt = (mm).sellt;
     mm.ltsymbol = (*(mm).lt[sellt]).symbol;
-    println!("{}, {:?}", sellt, mm.ltsymbol);
+    println!("arrangemon {}, {:?}", sellt, mm.ltsymbol);
     if let Some(arrange0) = (*(mm).lt[sellt]).arrange {
-        println!("fuck {:?}", arrange0);
         (arrange0)(&mut *mm);
     }
 }
