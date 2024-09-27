@@ -84,7 +84,7 @@ pub static mut lrpad: i32 = 0;
 pub static mut numlockmask: u32 = 0;
 pub static mut wmatom: [Atom; WM::WMLast as usize] = unsafe { zeroed() };
 pub static mut netatom: [Atom; NET::NetLast as usize] = unsafe { zeroed() };
-pub static mut running: bool = false;
+pub static mut running: bool = true;
 pub static mut cursor: [Option<Box<Cur>>; CUR::CurLast as usize] = [None, None, None];
 pub static mut scheme: Vec<Vec<*mut Clr>> = vec![];
 pub static mut dpy: *mut Display = null_mut();
@@ -1247,11 +1247,6 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             boxw = h / 6 + 2;
         }
 
-        println!(
-            "count: {}, barwin: {}",
-            Rc::strong_count(m.as_ref().unwrap()),
-            m.as_ref().unwrap().borrow_mut().barwin
-        );
         if !m.as_ref().unwrap().borrow_mut().showbar0 {
             return;
         }
@@ -1483,10 +1478,13 @@ pub fn run() {
     unsafe {
         let mut ev: XEvent = zeroed();
         XSync(dpy, False);
+        let mut i: u64 = 0;
         while running && XNextEvent(dpy, &mut ev) <= 0 {
-            if let Some(ha) = handler[ev.type_ as usize] {
+            println!("running frame: {}", i);
+            i = (i + 1) % std::u64::MAX;
+            if let Some(hd) = handler[ev.type_ as usize] {
                 // call handler
-                ha(&mut ev);
+                hd(&mut ev);
             }
         }
     }
@@ -2983,16 +2981,9 @@ pub fn setfocus(c: &Rc<RefCell<Client>>) {
 pub fn drawbars() {
     unsafe {
         let mut m = mons.clone();
-        println!("drawbars");
-        println!(
-            "here0: {}, {}",
-            Rc::strong_count(m.as_ref().unwrap()),
-            m.as_ref().unwrap().borrow_mut().barwin
-        );
         while m.is_some() {
-            println!("here1: {}", Rc::strong_count(m.as_ref().unwrap()));
+            println!("drawbar: {}", m.as_ref().unwrap().borrow_mut().barwin);
             drawbar(m.clone());
-            println!("here2: {}", Rc::strong_count(m.as_ref().unwrap()));
             let next = m.as_ref().unwrap().borrow_mut().next.clone();
             m = next;
         }
@@ -3011,10 +3002,10 @@ pub fn enternotify(e: *mut XEvent) {
             wintomon(ev.window)
         };
         let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        if m != selmon {
+        if !Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
             unfocus(selmon_mut.sel.clone(), true);
             selmon = m;
-        } else if c.is_none() || c == selmon_mut.sel {
+        } else if c.is_none() || Rc::ptr_eq(c.as_ref().unwrap(), selmon_mut.sel.as_ref().unwrap()) {
             return;
         }
         focus(c);
