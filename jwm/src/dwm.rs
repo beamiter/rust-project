@@ -6,7 +6,6 @@ use libc::{
     close, execvp, exit, fork, free, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP,
     SA_NOCLDWAIT, SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
-use log::info;
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
@@ -1430,16 +1429,9 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 );
             }
         }
-        let win = m.as_ref().unwrap().borrow_mut().barwin;
-        let mw: u32 = m.as_ref().unwrap().borrow_mut().ww as u32;
-        drw_map(
-            drw.as_mut().unwrap().as_mut(),
-            win,
-            0,
-            0,
-            mw,
-            bh as u32,
-        );
+        let barwin = m.as_ref().unwrap().borrow_mut().barwin;
+        let ww: u32 = m.as_ref().unwrap().borrow_mut().ww as u32;
+        drw_map(drw.as_mut().unwrap().as_mut(), barwin, 0, 0, ww, bh as u32);
     }
 }
 
@@ -1512,10 +1504,11 @@ pub fn run() {
         XSync(dpy, False);
         let mut i: u64 = 0;
         while running && XNextEvent(dpy, &mut ev) <= 0 {
-            // println!("running frame: {}", i);
+            println!("running frame: {}, handler type: {}", i, ev.type_);
             i = (i + 1) % std::u64::MAX;
             if let Some(hd) = handler[ev.type_ as usize] {
                 // call handler
+                println!("*********** handler type: {} valid", ev.type_);
                 hd(&mut ev);
             }
         }
@@ -1899,7 +1892,7 @@ pub fn spawn(arg: *const Arg) {
         let mut sa: sigaction = zeroed();
         static mut tmp: String = String::new();
 
-        info!("spawn");
+        println!("spawn");
         if let Arg::V(ref v) = *arg {
             if *v == *dmenucmd {
                 // Comment for test
@@ -1918,7 +1911,6 @@ pub fn spawn(arg: *const Arg) {
                 sa.sa_sigaction = SIG_DFL;
                 sigaction(SIGCHLD, &sa, null_mut());
 
-                info!("arg v: {:?}", v);
                 println!("arg v: {:?}", v);
                 let status = Command::new(v[0])
                     .args(&v[1..])
@@ -1955,9 +1947,6 @@ pub fn updatebars() {
         ch.res_class = c_string.as_ptr() as *mut _;
         let mut m = mons.clone();
         while m.is_some() {
-            if Rc::ptr_eq(mons.as_ref().unwrap(), m.as_ref().unwrap()) {
-                println!("equal!");
-            }
             if m.as_ref().unwrap().borrow_mut().barwin > 0 {
                 continue;
             }
@@ -2500,7 +2489,7 @@ pub fn setup() {
         wa.cursor = cursor[CUR::CurNormal as usize].as_ref().unwrap().cursor;
         wa.event_mask = SubstructureRedirectMask
             | SubstructureNotifyMask
-            | ButtonReleaseMask
+            | ButtonPressMask
             | PointerMotionMask
             | EnterWindowMask
             | LeaveWindowMask
@@ -2508,11 +2497,11 @@ pub fn setup() {
             | PropertyChangeMask;
         XChangeWindowAttributes(dpy, root, CWEventMask | CWCursor, &mut wa);
         XSelectInput(dpy, root, wa.event_mask);
-        info!("grabkeys");
+        println!("grabkeys");
         grabkeys();
-        info!("focus");
+        println!("focus");
         focus(None);
-        info!("finish setup");
+        println!("finish setup");
     }
 }
 pub fn killclient(_arg: *const Arg) {
@@ -2961,8 +2950,8 @@ pub fn grabkeys() {
                             keys[i].mod0 | modifiers[j],
                             root,
                             True,
-                            GrayScale,
-                            GrabModeSync,
+                            GrabModeAsync,
+                            GrabModeAsync,
                         );
                     }
                 }
@@ -3086,7 +3075,7 @@ pub fn focus(mut c: Option<Rc<RefCell<Client>>>) {
                 c.as_ref().unwrap().borrow_mut().mon.as_ref().unwrap(),
                 selmon.as_ref().unwrap(),
             ) {
-                selmon = (*c.as_ref().unwrap().borrow_mut()).mon.clone();
+                selmon = c.as_ref().unwrap().borrow_mut().mon.clone();
             }
             if c.as_ref().unwrap().borrow_mut().isurgent {
                 seturgent(&mut *c.as_ref().unwrap().borrow_mut(), false);
@@ -3165,11 +3154,14 @@ pub fn keypress(e: *mut XEvent) {
     unsafe {
         let ev = (*e).key;
         let keysym = XKeycodeToKeysym(dpy, ev.keycode as u8, 0);
+        println!("fuck: keysym: {}, mask: {}", keysym, CLEANMASK(ev.state));
         for i in 0..keys.len() {
             if keysym == keys[i].keysym
                 && CLEANMASK(keys[i].mod0) == CLEANMASK(ev.state)
                 && keys[i].func.is_some()
             {
+                println!("key: {}, arg: {:?}", i, keys[i].arg);
+                println!("keysym: {}, mask: {}", keysym, CLEANMASK(keys[i].mod0));
                 keys[i].func.unwrap()(&keys[i].arg);
             }
         }

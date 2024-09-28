@@ -38,17 +38,17 @@ fn main() {
             exit(1);
         }
         warn!("begin");
-        info!("checkotherwm");
+        println!("checkotherwm");
         checkotherwm();
-        info!("setup");
+        println!("setup");
         setup();
-        info!("scan");
+        println!("scan");
         scan();
-        info!("run");
+        println!("run");
         run();
-        info!("cleanup");
+        println!("cleanup");
         cleanup();
-        info!("XCloseDisplay");
+        println!("XCloseDisplay");
         XCloseDisplay(dpy);
         warn!("end");
     }
