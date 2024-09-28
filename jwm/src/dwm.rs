@@ -12,6 +12,7 @@ use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
+use std::process::Command;
 use std::ptr::{addr_of, addr_of_mut, null, null_mut};
 use std::rc::Rc;
 use std::{os::raw::c_long, usize};
@@ -1235,7 +1236,6 @@ pub fn dirtomon(dir: i32) -> Option<Rc<RefCell<Monitor>>> {
 }
 pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
     let mut tw: i32 = 0;
-    let mut _i: u32 = 0;
     let mut occ: u32 = 0;
     let mut urg: u32 = 0;
     unsafe {
@@ -1252,7 +1252,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         }
 
         // draw status first so it can be overdrawn by tags later.
-        if m == selmon {
+        if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
             // status is only drawn on selected monitor.
             drw_setscheme(
                 drw.as_mut().unwrap().as_mut(),
@@ -1269,6 +1269,14 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 0,
                 stext,
                 0,
+            );
+            println!(
+                "here0: {},{},{},{},{}",
+                m.as_ref().unwrap().borrow_mut().ww - tw,
+                0,
+                tw,
+                bh,
+                stext
             );
         }
         let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
@@ -1301,6 +1309,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 tags[i],
                 (urg & 1 << i) as i32,
             );
+            println!("here1: {},{},{},{},{}", x, 0, w, bh, tags[i]);
             if (occ & 1 << i) > 0 {
                 let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
                 drw_rect(
@@ -1313,10 +1322,10 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                         && selmon_mut.sel.is_some()
                         && (selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 & 1 << i > 0))
                         as i32,
-                    (urg & 1 << i).try_into().unwrap(),
+                    (urg & 1 << i) as i32,
                 );
-                x += w;
             }
+            x += w;
         }
         w = TEXTW(
             drw.as_mut().unwrap().as_mut(),
@@ -1330,17 +1339,25 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             drw.as_mut().unwrap().as_mut(),
             x,
             0,
-            w.try_into().unwrap(),
-            bh.try_into().unwrap(),
-            (lrpad / 2).try_into().unwrap(),
+            w as u32,
+            bh as u32,
+            (lrpad / 2) as u32,
             m.as_ref().unwrap().borrow_mut().ltsymbol,
             0,
+        );
+        println!(
+            "here2: {},{},{},{},{}",
+            x,
+            0,
+            w,
+            bh,
+            m.as_ref().unwrap().borrow_mut().ltsymbol
         );
 
         w = m.as_ref().unwrap().borrow_mut().ww - tw - x;
         if w > bh {
             if m.as_ref().unwrap().borrow_mut().sel.is_some() {
-                let idx = if m == selmon {
+                let idx = if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
                     SCHEME::SchemeSel
                 } else {
                     SCHEME::SchemeNorm
@@ -1350,11 +1367,26 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     drw.as_mut().unwrap().as_mut(),
                     x,
                     0,
-                    w.try_into().unwrap(),
-                    bh.try_into().unwrap(),
-                    (lrpad / 2).try_into().unwrap(),
-                    m.as_ref().unwrap().borrow_mut().ltsymbol,
+                    w as u32,
+                    bh as u32,
+                    (lrpad / 2) as u32,
+                    m.as_ref()
+                        .unwrap()
+                        .borrow_mut()
+                        .sel
+                        .as_ref()
+                        .unwrap()
+                        .borrow_mut()
+                        .name,
                     0,
+                );
+                println!(
+                    "here3: {},{},{},{},{}",
+                    x,
+                    0,
+                    w,
+                    bh,
+                    m.as_ref().unwrap().borrow_mut().ltsymbol
                 );
                 if m.as_ref()
                     .unwrap()
@@ -1406,7 +1438,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             0,
             0,
             mw,
-            bh.try_into().unwrap(),
+            bh as u32,
         );
     }
 }
@@ -1480,7 +1512,7 @@ pub fn run() {
         XSync(dpy, False);
         let mut i: u64 = 0;
         while running && XNextEvent(dpy, &mut ev) <= 0 {
-            println!("running frame: {}", i);
+            // println!("running frame: {}", i);
             i = (i + 1) % std::u64::MAX;
             if let Some(hd) = handler[ev.type_ as usize] {
                 // call handler
@@ -1867,12 +1899,13 @@ pub fn spawn(arg: *const Arg) {
         let mut sa: sigaction = zeroed();
         static mut tmp: String = String::new();
 
+        info!("spawn");
         if let Arg::V(ref v) = *arg {
             if *v == *dmenucmd {
-                // (TODO) other way?
-                tmp =
-                    ((b'0' + selmon.as_ref().unwrap().borrow_mut().num as u8) as char).to_string();
-                dmenumon = tmp.as_str();
+                // Comment for test
+                // tmp =
+                //     ((b'0' + selmon.as_ref().unwrap().borrow_mut().num as u8) as char).to_string();
+                // dmenumon = tmp.as_str();
             }
             if fork() == 0 {
                 if !dpy.is_null() {
@@ -1885,18 +1918,27 @@ pub fn spawn(arg: *const Arg) {
                 sa.sa_sigaction = SIG_DFL;
                 sigaction(SIGCHLD, &sa, null_mut());
 
-                let c_args: Vec<CString> = v
-                    .iter()
-                    .map(|&arg| CString::new(arg).expect("fail to create"))
-                    .collect();
-                let arg_ptrs: Vec<*const i8> = c_args
-                    .iter()
-                    .map(|arg| arg.as_ptr())
-                    .chain(Some(null()))
-                    .collect();
-                execvp(arg_ptrs[0], arg_ptrs[1..].as_ptr());
-                eprintln!("jwm: ececvp failed: {}", v[0]);
-                exit(0);
+                info!("arg v: {:?}", v);
+                println!("arg v: {:?}", v);
+                let status = Command::new(v[0])
+                    .args(&v[1..])
+                    .status()
+                    .expect("Failed to execute command");
+                if !status.success() {
+                    println!("Command exited with non-zero status code");
+                }
+                println!("fuck");
+                // Deprecated.
+                // let c_args: Vec<CString> = v
+                //     .iter()
+                //     .map(|&arg| CString::new(arg).expect("fail to create"))
+                //     .collect();
+                // let arg_ptrs: Vec<*const i8> = c_args
+                //     .iter()
+                //     .map(|arg| arg.as_ptr())
+                //     .chain(Some(null()))
+                //     .collect();
+                // execvp(arg_ptrs[0], arg_ptrs[1..].as_ptr());
             }
         }
     }

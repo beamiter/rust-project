@@ -12,18 +12,20 @@ mod drw;
 mod dwm;
 mod xproto;
 
+mod tests;
+
 // Xnest and Xephyr is all you need!
 // Xnest:
-// Xnest :1 -geometry 1024x768 &
-// export DISPLAY=:1
+// Xnest :2 -geometry 1024x768 &
+// export DISPLAY=:2
 // exec jwm
 
 // Xephyr:
-// Xephyr :1 -screen 1024x768 &
-// DISPLAY=:1 jwm
+// Xephyr :2 -screen 1024x768 &
+// DISPLAY=:2 jwm
 
 fn main() {
-    let log_file = std::fs::File::create("/home/mm/jwm.log").unwrap();
+    let log_file = std::fs::File::create("/home/yj/jwm.log").unwrap();
     WriteLogger::init(LevelFilter::Info, Config::default(), log_file).unwrap();
     unsafe {
         let c_string = CString::new("").unwrap();

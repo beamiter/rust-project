@@ -81,6 +81,12 @@ fn TAGKEYS(KEY: u32, TAG: i32) -> Vec<Key> {
 
 pub const MODKEY: u32 = Mod1Mask;
 pub static mut dmenumon: &'static str = "0";
+macro_rules! enclose_in_quotes {
+    ($val:expr) => {
+        concat!("\"", $val, "\"")
+    };
+}
+// dmenu_run -m 0 -fn "monospace:size=10" -nb "#222222" -nf "#bbbbbb" -sb "#005577" -sf "#eeeeee"
 pub const dmenucmd: Lazy<Vec<&'static str>> = Lazy::new(|| {
     vec![
         "dmenu_run",
@@ -96,7 +102,6 @@ pub const dmenucmd: Lazy<Vec<&'static str>> = Lazy::new(|| {
         col_cyan,
         "-sf",
         col_gray4,
-        "",
     ]
 });
 pub const termcmd: Lazy<Vec<&'static str>> = Lazy::new(|| vec!["gnome-terminal", ""]);
