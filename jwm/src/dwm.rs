@@ -3206,24 +3206,17 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             }
 
             let width = WIDTH(&mut c);
-            // (TODO)
-            if c.x + width
-                > c.mon.as_ref().unwrap().borrow_mut().wx + c.mon.as_ref().unwrap().borrow_mut().ww
-            {
-                let wx = c.mon.as_ref().unwrap().borrow_mut().wx;
-                let ww = c.mon.as_ref().unwrap().borrow_mut().ww;
+            let ww = c.mon.as_ref().unwrap().borrow_mut().ww;
+            let wh = c.mon.as_ref().unwrap().borrow_mut().wh;
+            let wx = c.mon.as_ref().unwrap().borrow_mut().wx;
+            let wy = c.mon.as_ref().unwrap().borrow_mut().wy;
+            if c.x + width > wx + ww {
                 c.x = wx + ww - width;
             }
             let height = HEIGHT(&mut c);
-            if c.y + height
-                > c.mon.as_ref().unwrap().borrow_mut().wy + c.mon.as_ref().unwrap().borrow_mut().wh
-            {
-                let wy = c.mon.as_ref().unwrap().borrow_mut().wy;
-                let wh = c.mon.as_ref().unwrap().borrow_mut().wh;
+            if c.y + height > wy + wh {
                 c.y = wy + wh - height;
             }
-            let wx = c.mon.as_ref().unwrap().borrow_mut().wx;
-            let wy = c.mon.as_ref().unwrap().borrow_mut().wy;
             c.x = c.x.max(wx);
             c.y = c.y.max(wy);
             c.bw = borderpx as i32;
@@ -3458,6 +3451,7 @@ pub fn updatestatus() {
 }
 pub fn updatewindowtype(c: &Rc<RefCell<Client>>) {
     unsafe {
+        // todo
         let c = &mut *c.borrow_mut();
         let state = getatomprop(c, netatom[NET::NetWMState as usize]);
         let wtype = getatomprop(c, netatom[NET::NetWMWindowType as usize]);
