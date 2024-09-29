@@ -438,12 +438,12 @@ impl Rule {
 }
 
 // function declarations and implementations.
-pub fn applyrules(c: *mut Client) {
+pub fn applyrules(c: &mut Client) {
     unsafe {
-        (*c).isfloating = false;
-        (*c).tags0 = 0;
+        c.isfloating = false;
+        c.tags0 = 0;
         let mut ch: XClassHint = zeroed();
-        XGetClassHint(dpy, (*c).win, &mut ch);
+        XGetClassHint(dpy, c.win, &mut ch);
         let class = if !ch.res_class.is_null() {
             let c_str = CStr::from_ptr(ch.res_class);
             c_str.to_str().unwrap()
@@ -458,12 +458,12 @@ pub fn applyrules(c: *mut Client) {
         };
 
         for r in &*rules {
-            if (r.title.is_empty() || (*c).name.find(r.title).is_some())
+            if (r.title.is_empty() || c.name.find(r.title).is_some())
                 && (r.class.is_empty() || class.find(r.class).is_some())
                 && (r.instance.is_empty() || instance.find(r.instance).is_some())
             {
-                (*c).isfloating = r.isfloating;
-                (*c).tags0 |= r.tags0 as u32;
+                c.isfloating = r.isfloating;
+                c.tags0 |= r.tags0 as u32;
                 let mut m = mons.clone();
                 // or here: let mut m = Some(mons.as_ref().unwrap().clone());
                 loop {
@@ -474,7 +474,7 @@ pub fn applyrules(c: *mut Client) {
                     m = next;
                 }
                 if m.is_some() {
-                    (*c).mon = m.clone();
+                    c.mon = m.clone();
                 }
             }
         }
@@ -484,11 +484,11 @@ pub fn applyrules(c: *mut Client) {
         if !ch.res_name.is_null() {
             XFree(ch.res_name as *mut _);
         }
-        (*c).tags0 = if ((*c).tags0 & TAGMASK()) > 0 {
-            (*c).tags0 & TAGMASK()
+        c.tags0 = if (c.tags0 & TAGMASK()) > 0 {
+            c.tags0 & TAGMASK()
         } else {
-            ((*c).mon.as_ref().unwrap().borrow_mut()).tagset
-                [(*(*c).mon.as_ref().unwrap().borrow_mut()).seltags]
+            let seltags = (*c.mon.as_ref().unwrap().borrow_mut()).seltags;
+            (c.mon.as_ref().unwrap().borrow_mut()).tagset[seltags]
         }
     }
 }
@@ -499,53 +499,52 @@ pub fn updatesizehints(c: &Rc<RefCell<Client>>) {
     unsafe {
         let mut size: XSizeHints = zeroed();
 
-        if XGetWMNormalHints(dpy, (*c).win, &mut size, msize as *mut i64) <= 0 {
+        if XGetWMNormalHints(dpy, c.win, &mut size, msize as *mut i64) <= 0 {
             size.flags = PSize;
         }
         if size.flags & PBaseSize > 0 {
-            (*c).basew = size.base_width;
-            (*c).baseh = size.base_height;
+            c.basew = size.base_width;
+            c.baseh = size.base_height;
         } else if size.flags & PMinSize > 0 {
-            (*c).basew = size.min_width;
-            (*c).baseh = size.min_height;
+            c.basew = size.min_width;
+            c.baseh = size.min_height;
         } else {
-            (*c).basew = 0;
-            (*c).baseh = 0;
+            c.basew = 0;
+            c.baseh = 0;
         }
         if size.flags & PResizeInc > 0 {
-            (*c).incw = size.width_inc;
-            (*c).inch = size.height_inc;
+            c.incw = size.width_inc;
+            c.inch = size.height_inc;
         } else {
-            (*c).incw = 0;
-            (*c).inch = 0;
+            c.incw = 0;
+            c.inch = 0;
         }
         if size.flags & PMaxSize > 0 {
-            (*c).maxw = size.max_width;
-            (*c).maxh = size.max_height;
+            c.maxw = size.max_width;
+            c.maxh = size.max_height;
         } else {
-            (*c).maxw = 0;
-            (*c).maxh = 0;
+            c.maxw = 0;
+            c.maxh = 0;
         }
         if size.flags & PMinSize > 0 {
-            (*c).minw = size.min_width;
-            (*c).minh = size.min_height;
+            c.minw = size.min_width;
+            c.minh = size.min_height;
         } else if size.flags & PBaseSize > 0 {
-            (*c).minw = size.base_width;
-            (*c).minh = size.base_height;
+            c.minw = size.base_width;
+            c.minh = size.base_height;
         } else {
-            (*c).minw = 0;
-            (*c).minh = 0;
+            c.minw = 0;
+            c.minh = 0;
         }
         if size.flags & PAspect > 0 {
-            (*c).mina = size.min_aspect.y as f32 / size.min_aspect.x as f32;
-            (*c).maxa = size.max_aspect.x as f32 / size.max_aspect.y as f32;
+            c.mina = size.min_aspect.y as f32 / size.min_aspect.x as f32;
+            c.maxa = size.max_aspect.x as f32 / size.max_aspect.y as f32;
         } else {
-            (*c).maxa = 0.;
-            (*c).mina = 0.;
+            c.maxa = 0.;
+            c.mina = 0.;
         }
-        (*c).isfixed =
-            (*c).maxw > 0 && (*c).maxh > 0 && ((*c).maxw == (*c).minw) && ((*c).maxh == (*c).minh);
-        (*c).hintsvalid = true;
+        c.isfixed = c.maxw > 0 && c.maxh > 0 && (c.maxw == c.minw) && (c.maxh == c.minh);
+        c.hintsvalid = true;
     }
 }
 
@@ -837,31 +836,31 @@ pub fn configurenotify(e: *mut XEvent) {
     }
 }
 
-pub fn configure(c: *mut Client) {
+pub fn configure(c: &mut Client) {
     unsafe {
         let mut ce: XConfigureEvent = zeroed();
 
         ce.type_ = ConfigureNotify;
         ce.display = dpy;
-        ce.event = (*c).win;
-        ce.window = (*c).win;
-        ce.x = (*c).x;
-        ce.y = (*c).y;
-        ce.width = (*c).w;
-        ce.height = (*c).h;
-        ce.border_width = (*c).bw;
+        ce.event = c.win;
+        ce.window = c.win;
+        ce.x = c.x;
+        ce.y = c.y;
+        ce.width = c.w;
+        ce.height = c.h;
+        ce.border_width = c.bw;
         ce.above = 0;
         ce.override_redirect = 0;
         let mut xe = XEvent { configure: ce };
-        XSendEvent(dpy, (*c).win, 0, StructureNotifyMask, &mut xe);
+        XSendEvent(dpy, c.win, 0, StructureNotifyMask, &mut xe);
     }
 }
-pub fn setfullscreen(c: *mut Client, fullscreen: bool) {
+pub fn setfullscreen(c: &mut Client, fullscreen: bool) {
     unsafe {
-        if fullscreen && !(*c).isfullscreen {
+        if fullscreen && !c.isfullscreen {
             XChangeProperty(
                 dpy,
-                (*c).win,
+                c.win,
                 netatom[NET::NetWMState as usize],
                 XA_ATOM,
                 32,
@@ -869,18 +868,28 @@ pub fn setfullscreen(c: *mut Client, fullscreen: bool) {
                 netatom[NET::NetWMFullscreen as usize] as *const _,
                 1,
             );
-            (*c).isfullscreen = true;
-            (*c).oldstate = (*c).isfloating;
-            (*c).oldbw = (*c).bw;
-            (*c).bw = 0;
-            (*c).isfloating = true;
-            let mon_mut = (*c).mon.as_ref().unwrap().borrow_mut();
-            resizeclient(c, mon_mut.mx, mon_mut.my, mon_mut.mw, mon_mut.mh);
-            XRaiseWindow(dpy, (*c).win);
-        } else if !fullscreen && (*c).isfullscreen {
+            c.isfullscreen = true;
+            c.oldstate = c.isfloating;
+            c.oldbw = c.bw;
+            c.bw = 0;
+            c.isfloating = true;
+            let mx;
+            let my;
+            let mw;
+            let mh;
+            {
+                let mon_mut = c.mon.as_ref().unwrap().borrow_mut();
+                mx = mon_mut.mx;
+                my = mon_mut.my;
+                mw = mon_mut.mw;
+                mh = mon_mut.mh;
+            }
+            resizeclient(c, mx, my, mw, mh);
+            XRaiseWindow(dpy, c.win);
+        } else if !fullscreen && c.isfullscreen {
             XChangeProperty(
                 dpy,
-                (*c).win,
+                c.win,
                 netatom[NET::NetWMState as usize],
                 XA_ATOM,
                 32,
@@ -888,37 +897,37 @@ pub fn setfullscreen(c: *mut Client, fullscreen: bool) {
                 0 as *const _,
                 0,
             );
-            (*c).isfullscreen = false;
-            (*c).isfloating = (*c).oldstate;
-            (*c).bw = (*c).oldbw;
-            (*c).x = (*c).oldx;
-            (*c).y = (*c).oldy;
-            (*c).w = (*c).oldw;
-            (*c).h = (*c).oldh;
-            resizeclient(c, (*c).x, (*c).y, (*c).w, (*c).h);
-            arrange((*c).mon.clone());
+            c.isfullscreen = false;
+            c.isfloating = c.oldstate;
+            c.bw = c.oldbw;
+            c.x = c.oldx;
+            c.y = c.oldy;
+            c.w = c.oldw;
+            c.h = c.oldh;
+            resizeclient(c, c.x, c.y, c.w, c.h);
+            arrange(c.mon.clone());
         }
     }
 }
-pub fn resizeclient(c: *mut Client, x: i32, y: i32, w: i32, h: i32) {
+pub fn resizeclient(c: &mut Client, x: i32, y: i32, w: i32, h: i32) {
     unsafe {
         let mut wc: XWindowChanges = zeroed();
-        (*c).oldx = (*c).x;
-        (*c).x = x;
+        c.oldx = c.x;
+        c.x = x;
         wc.x = x;
-        (*c).oldy = (*c).y;
-        (*c).y = y;
+        c.oldy = c.y;
+        c.y = y;
         wc.y = y;
-        (*c).oldw = (*c).w;
-        (*c).w = w;
+        c.oldw = c.w;
+        c.w = w;
         wc.width = w;
-        (*c).oldh = (*c).h;
-        (*c).h = h;
+        c.oldh = c.h;
+        c.h = h;
         wc.height = h;
-        wc.border_width = (*c).bw;
+        wc.border_width = c.bw;
         XConfigureWindow(
             dpy,
-            (*c).win,
+            c.win,
             (CWX | CWY | CWWidth | CWHeight | CWBorderWidth).into(),
             &mut wc as *mut _,
         );
@@ -942,8 +951,8 @@ pub fn resize(
 
 pub fn seturgent(c: &mut Client, urg: bool) {
     unsafe {
-        (*c).isurgent = urg;
-        let wmh = XGetWMHints(dpy, (*c).win);
+        c.isurgent = urg;
+        let wmh = XGetWMHints(dpy, c.win);
         if wmh.is_null() {
             return;
         }
@@ -952,7 +961,7 @@ pub fn seturgent(c: &mut Client, urg: bool) {
         } else {
             (*wmh).flags & !XUrgencyHint
         };
-        XSetWMHints(dpy, (*c).win, wmh);
+        XSetWMHints(dpy, c.win, wmh);
         XFree(wmh as *mut _);
     }
 }
@@ -1034,44 +1043,42 @@ pub fn configurerequest(e: *mut XEvent) {
             let mut c = c.borrow_mut();
             let selmon_borrow = selmon.as_ref().unwrap().borrow_mut();
             if ev.value_mask & CWBorderWidth as u64 > 0 {
-                (*c).bw = ev.border_width;
-            } else if (*c).isfloating
-                || (*(selmon_borrow.lt[selmon_borrow.sellt])).arrange.is_none()
-            {
+                c.bw = ev.border_width;
+            } else if c.isfloating || (*(selmon_borrow.lt[selmon_borrow.sellt])).arrange.is_none() {
                 let mx;
                 let my;
                 let mw;
                 let mh;
                 {
-                    let m = (*c).mon.as_ref().unwrap().borrow_mut();
+                    let m = c.mon.as_ref().unwrap().borrow_mut();
                     mx = m.mx;
                     my = m.my;
                     mw = m.mw;
                     mh = m.mh;
                 }
                 if ev.value_mask & CWX as u64 > 0 {
-                    (*c).oldx = (*c).x;
-                    (*c).x = mx + ev.x;
+                    c.oldx = c.x;
+                    c.x = mx + ev.x;
                 }
                 if ev.value_mask & CWY as u64 > 0 {
-                    (*c).oldy = (*c).y;
-                    (*c).y = my + ev.y;
+                    c.oldy = c.y;
+                    c.y = my + ev.y;
                 }
                 if ev.value_mask & CWWidth as u64 > 0 {
-                    (*c).oldw = (*c).w;
-                    (*c).w = ev.width;
+                    c.oldw = c.w;
+                    c.w = ev.width;
                 }
                 if ev.value_mask & CWHeight as u64 > 0 {
-                    (*c).oldh = (*c).h;
-                    (*c).h = ev.height;
+                    c.oldh = c.h;
+                    c.h = ev.height;
                 }
-                if ((*c).x + (*c).w) > mx + mw && (*c).isfloating {
+                if (c.x + c.w) > mx + mw && c.isfloating {
                     // center in x direction
-                    (*c).x = mx + (mw / 2 - WIDTH(&mut *c) / 2);
+                    c.x = mx + (mw / 2 - WIDTH(&mut *c) / 2);
                 }
-                if ((*c).y + (*c).h) > my + mh && (*c).isfloating {
+                if (c.y + c.h) > my + mh && c.isfloating {
                     // center in y direction
-                    (*c).y = my + (mh / 2 - HEIGHT(&mut *c) / 2);
+                    c.y = my + (mh / 2 - HEIGHT(&mut *c) / 2);
                 }
                 if (ev.value_mask & (CWX | CWY) as u64) > 0
                     && (ev.value_mask & (CWWidth | CWHeight) as u64) <= 0
@@ -1079,7 +1086,7 @@ pub fn configurerequest(e: *mut XEvent) {
                     configure(&mut *c);
                 }
                 if ISVISIBLE(&mut *c) > 0 {
-                    XMoveResizeWindow(dpy, (*c).win, (*c).x, (*c).y, (*c).w as u32, (*c).h as u32);
+                    XMoveResizeWindow(dpy, c.win, c.x, c.y, c.w as u32, c.h as u32);
                 }
             } else {
                 configure(&mut *c);
@@ -1625,7 +1632,7 @@ pub fn attachstack(c: Option<Rc<RefCell<Client>>>) {
         .stack = c.clone();
 }
 
-pub fn getatomprop(c: *mut Client, prop: Atom) -> u64 {
+pub fn getatomprop(c: &mut Client, prop: Atom) -> u64 {
     let mut di = 0;
     let mut dl: u64 = 0;
     let mut da: Atom = 0;
@@ -1634,7 +1641,7 @@ pub fn getatomprop(c: *mut Client, prop: Atom) -> u64 {
     unsafe {
         if XGetWindowProperty(
             dpy,
-            (*c).win,
+            c.win,
             prop,
             0,
             size_of::<Atom>() as i64,
@@ -2580,7 +2587,7 @@ pub fn propertynotify(e: *mut XEvent) {
                 _ => {}
             }
             if ev.atom == XA_WM_NAME || ev.atom == netatom[NET::NetWMName as usize] {
-                updatetitle(c.as_ref().unwrap());
+                updatetitle(&mut *c.as_ref().unwrap().borrow_mut());
                 if Rc::ptr_eq(
                     c.as_ref().unwrap(),
                     c.as_ref()
@@ -2960,13 +2967,13 @@ pub fn grabkeys() {
         XFree(syms as *mut _);
     }
 }
-pub fn sendevent(c: *mut Client, proto: Atom) -> bool {
+pub fn sendevent(c: &mut Client, proto: Atom) -> bool {
     let mut protocols: *mut Atom = null_mut();
     let mut n: i32 = 0;
     let mut exists: bool = false;
     unsafe {
         let mut ev: XEvent = zeroed();
-        if XGetWMProtocols(dpy, (*c).win, &mut protocols, &mut n) > 0 {
+        if XGetWMProtocols(dpy, c.win, &mut protocols, &mut n) > 0 {
             while !exists && {
                 let tmp = n;
                 n -= 1;
@@ -2979,13 +2986,13 @@ pub fn sendevent(c: *mut Client, proto: Atom) -> bool {
         }
         if exists {
             ev.type_ = ClientMessage;
-            ev.client_message.window = (*c).win;
+            ev.client_message.window = c.win;
             ev.client_message.message_type = wmatom[WM::WMProtocols as usize];
             ev.client_message.format = 32;
             // This data is cool!
             ev.client_message.data.as_longs_mut()[0] = proto as i64;
             ev.client_message.data.as_longs_mut()[1] = CurrentTime as i64;
-            XSendEvent(dpy, (*c).win, False, NoEventMask, &mut ev);
+            XSendEvent(dpy, c.win, False, NoEventMask, &mut ev);
         }
     }
     return exists;
@@ -2993,8 +3000,8 @@ pub fn sendevent(c: *mut Client, proto: Atom) -> bool {
 pub fn setfocus(c: &Rc<RefCell<Client>>) {
     unsafe {
         let mut c = c.borrow_mut();
-        if !(*c).nerverfocus {
-            XSetInputFocus(dpy, (*c).win, RevertToPointerRoot, CurrentTime);
+        if !c.nerverfocus {
+            XSetInputFocus(dpy, c.win, RevertToPointerRoot, CurrentTime);
             XChangeProperty(
                 dpy,
                 root,
@@ -3002,7 +3009,7 @@ pub fn setfocus(c: &Rc<RefCell<Client>>) {
                 XA_WINDOW,
                 32,
                 PropModeReplace,
-                (*c).win as *const _,
+                c.win as *const _,
                 1,
             );
         }
@@ -3186,7 +3193,7 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             c.oldh = (*wa).height;
             c.oldbw = (*wa).border_width;
 
-            updatetitle(cc.as_ref().unwrap());
+            updatetitle(&mut c);
             if XGetTransientForHint(dpy, w, &mut trans) > 0 && {
                 t = wintoclient(trans);
                 t.is_some()
@@ -3199,6 +3206,7 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             }
 
             let width = WIDTH(&mut c);
+            // (TODO)
             if c.x + width
                 > c.mon.as_ref().unwrap().borrow_mut().wx + c.mon.as_ref().unwrap().borrow_mut().ww
             {
@@ -3415,6 +3423,7 @@ pub fn gettextprop(w: Window, atom: Atom, mut text: &str, size: usize) -> bool {
     if text.is_empty() || size == 0 {
         return false;
     }
+    // (TODO), polish this in need.
     unsafe {
         let mut name: XTextProperty = zeroed();
         if XGetTextProperty(dpy, w, &mut name, atom) <= 0 || name.nitems <= 0 {
@@ -3457,7 +3466,7 @@ pub fn updatewindowtype(c: &Rc<RefCell<Client>>) {
             setfullscreen(c, true);
         }
         if wtype == netatom[NET::NetWMWindowTypeDialog as usize] {
-            (*c).isfloating = true;
+            c.isfloating = true;
         }
     }
 }
@@ -3487,20 +3496,21 @@ pub fn updatewmhints(c: &Rc<RefCell<Client>>) {
         }
     }
 }
-pub fn updatetitle(c: &Rc<RefCell<Client>>) {
+pub fn updatetitle(c: &mut Client) {
     unsafe {
-        let mut c = c.borrow_mut();
         if !gettextprop(
-            (*c).win,
+            c.win,
             netatom[NET::NetWMName as usize],
-            (*c).name,
-            (*c).name.len(),
+            c.name,
+            c.name.len(),
         ) {
-            gettextprop((*c).win, XA_WM_NAME, (*c).name, (*c).name.len());
+            gettextprop(c.win, XA_WM_NAME, c.name, c.name.len());
         }
         // hack to mark broken clients
-        if (*c).name.chars().nth(0).unwrap() == '\0' {
-            (*c).name = broken;
+        if let Some(b) = c.name.chars().nth(0) {
+            if b == '\0' {
+                c.name = broken;
+            }
         }
     }
 }

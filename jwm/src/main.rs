@@ -25,7 +25,7 @@ mod tests;
 // DISPLAY=:2 jwm
 
 fn main() {
-    let log_file = std::fs::File::create("/home/yj/jwm.log").unwrap();
+    let log_file = std::fs::File::create("/home/mm/jwm.log").unwrap();
     WriteLogger::init(LevelFilter::Info, Config::default(), log_file).unwrap();
     unsafe {
         let c_string = CString::new("").unwrap();
