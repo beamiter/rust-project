@@ -971,8 +971,7 @@ pub fn showhide(c: Option<Rc<RefCell<Client>>>) {
         return;
     }
     unsafe {
-        // HACK
-        if true || ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) > 0 {
+        if ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) > 0 {
             // show clients top down.
             let win = c.as_ref().unwrap().borrow_mut().win;
             let x = c.as_ref().unwrap().borrow_mut().x;
@@ -1117,12 +1116,19 @@ pub fn destroynotify(e: *mut XEvent) {
     }
 }
 pub fn arrangemon(m: &Rc<RefCell<Monitor>>) {
-    let mut mm = m.borrow_mut();
-    let sellt = (mm).sellt;
-    mm.ltsymbol = (*(mm).lt[sellt]).symbol;
-    println!("arrangemon {}, {:?}", sellt, mm.ltsymbol);
-    if let Some(arrange0) = (*(mm).lt[sellt]).arrange {
-        (arrange0)(&mut *mm);
+    let sellt;
+    {
+        let mut mm = m.borrow_mut();
+        sellt = (mm).sellt;
+        mm.ltsymbol = (*(mm).lt[sellt]).symbol;
+        println!("arrangemon {}, {:?}", sellt, mm.ltsymbol);
+    }
+    let arrange;
+    {
+        arrange = m.borrow_mut().lt[sellt].arrange;
+    }
+    if let Some(arrange0) = arrange {
+        (arrange0)(&mut *m.borrow_mut());
     }
 }
 // This is cool!
@@ -2491,7 +2497,8 @@ pub fn killclient(_arg: *const Arg) {
 }
 pub fn nexttiled(mut c: Option<Rc<RefCell<Client>>>) -> Option<Rc<RefCell<Client>>> {
     while let Some(ref c_ref) = c {
-        if c_ref.borrow_mut().isfloating || ISVISIBLE(&mut *c_ref.borrow_mut()) <= 0 {
+        let isfloating = c_ref.borrow_mut().isfloating;
+        if isfloating || ISVISIBLE(&mut *c_ref.borrow_mut()) <= 0 {
             let next = c_ref.borrow_mut().next.clone();
             c = next;
         }
