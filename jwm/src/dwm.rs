@@ -495,12 +495,12 @@ pub fn applyrules(c: &Rc<RefCell<Client>>) {
 }
 
 pub fn updatesizehints(c: &Rc<RefCell<Client>>) {
-    let msize: u32 = 0;
     let mut c = c.as_ref().borrow_mut();
     unsafe {
         let mut size: XSizeHints = zeroed();
 
-        if XGetWMNormalHints(dpy, c.win, &mut size, msize as *mut i64) <= 0 {
+        let mut msize: i64 = 0;
+        if XGetWMNormalHints(dpy, c.win, &mut size, &mut msize) <= 0 {
             size.flags = PSize;
         }
         if size.flags & PBaseSize > 0 {
@@ -972,7 +972,8 @@ pub fn showhide(c: Option<Rc<RefCell<Client>>>) {
         return;
     }
     unsafe {
-        if ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) > 0 {
+        let is_visible = { ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) };
+        if is_visible > 0 {
             // show clients top down.
             let win = c.as_ref().unwrap().borrow_mut().win;
             let x = c.as_ref().unwrap().borrow_mut().x;
@@ -1593,44 +1594,14 @@ pub fn arrange(mut m: Option<Rc<RefCell<Monitor>>>) {
 }
 
 pub fn attach(c: Option<Rc<RefCell<Client>>>) {
-    c.as_ref().unwrap().borrow_mut().next = c
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .mon
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .clients
-        .clone();
-    c.as_ref()
-        .unwrap()
-        .borrow_mut()
-        .mon
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .clients = c.clone();
+    let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
+    c.as_ref().unwrap().borrow_mut().next = mon.as_ref().unwrap().borrow_mut().clients.clone();
+    mon.as_ref().unwrap().borrow_mut().clients = c.clone();
 }
 pub fn attachstack(c: Option<Rc<RefCell<Client>>>) {
-    c.as_ref().unwrap().borrow_mut().snext = c
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .mon
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .stack
-        .clone();
-    c.as_ref()
-        .unwrap()
-        .borrow_mut()
-        .mon
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .stack = c.clone();
+    let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
+    c.as_ref().unwrap().borrow_mut().snext = mon.as_ref().unwrap().borrow_mut().stack.clone();
+    mon.as_ref().unwrap().borrow_mut().stack = c.clone();
 }
 
 pub fn getatomprop(c: &mut Client, prop: Atom) -> u64 {
@@ -1927,7 +1898,6 @@ pub fn spawn(arg: *const Arg) {
                 if !status.success() {
                     println!("Command exited with non-zero status code");
                 }
-                println!("fuck");
                 // Deprecated.
                 // let c_args: Vec<CString> = v
                 //     .iter()
@@ -3144,7 +3114,7 @@ pub fn sendmon(c: Option<Rc<RefCell<Client>>>, m: &Option<Rc<RefCell<Monitor>>>)
     focus(None);
     arrange(None);
 }
-pub fn setclientstate(c: &Rc<RefCell<Client>>, state: i64) {
+pub fn setclientstate(c: &Rc<RefCell<Client>>, mut state: i64) {
     unsafe {
         let win = c.borrow_mut().win;
         XChangeProperty(
@@ -3154,7 +3124,7 @@ pub fn setclientstate(c: &Rc<RefCell<Client>>, state: i64) {
             wmatom[WM::WMState as usize],
             32,
             PropModeReplace,
-            state as *const _,
+            &mut state as *const i64 as *const _,
             2,
         );
     }
@@ -3272,9 +3242,10 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
         );
         grabbuttons(c.clone(), false);
         if !c.as_ref().unwrap().borrow_mut().isfloating {
-            c.as_ref().unwrap().borrow_mut().oldstate =
-                trans != 0 || c.as_ref().unwrap().borrow_mut().isfixed;
-            c.as_ref().unwrap().borrow_mut().isfloating = c.as_ref().unwrap().borrow_mut().oldstate;
+            let isfixed = c.as_ref().unwrap().borrow_mut().isfixed;
+            c.as_ref().unwrap().borrow_mut().oldstate = trans != 0 || isfixed;
+            let oldstate = c.as_ref().unwrap().borrow_mut().oldstate;
+            c.as_ref().unwrap().borrow_mut().isfloating = oldstate;
         }
         if c.as_ref().unwrap().borrow_mut().isfloating {
             XRaiseWindow(dpy, c.as_ref().unwrap().borrow_mut().win);
@@ -3288,21 +3259,23 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             XA_WINDOW,
             32,
             PropModeAppend,
-            c.as_ref().unwrap().borrow_mut().win as *const _,
+            &mut c.as_ref().unwrap().borrow_mut().win as *const u64 as *const _,
             1,
         );
-        XMoveResizeWindow(
-            dpy,
-            c.as_ref().unwrap().borrow_mut().win,
-            c.as_ref().unwrap().borrow_mut().x + 2 * sw,
-            c.as_ref().unwrap().borrow_mut().y,
-            c.as_ref().unwrap().borrow_mut().w as u32,
-            c.as_ref().unwrap().borrow_mut().h as u32,
-        );
+        {
+            let win = c.as_ref().unwrap().borrow_mut().win;
+            let x = c.as_ref().unwrap().borrow_mut().x;
+            let y = c.as_ref().unwrap().borrow_mut().y;
+            let w = c.as_ref().unwrap().borrow_mut().w;
+            let h = c.as_ref().unwrap().borrow_mut().h;
+            XMoveResizeWindow(dpy, win, x + 2 * sw, y, w as u32, h as u32);
+        }
         setclientstate(c.as_ref().unwrap(), NormalState as i64);
-        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        if c.as_ref().unwrap().borrow_mut().mon == selmon {
-            unfocus(selmon_mut.sel.clone(), false);
+        if Rc::ptr_eq(
+            c.as_ref().unwrap().borrow_mut().mon.as_ref().unwrap(),
+            selmon.as_ref().unwrap(),
+        ) {
+            unfocus(selmon.as_ref().unwrap().borrow_mut().sel.clone(), false);
         }
         c.as_ref()
             .unwrap()
@@ -3516,7 +3489,9 @@ pub fn updatewmhints(c: &Rc<RefCell<Client>>) {
         let wmh = XGetWMHints(dpy, cc.win);
         let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         if !wmh.is_null() {
-            if Rc::ptr_eq(c, selmon_mut.sel.as_ref().unwrap()) && ((*wmh).flags & XUrgencyHint) > 0
+            if selmon_mut.sel.is_some()
+                && Rc::ptr_eq(c, selmon_mut.sel.as_ref().unwrap())
+                && ((*wmh).flags & XUrgencyHint) > 0
             {
                 (*wmh).flags &= !XUrgencyHint;
                 XSetWMHints(dpy, cc.win, wmh);
