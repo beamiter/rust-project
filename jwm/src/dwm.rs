@@ -332,7 +332,6 @@ pub struct Monitor {
     pub stack: Option<Rc<RefCell<Client>>>,
     pub next: Option<Rc<RefCell<Monitor>>>,
     pub barwin: Window,
-    // (TODO) Use Box instead of raw ptr.
     pub lt: [Rc<Layout>; 2],
 }
 impl Monitor {
@@ -972,43 +971,18 @@ pub fn showhide(c: Option<Rc<RefCell<Client>>>) {
         return;
     }
     unsafe {
-        {
-            println!(
-                "{} mon strong count: {}",
-                line!(),
-                if c.is_some() {
-                    Rc::strong_count(c.as_ref().unwrap())
-                } else {
-                    10086
-                }
-            );
-        }
-        if ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) > 0 {
+        // HACK
+        if true || ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) > 0 {
             // show clients top down.
             let win = c.as_ref().unwrap().borrow_mut().win;
             let x = c.as_ref().unwrap().borrow_mut().x;
             let y = c.as_ref().unwrap().borrow_mut().y;
             XMoveWindow(dpy, win, x, y);
-            let sellt = c
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .mon
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .sellt;
+            let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
+            let sellt = mon.as_ref().unwrap().borrow_mut().sellt;
             let isfloating = c.as_ref().unwrap().borrow_mut().isfloating;
             let isfullscreen = c.as_ref().unwrap().borrow_mut().isfullscreen;
-            if (c
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .mon
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .lt[sellt]
+            if (mon.as_ref().unwrap().borrow_mut().lt[sellt]
                 .arrange
                 .is_none()
                 || isfloating)
@@ -1027,10 +1001,12 @@ pub fn showhide(c: Option<Rc<RefCell<Client>>>) {
                 }
                 resize(c.as_ref().unwrap(), x, y, w, h, false);
             }
-            showhide(c.as_ref().unwrap().borrow_mut().snext.clone());
+            let snext = c.as_ref().unwrap().borrow_mut().snext.clone();
+            showhide(snext);
         } else {
             // hide clients bottom up.
-            showhide(c.as_ref().unwrap().borrow_mut().snext.clone());
+            let snext = c.as_ref().unwrap().borrow_mut().snext.clone();
+            showhide(snext);
             let y;
             let win;
             {
@@ -1578,32 +1554,14 @@ pub fn arrange(mut m: Option<Rc<RefCell<Monitor>>>) {
     unsafe {
         if m.is_some() {
             {
-                println!(
-                    "{} mon strong count: {}",
-                    line!(),
-                    if m.as_ref().unwrap().borrow_mut().stack.is_some() {
-                        Rc::strong_count(m.as_ref().unwrap().borrow_mut().stack.as_ref().unwrap())
-                    } else {
-                        10086
-                    }
-                );
-            }
-            showhide(m.as_ref().unwrap().borrow_mut().stack.clone());
-            {
-                println!(
-                    "{} mon strong count: {}",
-                    line!(),
-                    if m.as_ref().unwrap().borrow_mut().stack.is_some() {
-                        Rc::strong_count(m.as_ref().unwrap().borrow_mut().stack.as_ref().unwrap())
-                    } else {
-                        10086
-                    }
-                );
+                let stack = m.as_ref().unwrap().borrow_mut().stack.clone();
+                showhide(stack);
             }
         } else {
             m = mons.clone();
             while m.is_some() {
-                showhide(m.as_ref().unwrap().borrow_mut().stack.clone());
+                let stack = m.as_ref().unwrap().borrow_mut().stack.clone();
+                showhide(stack);
                 let next = m.as_ref().unwrap().borrow_mut().next.clone();
                 m = next;
             }
@@ -3181,16 +3139,18 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
     let mut trans: Window = 0;
     unsafe {
         let mut wc: XWindowChanges = zeroed();
-        c.as_ref().unwrap().borrow_mut().win = w;
-        c.as_ref().unwrap().borrow_mut().x = (*wa).x;
-        c.as_ref().unwrap().borrow_mut().oldx = (*wa).x;
-        c.as_ref().unwrap().borrow_mut().y = (*wa).y;
-        c.as_ref().unwrap().borrow_mut().oldy = (*wa).y;
-        c.as_ref().unwrap().borrow_mut().w = (*wa).width;
-        c.as_ref().unwrap().borrow_mut().oldw = (*wa).width;
-        c.as_ref().unwrap().borrow_mut().h = (*wa).height;
-        c.as_ref().unwrap().borrow_mut().oldh = (*wa).height;
-        c.as_ref().unwrap().borrow_mut().oldbw = (*wa).border_width;
+        {
+            c.as_ref().unwrap().borrow_mut().win = w;
+            c.as_ref().unwrap().borrow_mut().x = (*wa).x;
+            c.as_ref().unwrap().borrow_mut().oldx = (*wa).x;
+            c.as_ref().unwrap().borrow_mut().y = (*wa).y;
+            c.as_ref().unwrap().borrow_mut().oldy = (*wa).y;
+            c.as_ref().unwrap().borrow_mut().w = (*wa).width;
+            c.as_ref().unwrap().borrow_mut().oldw = (*wa).width;
+            c.as_ref().unwrap().borrow_mut().h = (*wa).height;
+            c.as_ref().unwrap().borrow_mut().oldh = (*wa).height;
+            c.as_ref().unwrap().borrow_mut().oldbw = (*wa).border_width;
+        }
 
         updatetitle(c.as_ref().unwrap());
         if XGetTransientForHint(dpy, w, &mut trans) > 0 && {
@@ -3204,69 +3164,41 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             applyrules(c.as_ref().unwrap());
         }
 
-        let width = WIDTH(&mut c.as_ref().unwrap().borrow_mut());
+        let width;
         let ww;
         let wh;
         let wx;
         let wy;
         {
-            ww = c
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .mon
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .ww;
-            wh = c
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .mon
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .wh;
-            wx = c
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .mon
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .wx;
-            wy = c
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .mon
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .wy;
+            width = WIDTH(&mut c.as_ref().unwrap().borrow_mut());
+            let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
+            ww = mon.as_ref().unwrap().borrow_mut().ww;
+            wh = mon.as_ref().unwrap().borrow_mut().wh;
+            wx = mon.as_ref().unwrap().borrow_mut().wx;
+            wy = mon.as_ref().unwrap().borrow_mut().wy;
         }
-        if c.as_ref().unwrap().borrow_mut().x + width > wx + ww {
-            c.as_ref().unwrap().borrow_mut().x = wx + ww - width;
+        {
+            if c.as_ref().unwrap().borrow_mut().x + width > wx + ww {
+                c.as_ref().unwrap().borrow_mut().x = wx + ww - width;
+            }
+            let height = HEIGHT(&mut c.as_ref().unwrap().borrow_mut());
+            if c.as_ref().unwrap().borrow_mut().y + height > wy + wh {
+                c.as_ref().unwrap().borrow_mut().y = wy + wh - height;
+            }
+            let x = c.as_ref().unwrap().borrow_mut().x;
+            c.as_ref().unwrap().borrow_mut().x = x.max(wx);
+            let y = c.as_ref().unwrap().borrow_mut().y;
+            c.as_ref().unwrap().borrow_mut().y = y.max(wy);
+            c.as_ref().unwrap().borrow_mut().bw = borderpx as i32;
+            wc.border_width = c.as_ref().unwrap().borrow_mut().bw;
+            XConfigureWindow(dpy, w, CWBorderWidth as u32, &mut wc);
+            XSetWindowBorder(
+                dpy,
+                w,
+                (*scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize]).pixel,
+            );
+            configure(&mut *c.as_ref().unwrap().borrow_mut());
         }
-        let height = HEIGHT(&mut c.as_ref().unwrap().borrow_mut());
-        if c.as_ref().unwrap().borrow_mut().y + height > wy + wh {
-            c.as_ref().unwrap().borrow_mut().y = wy + wh - height;
-        }
-        let x = c.as_ref().unwrap().borrow_mut().x;
-        c.as_ref().unwrap().borrow_mut().x = x.max(wx);
-        let y = c.as_ref().unwrap().borrow_mut().y;
-        c.as_ref().unwrap().borrow_mut().y = y.max(wy);
-        c.as_ref().unwrap().borrow_mut().bw = borderpx as i32;
-        wc.border_width = c.as_ref().unwrap().borrow_mut().bw;
-        XConfigureWindow(dpy, w, CWBorderWidth as u32, &mut wc);
-        XSetWindowBorder(
-            dpy,
-            w,
-            (*scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize]).pixel,
-        );
-        configure(&mut *c.as_ref().unwrap().borrow_mut());
         updatewindowtype(c.as_ref().unwrap());
         updatesizehints(c.as_ref().unwrap());
         updatewmhints(c.as_ref().unwrap());
@@ -3276,28 +3208,30 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             EnterWindowMask | FocusChangeMask | PropertyChangeMask | StructureNotifyMask,
         );
         grabbuttons(c.clone(), false);
-        if !c.as_ref().unwrap().borrow_mut().isfloating {
-            let isfixed = c.as_ref().unwrap().borrow_mut().isfixed;
-            c.as_ref().unwrap().borrow_mut().oldstate = trans != 0 || isfixed;
-            let oldstate = c.as_ref().unwrap().borrow_mut().oldstate;
-            c.as_ref().unwrap().borrow_mut().isfloating = oldstate;
-        }
-        if c.as_ref().unwrap().borrow_mut().isfloating {
-            XRaiseWindow(dpy, c.as_ref().unwrap().borrow_mut().win);
+        {
+            if !c.as_ref().unwrap().borrow_mut().isfloating {
+                let isfixed = c.as_ref().unwrap().borrow_mut().isfixed;
+                c.as_ref().unwrap().borrow_mut().oldstate = trans != 0 || isfixed;
+                let oldstate = c.as_ref().unwrap().borrow_mut().oldstate;
+                c.as_ref().unwrap().borrow_mut().isfloating = oldstate;
+            }
+            if c.as_ref().unwrap().borrow_mut().isfloating {
+                XRaiseWindow(dpy, c.as_ref().unwrap().borrow_mut().win);
+            }
         }
         attach(c.clone());
         attachstack(c.clone());
-        XChangeProperty(
-            dpy,
-            root,
-            netatom[NET::NetClientList as usize],
-            XA_WINDOW,
-            32,
-            PropModeAppend,
-            &mut c.as_ref().unwrap().borrow_mut().win as *const u64 as *const _,
-            1,
-        );
         {
+            XChangeProperty(
+                dpy,
+                root,
+                netatom[NET::NetClientList as usize],
+                XA_WINDOW,
+                32,
+                PropModeAppend,
+                &mut c.as_ref().unwrap().borrow_mut().win as *const u64 as *const _,
+                1,
+            );
             let win = c.as_ref().unwrap().borrow_mut().win;
             let x = c.as_ref().unwrap().borrow_mut().x;
             let y = c.as_ref().unwrap().borrow_mut().y;
@@ -3326,8 +3260,13 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
                 .borrow_mut()
                 .sel = c.clone();
         }
-        arrange(c.as_ref().unwrap().borrow_mut().mon.clone());
-        XMapWindow(dpy, c.as_ref().unwrap().borrow_mut().win);
+        {
+            let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
+            arrange(mon);
+        }
+        {
+            XMapWindow(dpy, c.as_ref().unwrap().borrow_mut().win);
+        }
         focus(None);
     }
 }
