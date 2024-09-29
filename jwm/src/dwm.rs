@@ -438,8 +438,9 @@ impl Rule {
 }
 
 // function declarations and implementations.
-pub fn applyrules(c: &mut Client) {
+pub fn applyrules(c: &Rc<RefCell<Client>>) {
     unsafe {
+        let mut c = c.borrow_mut();
         c.isfloating = false;
         c.tags0 = 0;
         let mut ch: XClassHint = zeroed();
@@ -2587,7 +2588,7 @@ pub fn propertynotify(e: *mut XEvent) {
                 _ => {}
             }
             if ev.atom == XA_WM_NAME || ev.atom == netatom[NET::NetWMName as usize] {
-                updatetitle(&mut *c.as_ref().unwrap().borrow_mut());
+                updatetitle(c.as_ref().unwrap());
                 if Rc::ptr_eq(
                     c.as_ref().unwrap(),
                     c.as_ref()
@@ -3143,11 +3144,12 @@ pub fn sendmon(c: Option<Rc<RefCell<Client>>>, m: &Option<Rc<RefCell<Monitor>>>)
     focus(None);
     arrange(None);
 }
-pub fn setclientstate(c: &mut Client, state: i64) {
+pub fn setclientstate(c: &Rc<RefCell<Client>>, state: i64) {
     unsafe {
+        let win = c.borrow_mut().win;
         XChangeProperty(
             dpy,
-            c.win,
+            win,
             wmatom[WM::WMState as usize],
             wmatom[WM::WMState as usize],
             32,
@@ -3175,78 +3177,110 @@ pub fn keypress(e: *mut XEvent) {
     }
 }
 pub fn manage(w: Window, wa: *mut XWindowAttributes) {
-    let cc: Option<Rc<RefCell<Client>>> = Some(Rc::new(RefCell::new(Client::new())));
+    let c: Option<Rc<RefCell<Client>>> = Some(Rc::new(RefCell::new(Client::new())));
     let t: Option<Rc<RefCell<Client>>>;
     let mut trans: Window = 0;
     unsafe {
         let mut wc: XWindowChanges = zeroed();
-        let mut c = cc.as_ref().unwrap().borrow_mut();
-        {
-            c.win = w;
-            c.x = (*wa).x;
-            c.oldx = (*wa).x;
-            c.y = (*wa).y;
-            c.oldy = (*wa).y;
-            c.w = (*wa).width;
-            c.oldw = (*wa).width;
-            c.h = (*wa).height;
-            c.oldh = (*wa).height;
-            c.oldbw = (*wa).border_width;
+        c.as_ref().unwrap().borrow_mut().win = w;
+        c.as_ref().unwrap().borrow_mut().x = (*wa).x;
+        c.as_ref().unwrap().borrow_mut().oldx = (*wa).x;
+        c.as_ref().unwrap().borrow_mut().y = (*wa).y;
+        c.as_ref().unwrap().borrow_mut().oldy = (*wa).y;
+        c.as_ref().unwrap().borrow_mut().w = (*wa).width;
+        c.as_ref().unwrap().borrow_mut().oldw = (*wa).width;
+        c.as_ref().unwrap().borrow_mut().h = (*wa).height;
+        c.as_ref().unwrap().borrow_mut().oldh = (*wa).height;
+        c.as_ref().unwrap().borrow_mut().oldbw = (*wa).border_width;
 
-            updatetitle(&mut c);
-            if XGetTransientForHint(dpy, w, &mut trans) > 0 && {
-                t = wintoclient(trans);
-                t.is_some()
-            } {
-                c.mon = t.as_ref().unwrap().borrow_mut().mon.clone();
-                c.tags0 = t.as_ref().unwrap().borrow_mut().tags0;
-            } else {
-                c.mon = selmon.clone();
-                applyrules(&mut *c);
-            }
-
-            let width = WIDTH(&mut c);
-            let ww = c.mon.as_ref().unwrap().borrow_mut().ww;
-            let wh = c.mon.as_ref().unwrap().borrow_mut().wh;
-            let wx = c.mon.as_ref().unwrap().borrow_mut().wx;
-            let wy = c.mon.as_ref().unwrap().borrow_mut().wy;
-            if c.x + width > wx + ww {
-                c.x = wx + ww - width;
-            }
-            let height = HEIGHT(&mut c);
-            if c.y + height > wy + wh {
-                c.y = wy + wh - height;
-            }
-            c.x = c.x.max(wx);
-            c.y = c.y.max(wy);
-            c.bw = borderpx as i32;
-            wc.border_width = c.bw;
+        updatetitle(c.as_ref().unwrap());
+        if XGetTransientForHint(dpy, w, &mut trans) > 0 && {
+            t = wintoclient(trans);
+            t.is_some()
+        } {
+            c.as_ref().unwrap().borrow_mut().mon = t.as_ref().unwrap().borrow_mut().mon.clone();
+            c.as_ref().unwrap().borrow_mut().tags0 = t.as_ref().unwrap().borrow_mut().tags0;
+        } else {
+            c.as_ref().unwrap().borrow_mut().mon = selmon.clone();
+            applyrules(c.as_ref().unwrap());
         }
+
+        let width = WIDTH(&mut c.as_ref().unwrap().borrow_mut());
+        let ww = c
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .mon
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .ww;
+        let wh = c
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .mon
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .wh;
+        let wx = c
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .mon
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .wx;
+        let wy = c
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .mon
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .wy;
+        if c.as_ref().unwrap().borrow_mut().x + width > wx + ww {
+            c.as_ref().unwrap().borrow_mut().x = wx + ww - width;
+        }
+        let height = HEIGHT(&mut c.as_ref().unwrap().borrow_mut());
+        if c.as_ref().unwrap().borrow_mut().y + height > wy + wh {
+            c.as_ref().unwrap().borrow_mut().y = wy + wh - height;
+        }
+        let x = c.as_ref().unwrap().borrow_mut().x;
+        c.as_ref().unwrap().borrow_mut().x = x.max(wx);
+        let y = c.as_ref().unwrap().borrow_mut().y;
+        c.as_ref().unwrap().borrow_mut().y = y.max(wy);
+        c.as_ref().unwrap().borrow_mut().bw = borderpx as i32;
+        wc.border_width = c.as_ref().unwrap().borrow_mut().bw;
         XConfigureWindow(dpy, w, CWBorderWidth as u32, &mut wc);
         XSetWindowBorder(
             dpy,
             w,
             (*scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize]).pixel,
         );
-        configure(&mut *c);
-        updatewindowtype(cc.as_ref().unwrap());
-        updatesizehints(cc.as_ref().unwrap());
-        updatewmhints(cc.as_ref().unwrap());
+        configure(&mut *c.as_ref().unwrap().borrow_mut());
+        updatewindowtype(c.as_ref().unwrap());
+        updatesizehints(c.as_ref().unwrap());
+        updatewmhints(c.as_ref().unwrap());
         XSelectInput(
             dpy,
             w,
             EnterWindowMask | FocusChangeMask | PropertyChangeMask | StructureNotifyMask,
         );
-        grabbuttons(cc.clone(), false);
-        if !c.isfloating {
-            c.oldstate = trans != 0 || c.isfixed;
-            c.isfloating = c.oldstate;
+        grabbuttons(c.clone(), false);
+        if !c.as_ref().unwrap().borrow_mut().isfloating {
+            c.as_ref().unwrap().borrow_mut().oldstate =
+                trans != 0 || c.as_ref().unwrap().borrow_mut().isfixed;
+            c.as_ref().unwrap().borrow_mut().isfloating = c.as_ref().unwrap().borrow_mut().oldstate;
         }
-        if c.isfloating {
-            XRaiseWindow(dpy, c.win);
+        if c.as_ref().unwrap().borrow_mut().isfloating {
+            XRaiseWindow(dpy, c.as_ref().unwrap().borrow_mut().win);
         }
-        attach(cc.clone());
-        attachstack(cc.clone());
+        attach(c.clone());
+        attachstack(c.clone());
         XChangeProperty(
             dpy,
             root,
@@ -3254,18 +3288,32 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             XA_WINDOW,
             32,
             PropModeAppend,
-            c.win as *const _,
+            c.as_ref().unwrap().borrow_mut().win as *const _,
             1,
         );
-        XMoveResizeWindow(dpy, c.win, c.x + 2 * sw, c.y, c.w as u32, c.h as u32);
-        setclientstate(&mut c, NormalState as i64);
+        XMoveResizeWindow(
+            dpy,
+            c.as_ref().unwrap().borrow_mut().win,
+            c.as_ref().unwrap().borrow_mut().x + 2 * sw,
+            c.as_ref().unwrap().borrow_mut().y,
+            c.as_ref().unwrap().borrow_mut().w as u32,
+            c.as_ref().unwrap().borrow_mut().h as u32,
+        );
+        setclientstate(c.as_ref().unwrap(), NormalState as i64);
         let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        if c.mon == selmon {
+        if c.as_ref().unwrap().borrow_mut().mon == selmon {
             unfocus(selmon_mut.sel.clone(), false);
         }
-        c.mon.as_ref().unwrap().borrow_mut().sel = cc.clone();
-        arrange(c.mon.clone());
-        XMapWindow(dpy, c.win);
+        c.as_ref()
+            .unwrap()
+            .borrow_mut()
+            .mon
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .sel = c.clone();
+        arrange(c.as_ref().unwrap().borrow_mut().mon.clone());
+        XMapWindow(dpy, c.as_ref().unwrap().borrow_mut().win);
         focus(None);
     }
 }
@@ -3348,24 +3396,25 @@ pub fn unmanage(c: Option<Rc<RefCell<Client>>>, destroyed: bool) {
         let mut wc: XWindowChanges = zeroed();
         detach(c.clone());
         detachstack(c.clone());
-        let mut cc = c.as_ref().unwrap().borrow_mut();
         if !destroyed {
-            wc.border_width = cc.oldbw;
+            let oldbw = c.as_ref().unwrap().borrow_mut().oldbw;
+            let win = c.as_ref().unwrap().borrow_mut().win;
+            wc.border_width = oldbw;
             // avoid race conditions.
             XGrabServer(dpy);
             XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
-            XSelectInput(dpy, cc.win, NoEventMask);
+            XSelectInput(dpy, win, NoEventMask);
             // restore border.
-            XConfigureWindow(dpy, cc.win, CWBorderWidth as u32, &mut wc);
-            XUngrabButton(dpy, AnyButton as u32, AnyModifier, cc.win);
-            setclientstate(&mut *cc, WithdrawnState as i64);
+            XConfigureWindow(dpy, win, CWBorderWidth as u32, &mut wc);
+            XUngrabButton(dpy, AnyButton as u32, AnyModifier, win);
+            setclientstate(c.as_ref().unwrap(), WithdrawnState as i64);
             XSync(dpy, False);
             XSetErrorHandler(Some(transmute(xerror as *const ())));
             XUngrabServer(dpy);
         }
         focus(None);
         updateclientlist();
-        arrange(cc.mon.clone());
+        arrange(c.as_ref().unwrap().borrow_mut().mon.clone());
     }
 }
 pub fn unmapnotify(e: *mut XEvent) {
@@ -3374,10 +3423,7 @@ pub fn unmapnotify(e: *mut XEvent) {
         let c = wintoclient(ev.window);
         if c.is_some() {
             if ev.send_event > 0 {
-                setclientstate(
-                    &mut *c.as_ref().unwrap().borrow_mut(),
-                    WithdrawnState as i64,
-                );
+                setclientstate(c.as_ref().unwrap(), WithdrawnState as i64);
             } else {
                 unmanage(c, false);
             }
@@ -3490,8 +3536,9 @@ pub fn updatewmhints(c: &Rc<RefCell<Client>>) {
         }
     }
 }
-pub fn updatetitle(c: &mut Client) {
+pub fn updatetitle(c: &Rc<RefCell<Client>>) {
     unsafe {
+        let mut c = c.borrow_mut();
         if !gettextprop(
             c.win,
             netatom[NET::NetWMName as usize],
