@@ -972,8 +972,18 @@ pub fn showhide(c: Option<Rc<RefCell<Client>>>) {
         return;
     }
     unsafe {
-        let is_visible = { ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) };
-        if is_visible > 0 {
+        {
+            println!(
+                "{} mon strong count: {}",
+                line!(),
+                if c.is_some() {
+                    Rc::strong_count(c.as_ref().unwrap())
+                } else {
+                    10086
+                }
+            );
+        }
+        if ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) > 0 {
             // show clients top down.
             let win = c.as_ref().unwrap().borrow_mut().win;
             let x = c.as_ref().unwrap().borrow_mut().x;
@@ -990,17 +1000,17 @@ pub fn showhide(c: Option<Rc<RefCell<Client>>>) {
                 .sellt;
             let isfloating = c.as_ref().unwrap().borrow_mut().isfloating;
             let isfullscreen = c.as_ref().unwrap().borrow_mut().isfullscreen;
-            if ((*(c
+            if (c
                 .as_ref()
                 .unwrap()
                 .borrow_mut()
                 .mon
                 .as_ref()
                 .unwrap()
-                .borrow_mut())
-            .lt[sellt])
+                .borrow_mut()
+                .lt[sellt]
                 .arrange
-                .is_some()
+                .is_none()
                 || isfloating)
                 && !isfullscreen
             {
@@ -1567,13 +1577,32 @@ pub fn scan() {
 pub fn arrange(mut m: Option<Rc<RefCell<Monitor>>>) {
     unsafe {
         if m.is_some() {
+            {
+                println!(
+                    "{} mon strong count: {}",
+                    line!(),
+                    if m.as_ref().unwrap().borrow_mut().stack.is_some() {
+                        Rc::strong_count(m.as_ref().unwrap().borrow_mut().stack.as_ref().unwrap())
+                    } else {
+                        10086
+                    }
+                );
+            }
             showhide(m.as_ref().unwrap().borrow_mut().stack.clone());
+            {
+                println!(
+                    "{} mon strong count: {}",
+                    line!(),
+                    if m.as_ref().unwrap().borrow_mut().stack.is_some() {
+                        Rc::strong_count(m.as_ref().unwrap().borrow_mut().stack.as_ref().unwrap())
+                    } else {
+                        10086
+                    }
+                );
+            }
         } else {
             m = mons.clone();
-            loop {
-                if m.is_none() {
-                    break;
-                }
+            while m.is_some() {
                 showhide(m.as_ref().unwrap().borrow_mut().stack.clone());
                 let next = m.as_ref().unwrap().borrow_mut().next.clone();
                 m = next;
@@ -1585,8 +1614,8 @@ pub fn arrange(mut m: Option<Rc<RefCell<Monitor>>>) {
         } else {
             m = mons.clone();
             while m.is_some() {
+                arrangemon(m.as_ref().unwrap());
                 let next = m.as_ref().unwrap().borrow_mut().next.clone();
-                arrangemon(next.as_ref().unwrap());
                 m = next;
             }
         }
@@ -3176,42 +3205,48 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
         }
 
         let width = WIDTH(&mut c.as_ref().unwrap().borrow_mut());
-        let ww = c
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .mon
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .ww;
-        let wh = c
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .mon
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .wh;
-        let wx = c
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .mon
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .wx;
-        let wy = c
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .mon
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .wy;
+        let ww;
+        let wh;
+        let wx;
+        let wy;
+        {
+            ww = c
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .mon
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .ww;
+            wh = c
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .mon
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .wh;
+            wx = c
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .mon
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .wx;
+            wy = c
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .mon
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .wy;
+        }
         if c.as_ref().unwrap().borrow_mut().x + width > wx + ww {
             c.as_ref().unwrap().borrow_mut().x = wx + ww - width;
         }
@@ -3271,20 +3306,26 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             XMoveResizeWindow(dpy, win, x + 2 * sw, y, w as u32, h as u32);
         }
         setclientstate(c.as_ref().unwrap(), NormalState as i64);
-        if Rc::ptr_eq(
-            c.as_ref().unwrap().borrow_mut().mon.as_ref().unwrap(),
-            selmon.as_ref().unwrap(),
-        ) {
+        let mon_eq_selmon;
+        {
+            mon_eq_selmon = Rc::ptr_eq(
+                c.as_ref().unwrap().borrow_mut().mon.as_ref().unwrap(),
+                selmon.as_ref().unwrap(),
+            );
+        }
+        if mon_eq_selmon {
             unfocus(selmon.as_ref().unwrap().borrow_mut().sel.clone(), false);
         }
-        c.as_ref()
-            .unwrap()
-            .borrow_mut()
-            .mon
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .sel = c.clone();
+        {
+            c.as_ref()
+                .unwrap()
+                .borrow_mut()
+                .mon
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .sel = c.clone();
+        }
         arrange(c.as_ref().unwrap().borrow_mut().mon.clone());
         XMapWindow(dpy, c.as_ref().unwrap().borrow_mut().win);
         focus(None);
