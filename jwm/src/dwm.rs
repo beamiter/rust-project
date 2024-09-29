@@ -383,19 +383,20 @@ pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: &Monitor) -> i32 {
     }
 }
 
-pub fn ISVISIBLE(X: &mut Client) -> u32 {
-    let tags0 = (*X).tags0;
-    let seltags = (*(*X).mon.as_ref().unwrap().borrow_mut()).seltags;
-    let x = tags0 & ((*X).mon.as_ref().unwrap().borrow_mut()).tagset[seltags];
+pub fn ISVISIBLE(X: &Rc<RefCell<Client>>) -> u32 {
+    let X = X.borrow_mut();
+    let tags0 = X.tags0;
+    let seltags = X.mon.as_ref().unwrap().borrow_mut().seltags;
+    let x = tags0 & X.mon.as_ref().unwrap().borrow_mut().tagset[seltags];
     x
 }
 
 pub fn WIDTH(X: &mut Client) -> i32 {
-    (*X).w + 2 * (*X).bw
+    X.w + 2 * X.bw
 }
 
 pub fn HEIGHT(X: &mut Client) -> i32 {
-    (*X).h + 2 * (*X).bw
+    X.h + 2 * X.bw
 }
 
 pub fn TAGMASK() -> u32 {
@@ -971,7 +972,7 @@ pub fn showhide(c: Option<Rc<RefCell<Client>>>) {
         return;
     }
     unsafe {
-        if ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) > 0 {
+        if ISVISIBLE(c.as_ref().unwrap()) > 0 {
             // show clients top down.
             let win = c.as_ref().unwrap().borrow_mut().win;
             let x = c.as_ref().unwrap().borrow_mut().x;
@@ -1025,9 +1026,9 @@ pub fn showhide(c: Option<Rc<RefCell<Client>>>) {
 pub fn configurerequest(e: *mut XEvent) {
     unsafe {
         let ev = (*e).configure_request;
-        let c = wintoclient(ev.window);
-        if let Some(ref c) = c {
-            let mut c = c.borrow_mut();
+        let cc = wintoclient(ev.window);
+        if cc.is_some() {
+            let mut c = cc.as_ref().unwrap().borrow_mut();
             let selmon_borrow = selmon.as_ref().unwrap().borrow_mut();
             if ev.value_mask & CWBorderWidth as u64 > 0 {
                 c.bw = ev.border_width;
@@ -1072,7 +1073,7 @@ pub fn configurerequest(e: *mut XEvent) {
                 {
                     configure(&mut *c);
                 }
-                if ISVISIBLE(&mut *c) > 0 {
+                if ISVISIBLE(cc.as_ref().unwrap()) > 0 {
                     XMoveResizeWindow(dpy, c.win, c.x, c.y, c.w as u32, c.h as u32);
                 }
             } else {
@@ -1128,7 +1129,11 @@ pub fn arrangemon(m: &Rc<RefCell<Monitor>>) {
         arrange = m.borrow_mut().lt[sellt].arrange;
     }
     if let Some(arrange0) = arrange {
-        (arrange0)(&mut *m.borrow_mut());
+        let m_ptr: *mut Monitor;
+        {
+            m_ptr = &mut *m.borrow_mut();
+        }
+        (arrange0)(m_ptr);
     }
 }
 // This is cool!
@@ -1203,7 +1208,7 @@ pub fn detachstack(c: Option<Rc<RefCell<Client>>>) {
             .stack
             .as_ref()
             .map(Rc::clone);
-        while t.is_some() && ISVISIBLE(&mut *t.as_ref().unwrap().borrow_mut()) <= 0 {
+        while t.is_some() && ISVISIBLE(t.as_ref().unwrap()) <= 0 {
             let snext = t.as_ref().unwrap().borrow_mut().snext.clone();
             t = snext;
         }
@@ -1478,7 +1483,7 @@ pub fn restack(m: Option<Rc<RefCell<Monitor>>>) {
             let mut c = m.as_ref().unwrap().borrow_mut().stack.clone();
             while c.is_none() {
                 if !c.as_ref().unwrap().borrow_mut().isfloating
-                    && ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) > 0
+                    && ISVISIBLE(c.as_ref().unwrap()) > 0
                 {
                     let win = c.as_ref().unwrap().borrow_mut().win;
                     XConfigureWindow(dpy, win, (CWSibling | CWStackMode) as u32, &mut wc);
@@ -1991,7 +1996,6 @@ pub fn updateclientlist() {
         }
     }
 }
-#[allow(dead_code)]
 pub fn tile(m: *mut Monitor) {
     let mut n: u32 = 0;
     unsafe {
@@ -2166,13 +2170,13 @@ pub fn focusstack(arg: *const Arg) {
             c = (*selmon_mut.sel.as_ref().unwrap().borrow_mut())
                 .next
                 .clone();
-            while c.is_some() && ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) <= 0 {
+            while c.is_some() && ISVISIBLE(c.as_ref().unwrap()) <= 0 {
                 let next = c.as_ref().unwrap().borrow_mut().next.clone();
                 c = next;
             }
             if c.is_none() {
                 c = selmon_mut.clients.clone();
-                while c.is_some() && ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) <= 0 {
+                while c.is_some() && ISVISIBLE(c.as_ref().unwrap()) <= 0 {
                     let next = c.as_ref().unwrap().borrow_mut().next.clone();
                     c = next;
                 }
@@ -2182,13 +2186,13 @@ pub fn focusstack(arg: *const Arg) {
             while !Rc::ptr_eq(cl.as_ref().unwrap(), selmon_mut.sel.as_ref().unwrap()) {
                 let next = cl.as_ref().unwrap().borrow_mut().next.clone();
                 cl = next;
-                if ISVISIBLE(&mut *cl.as_ref().unwrap().borrow_mut()) > 0 {
+                if ISVISIBLE(cl.as_ref().unwrap()) > 0 {
                     c = cl.clone();
                 }
             }
             if c.is_none() {
                 while cl.is_some() {
-                    if ISVISIBLE(&mut *cl.as_ref().unwrap().borrow_mut()) > 0 {
+                    if ISVISIBLE(cl.as_ref().unwrap()) > 0 {
                         c = cl.clone();
                     }
                     let next = cl.as_ref().unwrap().borrow_mut().next.clone();
@@ -2498,7 +2502,7 @@ pub fn killclient(_arg: *const Arg) {
 pub fn nexttiled(mut c: Option<Rc<RefCell<Client>>>) -> Option<Rc<RefCell<Client>>> {
     while let Some(ref c_ref) = c {
         let isfloating = c_ref.borrow_mut().isfloating;
-        if isfloating || ISVISIBLE(&mut *c_ref.borrow_mut()) <= 0 {
+        if isfloating || ISVISIBLE(c_ref) <= 0 {
             let next = c_ref.borrow_mut().next.clone();
             c = next;
         }
@@ -3029,9 +3033,9 @@ pub fn focus(mut c: Option<Rc<RefCell<Client>>>) {
     unsafe {
         {
             let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-            if c.is_none() || ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) <= 0 {
+            if c.is_none() || ISVISIBLE(c.as_ref().unwrap()) <= 0 {
                 c = selmon_mut.stack.clone();
-                while c.is_some() && ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) <= 0 {
+                while c.is_some() && ISVISIBLE(c.as_ref().unwrap()) <= 0 {
                     let next = c.as_ref().unwrap().borrow_mut().snext.clone();
                     c = next;
                 }
@@ -3258,14 +3262,8 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             unfocus(selmon.as_ref().unwrap().borrow_mut().sel.clone(), false);
         }
         {
-            c.as_ref()
-                .unwrap()
-                .borrow_mut()
-                .mon
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .sel = c.clone();
+            let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
+            mon.as_ref().unwrap().borrow_mut().sel = c.clone();
         }
         {
             let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
@@ -3298,7 +3296,6 @@ pub fn maprequest(e: *mut XEvent) {
         }
     }
 }
-#[allow(dead_code)]
 pub fn monocle(m: *mut Monitor) {
     unsafe {
         // This idea is cool!.
@@ -3306,7 +3303,7 @@ pub fn monocle(m: *mut Monitor) {
         let mut n: u32 = 0;
         let mut c = (*m).clients.clone();
         while c.is_some() {
-            if ISVISIBLE(&mut *c.as_ref().unwrap().borrow_mut()) > 0 {
+            if ISVISIBLE(c.as_ref().unwrap()) > 0 {
                 n += 1;
             }
             let next = c.as_ref().unwrap().borrow_mut().next.clone();
