@@ -403,7 +403,7 @@ pub fn TAGMASK() -> u32 {
     (1 << tags.len()) - 1
 }
 
-pub fn TEXTW(drw0: *mut Drw, X: &str) -> u32 {
+pub fn TEXTW(drw0: &mut Drw, X: &str) -> u32 {
     unsafe { drw_fontset_getwidth(drw0, X) + lrpad as u32 }
 }
 

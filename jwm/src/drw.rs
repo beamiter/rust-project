@@ -152,36 +152,32 @@ pub fn drw_create(dpy: *mut xlib::Display, screen: i32, root: Window, w: u32, h:
     return drw;
 }
 
-pub fn drw_resize(drw: *mut Drw, w: u32, h: u32) {
-    if drw.is_null() {
-        return;
-    }
-
+pub fn drw_resize(drw: &mut Drw, w: u32, h: u32) {
     unsafe {
-        (*drw).w = w;
-        (*drw).h = h;
-        if (*drw).drawable > 0 {
-            XFreePixmap((*drw).dpy, (*drw).drawable);
+        drw.w = w;
+        drw.h = h;
+        if drw.drawable > 0 {
+            XFreePixmap(drw.dpy, drw.drawable);
         }
-        (*drw).drawable = XCreatePixmap(
-            (*drw).dpy,
-            (*drw).root,
+        drw.drawable = XCreatePixmap(
+            drw.dpy,
+            drw.root,
             w,
             h,
-            XDefaultDepth((*drw).dpy, (*drw).screen).try_into().unwrap(),
+            XDefaultDepth(drw.dpy, drw.screen).try_into().unwrap(),
         );
     }
 }
 
-pub fn drw_free(drw: *mut Drw) {
+pub fn drw_free(drw: &mut Drw) {
     unsafe {
-        XFreePixmap((*drw).dpy, (*drw).drawable);
-        XFreeGC((*drw).dpy, (*drw).gc);
+        XFreePixmap(drw.dpy, drw.drawable);
+        XFreeGC(drw.dpy, drw.gc);
     }
 }
 
 fn xfont_create(
-    drw: *mut Drw,
+    drw: &mut Drw,
     fontname: &str,
     fontpattern: *mut FcPattern,
 ) -> Option<Rc<RefCell<Fnt>>> {
@@ -192,7 +188,7 @@ fn xfont_create(
     unsafe {
         if !fontname.is_empty() {
             let cstring = CString::new(fontname).expect("fail to convert");
-            xfont = XftFontOpenName((*drw).dpy, (*drw).screen, cstring.as_ptr());
+            xfont = XftFontOpenName(drw.dpy, drw.screen, cstring.as_ptr());
             if xfont.is_null() {
                 eprintln!("error, cannot load font from name: {}", fontname);
                 return None;
@@ -200,11 +196,11 @@ fn xfont_create(
             pattern = FcNameParse(cstring.as_ptr() as *const FcChar8);
             if pattern.is_null() {
                 eprintln!("error, cannot parse font name to pattern: {}", fontname);
-                XftFontClose((*drw).dpy, xfont);
+                XftFontClose(drw.dpy, xfont);
                 return None;
             }
         } else if !fontpattern.is_null() {
-            xfont = XftFontOpenPattern((*drw).dpy, fontpattern as *mut _);
+            xfont = XftFontOpenPattern(drw.dpy, fontpattern as *mut _);
             if xfont.is_null() {
                 eprintln!("error, cannot load font from pattern.");
                 return None;
@@ -218,7 +214,7 @@ fn xfont_create(
     font.pattern = pattern;
     unsafe {
         font.h = ((*xfont).ascent + (*xfont).descent) as u32;
-        font.dpy = (*drw).dpy;
+        font.dpy = drw.dpy;
     }
 
     return Some(Rc::new(RefCell::new(font)));
@@ -236,27 +232,25 @@ fn xfont_free(font: Option<Rc<RefCell<Fnt>>>) {
 
 // Fnt abstraction
 pub fn drw_fontset_create(
-    drw: *mut Drw,
+    drw: &mut Drw,
     fonts: &[&str],
     fontcount: u64,
 ) -> Option<Rc<RefCell<Fnt>>> {
     let mut ret: Option<Rc<RefCell<Fnt>>> = None;
 
-    if drw.is_null() || fonts.is_empty() {
+    if fonts.is_empty() {
         return None;
     }
 
-    unsafe {
-        for i in 1..=fontcount {
-            let cur = xfont_create(drw, fonts[(i - 1) as usize], null_mut());
-            if cur.is_some() {
-                cur.as_ref().unwrap().borrow_mut().next = ret;
-                ret = cur;
-            }
+    for i in 1..=fontcount {
+        let cur = xfont_create(drw, fonts[(i - 1) as usize], null_mut());
+        if cur.is_some() {
+            cur.as_ref().unwrap().borrow_mut().next = ret;
+            ret = cur;
         }
-        (*drw).fonts = ret;
-        return (*drw).fonts.clone();
     }
+    drw.fonts = ret;
+    return drw.fonts.clone();
 }
 
 #[allow(dead_code)]
@@ -267,22 +261,18 @@ pub fn drw_fontset_free(font: Option<Rc<RefCell<Fnt>>>) {
     }
 }
 
-pub fn drw_fontset_getwidth(drw: *mut Drw, text: &str) -> u32 {
-    unsafe {
-        if drw.is_null() || (*drw).fonts.is_none() || text.is_empty() {
-            return 0;
-        }
-        return drw_text(drw, 0, 0, 0, 0, 0, text, 0) as u32;
+pub fn drw_fontset_getwidth(drw: &mut Drw, text: &str) -> u32 {
+    if drw.fonts.is_none() || text.is_empty() {
+        return 0;
     }
+    return drw_text(drw, 0, 0, 0, 0, 0, text, 0) as u32;
 }
 
 #[allow(dead_code)]
-pub fn drw_fontset_getwidth_clamp(drw: *mut Drw, text: &str, n: u32) -> u32 {
+pub fn drw_fontset_getwidth_clamp(drw: &mut Drw, text: &str, n: u32) -> u32 {
     let mut tmp: u32 = 0;
-    unsafe {
-        if !drw.is_null() && (*drw).fonts.is_some() && (n > 0) {
-            tmp = drw_text(drw, 0, 0, 0, 0, 0, text, n as i32) as u32;
-        }
+    if drw.fonts.is_some() && (n > 0) {
+        tmp = drw_text(drw, 0, 0, 0, 0, 0, text, n as i32) as u32;
     }
     return n.min(tmp);
 }
@@ -313,16 +303,16 @@ pub fn drw_font_gettexts(font: *mut Fnt, text: &str, len: u32, w: *mut u32, h: *
 }
 
 // Colorscheme abstraction
-pub fn drw_clr_create(drw: *mut Drw, clrname: &str) -> Option<Rc<Clr>> {
-    if drw.is_null() || clrname.is_empty() {
+pub fn drw_clr_create(drw: &mut Drw, clrname: &str) -> Option<Rc<Clr>> {
+    if clrname.is_empty() {
         return None;
     }
 
     unsafe {
         let cstring = CString::new(clrname).expect("fail to connect");
         let mut dest: Clr = std::mem::zeroed();
-        let dpy = (*drw).dpy;
-        let screen = (*drw).screen;
+        let dpy = drw.dpy;
+        let screen = drw.screen;
         if XftColorAllocName(
             dpy,
             XDefaultVisual(dpy, screen),
@@ -338,10 +328,10 @@ pub fn drw_clr_create(drw: *mut Drw, clrname: &str) -> Option<Rc<Clr>> {
     }
 }
 
-pub fn drw_scm_create(drw: *mut Drw, clrnames: &[&str]) -> Vec<Option<Rc<Clr>>> {
+pub fn drw_scm_create(drw: &mut Drw, clrnames: &[&str]) -> Vec<Option<Rc<Clr>>> {
     let clrcount = clrnames.len();
     // Need at least two colors for a scheme.
-    if drw.is_null() || clrnames.is_empty() || clrcount < 2 {
+    if clrnames.is_empty() || clrcount < 2 {
         return vec![];
     }
     let mut ret: Vec<Option<Rc<Clr>>> = vec![];
@@ -353,72 +343,61 @@ pub fn drw_scm_create(drw: *mut Drw, clrnames: &[&str]) -> Vec<Option<Rc<Clr>>> 
 }
 
 // Cursor abstraction
-pub fn drw_cur_create(drw: *mut Drw, shape: i32) -> Option<Box<Cur>> {
+pub fn drw_cur_create(drw: &mut Drw, shape: i32) -> Option<Box<Cur>> {
     let mut cur: Cur = Cur::new();
 
-    if drw.is_null() {
-        return None;
-    }
     unsafe {
-        cur.cursor = XCreateFontCursor((*drw).dpy, shape as u32);
+        cur.cursor = XCreateFontCursor(drw.dpy, shape as u32);
     }
     return Some(Box::new(cur));
 }
 
-pub fn drw_cur_free(drw: *mut Drw, cursor: *mut Cur) {
+pub fn drw_cur_free(drw: &mut Drw, cursor: *mut Cur) {
     if cursor.is_null() {
         return;
     }
 
     unsafe {
-        XFreeCursor((*drw).dpy, (*cursor).cursor);
+        XFreeCursor(drw.dpy, (*cursor).cursor);
     }
 }
 
 // Drawing context manipulation.
 #[allow(dead_code)]
-pub fn drw_setfontset(drw: *mut Drw, set: Option<Rc<RefCell<Fnt>>>) {
-    if !drw.is_null() {
-        unsafe {
-            (*drw).fonts = set;
-        }
-    }
+pub fn drw_setfontset(drw: &mut Drw, set: Option<Rc<RefCell<Fnt>>>) {
+    drw.fonts = set;
 }
 
-pub fn drw_setscheme(drw: *mut Drw, scm: Vec<Option<Rc<Clr>>>) {
-    if !drw.is_null() {
-        unsafe {
-            (*drw).scheme = scm;
-        }
-    }
+pub fn drw_setscheme(drw: &mut Drw, scm: Vec<Option<Rc<Clr>>>) {
+    drw.scheme = scm;
 }
 
 // Drawing functions.
-pub fn drw_rect(drw: *mut Drw, x: i32, y: i32, w: u32, h: u32, filled: i32, invert: i32) {
+pub fn drw_rect(drw: &mut Drw, x: i32, y: i32, w: u32, h: u32, filled: i32, invert: i32) {
     unsafe {
-        if drw.is_null() || (*drw).scheme.is_empty() {
+        if drw.scheme.is_empty() {
             return;
         }
         XSetForeground(
-            (*drw).dpy,
-            (*drw).gc,
+            drw.dpy,
+            drw.gc,
             if invert > 0 {
-                (*drw).scheme[Col::ColBg as usize].as_ref().unwrap().pixel
+                drw.scheme[Col::ColBg as usize].as_ref().unwrap().pixel
             } else {
-                (*drw).scheme[Col::ColFg as usize].as_ref().unwrap().pixel
+                drw.scheme[Col::ColFg as usize].as_ref().unwrap().pixel
             },
         );
         if filled > 0 {
-            XFillRectangle((*drw).dpy, (*drw).drawable, (*drw).gc, x, y, w, h);
+            XFillRectangle(drw.dpy, drw.drawable, drw.gc, x, y, w, h);
         } else {
-            XDrawRectangle((*drw).dpy, (*drw).drawable, (*drw).gc, x, y, w - 1, h - 1);
+            XDrawRectangle(drw.dpy, drw.drawable, drw.gc, x, y, w - 1, h - 1);
         }
     }
 }
 
 #[allow(unused_mut)]
 pub fn drw_text(
-    drw: *mut Drw,
+    drw: &mut Drw,
     mut x: i32,
     mut y: i32,
     mut w: u32,
@@ -449,11 +428,7 @@ pub fn drw_text(
     let mut overflow: i32 = 0;
 
     unsafe {
-        if drw.is_null()
-            || (render && ((*drw).scheme.is_empty() || w <= 0)
-                || text.is_empty()
-                || (*drw).fonts.is_none())
-        {
+        if render && (drw.scheme.is_empty() || w <= 0) || text.is_empty() || drw.fonts.is_none() {
             return 0;
         }
 
@@ -465,19 +440,19 @@ pub fn drw_text(
             };
         } else {
             let idx = if invert > 0 { Col::ColFg } else { Col::ColBg } as usize;
-            XSetForeground((*drw).dpy, (*drw).gc, (*drw).scheme[idx].as_ref().unwrap().pixel);
-            XFillRectangle((*drw).dpy, (*drw).drawable, (*drw).gc, x, y, w, h);
+            XSetForeground(drw.dpy, drw.gc, drw.scheme[idx].as_ref().unwrap().pixel);
+            XFillRectangle(drw.dpy, drw.drawable, drw.gc, x, y, w, h);
             d = XftDrawCreate(
-                (*drw).dpy,
-                (*drw).drawable,
-                XDefaultVisual((*drw).dpy, (*drw).screen),
-                XDefaultColormap((*drw).dpy, (*drw).screen),
+                drw.dpy,
+                drw.drawable,
+                XDefaultVisual(drw.dpy, drw.screen),
+                XDefaultColormap(drw.dpy, drw.screen),
             );
             x += lpad as i32;
             w -= lpad;
         }
 
-        let mut usedfont = (*drw).fonts.clone();
+        let mut usedfont = drw.fonts.clone();
         let ellipsis_width = ELLIPSIS_WIDTH.load(Ordering::SeqCst);
         if ellipsis_width <= 0 && render {
             ELLIPSIS_WIDTH.store(drw_fontset_getwidth(drw, "..."), Ordering::SeqCst);
@@ -491,11 +466,11 @@ pub fn drw_text(
 
             while !text.is_empty() {
                 utf8charlen = utf8decode(text, &mut utf8codepoint, UTF_SIZ) as i32;
-                curfont = (*drw).fonts.clone();
+                curfont = drw.fonts.clone();
                 while curfont.is_some() {
                     charexists = (charexists > 0
                         || XftCharExists(
-                            (*drw).dpy,
+                            drw.dpy,
                             curfont.as_ref().unwrap().borrow_mut().xfont,
                             utf8codepoint.try_into().unwrap(),
                         ) > 0) as i32;
@@ -549,7 +524,7 @@ pub fn drw_text(
                     }
                     let idx = if invert > 0 { Col::ColBg } else { Col::ColFg } as usize;
                     let cstring = CString::new(utf8str).expect("fail to create");
-                    let clr = (*drw).scheme[idx].as_ref().unwrap().as_ref();
+                    let clr = drw.scheme[idx].as_ref().unwrap().as_ref();
                     XftDrawStringUtf8(
                         d,
                         clr,
@@ -581,7 +556,7 @@ pub fn drw_text(
                 for i in 0..NOMATCHES_LEN {
                     // avoid calling XftFontMatch if we know we won't find a match.
                     if utf8codepoint == NOMATCHES.codepoint[i] {
-                        usedfont = (*drw).fonts.clone();
+                        usedfont = drw.fonts.clone();
                         continue;
                     }
                 }
@@ -589,27 +564,20 @@ pub fn drw_text(
                 fccharset = FcCharSetCreate();
                 FcCharSetAddChar(fccharset, utf8codepoint as u32);
 
-                if (*drw)
-                    .fonts
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .pattern
-                    .is_null()
-                {
+                if drw.fonts.as_ref().unwrap().borrow_mut().pattern.is_null() {
                     // The first font in the cache must be loaded from a font string.
                     exit(0);
                 }
 
-                fcpattern = FcPatternDuplicate((*drw).fonts.as_ref().unwrap().borrow_mut().pattern);
+                fcpattern = FcPatternDuplicate(drw.fonts.as_ref().unwrap().borrow_mut().pattern);
                 FcPatternAddCharSet(fcpattern, FC_CHARSET.as_ptr(), fccharset);
                 FcPatternAddBool(fcpattern, FC_SCALABLE.as_ptr(), 1);
 
                 FcConfigSubstitute(null_mut(), fcpattern, FcMatchPattern);
                 FcDefaultSubstitute(fcpattern);
                 match0 = XftFontMatch(
-                    (*drw).dpy,
-                    (*drw).screen,
+                    drw.dpy,
+                    drw.screen,
                     fcpattern as *mut _,
                     &mut result as *mut _,
                 ) as *mut _;
@@ -621,12 +589,12 @@ pub fn drw_text(
                     usedfont = xfont_create(drw, "", match0);
                     if usedfont.is_some()
                         && XftCharExists(
-                            (*drw).dpy,
+                            drw.dpy,
                             usedfont.as_ref().unwrap().borrow_mut().xfont,
                             utf8codepoint as u32,
                         ) > 0
                     {
-                        curfont = (*drw).fonts.clone();
+                        curfont = drw.fonts.clone();
                         loop {
                             if curfont.as_ref().unwrap().borrow_mut().xfont.is_null() {
                                 break;
@@ -640,7 +608,7 @@ pub fn drw_text(
                         NOMATCHES.idx += 1;
                         let idx = NOMATCHES.idx as usize;
                         NOMATCHES.codepoint[idx % NOMATCHES_LEN] = utf8codepoint;
-                        usedfont = (*drw).fonts.clone();
+                        usedfont = drw.fonts.clone();
                     }
                 }
             }
@@ -654,25 +622,10 @@ pub fn drw_text(
 }
 
 // Map functions
-pub fn drw_map(drw: *mut Drw, win: Window, x: i32, y: i32, w: u32, h: u32) {
-    if drw.is_null() {
-        return;
-    }
-
+pub fn drw_map(drw: &mut Drw, win: Window, x: i32, y: i32, w: u32, h: u32) {
     unsafe {
-        XCopyArea(
-            (*drw).dpy,
-            (*drw).drawable,
-            win,
-            (*drw).gc,
-            x,
-            y,
-            w,
-            h,
-            x,
-            y,
-        );
-        XSync((*drw).dpy, False);
+        XCopyArea(drw.dpy, drw.drawable, win, drw.gc, x, y, w, h, x, y);
+        XSync(drw.dpy, False);
     }
 }
 
