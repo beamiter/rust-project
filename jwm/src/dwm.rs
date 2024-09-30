@@ -12,7 +12,7 @@ use std::ffi::{c_char, c_int, CStr, CString};
 use std::mem::transmute;
 use std::mem::zeroed;
 use std::process::Command;
-use std::ptr::{addr_of, addr_of_mut, null, null_mut};
+use std::ptr::{addr_of, addr_of_mut, null_mut};
 use std::rc::Rc;
 use std::{os::raw::c_long, usize};
 
@@ -23,11 +23,11 @@ use x11::xlib::{
     CWCursor, CWEventMask, CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth,
     ClientMessage, ConfigureNotify, ConfigureRequest, ControlMask, CopyFromParent, CurrentTime,
     DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose, ExposureMask, False,
-    FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess, GrayScale, InputHint,
-    IsViewable, KeyPress, KeySym, LASTEvent, LeaveWindowMask, LockMask, MapRequest,
-    MappingKeyboard, MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify,
-    NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc,
-    PSize, ParentRelative, PointerMotionMask, PointerRoot, PropModeAppend, PropModeReplace,
+    FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess, InputHint, IsViewable,
+    KeyPress, KeySym, LASTEvent, LeaveWindowMask, LockMask, MapRequest, MappingKeyboard,
+    MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify, NoEventMask,
+    NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize,
+    ParentRelative, PointerMotionMask, PointerRoot, PropModeAppend, PropModeReplace,
     PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer, RevertToPointerRoot,
     ShiftMask, StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask, Success,
     Time, True, UnmapNotify, Window, XAllowEvents, XChangeProperty, XChangeWindowAttributes,
@@ -466,12 +466,11 @@ pub fn applyrules(c: &Rc<RefCell<Client>>) {
                 c.isfloating = r.isfloating;
                 c.tags0 |= r.tags0 as u32;
                 let mut m = mons.clone();
-                // or here: let mut m = Some(mons.as_ref().unwrap().clone());
-                loop {
-                    if m.is_none() || m.as_ref().unwrap().borrow_mut().num == r.monitor {
+                while let Some(ref m_opt) = m {
+                    if m_opt.borrow_mut().num == r.monitor {
                         break;
                     }
-                    let next = m.as_ref().unwrap().borrow_mut().next.clone();
+                    let next = m_opt.borrow_mut().next.clone();
                     m = next;
                 }
                 if m.is_some() {
@@ -743,16 +742,17 @@ pub fn clientmessage(e: *mut XEvent) {
             {
                 // NET_WM_STATE_ADD
                 // NET_WM_STATE_TOGGLE
-                setfullscreen(
-                    &mut *c.as_ref().unwrap().borrow_mut(),
-                    cme.data.get_long(0) == 1
-                        || cme.data.get_long(0) == 2
-                            && !c.as_ref().unwrap().borrow_mut().isfullscreen,
-                );
+                let fullscreen = cme.data.get_long(0) == 1
+                    || (cme.data.get_long(0) == 2
+                        && !c.as_ref().unwrap().borrow_mut().isfullscreen);
+                setfullscreen(&mut *c.as_ref().unwrap().borrow_mut(), fullscreen);
             }
         } else if cme.message_type == netatom[NET::NetActiveWindow as usize] {
-            if c != selmon.as_ref().unwrap().borrow_mut().sel
-                && !c.as_ref().unwrap().borrow_mut().isurgent
+            let isurgent = { c.as_ref().unwrap().borrow_mut().isurgent };
+            if !Rc::ptr_eq(
+                c.as_ref().unwrap(),
+                selmon.as_ref().unwrap().borrow_mut().sel.as_ref().unwrap(),
+            ) && !isurgent
             {
                 seturgent(&mut *c.as_ref().unwrap().borrow_mut(), true);
             }
@@ -1243,7 +1243,6 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 stext,
                 0,
             );
-            println!("here0: {},{},{},{},{}", ww - tw, 0, tw, bh, stext);
         }
         {
             let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
@@ -1278,7 +1277,6 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 tags[i],
                 (urg & 1 << i) as i32,
             );
-            println!("here1: {},{},{},{},{}", x, 0, w, bh, tags[i]);
             if (occ & 1 << i) > 0 {
                 let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
                 let tags0 = { selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 };
@@ -1314,14 +1312,6 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             m.as_ref().unwrap().borrow_mut().ltsymbol,
             0,
         );
-        println!(
-            "here2: {},{},{},{},{}",
-            x,
-            0,
-            w,
-            bh,
-            m.as_ref().unwrap().borrow_mut().ltsymbol
-        );
 
         w = m.as_ref().unwrap().borrow_mut().ww - tw - x;
         if w > bh {
@@ -1341,14 +1331,6 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     (lrpad / 2) as u32,
                     sel_opt.borrow_mut().name,
                     0,
-                );
-                println!(
-                    "here3: {},{},{},{},{}",
-                    x,
-                    0,
-                    w,
-                    bh,
-                    m.as_ref().unwrap().borrow_mut().ltsymbol
                 );
                 if sel_opt.borrow_mut().isfloating {
                     drw_rect(
@@ -3157,7 +3139,10 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             XSetWindowBorder(
                 dpy,
                 w,
-                scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize].as_ref().unwrap().pixel,
+                scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize]
+                    .as_ref()
+                    .unwrap()
+                    .pixel,
             );
             configure(&mut *c.as_ref().unwrap().borrow_mut());
         }
@@ -3287,9 +3272,9 @@ pub fn motionnotify(e: *mut XEvent) {
             return;
         }
         let m = recttomon(ev.x_root, ev.y_root, 1, 1);
-        if m != motionmon && motionmon.is_some() {
-            let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-            unfocus(selmon_mut.sel.clone(), true);
+        if motionmon.is_some() && !Rc::ptr_eq(m.as_ref().unwrap(), motionmon.as_ref().unwrap()) {
+            let selmon_mut_sel = selmon.as_ref().unwrap().borrow_mut().sel.clone();
+            unfocus(selmon_mut_sel, true);
             selmon = m.clone();
             focus(None);
         }
