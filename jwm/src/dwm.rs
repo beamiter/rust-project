@@ -1071,7 +1071,7 @@ pub fn createmon() -> Monitor {
     m.lt[0] = layouts[0].clone();
     m.lt[1] = layouts[1 % layouts.len()].clone();
     m.ltsymbol = layouts[0].symbol;
-    println!("createmon: {:?}", m.ltsymbol);
+    println!("[createmon]: ltsymbol: {:?}", m.ltsymbol);
     return m;
 }
 pub fn destroynotify(e: *mut XEvent) {
@@ -1248,7 +1248,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         {
             let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
             while c.is_some() {
-                let tags0 =c.as_ref().unwrap().borrow_mut().tags0; 
+                let tags0 = c.as_ref().unwrap().borrow_mut().tags0;
                 occ |= tags0;
                 if c.as_ref().unwrap().borrow_mut().isurgent {
                     urg |= tags0;
@@ -1273,7 +1273,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 x,
                 0,
                 w as u32,
-                bh.try_into().unwrap(),
+                bh as u32,
                 (lrpad / 2) as u32,
                 tags[i],
                 (urg & 1 << i) as i32,
@@ -1285,8 +1285,8 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 drw_rect(
                     drw.as_mut().unwrap().as_mut(),
                     x + boxs as i32,
-                    0,
-                    boxs,
+                    boxs as i32,
+                    boxw,
                     boxw,
                     (Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap())
                         && selmon_mut.sel.is_some()
@@ -1325,7 +1325,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
 
         w = m.as_ref().unwrap().borrow_mut().ww - tw - x;
         if w > bh {
-            if m.as_ref().unwrap().borrow_mut().sel.is_some() {
+            if let Some(ref sel_opt) = m.as_ref().unwrap().borrow_mut().sel {
                 let idx = if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
                     SCHEME::SchemeSel
                 } else {
@@ -1339,14 +1339,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     w as u32,
                     bh as u32,
                     (lrpad / 2) as u32,
-                    m.as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .sel
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .name,
+                    sel_opt.borrow_mut().name,
                     0,
                 );
                 println!(
@@ -1357,29 +1350,14 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     bh,
                     m.as_ref().unwrap().borrow_mut().ltsymbol
                 );
-                if m.as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .sel
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .isfloating
-                {
+                if sel_opt.borrow_mut().isfloating {
                     drw_rect(
                         drw.as_mut().unwrap().as_mut(),
                         x + boxs as i32,
                         boxs as i32,
                         boxw,
                         boxw,
-                        m.as_ref()
-                            .unwrap()
-                            .borrow_mut()
-                            .sel
-                            .as_ref()
-                            .unwrap()
-                            .borrow_mut()
-                            .isfixed as i32,
+                        sel_opt.borrow_mut().isfixed as i32,
                         0,
                     );
                 }
@@ -1642,13 +1620,13 @@ pub fn recttomon(x: i32, y: i32, w: i32, h: i32) -> Option<Rc<RefCell<Monitor>>>
     unsafe {
         let mut r = selmon.clone();
         let mut m = mons.clone();
-        while m.is_some() {
-            let a = INTERSECT(x, y, w, h, &m.as_ref().unwrap().borrow());
+        while let Some(ref m_opt) = m {
+            let a = INTERSECT(x, y, w, h, &m_opt.borrow_mut());
             if a > area {
                 area = a;
                 r = m.clone();
             }
-            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            let next = m_opt.borrow_mut().next.clone();
             m = next;
         }
         return r;
@@ -1658,16 +1636,16 @@ pub fn recttomon(x: i32, y: i32, w: i32, h: i32) -> Option<Rc<RefCell<Monitor>>>
 pub fn wintoclient(w: Window) -> Option<Rc<RefCell<Client>>> {
     unsafe {
         let mut m = mons.clone();
-        while m.is_some() {
-            let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
-            while c.is_some() {
-                if c.as_ref().unwrap().borrow_mut().win == w {
+        while let Some(ref m_opt) = m {
+            let mut c = m_opt.borrow_mut().clients.clone();
+            while let Some(ref c_opt) = c {
+                if c_opt.borrow_mut().win == w {
                     return c;
                 }
-                let next = c.as_ref().unwrap().borrow_mut().next.clone();
+                let next = c_opt.borrow_mut().next.clone();
                 c = next;
             }
-            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            let next = m_opt.borrow_mut().next.clone();
             m = next;
         }
     }
@@ -1682,16 +1660,16 @@ pub fn wintomon(w: Window) -> Option<Rc<RefCell<Monitor>>> {
             return recttomon(x, y, 1, 1);
         }
         let mut m = mons.clone();
-        while m.is_some() {
-            if w == m.as_ref().unwrap().borrow_mut().barwin {
+        while let Some(ref m_opt) = m {
+            if w == m_opt.borrow_mut().barwin {
                 return m;
             }
-            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            let next = m_opt.borrow_mut().next.clone();
             m = next;
         }
         let c = wintoclient(w);
-        if c.is_some() {
-            return c.as_ref().unwrap().borrow_mut().mon.clone();
+        if let Some(ref c_opt) = c {
+            return c_opt.borrow_mut().mon.clone();
         }
         return selmon.clone();
     }
@@ -1902,31 +1880,29 @@ pub fn updatebars() {
                 CWOverrideRedirect | CWBackPixmap | CWEventMask,
                 &mut wa,
             );
+            let barwin = m.as_ref().unwrap().borrow_mut().barwin;
             XDefineCursor(
                 dpy,
-                m.as_ref().unwrap().borrow_mut().barwin,
+                barwin,
                 cursor[CUR::CurNormal as usize].as_ref().unwrap().cursor,
             );
-            XMapRaised(dpy, m.as_ref().unwrap().borrow_mut().barwin);
-            XSetClassHint(dpy, m.as_ref().unwrap().borrow_mut().barwin, &mut ch);
+            XMapRaised(dpy, barwin);
+            XSetClassHint(dpy, barwin, &mut ch);
             let next = m.as_ref().unwrap().borrow_mut().next.clone();
             m = next;
         }
     }
 }
-pub fn updatebarpos(m: *mut Monitor) {
+pub fn updatebarpos(m: &mut Monitor) {
     unsafe {
-        (*m).wy = (*m).my;
-        (*m).wh = (*m).mh;
-        if (*m).showbar0 {
-            (*m).wh -= bh;
-            (*m).by = if (*m).topbar0 {
-                (*m).wy
-            } else {
-                (*m).wy + (*m).wh
-            };
+        m.wy = m.my;
+        m.wh = m.mh;
+        if m.showbar0 {
+            m.wh -= bh;
+            m.by = if m.topbar0 { m.wy } else { m.wy + m.wh };
+            m.wy = if m.topbar0 { m.wy + bh } else { m.wy };
         } else {
-            (*m).by = -bh;
+            m.by = -bh;
         }
     }
 }
@@ -2319,6 +2295,7 @@ pub fn setup() {
         drw = Some(Box::new(drw_create(
             dpy, screen, root, sw as u32, sh as u32,
         )));
+        println!("[setup] drw_fontset_create");
         if drw_fontset_create(drw.as_mut().unwrap().as_mut(), &*fonts, fonts.len() as u64).is_none()
         {
             eprintln!("no fonts could be loaded");
@@ -2329,6 +2306,7 @@ pub fn setup() {
             lrpad = h;
             bh = h + 2;
         }
+        println!("[setup] updategeom");
         updategeom();
         // init atoms
         let mut c_string = CString::new("UTF8_STRING").expect("fail to convert");
@@ -2374,7 +2352,9 @@ pub fn setup() {
             scheme[i] = drw_scm_create(drw.as_mut().unwrap().as_mut(), colors[i], 3);
         }
         // init bars
+        println!("[setup] updatebars");
         updatebars();
+        println!("[setup] updatestatus");
         updatestatus();
         // supporting window fot NetWMCheck
         wmcheckwin = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
@@ -2433,11 +2413,10 @@ pub fn setup() {
             | PropertyChangeMask;
         XChangeWindowAttributes(dpy, root, CWEventMask | CWCursor, &mut wa);
         XSelectInput(dpy, root, wa.event_mask);
-        println!("grabkeys");
+        println!("[setup] grabkeys");
         grabkeys();
-        println!("focus");
+        println!("[setup] focus");
         focus(None);
-        println!("finish setup");
     }
 }
 pub fn killclient(_arg: *const Arg) {

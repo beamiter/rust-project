@@ -25,7 +25,7 @@ mod tests;
 // DISPLAY=:2 jwm
 
 fn main() {
-    let log_file = std::fs::File::create("/home/yj/jwm.log").unwrap();
+    let log_file = std::fs::File::create("/home/mm/jwm.log").unwrap();
     WriteLogger::init(LevelFilter::Info, Config::default(), log_file).unwrap();
     unsafe {
         let c_string = CString::new("").unwrap();
@@ -37,19 +37,19 @@ fn main() {
             eprintln!("jwm: cannot open display");
             exit(1);
         }
-        warn!("begin");
-        println!("checkotherwm");
+        println!("[main] main begin");
+        println!("[main] checkotherwm");
         checkotherwm();
-        println!("setup");
+        println!("[main] setup");
         setup();
-        println!("scan");
+        println!("[main] scan");
         scan();
-        println!("run");
+        println!("[main] run");
         run();
-        println!("cleanup");
+        println!("[main] cleanup");
         cleanup();
-        println!("XCloseDisplay");
+        println!("[main] XCloseDisplay");
         XCloseDisplay(dpy);
-        warn!("end");
+        println!("[main] end");
     }
 }
