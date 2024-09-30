@@ -2959,17 +2959,18 @@ pub fn focus(mut c: Option<Rc<RefCell<Client>>>) {
     unsafe {
         {
             if c.is_none() || ISVISIBLE(c.as_ref().unwrap()) <= 0 {
-                c = {
-                    let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-                    selmon_mut.stack.clone()
-                };
+                if let Some(ref sel_mon_opt) = selmon {
+                    c = sel_mon_opt.borrow_mut().stack.clone();
+                }
                 while c.is_some() && ISVISIBLE(c.as_ref().unwrap()) <= 0 {
                     let next = { c.as_ref().unwrap().borrow_mut().snext.clone() };
                     c = next;
                 }
             }
             let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
-            if sel.is_some() && !Rc::ptr_eq(sel.as_ref().unwrap(), c.as_ref().unwrap()) {
+            if sel.is_some()
+                && (c.is_none() || !Rc::ptr_eq(sel.as_ref().unwrap(), c.as_ref().unwrap()))
+            {
                 unfocus(sel.clone(), false);
             }
         }
