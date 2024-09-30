@@ -1139,8 +1139,7 @@ pub fn detachstack(c: Option<Rc<RefCell<Client>>>) {
         .unwrap()
         .borrow_mut()
         .stack
-        .as_ref()
-        .map(Rc::clone);
+        .clone();
     let mut prev_opt: Option<Rc<RefCell<Client>>> = None;
     while let Some(current) = current_opt {
         if Rc::ptr_eq(&current, cc) {
@@ -1155,17 +1154,15 @@ pub fn detachstack(c: Option<Rc<RefCell<Client>>>) {
         prev_opt = Some(Rc::clone(&current));
         current_opt = current.borrow().snext.as_ref().map(Rc::clone);
     }
-    if Rc::ptr_eq(
-        cc,
-        cc.borrow_mut()
-            .mon
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .sel
-            .as_ref()
-            .unwrap(),
-    ) {
+    let mut condition = false;
+    if let Some(ref mon_opt) = cc.borrow_mut().mon {
+        if let Some(ref sel_opt) = mon_opt.borrow_mut().sel {
+            if Rc::ptr_eq(cc, sel_opt) {
+                condition = true;
+            }
+        }
+    }
+    if condition {
         let mut t = cc
             .borrow_mut()
             .mon
@@ -1173,8 +1170,7 @@ pub fn detachstack(c: Option<Rc<RefCell<Client>>>) {
             .unwrap()
             .borrow_mut()
             .stack
-            .as_ref()
-            .map(Rc::clone);
+            .clone();
         while t.is_some() && ISVISIBLE(t.as_ref().unwrap()) <= 0 {
             let snext = t.as_ref().unwrap().borrow_mut().snext.clone();
             t = snext;
@@ -1279,7 +1275,11 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             );
             if (occ & 1 << i) > 0 {
                 let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-                let tags0 = { selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 };
+                let tags0 = if let Some(ref sel_opt) = selmon_mut.sel {
+                    sel_opt.borrow_mut().tags0
+                } else {
+                    0
+                };
                 drw_rect(
                     drw.as_mut().unwrap().as_mut(),
                     x + boxs as i32,
