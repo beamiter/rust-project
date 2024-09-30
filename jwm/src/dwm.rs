@@ -86,7 +86,7 @@ pub static mut wmatom: [Atom; WM::WMLast as usize] = unsafe { zeroed() };
 pub static mut netatom: [Atom; NET::NetLast as usize] = unsafe { zeroed() };
 pub static mut running: bool = true;
 pub static mut cursor: [Option<Box<Cur>>; CUR::CurLast as usize] = [None, None, None];
-pub static mut scheme: Vec<Vec<*mut Clr>> = vec![];
+pub static mut scheme: Vec<Vec<Option<Rc<Clr>>>> = vec![];
 pub static mut dpy: *mut Display = null_mut();
 pub static mut drw: Option<Box<Drw>> = None;
 pub static mut mons: Option<Rc<RefCell<Monitor>>> = None;
@@ -2347,9 +2347,9 @@ pub fn setup() {
         cursor[CUR::CurMove as usize] =
             drw_cur_create(drw.as_mut().unwrap().as_mut(), XC_fleur as i32);
         // init appearance
-        scheme = vec![vec![null_mut()]; colors.len()];
+        scheme = vec![vec![]; colors.len()];
         for i in 0..colors.len() {
-            scheme[i] = drw_scm_create(drw.as_mut().unwrap().as_mut(), colors[i], 3);
+            scheme[i] = drw_scm_create(drw.as_mut().unwrap().as_mut(), colors[i]);
         }
         // init bars
         println!("[setup] updatebars");
@@ -3007,7 +3007,10 @@ pub fn focus(mut c: Option<Rc<RefCell<Client>>>) {
             XSetWindowBorder(
                 dpy,
                 c.as_ref().unwrap().borrow_mut().win,
-                (*scheme[SCHEME::SchemeSel as usize][Col::ColBorder as usize]).pixel,
+                scheme[SCHEME::SchemeSel as usize][Col::ColBorder as usize]
+                    .as_ref()
+                    .unwrap()
+                    .pixel,
             );
             setfocus(c.as_ref().unwrap());
         } else {
@@ -3030,7 +3033,10 @@ pub fn unfocus(c: Option<Rc<RefCell<Client>>>, setfocus: bool) {
         XSetWindowBorder(
             dpy,
             c.as_ref().unwrap().borrow_mut().win,
-            (*scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize]).pixel,
+            scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize]
+                .as_ref()
+                .unwrap()
+                .pixel,
         );
         if setfocus {
             XSetInputFocus(dpy, root, RevertToPointerRoot, CurrentTime);
@@ -3151,7 +3157,7 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             XSetWindowBorder(
                 dpy,
                 w,
-                (*scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize]).pixel,
+                scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize].as_ref().unwrap().pixel,
             );
             configure(&mut *c.as_ref().unwrap().borrow_mut());
         }

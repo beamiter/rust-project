@@ -110,7 +110,7 @@ pub struct Drw {
     pub root: Window,
     pub drawable: Drawable,
     pub gc: GC,
-    pub scheme: Vec<*mut Clr>,
+    pub scheme: Vec<Option<Rc<Clr>>>,
     pub fonts: Option<Rc<RefCell<Fnt>>>,
 }
 impl Drw {
@@ -313,41 +313,43 @@ pub fn drw_font_gettexts(font: *mut Fnt, text: &str, len: u32, w: *mut u32, h: *
 }
 
 // Colorscheme abstraction
-pub fn drw_clr_create(drw: *mut Drw, dest: *mut Clr, clrname: &str) {
-    if drw.is_null() || dest.is_null() || clrname.is_empty() {
-        return;
+pub fn drw_clr_create(drw: *mut Drw, clrname: &str) -> Option<Rc<Clr>> {
+    if drw.is_null() || clrname.is_empty() {
+        return None;
     }
 
     unsafe {
         let cstring = CString::new(clrname).expect("fail to connect");
+        let mut dest: Clr = std::mem::zeroed();
+        let dpy = (*drw).dpy;
+        let screen = (*drw).screen;
         if XftColorAllocName(
-            (*drw).dpy,
-            XDefaultVisual((*drw).dpy, (*drw).screen),
-            XDefaultColormap((*drw).dpy, (*drw).screen),
+            dpy,
+            XDefaultVisual(dpy, screen),
+            XDefaultColormap(dpy, screen),
             cstring.as_ptr(),
-            dest,
+            &mut dest,
         ) <= 0
         {
             eprintln!("error, cannot allocate color: {}", clrname);
-            exit(0);
+            return None;
         }
+        return Some(Rc::new(dest));
     }
 }
 
-pub fn drw_scm_create(drw: *mut Drw, clrnames: &[&str], clrcount: u64) -> Vec<*mut Clr> {
-    unsafe {
-        // Need at least two colors for a scheme.
-        if drw.is_null() || clrnames.is_empty() || clrcount < 2 {
-            return vec![];
-        }
-        let mut ret: Vec<*mut Clr> = vec![];
-        for i in 0..clrcount {
-            let mut one_ret: Clr = std::mem::zeroed();
-            drw_clr_create(drw, &mut one_ret, clrnames[i as usize]);
-            ret.push(&mut one_ret);
-        }
-        return ret;
+pub fn drw_scm_create(drw: *mut Drw, clrnames: &[&str]) -> Vec<Option<Rc<Clr>>> {
+    let clrcount = clrnames.len();
+    // Need at least two colors for a scheme.
+    if drw.is_null() || clrnames.is_empty() || clrcount < 2 {
+        return vec![];
     }
+    let mut ret: Vec<Option<Rc<Clr>>> = vec![];
+    for clrname in clrnames {
+        let one_ret = drw_clr_create(drw, clrname);
+        ret.push(one_ret);
+    }
+    return ret;
 }
 
 // Cursor abstraction
@@ -383,7 +385,7 @@ pub fn drw_setfontset(drw: *mut Drw, set: Option<Rc<RefCell<Fnt>>>) {
     }
 }
 
-pub fn drw_setscheme(drw: *mut Drw, scm: Vec<*mut Clr>) {
+pub fn drw_setscheme(drw: *mut Drw, scm: Vec<Option<Rc<Clr>>>) {
     if !drw.is_null() {
         unsafe {
             (*drw).scheme = scm;
@@ -401,9 +403,9 @@ pub fn drw_rect(drw: *mut Drw, x: i32, y: i32, w: u32, h: u32, filled: i32, inve
             (*drw).dpy,
             (*drw).gc,
             if invert > 0 {
-                (*(*drw).scheme[Col::ColBg as usize]).pixel
+                (*drw).scheme[Col::ColBg as usize].as_ref().unwrap().pixel
             } else {
-                (*(*drw).scheme[Col::ColFg as usize]).pixel
+                (*drw).scheme[Col::ColFg as usize].as_ref().unwrap().pixel
             },
         );
         if filled > 0 {
@@ -463,7 +465,7 @@ pub fn drw_text(
             };
         } else {
             let idx = if invert > 0 { Col::ColFg } else { Col::ColBg } as usize;
-            XSetForeground((*drw).dpy, (*drw).gc, (*(*drw).scheme[idx]).pixel);
+            XSetForeground((*drw).dpy, (*drw).gc, (*drw).scheme[idx].as_ref().unwrap().pixel);
             XFillRectangle((*drw).dpy, (*drw).drawable, (*drw).gc, x, y, w, h);
             d = XftDrawCreate(
                 (*drw).dpy,
@@ -547,9 +549,10 @@ pub fn drw_text(
                     }
                     let idx = if invert > 0 { Col::ColBg } else { Col::ColFg } as usize;
                     let cstring = CString::new(utf8str).expect("fail to create");
+                    let clr = (*drw).scheme[idx].as_ref().unwrap().as_ref();
                     XftDrawStringUtf8(
                         d,
-                        (*drw).scheme[idx],
+                        clr,
                         (*usedfont.as_ref().unwrap().borrow_mut()).xfont,
                         x,
                         ty,
