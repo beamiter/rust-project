@@ -1673,8 +1673,8 @@ pub fn buttonpress(e: *mut XEvent) {
             selmon = m;
             focus(None);
         }
-        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        if ev.window == selmon_mut.barwin {
+        let barwin = { selmon.as_ref().unwrap().borrow_mut().barwin };
+        if ev.window == barwin {
             loop {
                 x += TEXTW(drw.as_mut().unwrap().as_mut(), tags[i]);
                 if ev.x >= x as i32
@@ -1686,6 +1686,7 @@ pub fn buttonpress(e: *mut XEvent) {
                     break;
                 }
             }
+            let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
             if i < tags.len() {
                 click = CLICK::ClkTagBar;
                 arg = Arg::Ui(1 << i);
@@ -2056,9 +2057,9 @@ pub fn focusmon(arg: *const Arg) {
 pub fn tag(arg: *const Arg) {
     unsafe {
         if let Arg::Ui(ui) = *arg {
-            let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-            if selmon_mut.sel.is_some() && (ui & TAGMASK()) > 0 {
-                selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 = ui & TAGMASK();
+            let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+            if sel.is_some() && (ui & TAGMASK()) > 0 {
+                sel.as_ref().unwrap().borrow_mut().tags0 = ui & TAGMASK();
                 focus(None);
                 arrange(selmon.clone());
             }
@@ -2078,37 +2079,57 @@ pub fn tagmon(arg: *const Arg) {
 }
 pub fn focusstack(arg: *const Arg) {
     unsafe {
-        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        if selmon_mut.sel.is_none()
-            || (selmon_mut.sel.as_ref().unwrap().borrow_mut().isfullscreen && lockfullscreen)
         {
-            return;
+            let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+            if selmon_mut.sel.is_none()
+                || (selmon_mut.sel.as_ref().unwrap().borrow_mut().isfullscreen && lockfullscreen)
+            {
+                return;
+            }
         }
         let mut c: Option<Rc<RefCell<Client>>> = None;
-        let i = if let Arg::I(i) = *arg { i } else { -1 };
+        let i = if let Arg::I(i) = *arg { i } else { 0 };
         if i > 0 {
-            c = (*selmon_mut.sel.as_ref().unwrap().borrow_mut())
-                .next
-                .clone();
+            c = {
+                selmon
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .sel
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .next
+                    .clone()
+            };
             while c.is_some() && ISVISIBLE(c.as_ref().unwrap()) <= 0 {
                 let next = c.as_ref().unwrap().borrow_mut().next.clone();
                 c = next;
             }
             if c.is_none() {
-                c = selmon_mut.clients.clone();
+                c = {
+                    let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+                    selmon_mut.clients.clone()
+                };
                 while c.is_some() && ISVISIBLE(c.as_ref().unwrap()) <= 0 {
                     let next = c.as_ref().unwrap().borrow_mut().next.clone();
                     c = next;
                 }
             }
         } else {
-            let mut cl = selmon_mut.clients.clone();
-            while !Rc::ptr_eq(cl.as_ref().unwrap(), selmon_mut.sel.as_ref().unwrap()) {
-                let next = cl.as_ref().unwrap().borrow_mut().next.clone();
-                cl = next;
+            let mut cl;
+            let sel;
+            {
+                let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+                cl = selmon_mut.clients.clone();
+                sel = selmon_mut.sel.clone();
+            }
+            while !Rc::ptr_eq(cl.as_ref().unwrap(), sel.as_ref().unwrap()) {
                 if ISVISIBLE(cl.as_ref().unwrap()) > 0 {
                     c = cl.clone();
                 }
+                let next = cl.as_ref().unwrap().borrow_mut().next.clone();
+                cl = next;
             }
             if c.is_none() {
                 while cl.is_some() {
@@ -2136,11 +2157,15 @@ pub fn incnmaster(arg: *const Arg) {
 }
 pub fn setmfact(arg: *const Arg) {
     unsafe {
-        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        if arg.is_null() || (*selmon_mut.lt[selmon_mut.sellt]).arrange.is_none() {
+        let lt_arrange = {
+            let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+            selmon_mut.lt[selmon_mut.sellt].arrange
+        };
+        if arg.is_null() || lt_arrange.is_none() {
             return;
         }
         if let Arg::F(f) = *arg {
+            let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
             let f = if f < 1.0 {
                 f + selmon_mut.mfact0
             } else {
