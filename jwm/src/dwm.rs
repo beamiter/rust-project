@@ -1429,11 +1429,11 @@ pub fn run() {
         XSync(dpy, False);
         let mut i: u64 = 0;
         while running && XNextEvent(dpy, &mut ev) <= 0 {
-            println!("running frame: {}, handler type: {}", i, ev.type_);
+            // println!("running frame: {}, handler type: {}", i, ev.type_);
             i = (i + 1) % std::u64::MAX;
             if let Some(hd) = handler[ev.type_ as usize] {
                 // call handler
-                println!("*********** handler type: {} valid", ev.type_);
+                // println!("*********** handler type: {} valid", ev.type_);
                 hd(&mut ev);
             }
         }
@@ -1667,8 +1667,9 @@ pub fn buttonpress(e: *mut XEvent) {
         let mut click = CLICK::ClkRootWin;
         // focus monitor if necessary.
         let m = wintomon(ev.window);
-        if m != selmon {
-            unfocus(selmon.as_ref().unwrap().borrow_mut().sel.clone(), true);
+        if m.is_some() && !Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
+            let sel = selmon.as_ref().unwrap().borrow_mut().sel.clone();
+            unfocus(sel, true);
             selmon = m;
             focus(None);
         }
@@ -1711,19 +1712,21 @@ pub fn buttonpress(e: *mut XEvent) {
                 && buttons[i].button == ev.button
                 && CLEANMASK(buttons[i].mask) == CLEANMASK(ev.state)
             {
-                buttons[i].func.unwrap()({
-                    if click as u32 == CLICK::ClkTagBar as u32 && {
-                        if let Arg::Ui(0) = arg {
-                            true
+                if let Some(ref func) = buttons[i].func {
+                    func({
+                        if click as u32 == CLICK::ClkTagBar as u32 && {
+                            if let Arg::Ui(0) = arg {
+                                true
+                            } else {
+                                false
+                            }
+                        } {
+                            &mut arg
                         } else {
-                            false
+                            &mut buttons[i].arg.clone()
                         }
-                    } {
-                        &mut arg
-                    } else {
-                        &mut buttons[i].arg.clone()
-                    }
-                });
+                    });
+                }
             }
         }
     }
@@ -1918,7 +1921,6 @@ pub fn tile(m: *mut Monitor) {
     unsafe {
         let mut c = nexttiled((*m).clients.clone());
         while c.is_some() {
-            println!("{} tile", line!());
             let next = nexttiled(c.as_ref().unwrap().borrow_mut().next.clone());
             c = next;
             n += 1;
@@ -1943,7 +1945,6 @@ pub fn tile(m: *mut Monitor) {
         let mut h: u32;
         c = nexttiled((*m).clients.clone());
         while c.is_some() {
-            println!("{} tile", line!());
             if i < (*m).nmaster0 as u32 {
                 h = ((*m).wh as u32 - my) / (n.min((*m).nmaster0 as u32) - i);
                 let bw = c.as_ref().unwrap().borrow_mut().bw;
@@ -2423,7 +2424,6 @@ pub fn killclient(_arg: *const Arg) {
 }
 pub fn nexttiled(mut c: Option<Rc<RefCell<Client>>>) -> Option<Rc<RefCell<Client>>> {
     while let Some(ref c_ref) = c {
-        println!("{} nexttiled", line!());
         let isfloating = c_ref.borrow_mut().isfloating;
         if isfloating || ISVISIBLE(c_ref) <= 0 {
             let next = c_ref.borrow_mut().next.clone();
@@ -2929,16 +2929,21 @@ pub fn enternotify(e: *mut XEvent) {
             return;
         }
         let c = wintoclient(ev.window);
-        let m = if c.is_some() {
-            c.as_ref().unwrap().borrow_mut().mon.clone()
+        let m = if let Some(ref c_opt) = c {
+            c_opt.borrow_mut().mon.clone()
         } else {
             wintomon(ev.window)
         };
-        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        if !Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
-            unfocus(selmon_mut.sel.clone(), true);
+        let mon_eq = { Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) };
+        if !mon_eq {
+            unfocus(selmon.as_ref().unwrap().borrow_mut().sel.clone(), true);
             selmon = m;
-        } else if c.is_none() || Rc::ptr_eq(c.as_ref().unwrap(), selmon_mut.sel.as_ref().unwrap()) {
+        } else if c.is_none()
+            || Rc::ptr_eq(
+                c.as_ref().unwrap(),
+                selmon.as_ref().unwrap().borrow_mut().sel.as_ref().unwrap(),
+            )
+        {
             return;
         }
         focus(c);
@@ -3072,7 +3077,6 @@ pub fn keypress(e: *mut XEvent) {
                 && keys[i].func.is_some()
             {
                 println!("key: {}, arg: {:?}", i, keys[i].arg);
-                println!("keysym: {}, mask: {}", keysym, CLEANMASK(keys[i].mod0));
                 keys[i].func.unwrap()(&keys[i].arg);
             }
         }
