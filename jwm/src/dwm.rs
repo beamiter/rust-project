@@ -1482,28 +1482,28 @@ pub fn scan() {
 
 pub fn arrange(mut m: Option<Rc<RefCell<Monitor>>>) {
     unsafe {
-        if m.is_some() {
+        if let Some(ref m_opt) = m {
             {
-                let stack = m.as_ref().unwrap().borrow_mut().stack.clone();
+                let stack = m_opt.borrow_mut().stack.clone();
                 showhide(stack);
             }
         } else {
             m = mons.clone();
-            while m.is_some() {
-                let stack = m.as_ref().unwrap().borrow_mut().stack.clone();
+            while let Some(ref m_opt) = m {
+                let stack = { m_opt.borrow_mut().stack.clone() };
                 showhide(stack);
-                let next = m.as_ref().unwrap().borrow_mut().next.clone();
+                let next = m_opt.borrow_mut().next.clone();
                 m = next;
             }
         }
-        if m.is_some() {
-            arrangemon(m.as_ref().unwrap());
+        if let Some(ref m_opt) = m {
+            arrangemon(m_opt);
             restack(m);
         } else {
             m = mons.clone();
-            while m.is_some() {
-                arrangemon(m.as_ref().unwrap());
-                let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            while let Some(ref m_opt) = m {
+                arrangemon(m_opt);
+                let next = m_opt.borrow_mut().next.clone();
                 m = next;
             }
         }
@@ -1896,9 +1896,9 @@ pub fn updateclientlist() {
     unsafe {
         XDeleteProperty(dpy, root, netatom[NET::NetClientList as usize]);
         let mut m = mons.clone();
-        while m.is_some() {
-            let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
-            while c.is_some() {
+        while let Some(ref m_opt) = m {
+            let mut c = m_opt.borrow_mut().clients.clone();
+            while let Some(c_opt) = c {
                 XChangeProperty(
                     dpy,
                     root,
@@ -1906,13 +1906,13 @@ pub fn updateclientlist() {
                     XA_WINDOW,
                     32,
                     PropModeAppend,
-                    c.as_ref().unwrap().borrow_mut().win as *const _,
+                    &mut c_opt.borrow_mut().win as *const u64 as *const _,
                     1,
                 );
-                let next = c.as_ref().unwrap().borrow_mut().next.clone();
+                let next = c_opt.borrow_mut().next.clone();
                 c = next;
             }
-            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            let next = m_opt.borrow_mut().next.clone();
             m = next;
         }
     }
@@ -1986,17 +1986,19 @@ pub fn tile(m: *mut Monitor) {
 }
 pub fn togglebar(_arg: *const Arg) {
     unsafe {
-        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        selmon_mut.showbar0 = !selmon_mut.showbar0;
-        updatebarpos(&mut *selmon_mut);
-        XMoveResizeWindow(
-            dpy,
-            selmon_mut.barwin,
-            selmon_mut.wx,
-            selmon_mut.by,
-            selmon_mut.ww as u32,
-            bh as u32,
-        );
+        {
+            let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+            selmon_mut.showbar0 = !selmon_mut.showbar0;
+            updatebarpos(&mut *selmon_mut);
+            XMoveResizeWindow(
+                dpy,
+                selmon_mut.barwin,
+                selmon_mut.wx,
+                selmon_mut.by,
+                selmon_mut.ww as u32,
+                bh as u32,
+            );
+        }
         arrange(selmon.clone());
     }
 }
@@ -2039,16 +2041,18 @@ pub fn focusin(e: *mut XEvent) {
 }
 pub fn focusmon(arg: *const Arg) {
     unsafe {
-        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        if mons.as_ref().unwrap().borrow_mut().next.is_none() {
-            return;
+        if let Some(ref mons_opt) = mons {
+            if mons_opt.borrow_mut().next.is_none() {
+                return;
+            }
         }
         if let Arg::I(i) = *arg {
             let m = dirtomon(i);
-            if m == selmon {
+            if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
                 return;
             }
-            unfocus(selmon_mut.sel.clone(), false);
+            let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+            unfocus(sel, false);
             selmon = m;
             focus(None);
         }
@@ -2068,12 +2072,20 @@ pub fn tag(arg: *const Arg) {
 }
 pub fn tagmon(arg: *const Arg) {
     unsafe {
-        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        if selmon_mut.sel.is_none() || (mons.as_ref().unwrap().borrow_mut()).next.is_none() {
-            return;
+        if let Some(ref selmon_opt) = selmon {
+            if selmon_opt.borrow_mut().sel.is_none() {
+                return;
+            }
+        }
+        if let Some(ref mons_opt) = mons {
+            if mons_opt.borrow_mut().next.is_none() {
+                return;
+            }
         }
         if let Arg::I(i) = *arg {
-            sendmon(selmon_mut.sel.clone(), &dirtomon(i));
+            if let Some(ref selmon_opt) = selmon {
+                sendmon(selmon_opt.borrow_mut().sel.clone(), &dirtomon(i));
+            }
         }
     }
 }
@@ -2153,6 +2165,7 @@ pub fn incnmaster(arg: *const Arg) {
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
             selmon_mut.nmaster0 = 0.max(selmon_mut.nmaster0 + i);
         }
+        arrange(selmon.clone());
     }
 }
 pub fn setmfact(arg: *const Arg) {
@@ -2181,24 +2194,29 @@ pub fn setmfact(arg: *const Arg) {
 }
 pub fn setlayout(arg: *const Arg) {
     unsafe {
-        let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        if arg.is_null()
-            || if let Arg::Lt(ref lt) = *arg {
-                !Rc::ptr_eq(lt, &selmon_mut.lt[selmon_mut.sellt])
-            } else {
-                true
-            }
+        let sel;
         {
-            selmon_mut.sellt ^= 1;
-        }
-        if !arg.is_null() {
-            if let Arg::Lt(ref lt) = *arg {
-                let index = selmon_mut.sellt;
-                selmon_mut.lt[index] = lt.clone();
+            let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+            let sellt = selmon_mut.sellt;
+            if arg.is_null()
+                || if let Arg::Lt(ref lt) = *arg {
+                    !Rc::ptr_eq(lt, &selmon_mut.lt[sellt])
+                } else {
+                    true
+                }
+            {
+                selmon_mut.sellt ^= 1;
             }
+            if !arg.is_null() {
+                if let Arg::Lt(ref lt) = *arg {
+                    let sellt = selmon_mut.sellt;
+                    selmon_mut.lt[sellt] = lt.clone();
+                }
+            }
+            selmon_mut.ltsymbol = (*selmon_mut.lt[selmon_mut.sellt]).symbol;
+            sel = selmon_mut.sel.clone();
         }
-        selmon_mut.ltsymbol = (*selmon_mut.lt[selmon_mut.sellt]).symbol;
-        if selmon_mut.sel.is_some() {
+        if sel.is_some() {
             arrange(selmon.clone());
         } else {
             println!("setlayout");
@@ -2208,17 +2226,25 @@ pub fn setlayout(arg: *const Arg) {
 }
 pub fn zoom(_arg: *const Arg) {
     unsafe {
-        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        let mut c = selmon_mut.sel.clone();
-
-        let sellt = selmon_mut.sellt;
-        if (*selmon_mut.lt[sellt]).arrange.is_none()
-            || c.is_none()
-            || c.as_ref().unwrap().borrow_mut().isfloating
+        let mut c;
+        let sel_c;
+        let nexttiled_c;
         {
-            return;
+            let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+            c = selmon_mut.sel.clone();
+            let sellt = selmon_mut.sellt;
+            if selmon_mut.lt[sellt].arrange.is_none()
+                || c.is_none()
+                || c.as_ref().unwrap().borrow_mut().isfloating
+            {
+                return;
+            }
+            sel_c = selmon_mut.clients.clone();
         }
-        if c == nexttiled(selmon_mut.clients.clone()) {
+        {
+            nexttiled_c = nexttiled(sel_c);
+        }
+        if Rc::ptr_eq(c.as_ref().unwrap(), nexttiled_c.as_ref().unwrap()) {
             let next = nexttiled(c.as_ref().unwrap().borrow_mut().next.clone());
             c = next;
             if c.is_none() {
@@ -2463,7 +2489,8 @@ pub fn pop(c: Option<Rc<RefCell<Client>>>) {
     detach(c.clone());
     attach(c.clone());
     focus(c.clone());
-    arrange(c.as_ref().unwrap().borrow_mut().mon.clone());
+    let mon = { c.as_ref().unwrap().borrow_mut().mon.clone() };
+    arrange(mon);
 }
 pub fn propertynotify(e: *mut XEvent) {
     unsafe {
@@ -3095,13 +3122,13 @@ pub fn keypress(e: *mut XEvent) {
     unsafe {
         let ev = (*e).key;
         let keysym = XKeycodeToKeysym(dpy, ev.keycode as u8, 0);
-        println!("fuck: keysym: {}, mask: {}", keysym, CLEANMASK(ev.state));
+        println!("[keypress] keysym: {}, mask: {}", keysym, CLEANMASK(ev.state));
         for i in 0..keys.len() {
             if keysym == keys[i].keysym
                 && CLEANMASK(keys[i].mod0) == CLEANMASK(ev.state)
                 && keys[i].func.is_some()
             {
-                println!("key: {}, arg: {:?}", i, keys[i].arg);
+                println!("[keypress] i: {}, arg: {:?}", i, keys[i].arg);
                 keys[i].func.unwrap()(&keys[i].arg);
             }
         }
