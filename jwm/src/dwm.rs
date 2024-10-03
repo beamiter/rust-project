@@ -1373,44 +1373,28 @@ pub fn restack(m: Option<Rc<RefCell<Monitor>>>) {
 
     unsafe {
         let mut wc: XWindowChanges = zeroed();
-        if m.as_ref().unwrap().borrow_mut().sel.is_none() {
+        let sel = m.as_ref().unwrap().borrow_mut().sel.clone();
+        if sel.is_none() {
             return;
         }
-        let isfloating = m
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .sel
-            .as_ref()
-            .unwrap()
-            .borrow_mut()
-            .isfloating;
+        let isfloating = sel.as_ref().unwrap().borrow_mut().isfloating;
         let sellt = m.as_ref().unwrap().borrow_mut().sellt;
-        if isfloating || m.as_ref().unwrap().borrow_mut().lt[sellt].arrange.is_none() {
-            let win = m
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .sel
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .win;
+        let arrange = { m.as_ref().unwrap().borrow_mut().lt[sellt].arrange };
+        if isfloating || arrange.is_none() {
+            let win = sel.as_ref().unwrap().borrow_mut().win;
             XRaiseWindow(dpy, win);
         }
-        if m.as_ref().unwrap().borrow_mut().lt[sellt].arrange.is_some() {
+        if arrange.is_some() {
             wc.stack_mode = Below;
             wc.sibling = m.as_ref().unwrap().borrow_mut().barwin;
             let mut c = m.as_ref().unwrap().borrow_mut().stack.clone();
-            while c.is_some() {
-                if !c.as_ref().unwrap().borrow_mut().isfloating
-                    && ISVISIBLE(c.as_ref().unwrap()) > 0
-                {
-                    let win = c.as_ref().unwrap().borrow_mut().win;
+            while let Some(ref c_opt) = c {
+                if !c_opt.borrow_mut().isfloating && ISVISIBLE(c.as_ref().unwrap()) > 0 {
+                    let win = c_opt.borrow_mut().win;
                     XConfigureWindow(dpy, win, (CWSibling | CWStackMode) as u32, &mut wc);
                     wc.sibling = win;
                 }
-                let next = c.as_ref().unwrap().borrow_mut().snext.clone();
+                let next = c_opt.borrow_mut().snext.clone();
                 c = next;
             }
         }
