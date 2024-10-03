@@ -580,24 +580,24 @@ pub fn applysizehints(
             let ww;
             let wh;
             {
-                let cc = c.as_ref().borrow_mut();
+                let mut cc = c.as_ref().borrow_mut();
                 wx = cc.mon.as_ref().unwrap().borrow_mut().wx;
                 wy = cc.mon.as_ref().unwrap().borrow_mut().wy;
                 ww = cc.mon.as_ref().unwrap().borrow_mut().ww;
                 wh = cc.mon.as_ref().unwrap().borrow_mut().wh;
-            }
-            {
-                let mut cc = c.as_ref().borrow_mut();
+                let width = WIDTH(&mut *cc);
                 if *x >= wx + ww {
-                    *x = wx + ww - WIDTH(&mut *cc);
+                    *x = wx + ww - width;
                 }
+                let height = HEIGHT(&mut *cc);
                 if *y >= wy + wh {
-                    *x = wy + wh - HEIGHT(&mut *cc);
+                    *y = wy + wh - height;
                 }
-                if *x + *w + 2 * cc.bw <= wx {
+                let bw = cc.bw;
+                if *x + *w + 2 * bw <= wx {
                     *x = wx;
                 }
-                if *y + *h + 2 * cc.bw <= wy {
+                if *y + *h + 2 * bw <= wy {
                     *y = wy;
                 }
             }
@@ -1084,12 +1084,13 @@ pub fn destroynotify(e: *mut XEvent) {
     }
 }
 pub fn arrangemon(m: &Rc<RefCell<Monitor>>) {
+    println!("[arrangemon]");
     let sellt;
     {
         let mut mm = m.borrow_mut();
         sellt = (mm).sellt;
-        mm.ltsymbol = (*(mm).lt[sellt]).symbol;
-        println!("arrangemon {}, {:?}", sellt, mm.ltsymbol);
+        mm.ltsymbol = (mm).lt[sellt].symbol;
+        println!("[arrangemon] sellt: {}, ltsymbol: {:?}", sellt, mm.ltsymbol);
     }
     let arrange;
     {
@@ -1203,6 +1204,7 @@ pub fn dirtomon(dir: i32) -> Option<Rc<RefCell<Monitor>>> {
     }
 }
 pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
+    println!("[drawbar]");
     let mut tw: i32 = 0;
     let mut occ: u32 = 0;
     let mut urg: u32 = 0;
@@ -1366,7 +1368,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
 }
 
 pub fn restack(m: Option<Rc<RefCell<Monitor>>>) {
-    println!("restack");
+    println!("[restack]");
     drawbar(m.clone());
 
     unsafe {
@@ -1400,7 +1402,7 @@ pub fn restack(m: Option<Rc<RefCell<Monitor>>>) {
             wc.stack_mode = Below;
             wc.sibling = m.as_ref().unwrap().borrow_mut().barwin;
             let mut c = m.as_ref().unwrap().borrow_mut().stack.clone();
-            while c.is_none() {
+            while c.is_some() {
                 if !c.as_ref().unwrap().borrow_mut().isfloating
                     && ISVISIBLE(c.as_ref().unwrap()) > 0
                 {
@@ -1414,11 +1416,7 @@ pub fn restack(m: Option<Rc<RefCell<Monitor>>>) {
         }
         XSync(dpy, 0);
         let mut ev: XEvent = zeroed();
-        loop {
-            if XCheckMaskEvent(dpy, EnterWindowMask, &mut ev) <= 0 {
-                break;
-            }
-        }
+        while XCheckMaskEvent(dpy, EnterWindowMask, &mut ev) > 0 {}
     }
 }
 
@@ -1481,6 +1479,7 @@ pub fn scan() {
 }
 
 pub fn arrange(mut m: Option<Rc<RefCell<Monitor>>>) {
+    println!("[arrange]");
     unsafe {
         if let Some(ref m_opt) = m {
             {
@@ -1658,6 +1657,7 @@ pub fn wintomon(w: Window) -> Option<Rc<RefCell<Monitor>>> {
 }
 
 pub fn buttonpress(e: *mut XEvent) {
+    println!("[buttonpress]");
     let mut i: usize = 0;
     let mut x: u32 = 0;
     let mut arg: Arg = Arg::Ui(0);
@@ -2090,6 +2090,7 @@ pub fn tagmon(arg: *const Arg) {
     }
 }
 pub fn focusstack(arg: *const Arg) {
+    println!("[focusstack]");
     unsafe {
         {
             let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
@@ -2193,6 +2194,7 @@ pub fn setmfact(arg: *const Arg) {
     }
 }
 pub fn setlayout(arg: *const Arg) {
+    println!("[setlayout]");
     unsafe {
         let sel;
         {
@@ -2219,7 +2221,6 @@ pub fn setlayout(arg: *const Arg) {
         if sel.is_some() {
             arrange(selmon.clone());
         } else {
-            println!("setlayout");
             drawbar(selmon.clone());
         }
     }
@@ -2559,6 +2560,7 @@ pub fn propertynotify(e: *mut XEvent) {
     }
 }
 pub fn movemouse(_arg: *const Arg) {
+    println!("[movemouse]");
     unsafe {
         let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         let c = selmon_mut.sel.clone();
@@ -2674,6 +2676,7 @@ pub fn movemouse(_arg: *const Arg) {
     }
 }
 pub fn resizemouse(_arg: *const Arg) {
+    println!("[resizemouse]");
     unsafe {
         let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         let c = selmon_mut.sel.clone();
@@ -3122,7 +3125,11 @@ pub fn keypress(e: *mut XEvent) {
     unsafe {
         let ev = (*e).key;
         let keysym = XKeycodeToKeysym(dpy, ev.keycode as u8, 0);
-        println!("[keypress] keysym: {}, mask: {}", keysym, CLEANMASK(ev.state));
+        println!(
+            "[keypress] keysym: {}, mask: {}",
+            keysym,
+            CLEANMASK(ev.state)
+        );
         for i in 0..keys.len() {
             if keysym == keys[i].keysym
                 && CLEANMASK(keys[i].mod0) == CLEANMASK(ev.state)
@@ -3292,30 +3299,31 @@ pub fn monocle(m: *mut Monitor) {
         static mut formatted_string: String = String::new();
         let mut n: u32 = 0;
         let mut c = (*m).clients.clone();
-        while c.is_some() {
-            if ISVISIBLE(c.as_ref().unwrap()) > 0 {
+        while let Some(ref c_opt) = c {
+            if ISVISIBLE(c_opt) > 0 {
                 n += 1;
             }
-            let next = c.as_ref().unwrap().borrow_mut().next.clone();
+            let next = c_opt.borrow_mut().next.clone();
             c = next;
         }
         if n > 0 {
             // override layout symbol
             formatted_string = format!("[{}]", n);
+            println!("[monocle] formatted_string: {}", formatted_string);
             (*m).ltsymbol = formatted_string.as_str();
         }
-        let mut c = nexttiled((*m).clients.clone());
-        while c.is_some() {
-            let bw = c.as_ref().unwrap().borrow_mut().bw;
+        c = nexttiled((*m).clients.clone());
+        while let Some(ref c_opt) = c {
+            let bw = c_opt.borrow_mut().bw;
             resize(
-                c.as_ref().unwrap(),
+                c_opt,
                 (*m).wx,
                 (*m).wy,
                 (*m).ww - 2 * bw,
                 (*m).wh - 2 * bw,
                 false,
             );
-            let next = nexttiled(c.as_ref().unwrap().borrow_mut().next.clone());
+            let next = nexttiled(c_opt.borrow_mut().next.clone());
             c = next;
         }
     }
