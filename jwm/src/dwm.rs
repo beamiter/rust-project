@@ -1642,8 +1642,6 @@ pub fn wintomon(w: Window) -> Option<Rc<RefCell<Monitor>>> {
 
 pub fn buttonpress(e: *mut XEvent) {
     println!("[buttonpress]");
-    let mut i: usize = 0;
-    let mut x: u32 = 0;
     let mut arg: Arg = Arg::Ui(0);
     unsafe {
         let c: Option<Rc<RefCell<Client>>>;
@@ -1659,16 +1657,19 @@ pub fn buttonpress(e: *mut XEvent) {
         }
         let barwin = { selmon.as_ref().unwrap().borrow_mut().barwin };
         if ev.window == barwin {
+            println!("[buttonpress] barwin: {}, ev.x: {}", barwin, ev.x);
+            let mut i: usize = 0;
+            let mut x: u32 = 0;
             loop {
                 x += TEXTW(drw.as_mut().unwrap().as_mut(), tags[i]);
-                if ev.x >= x as i32
-                    && ({
-                        i += 1;
-                        i
-                    } < tags.len())
-                {
+                if ev.x < x as i32 {
                     break;
                 }
+                i += 1;
+                if i >= tags.len() {
+                    break;
+                }
+                println!("[buttonpress] x: {}, i: {}", x, i);
             }
             let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
             if i < tags.len() {
@@ -1700,14 +1701,16 @@ pub fn buttonpress(e: *mut XEvent) {
                 if let Some(ref func) = buttons[i].func {
                     func({
                         if click as u32 == CLICK::ClkTagBar as u32 && {
-                            if let Arg::Ui(0) = arg {
+                            if let Arg::Ui(0) = buttons[i].arg {
                                 true
                             } else {
                                 false
                             }
                         } {
+                            println!("[buttonpress] use fresh arg");
                             &mut arg
                         } else {
+                            println!("[buttonpress] use button arg");
                             &mut buttons[i].arg.clone()
                         }
                     });
@@ -2241,8 +2244,8 @@ pub fn zoom(_arg: *const Arg) {
 }
 pub fn view(arg: *const Arg) {
     unsafe {
-        let ui = if let Arg::Ui(ui) = *arg { ui } else { 0 };
-        {
+        if let Arg::Ui(ui) = *arg {
+            println!("[view] ui: {}", ui);
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
             if (ui & TAGMASK()) == selmon_mut.tagset[selmon_mut.seltags] {
                 return;
@@ -2253,6 +2256,8 @@ pub fn view(arg: *const Arg) {
                 let index = selmon_mut.seltags;
                 selmon_mut.tagset[index] = ui & TAGMASK();
             }
+        } else {
+            return;
         }
         focus(None);
         arrange(selmon.clone());

@@ -261,7 +261,7 @@ pub const buttons: Lazy<Vec<Button>> = Lazy::new(|| {
         Button::new(
             CLICK::ClkClientWin as u32,
             MODKEY,
-            Button2,
+            Button3,
             Some(dwm::resizemouse),
             dwm::Arg::I(0),
         ),
@@ -270,28 +270,28 @@ pub const buttons: Lazy<Vec<Button>> = Lazy::new(|| {
             0,
             Button1,
             Some(dwm::view),
-            dwm::Arg::I(0),
+            dwm::Arg::Ui(0),
         ),
         Button::new(
             CLICK::ClkTagBar as u32,
             0,
             Button3,
             Some(dwm::toggleview),
-            dwm::Arg::I(0),
+            dwm::Arg::Ui(0),
         ),
         Button::new(
             CLICK::ClkTagBar as u32,
             MODKEY,
             Button1,
             Some(dwm::tag),
-            dwm::Arg::I(0),
+            dwm::Arg::Ui(0),
         ),
         Button::new(
             CLICK::ClkTagBar as u32,
             MODKEY,
             Button3,
             Some(dwm::toggletag),
-            dwm::Arg::I(0),
+            dwm::Arg::Ui(0),
         ),
     ]
 });
