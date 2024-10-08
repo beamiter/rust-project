@@ -24,6 +24,9 @@ mod tests;
 // Xephyr :2 -screen 1024x768 &
 // DISPLAY=:2 jwm
 
+// For dual monitor:
+// xrandr --output HDMI-1 --rotate normal --left-of eDP-1 --auto &
+
 fn main() {
     let log_file = std::fs::File::create("/home/mm/jwm.log").unwrap();
     WriteLogger::init(LevelFilter::Info, Config::default(), log_file).unwrap();
