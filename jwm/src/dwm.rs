@@ -3,8 +3,8 @@
 // #![allow(unused_mut)]
 
 use libc::{
-    close, execvp, exit, fork, free, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP,
-    SA_NOCLDWAIT, SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
+    close, exit, fork, free, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
+    SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
@@ -15,6 +15,7 @@ use std::process::Command;
 use std::ptr::{addr_of, addr_of_mut, null_mut};
 use std::rc::Rc;
 use std::{os::raw::c_long, usize};
+use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
 
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
@@ -1806,17 +1807,6 @@ pub fn spawn(arg: *const Arg) {
                 if !status.success() {
                     println!("Command exited with non-zero status code");
                 }
-                // Deprecated.
-                // let c_args: Vec<CString> = v
-                //     .iter()
-                //     .map(|&arg| CString::new(arg).expect("fail to create"))
-                //     .collect();
-                // let arg_ptrs: Vec<*const i8> = c_args
-                //     .iter()
-                //     .map(|arg| arg.as_ptr())
-                //     .chain(Some(null()))
-                //     .collect();
-                // execvp(arg_ptrs[0], arg_ptrs[1..].as_ptr());
             }
         }
     }
@@ -3375,23 +3365,164 @@ pub fn unmapnotify(e: *mut XEvent) {
     }
 }
 
+pub fn isuniquegeom(
+    unique: &mut Vec<XineramaScreenInfo>,
+    mut n: usize,
+    info: *mut XineramaScreenInfo,
+) -> bool {
+    unsafe {
+        while n > 0 {
+            n -= 1;
+            if unique[n].x_org == (*info).x_org
+                && unique[n].y_org == (*info).y_org
+                && unique[n].width == (*info).width
+                && unique[n].height == (*info).height
+            {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 pub fn updategeom() -> bool {
     let mut dirty: bool = false;
     unsafe {
-        if mons.is_none() {
-            mons = Some(Rc::new(RefCell::new(createmon())));
-        }
-        // Be careful not to import borrow_mut!
-        // Rc/RefCell is cool
-        {
-            let mut mons_mut = mons.as_ref().unwrap().borrow_mut();
-            if mons_mut.mw != sw || mons_mut.mh != sh {
-                dirty = true;
-                mons_mut.mw = sw;
-                mons_mut.ww = sw;
-                mons_mut.mh = sh;
-                mons_mut.wh = sh;
-                updatebarpos(&mut *mons_mut);
+        let mut nn: i32 = 0;
+        if XineramaIsActive(dpy) > 0 {
+            println!("[updategeom] XineramaIsActive");
+            let info = XineramaQueryScreens(dpy, &mut nn);
+            let mut unique: Vec<XineramaScreenInfo> = vec![];
+            unique.resize(nn as usize, zeroed());
+            let mut n = 0;
+            let mut m = mons.clone();
+            while let Some(ref m_opt) = m {
+                n += 1;
+                let next = m_opt.borrow_mut().next.clone();
+                m = next;
+            }
+            // Only consider unique geometries as separate screens
+            let mut i: usize = 0;
+            let mut j: usize = 0;
+            while i < nn as usize {
+                if isuniquegeom(&mut unique, j, info.wrapping_add(i)) {
+                    unique[j] = *info.wrapping_add(i);
+                    println!("[updategeom] set info i {} as unique j {}", i, j);
+                    j += 1;
+                }
+                i += 1;
+            }
+            XFree(info as *mut _);
+            nn = j as i32;
+
+            // new monitors if nn > n
+            i = n;
+            while i < nn as usize {
+                m = mons.clone();
+                while let Some(ref m_opt) = m {
+                    let next = m_opt.borrow_mut().next.clone();
+                    if next.is_none() {
+                        break;
+                    }
+                    m = next;
+                }
+                if m.is_some() {
+                    m.as_ref().unwrap().borrow_mut().next =
+                        Some(Rc::new(RefCell::new(createmon())));
+                } else {
+                    mons = Some(Rc::new(RefCell::new(createmon())));
+                }
+                i += 1;
+            }
+            i = 0;
+            m = mons.clone();
+            while i < nn as usize && m.is_some() {
+                let mx;
+                let my;
+                let mw;
+                let mh;
+                {
+                    mx = m.as_ref().unwrap().borrow_mut().mx;
+                    my = m.as_ref().unwrap().borrow_mut().my;
+                    mw = m.as_ref().unwrap().borrow_mut().mw;
+                    mh = m.as_ref().unwrap().borrow_mut().mh;
+                }
+                if i >= n
+                    || unique[i].x_org as i32 != mx
+                    || unique[i].y_org as i32 != my
+                    || unique[i].width as i32 != mw
+                    || unique[i].height as i32 != mh
+                {
+                    dirty = true;
+                    {
+                        m.as_ref().unwrap().borrow_mut().num = i as i32;
+                        m.as_ref().unwrap().borrow_mut().mx = unique[i].x_org as i32;
+                        m.as_ref().unwrap().borrow_mut().wx = unique[i].x_org as i32;
+                        m.as_ref().unwrap().borrow_mut().my = unique[i].y_org as i32;
+                        m.as_ref().unwrap().borrow_mut().wy = unique[i].y_org as i32;
+                        m.as_ref().unwrap().borrow_mut().mw = unique[i].width as i32;
+                        m.as_ref().unwrap().borrow_mut().ww = unique[i].width as i32;
+                        m.as_ref().unwrap().borrow_mut().mh = unique[i].height as i32;
+                        m.as_ref().unwrap().borrow_mut().wh = unique[i].height as i32;
+                    }
+                    let mut mons_mut = mons.as_ref().unwrap().borrow_mut();
+                    updatebarpos(&mut *mons_mut);
+                }
+                i += 1;
+                let next = { m.as_ref().unwrap().borrow_mut().next.clone() };
+                m = next;
+            }
+            // remove monitors if n > nn
+            i = nn as usize;
+            while i < n {
+                m = mons.clone();
+                while let Some(ref m_opt) = m {
+                    let next = m_opt.borrow_mut().next.clone();
+                    if next.is_none() {
+                        break;
+                    }
+                    m = next;
+                }
+
+                let mut c: Option<Rc<RefCell<Client>>>;
+                while {
+                    c = m.as_ref().unwrap().borrow_mut().clients.clone();
+                    c.is_some()
+                } {
+                    dirty = true;
+                    {
+                        m.as_ref().unwrap().borrow_mut().clients =
+                            c.as_ref().unwrap().borrow_mut().next.clone();
+                    }
+                    detachstack(c.clone());
+                    {
+                        c.as_ref().unwrap().borrow_mut().mon = mons.clone();
+                    }
+                    attach(c.clone());
+                    attachstack(c.clone());
+                }
+                if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
+                    selmon = mons.clone();
+                }
+                cleanupmon(m);
+
+                i += 1;
+            }
+        } else {
+            // default monitor setup
+            if mons.is_none() {
+                mons = Some(Rc::new(RefCell::new(createmon())));
+            }
+            {
+                let mut mons_mut = mons.as_ref().unwrap().borrow_mut();
+                if mons_mut.mw != sw || mons_mut.mh != sh {
+                    dirty = true;
+                    mons_mut.mw = sw;
+                    mons_mut.ww = sw;
+                    mons_mut.mh = sh;
+                    mons_mut.wh = sh;
+                    updatebarpos(&mut *mons_mut);
+                }
             }
         }
         if dirty {
