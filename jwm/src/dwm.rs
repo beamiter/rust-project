@@ -441,6 +441,7 @@ impl Rule {
 
 // function declarations and implementations.
 pub fn applyrules(c: &Rc<RefCell<Client>>) {
+    info!("[applyrules]");
     unsafe {
         let mut c = c.borrow_mut();
         c.isfloating = false;
@@ -496,6 +497,7 @@ pub fn applyrules(c: &Rc<RefCell<Client>>) {
 }
 
 pub fn updatesizehints(c: &Rc<RefCell<Client>>) {
+    info!("[updatesizehints]");
     let mut c = c.as_ref().borrow_mut();
     unsafe {
         let mut size: XSizeHints = zeroed();
@@ -558,6 +560,7 @@ pub fn applysizehints(
     h: &mut i32,
     interact: bool,
 ) -> bool {
+    info!("[applysizehints]");
     unsafe {
         // set minimum possible.
         *w = 1.max(*w);
@@ -668,6 +671,7 @@ pub fn applysizehints(
     }
 }
 pub fn cleanup() {
+    info!("[cleanup]");
     // Bitwise or to get max value.
     let mut a: Arg = Arg::Ui(!0);
     let foo: Layout = Layout::new("", None);
@@ -708,6 +712,7 @@ pub fn cleanup() {
     }
 }
 pub fn cleanupmon(mon: Option<Rc<RefCell<Monitor>>>) {
+    info!("[cleanupmon]");
     unsafe {
         if Rc::ptr_eq(mon.as_ref().unwrap(), mons.as_ref().unwrap()) {
             let next = mons.as_ref().unwrap().borrow_mut().next.clone();
@@ -731,6 +736,7 @@ pub fn cleanupmon(mon: Option<Rc<RefCell<Monitor>>>) {
     }
 }
 pub fn clientmessage(e: *mut XEvent) {
+    info!("[clientmessage]");
     unsafe {
         let cme = (*e).client_message;
         let c = wintoclient(cme.window);
@@ -763,6 +769,7 @@ pub fn clientmessage(e: *mut XEvent) {
 }
 
 pub fn configurenotify(e: *mut XEvent) {
+    info!("[configurenotify]");
     unsafe {
         let ev = (*e).configure;
         if ev.window == root {
@@ -807,6 +814,7 @@ pub fn configurenotify(e: *mut XEvent) {
 }
 
 pub fn configure(c: &mut Client) {
+    info!("[configure]");
     unsafe {
         let mut ce: XConfigureEvent = zeroed();
 
@@ -826,6 +834,7 @@ pub fn configure(c: &mut Client) {
     }
 }
 pub fn setfullscreen(c: &mut Client, fullscreen: bool) {
+    info!("[setfullscreen]");
     unsafe {
         if fullscreen && !c.isfullscreen {
             XChangeProperty(
@@ -880,6 +889,7 @@ pub fn setfullscreen(c: &mut Client, fullscreen: bool) {
     }
 }
 pub fn resizeclient(c: &mut Client, x: i32, y: i32, w: i32, h: i32) {
+    info!("[resizeclient]");
     unsafe {
         let mut wc: XWindowChanges = zeroed();
         c.oldx = c.x;
@@ -914,12 +924,14 @@ pub fn resize(
     mut h: i32,
     interact: bool,
 ) {
+    info!("[resize]");
     if applysizehints(c, &mut x, &mut y, &mut w, &mut h, interact) {
         resizeclient(&mut *c.borrow_mut(), x, y, w, h);
     }
 }
 
 pub fn seturgent(c: &mut Client, urg: bool) {
+    info!("[seturgent]");
     unsafe {
         c.isurgent = urg;
         let wmh = XGetWMHints(dpy, c.win);
@@ -937,6 +949,7 @@ pub fn seturgent(c: &mut Client, urg: bool) {
 }
 
 pub fn showhide(c: Option<Rc<RefCell<Client>>>) {
+    info!("[showhide]");
     if c.is_none() {
         return;
     }
@@ -993,6 +1006,7 @@ pub fn showhide(c: Option<Rc<RefCell<Client>>>) {
     }
 }
 pub fn configurerequest(e: *mut XEvent) {
+    info!("[configurerequest]");
     unsafe {
         let ev = (*e).configure_request;
         let cc = wintoclient(ev.window);
@@ -1063,6 +1077,7 @@ pub fn configurerequest(e: *mut XEvent) {
     }
 }
 pub fn createmon() -> Monitor {
+    info!("[createmon]");
     let mut m: Monitor = Monitor::new();
     m.tagset[0] = 1;
     m.tagset[1] = 1;
@@ -1077,6 +1092,7 @@ pub fn createmon() -> Monitor {
     return m;
 }
 pub fn destroynotify(e: *mut XEvent) {
+    info!("[destroynotify]");
     unsafe {
         let ev = (*e).destroy_window;
         let c = wintoclient(ev.window);
@@ -1108,6 +1124,7 @@ pub fn arrangemon(m: &Rc<RefCell<Monitor>>) {
 }
 // This is cool!
 pub fn detach(c: Option<Rc<RefCell<Client>>>) {
+    info!("[detach]");
     let cc = c.as_ref().unwrap();
     let mut current_opt = cc
         .borrow_mut()
@@ -1134,6 +1151,7 @@ pub fn detach(c: Option<Rc<RefCell<Client>>>) {
     }
 }
 pub fn detachstack(c: Option<Rc<RefCell<Client>>>) {
+    info!("[detachstack]");
     let cc = c.as_ref().unwrap();
     let mut current_opt = cc
         .borrow_mut()
@@ -1182,6 +1200,7 @@ pub fn detachstack(c: Option<Rc<RefCell<Client>>>) {
     }
 }
 pub fn dirtomon(dir: i32) -> Option<Rc<RefCell<Monitor>>> {
+    info!("[dirtomon]");
     unsafe {
         let mut m: Option<Rc<RefCell<Monitor>>>;
         if dir > 0 {
@@ -1407,6 +1426,7 @@ pub fn restack(m: Option<Rc<RefCell<Monitor>>>) {
 }
 
 pub fn run() {
+    info!("[run]");
     // main event loop
     unsafe {
         let mut ev: XEvent = zeroed();
@@ -1425,6 +1445,7 @@ pub fn run() {
 }
 
 pub fn scan() {
+    info!("[scan]");
     let mut num: u32 = 0;
     let mut d1: Window = 0;
     let mut d2: Window = 0;
@@ -1496,17 +1517,20 @@ pub fn arrange(mut m: Option<Rc<RefCell<Monitor>>>) {
 }
 
 pub fn attach(c: Option<Rc<RefCell<Client>>>) {
+    info!("[attach]");
     let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
     c.as_ref().unwrap().borrow_mut().next = mon.as_ref().unwrap().borrow_mut().clients.clone();
     mon.as_ref().unwrap().borrow_mut().clients = c.clone();
 }
 pub fn attachstack(c: Option<Rc<RefCell<Client>>>) {
+    info!("[attachstack]");
     let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
     c.as_ref().unwrap().borrow_mut().snext = mon.as_ref().unwrap().borrow_mut().stack.clone();
     mon.as_ref().unwrap().borrow_mut().stack = c.clone();
 }
 
 pub fn getatomprop(c: &mut Client, prop: Atom) -> u64 {
+    info!("[getatomprop]");
     let mut di = 0;
     let mut dl: u64 = 0;
     let mut da: Atom = 0;
@@ -1537,6 +1561,7 @@ pub fn getatomprop(c: &mut Client, prop: Atom) -> u64 {
 }
 
 pub fn getrootptr(x: &mut i32, y: &mut i32) -> i32 {
+    info!("[getrootptr]");
     let mut di: i32 = 0;
     let mut dui: u32 = 0;
     unsafe {
@@ -1549,6 +1574,7 @@ pub fn getrootptr(x: &mut i32, y: &mut i32) -> i32 {
 }
 
 pub fn getstate(w: Window) -> i64 {
+    info!("[getstate]");
     let mut format: i32 = 0;
     let mut result: i64 = -1;
     let mut p: *mut u8 = null_mut();
@@ -1582,6 +1608,7 @@ pub fn getstate(w: Window) -> i64 {
 }
 
 pub fn recttomon(x: i32, y: i32, w: i32, h: i32) -> Option<Rc<RefCell<Monitor>>> {
+    info!("[recttomon]");
     let mut area: i32 = 0;
 
     unsafe {
@@ -1601,6 +1628,7 @@ pub fn recttomon(x: i32, y: i32, w: i32, h: i32) -> Option<Rc<RefCell<Monitor>>>
 }
 
 pub fn wintoclient(w: Window) -> Option<Rc<RefCell<Client>>> {
+    info!("[wintoclient]");
     unsafe {
         let mut m = mons.clone();
         while let Some(ref m_opt) = m {
@@ -1620,6 +1648,7 @@ pub fn wintoclient(w: Window) -> Option<Rc<RefCell<Client>>> {
 }
 
 pub fn wintomon(w: Window) -> Option<Rc<RefCell<Monitor>>> {
+    info!("[wintomon]");
     let mut x: i32 = 0;
     let mut y: i32 = 0;
     unsafe {
@@ -1723,6 +1752,7 @@ pub fn buttonpress(e: *mut XEvent) {
 }
 
 pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
+    info!("[xerrordummy]");
     0
 }
 // #[no_mangle]
@@ -1733,6 +1763,7 @@ pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
 // Or use the method above.
 #[allow(dead_code)]
 pub fn xerrorstart(_: *mut Display, _: *mut XErrorEvent) -> i32 {
+    info!("[xerrorstart]");
     eprintln!("jwm: another window manager is already running");
     unsafe {
         exit(1);
@@ -1741,6 +1772,7 @@ pub fn xerrorstart(_: *mut Display, _: *mut XErrorEvent) -> i32 {
 // There's no way to check accesses to destroyed windows, thus those cases are ignored (especially
 // on UnmapNotify's). Other types of errors call xlibs default error handler, which may call exit.
 pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
+    info!("[xerror]");
     unsafe {
         if (*ee).error_code == BadWindow
             || ((*ee).request_code == X_SetInputFocus && (*ee).error_code == BadMatch)
@@ -1763,8 +1795,8 @@ pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
         return xerrorxlib.unwrap()(dpy, ee);
     }
 }
-#[allow(dead_code)]
 pub fn checkotherwm() {
+    info!("[checkotherwm]");
     unsafe {
         xerrorxlib = XSetErrorHandler(Some(transmute(xerrorstart as *const ())));
         // this causes an error if some other window manager is running.
@@ -1777,11 +1809,11 @@ pub fn checkotherwm() {
 }
 
 pub fn spawn(arg: *const Arg) {
+    info!("[spawn]");
     unsafe {
         let mut sa: sigaction = zeroed();
         static mut tmp: String = String::new();
 
-        info!("[spawn]");
         let mut mut_arg: Arg = (*arg).clone();
         if let Arg::V(ref mut v) = mut_arg {
             if *v == *dmenucmd {
@@ -1816,6 +1848,7 @@ pub fn spawn(arg: *const Arg) {
     }
 }
 pub fn updatebars() {
+    info!("[updatebars]");
     unsafe {
         let mut wa: XSetWindowAttributes = zeroed();
         wa.override_redirect = True;
@@ -1861,6 +1894,7 @@ pub fn updatebars() {
     }
 }
 pub fn updatebarpos(m: &mut Monitor) {
+    info!("[updatebarpos]");
     unsafe {
         m.wy = m.my;
         m.wh = m.mh;
@@ -1874,6 +1908,7 @@ pub fn updatebarpos(m: &mut Monitor) {
     }
 }
 pub fn updateclientlist() {
+    info!("[updateclientlist]");
     unsafe {
         XDeleteProperty(dpy, root, netatom[NET::NetClientList as usize]);
         let mut m = mons.clone();
@@ -1899,6 +1934,7 @@ pub fn updateclientlist() {
     }
 }
 pub fn tile(m: *mut Monitor) {
+    info!("[tile]");
     let mut n: u32 = 0;
     unsafe {
         let mut c = nexttiled((*m).clients.clone());
@@ -1966,6 +2002,7 @@ pub fn tile(m: *mut Monitor) {
     }
 }
 pub fn togglebar(_arg: *const Arg) {
+    info!("[togglebar]");
     unsafe {
         {
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
@@ -1984,6 +2021,7 @@ pub fn togglebar(_arg: *const Arg) {
     }
 }
 pub fn togglefloating(_arg: *const Arg) {
+    info!("[togglefloating]");
     unsafe {
         let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         if selmon_mut.sel.is_none() {
@@ -2010,6 +2048,7 @@ pub fn togglefloating(_arg: *const Arg) {
     }
 }
 pub fn focusin(e: *mut XEvent) {
+    info!("[focusin]");
     unsafe {
         let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         let ev = (*e).focus_change;
@@ -2021,6 +2060,7 @@ pub fn focusin(e: *mut XEvent) {
     }
 }
 pub fn focusmon(arg: *const Arg) {
+    info!("[focusmon]");
     unsafe {
         if let Some(ref mons_opt) = mons {
             if mons_opt.borrow_mut().next.is_none() {
@@ -2040,6 +2080,7 @@ pub fn focusmon(arg: *const Arg) {
     }
 }
 pub fn tag(arg: *const Arg) {
+    info!("[tag]");
     unsafe {
         if let Arg::Ui(ui) = *arg {
             let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
@@ -2052,6 +2093,7 @@ pub fn tag(arg: *const Arg) {
     }
 }
 pub fn tagmon(arg: *const Arg) {
+    info!("[tagmon]");
     unsafe {
         if let Some(ref selmon_opt) = selmon {
             if selmon_opt.borrow_mut().sel.is_none() {
@@ -2142,6 +2184,7 @@ pub fn focusstack(arg: *const Arg) {
     }
 }
 pub fn incnmaster(arg: *const Arg) {
+    info!("[incnmaster]");
     unsafe {
         if let Arg::I(i) = *arg {
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
@@ -2151,6 +2194,7 @@ pub fn incnmaster(arg: *const Arg) {
     }
 }
 pub fn setmfact(arg: *const Arg) {
+    info!("[setmfact]");
     unsafe {
         let lt_arrange = {
             let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
@@ -2207,6 +2251,7 @@ pub fn setlayout(arg: *const Arg) {
     }
 }
 pub fn zoom(_arg: *const Arg) {
+    info!("[zoom]");
     unsafe {
         let mut c;
         let sel_c;
@@ -2237,6 +2282,7 @@ pub fn zoom(_arg: *const Arg) {
     }
 }
 pub fn view(arg: *const Arg) {
+    info!("[view]");
     unsafe {
         if let Arg::Ui(ui) = *arg {
             info!("[view] ui: {}", ui);
@@ -2258,6 +2304,7 @@ pub fn view(arg: *const Arg) {
     }
 }
 pub fn toggleview(arg: *const Arg) {
+    info!("[toggleview]");
     unsafe {
         if let Arg::Ui(ui) = *arg {
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
@@ -2272,6 +2319,7 @@ pub fn toggleview(arg: *const Arg) {
     }
 }
 pub fn toggletag(arg: *const Arg) {
+    info!("[toggletag]");
     unsafe {
         let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         if selmon_mut.sel.is_none() {
@@ -2288,11 +2336,13 @@ pub fn toggletag(arg: *const Arg) {
     }
 }
 pub fn quit(_arg: *const Arg) {
+    info!("[quit]");
     unsafe {
         running = false;
     }
 }
 pub fn setup() {
+    info!("[setup]");
     unsafe {
         let mut wa: XSetWindowAttributes = zeroed();
         let mut sa: sigaction = zeroed();
@@ -2438,6 +2488,7 @@ pub fn setup() {
     }
 }
 pub fn killclient(_arg: *const Arg) {
+    info!("[killclient]");
     unsafe {
         let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         if selmon_mut.sel.is_none() {
@@ -2458,6 +2509,7 @@ pub fn killclient(_arg: *const Arg) {
     }
 }
 pub fn nexttiled(mut c: Option<Rc<RefCell<Client>>>) -> Option<Rc<RefCell<Client>>> {
+    info!("[nexttiled]");
     while let Some(ref c_ref) = c {
         let isfloating = c_ref.borrow_mut().isfloating;
         if isfloating || ISVISIBLE(c_ref) <= 0 {
@@ -2470,6 +2522,7 @@ pub fn nexttiled(mut c: Option<Rc<RefCell<Client>>>) -> Option<Rc<RefCell<Client
     return c;
 }
 pub fn pop(c: Option<Rc<RefCell<Client>>>) {
+    info!("[pop]");
     detach(c.clone());
     attach(c.clone());
     focus(c.clone());
@@ -2477,6 +2530,7 @@ pub fn pop(c: Option<Rc<RefCell<Client>>>) {
     arrange(mon);
 }
 pub fn propertynotify(e: *mut XEvent) {
+    info!("[propertynotify]");
     unsafe {
         let c: Option<Rc<RefCell<Client>>>;
         let ev = (*e).property;
@@ -2808,6 +2862,7 @@ pub fn resizemouse(_arg: *const Arg) {
     }
 }
 pub fn updatenumlockmask() {
+    info!("[updatenumlockmask]");
     unsafe {
         numlockmask = 0;
         let modmap = XGetModifierMapping(dpy);
@@ -2826,6 +2881,7 @@ pub fn updatenumlockmask() {
     }
 }
 pub fn grabbuttons(c: Option<Rc<RefCell<Client>>>, focused: bool) {
+    info!("[grabbuttons]");
     updatenumlockmask();
     unsafe {
         let modifiers = [0, LockMask, numlockmask, numlockmask | LockMask];
@@ -2866,6 +2922,7 @@ pub fn grabbuttons(c: Option<Rc<RefCell<Client>>>, focused: bool) {
     }
 }
 pub fn grabkeys() {
+    info!("[grabkeys]");
     updatenumlockmask();
     unsafe {
         let modifiers = [0, LockMask, numlockmask, numlockmask | LockMask];
@@ -2901,6 +2958,7 @@ pub fn grabkeys() {
     }
 }
 pub fn sendevent(c: &mut Client, proto: Atom) -> bool {
+    info!("[sendevent]");
     let mut protocols: *mut Atom = null_mut();
     let mut n: i32 = 0;
     let mut exists: bool = false;
@@ -2931,6 +2989,7 @@ pub fn sendevent(c: &mut Client, proto: Atom) -> bool {
     return exists;
 }
 pub fn setfocus(c: &Rc<RefCell<Client>>) {
+    info!("[setfocus]");
     unsafe {
         let mut c = c.borrow_mut();
         if !c.nerverfocus {
@@ -2950,10 +3009,14 @@ pub fn setfocus(c: &Rc<RefCell<Client>>) {
     }
 }
 pub fn drawbars() {
+    info!("[drawbars]");
     unsafe {
         let mut m = mons.clone();
         while m.is_some() {
-            info!("drawbar: {}", m.as_ref().unwrap().borrow_mut().barwin);
+            info!(
+                "[drawbars] barwin: {}",
+                m.as_ref().unwrap().borrow_mut().barwin
+            );
             drawbar(m.clone());
             let next = m.as_ref().unwrap().borrow_mut().next.clone();
             m = next;
@@ -2961,6 +3024,7 @@ pub fn drawbars() {
     }
 }
 pub fn enternotify(e: *mut XEvent) {
+    info!("[enternotify]");
     unsafe {
         let ev = (*e).crossing;
         if (ev.mode != NotifyNormal || ev.detail == NotifyInferior) && ev.window != root {
@@ -2988,6 +3052,7 @@ pub fn enternotify(e: *mut XEvent) {
     }
 }
 pub fn expose(e: *mut XEvent) {
+    info!("[expose]");
     unsafe {
         let ev = (*e).expose;
         let m = wintomon(ev.window);
@@ -2999,6 +3064,7 @@ pub fn expose(e: *mut XEvent) {
     }
 }
 pub fn focus(mut c: Option<Rc<RefCell<Client>>>) {
+    info!("[focus]");
     unsafe {
         {
             if c.is_none() || ISVISIBLE(c.as_ref().unwrap()) <= 0 {
@@ -3051,6 +3117,7 @@ pub fn focus(mut c: Option<Rc<RefCell<Client>>>) {
     }
 }
 pub fn unfocus(c: Option<Rc<RefCell<Client>>>, setfocus: bool) {
+    info!("[unfocus]");
     if c.is_none() {
         return;
     }
@@ -3071,6 +3138,7 @@ pub fn unfocus(c: Option<Rc<RefCell<Client>>>, setfocus: bool) {
     }
 }
 pub fn sendmon(c: Option<Rc<RefCell<Client>>>, m: &Option<Rc<RefCell<Monitor>>>) {
+    info!("[sendmon]");
     if Rc::ptr_eq(
         c.as_ref().unwrap().borrow_mut().mon.as_ref().unwrap(),
         m.as_ref().unwrap(),
@@ -3090,6 +3158,7 @@ pub fn sendmon(c: Option<Rc<RefCell<Client>>>, m: &Option<Rc<RefCell<Monitor>>>)
     arrange(None);
 }
 pub fn setclientstate(c: &Rc<RefCell<Client>>, mut state: i64) {
+    info!("[setclientstate]");
     unsafe {
         let win = c.borrow_mut().win;
         XChangeProperty(
@@ -3105,6 +3174,7 @@ pub fn setclientstate(c: &Rc<RefCell<Client>>, mut state: i64) {
     }
 }
 pub fn keypress(e: *mut XEvent) {
+    info!("[keypress]");
     unsafe {
         let ev = (*e).key;
         let keysym = XKeycodeToKeysym(dpy, ev.keycode as u8, 0);
@@ -3125,6 +3195,7 @@ pub fn keypress(e: *mut XEvent) {
     }
 }
 pub fn manage(w: Window, wa: *mut XWindowAttributes) {
+    info!("[manage]");
     let c: Option<Rc<RefCell<Client>>> = Some(Rc::new(RefCell::new(Client::new())));
     let t: Option<Rc<RefCell<Client>>>;
     let mut trans: Window = 0;
@@ -3256,6 +3327,7 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
     }
 }
 pub fn mappingnotify(e: *mut XEvent) {
+    info!("[mappingnotify]");
     unsafe {
         let mut ev = (*e).mapping;
         XRefreshKeyboardMapping(&mut ev);
@@ -3265,6 +3337,7 @@ pub fn mappingnotify(e: *mut XEvent) {
     }
 }
 pub fn maprequest(e: *mut XEvent) {
+    info!("[maprequest]");
     unsafe {
         let ev = (*e).map_request;
         static mut wa: XWindowAttributes = unsafe { zeroed() };
@@ -3277,6 +3350,7 @@ pub fn maprequest(e: *mut XEvent) {
     }
 }
 pub fn monocle(m: *mut Monitor) {
+    info!("[monocle]");
     unsafe {
         // This idea is cool!.
         static mut formatted_string: String = String::new();
@@ -3312,6 +3386,7 @@ pub fn monocle(m: *mut Monitor) {
     }
 }
 pub fn motionnotify(e: *mut XEvent) {
+    info!("[motionnotify]");
     unsafe {
         // This idea is cool
         static mut motionmon: Option<Rc<RefCell<Monitor>>> = None;
@@ -3330,6 +3405,7 @@ pub fn motionnotify(e: *mut XEvent) {
     }
 }
 pub fn unmanage(c: Option<Rc<RefCell<Client>>>, destroyed: bool) {
+    info!("[unmanage]");
     unsafe {
         let mut wc: XWindowChanges = zeroed();
         detach(c.clone());
@@ -3356,6 +3432,7 @@ pub fn unmanage(c: Option<Rc<RefCell<Client>>>, destroyed: bool) {
     }
 }
 pub fn unmapnotify(e: *mut XEvent) {
+    info!("[unmapnotify]");
     unsafe {
         let ev = (*e).unmap;
         let c = wintoclient(ev.window);
@@ -3374,6 +3451,7 @@ pub fn isuniquegeom(
     mut n: usize,
     info: *mut XineramaScreenInfo,
 ) -> bool {
+    info!("[isuniquegeom]");
     unsafe {
         while n > 0 {
             n -= 1;
@@ -3390,6 +3468,7 @@ pub fn isuniquegeom(
 }
 
 pub fn updategeom() -> bool {
+    info!("[updategeom]");
     let mut dirty: bool = false;
     unsafe {
         let mut nn: i32 = 0;
@@ -3538,6 +3617,7 @@ pub fn updategeom() -> bool {
 }
 #[allow(unused_assignments)]
 pub fn gettextprop(w: Window, atom: Atom, mut text: &str, size: usize) -> bool {
+    info!("[gettextprop]");
     if text.is_empty() || size == 0 {
         return false;
     }
@@ -3566,6 +3646,7 @@ pub fn gettextprop(w: Window, atom: Atom, mut text: &str, size: usize) -> bool {
     true
 }
 pub fn updatestatus() {
+    info!("[updatestatus]");
     unsafe {
         if !gettextprop(root, XA_WM_NAME, *addr_of!(stext), stext.len()) {
             stext = "jwm-1.0";
@@ -3575,6 +3656,7 @@ pub fn updatestatus() {
     }
 }
 pub fn updatewindowtype(c: &Rc<RefCell<Client>>) {
+    info!("[updatewindowtype]");
     unsafe {
         // todo
         let c = &mut *c.borrow_mut();
@@ -3590,6 +3672,7 @@ pub fn updatewindowtype(c: &Rc<RefCell<Client>>) {
     }
 }
 pub fn updatewmhints(c: &Rc<RefCell<Client>>) {
+    info!("[updatewmhints]");
     unsafe {
         let mut cc = c.borrow_mut();
         let wmh = XGetWMHints(dpy, cc.win);
@@ -3618,6 +3701,7 @@ pub fn updatewmhints(c: &Rc<RefCell<Client>>) {
     }
 }
 pub fn updatetitle(c: &Rc<RefCell<Client>>) {
+    info!("[updatetitle]");
     unsafe {
         let mut c = c.borrow_mut();
         if !gettextprop(
