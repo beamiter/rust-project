@@ -8,9 +8,9 @@ use std::rc::Rc;
 use once_cell::unsync::Lazy;
 use x11::{
     keysym::{
-        XK_Return, XK_Tab, XK_b, XK_c, XK_comma, XK_d, XK_f, XK_h, XK_i, XK_j, XK_k, XK_l, XK_m,
-        XK_r, XK_period, XK_q, XK_space, XK_t, XK_0, XK_1, XK_2, XK_3, XK_4, XK_5, XK_6, XK_7,
-        XK_8, XK_9,
+        XK_Return, XK_Tab, XK_b, XK_c, XK_comma, XK_d, XK_e, XK_f, XK_h, XK_i, XK_j, XK_k, XK_l,
+        XK_m, XK_period, XK_q, XK_r, XK_space, XK_t, XK_0, XK_1, XK_2, XK_3, XK_4, XK_5, XK_6,
+        XK_7, XK_8, XK_9,
     },
     xlib::{Button1, Button2, Button3, ControlMask, Mod1Mask, ShiftMask},
 };
@@ -110,7 +110,7 @@ pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
         // modifier     key           function          argument
         Key::new(
             MODKEY,
-            XK_r.into(),
+            XK_e.into(),
             Some(dwm::spawn),
             dwm::Arg::V(dmenucmd.clone()),
         ),
