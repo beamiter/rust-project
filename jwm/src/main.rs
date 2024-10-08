@@ -1,6 +1,6 @@
 use std::{ffi::CString, process::exit, ptr::null_mut};
 
-use log::{info, warn};
+use log::info;
 use simplelog::*;
 
 use dwm::{checkotherwm, cleanup, dpy, run, scan, setup};
@@ -37,19 +37,19 @@ fn main() {
             eprintln!("jwm: cannot open display");
             exit(1);
         }
-        println!("[main] main begin");
-        println!("[main] checkotherwm");
+        info!("[main] main begin");
+        info!("[main] checkotherwm");
         checkotherwm();
-        println!("[main] setup");
+        info!("[main] setup");
         setup();
-        println!("[main] scan");
+        info!("[main] scan");
         scan();
-        println!("[main] run");
+        info!("[main] run");
         run();
-        println!("[main] cleanup");
+        info!("[main] cleanup");
         cleanup();
-        println!("[main] XCloseDisplay");
+        info!("[main] XCloseDisplay");
         XCloseDisplay(dpy);
-        println!("[main] end");
+        info!("[main] end");
     }
 }

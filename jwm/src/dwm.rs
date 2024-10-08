@@ -6,6 +6,7 @@ use libc::{
     close, exit, fork, free, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
     SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
+use log::info;
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
@@ -1072,7 +1073,7 @@ pub fn createmon() -> Monitor {
     m.lt[0] = layouts[0].clone();
     m.lt[1] = layouts[1 % layouts.len()].clone();
     m.ltsymbol = layouts[0].symbol;
-    println!("[createmon]: ltsymbol: {:?}", m.ltsymbol);
+    info!("[createmon]: ltsymbol: {:?}", m.ltsymbol);
     return m;
 }
 pub fn destroynotify(e: *mut XEvent) {
@@ -1085,13 +1086,13 @@ pub fn destroynotify(e: *mut XEvent) {
     }
 }
 pub fn arrangemon(m: &Rc<RefCell<Monitor>>) {
-    println!("[arrangemon]");
+    info!("[arrangemon]");
     let sellt;
     {
         let mut mm = m.borrow_mut();
         sellt = (mm).sellt;
         mm.ltsymbol = (mm).lt[sellt].symbol;
-        println!("[arrangemon] sellt: {}, ltsymbol: {:?}", sellt, mm.ltsymbol);
+        info!("[arrangemon] sellt: {}, ltsymbol: {:?}", sellt, mm.ltsymbol);
     }
     let arrange;
     {
@@ -1205,7 +1206,7 @@ pub fn dirtomon(dir: i32) -> Option<Rc<RefCell<Monitor>>> {
     }
 }
 pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
-    println!("[drawbar]");
+    info!("[drawbar]");
     let mut tw: i32 = 0;
     let mut occ: u32 = 0;
     let mut urg: u32 = 0;
@@ -1369,7 +1370,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
 }
 
 pub fn restack(m: Option<Rc<RefCell<Monitor>>>) {
-    println!("[restack]");
+    info!("[restack]");
     drawbar(m.clone());
 
     unsafe {
@@ -1412,11 +1413,11 @@ pub fn run() {
         XSync(dpy, False);
         let mut i: u64 = 0;
         while running && XNextEvent(dpy, &mut ev) <= 0 {
-            // println!("running frame: {}, handler type: {}", i, ev.type_);
+            // info!("running frame: {}, handler type: {}", i, ev.type_);
             i = (i + 1) % std::u64::MAX;
             if let Some(hd) = handler[ev.type_ as usize] {
                 // call handler
-                // println!("*********** handler type: {} valid", ev.type_);
+                // info!("*********** handler type: {} valid", ev.type_);
                 hd(&mut ev);
             }
         }
@@ -1464,7 +1465,7 @@ pub fn scan() {
 }
 
 pub fn arrange(mut m: Option<Rc<RefCell<Monitor>>>) {
-    println!("[arrange]");
+    info!("[arrange]");
     unsafe {
         if let Some(ref m_opt) = m {
             {
@@ -1642,7 +1643,7 @@ pub fn wintomon(w: Window) -> Option<Rc<RefCell<Monitor>>> {
 }
 
 pub fn buttonpress(e: *mut XEvent) {
-    println!("[buttonpress]");
+    info!("[buttonpress]");
     let mut arg: Arg = Arg::Ui(0);
     unsafe {
         let c: Option<Rc<RefCell<Client>>>;
@@ -1658,7 +1659,7 @@ pub fn buttonpress(e: *mut XEvent) {
         }
         let barwin = { selmon.as_ref().unwrap().borrow_mut().barwin };
         if ev.window == barwin {
-            println!("[buttonpress] barwin: {}, ev.x: {}", barwin, ev.x);
+            info!("[buttonpress] barwin: {}, ev.x: {}", barwin, ev.x);
             let mut i: usize = 0;
             let mut x: u32 = 0;
             loop {
@@ -1670,7 +1671,7 @@ pub fn buttonpress(e: *mut XEvent) {
                 if i >= tags.len() {
                     break;
                 }
-                println!("[buttonpress] x: {}, i: {}", x, i);
+                info!("[buttonpress] x: {}, i: {}", x, i);
             }
             let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
             if i < tags.len() {
@@ -1708,10 +1709,10 @@ pub fn buttonpress(e: *mut XEvent) {
                                 false
                             }
                         } {
-                            println!("[buttonpress] use fresh arg");
+                            info!("[buttonpress] use fresh arg");
                             &mut arg
                         } else {
-                            println!("[buttonpress] use button arg");
+                            info!("[buttonpress] use button arg");
                             &mut buttons[i].arg.clone()
                         }
                     });
@@ -1753,7 +1754,7 @@ pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
         {
             return 0;
         }
-        println!(
+        info!(
             "jwm: fatal error: request code = {}, error code = {}",
             (*ee).request_code,
             (*ee).error_code
@@ -1780,13 +1781,16 @@ pub fn spawn(arg: *const Arg) {
         let mut sa: sigaction = zeroed();
         static mut tmp: String = String::new();
 
-        println!("spawn");
-        if let Arg::V(ref v) = *arg {
+        info!("[spawn]");
+        let mut mut_arg: Arg = (*arg).clone();
+        if let Arg::V(ref mut v) = mut_arg {
             if *v == *dmenucmd {
                 // Comment for test
-                // tmp =
-                //     ((b'0' + selmon.as_ref().unwrap().borrow_mut().num as u8) as char).to_string();
-                // dmenumon = tmp.as_str();
+                tmp =
+                    ((b'0' + selmon.as_ref().unwrap().borrow_mut().num as u8) as char).to_string();
+                dmenumon = tmp.as_str();
+                info!("[spawn] dmenumon {}", dmenumon);
+                (*v)[2] = dmenumon;
             }
             if fork() == 0 {
                 if !dpy.is_null() {
@@ -1799,13 +1803,13 @@ pub fn spawn(arg: *const Arg) {
                 sa.sa_sigaction = SIG_DFL;
                 sigaction(SIGCHLD, &sa, null_mut());
 
-                println!("arg v: {:?}", v);
+                info!("[spawn] arg v: {:?}", v);
                 let status = Command::new(v[0])
                     .args(&v[1..])
                     .status()
                     .expect("Failed to execute command");
                 if !status.success() {
-                    println!("Command exited with non-zero status code");
+                    info!("[spawn] Command exited with non-zero status code");
                 }
             }
         }
@@ -2067,7 +2071,7 @@ pub fn tagmon(arg: *const Arg) {
     }
 }
 pub fn focusstack(arg: *const Arg) {
-    println!("[focusstack]");
+    info!("[focusstack]");
     unsafe {
         {
             let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
@@ -2171,7 +2175,7 @@ pub fn setmfact(arg: *const Arg) {
     }
 }
 pub fn setlayout(arg: *const Arg) {
-    println!("[setlayout]");
+    info!("[setlayout]");
     unsafe {
         let sel;
         {
@@ -2235,7 +2239,7 @@ pub fn zoom(_arg: *const Arg) {
 pub fn view(arg: *const Arg) {
     unsafe {
         if let Arg::Ui(ui) = *arg {
-            println!("[view] ui: {}", ui);
+            info!("[view] ui: {}", ui);
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
             if (ui & TAGMASK()) == selmon_mut.tagset[selmon_mut.seltags] {
                 return;
@@ -2309,7 +2313,7 @@ pub fn setup() {
         drw = Some(Box::new(drw_create(
             dpy, screen, root, sw as u32, sh as u32,
         )));
-        println!("[setup] drw_fontset_create");
+        info!("[setup] drw_fontset_create");
         if drw_fontset_create(drw.as_mut().unwrap().as_mut(), &*fonts, fonts.len() as u64).is_none()
         {
             eprintln!("no fonts could be loaded");
@@ -2320,7 +2324,7 @@ pub fn setup() {
             lrpad = h;
             bh = h + 2;
         }
-        println!("[setup] updategeom");
+        info!("[setup] updategeom");
         updategeom();
         // init atoms
         let mut c_string = CString::new("UTF8_STRING").expect("fail to convert");
@@ -2366,9 +2370,9 @@ pub fn setup() {
             scheme[i] = drw_scm_create(drw.as_mut().unwrap().as_mut(), colors[i]);
         }
         // init bars
-        println!("[setup] updatebars");
+        info!("[setup] updatebars");
         updatebars();
-        println!("[setup] updatestatus");
+        info!("[setup] updatestatus");
         updatestatus();
         // supporting window fot NetWMCheck
         wmcheckwin = XCreateSimpleWindow(dpy, root, 0, 0, 1, 1, 0, 0, 0);
@@ -2427,9 +2431,9 @@ pub fn setup() {
             | PropertyChangeMask;
         XChangeWindowAttributes(dpy, root, CWEventMask | CWCursor, &mut wa);
         XSelectInput(dpy, root, wa.event_mask);
-        println!("[setup] grabkeys");
+        info!("[setup] grabkeys");
         grabkeys();
-        println!("[setup] focus");
+        info!("[setup] focus");
         focus(None);
     }
 }
@@ -2527,7 +2531,7 @@ pub fn propertynotify(e: *mut XEvent) {
                         .as_ref()
                         .unwrap(),
                 ) {
-                    println!("propertynotify");
+                    info!("propertynotify");
                     let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
                     drawbar(mon);
                 }
@@ -2539,7 +2543,7 @@ pub fn propertynotify(e: *mut XEvent) {
     }
 }
 pub fn movemouse(_arg: *const Arg) {
-    println!("[movemouse]");
+    info!("[movemouse]");
     unsafe {
         let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         let c = selmon_mut.sel.clone();
@@ -2655,7 +2659,7 @@ pub fn movemouse(_arg: *const Arg) {
     }
 }
 pub fn resizemouse(_arg: *const Arg) {
-    println!("[resizemouse]");
+    info!("[resizemouse]");
     unsafe {
         let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
         let c = selmon_mut.sel.clone();
@@ -2949,7 +2953,7 @@ pub fn drawbars() {
     unsafe {
         let mut m = mons.clone();
         while m.is_some() {
-            println!("drawbar: {}", m.as_ref().unwrap().borrow_mut().barwin);
+            info!("drawbar: {}", m.as_ref().unwrap().borrow_mut().barwin);
             drawbar(m.clone());
             let next = m.as_ref().unwrap().borrow_mut().next.clone();
             m = next;
@@ -2989,7 +2993,7 @@ pub fn expose(e: *mut XEvent) {
         let m = wintomon(ev.window);
 
         if ev.count == 0 && m.is_some() {
-            println!("expose");
+            info!("expose");
             drawbar(m);
         }
     }
@@ -3104,7 +3108,7 @@ pub fn keypress(e: *mut XEvent) {
     unsafe {
         let ev = (*e).key;
         let keysym = XKeycodeToKeysym(dpy, ev.keycode as u8, 0);
-        println!(
+        info!(
             "[keypress] keysym: {}, mask: {}",
             keysym,
             CLEANMASK(ev.state)
@@ -3114,7 +3118,7 @@ pub fn keypress(e: *mut XEvent) {
                 && CLEANMASK(keys[i].mod0) == CLEANMASK(ev.state)
                 && keys[i].func.is_some()
             {
-                println!("[keypress] i: {}, arg: {:?}", i, keys[i].arg);
+                info!("[keypress] i: {}, arg: {:?}", i, keys[i].arg);
                 keys[i].func.unwrap()(&keys[i].arg);
             }
         }
@@ -3288,7 +3292,7 @@ pub fn monocle(m: *mut Monitor) {
         if n > 0 {
             // override layout symbol
             formatted_string = format!("[{}]", n);
-            println!("[monocle] formatted_string: {}", formatted_string);
+            info!("[monocle] formatted_string: {}", formatted_string);
             (*m).ltsymbol = formatted_string.as_str();
         }
         c = nexttiled((*m).clients.clone());
@@ -3390,7 +3394,7 @@ pub fn updategeom() -> bool {
     unsafe {
         let mut nn: i32 = 0;
         if XineramaIsActive(dpy) > 0 {
-            println!("[updategeom] XineramaIsActive");
+            info!("[updategeom] XineramaIsActive");
             let info = XineramaQueryScreens(dpy, &mut nn);
             let mut unique: Vec<XineramaScreenInfo> = vec![];
             unique.resize(nn as usize, zeroed());
@@ -3407,7 +3411,7 @@ pub fn updategeom() -> bool {
             while i < nn as usize {
                 if isuniquegeom(&mut unique, j, info.wrapping_add(i)) {
                     unique[j] = *info.wrapping_add(i);
-                    println!("[updategeom] set info i {} as unique j {}", i, j);
+                    info!("[updategeom] set info i {} as unique j {}", i, j);
                     j += 1;
                 }
                 i += 1;
@@ -3566,7 +3570,7 @@ pub fn updatestatus() {
         if !gettextprop(root, XA_WM_NAME, *addr_of!(stext), stext.len()) {
             stext = "jwm-1.0";
         }
-        println!("updatestatus");
+        info!("updatestatus");
         drawbar(selmon.clone());
     }
 }
