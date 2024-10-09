@@ -379,6 +379,7 @@ impl Monitor {
 
 #[allow(unused)]
 pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: &Monitor) -> i32 {
+    info!("[INTERSECT]");
     unsafe {
         max(0, min(x + w, (*m).wx + (*m).ww) - max(x, (*m).wx))
             * max(0, min(y + h, (*m).wy + (*m).wh) - max(y, (*m).wy))
@@ -386,6 +387,7 @@ pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: &Monitor) -> i32 {
 }
 
 pub fn ISVISIBLE(X: &Rc<RefCell<Client>>) -> u32 {
+    info!("[ISVISIBLE]");
     let X = X.borrow_mut();
     let tags0 = X.tags0;
     let seltags = X.mon.as_ref().unwrap().borrow_mut().seltags;
@@ -394,18 +396,22 @@ pub fn ISVISIBLE(X: &Rc<RefCell<Client>>) -> u32 {
 }
 
 pub fn WIDTH(X: &mut Client) -> i32 {
+    info!("[WIDTH]");
     X.w + 2 * X.bw
 }
 
 pub fn HEIGHT(X: &mut Client) -> i32 {
+    info!("[HEIGHT]");
     X.h + 2 * X.bw
 }
 
 pub fn TAGMASK() -> u32 {
+    info!("[TAGMASK]");
     (1 << tags.len()) - 1
 }
 
 pub fn TEXTW(drw0: &mut Drw, X: &str) -> u32 {
+    info!("[TEXTW]");
     unsafe { drw_fontset_getwidth(drw0, X) + lrpad as u32 }
 }
 
@@ -1125,78 +1131,119 @@ pub fn arrangemon(m: &Rc<RefCell<Monitor>>) {
 // This is cool!
 pub fn detach(c: Option<Rc<RefCell<Client>>>) {
     info!("[detach]");
-    let cc = c.as_ref().unwrap();
-    let mut current_opt = cc
-        .borrow_mut()
-        .mon
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .clients
-        .as_ref()
-        .map(Rc::clone);
-    let mut prev_opt: Option<Rc<RefCell<Client>>> = None;
-    while let Some(current) = current_opt {
-        if Rc::ptr_eq(&current, cc) {
-            let next_opt = { current.borrow_mut().next.clone() };
-            if let Some(prev) = prev_opt {
-                prev.borrow_mut().next = next_opt;
+    let mut current = {
+        c.as_ref()
+            .unwrap()
+            .borrow_mut()
+            .mon
+            .as_ref()
+            .unwrap()
+            .borrow_mut()
+            .clients
+            .clone()
+    };
+    let mut prev: Option<Rc<RefCell<Client>>> = None;
+    while let Some(ref current_opt) = current {
+        info!("[detach] check clients equal");
+        if Rc::ptr_eq(current.as_ref().unwrap(), c.as_ref().unwrap()) {
+            info!("[detach] current equal c");
+            let next = { current_opt.borrow_mut().next.clone() };
+            if let Some(ref prev_opt) = prev {
+                prev_opt.borrow_mut().next = next;
             } else {
-                cc.borrow_mut().mon.as_ref().unwrap().borrow_mut().clients = next_opt;
+                c.as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .mon
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .clients = next;
             }
             break;
         }
-        prev_opt = Some(Rc::clone(&current));
-        current_opt = current.borrow().next.as_ref().map(Rc::clone);
+        info!("[detach] move to next");
+        prev = current.clone();
+        let next = current_opt.borrow_mut().next.clone();
+        current = next;
     }
 }
 pub fn detachstack(c: Option<Rc<RefCell<Client>>>) {
     info!("[detachstack]");
-    let cc = c.as_ref().unwrap();
-    let mut current_opt = cc
-        .borrow_mut()
-        .mon
-        .as_ref()
-        .unwrap()
-        .borrow_mut()
-        .stack
-        .clone();
-    let mut prev_opt: Option<Rc<RefCell<Client>>> = None;
-    while let Some(current) = current_opt {
-        if Rc::ptr_eq(&current, cc) {
-            let next_opt = { current.borrow_mut().snext.clone() };
-            if let Some(prev) = prev_opt {
-                prev.borrow_mut().snext = next_opt;
-            } else {
-                cc.borrow_mut().mon.as_ref().unwrap().borrow_mut().stack = next_opt;
-            }
-            break;
-        }
-        prev_opt = Some(Rc::clone(&current));
-        current_opt = current.borrow().snext.as_ref().map(Rc::clone);
-    }
-    let mut condition = false;
-    if let Some(ref mon_opt) = cc.borrow_mut().mon {
-        if let Some(ref sel_opt) = mon_opt.borrow_mut().sel {
-            if Rc::ptr_eq(cc, sel_opt) {
-                condition = true;
-            }
-        }
-    }
-    if condition {
-        let mut t = cc
+    let mut current = {
+        c.as_ref()
+            .unwrap()
             .borrow_mut()
             .mon
             .as_ref()
             .unwrap()
             .borrow_mut()
             .stack
-            .clone();
-        while t.is_some() && ISVISIBLE(t.as_ref().unwrap()) <= 0 {
-            let snext = t.as_ref().unwrap().borrow_mut().snext.clone();
+            .clone()
+    };
+    let mut prev: Option<Rc<RefCell<Client>>> = None;
+    while let Some(ref current_opt) = current {
+        info!("[detach] check clients equal");
+        if Rc::ptr_eq(current.as_ref().unwrap(), c.as_ref().unwrap()) {
+            info!("[detach] current equal c");
+            let snext = { current_opt.borrow_mut().snext.clone() };
+            if let Some(ref prev_opt) = prev {
+                prev_opt.borrow_mut().snext = snext;
+            } else {
+                c.as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .mon
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .stack = snext;
+            }
+            break;
+        }
+        info!("[detach] move to snext");
+        prev = current.clone();
+        let snext = current_opt.borrow_mut().snext.clone();
+        current = snext;
+    }
+
+    let mut condition = false;
+    if let Some(ref mon_opt) = c.as_ref().unwrap().borrow_mut().mon {
+        if let Some(ref sel_opt) = mon_opt.borrow_mut().sel {
+            if Rc::ptr_eq(c.as_ref().unwrap(), sel_opt) {
+                condition = true;
+            }
+        }
+    }
+    if condition {
+        let mut t = {
+            c.as_ref()
+                .unwrap()
+                .borrow_mut()
+                .mon
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .stack
+                .clone()
+        };
+        while let Some(ref t_opt) = t {
+            if ISVISIBLE(t.as_ref().unwrap()) > 0 {
+                break;
+            }
+            let snext = t_opt.borrow_mut().snext.clone();
             t = snext;
         }
-        cc.borrow_mut().mon.as_ref().unwrap().borrow_mut().sel = t.clone();
+        {
+            c.as_ref()
+                .unwrap()
+                .borrow_mut()
+                .mon
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .sel = t.clone()
+        };
     }
 }
 pub fn dirtomon(dir: i32) -> Option<Rc<RefCell<Monitor>>> {
@@ -1204,20 +1251,29 @@ pub fn dirtomon(dir: i32) -> Option<Rc<RefCell<Monitor>>> {
     unsafe {
         let mut m: Option<Rc<RefCell<Monitor>>>;
         if dir > 0 {
+            info!("[dirtomon] dir: {}", dir);
             m = selmon.as_ref().unwrap().borrow_mut().next.clone();
-            if m.is_some() {
+            if m.is_none() {
                 m = mons.clone();
             }
-        } else if selmon == mons {
+        } else if Rc::ptr_eq(selmon.as_ref().unwrap(), mons.as_ref().unwrap()) {
+            info!("[dirtomon] selmon equal mons");
             m = mons.clone();
-            while m.is_some() && m.as_ref().unwrap().borrow_mut().next.is_some() {
-                let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            while let Some(ref m_opt) = m {
+                let next = m_opt.borrow_mut().next.clone();
+                if next.is_none() {
+                    break;
+                }
                 m = next;
             }
         } else {
+            info!("[dirtomon] other dir: {}", dir);
             m = mons.clone();
-            while m.is_some() && m.as_ref().unwrap().borrow_mut().next != selmon {
-                let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            while let Some(ref m_opt) = m {
+                let next = m_opt.borrow_mut().next.clone();
+                if Rc::ptr_eq(next.as_ref().unwrap(), selmon.as_ref().unwrap()) {
+                    break;
+                }
                 m = next;
             }
         }
@@ -2069,6 +2125,7 @@ pub fn focusmon(arg: *const Arg) {
         }
         if let Arg::I(i) = *arg {
             let m = dirtomon(i);
+            info!("[focusmon] check m equal selmon");
             if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
                 return;
             }
@@ -2107,7 +2164,9 @@ pub fn tagmon(arg: *const Arg) {
         }
         if let Arg::I(i) = *arg {
             if let Some(ref selmon_opt) = selmon {
-                sendmon(selmon_opt.borrow_mut().sel.clone(), &dirtomon(i));
+                let dir_i_mon = dirtomon(i);
+                let sel = { selmon_opt.borrow_mut().sel.clone() };
+                sendmon(sel, dir_i_mon);
             }
         }
     }
@@ -2706,7 +2765,7 @@ pub fn movemouse(_arg: *const Arg) {
             c.as_ref().unwrap().borrow_mut().h,
         );
         if m != selmon {
-            sendmon(c, &m);
+            sendmon(c, m.clone());
             selmon = m;
             focus(None);
         }
@@ -2855,7 +2914,7 @@ pub fn resizemouse(_arg: *const Arg) {
             (*c.as_ref().unwrap().borrow_mut()).h,
         );
         if m != selmon {
-            sendmon(c, &m);
+            sendmon(c, m.clone());
             selmon = m;
             focus(None);
         }
@@ -3137,7 +3196,7 @@ pub fn unfocus(c: Option<Rc<RefCell<Client>>>, setfocus: bool) {
         }
     }
 }
-pub fn sendmon(c: Option<Rc<RefCell<Client>>>, m: &Option<Rc<RefCell<Monitor>>>) {
+pub fn sendmon(c: Option<Rc<RefCell<Client>>>, m: Option<Rc<RefCell<Monitor>>>) {
     info!("[sendmon]");
     if Rc::ptr_eq(
         c.as_ref().unwrap().borrow_mut().mon.as_ref().unwrap(),
@@ -3148,10 +3207,14 @@ pub fn sendmon(c: Option<Rc<RefCell<Client>>>, m: &Option<Rc<RefCell<Monitor>>>)
     unfocus(c.clone(), true);
     detach(c.clone());
     detachstack(c.clone());
-    c.as_ref().unwrap().borrow_mut().mon = m.clone();
+    {
+        c.as_ref().unwrap().borrow_mut().mon = m.clone()
+    };
     // assign tags of target monitor.
-    c.as_ref().unwrap().borrow_mut().tags0 =
-        m.as_ref().unwrap().borrow_mut().tagset[m.as_ref().unwrap().borrow_mut().seltags];
+    let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
+    {
+        c.as_ref().unwrap().borrow_mut().tags0 = m.as_ref().unwrap().borrow_mut().tagset[seltags]
+    };
     attach(c.clone());
     attachstack(c.clone());
     focus(None);

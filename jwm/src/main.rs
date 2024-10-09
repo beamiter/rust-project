@@ -30,7 +30,7 @@ mod tests;
 
 fn main() {
     let now = Local::now();
-    let timestamp = now.format("%Y-%m-%d_%H:%M:%S").to_string();
+    let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
     let log_filename = format!("/tmp/jwm_{}.log", timestamp);
     let log_file = std::fs::File::create(log_filename).unwrap();
     WriteLogger::init(LevelFilter::Info, Config::default(), log_file).unwrap();
