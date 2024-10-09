@@ -128,7 +128,7 @@ pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
         Key::new(MODKEY, XK_h.into(), Some(dwm::setmfact), dwm::Arg::F(-0.05)),
         Key::new(MODKEY, XK_l.into(), Some(dwm::setmfact), dwm::Arg::F(0.05)),
         Key::new(MODKEY, XK_Return.into(), Some(dwm::zoom), dwm::Arg::I(0)),
-        Key::new(MODKEY, XK_Tab.into(), Some(dwm::view), dwm::Arg::I(0)),
+        Key::new(MODKEY, XK_Tab.into(), Some(dwm::view), dwm::Arg::Ui(0)),
         Key::new(
             MODKEY | ShiftMask,
             XK_c.into(),
@@ -165,12 +165,12 @@ pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
             Some(dwm::togglefloating),
             dwm::Arg::I(0),
         ),
-        Key::new(MODKEY, XK_0.into(), Some(dwm::view), dwm::Arg::Ui(0)),
+        Key::new(MODKEY, XK_0.into(), Some(dwm::view), dwm::Arg::Ui(!0)),
         Key::new(
             MODKEY | ShiftMask,
             XK_0.into(),
             Some(dwm::tag),
-            dwm::Arg::Ui(0),
+            dwm::Arg::Ui(!0),
         ),
         Key::new(
             MODKEY,

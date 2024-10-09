@@ -1237,8 +1237,8 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             boxs = h / 9;
             boxw = h / 6 + 2;
         }
-
-        if !m.as_ref().unwrap().borrow_mut().showbar0 {
+        let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
+        if !showbar0 {
             return;
         }
 
@@ -1251,7 +1251,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             );
             // 2px right padding.
             tw = TEXTW(drw.as_mut().unwrap().as_mut(), stext) as i32 - lrpad + 2;
-            let ww = m.as_ref().unwrap().borrow_mut().ww;
+            let ww = { m.as_ref().unwrap().borrow_mut().ww };
             drw_text(
                 drw.as_mut().unwrap().as_mut(),
                 ww - tw,
@@ -1279,8 +1279,8 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         let mut w;
         for i in 0..tags.len() {
             w = TEXTW(drw.as_mut().unwrap().as_mut(), tags[i]) as i32;
-            let st = m.as_ref().unwrap().borrow_mut().seltags;
-            let idx = if m.as_ref().unwrap().borrow_mut().tagset[st] & 1 << i > 0 {
+            let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
+            let idx = if m.as_ref().unwrap().borrow_mut().tagset[seltags] & 1 << i > 0 {
                 SCHEME::SchemeSel as usize
             } else {
                 SCHEME::SchemeNorm as usize
@@ -1336,7 +1336,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             0,
         );
 
-        w = m.as_ref().unwrap().borrow_mut().ww - tw - x;
+        w = { m.as_ref().unwrap().borrow_mut().ww } - tw - x;
         if w > bh {
             if let Some(ref sel_opt) = m.as_ref().unwrap().borrow_mut().sel {
                 let idx = if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
@@ -1382,8 +1382,8 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 );
             }
         }
-        let barwin = m.as_ref().unwrap().borrow_mut().barwin;
-        let ww: u32 = m.as_ref().unwrap().borrow_mut().ww as u32;
+        let barwin = { m.as_ref().unwrap().borrow_mut().barwin };
+        let ww: u32 = { m.as_ref().unwrap().borrow_mut().ww } as u32;
         drw_map(drw.as_mut().unwrap().as_mut(), barwin, 0, 0, ww, bh as u32);
     }
 }
@@ -2599,8 +2599,7 @@ pub fn propertynotify(e: *mut XEvent) {
 pub fn movemouse(_arg: *const Arg) {
     info!("[movemouse]");
     unsafe {
-        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        let c = selmon_mut.sel.clone();
+        let c = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
         if c.is_none() {
             return;
         }
@@ -2650,6 +2649,7 @@ pub fn movemouse(_arg: *const Arg) {
                     }
                     lasttime = ev.motion.time;
 
+                    let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
                     let mut nx = ocx + ev.motion.x - x;
                     let mut ny = ocy + ev.motion.y - y;
                     if (selmon_mut.wx - nx).abs() < snap as i32 {
