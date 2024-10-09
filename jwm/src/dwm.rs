@@ -3,7 +3,7 @@
 // #![allow(unused_mut)]
 
 use libc::{
-    close, exit, fork, free, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
+    close, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
     SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
 use log::info;
@@ -379,7 +379,7 @@ impl Monitor {
 
 #[allow(unused)]
 pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: &Monitor) -> i32 {
-    info!("[INTERSECT]");
+    // info!("[INTERSECT]");
     unsafe {
         max(0, min(x + w, (*m).wx + (*m).ww) - max(x, (*m).wx))
             * max(0, min(y + h, (*m).wy + (*m).wh) - max(y, (*m).wy))
@@ -396,22 +396,22 @@ pub fn ISVISIBLE(X: &Rc<RefCell<Client>>) -> u32 {
 }
 
 pub fn WIDTH(X: &mut Client) -> i32 {
-    info!("[WIDTH]");
+    // info!("[WIDTH]");
     X.w + 2 * X.bw
 }
 
 pub fn HEIGHT(X: &mut Client) -> i32 {
-    info!("[HEIGHT]");
+    // info!("[HEIGHT]");
     X.h + 2 * X.bw
 }
 
 pub fn TAGMASK() -> u32 {
-    info!("[TAGMASK]");
+    // info!("[TAGMASK]");
     (1 << tags.len()) - 1
 }
 
 pub fn TEXTW(drw0: &mut Drw, X: &str) -> u32 {
-    info!("[TEXTW]");
+    // info!("[TEXTW]");
     unsafe { drw_fontset_getwidth(drw0, X) + lrpad as u32 }
 }
 
@@ -689,11 +689,15 @@ pub fn cleanup() {
             selmon_mut.lt[idx] = Rc::new(foo);
         }
         let mut m = mons.clone();
-        while m.is_some() {
-            while m.as_ref().unwrap().borrow_mut().stack.is_some() {
-                unmanage(m.as_ref().unwrap().borrow_mut().stack.clone(), false);
+        while let Some(ref m_opt) = m {
+            let mut stack: Option<Rc<RefCell<Client>>>;
+            while {
+                stack = m_opt.borrow_mut().stack.clone();
+                stack.is_some()
+            } {
+                unmanage(stack, false);
             }
-            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            let next = { m_opt.borrow_mut().next.clone() };
             m = next;
         }
         XUngrabKey(dpy, AnyKey, AnyModifier, root);
@@ -706,10 +710,6 @@ pub fn cleanup() {
                 cursor[i].as_mut().unwrap().as_mut(),
             );
         }
-        for i in 0..colors.len() {
-            free(scheme[i].as_mut_ptr() as *mut _);
-        }
-        free(scheme.as_mut_ptr() as *mut _);
         XDestroyWindow(dpy, wmcheckwin);
         drw_free(drw.as_mut().unwrap().as_mut());
         XSync(dpy, False);
@@ -756,19 +756,16 @@ pub fn clientmessage(e: *mut XEvent) {
             {
                 // NET_WM_STATE_ADD
                 // NET_WM_STATE_TOGGLE
-                let fullscreen = cme.data.get_long(0) == 1
-                    || (cme.data.get_long(0) == 2
-                        && !c.as_ref().unwrap().borrow_mut().isfullscreen);
-                setfullscreen(&mut *c.as_ref().unwrap().borrow_mut(), fullscreen);
+                let isfullscreen = { c.as_ref().unwrap().borrow_mut().isfullscreen };
+                let fullscreen =
+                    cme.data.get_long(0) == 1 || (cme.data.get_long(0) == 2 && !isfullscreen);
+                setfullscreen(&mut *{ c.as_ref().unwrap().borrow_mut() }, fullscreen);
             }
         } else if cme.message_type == netatom[NET::NetActiveWindow as usize] {
             let isurgent = { c.as_ref().unwrap().borrow_mut().isurgent };
-            if !Rc::ptr_eq(
-                c.as_ref().unwrap(),
-                selmon.as_ref().unwrap().borrow_mut().sel.as_ref().unwrap(),
-            ) && !isurgent
-            {
-                seturgent(&mut *c.as_ref().unwrap().borrow_mut(), true);
+            let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+            if !Rc::ptr_eq(c.as_ref().unwrap(), sel.as_ref().unwrap()) && !isurgent {
+                seturgent(&mut *{ c.as_ref().unwrap().borrow_mut() }, true);
             }
         }
     }
@@ -1145,6 +1142,7 @@ pub fn detach(c: Option<Rc<RefCell<Client>>>) {
             .clients
             .clone()
     };
+    info!("[detach] check borrowmut error");
     let mut prev: Option<Rc<RefCell<Client>>> = None;
     while let Some(ref current_opt) = current {
         info!("[detach] check clients equal");
