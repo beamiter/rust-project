@@ -1,3 +1,4 @@
+use chrono::prelude::*;
 use std::{ffi::CString, process::exit, ptr::null_mut};
 
 use log::info;
@@ -28,7 +29,10 @@ mod tests;
 // xrandr --output HDMI-1 --rotate normal --left-of eDP-1 --auto &
 
 fn main() {
-    let log_file = std::fs::File::create("/home/mm/jwm.log").unwrap();
+    let now = Local::now();
+    let timestamp = now.format("%Y-%m-%d_%H:%M:%S").to_string();
+    let log_filename = format!("/tmp/jwm_{}.log", timestamp);
+    let log_file = std::fs::File::create(log_filename).unwrap();
     WriteLogger::init(LevelFilter::Info, Config::default(), log_file).unwrap();
     unsafe {
         let c_string = CString::new("").unwrap();
