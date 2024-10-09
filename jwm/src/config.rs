@@ -37,7 +37,7 @@ pub const colors: [&[&'static str; 3]; 2] = [
 pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
     vec![
         // class | instance | title | tags mask | isfloating | monitor
-        Rule::new("Gimp", "", "", 0, true, -1),
+        Rule::new("Gimp", "", "", 0, false, -1),
         Rule::new("Firefox", "", "", 1 << 8, false, -1),
     ]
 });
@@ -126,8 +126,8 @@ pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
         Key::new(MODKEY, XK_k.into(), Some(dwm::focusstack), dwm::Arg::I(-1)),
         Key::new(MODKEY, XK_i.into(), Some(dwm::incnmaster), dwm::Arg::I(1)),
         Key::new(MODKEY, XK_d.into(), Some(dwm::incnmaster), dwm::Arg::I(-1)),
-        Key::new(MODKEY, XK_h.into(), Some(dwm::setmfact), dwm::Arg::F(-0.05)),
-        Key::new(MODKEY, XK_l.into(), Some(dwm::setmfact), dwm::Arg::F(0.05)),
+        Key::new(MODKEY, XK_h.into(), Some(dwm::setmfact), dwm::Arg::F(-0.025)),
+        Key::new(MODKEY, XK_l.into(), Some(dwm::setmfact), dwm::Arg::F(0.025)),
         Key::new(MODKEY, XK_Return.into(), Some(dwm::zoom), dwm::Arg::I(0)),
         Key::new(MODKEY, XK_Tab.into(), Some(dwm::view), dwm::Arg::Ui(0)),
         Key::new(
