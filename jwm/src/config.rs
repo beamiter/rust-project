@@ -36,6 +36,7 @@ pub const colors: [&[&'static str; 3]; 2] = [
 
 pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
     vec![
+        // class | instance | title | tags mask | isfloating | monitor
         Rule::new("Gimp", "", "", 0, true, -1),
         Rule::new("Firefox", "", "", 1 << 8, false, -1),
     ]

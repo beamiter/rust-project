@@ -389,9 +389,11 @@ pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: &Monitor) -> i32 {
 pub fn ISVISIBLE(X: &Rc<RefCell<Client>>) -> u32 {
     info!("[ISVISIBLE]");
     let X = X.borrow_mut();
+    info!("[ISVISIBLE] X borrow_mut valid");
     let tags0 = X.tags0;
     let seltags = X.mon.as_ref().unwrap().borrow_mut().seltags;
     let x = tags0 & X.mon.as_ref().unwrap().borrow_mut().tagset[seltags];
+    info!("[ISVISIBLE] mon borrow_mut valid");
     x
 }
 
@@ -449,6 +451,7 @@ impl Rule {
 pub fn applyrules(c: &Rc<RefCell<Client>>) {
     info!("[applyrules]");
     unsafe {
+        // rule matching
         let mut c = c.borrow_mut();
         c.isfloating = false;
         c.tags0 = 0;
@@ -466,6 +469,7 @@ pub fn applyrules(c: &Rc<RefCell<Client>>) {
         } else {
             broken
         };
+        info!("[applyrules] class: {}, instance: {}", class, instance);
 
         for r in &*rules {
             if (r.title.is_empty() || c.name.find(r.title).is_some())
@@ -493,11 +497,12 @@ pub fn applyrules(c: &Rc<RefCell<Client>>) {
         if !ch.res_name.is_null() {
             XFree(ch.res_name as *mut _);
         }
-        c.tags0 = if (c.tags0 & TAGMASK()) > 0 {
-            c.tags0 & TAGMASK()
+        let condition = c.tags0 & TAGMASK();
+        c.tags0 = if condition > 0 {
+            condition
         } else {
-            let seltags = (*c.mon.as_ref().unwrap().borrow_mut()).seltags;
-            (c.mon.as_ref().unwrap().borrow_mut()).tagset[seltags]
+            let seltags = { c.mon.as_ref().unwrap().borrow_mut().seltags };
+            c.mon.as_ref().unwrap().borrow_mut().tagset[seltags]
         }
     }
 }
@@ -1012,60 +1017,79 @@ pub fn configurerequest(e: *mut XEvent) {
     info!("[configurerequest]");
     unsafe {
         let ev = (*e).configure_request;
-        let cc = wintoclient(ev.window);
-        if cc.is_some() {
-            let mut c = cc.as_ref().unwrap().borrow_mut();
-            let selmon_borrow = selmon.as_ref().unwrap().borrow_mut();
+        let c = wintoclient(ev.window);
+        if let Some(c_opt) = c {
+            info!("[configurerequest] c valid");
+            let arrange = {
+                let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+                let sellt = selmon_mut.sellt;
+                selmon_mut.lt[sellt].arrange.clone()
+            };
+            let isfloating = { c_opt.borrow_mut().isfloating };
             if ev.value_mask & CWBorderWidth as u64 > 0 {
-                c.bw = ev.border_width;
-            } else if c.isfloating || (*(selmon_borrow.lt[selmon_borrow.sellt])).arrange.is_none() {
+                let mut c_mut = c_opt.borrow_mut();
+                c_mut.bw = ev.border_width;
+            } else if isfloating || arrange.is_none() {
                 let mx;
                 let my;
                 let mw;
                 let mh;
                 {
-                    let m = c.mon.as_ref().unwrap().borrow_mut();
+                    let c_mut = c_opt.borrow_mut();
+                    let m = c_mut.mon.as_ref().unwrap().borrow_mut();
                     mx = m.mx;
                     my = m.my;
                     mw = m.mw;
                     mh = m.mh;
                 }
-                if ev.value_mask & CWX as u64 > 0 {
-                    c.oldx = c.x;
-                    c.x = mx + ev.x;
-                }
-                if ev.value_mask & CWY as u64 > 0 {
-                    c.oldy = c.y;
-                    c.y = my + ev.y;
-                }
-                if ev.value_mask & CWWidth as u64 > 0 {
-                    c.oldw = c.w;
-                    c.w = ev.width;
-                }
-                if ev.value_mask & CWHeight as u64 > 0 {
-                    c.oldh = c.h;
-                    c.h = ev.height;
-                }
-                if (c.x + c.w) > mx + mw && c.isfloating {
-                    // center in x direction
-                    c.x = mx + (mw / 2 - WIDTH(&mut *c) / 2);
-                }
-                if (c.y + c.h) > my + mh && c.isfloating {
-                    // center in y direction
-                    c.y = my + (mh / 2 - HEIGHT(&mut *c) / 2);
+                {
+                    let mut c_mut = c_opt.borrow_mut();
+                    if ev.value_mask & CWX as u64 > 0 {
+                        c_mut.oldx = c_mut.x;
+                        c_mut.x = mx + ev.x;
+                    }
+                    if ev.value_mask & CWY as u64 > 0 {
+                        c_mut.oldy = c_mut.y;
+                        c_mut.y = my + ev.y;
+                    }
+                    if ev.value_mask & CWWidth as u64 > 0 {
+                        c_mut.oldw = c_mut.w;
+                        c_mut.w = ev.width;
+                    }
+                    if ev.value_mask & CWHeight as u64 > 0 {
+                        c_mut.oldh = c_mut.h;
+                        c_mut.h = ev.height;
+                    }
+                    if (c_mut.x + c_mut.w) > mx + mw && c_mut.isfloating {
+                        // center in x direction
+                        c_mut.x = mx + (mw / 2 - WIDTH(&mut *c_mut) / 2);
+                    }
+                    if (c_mut.y + c_mut.h) > my + mh && c_mut.isfloating {
+                        // center in y direction
+                        c_mut.y = my + (mh / 2 - HEIGHT(&mut *c_mut) / 2);
+                    }
                 }
                 if (ev.value_mask & (CWX | CWY) as u64) > 0
                     && (ev.value_mask & (CWWidth | CWHeight) as u64) <= 0
                 {
-                    configure(&mut *c);
+                    configure(&mut *c_opt.borrow_mut());
                 }
-                if ISVISIBLE(cc.as_ref().unwrap()) > 0 {
-                    XMoveResizeWindow(dpy, c.win, c.x, c.y, c.w as u32, c.h as u32);
+                if ISVISIBLE(&c_opt) > 0 {
+                    let c_mut = c_opt.borrow();
+                    XMoveResizeWindow(
+                        dpy,
+                        c_mut.win,
+                        c_mut.x,
+                        c_mut.y,
+                        c_mut.w as u32,
+                        c_mut.h as u32,
+                    );
                 }
             } else {
-                configure(&mut *c);
+                configure(&mut *c_opt.borrow_mut());
             }
         } else {
+            info!("[configurerequest] c not valid");
             let mut wc: XWindowChanges = zeroed();
             wc.x = ev.x;
             wc.y = ev.y;
