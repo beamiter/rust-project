@@ -2635,8 +2635,7 @@ pub fn propertynotify(e: *mut XEvent) {
             }
             if ev.atom == XA_WM_NAME || ev.atom == netatom[NET::NetWMName as usize] {
                 updatetitle(c.as_ref().unwrap());
-                if Rc::ptr_eq(
-                    c.as_ref().unwrap(),
+                let sel = {
                     c.as_ref()
                         .unwrap()
                         .borrow_mut()
@@ -2645,11 +2644,11 @@ pub fn propertynotify(e: *mut XEvent) {
                         .unwrap()
                         .borrow_mut()
                         .sel
-                        .as_ref()
-                        .unwrap(),
-                ) {
-                    info!("propertynotify");
-                    let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
+                        .clone()
+                };
+                info!("[propertynotify] check if c equal sel");
+                if Rc::ptr_eq(c.as_ref().unwrap(), sel.as_ref().unwrap()) {
+                    let mon = { c.as_ref().unwrap().borrow_mut().mon.clone() };
                     drawbar(mon);
                 }
             }
