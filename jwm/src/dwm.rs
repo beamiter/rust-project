@@ -1494,7 +1494,7 @@ pub fn run() {
             i = (i + 1) % std::u64::MAX;
             if let Some(hd) = handler[ev.type_ as usize] {
                 // call handler
-                // info!("*********** handler type: {} valid", ev.type_);
+                info!("*********** handler type: {} valid", ev.type_);
                 hd(&mut ev);
             }
         }
