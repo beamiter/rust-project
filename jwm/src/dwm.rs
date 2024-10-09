@@ -1094,7 +1094,10 @@ pub fn createmon() -> Monitor {
     m.lt[0] = layouts[0].clone();
     m.lt[1] = layouts[1 % layouts.len()].clone();
     m.ltsymbol = layouts[0].symbol;
-    info!("[createmon]: ltsymbol: {:?}", m.ltsymbol);
+    info!(
+        "[createmon]: ltsymbol: {:?}, mfact0: {}, nmaster0: {}, showbar0: {}, topbar0: {}",
+        m.ltsymbol, m.mfact0, m.nmaster0, m.showbar0, m.topbar0
+    );
     return m;
 }
 pub fn destroynotify(e: *mut XEvent) {
@@ -1688,15 +1691,16 @@ pub fn wintoclient(w: Window) -> Option<Rc<RefCell<Client>>> {
     unsafe {
         let mut m = mons.clone();
         while let Some(ref m_opt) = m {
-            let mut c = m_opt.borrow_mut().clients.clone();
+            let mut c = { m_opt.borrow_mut().clients.clone() };
             while let Some(ref c_opt) = c {
-                if c_opt.borrow_mut().win == w {
+                let win = { c_opt.borrow_mut().win };
+                if win == w {
                     return c;
                 }
-                let next = c_opt.borrow_mut().next.clone();
+                let next = { c_opt.borrow_mut().next.clone() };
                 c = next;
             }
-            let next = m_opt.borrow_mut().next.clone();
+            let next = { m_opt.borrow_mut().next.clone() };
             m = next;
         }
     }
@@ -3509,19 +3513,14 @@ pub fn unmapnotify(e: *mut XEvent) {
     }
 }
 
-pub fn isuniquegeom(
-    unique: &mut Vec<XineramaScreenInfo>,
-    mut n: usize,
-    info: *mut XineramaScreenInfo,
-) -> bool {
+pub fn isuniquegeom(unique: &mut Vec<XineramaScreenInfo>, info: *mut XineramaScreenInfo) -> bool {
     info!("[isuniquegeom]");
     unsafe {
-        while n > 0 {
-            n -= 1;
-            if unique[n].x_org == (*info).x_org
-                && unique[n].y_org == (*info).y_org
-                && unique[n].width == (*info).width
-                && unique[n].height == (*info).height
+        for val in unique.iter().rev() {
+            if val.x_org == (*info).x_org
+                && val.y_org == (*info).y_org
+                && val.width == (*info).width
+                && val.height == (*info).height
             {
                 return false;
             }
@@ -3539,7 +3538,7 @@ pub fn updategeom() -> bool {
             info!("[updategeom] XineramaIsActive");
             let info = XineramaQueryScreens(dpy, &mut nn);
             let mut unique: Vec<XineramaScreenInfo> = vec![];
-            unique.resize(nn as usize, zeroed());
+            unique.reserve(nn as usize);
             let mut n = 0;
             let mut m = mons.clone();
             while let Some(ref m_opt) = m {
@@ -3548,22 +3547,18 @@ pub fn updategeom() -> bool {
                 m = next;
             }
             // Only consider unique geometries as separate screens
-            let mut i: usize = 0;
-            let mut j: usize = 0;
-            while i < nn as usize {
-                if isuniquegeom(&mut unique, j, info.wrapping_add(i)) {
-                    unique[j] = *info.wrapping_add(i);
-                    info!("[updategeom] set info i {} as unique j {}", i, j);
-                    j += 1;
+            for i in 0..nn as usize {
+                if isuniquegeom(&mut unique, info.wrapping_add(i)) {
+                    unique.push(*info.wrapping_add(i));
+                    info!("[updategeom] set info i {} as unique {}", i, unique.len());
                 }
-                i += 1;
             }
             XFree(info as *mut _);
-            nn = j as i32;
+            nn = unique.len() as i32;
 
             // new monitors if nn > n
-            i = n;
-            while i < nn as usize {
+            info!("[updategeom] n: {}, nn: {}", n, nn);
+            for _ in n..nn as usize {
                 m = mons.clone();
                 while let Some(ref m_opt) = m {
                     let next = m_opt.borrow_mut().next.clone();
@@ -3578,20 +3573,22 @@ pub fn updategeom() -> bool {
                 } else {
                     mons = Some(Rc::new(RefCell::new(createmon())));
                 }
-                i += 1;
             }
-            i = 0;
             m = mons.clone();
-            while i < nn as usize && m.is_some() {
+            for i in 0..nn as usize {
+                if m.is_none() {
+                    break;
+                }
                 let mx;
                 let my;
                 let mw;
                 let mh;
                 {
-                    mx = m.as_ref().unwrap().borrow_mut().mx;
-                    my = m.as_ref().unwrap().borrow_mut().my;
-                    mw = m.as_ref().unwrap().borrow_mut().mw;
-                    mh = m.as_ref().unwrap().borrow_mut().mh;
+                    let m_mut = m.as_ref().unwrap().borrow_mut();
+                    mx = m_mut.mx;
+                    my = m_mut.my;
+                    mw = m_mut.mw;
+                    mh = m_mut.mh;
                 }
                 if i >= n
                     || unique[i].x_org as i32 != mx
@@ -3600,27 +3597,23 @@ pub fn updategeom() -> bool {
                     || unique[i].height as i32 != mh
                 {
                     dirty = true;
-                    {
-                        m.as_ref().unwrap().borrow_mut().num = i as i32;
-                        m.as_ref().unwrap().borrow_mut().mx = unique[i].x_org as i32;
-                        m.as_ref().unwrap().borrow_mut().wx = unique[i].x_org as i32;
-                        m.as_ref().unwrap().borrow_mut().my = unique[i].y_org as i32;
-                        m.as_ref().unwrap().borrow_mut().wy = unique[i].y_org as i32;
-                        m.as_ref().unwrap().borrow_mut().mw = unique[i].width as i32;
-                        m.as_ref().unwrap().borrow_mut().ww = unique[i].width as i32;
-                        m.as_ref().unwrap().borrow_mut().mh = unique[i].height as i32;
-                        m.as_ref().unwrap().borrow_mut().wh = unique[i].height as i32;
-                    }
-                    let mut mons_mut = mons.as_ref().unwrap().borrow_mut();
-                    updatebarpos(&mut *mons_mut);
+                    let mut m_mut = m.as_ref().unwrap().borrow_mut();
+                    m_mut.num = i as i32;
+                    m_mut.mx = unique[i].x_org as i32;
+                    m_mut.wx = unique[i].x_org as i32;
+                    m_mut.my = unique[i].y_org as i32;
+                    m_mut.wy = unique[i].y_org as i32;
+                    m_mut.mw = unique[i].width as i32;
+                    m_mut.ww = unique[i].width as i32;
+                    m_mut.mh = unique[i].height as i32;
+                    m_mut.wh = unique[i].height as i32;
+                    updatebarpos(&mut *m_mut);
                 }
-                i += 1;
                 let next = { m.as_ref().unwrap().borrow_mut().next.clone() };
                 m = next;
             }
             // remove monitors if n > nn
-            i = nn as usize;
-            while i < n {
+            for _ in nn..n as i32 {
                 m = mons.clone();
                 while let Some(ref m_opt) = m {
                     let next = m_opt.borrow_mut().next.clone();
@@ -3651,8 +3644,6 @@ pub fn updategeom() -> bool {
                     selmon = mons.clone();
                 }
                 cleanupmon(m);
-
-                i += 1;
             }
         } else {
             // default monitor setup
