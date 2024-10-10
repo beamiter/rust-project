@@ -6,14 +6,15 @@ use libc::{
     close, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
     SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
-use log::info;
+use log::{info, warn};
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
+use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
 use std::process::Command;
-use std::ptr::{addr_of, addr_of_mut, null_mut};
+use std::ptr::{addr_of_mut, null_mut};
 use std::rc::Rc;
 use std::{os::raw::c_long, usize};
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
@@ -36,18 +37,17 @@ use x11::xlib::{
     XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow, XConnectionNumber,
     XCreateSimpleWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow, XDefaultScreen,
     XDefaultVisual, XDefineCursor, XDeleteProperty, XDestroyWindow, XDisplayHeight,
-    XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap, XFreeStringList,
-    XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetTextProperty,
-    XGetTransientForHint, XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes,
-    XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XInternAtom,
-    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMapWindow, XMaskEvent,
-    XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow,
-    XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetClassHint,
-    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
-    XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabPointer,
-    XUngrabServer, XUnmapWindow, XUrgencyHint, XWarpPointer, XWindowAttributes, XWindowChanges,
-    XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME,
-    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap, XGetClassHint,
+    XGetKeyboardMapping, XGetModifierMapping, XGetTextProperty, XGetTransientForHint, XGetWMHints,
+    XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton,
+    XGrabKey, XGrabPointer, XGrabServer, XInternAtom, XKeycodeToKeysym, XKeysymToKeycode,
+    XKillClient, XMapRaised, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent,
+    XQueryPointer, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput,
+    XSendEvent, XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints,
+    XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton,
+    XUngrabKey, XUngrabPointer, XUngrabServer, XUnmapWindow, XUrgencyHint, XWarpPointer,
+    XWindowAttributes, XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING,
+    XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -376,6 +376,32 @@ impl Monitor {
         }
     }
 }
+impl fmt::Display for Monitor {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Monitor {{ ltsymbol: {}, mfact0: {}, nmaster0: {}, num: {}, by: {}, mx: {}, my: {}, mw: {}, mh: {}, wx: {}, wy: {}, ww: {}, wh: {}, seltags: {}, sellt: {}, tagset: [{}, {}], showbar0: {}, topbar0: {},  barwin: {}}}",
+               self.ltsymbol,
+               self.mfact0,
+               self.nmaster0,
+               self.num,
+               self.by,
+               self.mx,
+               self.my,
+               self.mw,
+               self.mh,
+               self.wx,
+               self.wy,
+               self.ww,
+               self.wh,
+               self.seltags,
+               self.sellt,
+               self.tagset[0],
+               self.tagset[1],
+               self.showbar0,
+               self.topbar0,
+               self.barwin,
+        )
+    }
+}
 
 #[allow(unused)]
 pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: &Monitor) -> i32 {
@@ -408,12 +434,12 @@ pub fn HEIGHT(X: &mut Client) -> i32 {
 }
 
 pub fn TAGMASK() -> u32 {
-    // info!("[TAGMASK]");
+    warn!("[TAGMASK]");
     (1 << tags.len()) - 1
 }
 
 pub fn TEXTW(drw0: &mut Drw, X: &str) -> u32 {
-    // info!("[TEXTW]");
+    warn!("[TEXTW]");
     unsafe { drw_fontset_getwidth(drw0, X) + lrpad as u32 }
 }
 
@@ -1306,10 +1332,13 @@ pub fn dirtomon(dir: i32) -> Option<Rc<RefCell<Monitor>>> {
     }
 }
 pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
-    info!("[drawbar]");
+    warn!("[drawbar]");
     let mut tw: i32 = 0;
     let mut occ: u32 = 0;
     let mut urg: u32 = 0;
+    {
+        warn!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
+    }
     unsafe {
         let boxs;
         let boxw;
@@ -1317,12 +1346,14 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             let h = drw.as_ref().unwrap().fonts.as_ref().unwrap().borrow_mut().h;
             boxs = h / 9;
             boxw = h / 6 + 2;
+            warn!("[drawbar] boxs: {}, boxw: {}, lrpad: {}", boxs, boxw, lrpad);
         }
         let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
         if !showbar0 {
             return;
         }
 
+        let ww = { m.as_ref().unwrap().borrow_mut().ww };
         // draw status first so it can be overdrawn by tags later.
         if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
             // status is only drawn on selected monitor.
@@ -1332,7 +1363,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             );
             // 2px right padding.
             tw = TEXTW(drw.as_mut().unwrap().as_mut(), stext) as i32 - lrpad + 2;
-            let ww = { m.as_ref().unwrap().borrow_mut().ww };
+            warn!("[drawbar] drw_text 0, tw: {}, ww: {}", tw, ww);
             drw_text(
                 drw.as_mut().unwrap().as_mut(),
                 ww - tw,
@@ -1346,13 +1377,13 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         }
         {
             let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
-            while c.is_some() {
-                let tags0 = c.as_ref().unwrap().borrow_mut().tags0;
+            while let Some(ref c_opt) = c {
+                let tags0 = c_opt.borrow_mut().tags0;
                 occ |= tags0;
-                if c.as_ref().unwrap().borrow_mut().isurgent {
+                if c_opt.borrow_mut().isurgent {
                     urg |= tags0;
                 }
-                let next = c.as_ref().unwrap().borrow_mut().next.clone();
+                let next = c_opt.borrow_mut().next.clone();
                 c = next;
             }
         }
@@ -1361,12 +1392,18 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         for i in 0..tags.len() {
             w = TEXTW(drw.as_mut().unwrap().as_mut(), tags[i]) as i32;
             let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
-            let idx = if m.as_ref().unwrap().borrow_mut().tagset[seltags] & 1 << i > 0 {
+            let tagset = { m.as_ref().unwrap().borrow_mut().tagset };
+            let idx = if tagset[seltags] & 1 << i > 0 {
                 SCHEME::SchemeSel as usize
             } else {
                 SCHEME::SchemeNorm as usize
             };
+            warn!(
+                "[drawbar] seltags: {}, tagset: {:?}, i: {}: idx: {}, w: {}",
+                seltags, tagset, i, idx, w
+            );
             drw_setscheme(drw.as_mut().unwrap().as_mut(), scheme[idx].clone());
+            warn!("[drawbar] drw_text 1");
             drw_text(
                 drw.as_mut().unwrap().as_mut(),
                 x,
@@ -1378,21 +1415,19 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 (urg & 1 << i) as i32,
             );
             if (occ & 1 << i) > 0 {
-                let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-                let tags0 = if let Some(ref sel_opt) = selmon_mut.sel {
-                    sel_opt.borrow_mut().tags0
-                } else {
-                    0
-                };
+                let selmon_mut = { selmon.as_ref().unwrap().borrow_mut() };
+                warn!("[drawbar] drw_rect 0");
+                let filled = (Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap())
+                    && selmon_mut.sel.is_some()
+                    && (selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 & 1 << i > 0))
+                    as i32;
                 drw_rect(
                     drw.as_mut().unwrap().as_mut(),
                     x + boxs as i32,
                     boxs as i32,
                     boxw,
                     boxw,
-                    (Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap())
-                        && selmon_mut.sel.is_some()
-                        && (tags0 & 1 << i > 0)) as i32,
+                    filled,
                     (urg & 1 << i) as i32,
                 );
             }
@@ -1406,6 +1441,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             drw.as_mut().unwrap().as_mut(),
             scheme[SCHEME::SchemeNorm as usize].clone(),
         );
+        warn!("[drawbar] drw_text 2, w: {}", w);
         x = drw_text(
             drw.as_mut().unwrap().as_mut(),
             x,
@@ -1418,6 +1454,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         );
 
         w = { m.as_ref().unwrap().borrow_mut().ww } - tw - x;
+        warn!("[drawbar] tw: {}, x: {}, w: {}, bh: {}", tw, x, w, bh);
         if w > bh {
             if let Some(ref sel_opt) = m.as_ref().unwrap().borrow_mut().sel {
                 let idx = if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
@@ -1426,6 +1463,11 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     SCHEME::SchemeNorm
                 } as usize;
                 drw_setscheme(drw.as_mut().unwrap().as_mut(), scheme[idx].clone());
+                warn!(
+                    "[drawbar] drw_text 3: idx: {}, name: {}",
+                    idx,
+                    sel_opt.borrow_mut().name
+                );
                 drw_text(
                     drw.as_mut().unwrap().as_mut(),
                     x,
@@ -1436,7 +1478,9 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     sel_opt.borrow_mut().name,
                     0,
                 );
+                warn!("[drawbar] drw_text 3 finish");
                 if sel_opt.borrow_mut().isfloating {
+                    warn!("[drawbar] drw_rect 1");
                     drw_rect(
                         drw.as_mut().unwrap().as_mut(),
                         x + boxs as i32,
@@ -1452,6 +1496,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     drw.as_mut().unwrap().as_mut(),
                     scheme[SCHEME::SchemeNorm as usize].clone(),
                 );
+                warn!("[drawbar] drw_rect 2");
                 drw_rect(
                     drw.as_mut().unwrap().as_mut(),
                     x,
@@ -1518,7 +1563,7 @@ pub fn run() {
             i = (i + 1) % std::u64::MAX;
             if let Some(hd) = handler[ev.type_ as usize] {
                 // call handler
-                info!("*********** handler type: {} valid", ev.type_);
+                warn!("*********** handler type: {} valid", ev.type_);
                 hd(&mut ev);
             }
         }
@@ -3691,42 +3736,41 @@ pub fn updategeom() -> bool {
     return dirty;
 }
 #[allow(unused_assignments)]
-pub fn gettextprop(w: Window, atom: Atom, mut text: &str, size: usize) -> bool {
+pub fn gettextprop(w: Window, atom: Atom, text: *mut &str) -> bool {
     info!("[gettextprop]");
-    if text.is_empty() || size == 0 {
-        return false;
-    }
-    // (TODO), polish this in need.
     unsafe {
         let mut name: XTextProperty = zeroed();
         if XGetTextProperty(dpy, w, &mut name, atom) <= 0 || name.nitems <= 0 {
             return false;
         }
-        text = "\0";
+        *text = "";
         let mut list: *mut *mut c_char = null_mut();
         let mut n: i32 = 0;
         if name.encoding == XA_STRING {
             let c_str = CStr::from_ptr(name.value as *const _);
-            // Not same as strncpy!
-            text = c_str.to_str().unwrap();
-        } else if XmbTextPropertyToTextList(dpy, &mut name, &mut list, &mut n) >= Success as i32 {
-            // may be buggy.
+            *text = c_str.to_str().unwrap();
+            // deprecated, sinse memory borrowed
+            // XFree(name.value as *mut _);
+            warn!("[gettextprop]text from string : {:?}", *text);
+        } else if XmbTextPropertyToTextList(dpy, &mut name, &mut list, &mut n) >= Success as i32
+            && n > 0
+            && !list.is_null()
+        {
             let c_str = CStr::from_ptr(*list);
-            text = c_str.to_str().unwrap();
-            XFreeStringList(list);
+            *text = c_str.to_str().unwrap();
+            // deprecated, sinse memory borrowed
+            // XFreeStringList(list);
+            warn!("[gettextprop]text from string list : {:?}", *text);
         }
-        // No need to end with '\0'
-        XFree(name.value as *mut _);
     }
     true
 }
 pub fn updatestatus() {
     info!("[updatestatus]");
     unsafe {
-        if !gettextprop(root, XA_WM_NAME, *addr_of!(stext), stext.len()) {
+        if !gettextprop(root, XA_WM_NAME, addr_of_mut!(stext)) {
             stext = "jwm-1.0";
         }
-        info!("updatestatus");
         drawbar(selmon.clone());
     }
 }
@@ -3782,16 +3826,12 @@ pub fn updatetitle(c: &Rc<RefCell<Client>>) {
         if !gettextprop(
             c.win,
             netatom[NET::NetWMName as usize],
-            c.name,
-            c.name.len(),
+            addr_of_mut!(c.name),
         ) {
-            gettextprop(c.win, XA_WM_NAME, c.name, c.name.len());
+            gettextprop(c.win, XA_WM_NAME, addr_of_mut!(c.name));
         }
-        // hack to mark broken clients
-        if let Some(b) = c.name.chars().nth(0) {
-            if b == '\0' {
-                c.name = broken;
-            }
+        if c.name.is_empty() {
+            c.name = broken;
         }
     }
 }
