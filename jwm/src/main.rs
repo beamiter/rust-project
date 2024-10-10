@@ -29,11 +29,29 @@ mod tests;
 // xrandr --output HDMI-1 --rotate normal --left-of eDP-1 --auto &
 
 fn main() {
+    let tt: &str = "中国";
+    println!("len: {}", tt.len());
+    println!("0: {}", &tt[0..3]);
+    println!(
+        "0:{} len: {}, decode: {}, {:0X}",
+        tt.chars().nth(0).unwrap(),
+        tt.chars().nth(0).unwrap().len_utf8(),
+        tt.chars().nth(0).unwrap() as u32,
+        tt.chars().nth(0).unwrap() as u32
+    );
+    println!("1: {}", &tt[3..]);
+    println!(
+        "1:{} len: {}, decode: {}, {:0X}",
+        tt.chars().nth(1).unwrap(),
+        tt.chars().nth(1).unwrap().len_utf8(),
+        tt.chars().nth(1).unwrap() as u32,
+        tt.chars().nth(1).unwrap() as u32
+    );
     let now = Local::now();
     let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
     let log_filename = format!("/tmp/jwm_{}.log", timestamp);
     let log_file = std::fs::File::create(log_filename).unwrap();
-    WriteLogger::init(LevelFilter::Info, Config::default(), log_file).unwrap();
+    WriteLogger::init(LevelFilter::Warn, Config::default(), log_file).unwrap();
     unsafe {
         let c_string = CString::new("").unwrap();
         if setlocale(LC_CTYPE, c_string.as_ptr()).is_null() || XSupportsLocale() <= 0 {

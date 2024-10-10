@@ -4,7 +4,6 @@
 
 use std::{
     cell::RefCell,
-    char,
     ffi::CString,
     i32,
     process::exit,
@@ -22,6 +21,7 @@ use fontconfig_sys::{
     FcDefaultSubstitute, FcMatchPattern, FcNameParse, FcPattern, FcPatternAddBool,
     FcPatternAddCharSet, FcPatternDestroy, FcPatternDuplicate,
 };
+use log::info;
 use log::warn;
 use x11::{
     xft::{
@@ -37,20 +37,6 @@ use x11::{
     },
     xrender::XGlyphInfo,
 };
-
-pub const UTF_INVALID: u64 = 0xFFFD;
-pub const UTF_SIZ: usize = 4;
-
-pub const UTFBYTE: [u8; UTF_SIZ + 1] = [0x80, 0, 0xC0, 0xE0, 0xF0];
-pub const UTFMASK: [u8; UTF_SIZ + 1] = [0xc0, 0x80, 0xE0, 0xF0, 0xF8];
-pub const UTFMIN: [u64; UTF_SIZ + 1] = [0, 0, 0x80, 0x800, 0x10000];
-pub const UTFMAX: [u64; UTF_SIZ + 1] = [0x10FFFF, 0x7F, 0x7FF, 0xFFF, 0x10FFFF];
-
-macro_rules! BETWEEN {
-    ($x:expr, $a:expr, $b:expr) => {
-        $a <= $x && $x <= $b
-    };
-}
 
 const NOMATCHES_LEN: usize = 64;
 pub struct NoMathes {
@@ -375,8 +361,8 @@ pub fn drw_setscheme(drw: &mut Drw, scm: Vec<Option<Rc<Clr>>>) {
 
 // Drawing functions.
 pub fn drw_rect(drw: &mut Drw, x: i32, y: i32, w: u32, h: u32, filled: i32, invert: i32) {
-    warn!("[drw_rect]");
-    warn!(
+    info!("[drw_rect]");
+    info!(
         "[drw_rect] x: {}, y: {},w: {},h: {}, filled: {}, invert: {}",
         x, y, w, h, filled, invert
     );
@@ -412,8 +398,8 @@ pub fn drw_text(
     mut text: &str,
     invert: i32,
 ) -> i32 {
-    warn!("[drw_text]");
-    warn!(
+    info!("[drw_text]");
+    info!(
         "[drw_text] x: {}, y: {},w: {},h: {}, lpad: {}, text: {:?}, invert: {}",
         x, y, w, h, lpad, text, invert
     );
@@ -476,23 +462,17 @@ pub fn drw_text(
             nextfont = None;
 
             while !text.is_empty() {
-                warn!("[drw_text] text: {}", text);
-                warn!("[drw_text] check utf8decode start");
-                utf8charlen = utf8decode(text, &mut utf8codepoint, UTF_SIZ) as i32;
-                warn!(
-                    "[drw_text] check utf8decode end, utf8charlen: {}",
-                    utf8charlen
-                );
+                utf8charlen = text.chars().nth(0).unwrap().len_utf8() as i32;
+                utf8codepoint = text.chars().nth(0).unwrap() as u64;
                 curfont = drw.fonts.clone();
                 while curfont.is_some() {
                     charexists = (charexists > 0
                         || XftCharExists(
                             drw.dpy,
                             curfont.as_ref().unwrap().borrow_mut().xfont,
-                            utf8codepoint.try_into().unwrap(),
+                            utf8codepoint as u32,
                         ) > 0) as i32;
                     if charexists > 0 {
-                        warn!("[drw_text] check drw_font_gettexts start");
                         drw_font_gettexts(
                             &mut *curfont.as_ref().unwrap().borrow_mut(),
                             text,
@@ -500,7 +480,6 @@ pub fn drw_text(
                             &mut tmpw,
                             null_mut(),
                         );
-                        warn!("[drw_text] check drw_font_gettexts end");
                         if ew + ellipsis_width <= w {
                             ellipsis_x = x + ew as i32;
                             ellipsis_w = w - ew;
@@ -515,14 +494,7 @@ pub fn drw_text(
                             }
                         } else if curfont == usedfont {
                             utf8strlen += utf8charlen;
-                            warn!(
-                                "[drw_text] text before: {}, len: {}, utf8charlen: {}",
-                                text,
-                                text.len(),
-                                utf8charlen
-                            );
                             text = &text[utf8charlen as usize..];
-                            warn!("[drw_text] text after: {}", text);
                             ew += tmpw;
                         } else {
                             nextfont = curfont;
@@ -549,9 +521,7 @@ pub fn drw_text(
                         ty += (*usedfont.as_ref().unwrap().borrow_mut().xfont).ascent;
                     }
                     let idx = if invert > 0 { Col::ColBg } else { Col::ColFg } as usize;
-                    warn!("[drw_text] utf8str: {}", utf8str);
                     let cstring = CString::new(utf8str).expect("fail to create");
-                    warn!("[drw_text] cstring: {:?}", cstring);
                     let clr = drw.scheme[idx].as_ref().unwrap().as_ref();
                     XftDrawStringUtf8(
                         d,
@@ -567,7 +537,6 @@ pub fn drw_text(
                 w -= ew;
             }
 
-            warn!("[drw_text] 0");
             if render && overflow > 0 {
                 drw_text(drw, ellipsis_x, y, ellipsis_w, h, 0, "...", invert);
             }
@@ -590,7 +559,6 @@ pub fn drw_text(
                     }
                 }
 
-                warn!("[drw_text] 1");
                 fccharset = FcCharSetCreate();
                 FcCharSetAddChar(fccharset, utf8codepoint as u32);
 
@@ -606,21 +574,18 @@ pub fn drw_text(
 
                 FcConfigSubstitute(null_mut(), fcpattern, FcMatchPattern);
                 FcDefaultSubstitute(fcpattern);
-                warn!("[drw_text] 2");
                 match0 = XftFontMatch(
                     drw.dpy,
                     drw.screen,
                     fcpattern as *mut _,
                     &mut result as *mut _,
                 ) as *mut _;
-                warn!("[drw_text] 3");
 
                 FcCharSetDestroy(fccharset);
                 FcPatternDestroy(fcpattern);
 
                 if !match0.is_null() {
                     usedfont = xfont_create(drw, "", match0);
-                    warn!("[drw_text] 4");
                     if usedfont.is_some()
                         && XftCharExists(
                             drw.dpy,
@@ -628,23 +593,21 @@ pub fn drw_text(
                             utf8codepoint as u32,
                         ) > 0
                     {
-                        warn!("[drw_text] 5");
                         curfont = drw.fonts.clone();
-                        loop {
-                            warn!("[drw_text] 6");
-                            if curfont.as_ref().unwrap().borrow_mut().xfont.is_null() {
+                        while let Some(ref curfont_opt) = curfont {
+                            // NOP
+                            let next = curfont_opt.borrow_mut().next.clone();
+                            if next.is_none() {
                                 break;
                             }
-                            let next = curfont.as_ref().unwrap().borrow_mut().next.clone();
                             curfont = next;
                         }
-                        warn!("[drw_text] 7");
                         curfont.as_ref().unwrap().borrow_mut().next = usedfont.clone();
                     } else {
                         xfont_free(usedfont);
                         NOMATCHES.idx += 1;
-                        let idx = NOMATCHES.idx as usize;
-                        NOMATCHES.codepoint[idx % NOMATCHES_LEN] = utf8codepoint;
+                        let idx = NOMATCHES.idx as usize % NOMATCHES_LEN;
+                        NOMATCHES.codepoint[idx] = utf8codepoint;
                         usedfont = drw.fonts.clone();
                     }
                 }
@@ -664,56 +627,4 @@ pub fn drw_map(drw: &mut Drw, win: Window, x: i32, y: i32, w: u32, h: u32) {
         XCopyArea(drw.dpy, drw.drawable, win, drw.gc, x, y, w, h, x, y);
         XSync(drw.dpy, False);
     }
-}
-
-pub fn utf8decodebyt(c: char, i: &mut usize) -> u64 {
-    *i = 0;
-    while *i < (UTF_SIZ + 1) {
-        if (c as u8 & UTFMASK[*i]) == UTFBYTE[*i] {
-            return (c as u8 & !UTFMASK[*i]) as u64;
-        }
-        *i += 1;
-    }
-    return 0;
-}
-
-pub fn utf8validate(u: &mut u64, mut i: usize) -> usize {
-    if !BETWEEN!(*u, UTFMIN[i], UTFMAX[i]) || BETWEEN!(*u, 0xD800, 0xDFFF) {
-        *u = UTF_INVALID;
-    }
-    i = 1;
-    while *u > UTFMAX[i] {
-        i += 1;
-    }
-    return i;
-}
-
-pub fn utf8decode(c: &str, u: &mut u64, clen: usize) -> usize {
-    *u = UTF_INVALID;
-    if clen <= 0 {
-        return 0;
-    }
-    let mut len: usize = 0;
-    let mut udecoded = utf8decodebyt(c.chars().nth(0).unwrap(), &mut len);
-    if !BETWEEN!(len, 1, UTF_SIZ) {
-        return 1;
-    }
-    let mut i = 1;
-    let mut j = 1;
-    let mut type0: usize = 0;
-    while i < clen && j < len {
-        udecoded = (udecoded << 6) | utf8decodebyt(c.chars().nth(i).unwrap(), &mut type0);
-        if type0 > 0 {
-            return j;
-        }
-        i += 1;
-        j += 1;
-    }
-    if j < len {
-        return 0;
-    }
-    *u = udecoded;
-    utf8validate(u, len);
-
-    return len;
 }

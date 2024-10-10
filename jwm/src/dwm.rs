@@ -434,12 +434,12 @@ pub fn HEIGHT(X: &mut Client) -> i32 {
 }
 
 pub fn TAGMASK() -> u32 {
-    warn!("[TAGMASK]");
+    // warn!("[TAGMASK]");
     (1 << tags.len()) - 1
 }
 
 pub fn TEXTW(drw0: &mut Drw, X: &str) -> u32 {
-    warn!("[TEXTW]");
+    // warn!("[TEXTW]");
     unsafe { drw_fontset_getwidth(drw0, X) + lrpad as u32 }
 }
 
@@ -1332,12 +1332,12 @@ pub fn dirtomon(dir: i32) -> Option<Rc<RefCell<Monitor>>> {
     }
 }
 pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
-    warn!("[drawbar]");
+    info!("[drawbar]");
     let mut tw: i32 = 0;
     let mut occ: u32 = 0;
     let mut urg: u32 = 0;
     {
-        warn!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
+        info!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
     }
     unsafe {
         let boxs;
@@ -1346,7 +1346,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             let h = drw.as_ref().unwrap().fonts.as_ref().unwrap().borrow_mut().h;
             boxs = h / 9;
             boxw = h / 6 + 2;
-            warn!("[drawbar] boxs: {}, boxw: {}, lrpad: {}", boxs, boxw, lrpad);
+            info!("[drawbar] boxs: {}, boxw: {}, lrpad: {}", boxs, boxw, lrpad);
         }
         let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
         if !showbar0 {
@@ -1363,7 +1363,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             );
             // 2px right padding.
             tw = TEXTW(drw.as_mut().unwrap().as_mut(), stext) as i32 - lrpad + 2;
-            warn!("[drawbar] drw_text 0, tw: {}, ww: {}", tw, ww);
+            info!("[drawbar] drw_text 0, tw: {}, ww: {}", tw, ww);
             drw_text(
                 drw.as_mut().unwrap().as_mut(),
                 ww - tw,
@@ -1398,12 +1398,12 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             } else {
                 SCHEME::SchemeNorm as usize
             };
-            warn!(
+            info!(
                 "[drawbar] seltags: {}, tagset: {:?}, i: {}: idx: {}, w: {}",
                 seltags, tagset, i, idx, w
             );
             drw_setscheme(drw.as_mut().unwrap().as_mut(), scheme[idx].clone());
-            warn!("[drawbar] drw_text 1");
+            info!("[drawbar] drw_text 1");
             drw_text(
                 drw.as_mut().unwrap().as_mut(),
                 x,
@@ -1416,7 +1416,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             );
             if (occ & 1 << i) > 0 {
                 let selmon_mut = { selmon.as_ref().unwrap().borrow_mut() };
-                warn!("[drawbar] drw_rect 0");
+                info!("[drawbar] drw_rect 0");
                 let filled = (Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap())
                     && selmon_mut.sel.is_some()
                     && (selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 & 1 << i > 0))
@@ -1441,7 +1441,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             drw.as_mut().unwrap().as_mut(),
             scheme[SCHEME::SchemeNorm as usize].clone(),
         );
-        warn!("[drawbar] drw_text 2, w: {}", w);
+        info!("[drawbar] drw_text 2, w: {}", w);
         x = drw_text(
             drw.as_mut().unwrap().as_mut(),
             x,
@@ -1454,7 +1454,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         );
 
         w = { m.as_ref().unwrap().borrow_mut().ww } - tw - x;
-        warn!("[drawbar] tw: {}, x: {}, w: {}, bh: {}", tw, x, w, bh);
+        info!("[drawbar] tw: {}, x: {}, w: {}, bh: {}", tw, x, w, bh);
         if w > bh {
             if let Some(ref sel_opt) = m.as_ref().unwrap().borrow_mut().sel {
                 let idx = if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
@@ -1463,7 +1463,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     SCHEME::SchemeNorm
                 } as usize;
                 drw_setscheme(drw.as_mut().unwrap().as_mut(), scheme[idx].clone());
-                warn!(
+                info!(
                     "[drawbar] drw_text 3: idx: {}, name: {}",
                     idx,
                     sel_opt.borrow_mut().name
@@ -1478,9 +1478,8 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     sel_opt.borrow_mut().name,
                     0,
                 );
-                warn!("[drawbar] drw_text 3 finish");
                 if sel_opt.borrow_mut().isfloating {
-                    warn!("[drawbar] drw_rect 1");
+                    info!("[drawbar] drw_rect 1");
                     drw_rect(
                         drw.as_mut().unwrap().as_mut(),
                         x + boxs as i32,
@@ -1496,7 +1495,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     drw.as_mut().unwrap().as_mut(),
                     scheme[SCHEME::SchemeNorm as usize].clone(),
                 );
-                warn!("[drawbar] drw_rect 2");
+                info!("[drawbar] drw_rect 2");
                 drw_rect(
                     drw.as_mut().unwrap().as_mut(),
                     x,
@@ -3749,18 +3748,18 @@ pub fn gettextprop(w: Window, atom: Atom, text: *mut &str) -> bool {
         if name.encoding == XA_STRING {
             let c_str = CStr::from_ptr(name.value as *const _);
             *text = c_str.to_str().unwrap();
-            // deprecated, sinse memory borrowed
+            // deprecated, since memory borrowed
             // XFree(name.value as *mut _);
-            warn!("[gettextprop]text from string : {:?}", *text);
+            info!("[gettextprop]text from string : {:?}", *text);
         } else if XmbTextPropertyToTextList(dpy, &mut name, &mut list, &mut n) >= Success as i32
             && n > 0
             && !list.is_null()
         {
             let c_str = CStr::from_ptr(*list);
             *text = c_str.to_str().unwrap();
-            // deprecated, sinse memory borrowed
+            // deprecated, since memory borrowed
             // XFreeStringList(list);
-            warn!("[gettextprop]text from string list : {:?}", *text);
+            info!("[gettextprop]text from string list : {:?}", *text);
         }
     }
     true
