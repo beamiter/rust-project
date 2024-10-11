@@ -8,6 +8,8 @@ use dwm::{checkotherwm, cleanup, dpy, run, scan, setup};
 use libc::{setlocale, LC_CTYPE};
 use x11::xlib::{XCloseDisplay, XOpenDisplay, XSupportsLocale};
 
+use crate::dwm::remove_control_characters;
+
 mod config;
 mod drw;
 mod dwm;
@@ -47,11 +49,17 @@ fn main() {
         tt.chars().nth(1).unwrap() as u32,
         tt.chars().nth(1).unwrap() as u32
     );
+    let mut text = "\u{200d}\u{2061}\u{200d}\u{2063}\u{202c}\u{202c}\u{2064}\u{2064}\u{200d}\u{202c}\u{2063}\u{202c}\u{2063}\u{2064}\u{202c}\u{200c}\u{feff}\u{feff}\u{2061}\u{2063}\u{2061}\u{200b}\u{200c}\u{feff}\u{2063}\u{200b}\u{200b}\u{200b}\u{2061}\u{200b}\u{2063}\u{200c}\u{200b}\u{200b}\u{2063}\u{2061}\u{2062}\u{200d}\u{2064}\u{feff}\u{202c}\u{2064}\u{2063}\u{200d}\u{2061}\u{200c}\u{feff}\u{202c}\u{2062}\u{202c}CP路测跟车记录 - Feishu Docs - Google Chrome";
+    println!("{}", text.len());
+     let binding = &remove_control_characters(&text.to_string());
+    text = binding;
+    println!("{}", text.len());
+
     let now = Local::now();
     let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
     let log_filename = format!("/tmp/jwm_{}.log", timestamp);
     let log_file = std::fs::File::create(log_filename).unwrap();
-    WriteLogger::init(LevelFilter::Warn, Config::default(), log_file).unwrap();
+    WriteLogger::init(LevelFilter::Info, Config::default(), log_file).unwrap();
     unsafe {
         let c_string = CString::new("").unwrap();
         if setlocale(LC_CTYPE, c_string.as_ptr()).is_null() || XSupportsLocale() <= 0 {

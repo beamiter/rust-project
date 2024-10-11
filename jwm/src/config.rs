@@ -108,10 +108,16 @@ pub const dmenucmd: Lazy<Vec<&'static str>> = Lazy::new(|| {
 pub const termcmd: Lazy<Vec<&'static str>> = Lazy::new(|| vec!["gnome-terminal", ""]);
 pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
     let mut m = vec![
-        // modifier     key           function          argument
+        // modifier | key | function | argument
         Key::new(
             MODKEY,
             XK_e.into(),
+            Some(dwm::spawn),
+            dwm::Arg::V(dmenucmd.clone()),
+        ),
+        Key::new(
+            MODKEY,
+            XK_r.into(),
             Some(dwm::spawn),
             dwm::Arg::V(dmenucmd.clone()),
         ),

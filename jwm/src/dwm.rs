@@ -8,6 +8,7 @@ use libc::{
 };
 use log::{info, warn};
 use once_cell::sync::Lazy;
+use regex::Regex;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt;
@@ -77,7 +78,7 @@ pub const MOUSEMASK: c_long = BUTTONMASK | PointerMotionMask;
 
 // Variables.
 pub const broken: &str = "broken";
-pub static mut stext: &str = "";
+pub static mut stext: Lazy<String> = Lazy::new(|| String::new());
 pub static mut screen: i32 = 0;
 pub static mut sw: i32 = 0;
 pub static mut sh: i32 = 0;
@@ -234,7 +235,7 @@ impl Layout {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Client {
-    pub name: &'static str,
+    pub name: String,
     pub mina: f32,
     pub maxa: f32,
     pub x: i32,
@@ -272,7 +273,7 @@ impl Client {
     #[allow(unused)]
     pub fn new() -> Self {
         Self {
-            name: "",
+            name: String::new(),
             mina: 0.,
             maxa: 0.,
             x: 0,
@@ -1362,7 +1363,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 scheme[SCHEME::SchemeNorm as usize].clone(),
             );
             // 2px right padding.
-            tw = TEXTW(drw.as_mut().unwrap().as_mut(), stext) as i32 - lrpad + 2;
+            tw = TEXTW(drw.as_mut().unwrap().as_mut(), &*stext) as i32 - lrpad + 2;
             info!("[drawbar] drw_text 0, tw: {}, ww: {}", tw, ww);
             drw_text(
                 drw.as_mut().unwrap().as_mut(),
@@ -1371,7 +1372,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 tw as u32,
                 bh as u32,
                 0,
-                stext,
+                &*stext,
                 0,
             );
         }
@@ -1475,7 +1476,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     w as u32,
                     bh as u32,
                     (lrpad / 2) as u32,
-                    sel_opt.borrow_mut().name,
+                    &sel_opt.borrow_mut().name,
                     0,
                 );
                 if sel_opt.borrow_mut().isfloating {
@@ -1835,7 +1836,7 @@ pub fn buttonpress(e: *mut XEvent) {
             } else if ev.x < (x + TEXTW(drw.as_mut().unwrap().as_mut(), selmon_mut.ltsymbol)) as i32
             {
                 click = CLICK::ClkLtSymbol;
-            } else if ev.x > selmon_mut.ww - TEXTW(drw.as_mut().unwrap().as_mut(), stext) as i32 {
+            } else if ev.x > selmon_mut.ww - TEXTW(drw.as_mut().unwrap().as_mut(), &*stext) as i32 {
                 click = CLICK::ClkStatusText;
             } else {
                 click = CLICK::ClkWinTitle;
@@ -3734,20 +3735,28 @@ pub fn updategeom() -> bool {
     }
     return dirty;
 }
-#[allow(unused_assignments)]
-pub fn gettextprop(w: Window, atom: Atom, text: *mut &str) -> bool {
+
+pub fn remove_control_characters(s: &String) -> String {
+    let control_chars_regex = Regex::new(
+        r"[\x00-\x1F\x7F-\x9F\u{200b}-\u{200f}\u{202a}-\u{202e}\u{2060}-\u{206f}\u{feff}]+",
+    )
+    .unwrap();
+    control_chars_regex.replace_all(s, "").into_owned()
+}
+
+pub fn gettextprop(w: Window, atom: Atom, text: &mut String) -> bool {
     info!("[gettextprop]");
     unsafe {
         let mut name: XTextProperty = zeroed();
         if XGetTextProperty(dpy, w, &mut name, atom) <= 0 || name.nitems <= 0 {
             return false;
         }
-        *text = "";
+        *text = "".to_string();
         let mut list: *mut *mut c_char = null_mut();
         let mut n: i32 = 0;
         if name.encoding == XA_STRING {
             let c_str = CStr::from_ptr(name.value as *const _);
-            *text = c_str.to_str().unwrap();
+            *text = remove_control_characters(&c_str.to_str().unwrap().to_string());
             // deprecated, since memory borrowed
             // XFree(name.value as *mut _);
             info!("[gettextprop]text from string : {:?}", *text);
@@ -3756,7 +3765,7 @@ pub fn gettextprop(w: Window, atom: Atom, text: *mut &str) -> bool {
             && !list.is_null()
         {
             let c_str = CStr::from_ptr(*list);
-            *text = c_str.to_str().unwrap();
+            *text = remove_control_characters(&c_str.to_str().unwrap().to_string());
             // deprecated, since memory borrowed
             // XFreeStringList(list);
             info!("[gettextprop]text from string list : {:?}", *text);
@@ -3767,8 +3776,8 @@ pub fn gettextprop(w: Window, atom: Atom, text: *mut &str) -> bool {
 pub fn updatestatus() {
     info!("[updatestatus]");
     unsafe {
-        if !gettextprop(root, XA_WM_NAME, addr_of_mut!(stext)) {
-            stext = "jwm-1.0";
+        if !gettextprop(root, XA_WM_NAME, &mut *stext) {
+            *stext = "jwm-1.0".to_string();
         }
         drawbar(selmon.clone());
     }
@@ -3822,15 +3831,11 @@ pub fn updatetitle(c: &Rc<RefCell<Client>>) {
     info!("[updatetitle]");
     unsafe {
         let mut c = c.borrow_mut();
-        if !gettextprop(
-            c.win,
-            netatom[NET::NetWMName as usize],
-            addr_of_mut!(c.name),
-        ) {
-            gettextprop(c.win, XA_WM_NAME, addr_of_mut!(c.name));
+        if !gettextprop(c.win, netatom[NET::NetWMName as usize], &mut c.name) {
+            gettextprop(c.win, XA_WM_NAME, &mut c.name);
         }
         if c.name.is_empty() {
-            c.name = broken;
+            c.name = broken.to_string();
         }
     }
 }
