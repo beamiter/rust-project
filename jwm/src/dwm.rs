@@ -3756,19 +3756,35 @@ pub fn gettextprop(w: Window, atom: Atom, text: &mut String) -> bool {
         let mut n: i32 = 0;
         if name.encoding == XA_STRING {
             let c_str = CStr::from_ptr(name.value as *const _);
-            *text = remove_control_characters(&c_str.to_str().unwrap().to_string());
+            let mut tmp = remove_control_characters(&c_str.to_str().unwrap().to_string());
+            while tmp.as_bytes().len() > 255 {
+                tmp.pop();
+            }
+            *text = tmp;
             // deprecated, since memory borrowed
             // XFree(name.value as *mut _);
-            info!("[gettextprop]text from string : {:?}", *text);
+            info!(
+                "[gettextprop]text from string, len: {}, text: {:?}",
+                text.len(),
+                *text
+            );
         } else if XmbTextPropertyToTextList(dpy, &mut name, &mut list, &mut n) >= Success as i32
             && n > 0
             && !list.is_null()
         {
             let c_str = CStr::from_ptr(*list);
-            *text = remove_control_characters(&c_str.to_str().unwrap().to_string());
+            let mut tmp = remove_control_characters(&c_str.to_str().unwrap().to_string());
+            while tmp.as_bytes().len() > 255 {
+                tmp.pop();
+            }
+            *text = tmp;
             // deprecated, since memory borrowed
             // XFreeStringList(list);
-            info!("[gettextprop]text from string list : {:?}", *text);
+            info!(
+                "[gettextprop]text from string list, len: {},  text: {:?}",
+                text.len(),
+                *text
+            );
         }
     }
     true

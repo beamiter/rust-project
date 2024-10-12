@@ -3,14 +3,7 @@
 // #![allow(unused_mut)]
 
 use std::{
-    cell::RefCell,
-    ffi::CString,
-    i32,
-    process::exit,
-    ptr::null_mut,
-    rc::Rc,
-    sync::atomic::{AtomicU32, Ordering},
-    u32, usize,
+    cell::RefCell, ffi::CString, i32, mem::zeroed, process::exit, ptr::null_mut, rc::Rc, u32, usize,
 };
 
 pub use fontconfig_sys;
@@ -27,10 +20,10 @@ use x11::{
     xft::{
         FcResult, XftCharExists, XftColor, XftColorAllocName, XftDraw, XftDrawCreate,
         XftDrawDestroy, XftDrawStringUtf8, XftFont, XftFontClose, XftFontMatch, XftFontOpenName,
-        XftFontOpenPattern, XftTextExtents8,
+        XftFontOpenPattern, XftTextExtentsUtf8,
     },
     xlib::{
-        self, CapButt, Cursor, Drawable, False, JoinMiter, LineSolid, Window, XCopyArea,
+        self, CapButt, Cursor, Drawable, False, JoinMiter, LineSolid, True, Window, XCopyArea,
         XCreateFontCursor, XCreateGC, XCreatePixmap, XDefaultColormap, XDefaultDepth,
         XDefaultVisual, XDrawRectangle, XFillRectangle, XFreeCursor, XFreeGC, XFreePixmap,
         XSetForeground, XSetLineAttributes, XSync, GC,
@@ -43,11 +36,15 @@ pub struct NoMathes {
     codepoint: [u64; NOMATCHES_LEN],
     idx: u32,
 }
-pub static mut NOMATCHES: NoMathes = NoMathes {
-    codepoint: [0; NOMATCHES_LEN],
-    idx: 0,
-};
-static ELLIPSIS_WIDTH: AtomicU32 = AtomicU32::new(0);
+#[allow(dead_code)]
+impl NoMathes {
+    pub fn new() -> Self {
+        Self {
+            codepoint: [0; NOMATCHES_LEN],
+            idx: 0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Cur {
@@ -273,7 +270,7 @@ pub fn drw_font_gettexts(font: *mut Fnt, text: &str, len: u32, w: *mut u32, h: *
         }
 
         let cstring = CString::new(text).expect("fail to convert");
-        XftTextExtents8(
+        XftTextExtentsUtf8(
             (*font).dpy,
             (*font).xfont,
             cstring.as_ptr() as *const _,
@@ -425,7 +422,12 @@ pub fn drw_text(
     let mut overflow: i32 = 0;
 
     unsafe {
-        if render && (drw.scheme.is_empty() || w <= 0) || text.is_empty() || drw.fonts.is_none() {
+        static mut ellipsis_width: u32 = 0;
+        static mut nomatches: NoMathes = unsafe { zeroed() };
+        if (render && (drw.scheme.is_empty() || w <= 0))
+            || (text.is_empty())
+            || (drw.fonts.is_none())
+        {
             return 0;
         }
 
@@ -450,9 +452,9 @@ pub fn drw_text(
         }
 
         let mut usedfont = drw.fonts.clone();
-        let ellipsis_width = ELLIPSIS_WIDTH.load(Ordering::SeqCst);
         if ellipsis_width <= 0 && render {
-            ELLIPSIS_WIDTH.store(drw_fontset_getwidth(drw, "..."), Ordering::SeqCst);
+            ellipsis_width = drw_fontset_getwidth(drw, "...");
+            // info!("[drw_text], ellipsis_width: {}", ellipsis_width);
         }
         loop {
             let mut ew = 0;
@@ -465,34 +467,37 @@ pub fn drw_text(
                 utf8charlen = text.chars().nth(0).unwrap().len_utf8() as i32;
                 utf8codepoint = text.chars().nth(0).unwrap() as u64;
                 curfont = drw.fonts.clone();
-                while curfont.is_some() {
-                    charexists = (charexists > 0
-                        || XftCharExists(
-                            drw.dpy,
-                            curfont.as_ref().unwrap().borrow_mut().xfont,
-                            utf8codepoint as u32,
-                        ) > 0) as i32;
+                while let Some(ref curfont_opt) = curfont {
+                    charexists |= XftCharExists(
+                        drw.dpy,
+                        curfont_opt.borrow_mut().xfont,
+                        utf8codepoint as u32,
+                    );
                     if charexists > 0 {
                         drw_font_gettexts(
-                            &mut *curfont.as_ref().unwrap().borrow_mut(),
+                            &mut *curfont_opt.borrow_mut(),
                             text,
                             utf8charlen as u32,
                             &mut tmpw,
                             null_mut(),
                         );
                         if ew + ellipsis_width <= w {
+                            // keep track where the ellipsis still fits
                             ellipsis_x = x + ew as i32;
                             ellipsis_w = w - ew;
                             ellipsis_len = utf8strlen as u32;
                         }
 
                         if ew + tmpw > w {
+                            overflow = 1;
+                            // called from drw_fontset_getwidth_clamp()
+                            // it wants the width AFTER the overflow
                             if !render {
                                 x += tmpw as i32;
                             } else {
                                 utf8strlen = ellipsis_len as i32;
                             }
-                        } else if curfont == usedfont {
+                        } else if Rc::ptr_eq(curfont_opt, usedfont.as_ref().unwrap()) {
                             utf8strlen += utf8charlen;
                             text = &text[utf8charlen as usize..];
                             ew += tmpw;
@@ -502,10 +507,11 @@ pub fn drw_text(
                         break;
                     }
 
-                    let next = curfont.as_ref().unwrap().borrow_mut().next.clone();
+                    let next = curfont_opt.borrow_mut().next.clone();
                     curfont = next;
                 }
 
+                // info!("[drw_text] charexists: {}, ew: {}, ellipsis_width: {}, w: {}, tmpw: {}, overflow: {}, nextfont: {}",charexists, ew, ellipsis_width, w, tmpw, overflow, nextfont.is_some());
                 if overflow > 0 || charexists <= 0 || nextfont.is_some() {
                     break;
                 } else {
@@ -515,18 +521,17 @@ pub fn drw_text(
 
             if utf8strlen > 0 {
                 if render {
-                    let mut ty = y;
-                    {
-                        ty += ((h - usedfont.as_ref().unwrap().borrow_mut().h) / 2) as i32;
-                        ty += (*usedfont.as_ref().unwrap().borrow_mut().xfont).ascent;
-                    }
+                    let usedfont_mut = usedfont.as_ref().unwrap().borrow_mut();
+                    let usedfont_h = usedfont_mut.h;
+                    let ascent = (*usedfont_mut.xfont).ascent;
+                    let ty = y + (h - usedfont_h) as i32 / 2 + ascent;
                     let idx = if invert > 0 { Col::ColBg } else { Col::ColFg } as usize;
                     let cstring = CString::new(utf8str).expect("fail to create");
-                    let clr = drw.scheme[idx].as_ref().unwrap().as_ref();
+                    let clr = drw.scheme[idx].as_ref().unwrap();
                     XftDrawStringUtf8(
                         d,
-                        clr,
-                        (*usedfont.as_ref().unwrap().borrow_mut()).xfont,
+                        clr.as_ref(),
+                        usedfont_mut.xfont,
                         x,
                         ty,
                         cstring.as_ptr() as *const _,
@@ -538,6 +543,7 @@ pub fn drw_text(
             }
 
             if render && overflow > 0 {
+                info!("[drw_text] render overflow, draw ...");
                 drw_text(drw, ellipsis_x, y, ellipsis_w, h, 0, "...", invert);
             }
 
@@ -553,7 +559,7 @@ pub fn drw_text(
 
                 for i in 0..NOMATCHES_LEN {
                     // avoid calling XftFontMatch if we know we won't find a match.
-                    if utf8codepoint == NOMATCHES.codepoint[i] {
+                    if utf8codepoint == nomatches.codepoint[i] {
                         usedfont = drw.fonts.clone();
                         continue;
                     }
@@ -562,15 +568,17 @@ pub fn drw_text(
                 fccharset = FcCharSetCreate();
                 FcCharSetAddChar(fccharset, utf8codepoint as u32);
 
-                if drw.fonts.as_ref().unwrap().borrow_mut().pattern.is_null() {
+                let pattern = { drw.fonts.as_ref().unwrap().borrow_mut().pattern };
+                if pattern.is_null() {
+                    // Refer to the comment if xfont_free for more information
                     // The first font in the cache must be loaded from a font string.
                     warn!("[drw_text] pattern is null");
                     exit(0);
                 }
 
-                fcpattern = FcPatternDuplicate(drw.fonts.as_ref().unwrap().borrow_mut().pattern);
+                fcpattern = FcPatternDuplicate(pattern);
                 FcPatternAddCharSet(fcpattern, FC_CHARSET.as_ptr(), fccharset);
-                FcPatternAddBool(fcpattern, FC_SCALABLE.as_ptr(), 1);
+                FcPatternAddBool(fcpattern, FC_SCALABLE.as_ptr(), True);
 
                 FcConfigSubstitute(null_mut(), fcpattern, FcMatchPattern);
                 FcDefaultSubstitute(fcpattern);
@@ -586,12 +594,8 @@ pub fn drw_text(
 
                 if !match0.is_null() {
                     usedfont = xfont_create(drw, "", match0);
-                    if usedfont.is_some()
-                        && XftCharExists(
-                            drw.dpy,
-                            usedfont.as_ref().unwrap().borrow_mut().xfont,
-                            utf8codepoint as u32,
-                        ) > 0
+                    let xfont = { usedfont.as_ref().unwrap().borrow_mut().xfont };
+                    if usedfont.is_some() && XftCharExists(drw.dpy, xfont, utf8codepoint as u32) > 0
                     {
                         curfont = drw.fonts.clone();
                         while let Some(ref curfont_opt) = curfont {
@@ -605,9 +609,9 @@ pub fn drw_text(
                         curfont.as_ref().unwrap().borrow_mut().next = usedfont.clone();
                     } else {
                         xfont_free(usedfont);
-                        NOMATCHES.idx += 1;
-                        let idx = NOMATCHES.idx as usize % NOMATCHES_LEN;
-                        NOMATCHES.codepoint[idx] = utf8codepoint;
+                        nomatches.idx += 1;
+                        let idx = nomatches.idx as usize % NOMATCHES_LEN;
+                        nomatches.codepoint[idx] = utf8codepoint;
                         usedfont = drw.fonts.clone();
                     }
                 }
