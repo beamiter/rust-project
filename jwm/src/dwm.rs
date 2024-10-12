@@ -797,8 +797,7 @@ pub fn clientmessage(e: *mut XEvent) {
             let isurgent = { c.as_ref().unwrap().borrow_mut().isurgent };
             let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
             if !Rc::ptr_eq(c.as_ref().unwrap(), sel.as_ref().unwrap()) && !isurgent {
-                // (TODO)
-                seturgent(&mut *{ c.as_ref().unwrap().borrow_mut() }, true);
+                seturgent(c.as_ref().unwrap(), true);
             }
         }
     }
@@ -983,11 +982,12 @@ pub fn resize(
     }
 }
 
-pub fn seturgent(c: &mut Client, urg: bool) {
+pub fn seturgent(c: &Rc<RefCell<Client>>, urg: bool) {
     info!("[seturgent]");
     unsafe {
-        c.isurgent = urg;
-        let wmh = XGetWMHints(dpy, c.win);
+        c.borrow_mut().isurgent = urg;
+        let win = c.borrow_mut().win;
+        let wmh = XGetWMHints(dpy, win);
         if wmh.is_null() {
             return;
         }
@@ -996,7 +996,7 @@ pub fn seturgent(c: &mut Client, urg: bool) {
         } else {
             (*wmh).flags & !XUrgencyHint
         };
-        XSetWMHints(dpy, c.win, wmh);
+        XSetWMHints(dpy, win, wmh);
         XFree(wmh as *mut _);
     }
 }
@@ -3238,7 +3238,7 @@ pub fn focus(mut c: Option<Rc<RefCell<Client>>>) {
                 selmon = c.as_ref().unwrap().borrow_mut().mon.clone();
             }
             if c.as_ref().unwrap().borrow_mut().isurgent {
-                seturgent(&mut *c.as_ref().unwrap().borrow_mut(), false);
+                seturgent(c.as_ref().unwrap(), false);
             }
             detachstack(c.clone());
             attachstack(c.clone());
