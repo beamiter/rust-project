@@ -15,7 +15,7 @@ use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
 use std::process::Command;
-use std::ptr::{addr_of_mut, null_mut};
+use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
 use std::{os::raw::c_long, usize};
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
@@ -791,12 +791,13 @@ pub fn clientmessage(e: *mut XEvent) {
                 let isfullscreen = { c.as_ref().unwrap().borrow_mut().isfullscreen };
                 let fullscreen =
                     cme.data.get_long(0) == 1 || (cme.data.get_long(0) == 2 && !isfullscreen);
-                setfullscreen(&mut *{ c.as_ref().unwrap().borrow_mut() }, fullscreen);
+                setfullscreen(c.as_ref().unwrap(), fullscreen);
             }
         } else if cme.message_type == netatom[NET::NetActiveWindow as usize] {
             let isurgent = { c.as_ref().unwrap().borrow_mut().isurgent };
             let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
             if !Rc::ptr_eq(c.as_ref().unwrap(), sel.as_ref().unwrap()) && !isurgent {
+                // (TODO)
                 seturgent(&mut *{ c.as_ref().unwrap().borrow_mut() }, true);
             }
         }
@@ -868,58 +869,75 @@ pub fn configure(c: &mut Client) {
         XSendEvent(dpy, c.win, 0, StructureNotifyMask, &mut xe);
     }
 }
-pub fn setfullscreen(c: &mut Client, fullscreen: bool) {
+pub fn setfullscreen(c: &Rc<RefCell<Client>>, fullscreen: bool) {
     info!("[setfullscreen]");
     unsafe {
-        if fullscreen && !c.isfullscreen {
+        let isfullscreen = { c.borrow_mut().isfullscreen };
+        let win = { c.borrow_mut().win };
+        if fullscreen && !isfullscreen {
             XChangeProperty(
                 dpy,
-                c.win,
+                win,
                 netatom[NET::NetWMState as usize],
                 XA_ATOM,
                 32,
                 PropModeReplace,
-                netatom[NET::NetWMFullscreen as usize] as *const _,
+                netatom.as_ptr().add(NET::NetWMFullscreen as usize) as *const _,
                 1,
             );
-            c.isfullscreen = true;
-            c.oldstate = c.isfloating;
-            c.oldbw = c.bw;
-            c.bw = 0;
-            c.isfloating = true;
+            {
+                let mut c = c.borrow_mut();
+                c.isfullscreen = true;
+                c.oldstate = c.isfloating;
+                c.oldbw = c.bw;
+                c.bw = 0;
+                c.isfloating = true;
+            }
             let mx;
             let my;
             let mw;
             let mh;
             {
-                let mon_mut = c.mon.as_ref().unwrap().borrow_mut();
+                let mon = c.borrow_mut().mon.clone();
+                let mon_mut = mon.as_ref().unwrap().borrow_mut();
                 mx = mon_mut.mx;
                 my = mon_mut.my;
                 mw = mon_mut.mw;
                 mh = mon_mut.mh;
             }
-            resizeclient(c, mx, my, mw, mh);
-            XRaiseWindow(dpy, c.win);
-        } else if !fullscreen && c.isfullscreen {
+            resizeclient(&mut *c.borrow_mut(), mx, my, mw, mh);
+            XRaiseWindow(dpy, win);
+        } else if !fullscreen && isfullscreen {
             XChangeProperty(
                 dpy,
-                c.win,
+                win,
                 netatom[NET::NetWMState as usize],
                 XA_ATOM,
                 32,
                 PropModeReplace,
-                0 as *const _,
+                null(),
                 0,
             );
-            c.isfullscreen = false;
-            c.isfloating = c.oldstate;
-            c.bw = c.oldbw;
-            c.x = c.oldx;
-            c.y = c.oldy;
-            c.w = c.oldw;
-            c.h = c.oldh;
-            resizeclient(c, c.x, c.y, c.w, c.h);
-            arrange(c.mon.clone());
+            {
+                let mut c = c.borrow_mut();
+                c.isfullscreen = false;
+                c.isfloating = c.oldstate;
+                c.bw = c.oldbw;
+                c.x = c.oldx;
+                c.y = c.oldy;
+                c.w = c.oldw;
+                c.h = c.oldh;
+            }
+            {
+                let mut c = c.borrow_mut();
+                let x = c.x;
+                let y = c.y;
+                let w = c.w;
+                let h = c.h;
+                resizeclient(&mut *c, x, y, w, h);
+            }
+            let mon = { c.borrow_mut().mon.clone() };
+            arrange(mon);
         }
     }
 }
@@ -1347,7 +1365,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             let h = drw.as_ref().unwrap().fonts.as_ref().unwrap().borrow_mut().h;
             boxs = h / 9;
             boxw = h / 6 + 2;
-            info!("[drawbar] boxs: {}, boxw: {}, lrpad: {}", boxs, boxw, lrpad);
+            // info!("[drawbar] boxs: {}, boxw: {}, lrpad: {}", boxs, boxw, lrpad);
         }
         let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
         if !showbar0 {
@@ -1364,7 +1382,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             );
             // 2px right padding.
             tw = TEXTW(drw.as_mut().unwrap().as_mut(), &*stext) as i32 - lrpad + 2;
-            info!("[drawbar] drw_text 0, tw: {}, ww: {}", tw, ww);
+            // info!("[drawbar] drw_text 0, tw: {}, ww: {}", tw, ww);
             drw_text(
                 drw.as_mut().unwrap().as_mut(),
                 ww - tw,
@@ -1399,12 +1417,12 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             } else {
                 SCHEME::SchemeNorm as usize
             };
-            info!(
-                "[drawbar] seltags: {}, tagset: {:?}, i: {}: idx: {}, w: {}",
-                seltags, tagset, i, idx, w
-            );
+            // info!(
+            //     "[drawbar] seltags: {}, tagset: {:?}, i: {}: idx: {}, w: {}",
+            //     seltags, tagset, i, idx, w
+            // );
             drw_setscheme(drw.as_mut().unwrap().as_mut(), scheme[idx].clone());
-            info!("[drawbar] drw_text 1");
+            // info!("[drawbar] drw_text 1");
             drw_text(
                 drw.as_mut().unwrap().as_mut(),
                 x,
@@ -1417,7 +1435,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             );
             if (occ & 1 << i) > 0 {
                 let selmon_mut = { selmon.as_ref().unwrap().borrow_mut() };
-                info!("[drawbar] drw_rect 0");
+                // info!("[drawbar] drw_rect 0");
                 let filled = (Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap())
                     && selmon_mut.sel.is_some()
                     && (selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 & 1 << i > 0))
@@ -1442,7 +1460,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             drw.as_mut().unwrap().as_mut(),
             scheme[SCHEME::SchemeNorm as usize].clone(),
         );
-        info!("[drawbar] drw_text 2, w: {}", w);
+        // info!("[drawbar] drw_text 2, w: {}", w);
         x = drw_text(
             drw.as_mut().unwrap().as_mut(),
             x,
@@ -1455,7 +1473,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         );
 
         w = { m.as_ref().unwrap().borrow_mut().ww } - tw - x;
-        info!("[drawbar] tw: {}, x: {}, w: {}, bh: {}", tw, x, w, bh);
+        // info!("[drawbar] tw: {}, x: {}, w: {}, bh: {}", tw, x, w, bh);
         if w > bh {
             if let Some(ref sel_opt) = m.as_ref().unwrap().borrow_mut().sel {
                 let idx = if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
@@ -1464,11 +1482,11 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     SCHEME::SchemeNorm
                 } as usize;
                 drw_setscheme(drw.as_mut().unwrap().as_mut(), scheme[idx].clone());
-                info!(
-                    "[drawbar] drw_text 3: idx: {}, name: {}",
-                    idx,
-                    sel_opt.borrow_mut().name
-                );
+                // info!(
+                //     "[drawbar] drw_text 3: idx: {}, name: {}",
+                //     idx,
+                //     sel_opt.borrow_mut().name
+                // );
                 drw_text(
                     drw.as_mut().unwrap().as_mut(),
                     x,
@@ -1480,7 +1498,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     0,
                 );
                 if sel_opt.borrow_mut().isfloating {
-                    info!("[drawbar] drw_rect 1");
+                    // info!("[drawbar] drw_rect 1");
                     drw_rect(
                         drw.as_mut().unwrap().as_mut(),
                         x + boxs as i32,
@@ -1496,7 +1514,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     drw.as_mut().unwrap().as_mut(),
                     scheme[SCHEME::SchemeNorm as usize].clone(),
                 );
-                info!("[drawbar] drw_rect 2");
+                // info!("[drawbar] drw_rect 2");
                 drw_rect(
                     drw.as_mut().unwrap().as_mut(),
                     x,
@@ -1616,7 +1634,7 @@ pub fn arrange(mut m: Option<Rc<RefCell<Monitor>>>) {
     unsafe {
         if let Some(ref m_opt) = m {
             {
-                let stack = m_opt.borrow_mut().stack.clone();
+                let stack = { m_opt.borrow_mut().stack.clone() };
                 showhide(stack);
             }
         } else {
@@ -1624,7 +1642,7 @@ pub fn arrange(mut m: Option<Rc<RefCell<Monitor>>>) {
             while let Some(ref m_opt) = m {
                 let stack = { m_opt.borrow_mut().stack.clone() };
                 showhide(stack);
-                let next = m_opt.borrow_mut().next.clone();
+                let next = { m_opt.borrow_mut().next.clone() };
                 m = next;
             }
         }
@@ -1635,7 +1653,7 @@ pub fn arrange(mut m: Option<Rc<RefCell<Monitor>>>) {
             m = mons.clone();
             while let Some(ref m_opt) = m {
                 arrangemon(m_opt);
-                let next = m_opt.borrow_mut().next.clone();
+                let next = { m_opt.borrow_mut().next.clone() };
                 m = next;
             }
         }
@@ -3801,15 +3819,19 @@ pub fn updatestatus() {
 pub fn updatewindowtype(c: &Rc<RefCell<Client>>) {
     info!("[updatewindowtype]");
     unsafe {
-        // todo
-        let c = &mut *c.borrow_mut();
-        let state = getatomprop(c, netatom[NET::NetWMState as usize]);
-        let wtype = getatomprop(c, netatom[NET::NetWMWindowType as usize]);
+        let state;
+        let wtype;
+        {
+            let c = &mut *c.borrow_mut();
+            state = getatomprop(c, netatom[NET::NetWMState as usize]);
+            wtype = getatomprop(c, netatom[NET::NetWMWindowType as usize]);
+        }
 
         if state == netatom[NET::NetWMFullscreen as usize] {
             setfullscreen(c, true);
         }
         if wtype == netatom[NET::NetWMWindowTypeDialog as usize] {
+            let c = &mut *c.borrow_mut();
             c.isfloating = true;
         }
     }
