@@ -308,6 +308,15 @@ impl Client {
             win: 0,
         }
     }
+    pub fn isvisible(&self) -> bool {
+        info!("[ISVISIBLE]");
+        info!("[ISVISIBLE] X borrow_mut valid");
+        let tags0 = self.tags0;
+        let seltags = self.mon.as_ref().unwrap().borrow_mut().seltags;
+        let b = tags0 & self.mon.as_ref().unwrap().borrow_mut().tagset[seltags];
+        info!("[ISVISIBLE] mon borrow_mut valid");
+        b > 0
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -411,17 +420,6 @@ pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: &Monitor) -> i32 {
         max(0, min(x + w, (*m).wx + (*m).ww) - max(x, (*m).wx))
             * max(0, min(y + h, (*m).wy + (*m).wh) - max(y, (*m).wy))
     }
-}
-
-pub fn ISVISIBLE(X: &Rc<RefCell<Client>>) -> u32 {
-    info!("[ISVISIBLE]");
-    let X = X.borrow_mut();
-    info!("[ISVISIBLE] X borrow_mut valid");
-    let tags0 = X.tags0;
-    let seltags = X.mon.as_ref().unwrap().borrow_mut().seltags;
-    let x = tags0 & X.mon.as_ref().unwrap().borrow_mut().tagset[seltags];
-    info!("[ISVISIBLE] mon borrow_mut valid");
-    x
 }
 
 pub fn WIDTH(X: &mut Client) -> i32 {
@@ -1007,7 +1005,8 @@ pub fn showhide(c: Option<Rc<RefCell<Client>>>) {
         return;
     }
     unsafe {
-        if ISVISIBLE(c.as_ref().unwrap()) > 0 {
+        let isvisible = { c.as_ref().unwrap().borrow_mut().isvisible() };
+        if isvisible {
             // show clients top down.
             let win = c.as_ref().unwrap().borrow_mut().win;
             let x = c.as_ref().unwrap().borrow_mut().x;
@@ -1119,7 +1118,8 @@ pub fn configurerequest(e: *mut XEvent) {
                 {
                     configure(&mut *c_opt.borrow_mut());
                 }
-                if ISVISIBLE(&c_opt) > 0 {
+                let isvisible = { c_opt.borrow_mut().isvisible() };
+                if isvisible {
                     let c_mut = c_opt.borrow();
                     XMoveResizeWindow(
                         dpy,
@@ -1298,10 +1298,11 @@ pub fn detachstack(c: Option<Rc<RefCell<Client>>>) {
                 .clone()
         };
         while let Some(ref t_opt) = t {
-            if ISVISIBLE(t.as_ref().unwrap()) > 0 {
+            let isvisible = { t_opt.borrow_mut().isvisible() };
+            if isvisible {
                 break;
             }
-            let snext = t_opt.borrow_mut().snext.clone();
+            let snext = { t_opt.borrow_mut().snext.clone() };
             t = snext;
         }
         {
@@ -1554,7 +1555,9 @@ pub fn restack(m: Option<Rc<RefCell<Monitor>>>) {
             wc.sibling = m.as_ref().unwrap().borrow_mut().barwin;
             let mut c = m.as_ref().unwrap().borrow_mut().stack.clone();
             while let Some(ref c_opt) = c {
-                if !c_opt.borrow_mut().isfloating && ISVISIBLE(c.as_ref().unwrap()) > 0 {
+                let isfloating = { c_opt.borrow_mut().isfloating };
+                let isvisible = { c_opt.borrow_mut().isvisible() };
+                if !isfloating && isvisible {
                     let win = c_opt.borrow_mut().win;
                     XConfigureWindow(dpy, win, (CWSibling | CWStackMode) as u32, &mut wc);
                     wc.sibling = win;
@@ -2286,7 +2289,10 @@ pub fn focusstack(arg: *const Arg) {
                     .next
                     .clone()
             };
-            while c.is_some() && ISVISIBLE(c.as_ref().unwrap()) <= 0 {
+            while c.is_some() {
+                if c.as_ref().unwrap().borrow_mut().isvisible() {
+                    break;
+                }
                 let next = c.as_ref().unwrap().borrow_mut().next.clone();
                 c = next;
             }
@@ -2295,8 +2301,11 @@ pub fn focusstack(arg: *const Arg) {
                     let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
                     selmon_mut.clients.clone()
                 };
-                while c.is_some() && ISVISIBLE(c.as_ref().unwrap()) <= 0 {
-                    let next = c.as_ref().unwrap().borrow_mut().next.clone();
+                while let Some(ref c_opt) = c {
+                    if c_opt.borrow_mut().isvisible() {
+                        break;
+                    }
+                    let next = c_opt.borrow_mut().next.clone();
                     c = next;
                 }
             }
@@ -2309,18 +2318,18 @@ pub fn focusstack(arg: *const Arg) {
                 sel = selmon_mut.sel.clone();
             }
             while !Rc::ptr_eq(cl.as_ref().unwrap(), sel.as_ref().unwrap()) {
-                if ISVISIBLE(cl.as_ref().unwrap()) > 0 {
+                if cl.as_ref().unwrap().borrow_mut().isvisible() {
                     c = cl.clone();
                 }
                 let next = cl.as_ref().unwrap().borrow_mut().next.clone();
                 cl = next;
             }
             if c.is_none() {
-                while cl.is_some() {
-                    if ISVISIBLE(cl.as_ref().unwrap()) > 0 {
+                while let Some(ref cl_opt) = cl {
+                    if cl_opt.borrow_mut().isvisible() {
                         c = cl.clone();
                     }
-                    let next = cl.as_ref().unwrap().borrow_mut().next.clone();
+                    let next = cl_opt.borrow_mut().next.clone();
                     cl = next;
                 }
             }
@@ -2658,10 +2667,11 @@ pub fn killclient(_arg: *const Arg) {
 }
 pub fn nexttiled(mut c: Option<Rc<RefCell<Client>>>) -> Option<Rc<RefCell<Client>>> {
     info!("[nexttiled]");
-    while let Some(ref c_ref) = c {
-        let isfloating = c_ref.borrow_mut().isfloating;
-        if isfloating || ISVISIBLE(c_ref) <= 0 {
-            let next = c_ref.borrow_mut().next.clone();
+    while let Some(ref c_opt) = c {
+        let isfloating = c_opt.borrow_mut().isfloating;
+        let isvisible = c_opt.borrow_mut().isvisible();
+        if isfloating || !isvisible {
+            let next = c_opt.borrow_mut().next.clone();
             c = next;
         } else {
             break;
@@ -3214,11 +3224,15 @@ pub fn focus(mut c: Option<Rc<RefCell<Client>>>) {
     info!("[focus]");
     unsafe {
         {
-            if c.is_none() || ISVISIBLE(c.as_ref().unwrap()) <= 0 {
+            let isvisible = { c.is_some() && c.as_ref().unwrap().borrow_mut().isvisible() };
+            if !isvisible {
                 if let Some(ref sel_mon_opt) = selmon {
                     c = sel_mon_opt.borrow_mut().stack.clone();
                 }
-                while c.is_some() && ISVISIBLE(c.as_ref().unwrap()) <= 0 {
+                while c.is_some() {
+                    if c.as_ref().unwrap().borrow_mut().isvisible() {
+                        break;
+                    }
                     let next = { c.as_ref().unwrap().borrow_mut().snext.clone() };
                     c = next;
                 }
@@ -3508,7 +3522,7 @@ pub fn monocle(m: *mut Monitor) {
         let mut n: u32 = 0;
         let mut c = (*m).clients.clone();
         while let Some(ref c_opt) = c {
-            if ISVISIBLE(c_opt) > 0 {
+            if c_opt.borrow_mut().isvisible() {
                 n += 1;
             }
             let next = c_opt.borrow_mut().next.clone();
