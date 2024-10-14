@@ -1518,6 +1518,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         let barwin = { m.as_ref().unwrap().borrow_mut().barwin };
         let ww: u32 = { m.as_ref().unwrap().borrow_mut().ww } as u32;
         drw_map(drw.as_mut().unwrap().as_mut(), barwin, 0, 0, ww, bh as u32);
+        info!("[drawbar] finish");
     }
 }
 
@@ -1827,28 +1828,29 @@ pub fn buttonpress(e: *mut XEvent) {
             info!("[buttonpress] barwin: {}, ev.x: {}", barwin, ev.x);
             let mut i: usize = 0;
             let mut x: u32 = 0;
-            loop {
-                x += TEXTW(drw.as_mut().unwrap().as_mut(), tags[i]);
+            for tag_i in 0..tags.len() {
+                x += TEXTW(drw.as_mut().unwrap().as_mut(), tags[tag_i]);
                 if ev.x < x as i32 {
                     break;
                 }
-                i += 1;
-                if i >= tags.len() {
-                    break;
-                }
+                i = tag_i + 1;
                 info!("[buttonpress] x: {}, i: {}", x, i);
             }
             let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
             if i < tags.len() {
                 click = CLICK::ClkTagBar;
                 arg = Arg::Ui(1 << i);
+                info!("[buttonpress] ClkTagBar");
             } else if ev.x < (x + TEXTW(drw.as_mut().unwrap().as_mut(), selmon_mut.ltsymbol)) as i32
             {
                 click = CLICK::ClkLtSymbol;
+                info!("[buttonpress] ClkLtSymbol");
             } else if ev.x > selmon_mut.ww - TEXTW(drw.as_mut().unwrap().as_mut(), &*stext) as i32 {
                 click = CLICK::ClkStatusText;
+                info!("[buttonpress] ClkStatusText");
             } else {
                 click = CLICK::ClkWinTitle;
+                info!("[buttonpress] ClkWinTitle");
             }
         } else if {
             c = wintoclient(ev.window);
@@ -1866,6 +1868,10 @@ pub fn buttonpress(e: *mut XEvent) {
                 && CLEANMASK(buttons[i].mask) == CLEANMASK(ev.state)
             {
                 if let Some(ref func) = buttons[i].func {
+                    info!(
+                        "[buttonpress] click: {}, button: {}, mask: {}",
+                        buttons[i].click, buttons[i].button, buttons[i].mask
+                    );
                     func({
                         if click as u32 == CLICK::ClkTagBar as u32 && {
                             if let Arg::Ui(0) = buttons[i].arg {
@@ -2452,13 +2458,16 @@ pub fn toggleview(arg: *const Arg) {
     info!("[toggleview]");
     unsafe {
         if let Arg::Ui(ui) = *arg {
-            let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-            let newtagset = selmon_mut.tagset[selmon_mut.seltags] ^ (ui & tagmask);
-            if newtagset > 0 {
-                let index = selmon_mut.seltags;
-                selmon_mut.tagset[index] = newtagset;
-                focus(None);
-                arrange(selmon.clone());
+            if let Some(ref selmon_opt) = selmon {
+                let seltags = { selmon_opt.borrow_mut().seltags };
+                let newtagset = { selmon_opt.borrow_mut().tagset[seltags] ^ (ui & tagmask) };
+                if newtagset > 0 {
+                    {
+                        selmon_opt.borrow_mut().tagset[seltags] = newtagset;
+                    }
+                    focus(None);
+                    arrange(selmon.clone());
+                }
             }
         }
     }

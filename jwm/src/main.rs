@@ -59,7 +59,8 @@ fn main() {
     let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
     let log_filename = format!("/tmp/jwm_{}.log", timestamp);
     let log_file = std::fs::File::create(log_filename).unwrap();
-    WriteLogger::init(LevelFilter::Info, Config::default(), log_file).unwrap();
+    // WriteLogger::init(LevelFilter::Info, Config::default(), log_file).unwrap();
+    WriteLogger::init(LevelFilter::Info, Config::default(), std::io::stdout()).unwrap();
     unsafe {
         let c_string = CString::new("").unwrap();
         if setlocale(LC_CTYPE, c_string.as_ptr()).is_null() || XSupportsLocale() <= 0 {
