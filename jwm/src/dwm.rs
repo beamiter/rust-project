@@ -951,7 +951,7 @@ pub fn resizeclient(c: &mut Client, x: i32, y: i32, w: i32, h: i32) {
         XConfigureWindow(
             dpy,
             c.win,
-            (CWX | CWY | CWWidth | CWHeight | CWBorderWidth).into(),
+            (CWX | CWY | CWWidth | CWHeight | CWBorderWidth) as u32,
             &mut wc as *mut _,
         );
         configure(c);
@@ -1487,7 +1487,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     0,
                 );
                 if sel_opt.borrow_mut().isfloating {
-                    // info!("[drawbar] drw_rect 1");
+                    info!("[drawbar] drw_rect 1");
                     drw_rect(
                         drw.as_mut().unwrap().as_mut(),
                         x + boxs as i32,
@@ -1503,7 +1503,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     drw.as_mut().unwrap().as_mut(),
                     scheme[SCHEME::SchemeNorm as usize].clone(),
                 );
-                // info!("[drawbar] drw_rect 2");
+                info!("[drawbar] drw_rect 2");
                 drw_rect(
                     drw.as_mut().unwrap().as_mut(),
                     x,
@@ -1887,6 +1887,7 @@ pub fn buttonpress(e: *mut XEvent) {
                             &mut buttons[i].arg.clone()
                         }
                     });
+                    break;
                 }
             }
         }
@@ -2377,10 +2378,10 @@ pub fn setlayout(arg: *const Arg) {
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
             let sellt = selmon_mut.sellt;
             if arg.is_null()
-                || if let Arg::Lt(ref lt) = *arg {
-                    !Rc::ptr_eq(lt, &selmon_mut.lt[sellt])
+                || !if let Arg::Lt(ref lt) = *arg {
+                    Rc::ptr_eq(lt, &selmon_mut.lt[sellt])
                 } else {
-                    true
+                    false
                 }
             {
                 selmon_mut.sellt ^= 1;
@@ -2391,7 +2392,7 @@ pub fn setlayout(arg: *const Arg) {
                     selmon_mut.lt[sellt] = lt.clone();
                 }
             }
-            selmon_mut.ltsymbol = (*selmon_mut.lt[selmon_mut.sellt]).symbol;
+            selmon_mut.ltsymbol = selmon_mut.lt[selmon_mut.sellt].symbol;
             sel = selmon_mut.sel.clone();
         }
         if sel.is_some() {
