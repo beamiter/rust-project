@@ -83,7 +83,6 @@ pub static mut screen: i32 = 0;
 pub static mut sw: i32 = 0;
 pub static mut sh: i32 = 0;
 pub static mut bh: i32 = 0;
-pub static mut lrpad: i32 = 0;
 pub static mut numlockmask: u32 = 0;
 pub static mut wmatom: [Atom; WM::WMLast as usize] = unsafe { zeroed() };
 pub static mut netatom: [Atom; NET::NetLast as usize] = unsafe { zeroed() };
@@ -391,6 +390,10 @@ impl Monitor {
             ],
         }
     }
+    pub fn intersect(&self, x: i32, y: i32, w: i32, h: i32) -> i32 {
+        max(0, min(x + w, self.wx + self.ww) - max(x, self.wx))
+            * max(0, min(y + h, self.wy + self.wh) - max(y, self.wy))
+    }
 }
 impl fmt::Display for Monitor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
@@ -419,18 +422,8 @@ impl fmt::Display for Monitor {
     }
 }
 
-#[allow(unused)]
-pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: &Monitor) -> i32 {
-    // info!("[INTERSECT]");
-    unsafe {
-        max(0, min(x + w, (*m).wx + (*m).ww) - max(x, (*m).wx))
-            * max(0, min(y + h, (*m).wy + (*m).wh) - max(y, (*m).wy))
-    }
-}
-
 pub fn TEXTW(drw0: &mut Drw, X: &str) -> u32 {
-    // warn!("[TEXTW]");
-    unsafe { drw_fontset_getwidth(drw0, X) + lrpad as u32 }
+    drw_fontset_getwidth(drw0, X) + drw0.lrpad as u32
 }
 
 #[derive(Debug, Clone)]
@@ -1350,8 +1343,10 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
     unsafe {
         let boxs;
         let boxw;
+        let lrpad;
         {
             let h = drw.as_ref().unwrap().fonts.as_ref().unwrap().borrow_mut().h;
+            lrpad = drw.as_ref().unwrap().lrpad;
             boxs = h / 9;
             boxw = h / 6 + 2;
             // info!("[drawbar] boxs: {}, boxw: {}, lrpad: {}", boxs, boxw, lrpad);
@@ -1751,7 +1746,7 @@ pub fn recttomon(x: i32, y: i32, w: i32, h: i32) -> Option<Rc<RefCell<Monitor>>>
         let mut r = selmon.clone();
         let mut m = mons.clone();
         while let Some(ref m_opt) = m {
-            let a = INTERSECT(x, y, w, h, &m_opt.borrow_mut());
+            let a = m_opt.borrow_mut().intersect(x, y, w, h);
             if a > area {
                 area = a;
                 r = m.clone();
@@ -2526,7 +2521,7 @@ pub fn setup() {
         }
         {
             let h = drw.as_ref().unwrap().fonts.as_ref().unwrap().borrow_mut().h as i32;
-            lrpad = h;
+            drw.as_mut().unwrap().lrpad = h;
             bh = h + 2;
         }
         info!("[setup] updategeom");
