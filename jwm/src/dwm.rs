@@ -57,10 +57,7 @@ use crate::config::{
     borderpx, buttons, colors, dmenucmd, dmenumon, fonts, keys, layouts, lockfullscreen, mfact,
     nmaster, resizehints, rules, showbar, snap, tagmask, tags, topbar,
 };
-use crate::drw::{
-    drw_create, drw_cur_create, drw_cur_free, drw_fontset_create, drw_fontset_getwidth, drw_free,
-    drw_map, drw_rect, drw_resize, drw_scm_create, drw_setscheme, drw_text, Clr, Col, Cur, Drw,
-};
+use crate::drw::{Clr, Col, Cur, Drw};
 use crate::xproto::{
     IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
     X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8,
@@ -422,10 +419,6 @@ impl fmt::Display for Monitor {
     }
 }
 
-pub fn TEXTW(drw0: &mut Drw, X: &str) -> u32 {
-    drw_fontset_getwidth(drw0, X) + drw0.lrpad as u32
-}
-
 #[derive(Debug, Clone)]
 pub struct Rule {
     pub class: &'static str,
@@ -721,13 +714,13 @@ pub fn cleanup() {
             cleanupmon(mons.clone());
         }
         for i in 0..CUR::CurLast as usize {
-            drw_cur_free(
-                drw.as_mut().unwrap().as_mut(),
-                cursor[i].as_mut().unwrap().as_mut(),
-            );
+            drw.as_mut()
+                .unwrap()
+                .as_mut()
+                .drw_cur_free(cursor[i].as_mut().unwrap().as_mut());
         }
         XDestroyWindow(dpy, wmcheckwin);
-        drw_free(drw.as_mut().unwrap().as_mut());
+        drw.as_mut().unwrap().as_mut().drw_free();
         XSync(dpy, False);
         XSetInputFocus(dpy, PointerRoot as u64, RevertToPointerRoot, CurrentTime);
         XDeleteProperty(dpy, root, netatom[NET::NetActiveWindow as usize]);
@@ -796,7 +789,10 @@ pub fn configurenotify(e: *mut XEvent) {
             sw = ev.width;
             sh = ev.height;
             if updategeom() || dirty {
-                drw_resize(drw.as_mut().unwrap().as_mut(), sw as u32, bh as u32);
+                drw.as_mut()
+                    .unwrap()
+                    .as_mut()
+                    .drw_resize(sw as u32, bh as u32);
                 updatebars();
                 let mut m = mons.clone();
                 while m.is_some() {
@@ -1360,15 +1356,14 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         // draw status first so it can be overdrawn by tags later.
         if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
             // status is only drawn on selected monitor.
-            drw_setscheme(
-                drw.as_mut().unwrap().as_mut(),
-                scheme[SCHEME::SchemeNorm as usize].clone(),
-            );
+            drw.as_mut()
+                .unwrap()
+                .as_mut()
+                .drw_setscheme(scheme[SCHEME::SchemeNorm as usize].clone());
             // 2px right padding.
-            tw = TEXTW(drw.as_mut().unwrap().as_mut(), &*stext) as i32 - lrpad + 2;
+            tw = drw.as_mut().unwrap().as_mut().textw(&*stext) as i32 - lrpad + 2;
             // info!("[drawbar] drw_text 0, tw: {}, ww: {}", tw, ww);
-            drw_text(
-                drw.as_mut().unwrap().as_mut(),
+            drw.as_mut().unwrap().as_mut().drw_text(
                 ww - tw,
                 0,
                 tw as u32,
@@ -1393,7 +1388,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         let mut x = 0;
         let mut w;
         for i in 0..tags.len() {
-            w = TEXTW(drw.as_mut().unwrap().as_mut(), tags[i]) as i32;
+            w = drw.as_mut().unwrap().as_mut().textw(tags[i]) as i32;
             let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
             let tagset = { m.as_ref().unwrap().borrow_mut().tagset };
             let idx = if tagset[seltags] & 1 << i > 0 {
@@ -1405,10 +1400,12 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             //     "[drawbar] seltags: {}, tagset: {:?}, i: {}: idx: {}, w: {}",
             //     seltags, tagset, i, idx, w
             // );
-            drw_setscheme(drw.as_mut().unwrap().as_mut(), scheme[idx].clone());
+            drw.as_mut()
+                .unwrap()
+                .as_mut()
+                .drw_setscheme(scheme[idx].clone());
             // info!("[drawbar] drw_text 1");
-            drw_text(
-                drw.as_mut().unwrap().as_mut(),
+            drw.as_mut().unwrap().as_mut().drw_text(
                 x,
                 0,
                 w as u32,
@@ -1424,8 +1421,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     && selmon_mut.sel.is_some()
                     && (selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 & 1 << i > 0))
                     as i32;
-                drw_rect(
-                    drw.as_mut().unwrap().as_mut(),
+                drw.as_mut().unwrap().as_mut().drw_rect(
                     x + boxs as i32,
                     boxs as i32,
                     boxw,
@@ -1436,17 +1432,17 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             }
             x += w;
         }
-        w = TEXTW(
-            drw.as_mut().unwrap().as_mut(),
-            m.as_ref().unwrap().borrow_mut().ltsymbol,
-        ) as i32;
-        drw_setscheme(
-            drw.as_mut().unwrap().as_mut(),
-            scheme[SCHEME::SchemeNorm as usize].clone(),
-        );
+        w = drw
+            .as_mut()
+            .unwrap()
+            .as_mut()
+            .textw(m.as_ref().unwrap().borrow_mut().ltsymbol) as i32;
+        drw.as_mut()
+            .unwrap()
+            .as_mut()
+            .drw_setscheme(scheme[SCHEME::SchemeNorm as usize].clone());
         // info!("[drawbar] drw_text 2, w: {}", w);
-        x = drw_text(
-            drw.as_mut().unwrap().as_mut(),
+        x = drw.as_mut().unwrap().as_mut().drw_text(
             x,
             0,
             w as u32,
@@ -1465,14 +1461,16 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 } else {
                     SCHEME::SchemeNorm
                 } as usize;
-                drw_setscheme(drw.as_mut().unwrap().as_mut(), scheme[idx].clone());
+                drw.as_mut()
+                    .unwrap()
+                    .as_mut()
+                    .drw_setscheme(scheme[idx].clone());
                 // info!(
                 //     "[drawbar] drw_text 3: idx: {}, name: {}",
                 //     idx,
                 //     sel_opt.borrow_mut().name
                 // );
-                drw_text(
-                    drw.as_mut().unwrap().as_mut(),
+                drw.as_mut().unwrap().as_mut().drw_text(
                     x,
                     0,
                     w as u32,
@@ -1483,8 +1481,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 );
                 if sel_opt.borrow_mut().isfloating {
                     info!("[drawbar] drw_rect 1");
-                    drw_rect(
-                        drw.as_mut().unwrap().as_mut(),
+                    drw.as_mut().unwrap().as_mut().drw_rect(
                         x + boxs as i32,
                         boxs as i32,
                         boxw,
@@ -1494,13 +1491,12 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     );
                 }
             } else {
-                drw_setscheme(
-                    drw.as_mut().unwrap().as_mut(),
-                    scheme[SCHEME::SchemeNorm as usize].clone(),
-                );
+                drw.as_mut()
+                    .unwrap()
+                    .as_mut()
+                    .drw_setscheme(scheme[SCHEME::SchemeNorm as usize].clone());
                 info!("[drawbar] drw_rect 2");
-                drw_rect(
-                    drw.as_mut().unwrap().as_mut(),
+                drw.as_mut().unwrap().as_mut().drw_rect(
                     x,
                     0,
                     w.try_into().unwrap(),
@@ -1512,7 +1508,10 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         }
         let barwin = { m.as_ref().unwrap().borrow_mut().barwin };
         let ww: u32 = { m.as_ref().unwrap().borrow_mut().ww } as u32;
-        drw_map(drw.as_mut().unwrap().as_mut(), barwin, 0, 0, ww, bh as u32);
+        drw.as_mut()
+            .unwrap()
+            .as_mut()
+            .drw_map(barwin, 0, 0, ww, bh as u32);
         info!("[drawbar] finish");
     }
 }
@@ -1824,7 +1823,7 @@ pub fn buttonpress(e: *mut XEvent) {
             let mut i: usize = 0;
             let mut x: u32 = 0;
             for tag_i in 0..tags.len() {
-                x += TEXTW(drw.as_mut().unwrap().as_mut(), tags[tag_i]);
+                x += drw.as_mut().unwrap().as_mut().textw(tags[tag_i]);
                 if ev.x < x as i32 {
                     break;
                 }
@@ -1836,11 +1835,11 @@ pub fn buttonpress(e: *mut XEvent) {
                 click = CLICK::ClkTagBar;
                 arg = Arg::Ui(1 << i);
                 info!("[buttonpress] ClkTagBar");
-            } else if ev.x < (x + TEXTW(drw.as_mut().unwrap().as_mut(), selmon_mut.ltsymbol)) as i32
+            } else if ev.x < (x + drw.as_mut().unwrap().as_mut().textw(selmon_mut.ltsymbol)) as i32
             {
                 click = CLICK::ClkLtSymbol;
                 info!("[buttonpress] ClkLtSymbol");
-            } else if ev.x > selmon_mut.ww - TEXTW(drw.as_mut().unwrap().as_mut(), &*stext) as i32 {
+            } else if ev.x > selmon_mut.ww - drw.as_mut().unwrap().as_mut().textw(&*stext) as i32 {
                 click = CLICK::ClkStatusText;
                 info!("[buttonpress] ClkStatusText");
             } else {
@@ -2510,11 +2509,16 @@ pub fn setup() {
         sw = XDisplayWidth(dpy, screen);
         sh = XDisplayHeight(dpy, screen);
         root = XRootWindow(dpy, screen);
-        drw = Some(Box::new(drw_create(
+        drw = Some(Box::new(Drw::drw_create(
             dpy, screen, root, sw as u32, sh as u32,
         )));
         info!("[setup] drw_fontset_create");
-        if drw_fontset_create(drw.as_mut().unwrap().as_mut(), &*fonts, fonts.len() as u64).is_none()
+        if drw
+            .as_mut()
+            .unwrap()
+            .as_mut()
+            .drw_fontset_create(&*fonts, fonts.len() as u64)
+            .is_none()
         {
             eprintln!("no fonts could be loaded");
             exit(0);
@@ -2558,16 +2562,25 @@ pub fn setup() {
         netatom[NET::NetClientList as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
 
         // init cursors
-        cursor[CUR::CurNormal as usize] =
-            drw_cur_create(drw.as_mut().unwrap().as_mut(), XC_left_ptr as i32);
-        cursor[CUR::CurResize as usize] =
-            drw_cur_create(drw.as_mut().unwrap().as_mut(), XC_sizing as i32);
-        cursor[CUR::CurMove as usize] =
-            drw_cur_create(drw.as_mut().unwrap().as_mut(), XC_fleur as i32);
+        cursor[CUR::CurNormal as usize] = drw
+            .as_mut()
+            .unwrap()
+            .as_mut()
+            .drw_cur_create(XC_left_ptr as i32);
+        cursor[CUR::CurResize as usize] = drw
+            .as_mut()
+            .unwrap()
+            .as_mut()
+            .drw_cur_create(XC_sizing as i32);
+        cursor[CUR::CurMove as usize] = drw
+            .as_mut()
+            .unwrap()
+            .as_mut()
+            .drw_cur_create(XC_fleur as i32);
         // init appearance
         scheme = vec![vec![]; colors.len()];
         for i in 0..colors.len() {
-            scheme[i] = drw_scm_create(drw.as_mut().unwrap().as_mut(), colors[i]);
+            scheme[i] = drw.as_mut().unwrap().as_mut().drw_scm_create(colors[i]);
         }
         // init bars
         info!("[setup] updatebars");
