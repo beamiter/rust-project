@@ -55,7 +55,7 @@ use std::cmp::{max, min};
 
 use crate::config::{
     borderpx, buttons, colors, dmenucmd, dmenumon, fonts, keys, layouts, lockfullscreen, mfact,
-    nmaster, resizehints, rules, showbar, snap, tags, topbar,
+    nmaster, resizehints, rules, showbar, snap, tagmask, tags, topbar,
 };
 use crate::drw::{
     drw_create, drw_cur_create, drw_cur_free, drw_fontset_create, drw_fontset_getwidth, drw_free,
@@ -317,6 +317,12 @@ impl Client {
         info!("[ISVISIBLE] mon borrow_mut valid");
         b > 0
     }
+    pub fn width(&self) -> i32 {
+        self.w + 2 * self.bw
+    }
+    pub fn height(&self) -> i32 {
+        self.h + 2 * self.bw
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -422,21 +428,6 @@ pub fn INTERSECT(x: i32, y: i32, w: i32, h: i32, m: &Monitor) -> i32 {
     }
 }
 
-pub fn WIDTH(X: &mut Client) -> i32 {
-    // info!("[WIDTH]");
-    X.w + 2 * X.bw
-}
-
-pub fn HEIGHT(X: &mut Client) -> i32 {
-    // info!("[HEIGHT]");
-    X.h + 2 * X.bw
-}
-
-pub fn TAGMASK() -> u32 {
-    // warn!("[TAGMASK]");
-    (1 << tags.len()) - 1
-}
-
 pub fn TEXTW(drw0: &mut Drw, X: &str) -> u32 {
     // warn!("[TEXTW]");
     unsafe { drw_fontset_getwidth(drw0, X) + lrpad as u32 }
@@ -522,7 +513,7 @@ pub fn applyrules(c: &Rc<RefCell<Client>>) {
         if !ch.res_name.is_null() {
             XFree(ch.res_name as *mut _);
         }
-        let condition = c.tags0 & TAGMASK();
+        let condition = c.tags0 & tagmask;
         c.tags0 = if condition > 0 {
             condition
         } else {
@@ -602,12 +593,14 @@ pub fn applysizehints(
         *w = 1.max(*w);
         *h = 1.max(*h);
         if interact {
-            let mut cc = c.as_ref().borrow_mut();
+            let cc = c.as_ref().borrow_mut();
+            let width = cc.width();
+            let height = cc.height();
             if *x > sw {
-                *x = sw - WIDTH(&mut *cc);
+                *x = sw - width;
             }
             if *y > sh {
-                *y = sh - HEIGHT(&mut *cc);
+                *y = sh - height;
             }
             if *x + *w + 2 * cc.bw < 0 {
                 *x = 0;
@@ -621,16 +614,16 @@ pub fn applysizehints(
             let ww;
             let wh;
             {
-                let mut cc = c.as_ref().borrow_mut();
+                let cc = c.as_ref().borrow_mut();
                 wx = cc.mon.as_ref().unwrap().borrow_mut().wx;
                 wy = cc.mon.as_ref().unwrap().borrow_mut().wy;
                 ww = cc.mon.as_ref().unwrap().borrow_mut().ww;
                 wh = cc.mon.as_ref().unwrap().borrow_mut().wh;
-                let width = WIDTH(&mut *cc);
+                let width = cc.width();
+                let height = cc.height();
                 if *x >= wx + ww {
                     *x = wx + ww - width;
                 }
-                let height = HEIGHT(&mut *cc);
                 if *y >= wy + wh {
                     *y = wy + wh - height;
                 }
@@ -1048,12 +1041,7 @@ pub fn showhide(c: Option<Rc<RefCell<Client>>>) {
                 y = cc.y;
                 win = cc.win;
             }
-            XMoveWindow(
-                dpy,
-                win,
-                WIDTH(&mut *c.as_ref().unwrap().borrow_mut()) * -2,
-                y,
-            );
+            XMoveWindow(dpy, win, c.as_ref().unwrap().borrow_mut().width() * -2, y);
         }
     }
 }
@@ -1106,11 +1094,11 @@ pub fn configurerequest(e: *mut XEvent) {
                     }
                     if (c_mut.x + c_mut.w) > mx + mw && c_mut.isfloating {
                         // center in x direction
-                        c_mut.x = mx + (mw / 2 - WIDTH(&mut *c_mut) / 2);
+                        c_mut.x = mx + (mw / 2 - c_mut.width() / 2);
                     }
                     if (c_mut.y + c_mut.h) > my + mh && c_mut.isfloating {
                         // center in y direction
-                        c_mut.y = my + (mh / 2 - HEIGHT(&mut *c_mut) / 2);
+                        c_mut.y = my + (mh / 2 - c_mut.height() / 2);
                     }
                 }
                 if (ev.value_mask & (CWX | CWY) as u64) > 0
@@ -2122,7 +2110,7 @@ pub fn tile(m: *mut Monitor) {
                     h as i32 - (2 * bw),
                     false,
                 );
-                let height = HEIGHT(&mut *c.as_ref().unwrap().borrow_mut()) as u32;
+                let height = c.as_ref().unwrap().borrow_mut().height() as u32;
                 if my + height < (*m).wh as u32 {
                     my += height;
                 }
@@ -2137,7 +2125,7 @@ pub fn tile(m: *mut Monitor) {
                     h as i32 - (2 * bw),
                     false,
                 );
-                let height = HEIGHT(&mut *c.as_ref().unwrap().borrow_mut());
+                let height = c.as_ref().unwrap().borrow_mut().height();
                 if ty as i32 + height < (*m).wh {
                     ty += height as u32;
                 }
@@ -2233,8 +2221,8 @@ pub fn tag(arg: *const Arg) {
     unsafe {
         if let Arg::Ui(ui) = *arg {
             let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
-            if sel.is_some() && (ui & TAGMASK()) > 0 {
-                sel.as_ref().unwrap().borrow_mut().tags0 = ui & TAGMASK();
+            if sel.is_some() && (ui & tagmask) > 0 {
+                sel.as_ref().unwrap().borrow_mut().tags0 = ui & tagmask;
                 focus(None);
                 arrange(selmon.clone());
             }
@@ -2444,14 +2432,14 @@ pub fn view(arg: *const Arg) {
         if let Arg::Ui(ui) = *arg {
             info!("[view] ui: {}", ui);
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-            if (ui & TAGMASK()) == selmon_mut.tagset[selmon_mut.seltags] {
+            if (ui & tagmask) == selmon_mut.tagset[selmon_mut.seltags] {
                 return;
             }
             // toggle sel tagset.
             selmon_mut.seltags ^= 1;
-            if ui & TAGMASK() > 0 {
+            if ui & tagmask > 0 {
                 let index = selmon_mut.seltags;
-                selmon_mut.tagset[index] = ui & TAGMASK();
+                selmon_mut.tagset[index] = ui & tagmask;
             }
         } else {
             return;
@@ -2465,7 +2453,7 @@ pub fn toggleview(arg: *const Arg) {
     unsafe {
         if let Arg::Ui(ui) = *arg {
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-            let newtagset = selmon_mut.tagset[selmon_mut.seltags] ^ (ui & TAGMASK());
+            let newtagset = selmon_mut.tagset[selmon_mut.seltags] ^ (ui & tagmask);
             if newtagset > 0 {
                 let index = selmon_mut.seltags;
                 selmon_mut.tagset[index] = newtagset;
@@ -2483,7 +2471,7 @@ pub fn toggletag(arg: *const Arg) {
             return;
         }
         if let Arg::Ui(ui) = *arg {
-            let newtags = selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 ^ (ui & TAGMASK());
+            let newtags = selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 ^ (ui & tagmask);
             if newtags > 0 {
                 selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 = newtags;
                 focus(None);
@@ -2801,6 +2789,7 @@ pub fn movemouse(_arg: *const Arg) {
                     }
                 }
                 MotionNotify => {
+                    info!("[movemouse] MotionNotify");
                     if ev.motion.time - lasttime <= (1000 / 60) {
                         continue;
                     }
@@ -2809,30 +2798,26 @@ pub fn movemouse(_arg: *const Arg) {
                     let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
                     let mut nx = ocx + ev.motion.x - x;
                     let mut ny = ocy + ev.motion.y - y;
+                    let width = { c.as_ref().unwrap().borrow_mut().width() };
+                    let height = { c.as_ref().unwrap().borrow_mut().height() };
                     if (selmon_mut.wx - nx).abs() < snap as i32 {
                         nx = selmon_mut.wx;
-                    } else if ((selmon_mut.wx + selmon_mut.ww)
-                        - (nx + WIDTH(&mut *c.as_ref().unwrap().borrow_mut())))
-                    .abs()
-                        < snap as i32
-                    {
-                        nx = selmon_mut.wx + selmon_mut.ww
-                            - WIDTH(&mut *c.as_ref().unwrap().borrow_mut());
+                    } else if ((selmon_mut.wx + selmon_mut.ww) - (nx + width)).abs() < snap as i32 {
+                        nx = selmon_mut.wx + selmon_mut.ww - width;
                     }
                     if (selmon_mut.wy - ny).abs() < snap as i32 {
                         ny = selmon_mut.wy;
-                    } else if ((selmon_mut.wy + selmon_mut.wh)
-                        - (ny + HEIGHT(&mut *c.as_ref().unwrap().borrow_mut())))
-                    .abs()
-                        < snap as i32
+                    } else if ((selmon_mut.wy + selmon_mut.wh) - (ny + height)).abs() < snap as i32
                     {
-                        ny = selmon_mut.wy + selmon_mut.wh
-                            - HEIGHT(&mut *c.as_ref().unwrap().borrow_mut());
+                        ny = selmon_mut.wy + selmon_mut.wh - height;
                     }
-                    if !c.as_ref().unwrap().borrow_mut().isfloating
-                        && (*selmon_mut.lt[selmon_mut.sellt]).arrange.is_some()
-                        && (nx - c.as_ref().unwrap().borrow_mut().x).abs() > snap as i32
-                        || (ny - c.as_ref().unwrap().borrow_mut().y).abs() > snap as i32
+                    let isfloating = c.as_ref().unwrap().borrow_mut().isfloating;
+                    let x = c.as_ref().unwrap().borrow_mut().x;
+                    let y = c.as_ref().unwrap().borrow_mut().y;
+                    if !isfloating
+                        && selmon_mut.lt[selmon_mut.sellt].arrange.is_some()
+                        && (nx - x).abs() > snap as i32
+                        || (ny - y).abs() > snap as i32
                     {
                         togglefloating(null_mut());
                     }
@@ -3397,7 +3382,7 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
         let wx;
         let wy;
         {
-            width = WIDTH(&mut c.as_ref().unwrap().borrow_mut());
+            width = c.as_ref().unwrap().borrow_mut().width();
             let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
             ww = mon.as_ref().unwrap().borrow_mut().ww;
             wh = mon.as_ref().unwrap().borrow_mut().wh;
@@ -3408,7 +3393,7 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             if c.as_ref().unwrap().borrow_mut().x + width > wx + ww {
                 c.as_ref().unwrap().borrow_mut().x = wx + ww - width;
             }
-            let height = HEIGHT(&mut c.as_ref().unwrap().borrow_mut());
+            let height = c.as_ref().unwrap().borrow_mut().height();
             if c.as_ref().unwrap().borrow_mut().y + height > wy + wh {
                 c.as_ref().unwrap().borrow_mut().y = wy + wh - height;
             }
