@@ -112,7 +112,7 @@ fn main() -> glib::ExitCode {
             if keyval == Key::c || keyval == Key::v {
                 // println!("wtf1");
             }
-            true.into()
+            false.into()
         });
         key_controller.connect_key_released(move |_controller, keyval, _keycode, state| {
             // println!("connect_key_released state:{:?}, keyval: {}", state, keyval);
