@@ -1,4 +1,6 @@
-use gtk4::gdk::ffi::{GDK_KEY_Control_L, GdkModifierType, GDK_BUTTON_PRIMARY};
+use gtk4::gdk::ffi::GDK_BUTTON_PRIMARY;
+use gtk4::gdk::Key;
+use gtk4::gdk::ModifierType;
 use gtk4::gdk::RGBA;
 use gtk4::gio::Cancellable;
 use gtk4::glib::SpawnFlags;
@@ -8,7 +10,6 @@ use gtk4::{glib, Application, ApplicationWindow};
 use gtk4::{EventControllerKey, GestureClick};
 use vte4::{CursorBlinkMode, CursorShape, PtyFlags, Terminal};
 use vte4::{TerminalExt, TerminalExtManual};
-use gdk4;
 
 fn main() -> glib::ExitCode {
     // Create a new GTK application
@@ -31,8 +32,10 @@ fn main() -> glib::ExitCode {
             .hexpand(true)
             .vexpand(true)
             .name("term_name")
+            .can_focus(true)
             .allow_hyperlink(true)
             .bold_is_bright(true)
+            .input_enabled(true)
             .scrollback_lines(5000)
             .cursor_blink_mode(CursorBlinkMode::Off)
             .cursor_shape(CursorShape::Block)
@@ -72,7 +75,8 @@ fn main() -> glib::ExitCode {
         // Set teh terminal's font
         terminal.set_font(Some(&font_desc));
 
-        let regex_pattern = vte4::Regex::for_match("[a-z]+://[[:graph:]]+", 0);
+        // (TODO) has bug
+        let regex_pattern = vte4::Regex::for_match(r"[a-z]+://[[:graph:]]+", 0);
         // let regex_pattern = vte::Regex::new(r"https?://[^\s]+", 0);
         terminal.match_add_regex(&regex_pattern.unwrap(), 0);
 
@@ -80,26 +84,46 @@ fn main() -> glib::ExitCode {
             println!("Bell signal received");
         });
 
+        let window_clone = window.clone();
+        terminal.connect_child_exited(move |_, _| {
+            window_clone.destroy();
+        });
+
         let click_controller = GestureClick::new();
         // 0 means all buttons
         click_controller.set_button(0);
         click_controller.connect_pressed(move |controller, n_press, _x, _y| {
-            println!("n_press: {}", n_press);
+            // println!("n_press: {}", n_press);
             if n_press == 1 {
                 let button = controller.current_button();
-                println!("button: {}", button);
+                // println!("button: {}", button);
                 if button == GDK_BUTTON_PRIMARY as u32 {}
             }
         });
         // Add the controller to the terminal
-        terminal.add_controller(click_controller);
+        // terminal.add_controller(click_controller);
 
         let key_controller = EventControllerKey::new();
-        let mut ctrl_pressed = false;
         key_controller.connect_key_pressed(move |_controller, keyval, _keycode, state| {
-            if keyval == GDK_KEY_Control_L {}
-            false.into()
+            println!("connect_key_pressed state:{:?}, keyval: {}", state, keyval);
+            if state == ModifierType::CONTROL_MASK {
+                // println!("wtf0");
+            }
+            if keyval == Key::c || keyval == Key::v {
+                // println!("wtf1");
+            }
+            true.into()
         });
+        key_controller.connect_key_released(move |_controller, keyval, _keycode, state| {
+            // println!("connect_key_released state:{:?}, keyval: {}", state, keyval);
+            if state == ModifierType::CONTROL_MASK {
+                // println!("wtf0");
+            }
+            if keyval == Key::c || keyval == Key::v {
+                // println!("wtf1");
+            }
+        });
+        terminal.add_controller(key_controller);
 
         let argv = &["/bin/bash", "-/bin/bash"];
         let envv: &[&str] = &[];

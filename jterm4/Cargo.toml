@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+gdk4 = "0.9.2"
 gtk4 = "0.8.2"
 pango = "0.20.4"
 vte4 = "0.7.1"
