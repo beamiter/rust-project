@@ -76,7 +76,7 @@ fn main() -> glib::ExitCode {
         terminal.set_color_cursor_foreground(Some(&RGBA::parse("#1b315e").unwrap()));
 
         // Create a new FontDescription
-        let font_desc = FontDescription::from_string("JetBrainsMono Nerd Font Regular 12");
+        let font_desc = FontDescription::from_string("SauceCodePro Nerd Font Regular 12");
         // Set the terminal's font
         terminal.set_font(Some(&font_desc));
 
