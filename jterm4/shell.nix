@@ -7,7 +7,6 @@ pkgs.mkShell {
     pkgs.rustfmt        # Rust 代码格式化工具
     pkgs.clippy         # Rust 静态分析工具，用于捕获常见错误
     pkgs.gtk4
-    pkgs.gdk4
     pkgs.pkg-config
     pkgs.vte
     pkgs.vte-gtk4
