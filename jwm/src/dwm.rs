@@ -22,16 +22,16 @@ use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
 
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
-    AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadMatch, BadWindow, Below,
-    ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBackPixmap, CWBorderWidth,
-    CWCursor, CWEventMask, CWHeight, CWOverrideRedirect, CWSibling, CWStackMode, CWWidth,
-    ClientMessage, ConfigureNotify, ConfigureRequest, ControlMask, CopyFromParent, CurrentTime,
-    DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose, ExposureMask, False,
-    FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess, InputHint, IsViewable,
-    KeyPress, KeySym, LASTEvent, LeaveWindowMask, LockMask, MapRequest, MappingKeyboard,
-    MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify, NoEventMask,
-    NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize,
-    ParentRelative, PointerMotionMask, PointerRoot, PropModeAppend, PropModeReplace,
+    AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow,
+    Below, ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBackPixmap,
+    CWBorderWidth, CWCursor, CWEventMask, CWHeight, CWOverrideRedirect, CWSibling, CWStackMode,
+    CWWidth, ClientMessage, ConfigureNotify, ConfigureRequest, ControlMask, CopyFromParent,
+    CurrentTime, DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose,
+    ExposureMask, False, FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess,
+    InputHint, IsViewable, KeyPress, KeySym, LASTEvent, LeaveWindowMask, LockMask, MapRequest,
+    MappingKeyboard, MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify,
+    NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc,
+    PSize, ParentRelative, PointerMotionMask, PointerRoot, PropModeAppend, PropModeReplace,
     PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer, RevertToPointerRoot,
     ShiftMask, StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask, Success,
     Time, True, UnmapNotify, Window, XAllowEvents, XChangeProperty, XChangeWindowAttributes,
@@ -1910,6 +1910,7 @@ pub fn xerrorstart(_: *mut Display, _: *mut XErrorEvent) -> i32 {
 // on UnmapNotify's). Other types of errors call xlibs default error handler, which may call exit.
 pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
     info!("[xerror]");
+    let hack_request_code: u8 = 139;
     unsafe {
         if (*ee).error_code == BadWindow
             || ((*ee).request_code == X_SetInputFocus && (*ee).error_code == BadMatch)
@@ -1920,6 +1921,7 @@ pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
             || ((*ee).request_code == X_GrabButton && (*ee).error_code == BadAccess)
             || ((*ee).request_code == X_GrabKey && (*ee).error_code == BadAccess)
             || ((*ee).request_code == X_CopyArea && (*ee).error_code == BadDrawable)
+            || ((*ee).request_code == hack_request_code && (*ee).error_code == BadLength)
         {
             return 0;
         }
