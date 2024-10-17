@@ -91,6 +91,7 @@ pub struct Drw {
     pub h: u32,
     pub dpy: *mut xlib::Display,
     pub screen: i32,
+    // sum of left and right padding for text
     pub lrpad: i32,
     pub root: Window,
     pub drawable: Drawable,

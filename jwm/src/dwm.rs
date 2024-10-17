@@ -55,7 +55,7 @@ use std::cmp::{max, min};
 
 use crate::config::{
     borderpx, buttons, colors, dmenucmd, dmenumon, fonts, keys, layouts, lockfullscreen, mfact,
-    nmaster, resizehints, rules, showbar, snap, tagmask, tags, topbar,
+    nmaster, resizehints, rules, showbar, sidepad, snap, tagmask, tags, topbar, vertpad,
 };
 use crate::drw::{Clr, Col, Cur, Drw};
 use crate::xproto::{
@@ -80,6 +80,8 @@ pub static mut screen: i32 = 0;
 pub static mut sw: i32 = 0;
 pub static mut sh: i32 = 0;
 pub static mut bh: i32 = 0;
+pub static mut vp: i32 = 0; // vertical padding for bar
+pub static mut sp: i32 = 0; // side padding for bar
 pub static mut numlockmask: u32 = 0;
 pub static mut wmatom: [Atom; WM::WMLast as usize] = unsafe { zeroed() };
 pub static mut netatom: [Atom; NET::NetLast as usize] = unsafe { zeroed() };
@@ -734,13 +736,14 @@ pub fn cleanupmon(mon: Option<Rc<RefCell<Monitor>>>) {
             mons = next;
         } else {
             let mut m = mons.clone();
-            while m.is_some()
-                && !Rc::ptr_eq(
-                    m.as_ref().unwrap().borrow_mut().next.as_ref().unwrap(),
+            while let Some(ref m_opt) = m {
+                if Rc::ptr_eq(
+                    m_opt.borrow_mut().next.as_ref().unwrap(),
                     mon.as_ref().unwrap(),
-                )
-            {
-                let next = m.as_ref().unwrap().borrow_mut().next.clone();
+                ) {
+                    break;
+                }
+                let next = m_opt.borrow_mut().next.clone();
                 m = next;
             }
             m.as_ref().unwrap().borrow_mut().next = mon.as_ref().unwrap().borrow_mut().next.clone();
@@ -795,16 +798,16 @@ pub fn configurenotify(e: *mut XEvent) {
                     .drw_resize(sw as u32, bh as u32);
                 updatebars();
                 let mut m = mons.clone();
-                while m.is_some() {
-                    let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
+                while let Some(m_opt) = m {
+                    let mut c = m_opt.borrow_mut().clients.clone();
                     while c.is_some() {
                         if c.as_ref().unwrap().borrow_mut().isfullscreen {
                             resizeclient(
                                 &mut *c.as_ref().unwrap().borrow_mut(),
-                                m.as_ref().unwrap().borrow_mut().mx,
-                                m.as_ref().unwrap().borrow_mut().my,
-                                m.as_ref().unwrap().borrow_mut().mw,
-                                m.as_ref().unwrap().borrow_mut().mh,
+                                m_opt.borrow_mut().mx,
+                                m_opt.borrow_mut().my,
+                                m_opt.borrow_mut().mw,
+                                m_opt.borrow_mut().mh,
                             );
                         }
                         let next = c.as_ref().unwrap().borrow_mut().next.clone();
@@ -812,13 +815,13 @@ pub fn configurenotify(e: *mut XEvent) {
                     }
                     XMoveResizeWindow(
                         dpy,
-                        m.as_ref().unwrap().borrow_mut().barwin,
-                        m.as_ref().unwrap().borrow_mut().wx,
-                        m.as_ref().unwrap().borrow_mut().by,
-                        m.as_ref().unwrap().borrow_mut().ww as u32,
+                        m_opt.borrow_mut().barwin,
+                        m_opt.borrow_mut().wx + sp,
+                        m_opt.borrow_mut().by + vp,
+                        (m_opt.borrow_mut().ww - 2 * sp) as u32,
                         bh as u32,
                     );
-                    let next = m.as_ref().unwrap().borrow_mut().next.clone();
+                    let next = m_opt.borrow_mut().next.clone();
                     m = next;
                 }
                 focus(None);
@@ -1408,9 +1411,15 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             // 2px right padding.
             tw = drw.as_mut().unwrap().textw(&*stext) as i32 - lrpad + 2;
             // info!("[drawbar] drw_text 0, tw: {}, ww: {}", tw, ww);
-            drw.as_mut()
-                .unwrap()
-                .drw_text(ww - tw, 0, tw as u32, bh as u32, 0, &*stext, 0);
+            drw.as_mut().unwrap().drw_text(
+                ww - tw - 2 * sp,
+                0,
+                tw as u32,
+                bh as u32,
+                0,
+                &*stext,
+                0,
+            );
             // draw status bar here
         }
         {
@@ -1513,7 +1522,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 drw.as_mut().unwrap().drw_text(
                     x,
                     0,
-                    w as u32,
+                    (w - 2 * sp) as u32,
                     bh as u32,
                     (lrpad / 2) as u32,
                     &sel_opt.borrow_mut().name,
@@ -1536,14 +1545,9 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     .as_mut()
                     .drw_setscheme(scheme[SCHEME::SchemeNorm as usize].clone());
                 info!("[drawbar] drw_rect 2");
-                drw.as_mut().unwrap().drw_rect(
-                    x,
-                    0,
-                    w.try_into().unwrap(),
-                    bh.try_into().unwrap(),
-                    1,
-                    1,
-                );
+                drw.as_mut()
+                    .unwrap()
+                    .drw_rect(x, 0, (w - 2 * sp) as u32, bh as u32, 1, 1);
             }
         }
         let barwin = { m.as_ref().unwrap().borrow_mut().barwin };
@@ -2037,19 +2041,19 @@ pub fn updatebars() {
         ch.res_name = c_string.as_ptr() as *mut _;
         ch.res_class = c_string.as_ptr() as *mut _;
         let mut m = mons.clone();
-        while m.is_some() {
-            if m.as_ref().unwrap().borrow_mut().barwin > 0 {
+        while let Some(ref m_opt) = m {
+            if m_opt.borrow_mut().barwin > 0 {
                 continue;
             }
-            let wx = m.as_ref().unwrap().borrow_mut().wx;
-            let by = m.as_ref().unwrap().borrow_mut().by;
-            let ww = m.as_ref().unwrap().borrow_mut().ww as u32;
-            m.as_ref().unwrap().borrow_mut().barwin = XCreateWindow(
+            let wx = m_opt.borrow_mut().wx;
+            let by = m_opt.borrow_mut().by;
+            let ww = m_opt.borrow_mut().ww as u32;
+            m_opt.borrow_mut().barwin = XCreateWindow(
                 dpy,
                 root,
-                wx,
-                by,
-                ww,
+                wx + sp,
+                by + vp,
+                ww - 2 * sp as u32,
                 bh as u32,
                 0,
                 XDefaultDepth(dpy, screen),
@@ -2058,7 +2062,7 @@ pub fn updatebars() {
                 CWOverrideRedirect | CWBackPixmap | CWEventMask,
                 &mut wa,
             );
-            let barwin = m.as_ref().unwrap().borrow_mut().barwin;
+            let barwin = m_opt.borrow_mut().barwin;
             XDefineCursor(
                 dpy,
                 barwin,
@@ -2066,7 +2070,7 @@ pub fn updatebars() {
             );
             XMapRaised(dpy, barwin);
             XSetClassHint(dpy, barwin, &mut ch);
-            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            let next = m_opt.borrow_mut().next.clone();
             m = next;
         }
     }
@@ -2077,11 +2081,15 @@ pub fn updatebarpos(m: &mut Monitor) {
         m.wy = m.my;
         m.wh = m.mh;
         if m.showbar0 {
-            m.wh -= bh;
-            m.by = if m.topbar0 { m.wy } else { m.wy + m.wh };
-            m.wy = if m.topbar0 { m.wy + bh } else { m.wy };
+            m.wh = m.wh - vertpad - bh;
+            m.by = if m.topbar0 {
+                m.wy
+            } else {
+                m.wy + m.wh + vertpad
+            };
+            m.wy = if m.topbar0 { m.wy + bh + vp } else { m.wy };
         } else {
-            m.by = -bh;
+            m.by = -bh - vp;
         }
     }
 }
@@ -2189,9 +2197,9 @@ pub fn togglebar(_arg: *const Arg) {
             XMoveResizeWindow(
                 dpy,
                 selmon_mut.barwin,
-                selmon_mut.wx,
-                selmon_mut.by,
-                selmon_mut.ww as u32,
+                selmon_mut.wx + sp,
+                selmon_mut.by + vp,
+                (selmon_mut.ww - 2 * sp) as u32,
                 bh as u32,
             );
         }
@@ -2570,6 +2578,8 @@ pub fn setup() {
             bh = h + 2;
         }
         println!("here");
+        sp = sidepad;
+        vp = if topbar { vertpad } else { -vertpad };
         info!("[setup] updategeom");
         updategeom();
         // init atoms
@@ -3214,13 +3224,10 @@ pub fn drawbars() {
     info!("[drawbars]");
     unsafe {
         let mut m = mons.clone();
-        while m.is_some() {
-            info!(
-                "[drawbars] barwin: {}",
-                m.as_ref().unwrap().borrow_mut().barwin
-            );
+        while let Some(ref m_opt) = m {
+            info!("[drawbars] barwin: {}", m_opt.borrow_mut().barwin);
             drawbar(m.clone());
-            let next = m.as_ref().unwrap().borrow_mut().next.clone();
+            let next = m_opt.borrow_mut().next.clone();
             m = next;
         }
     }
@@ -3710,9 +3717,8 @@ pub fn updategeom() -> bool {
                     }
                     m = next;
                 }
-                if m.is_some() {
-                    m.as_ref().unwrap().borrow_mut().next =
-                        Some(Rc::new(RefCell::new(createmon())));
+                if let Some(ref m_opt) = m {
+                    m_opt.borrow_mut().next = Some(Rc::new(RefCell::new(createmon())));
                 } else {
                     mons = Some(Rc::new(RefCell::new(createmon())));
                 }
