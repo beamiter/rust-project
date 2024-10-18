@@ -1331,47 +1331,116 @@ pub fn dirtomon(dir: i32) -> Option<Rc<RefCell<Monitor>>> {
         m
     }
 }
-pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh_in: u32, mut text_in: &str) -> i32 {
+#[derive(Debug)]
+enum TextElement {
+    WithCaret(String),
+    WithoutCaret(String),
+}
+fn parse_string(input: &str) -> Vec<TextElement> {
+    let mut elements = Vec::new();
+    let mut current_segment = String::new();
+    let mut inside_caret = false;
+
+    for c in input.chars() {
+        match c {
+            '^' => {
+                if !current_segment.is_empty() {
+                    // Push the current segment into the appropriate category.
+                    if inside_caret {
+                        elements.push(TextElement::WithCaret(current_segment));
+                    } else {
+                        elements.push(TextElement::WithoutCaret(current_segment));
+                    }
+                    current_segment = String::new();
+                }
+                inside_caret = !inside_caret;
+            }
+            _ => {
+                // Add the current character to the current segment.
+                current_segment.push(c);
+            }
+        }
+    }
+
+    // Add any remaining segment after the last caret or at the end of the string.
+    if !current_segment.is_empty() {
+        if inside_caret {
+            elements.push(TextElement::WithCaret(current_segment));
+        } else {
+            elements.push(TextElement::WithoutCaret(current_segment));
+        }
+    }
+
+    elements
+}
+
+pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> i32 {
     // compute width of the status text
-    // Create a regular expression to match any characters between "^" and "^"
-    let re = Regex::new(r"\^(.*?)\^").unwrap();
-    // Find all matches and collect them into a Vec<String>
-    let captured_strings: Vec<String> = re
-        .captures_iter(text_in)
-        .filter_map(|cap| cap.get(1))
-        .map(|m| m.as_str().to_owned())
-        .collect();
-    println!("{:?}", captured_strings);
     let mut w: u32 = 0;
+    let parsed_elements = parse_string(text0);
     unsafe {
         let drw_mut = drw.as_mut().unwrap();
-        for val in captured_strings.clone() {
-            w += drw_mut.textw(&val) - drw_mut.lrpad as u32;
-            if val.starts_with('f') {
-                match val[1..].parse::<u32>() {
-                    Ok(num) => w += num,
-                    Err(e) => eprintln!("Failed to parse the number: {}", e),
+        for element in &parsed_elements {
+            match element {
+                TextElement::WithoutCaret(val) => {
+                    w += drw_mut.textw(&val) - drw_mut.lrpad as u32;
+                    if val.starts_with('f') {
+                        match val[1..].parse::<u32>() {
+                            Ok(num) => w += num,
+                            Err(e) => eprintln!("Failed to parse the number: {}", e),
+                        }
+                    }
                 }
+                _ => {}
             }
         }
         w += 2; // 1px padding on both sides
         let ww = { m.as_ref().unwrap().borrow_mut().ww };
-        let mut ret = ww - w as i32;
+        let ret = ww - w as i32;
         let mut x = ret;
         drw_mut.drw_setscheme(scheme[0].clone());
         drw_mut.scheme[Col::ColFg as usize] =
             scheme[SCHEME::SchemeNorm as usize][Col::ColFg as usize].clone();
         drw_mut.scheme[Col::ColBg as usize] =
             scheme[SCHEME::SchemeNorm as usize][Col::ColBg as usize].clone();
-        drw_mut.drw_rect(x, 0, w, bh_in, 1, 1);
+        drw_mut.drw_rect(x, 0, w, bh0, 1, 1);
         x += 1;
-        for val in captured_strings {
-            if val.starts_with('c') {
-            } else if val.starts_with('b') {
-            } else if val.starts_with('d') {
-            } else if val.starts_with('r') {
-            } else if val.starts_with('f') {
-            } else {
+        for element in &parsed_elements {
+            println!("element {:?}", element);
+            match element {
+                TextElement::WithoutCaret(val) => {
+                    drw_mut.drw_text(x, 0, w, bh0, 0, &val, 0);
+                }
+                TextElement::WithCaret(val) => {
+                    if val.starts_with('c') {
+                        let color = &val[1..];
+                        drw_mut.scheme[Col::ColFg as usize] = drw_mut.drw_clr_create(color);
+                    } else if val.starts_with('b') {
+                        let color = &val[1..];
+                        drw_mut.scheme[Col::ColBg as usize] = drw_mut.drw_clr_create(color);
+                    } else if val.starts_with('d') {
+                        drw_mut.scheme[Col::ColFg as usize] =
+                            scheme[SCHEME::SchemeNorm as usize][Col::ColFg as usize].clone();
+                        drw_mut.scheme[Col::ColBg as usize] =
+                            scheme[SCHEME::SchemeNorm as usize][Col::ColBg as usize].clone();
+                    } else if val.starts_with('r') {
+                        let numbers: Result<Vec<i32>, _> =
+                            (&val[1..]).split(',').map(|s| s.parse::<i32>()).collect();
+                        if let Ok(numbers) = numbers {
+                            println!("numbers: {:?}", numbers);
+                            let rx = numbers[0];
+                            let ry = numbers[1];
+                            let rw = numbers[2];
+                            let rh = numbers[3];
+                            drw_mut.drw_rect(rx + x, ry, rw as u32, rh as u32, 1, 0);
+                        }
+                    } else if val.starts_with('f') {
+                        match val[1..].parse::<u32>() {
+                            Ok(num) => x += num as i32,
+                            Err(e) => eprintln!("Failed to parse the number: {}", e),
+                        }
+                    }
+                }
             }
         }
         return ret;
@@ -1404,23 +1473,24 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         let ww = { m.as_ref().unwrap().borrow_mut().ww };
         // draw status first so it can be overdrawn by tags later.
         if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
-            // status is only drawn on selected monitor.
-            drw.as_mut()
-                .unwrap()
-                .drw_setscheme(scheme[SCHEME::SchemeNorm as usize].clone());
-            // 2px right padding.
-            tw = drw.as_mut().unwrap().textw(&*stext) as i32 - lrpad + 2;
-            // info!("[drawbar] drw_text 0, tw: {}, ww: {}", tw, ww);
-            drw.as_mut().unwrap().drw_text(
-                ww - tw - 2 * sp,
-                0,
-                tw as u32,
-                bh as u32,
-                0,
-                &*stext,
-                0,
-            );
+            // // status is only drawn on selected monitor.
+            // drw.as_mut()
+            //     .unwrap()
+            //     .drw_setscheme(scheme[SCHEME::SchemeNorm as usize].clone());
+            // // 2px right padding.
+            // tw = drw.as_mut().unwrap().textw(&*stext) as i32 - lrpad + 2;
+            // // info!("[drawbar] drw_text 0, tw: {}, ww: {}", tw, ww);
+            // drw.as_mut().unwrap().drw_text(
+            //     ww - tw - 2 * sp,
+            //     0,
+            //     tw as u32,
+            //     bh as u32,
+            //     0,
+            //     &*stext,
+            //     0,
+            // );
             // draw status bar here
+            tw = ww - drawstatusbar(m.clone(), bh as u32, &*stext);
         }
         {
             let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
@@ -2577,7 +2647,6 @@ pub fn setup() {
             drw.as_mut().unwrap().lrpad = h;
             bh = h + 2;
         }
-        println!("here");
         sp = sidepad;
         vp = if topbar { vertpad } else { -vertpad };
         info!("[setup] updategeom");
