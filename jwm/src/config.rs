@@ -28,10 +28,18 @@ pub const col_gray2: &str = "#444444";
 pub const col_gray3: &str = "#bbbbbb";
 pub const col_gray4: &str = "#eeeeee";
 pub const col_cyan: &str = "#005577";
+pub const col_black: &str = "#000000";
+pub const col_red: &str = "#ff0000";
+pub const col_yellow: &str = "#ffff00";
+pub const col_white: &str = "#ffffff";
 
-pub const colors: [&[&'static str; 3]; 2] = [
+pub const colors: [&[&'static str; 3]; 5] = [
+    // fg | bg | border
     &[col_gray3, col_gray1, col_gray2],
     &[col_gray4, col_cyan, col_cyan],
+    &[col_gray3, col_gray1, col_gray2],
+    &[col_black, col_yellow, col_red],
+    &[col_white, col_red, col_red],
 ];
 
 pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
@@ -133,7 +141,12 @@ pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
         Key::new(MODKEY, XK_k.into(), Some(dwm::focusstack), dwm::Arg::I(-1)),
         Key::new(MODKEY, XK_i.into(), Some(dwm::incnmaster), dwm::Arg::I(1)),
         Key::new(MODKEY, XK_d.into(), Some(dwm::incnmaster), dwm::Arg::I(-1)),
-        Key::new(MODKEY, XK_h.into(), Some(dwm::setmfact), dwm::Arg::F(-0.025)),
+        Key::new(
+            MODKEY,
+            XK_h.into(),
+            Some(dwm::setmfact),
+            dwm::Arg::F(-0.025),
+        ),
         Key::new(MODKEY, XK_l.into(), Some(dwm::setmfact), dwm::Arg::F(0.025)),
         Key::new(MODKEY, XK_Return.into(), Some(dwm::zoom), dwm::Arg::I(0)),
         Key::new(MODKEY, XK_Tab.into(), Some(dwm::view), dwm::Arg::Ui(0)),

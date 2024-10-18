@@ -720,7 +720,7 @@ pub fn cleanup() {
                 .drw_cur_free(cursor[i].as_mut().unwrap().as_mut());
         }
         XDestroyWindow(dpy, wmcheckwin);
-        drw.as_mut().unwrap().as_mut().drw_free();
+        drw.as_mut().unwrap().drw_free();
         XSync(dpy, False);
         XSetInputFocus(dpy, PointerRoot as u64, RevertToPointerRoot, CurrentTime);
         XDeleteProperty(dpy, root, netatom[NET::NetActiveWindow as usize]);
@@ -1328,6 +1328,52 @@ pub fn dirtomon(dir: i32) -> Option<Rc<RefCell<Monitor>>> {
         m
     }
 }
+pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh_in: u32, mut text_in: &str) -> i32 {
+    // compute width of the status text
+    // Create a regular expression to match any characters between "^" and "^"
+    let re = Regex::new(r"\^(.*?)\^").unwrap();
+    // Find all matches and collect them into a Vec<String>
+    let captured_strings: Vec<String> = re
+        .captures_iter(text_in)
+        .filter_map(|cap| cap.get(1))
+        .map(|m| m.as_str().to_owned())
+        .collect();
+    println!("{:?}", captured_strings);
+    let mut w: u32 = 0;
+    unsafe {
+        let drw_mut = drw.as_mut().unwrap();
+        for val in captured_strings.clone() {
+            w += drw_mut.textw(&val) - drw_mut.lrpad as u32;
+            if val.starts_with('f') {
+                match val[1..].parse::<u32>() {
+                    Ok(num) => w += num,
+                    Err(e) => eprintln!("Failed to parse the number: {}", e),
+                }
+            }
+        }
+        w += 2; // 1px padding on both sides
+        let ww = { m.as_ref().unwrap().borrow_mut().ww };
+        let mut ret = ww - w as i32;
+        let mut x = ret;
+        drw_mut.drw_setscheme(scheme[0].clone());
+        drw_mut.scheme[Col::ColFg as usize] =
+            scheme[SCHEME::SchemeNorm as usize][Col::ColFg as usize].clone();
+        drw_mut.scheme[Col::ColBg as usize] =
+            scheme[SCHEME::SchemeNorm as usize][Col::ColBg as usize].clone();
+        drw_mut.drw_rect(x, 0, w, bh_in, 1, 1);
+        x += 1;
+        for val in captured_strings {
+            if val.starts_with('c') {
+            } else if val.starts_with('b') {
+            } else if val.starts_with('d') {
+            } else if val.starts_with('r') {
+            } else if val.starts_with('f') {
+            } else {
+            }
+        }
+        return ret;
+    }
+}
 pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
     info!("[drawbar]");
     let mut tw: i32 = 0;
@@ -1358,20 +1404,14 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             // status is only drawn on selected monitor.
             drw.as_mut()
                 .unwrap()
-                .as_mut()
                 .drw_setscheme(scheme[SCHEME::SchemeNorm as usize].clone());
             // 2px right padding.
-            tw = drw.as_mut().unwrap().as_mut().textw(&*stext) as i32 - lrpad + 2;
+            tw = drw.as_mut().unwrap().textw(&*stext) as i32 - lrpad + 2;
             // info!("[drawbar] drw_text 0, tw: {}, ww: {}", tw, ww);
-            drw.as_mut().unwrap().as_mut().drw_text(
-                ww - tw,
-                0,
-                tw as u32,
-                bh as u32,
-                0,
-                &*stext,
-                0,
-            );
+            drw.as_mut()
+                .unwrap()
+                .drw_text(ww - tw, 0, tw as u32, bh as u32, 0, &*stext, 0);
+            // draw status bar here
         }
         {
             let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
@@ -1388,7 +1428,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         let mut x = 0;
         let mut w;
         for i in 0..tags.len() {
-            w = drw.as_mut().unwrap().as_mut().textw(tags[i]) as i32;
+            w = drw.as_mut().unwrap().textw(tags[i]) as i32;
             let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
             let tagset = { m.as_ref().unwrap().borrow_mut().tagset };
             let idx = if tagset[seltags] & 1 << i > 0 {
@@ -1405,7 +1445,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 .as_mut()
                 .drw_setscheme(scheme[idx].clone());
             // info!("[drawbar] drw_text 1");
-            drw.as_mut().unwrap().as_mut().drw_text(
+            drw.as_mut().unwrap().drw_text(
                 x,
                 0,
                 w as u32,
@@ -1421,7 +1461,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     && selmon_mut.sel.is_some()
                     && (selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 & 1 << i > 0))
                     as i32;
-                drw.as_mut().unwrap().as_mut().drw_rect(
+                drw.as_mut().unwrap().drw_rect(
                     x + boxs as i32,
                     boxs as i32,
                     boxw,
@@ -1442,7 +1482,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             .as_mut()
             .drw_setscheme(scheme[SCHEME::SchemeNorm as usize].clone());
         // info!("[drawbar] drw_text 2, w: {}", w);
-        x = drw.as_mut().unwrap().as_mut().drw_text(
+        x = drw.as_mut().unwrap().drw_text(
             x,
             0,
             w as u32,
@@ -1470,7 +1510,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 //     idx,
                 //     sel_opt.borrow_mut().name
                 // );
-                drw.as_mut().unwrap().as_mut().drw_text(
+                drw.as_mut().unwrap().drw_text(
                     x,
                     0,
                     w as u32,
@@ -1481,7 +1521,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 );
                 if sel_opt.borrow_mut().isfloating {
                     info!("[drawbar] drw_rect 1");
-                    drw.as_mut().unwrap().as_mut().drw_rect(
+                    drw.as_mut().unwrap().drw_rect(
                         x + boxs as i32,
                         boxs as i32,
                         boxw,
@@ -1496,7 +1536,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     .as_mut()
                     .drw_setscheme(scheme[SCHEME::SchemeNorm as usize].clone());
                 info!("[drawbar] drw_rect 2");
-                drw.as_mut().unwrap().as_mut().drw_rect(
+                drw.as_mut().unwrap().drw_rect(
                     x,
                     0,
                     w.try_into().unwrap(),
@@ -1823,7 +1863,7 @@ pub fn buttonpress(e: *mut XEvent) {
             let mut i: usize = 0;
             let mut x: u32 = 0;
             for tag_i in 0..tags.len() {
-                x += drw.as_mut().unwrap().as_mut().textw(tags[tag_i]);
+                x += drw.as_mut().unwrap().textw(tags[tag_i]);
                 if ev.x < x as i32 {
                     break;
                 }
@@ -1835,11 +1875,10 @@ pub fn buttonpress(e: *mut XEvent) {
                 click = CLICK::ClkTagBar;
                 arg = Arg::Ui(1 << i);
                 info!("[buttonpress] ClkTagBar");
-            } else if ev.x < (x + drw.as_mut().unwrap().as_mut().textw(selmon_mut.ltsymbol)) as i32
-            {
+            } else if ev.x < (x + drw.as_mut().unwrap().textw(selmon_mut.ltsymbol)) as i32 {
                 click = CLICK::ClkLtSymbol;
                 info!("[buttonpress] ClkLtSymbol");
-            } else if ev.x > selmon_mut.ww - drw.as_mut().unwrap().as_mut().textw(&*stext) as i32 {
+            } else if ev.x > selmon_mut.ww - drw.as_mut().unwrap().textw(&*stext) as i32 {
                 click = CLICK::ClkStatusText;
                 info!("[buttonpress] ClkStatusText");
             } else {
@@ -2530,6 +2569,7 @@ pub fn setup() {
             drw.as_mut().unwrap().lrpad = h;
             bh = h + 2;
         }
+        println!("here");
         info!("[setup] updategeom");
         updategeom();
         // init atoms
@@ -2582,7 +2622,7 @@ pub fn setup() {
         // init appearance
         scheme = vec![vec![]; colors.len()];
         for i in 0..colors.len() {
-            scheme[i] = drw.as_mut().unwrap().as_mut().drw_scm_create(colors[i]);
+            scheme[i] = drw.as_mut().unwrap().drw_scm_create(colors[i]);
         }
         // init bars
         info!("[setup] updatebars");
