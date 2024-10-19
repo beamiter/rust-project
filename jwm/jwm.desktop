@@ -1,0 +1,5 @@
+[Desktop Entry]
+Name=jwm
+Comment=jwm made beautiful
+Exec=/home/yj/.config/jwm/scripts/run.sh
+Type=Application
