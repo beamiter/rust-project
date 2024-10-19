@@ -1409,7 +1409,9 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
             println!("element {:?}", element);
             match element {
                 TextElement::WithoutCaret(val) => {
+                    w = drw_mut.textw(val) - drw_mut.lrpad as u32;
                     drw_mut.drw_text(x, 0, w, bh0, 0, &val, 0);
+                    x += w as i32;
                 }
                 TextElement::WithCaret(val) => {
                     if val.starts_with('c') {
