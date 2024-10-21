@@ -64,9 +64,10 @@ while true; do
 
   [ $interval = 0 ] || [ $(($interval % 3600)) = 0 ] && updates=$(pkg_updates)
   interval=$((interval + 1))
-  printf "\n***********************\n"
-  printf "$updates $(battery) $(brightness) $(cpu) $(mem) $(wlan) $(clock)"
+  # printf "\n***********************\n"
+  # printf "$updates $(battery) $(brightness) $(cpu) $(mem) $(wlan) $(clock)"
 
-  sleep 1 && xsetroot -name "$updates $(battery) $(cpu) $(mem) $(wlan) $(clock)"
+  sleep 1 && xsetroot -name "$(battery) $(cpu) $(mem) $(wlan) $(clock)"
+  # sleep 1 && xsetroot -name "$updates $(battery) $(cpu) $(mem) $(wlan) $(clock)"
   # sleep 1 && xsetroot -name "$updates $(battery) $(brightness) $(cpu) $(mem) $(wlan) $(clock)"
 done
