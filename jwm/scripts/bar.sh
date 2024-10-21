@@ -67,5 +67,6 @@ while true; do
   printf "\n***********************\n"
   printf "$updates $(battery) $(brightness) $(cpu) $(mem) $(wlan) $(clock)"
 
-  sleep 1 && xsetroot -name "$updates $(battery) $(brightness) $(cpu) $(mem) $(wlan) $(clock)"
+  sleep 1 && xsetroot -name "$updates $(battery) $(cpu) $(mem) $(wlan) $(clock)"
+  # sleep 1 && xsetroot -name "$updates $(battery) $(brightness) $(cpu) $(mem) $(wlan) $(clock)"
 done
