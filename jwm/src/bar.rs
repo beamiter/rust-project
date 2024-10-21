@@ -20,7 +20,7 @@ fn read_file(path: &str) -> Result<String, std::io::Error> {
 pub fn cpu_load() -> String {
     let load_avg = System::load_average();
     format!(
-        "^c{}^^b{}^ ☘ CPU ^c{}^^b{}^ {}",
+        "^c{}^^b{}^ ☘ CPU ^c{}^^b{}^ {}%",
         BLACK, GREEN, WHITE, GREY, load_avg.one
     )
 }
