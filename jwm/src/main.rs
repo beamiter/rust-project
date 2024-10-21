@@ -35,41 +35,32 @@ mod tests;
 
 fn main() {
     miscellaneous::for_test();
-    let black = "#222526";
-    let green = "#89b482";
-    let white = "#c7b89d";
-    let grey = "#2b2e2f";
-    let blue = "#6f8faf";
-    let red = "#ec6b64";
-    let darkblue = "#6080a0";
 
+    let status = format!(
+        "{} {} {} {} {}",
+        battery_capacity(),
+        cpu_load(),
+        mem_usage(),
+        wlan_status(),
+        current_time()
+    );
+
+    println!("{}", status);
     let status_update_thread = thread::spawn(move || {
-        let mut interval = 0usize;
-        let mut updates_info = String::new();
         loop {
-            if interval % 3600 == 0 {
-                updates_info = pkg_updates(green);
-            }
-
             let status = format!(
-                "{} {} {} {} {} {} {}",
-                updates_info,
-                battery_capacity(blue),
-                brightness(red),
-                cpu_load(black, green, white, grey),
-                mem_usage(blue, black),
-                wlan_status(black, blue),
-                current_time(black, darkblue, blue)
+                "{} {} {} {} {}",
+                battery_capacity(),
+                cpu_load(),
+                mem_usage(),
+                wlan_status(),
+                current_time()
             );
 
-            // Update X root window name (status bar), here we will just print to stdout
             println!("{}", status);
-            // let _output = Command::new("xsetroot")
-            //     .arg("-name")
-            //     .arg(status)
-            //     .output();
+            // Update X root window name (status bar), here we will just print to stdout
+            let _output = Command::new("xsetroot").arg("-name").arg(status).output();
 
-            interval += 1;
             thread::sleep(Duration::from_secs(1));
         }
     });
