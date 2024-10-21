@@ -17,6 +17,7 @@ use std::mem::zeroed;
 use std::process::Command;
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{os::raw::c_long, usize};
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
 
@@ -85,7 +86,7 @@ pub static mut sp: i32 = 0; // side padding for bar
 pub static mut numlockmask: u32 = 0;
 pub static mut wmatom: [Atom; WM::WMLast as usize] = unsafe { zeroed() };
 pub static mut netatom: [Atom; NET::NetLast as usize] = unsafe { zeroed() };
-pub static mut running: bool = true;
+pub static mut running: AtomicBool = AtomicBool::new(true);
 pub static mut cursor: [Option<Box<Cur>>; CUR::CurLast as usize] = [None, None, None];
 pub static mut scheme: Vec<Vec<Option<Rc<Clr>>>> = vec![];
 pub static mut dpy: *mut Display = null_mut();
@@ -1678,7 +1679,7 @@ pub fn run() {
         let mut ev: XEvent = zeroed();
         XSync(dpy, False);
         let mut i: u64 = 0;
-        while running && XNextEvent(dpy, &mut ev) <= 0 {
+        while running.load(Ordering::SeqCst) && XNextEvent(dpy, &mut ev) <= 0 {
             // info!("running frame: {}, handler type: {}", i, ev.type_);
             i = (i + 1) % std::u64::MAX;
             if let Some(hd) = handler[ev.type_ as usize] {
@@ -2608,7 +2609,7 @@ pub fn toggletag(arg: *const Arg) {
 pub fn quit(_arg: *const Arg) {
     info!("[quit]");
     unsafe {
-        running = false;
+        running.store(false, Ordering::SeqCst);
     }
 }
 pub fn setup() {

@@ -6,7 +6,7 @@ use std::{thread, time::Duration};
 use log::info;
 use simplelog::*;
 
-use dwm::{checkotherwm, cleanup, dpy, run, scan, setup};
+use dwm::{checkotherwm, cleanup, dpy, run, running, scan, setup};
 use libc::{setlocale, LC_CTYPE};
 use x11::xlib::{XCloseDisplay, XOpenDisplay, XSupportsLocale};
 
@@ -44,7 +44,6 @@ fn main() {
         wlan_status(),
         current_time()
     );
-
     println!("{}", status);
     let status_update_thread = thread::spawn(move || {
         loop {
@@ -57,10 +56,15 @@ fn main() {
                 current_time()
             );
 
-            println!("{}", status);
+            // println!("{}", status);
             // Update X root window name (status bar), here we will just print to stdout
             let _output = Command::new("xsetroot").arg("-name").arg(status).output();
 
+            unsafe {
+                if !running.load(std::sync::atomic::Ordering::SeqCst) {
+                    break;
+                }
+            }
             thread::sleep(Duration::from_secs(1));
         }
     });
