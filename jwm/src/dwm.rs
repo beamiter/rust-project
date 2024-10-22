@@ -1398,7 +1398,7 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
         w += 2; // 1px padding on both sides
         let ww = { m.as_ref().unwrap().borrow_mut().ww };
         let ret = ww - w as i32;
-        let mut x = ret;
+        let mut x = ret - 2 * sp;
         drw_mut.drw_setscheme(scheme[0].clone());
         drw_mut.scheme[Col::ColFg as usize] =
             scheme[SCHEME::SchemeNorm as usize][Col::ColFg as usize].clone();
