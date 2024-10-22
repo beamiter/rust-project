@@ -2154,13 +2154,13 @@ pub fn updatebarpos(m: &mut Monitor) {
         m.wy = m.my;
         m.wh = m.mh;
         if m.showbar0 {
-            m.wh = m.wh - vertpad - bh;
+            m.wh = m.wh - 2 * vp - bh;
             m.by = if m.topbar0 {
                 m.wy
             } else {
-                m.wy + m.wh + vertpad
+                m.wy + m.wh + 2 * vp
             };
-            m.wy = if m.topbar0 { m.wy + bh + vp } else { m.wy };
+            m.wy = if m.topbar0 { m.wy + bh + 2 * vp } else { m.wy };
         } else {
             m.by = -bh - vp;
         }
@@ -2872,7 +2872,10 @@ pub fn propertynotify(e: *mut XEvent) {
                         .clone()
                 };
                 info!("[propertynotify] check if c equal sel");
-                if Rc::ptr_eq(c.as_ref().unwrap(), sel.as_ref().unwrap()) {
+                if c.is_some()
+                    && sel.is_some()
+                    && Rc::ptr_eq(c.as_ref().unwrap(), sel.as_ref().unwrap())
+                {
                     let mon = { c.as_ref().unwrap().borrow_mut().mon.clone() };
                     drawbar(mon);
                 }
