@@ -98,6 +98,6 @@ pub fn current_time() -> String {
         DARKBLUE,
         BLACK,
         BLUE,
-        now.format("%H:%M")
+        now.format("%d/%m/%Y %H:%M")
     )
 }

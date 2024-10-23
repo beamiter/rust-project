@@ -76,6 +76,7 @@ pub const MOUSEMASK: c_long = BUTTONMASK | PointerMotionMask;
 
 // Variables.
 pub const broken: &str = "broken";
+pub const stext_max_len: usize = 500;
 pub static mut stext: Lazy<String> = Lazy::new(|| String::new());
 pub static mut screen: i32 = 0;
 pub static mut sw: i32 = 0;
@@ -1379,6 +1380,7 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
     // compute width of the status text
     let mut w: u32 = 0;
     let parsed_elements = parse_string(text0);
+    // println!("parsed_elements: {:?}", parsed_elements);
     unsafe {
         let drw_mut = drw.as_mut().unwrap();
         for element in &parsed_elements {
@@ -3920,7 +3922,7 @@ pub fn gettextprop(w: Window, atom: Atom, text: &mut String) -> bool {
         if name.encoding == XA_STRING {
             let c_str = CStr::from_ptr(name.value as *const _);
             let mut tmp = remove_control_characters(&c_str.to_str().unwrap().to_string());
-            while tmp.as_bytes().len() > 255 {
+            while tmp.as_bytes().len() > stext_max_len {
                 tmp.pop();
             }
             *text = tmp;
@@ -3937,7 +3939,7 @@ pub fn gettextprop(w: Window, atom: Atom, text: &mut String) -> bool {
         {
             let c_str = CStr::from_ptr(*list);
             let mut tmp = remove_control_characters(&c_str.to_str().unwrap().to_string());
-            while tmp.as_bytes().len() > 255 {
+            while tmp.as_bytes().len() > stext_max_len {
                 tmp.pop();
             }
             *text = tmp;
