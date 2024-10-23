@@ -1395,7 +1395,8 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
                 _ => {}
             }
         }
-        w += 2; // 1px padding on both sides
+        // NO padding is cooler.
+        // w += 2; // 1px padding on both sides
         let ww = { m.as_ref().unwrap().borrow_mut().ww };
         let ret = ww - w as i32;
         let mut x = ret - 2 * sp;
@@ -1574,7 +1575,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             0,
         );
 
-        w = { m.as_ref().unwrap().borrow_mut().ww } - tw - x;
+        w = ww - tw - x;
         // info!("[drawbar] tw: {}, x: {}, w: {}, bh: {}", tw, x, w, bh);
         if w > bh {
             if let Some(ref sel_opt) = m.as_ref().unwrap().borrow_mut().sel {
@@ -2154,13 +2155,17 @@ pub fn updatebarpos(m: &mut Monitor) {
         m.wy = m.my;
         m.wh = m.mh;
         if m.showbar0 {
-            m.wh = m.wh - 2 * vp - bh;
+            m.wh = m.wh - 3 * vp / 2 - bh;
             m.by = if m.topbar0 {
                 m.wy
             } else {
-                m.wy + m.wh + 2 * vp
+                m.wy + m.wh + 3 * vp / 2
             };
-            m.wy = if m.topbar0 { m.wy + bh + 2 * vp } else { m.wy };
+            m.wy = if m.topbar0 {
+                m.wy + bh + 3 * vp / 2
+            } else {
+                m.wy
+            };
         } else {
             m.by = -bh - vp;
         }
