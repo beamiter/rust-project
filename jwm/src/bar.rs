@@ -1,6 +1,6 @@
 use battery::Manager;
 use std::fs;
-use sysinfo::System;
+use sysinfo::{CpuRefreshKind, RefreshKind, System};
 
 pub const BLACK: &str = "#222526";
 pub const GREEN: &str = "#89b482";
@@ -18,12 +18,19 @@ fn read_file(path: &str) -> Result<String, std::io::Error> {
 
 // Function to get CPU load
 pub fn cpu_load() -> String {
-    let mut sys = System::new_all();
-    sys.refresh_all();
-    let global_precessor_info = sys.global_cpu_usage();
+    let mut s =
+        System::new_with_specifics(RefreshKind::new().with_cpu(CpuRefreshKind::everything()));
+    // Wait a bit because CPU usage is based on diff.
+    std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
+    // Refresh CPUs again to get actual value.
+    s.refresh_cpu_usage();
     format!(
         "^c{}^^b{}^ ☘ CPU ^c{}^^b{}^ {:.2}%",
-        BLACK, GREEN, WHITE, GREY, global_precessor_info
+        BLACK,
+        GREEN,
+        WHITE,
+        GREY,
+        s.global_cpu_usage()
     )
 }
 
