@@ -18,10 +18,12 @@ fn read_file(path: &str) -> Result<String, std::io::Error> {
 
 // Function to get CPU load
 pub fn cpu_load() -> String {
-    let load_avg = System::load_average();
+    let mut sys = System::new_all();
+    sys.refresh_all();
+    let global_precessor_info = sys.global_cpu_usage();
     format!(
-        "^c{}^^b{}^ ☘ CPU ^c{}^^b{}^ {}%",
-        BLACK, GREEN, WHITE, GREY, load_avg.one
+        "^c{}^^b{}^ ☘ CPU ^c{}^^b{}^ {:.2}%",
+        BLACK, GREEN, WHITE, GREY, global_precessor_info
     )
 }
 
@@ -52,8 +54,8 @@ pub fn mem_usage() -> String {
     let used = sys.used_memory() as f64 / 1e9;
     let free = sys.free_memory() as f64 / 1e9;
     format!(
-        "^c{}^^b{}^   ^c{}^{:.1}/{:.1}",
-        BLUE, BLACK, BLUE, used, free
+        "^c{}^^b{}^   ^c{}^{:.1}^c{}^ ◔ {:.1}",
+        BLUE, BLACK, BLUE, used, RED, free
     )
 }
 
