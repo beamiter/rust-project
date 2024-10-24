@@ -133,6 +133,11 @@ pub enum CUR {
 pub enum SCHEME {
     SchemeNorm = 0,
     SchemeSel = 1,
+    SchemeStatus = 2,
+    SchemeTagsSel = 3,
+    SchemeTagsNorm = 4,
+    SchemeInfoSel = 5,
+    SchemeInfoNorm = 6,
 }
 
 #[repr(C)]
@@ -1405,7 +1410,7 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
         let ww = { m.as_ref().unwrap().borrow_mut().ww };
         let ret = ww - w as i32;
         let mut x = ret - 2 * sp;
-        drw_mut.drw_setscheme(scheme[0].clone());
+        drw_mut.drw_setscheme(scheme[SCHEME::SchemeStatus as usize].clone());
         drw_mut.scheme[Col::ColFg as usize] =
             scheme[SCHEME::SchemeNorm as usize][Col::ColFg as usize].clone();
         drw_mut.scheme[Col::ColBg as usize] =
@@ -1527,9 +1532,9 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
             let tagset = { m.as_ref().unwrap().borrow_mut().tagset };
             let idx = if tagset[seltags] & 1 << i > 0 {
-                SCHEME::SchemeSel as usize
+                SCHEME::SchemeTagsSel as usize
             } else {
-                SCHEME::SchemeNorm as usize
+                SCHEME::SchemeTagsNorm as usize
             };
             // info!(
             //     "[drawbar] seltags: {}, tagset: {:?}, i: {}: idx: {}, w: {}",
@@ -1575,7 +1580,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         drw.as_mut()
             .unwrap()
             .as_mut()
-            .drw_setscheme(scheme[SCHEME::SchemeNorm as usize].clone());
+            .drw_setscheme(scheme[SCHEME::SchemeTagsNorm as usize].clone());
         // info!("[drawbar] drw_text 2, w: {}", w);
         x = drw.as_mut().unwrap().drw_text(
             x,
@@ -1592,9 +1597,9 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         if w > bh {
             if let Some(ref sel_opt) = m.as_ref().unwrap().borrow_mut().sel {
                 let idx = if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
-                    SCHEME::SchemeSel
+                    SCHEME::SchemeInfoSel
                 } else {
-                    SCHEME::SchemeNorm
+                    SCHEME::SchemeInfoNorm
                 } as usize;
                 drw.as_mut()
                     .unwrap()
@@ -1629,7 +1634,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 drw.as_mut()
                     .unwrap()
                     .as_mut()
-                    .drw_setscheme(scheme[SCHEME::SchemeNorm as usize].clone());
+                    .drw_setscheme(scheme[SCHEME::SchemeInfoNorm as usize].clone());
                 info!("[drawbar] drw_rect 2");
                 drw.as_mut()
                     .unwrap()

@@ -41,10 +41,20 @@ pub const col_red: &str = "#ff0000";
 pub const col_yellow: &str = "#ffff00";
 pub const col_white: &str = "#ffffff";
 
-pub const colors: [&[&'static str; 3]; 5] = [
+pub const colors: [&[&'static str; 3]; 10] = [
     // fg | bg | border
     &[col_gray3, col_gray1, col_gray2],
     &[col_gray4, col_cyan, col_cyan],
+    &["#bbccbb", "#223322", "#000000"], // Statubar right {text, background, not used but cannot be
+    // empty}
+    &["#eeffee", "#006677", "#000000"], // Tagbar left selected {text, background, not used but cannot be
+    // empty}
+    &["#ccbbbb", "#332222", "#000000"], // Tagbar left unselected {text, background, not used but cannot be
+    // empty}
+    &["#ffeeee", "#116677", "#000000"], // infobar middle selected {text, background, not used but cannot be
+    // empty}
+    &["#bbbbcc", "#222233", "#000000"], // infobar middle unselected {text, background, not used but cannot be
+    // empty}
     &[col_gray3, col_gray1, col_gray2],
     &[col_black, col_yellow, col_red],
     &[col_white, col_red, col_red],
