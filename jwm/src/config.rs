@@ -17,14 +17,20 @@ use x11::{
 
 use crate::dwm::{self, monocle, tile, Button, Key, Layout, Rule, CLICK};
 
+// border pixel of windows
 pub const borderpx: u32 = 1;
+// snap pixel
 pub const snap: u32 = 32;
 pub const showbar: bool = true;
 pub const topbar: bool = true;
 pub const vertpad: i32 = 8;
 pub const sidepad: i32 = 8;
-pub const fonts: Lazy<Vec<&str>> = Lazy::new(|| vec!["monospace:size=10"]);
-pub const dmenufont: &str = "monospace:size=10";
+// horizontal padding for statusbar
+pub const horizpadbar: i32 = 0;
+// vertical padding for statusbar
+pub const vertpadbar: i32 = 2;
+pub const fonts: Lazy<Vec<&str>> = Lazy::new(|| vec!["SauceCodeProNerdFontRegular:size=10"]);
+pub const dmenufont: &str = "SauceCodeProNerdFontRegular:size=10";
 pub const col_gray1: &str = "#222222";
 pub const col_gray2: &str = "#444444";
 pub const col_gray3: &str = "#bbbbbb";

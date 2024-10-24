@@ -55,8 +55,9 @@ use x11::xlib::{
 use std::cmp::{max, min};
 
 use crate::config::{
-    borderpx, buttons, colors, dmenucmd, dmenumon, fonts, keys, layouts, lockfullscreen, mfact,
-    nmaster, resizehints, rules, showbar, sidepad, snap, tagmask, tags, topbar, vertpad,
+    borderpx, buttons, colors, dmenucmd, dmenumon, fonts, horizpadbar, keys, layouts,
+    lockfullscreen, mfact, nmaster, resizehints, rules, showbar, sidepad, snap, tagmask, tags,
+    topbar, vertpad, vertpadbar,
 };
 use crate::drw::{Clr, Col, Cur, Drw};
 use crate::xproto::{
@@ -1397,6 +1398,8 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
                 _ => {}
             }
         }
+
+        w += horizpadbar as u32;
         // NO padding is cooler.
         // w += 2; // 1px padding on both sides
         let ww = { m.as_ref().unwrap().borrow_mut().ww };
@@ -1408,13 +1411,13 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
         drw_mut.scheme[Col::ColBg as usize] =
             scheme[SCHEME::SchemeNorm as usize][Col::ColBg as usize].clone();
         drw_mut.drw_rect(x, 0, w, bh0, 1, 1);
-        x += 1;
+        x += horizpadbar / 2;
         for element in &parsed_elements {
             println!("element {:?}", element);
             match element {
                 TextElement::WithoutCaret(val) => {
                     w = drw_mut.textw(val) - drw_mut.lrpad as u32;
-                    drw_mut.drw_text(x, 0, w, bh0, 0, &val, 0);
+                    drw_mut.drw_text(x, vertpadbar / 2, w, bh0 - vertpadbar as u32, 0, &val, 0);
                     x += w as i32;
                 }
                 TextElement::WithCaret(val) => {
@@ -1438,7 +1441,14 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
                             let ry = numbers[1];
                             let rw = numbers[2];
                             let rh = numbers[3];
-                            drw_mut.drw_rect(rx + x, ry, rw as u32, rh as u32, 1, 0);
+                            drw_mut.drw_rect(
+                                rx + x,
+                                ry + vertpadbar / 2,
+                                rw as u32,
+                                rh as u32,
+                                1,
+                                0,
+                            );
                         }
                     } else if val.starts_with('f') {
                         match val[1..].parse::<u32>() {
@@ -2655,7 +2665,7 @@ pub fn setup() {
         {
             let h = drw.as_ref().unwrap().fonts.as_ref().unwrap().borrow_mut().h as i32;
             drw.as_mut().unwrap().lrpad = h;
-            bh = h + 2;
+            bh = h + vertpadbar;
         }
         sp = sidepad;
         vp = if topbar { vertpad } else { -vertpad };
