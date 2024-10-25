@@ -57,7 +57,7 @@ use std::cmp::{max, min};
 use crate::config::{
     borderpx, buttons, colors, dmenucmd, dmenumon, fonts, horizpadbar, keys, layouts,
     lockfullscreen, mfact, nmaster, resizehints, rules, showbar, sidepad, snap, tagmask, tags,
-    topbar, vertpad, vertpadbar,
+    topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad, vertpadbar,
 };
 use crate::drw::{Clr, Col, Cur, Drw};
 use crate::xproto::{
@@ -1531,7 +1531,8 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             w = drw.as_mut().unwrap().textw(tags[i]) as i32;
             let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
             let tagset = { m.as_ref().unwrap().borrow_mut().tagset };
-            let idx = if tagset[seltags] & 1 << i > 0 {
+            let is_selected_tag = tagset[seltags] & 1 << i > 0;
+            let idx = if is_selected_tag {
                 SCHEME::SchemeTagsSel as usize
             } else {
                 SCHEME::SchemeTagsNorm as usize
@@ -1554,6 +1555,16 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 tags[i],
                 (urg & 1 << i) as i32,
             );
+            if ulineall || is_selected_tag {
+                drw.as_mut().unwrap().drw_rect(
+                    x + ulinepad as i32,
+                    bh - ulinestroke as i32 - ulinevoffset as i32,
+                    w as u32 - (ulinepad * 2),
+                    ulinestroke,
+                    1,
+                    0,
+                );
+            }
             if (occ & 1 << i) > 0 {
                 let selmon_mut = { selmon.as_ref().unwrap().borrow_mut() };
                 // info!("[drawbar] drw_rect 0");

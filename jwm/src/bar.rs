@@ -49,7 +49,7 @@ pub fn battery_capacity() -> String {
             .state_of_charge()
             .get::<battery::units::ratio::percent>();
 
-        battery_state = format!("{:?} {:.2}%", battery.state(), percentage);
+        battery_state = format!("Battery {:.2}%", percentage);
     }
     format!("^c{}^  {}", BLUE, battery_state.trim())
 }

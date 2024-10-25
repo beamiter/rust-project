@@ -51,9 +51,9 @@ pub const colors: [&[&'static str; 3]; 10] = [
     // empty}
     &["#7bbfea", "#c85d44", "#000000"], // Tagbar left unselected {text, background, not used but cannot be
     // empty}
-    &["#74787c", "#9b95c9", "#000000"], // infobar middle selected {text, background, not used but cannot be
+    &["#ffffff", "#9b95c9", "#000000"], // infobar middle selected {text, background, not used but cannot be
     // empty}
-    &["#78cdd1", "#008792", "#000000"], // infobar middle unselected {text, background, not used but cannot be
+    &["#78cdd1", "#74787c", "#000000"], // infobar middle unselected {text, background, not used but cannot be
     // empty}
     &[col_gray3, col_gray1, col_gray2],
     &[col_black, col_yellow, col_red],
@@ -74,6 +74,11 @@ pub const mfact: f32 = 0.55;
 pub const nmaster: i32 = 1;
 pub const resizehints: bool = true;
 pub const lockfullscreen: bool = true;
+
+pub const ulinepad: u32 = 5; // horizontal padding between the underline and tag
+pub const ulinestroke: u32 = 2; // thickness /height of the unerline
+pub const ulinevoffset: u32 = 0; // how far above the bottom of the bar the line should appear
+pub const ulineall: bool = false; // true to show underline on all tags, false for just the acitve ones
 
 pub const layouts: Lazy<Vec<Rc<Layout>>> = Lazy::new(|| {
     vec![
