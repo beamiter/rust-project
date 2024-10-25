@@ -407,7 +407,7 @@ impl Drw {
 
             let mut usedfont = self.fonts.clone();
             if ellipsis_width <= 0 && render {
-                ellipsis_width = self.drw_fontset_getwidth("...");
+                ellipsis_width = self.drw_fontset_getwidth("…");
                 // info!("[drw_text], ellipsis_width: {}", ellipsis_width);
             }
             loop {
@@ -497,8 +497,8 @@ impl Drw {
                 }
 
                 if render && overflow > 0 {
-                    info!("[drw_text] render overflow, draw ...");
-                    self.drw_text(ellipsis_x, y, ellipsis_w, h, 0, "...", invert);
+                    info!("[drw_text] render overflow, draw …");
+                    self.drw_text(ellipsis_x, y, ellipsis_w, h, 0, "…", invert);
                 }
 
                 if text.is_empty() || overflow > 0 {

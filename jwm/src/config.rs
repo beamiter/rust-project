@@ -29,7 +29,7 @@ pub const sidepad: i32 = 8;
 pub const horizpadbar: i32 = 0;
 // vertical padding for statusbar
 pub const vertpadbar: i32 = 2;
-pub const fonts: Lazy<Vec<&str>> = Lazy::new(|| vec!["SauceCodeProNerdFontRegular:size=10"]);
+pub const fonts: Lazy<Vec<&str>> = Lazy::new(|| vec!["SauceCodeProNerdFontRegular:size=12"]);
 pub const dmenufont: &str = "SauceCodeProNerdFontRegular:size=10";
 pub const col_gray1: &str = "#222222";
 pub const col_gray2: &str = "#444444";
@@ -47,9 +47,9 @@ pub const colors: [&[&'static str; 3]; 10] = [
     &[col_gray4, col_cyan, col_cyan],
     &["#cde6c7", "#224b8f", "#000000"], // Statubar right {text, background, not used but cannot be
     // empty}
-    &["#94d6da", "#ea66a6", "#000000"], // Tagbar left selected {text, background, not used but cannot be
+    &["#ea66a6", "#94d6da", "#000000"], // Tagbar left selected {text, background, not used but cannot be
     // empty}
-    &["#7bbfea", "#c85d44", "#000000"], // Tagbar left unselected {text, background, not used but cannot be
+    &["#c85d44", "#7bbfea", "#000000"], // Tagbar left unselected {text, background, not used but cannot be
     // empty}
     &["#ffffff", "#9b95c9", "#000000"], // infobar middle selected {text, background, not used but cannot be
     // empty}
@@ -67,7 +67,8 @@ pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
         Rule::new("Firefox", "", "", 1 << 8, false, -1),
     ]
 });
-pub const tags: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
+// https://symbl.cc/en/
+pub const tags: [&str; 9] = ["🍇", "🍵", "🎦", "🎮", "🎵", "🏖", "🐣", "🐶", "🦄"];
 pub const tagmask: u32 = (1 << tags.len()) - 1;
 
 pub const mfact: f32 = 0.55;
