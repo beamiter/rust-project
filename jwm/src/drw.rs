@@ -267,6 +267,7 @@ impl Drw {
                 eprintln!("error, cannot allocate color: {}", clrname);
                 return None;
             }
+            dest.pixel |= 0xff << 24;
             return Some(Rc::new(dest));
         }
     }

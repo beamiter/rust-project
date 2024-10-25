@@ -45,15 +45,15 @@ pub const colors: [&[&'static str; 3]; 10] = [
     // fg | bg | border
     &[col_gray3, col_gray1, col_gray2],
     &[col_gray4, col_cyan, col_cyan],
-    &["#bbccbb", "#223322", "#000000"], // Statubar right {text, background, not used but cannot be
+    &["#cde6c7", "#224b8f", "#000000"], // Statubar right {text, background, not used but cannot be
     // empty}
-    &["#eeffee", "#006677", "#000000"], // Tagbar left selected {text, background, not used but cannot be
+    &["#94d6da", "#ea66a6", "#000000"], // Tagbar left selected {text, background, not used but cannot be
     // empty}
-    &["#ccbbbb", "#332222", "#000000"], // Tagbar left unselected {text, background, not used but cannot be
+    &["#7bbfea", "#c85d44", "#000000"], // Tagbar left unselected {text, background, not used but cannot be
     // empty}
-    &["#ffeeee", "#116677", "#000000"], // infobar middle selected {text, background, not used but cannot be
+    &["#74787c", "#9b95c9", "#000000"], // infobar middle selected {text, background, not used but cannot be
     // empty}
-    &["#bbbbcc", "#222233", "#000000"], // infobar middle unselected {text, background, not used but cannot be
+    &["#78cdd1", "#008792", "#000000"], // infobar middle unselected {text, background, not used but cannot be
     // empty}
     &[col_gray3, col_gray1, col_gray2],
     &[col_black, col_yellow, col_red],
