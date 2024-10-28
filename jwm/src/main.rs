@@ -53,7 +53,7 @@ fn main() {
                 cpu_load(),
                 mem_usage(),
                 wlan_status(),
-                current_time()
+                current_time(),
             );
 
             // println!("{}", status);

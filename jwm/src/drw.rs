@@ -213,9 +213,10 @@ impl Drw {
             return None;
         }
 
-        for i in 1..=fontcount {
-            let cur = self.xfont_create(fonts[(i - 1) as usize], null_mut());
+        for i in 0..fontcount {
+            let cur = self.xfont_create(fonts[i as usize], null_mut());
             if cur.is_some() {
+                println!("[drw_fontset_create] font: {}", fonts[i as usize]);
                 cur.as_ref().unwrap().borrow_mut().next = ret;
                 ret = cur;
             }
@@ -482,6 +483,10 @@ impl Drw {
                         let idx = if invert > 0 { Col::ColBg } else { Col::ColFg } as usize;
                         let cstring = CString::new(utf8str).expect("fail to create");
                         let clr = self.scheme[idx].as_ref().unwrap();
+                        // println!(
+                        //     "[drw_text] utf8str: {}, utf8strlen: {}",
+                        //     utf8str, utf8strlen
+                        // );
                         XftDrawStringUtf8(
                             d,
                             clr.as_ref(),

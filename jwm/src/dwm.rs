@@ -1418,7 +1418,7 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
         drw_mut.drw_rect(x, 0, w, bh0, 1, 1);
         x += horizpadbar / 2;
         for element in &parsed_elements {
-            println!("element {:?}", element);
+            // println!("element {:?}", element);
             match element {
                 TextElement::WithoutCaret(val) => {
                     w = drw_mut.textw(val) - drw_mut.lrpad as u32;

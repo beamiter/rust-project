@@ -1,5 +1,5 @@
 use battery::Manager;
-use std::fs;
+use std::{fmt::format, fs};
 use sysinfo::{CpuRefreshKind, RefreshKind, System};
 
 pub const BLACK: &str = "#222526";
@@ -87,6 +87,11 @@ pub fn wlan_status() -> String {
     }
 
     format!("^c{}^^b{}^ 󰤭  ^d^^c{}^ {}", BLACK, BLUE, BLUE, status)
+}
+
+#[allow(unused)]
+pub fn cool_symbol() -> String {
+    "🍇🍵🎦🎮🎵🏖🐣🐶🦄".to_string()
 }
 
 // Function to get current time

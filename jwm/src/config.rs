@@ -30,7 +30,7 @@ pub const horizpadbar: i32 = 0;
 // vertical padding for statusbar
 pub const vertpadbar: i32 = 2;
 pub const fonts: Lazy<Vec<&str>> = Lazy::new(|| vec!["SauceCodeProNerdFontRegular:size=12"]);
-pub const dmenufont: &str = "SauceCodeProNerdFontRegular:size=10";
+pub const dmenufont: &str = "SauceCodeProNerdFontRegular:size=11";
 pub const col_gray1: &str = "#222222";
 pub const col_gray2: &str = "#444444";
 pub const col_gray3: &str = "#bbbbbb";
@@ -68,7 +68,8 @@ pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
     ]
 });
 // https://symbl.cc/en/
-pub const tags: [&str; 9] = ["🍇", "🍵", "🎦", "🎮", "🎵", "🏖", "🐣", "🐶", "🦄"];
+// pub const tags: [&str; 9] = ["🍇", "🍵", "🎦", "🎮", "🎵", "🏖", "🐣", "🐶", "🦄"];
+pub const tags: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 pub const tagmask: u32 = (1 << tags.len()) - 1;
 
 pub const mfact: f32 = 0.55;
