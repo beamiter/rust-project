@@ -1,5 +1,5 @@
 use battery::Manager;
-use std::{fmt::format, fs};
+use std::fs;
 use sysinfo::{CpuRefreshKind, RefreshKind, System};
 
 pub const BLACK: &str = "#222526";

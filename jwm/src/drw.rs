@@ -16,6 +16,9 @@ use fontconfig_sys::{
 };
 use log::info;
 use log::warn;
+// For whatever reason, dmenu and other suckless tools use libXft, which does not support Unicode properly.
+// If you use Pango however, Unicode will work great and this includes flag emojis.
+use pango::{glib::property::PropertyGet, prelude::*, FontDescription};
 use x11::{
     xft::{
         FcResult, XftCharExists, XftColor, XftColorAllocName, XftDraw, XftDrawCreate,
@@ -157,42 +160,17 @@ impl Drw {
         unsafe {
             XFreePixmap(self.dpy, self.drawable);
             XFreeGC(self.dpy, self.gc);
+            self.drw_fontset_free(self.fonts.clone());
         }
     }
-    pub fn xfont_create(
-        &mut self,
-        fontname: &str,
-        fontpattern: *mut FcPattern,
-    ) -> Option<Rc<RefCell<Fnt>>> {
-        let mut font = Fnt::new();
-        let xfont: *mut XftFont;
-        let mut pattern: *mut FcPattern = null_mut();
-
-        unsafe {
-            if !fontname.is_empty() {
-                let cstring = CString::new(fontname).expect("fail to convert");
-                xfont = XftFontOpenName(self.dpy, self.screen, cstring.as_ptr());
-                if xfont.is_null() {
-                    eprintln!("error, cannot load font from name: {}", fontname);
-                    return None;
-                }
-                pattern = FcNameParse(cstring.as_ptr() as *const FcChar8);
-                if pattern.is_null() {
-                    eprintln!("error, cannot parse font name to pattern: {}", fontname);
-                    XftFontClose(self.dpy, xfont);
-                    return None;
-                }
-            } else if !fontpattern.is_null() {
-                xfont = XftFontOpenPattern(self.dpy, fontpattern as *mut _);
-                if xfont.is_null() {
-                    eprintln!("error, cannot load font from pattern.");
-                    return None;
-                }
-            } else {
-                exit(0);
-            }
+    pub fn xfont_create(&mut self, fontname: &str) -> Option<Rc<RefCell<Fnt>>> {
+        if fontname.is_empty() {
+            exit(0);
         }
 
+        let context = pango::Context::new();
+        let desc = FontDescription::from_string("SauceCodePro Nerd Font Regular 12");
+        let mut font = Fnt::new();
         font.xfont = xfont;
         font.pattern = pattern;
         unsafe {
@@ -224,10 +202,9 @@ impl Drw {
         self.fonts = ret;
         return self.fonts.clone();
     }
-    #[allow(dead_code)]
     pub fn drw_fontset_free(&self, font: Option<Rc<RefCell<Fnt>>>) {
-        if font.is_some() {
-            self.drw_fontset_free(font.as_ref().unwrap().borrow_mut().next.clone());
+        if let Some(ref font_opt) = font {
+            self.drw_fontset_free(font_opt.borrow_mut().next.clone());
             Self::xfont_free(font);
         }
     }
@@ -592,10 +569,13 @@ impl Drw {
     }
     fn xfont_free(font: Option<Rc<RefCell<Fnt>>>) {
         unsafe {
-            if let Some(ref font) = font {
-                if !font.borrow_mut().pattern.is_null() {
-                    FcPatternDestroy(font.borrow_mut().pattern);
+            if let Some(ref font_opt) = font {
+                if !font_opt.borrow_mut().pattern.is_null() {
+                    FcPatternDestroy(font_opt.borrow_mut().pattern);
                 }
+                let dpy = { font_opt.borrow_mut().dpy };
+                let xfont = { font_opt.borrow_mut().xfont };
+                XftFontClose(dpy, xfont);
             }
         }
     }
