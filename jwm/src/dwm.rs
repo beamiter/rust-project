@@ -77,7 +77,7 @@ pub const MOUSEMASK: c_long = BUTTONMASK | PointerMotionMask;
 
 // Variables.
 pub const broken: &str = "broken";
-pub const stext_max_len: usize = 500;
+pub const stext_max_len: usize = 512;
 pub static mut stext: Lazy<String> = Lazy::new(|| String::new());
 pub static mut screen: i32 = 0;
 pub static mut sw: i32 = 0;
@@ -1422,7 +1422,7 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
             match element {
                 TextElement::WithoutCaret(val) => {
                     w = drw_mut.textw(val) - drw_mut.lrpad as u32;
-                    drw_mut.drw_text(x, vertpadbar / 2, w, bh0 - vertpadbar as u32, 0, &val, 0);
+                    drw_mut.drw_text(x, vertpadbar / 2, w, bh0 - vertpadbar as u32, 0, &val, 0, false);
                     x += w as i32;
                 }
                 TextElement::WithCaret(val) => {
@@ -1480,7 +1480,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         let boxw;
         let lrpad;
         {
-            let h = drw.as_ref().unwrap().fonts.as_ref().unwrap().borrow_mut().h;
+            let h = drw.as_ref().unwrap().font.as_ref().unwrap().borrow_mut().h;
             lrpad = drw.as_ref().unwrap().lrpad;
             boxs = h / 9;
             boxw = h / 6 + 2;
@@ -1554,6 +1554,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 (lrpad / 2) as u32,
                 tags[i],
                 (urg & 1 << i) as i32,
+                false,
             );
             if ulineall || is_selected_tag {
                 drw.as_mut().unwrap().drw_rect(
@@ -1601,6 +1602,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             (lrpad / 2) as u32,
             m.as_ref().unwrap().borrow_mut().ltsymbol,
             0,
+            false,
         );
 
         w = ww - tw - x;
@@ -1629,6 +1631,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     (lrpad / 2) as u32,
                     &sel_opt.borrow_mut().name,
                     0,
+                    false,
                 );
                 if sel_opt.borrow_mut().isfloating {
                     info!("[drawbar] drw_rect 1");
@@ -1984,7 +1987,7 @@ pub fn buttonpress(e: *mut XEvent) {
             } else if ev.x < (x + drw.as_mut().unwrap().textw(selmon_mut.ltsymbol)) as i32 {
                 click = CLICK::ClkLtSymbol;
                 info!("[buttonpress] ClkLtSymbol");
-            } else if ev.x > selmon_mut.ww - drw.as_mut().unwrap().textw(&*stext) as i32 {
+            } else if ev.x > selmon_mut.ww - drw.as_mut().unwrap().textwm(&*stext) as i32 {
                 click = CLICK::ClkStatusText;
                 info!("[buttonpress] ClkStatusText");
             } else {
@@ -2672,14 +2675,14 @@ pub fn setup() {
             .as_mut()
             .unwrap()
             .as_mut()
-            .drw_fontset_create(&*fonts, fonts.len() as u64)
+            .drw_font_create(&*fonts)
             .is_none()
         {
             eprintln!("no fonts could be loaded");
             exit(0);
         }
         {
-            let h = drw.as_ref().unwrap().fonts.as_ref().unwrap().borrow_mut().h as i32;
+            let h = drw.as_ref().unwrap().font.as_ref().unwrap().borrow_mut().h as i32;
             drw.as_mut().unwrap().lrpad = h;
             bh = h + vertpadbar;
         }

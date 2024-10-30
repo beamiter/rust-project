@@ -18,7 +18,18 @@ use log::info;
 use log::warn;
 // For whatever reason, dmenu and other suckless tools use libXft, which does not support Unicode properly.
 // If you use Pango however, Unicode will work great and this includes flag emojis.
-use pango::{glib::property::PropertyGet, prelude::*, FontDescription};
+use pango::{
+    ffi::{
+        pango_context_get_metrics, pango_context_new, pango_font_description_from_string,
+        pango_font_map_create_context, pango_font_metrics_get_height, pango_font_metrics_get_type,
+        pango_font_metrics_unref, pango_layout_get_extents, pango_layout_new,
+        pango_layout_set_attributes, pango_layout_set_font_description, pango_layout_set_markup,
+        pango_layout_set_text, PangoLayout, PangoRectangle, PANGO_SCALE,
+    },
+    glib::{gobject_ffi::g_object_unref, property::PropertyGet},
+    prelude::*,
+    FontDescription,
+};
 use x11::{
     xft::{
         FcResult, XftCharExists, XftColor, XftColorAllocName, XftDraw, XftDrawCreate,
@@ -63,18 +74,14 @@ impl Cur {
 pub struct Fnt {
     pub dpy: *mut xlib::Display,
     pub h: u32,
-    pub xfont: *mut XftFont,
-    pub pattern: *mut FcPattern,
-    pub next: Option<Rc<RefCell<Fnt>>>,
+    pub layout: *mut PangoLayout,
 }
 impl Fnt {
     pub fn new() -> Self {
         Fnt {
             dpy: null_mut(),
             h: 0,
-            xfont: null_mut(),
-            pattern: null_mut(),
-            next: None,
+            layout: null_mut(),
         }
     }
 }
@@ -100,7 +107,7 @@ pub struct Drw {
     pub drawable: Drawable,
     pub gc: GC,
     pub scheme: Vec<Option<Rc<Clr>>>,
-    pub fonts: Option<Rc<RefCell<Fnt>>>,
+    pub font: Option<Rc<RefCell<Fnt>>>,
 }
 impl Drw {
     pub fn new() -> Self {
@@ -114,11 +121,14 @@ impl Drw {
             drawable: 0,
             gc: null_mut(),
             scheme: vec![],
-            fonts: None,
+            font: None,
         }
     }
     pub fn textw(&mut self, X: &str) -> u32 {
-        self.drw_fontset_getwidth(X) + self.lrpad as u32
+        self.drw_font_getwidth(X, false) + self.lrpad as u32
+    }
+    pub fn textwm(&mut self, X: &str) -> u32 {
+        self.drw_font_getwidth(X, true) + self.lrpad as u32
     }
     pub fn drw_create(dpy: *mut xlib::Display, screen: i32, root: Window, w: u32, h: u32) -> Self {
         let mut drw = Drw::new();
@@ -160,7 +170,7 @@ impl Drw {
         unsafe {
             XFreePixmap(self.dpy, self.drawable);
             XFreeGC(self.dpy, self.gc);
-            self.drw_fontset_free(self.fonts.clone());
+            self.drw_font_free(self.font.clone());
         }
     }
     pub fn xfont_create(&mut self, fontname: &str) -> Option<Rc<RefCell<Fnt>>> {
@@ -168,59 +178,52 @@ impl Drw {
             exit(0);
         }
 
-        let context = pango::Context::new();
-        let desc = FontDescription::from_string("SauceCodePro Nerd Font Regular 12");
         let mut font = Fnt::new();
-        font.xfont = xfont;
-        font.pattern = pattern;
+        font.dpy = self.dpy;
+
         unsafe {
-            font.h = ((*xfont).ascent + (*xfont).descent) as u32;
-            font.dpy = self.dpy;
+            let context = pango_context_new();
+            let cstring = CString::new(fontname).expect("fail to connect");
+            let desc = pango_font_description_from_string(cstring.as_ptr());
+            font.layout = pango_layout_new(context);
+            pango_layout_set_font_description(font.layout, desc);
+
+            let metrics = pango_context_get_metrics(context, desc, null_mut());
+            font.h = pango_font_metrics_get_height(metrics);
+
+            pango_font_metrics_unref(metrics);
+            g_object_unref(context);
         }
 
         return Some(Rc::new(RefCell::new(font)));
     }
-    pub fn drw_fontset_create(
-        &mut self,
-        fonts: &[&str],
-        fontcount: u64,
-    ) -> Option<Rc<RefCell<Fnt>>> {
-        let mut ret: Option<Rc<RefCell<Fnt>>> = None;
-
-        if fonts.is_empty() {
+    pub fn drw_font_create(&mut self, font: &str) -> Option<Rc<RefCell<Fnt>>> {
+        if font.is_empty() {
             return None;
         }
 
-        for i in 0..fontcount {
-            let cur = self.xfont_create(fonts[i as usize], null_mut());
-            if cur.is_some() {
-                println!("[drw_fontset_create] font: {}", fonts[i as usize]);
-                cur.as_ref().unwrap().borrow_mut().next = ret;
-                ret = cur;
-            }
-        }
-        self.fonts = ret;
-        return self.fonts.clone();
+        let fnt = self.xfont_create(font);
+        self.font = fnt;
+        return self.font.clone();
     }
-    pub fn drw_fontset_free(&self, font: Option<Rc<RefCell<Fnt>>>) {
-        if let Some(ref font_opt) = font {
-            self.drw_fontset_free(font_opt.borrow_mut().next.clone());
+    pub fn drw_font_free(&self, font: Option<Rc<RefCell<Fnt>>>) {
+        if font.is_some() {
             Self::xfont_free(font);
         }
     }
 
-    pub fn drw_fontset_getwidth(&mut self, text: &str) -> u32 {
-        if self.fonts.is_none() || text.is_empty() {
+    pub fn drw_font_getwidth(&mut self, text: &str, markup: bool) -> u32 {
+        if self.font.is_none() || text.is_empty() {
             return 0;
         }
-        return self.drw_text(0, 0, 0, 0, 0, text, 0) as u32;
+        return self.drw_text(0, 0, 0, 0, 0, text, 0, markup) as u32;
     }
 
     #[allow(dead_code)]
-    pub fn drw_fontset_getwidth_clamp(&mut self, text: &str, n: u32) -> u32 {
+    pub fn drw_font_getwidth_clamp(&mut self, text: &str, n: u32, markup: bool) -> u32 {
         let mut tmp: u32 = 0;
-        if self.fonts.is_some() && (n > 0) {
-            tmp = self.drw_text(0, 0, 0, 0, 0, text, n as i32) as u32;
+        if self.font.is_some() && (n > 0) {
+            tmp = self.drw_text(0, 0, 0, 0, 0, text, n as i32, markup) as u32;
         }
         return n.min(tmp);
     }
@@ -280,10 +283,6 @@ impl Drw {
             XFreeCursor(self.dpy, (*cursor).cursor);
         }
     }
-    #[allow(dead_code)]
-    pub fn drw_setfontset(&mut self, set: Option<Rc<RefCell<Fnt>>>) {
-        self.fonts = set;
-    }
 
     pub fn drw_setscheme(&mut self, scm: Vec<Option<Rc<Clr>>>) {
         self.scheme = scm;
@@ -326,43 +325,22 @@ impl Drw {
         lpad: u32,
         mut text: &str,
         invert: i32,
+        markup: bool,
     ) -> i32 {
         info!("[drw_text]");
         info!(
             "[drw_text] x: {}, y: {},w: {},h: {}, lpad: {}, text: {:?}, invert: {}",
             x, y, w, h, lpad, text, invert
         );
-        let mut ellipsis_x: i32 = 0;
-
-        let mut tmpw: u32 = 0;
-        let mut ellipsis_w: u32 = 0;
 
         let mut d: *mut XftDraw = null_mut();
 
-        let mut curfont: Option<Rc<RefCell<Fnt>>>;
-        let mut nextfont: Option<Rc<RefCell<Fnt>>>;
-        let mut utf8strlen: i32;
-        let mut utf8charlen: i32;
-        let render: bool = x > 0 || y > 0 || w > 0 || h > 0;
-        let mut utf8codepoint: u64 = 0;
-        let mut utf8str: &str;
-        let mut fccharset: *mut FcCharSet;
-        let mut fcpattern: *mut FcPattern;
-        let mut match0: *mut FcPattern;
-        let mut result: FcResult = FcResult::NoId;
-        let mut charexists: i32 = 0;
-        let mut overflow: i32 = 0;
+        let render = x > 0 || y > 0 || w > 0 || h > 0;
+        if (render && (self.scheme.is_empty())) || text.is_empty() || self.font.is_none() {
+            return 0;
+        }
 
         unsafe {
-            static mut ellipsis_width: u32 = 0;
-            static mut nomatches: NoMathes = unsafe { zeroed() };
-            if (render && (self.scheme.is_empty() || w <= 0))
-                || (text.is_empty())
-                || (self.fonts.is_none())
-            {
-                return 0;
-            }
-
             if !render {
                 w = if invert > 0 {
                     invert as u32
@@ -383,175 +361,31 @@ impl Drw {
                 w -= lpad;
             }
 
-            let mut usedfont = self.fonts.clone();
-            if ellipsis_width <= 0 && render {
-                ellipsis_width = self.drw_fontset_getwidth("…");
-                // info!("[drw_text], ellipsis_width: {}", ellipsis_width);
-            }
-            loop {
-                let mut ew = 0;
-                let mut ellipsis_len = 0;
-                utf8strlen = 0;
-                utf8str = text;
-                nextfont = None;
+            let len = text.len();
+            if len > 0 {
+                // (TODO)
+                drw_font_gettexts(self.font, text, len, w, h);
+                let th = eh;
+                // shorten text if necessary.
+                // (TODO)
 
-                while !text.is_empty() {
-                    utf8charlen = text.chars().nth(0).unwrap().len_utf8() as i32;
-                    utf8codepoint = text.chars().nth(0).unwrap() as u64;
-                    curfont = self.fonts.clone();
-                    while let Some(ref curfont_opt) = curfont {
-                        charexists |= XftCharExists(
-                            self.dpy,
-                            curfont_opt.borrow_mut().xfont,
-                            utf8codepoint as u32,
-                        );
-                        if charexists > 0 {
-                            Self::drw_font_gettexts(
-                                &mut *curfont_opt.borrow_mut(),
-                                text,
-                                utf8charlen as u32,
-                                &mut tmpw,
-                                null_mut(),
-                            );
-                            if ew + ellipsis_width <= w {
-                                // keep track where the ellipsis still fits
-                                ellipsis_x = x + ew as i32;
-                                ellipsis_w = w - ew;
-                                ellipsis_len = utf8strlen as u32;
-                            }
+                if len > 0 {
+                    // drw ... //nop
 
-                            if ew + tmpw > w {
-                                overflow = 1;
-                                // called from drw_fontset_getwidth_clamp()
-                                // it wants the width AFTER the overflow
-                                if !render {
-                                    x += tmpw as i32;
-                                } else {
-                                    utf8strlen = ellipsis_len as i32;
-                                }
-                            } else if Rc::ptr_eq(curfont_opt, usedfont.as_ref().unwrap()) {
-                                utf8strlen += utf8charlen;
-                                text = &text[utf8charlen as usize..];
-                                ew += tmpw;
-                            } else {
-                                nextfont = curfont;
-                            }
-                            break;
-                        }
-
-                        let next = curfont_opt.borrow_mut().next.clone();
-                        curfont = next;
-                    }
-
-                    // info!("[drw_text] charexists: {}, ew: {}, ellipsis_width: {}, w: {}, tmpw: {}, overflow: {}, nextfont: {}",charexists, ew, ellipsis_width, w, tmpw, overflow, nextfont.is_some());
-                    if overflow > 0 || charexists <= 0 || nextfont.is_some() {
-                        break;
-                    } else {
-                        charexists = 0;
-                    }
-                }
-
-                if utf8strlen > 0 {
                     if render {
-                        let usedfont_mut = usedfont.as_ref().unwrap().borrow_mut();
-                        let usedfont_h = usedfont_mut.h;
-                        let ascent = (*usedfont_mut.xfont).ascent;
-                        let ty = y + (h - usedfont_h) as i32 / 2 + ascent;
-                        let idx = if invert > 0 { Col::ColBg } else { Col::ColFg } as usize;
-                        let cstring = CString::new(utf8str).expect("fail to create");
-                        let clr = self.scheme[idx].as_ref().unwrap();
-                        // println!(
-                        //     "[drw_text] utf8str: {}, utf8strlen: {}",
-                        //     utf8str, utf8strlen
-                        // );
-                        XftDrawStringUtf8(
-                            d,
-                            clr.as_ref(),
-                            usedfont_mut.xfont,
-                            x,
-                            ty,
-                            cstring.as_ptr() as *const _,
-                            utf8strlen,
-                        );
+                        let ty = y + (h - th) / 2;
+                        if markup {
+                            pango_layout_set_markup(self.font.layout, markup, length);
+                        } else {
+                            pango_layout_set_text(self.font.layout, text, length);
+                        }
+                        // pango_xft_render_layout
+                        if markup {
+                            pango_layout_set_attributes(self.font.layout, null_mut());
+                        }
                     }
                     x += ew as i32;
                     w -= ew;
-                }
-
-                if render && overflow > 0 {
-                    info!("[drw_text] render overflow, draw …");
-                    self.drw_text(ellipsis_x, y, ellipsis_w, h, 0, "…", invert);
-                }
-
-                if text.is_empty() || overflow > 0 {
-                    break;
-                } else if nextfont.is_some() {
-                    charexists = 0;
-                    usedfont = nextfont;
-                } else {
-                    // Regardless of whether or not a fallback font is found, the character must be
-                    // drawn.
-                    charexists = 1;
-
-                    for i in 0..NOMATCHES_LEN {
-                        // avoid calling XftFontMatch if we know we won't find a match.
-                        if utf8codepoint == nomatches.codepoint[i] {
-                            usedfont = self.fonts.clone();
-                            continue;
-                        }
-                    }
-
-                    fccharset = FcCharSetCreate();
-                    FcCharSetAddChar(fccharset, utf8codepoint as u32);
-
-                    let pattern = { self.fonts.as_ref().unwrap().borrow_mut().pattern };
-                    if pattern.is_null() {
-                        // Refer to the comment if xfont_free for more information
-                        // The first font in the cache must be loaded from a font string.
-                        warn!("[drw_text] pattern is null");
-                        exit(0);
-                    }
-
-                    fcpattern = FcPatternDuplicate(pattern);
-                    FcPatternAddCharSet(fcpattern, FC_CHARSET.as_ptr(), fccharset);
-                    FcPatternAddBool(fcpattern, FC_SCALABLE.as_ptr(), True);
-
-                    FcConfigSubstitute(null_mut(), fcpattern, FcMatchPattern);
-                    FcDefaultSubstitute(fcpattern);
-                    match0 = XftFontMatch(
-                        self.dpy,
-                        self.screen,
-                        fcpattern as *mut _,
-                        &mut result as *mut _,
-                    ) as *mut _;
-
-                    FcCharSetDestroy(fccharset);
-                    FcPatternDestroy(fcpattern);
-
-                    if !match0.is_null() {
-                        usedfont = self.xfont_create("", match0);
-                        let xfont = { usedfont.as_ref().unwrap().borrow_mut().xfont };
-                        if usedfont.is_some()
-                            && XftCharExists(self.dpy, xfont, utf8codepoint as u32) > 0
-                        {
-                            curfont = self.fonts.clone();
-                            while let Some(ref curfont_opt) = curfont {
-                                // NOP
-                                let next = curfont_opt.borrow_mut().next.clone();
-                                if next.is_none() {
-                                    break;
-                                }
-                                curfont = next;
-                            }
-                            curfont.as_ref().unwrap().borrow_mut().next = usedfont.clone();
-                        } else {
-                            Self::xfont_free(usedfont);
-                            nomatches.idx += 1;
-                            let idx = nomatches.idx as usize % NOMATCHES_LEN;
-                            nomatches.codepoint[idx] = utf8codepoint;
-                            usedfont = self.fonts.clone();
-                        }
-                    }
                 }
             }
             if !d.is_null() {
@@ -561,6 +395,7 @@ impl Drw {
 
         return x + if render { w as i32 } else { 0 };
     }
+
     pub fn drw_map(&mut self, win: Window, x: i32, y: i32, w: u32, h: u32) {
         unsafe {
             XCopyArea(self.dpy, self.drawable, win, self.gc, x, y, w, h, x, y);
@@ -570,37 +405,39 @@ impl Drw {
     fn xfont_free(font: Option<Rc<RefCell<Fnt>>>) {
         unsafe {
             if let Some(ref font_opt) = font {
-                if !font_opt.borrow_mut().pattern.is_null() {
-                    FcPatternDestroy(font_opt.borrow_mut().pattern);
+                if !font_opt.borrow_mut().layout.is_null() {
+                    g_object_unref(font_opt.layout);
                 }
-                let dpy = { font_opt.borrow_mut().dpy };
-                let xfont = { font_opt.borrow_mut().xfont };
-                XftFontClose(dpy, xfont);
             }
         }
     }
 
-    fn drw_font_gettexts(font: *mut Fnt, text: &str, len: u32, w: *mut u32, h: *mut u32) {
+    fn drw_font_gettexts(
+        font: *mut Fnt,
+        text: &str,
+        len: u32,
+        w: *mut u32,
+        h: *mut u32,
+        markup: bool,
+    ) {
         unsafe {
-            let mut ext: XGlyphInfo = std::mem::zeroed();
-
             if font.is_null() || text.is_empty() {
                 return;
             }
 
             let cstring = CString::new(text).expect("fail to convert");
-            XftTextExtentsUtf8(
-                (*font).dpy,
-                (*font).xfont,
-                cstring.as_ptr() as *const _,
-                len as i32,
-                &mut ext,
-            );
+            if markup {
+                pango_layout_set_markup(font.layout, markup, length);
+            } else {
+                pango_layout_set_text(font.layout, text, length);
+            }
+            let mut r: PangoRectangle = zeroed();
+            pango_layout_get_extents(font.layout, 0, &mut r);
             if !w.is_null() {
-                *w = ext.xOff as u32;
+                *w = (r.width / PANGO_SCALE) as u32;
             }
             if !h.is_null() {
-                *h = (*font).h;
+                *h = (r.height / PANGO_SCALE) as u32;
             }
         }
     }
