@@ -3,62 +3,38 @@
 // #![allow(unused_mut)]
 
 use std::{
-    cell::RefCell, ffi::CString, i32, mem::zeroed, process::exit, ptr::null_mut, rc::Rc, u32, usize,
+    cell::RefCell,
+    ffi::CString,
+    i32,
+    mem::zeroed,
+    process::exit,
+    ptr::{null, null_mut},
+    rc::Rc,
+    u32, usize,
 };
 
-pub use fontconfig_sys;
-
-use fontconfig_sys::{
-    constants::{FC_CHARSET, FC_SCALABLE},
-    FcChar8, FcCharSet, FcCharSetAddChar, FcCharSetCreate, FcCharSetDestroy, FcConfigSubstitute,
-    FcDefaultSubstitute, FcMatchPattern, FcNameParse, FcPattern, FcPatternAddBool,
-    FcPatternAddCharSet, FcPatternDestroy, FcPatternDuplicate,
-};
 use log::info;
-use log::warn;
+// use log::warn;
 // For whatever reason, dmenu and other suckless tools use libXft, which does not support Unicode properly.
 // If you use Pango however, Unicode will work great and this includes flag emojis.
 use pango::{
     ffi::{
         pango_context_get_metrics, pango_context_new, pango_font_description_from_string,
-        pango_font_map_create_context, pango_font_metrics_get_height, pango_font_metrics_get_type,
-        pango_font_metrics_unref, pango_layout_get_extents, pango_layout_new,
-        pango_layout_set_attributes, pango_layout_set_font_description, pango_layout_set_markup,
-        pango_layout_set_text, PangoLayout, PangoRectangle, PANGO_SCALE,
+        pango_font_metrics_get_height, pango_font_metrics_unref, pango_layout_get_extents,
+        pango_layout_new, pango_layout_set_attributes, pango_layout_set_font_description,
+        pango_layout_set_markup, pango_layout_set_text, PangoLayout, PangoRectangle, PANGO_SCALE,
     },
-    glib::{gobject_ffi::g_object_unref, property::PropertyGet},
-    prelude::*,
-    FontDescription,
+    glib::gobject_ffi::g_object_unref,
 };
 use x11::{
-    xft::{
-        FcResult, XftCharExists, XftColor, XftColorAllocName, XftDraw, XftDrawCreate,
-        XftDrawDestroy, XftDrawStringUtf8, XftFont, XftFontClose, XftFontMatch, XftFontOpenName,
-        XftFontOpenPattern, XftTextExtentsUtf8,
-    },
+    xft::{XftColor, XftColorAllocName, XftDraw, XftDrawCreate, XftDrawDestroy},
     xlib::{
-        self, CapButt, Cursor, Drawable, False, JoinMiter, LineSolid, True, Window, XCopyArea,
+        self, CapButt, Cursor, Drawable, False, JoinMiter, LineSolid,  Window, XCopyArea,
         XCreateFontCursor, XCreateGC, XCreatePixmap, XDefaultColormap, XDefaultDepth,
         XDefaultVisual, XDrawRectangle, XFillRectangle, XFreeCursor, XFreeGC, XFreePixmap,
         XSetForeground, XSetLineAttributes, XSync, GC,
     },
-    xrender::XGlyphInfo,
 };
-
-const NOMATCHES_LEN: usize = 64;
-pub struct NoMathes {
-    codepoint: [u64; NOMATCHES_LEN],
-    idx: u32,
-}
-#[allow(dead_code)]
-impl NoMathes {
-    pub fn new() -> Self {
-        Self {
-            codepoint: [0; NOMATCHES_LEN],
-            idx: 0,
-        }
-    }
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct Cur {
@@ -189,10 +165,10 @@ impl Drw {
             pango_layout_set_font_description(font.layout, desc);
 
             let metrics = pango_context_get_metrics(context, desc, null_mut());
-            font.h = pango_font_metrics_get_height(metrics);
+            font.h = pango_font_metrics_get_height(metrics) as u32;
 
             pango_font_metrics_unref(metrics);
-            g_object_unref(context);
+            g_object_unref(context as *mut _);
         }
 
         return Some(Rc::new(RefCell::new(font)));
@@ -332,13 +308,13 @@ impl Drw {
             "[drw_text] x: {}, y: {},w: {},h: {}, lpad: {}, text: {:?}, invert: {}",
             x, y, w, h, lpad, text, invert
         );
-
-        let mut d: *mut XftDraw = null_mut();
-
         let render = x > 0 || y > 0 || w > 0 || h > 0;
         if (render && (self.scheme.is_empty())) || text.is_empty() || self.font.is_none() {
             return 0;
         }
+        let mut d: *mut XftDraw = null_mut();
+        let mut ew: u32 = 0;
+        let mut eh: u32 = 0;
 
         unsafe {
             if !render {
@@ -364,7 +340,7 @@ impl Drw {
             let len = text.len();
             if len > 0 {
                 // (TODO)
-                drw_font_gettexts(self.font, text, len, w, h);
+                Self::drw_font_gettexts(self.font.clone(), text, len, &mut ew, &mut eh, markup);
                 let th = eh;
                 // shorten text if necessary.
                 // (TODO)
@@ -373,15 +349,27 @@ impl Drw {
                     // drw ... //nop
 
                     if render {
-                        let ty = y + (h - th) / 2;
+                        let ty = y + (h - th) as i32 / 2;
                         if markup {
-                            pango_layout_set_markup(self.font.layout, markup, length);
+                            pango_layout_set_markup(
+                                self.font.as_ref().unwrap().borrow_mut().layout,
+                                null(),
+                                len as i32,
+                            );
                         } else {
-                            pango_layout_set_text(self.font.layout, text, length);
+                            pango_layout_set_text(
+                                self.font.as_ref().unwrap().borrow_mut().layout,
+                                null(),
+                                len as i32,
+                            );
                         }
                         // pango_xft_render_layout
                         if markup {
-                            pango_layout_set_attributes(self.font.layout, null_mut());
+                            // clear markup attributes
+                            pango_layout_set_attributes(
+                                self.font.as_ref().unwrap().borrow_mut().layout,
+                                null_mut(),
+                            );
                         }
                     }
                     x += ew as i32;
@@ -406,39 +394,36 @@ impl Drw {
         unsafe {
             if let Some(ref font_opt) = font {
                 if !font_opt.borrow_mut().layout.is_null() {
-                    g_object_unref(font_opt.layout);
+                    g_object_unref(font_opt.borrow_mut().layout as *mut _);
                 }
             }
         }
     }
 
     fn drw_font_gettexts(
-        font: *mut Fnt,
+        font: Option<Rc<RefCell<Fnt>>>,
         text: &str,
-        len: u32,
-        w: *mut u32,
-        h: *mut u32,
+        len: usize,
+        w: &mut u32,
+        h: &mut u32,
         markup: bool,
     ) {
         unsafe {
-            if font.is_null() || text.is_empty() {
+            if font.is_none() || text.is_empty() {
                 return;
             }
+            let font = font.as_ref().unwrap().borrow_mut();
 
             let cstring = CString::new(text).expect("fail to convert");
             if markup {
-                pango_layout_set_markup(font.layout, markup, length);
+                pango_layout_set_markup(font.layout, cstring.as_ptr(), len as i32);
             } else {
-                pango_layout_set_text(font.layout, text, length);
+                pango_layout_set_text(font.layout, cstring.as_ptr(), len as i32);
             }
             let mut r: PangoRectangle = zeroed();
-            pango_layout_get_extents(font.layout, 0, &mut r);
-            if !w.is_null() {
-                *w = (r.width / PANGO_SCALE) as u32;
-            }
-            if !h.is_null() {
-                *h = (r.height / PANGO_SCALE) as u32;
-            }
+            pango_layout_get_extents(font.layout, null_mut(), &mut r);
+            *w = (r.width / PANGO_SCALE) as u32;
+            *h = (r.height / PANGO_SCALE) as u32;
         }
     }
 }

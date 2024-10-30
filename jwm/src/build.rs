@@ -6,7 +6,6 @@ fn main() {
     // Link against the `X11` library on Unix-like systems
     println!("cargo:rustc-link-lib=X11");
     println!("cargo:rustc-link-lib=fontconfig");
-    println!("cargo:rustc-link-lib=pango");
     println!("cargo:rustc-link-lib=Xinerama");
     println!("cargo:rustc-link-lib=Xft");
 

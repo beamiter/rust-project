@@ -55,7 +55,7 @@ use x11::xlib::{
 use std::cmp::{max, min};
 
 use crate::config::{
-    borderpx, buttons, colors, dmenucmd, dmenumon, fonts, horizpadbar, keys, layouts,
+    borderpx, buttons, colors, dmenucmd, dmenumon, font, horizpadbar, keys, layouts,
     lockfullscreen, mfact, nmaster, resizehints, rules, showbar, sidepad, snap, tagmask, tags,
     topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad, vertpadbar,
 };
@@ -1422,7 +1422,16 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
             match element {
                 TextElement::WithoutCaret(val) => {
                     w = drw_mut.textw(val) - drw_mut.lrpad as u32;
-                    drw_mut.drw_text(x, vertpadbar / 2, w, bh0 - vertpadbar as u32, 0, &val, 0, false);
+                    drw_mut.drw_text(
+                        x,
+                        vertpadbar / 2,
+                        w,
+                        bh0 - vertpadbar as u32,
+                        0,
+                        &val,
+                        0,
+                        false,
+                    );
                     x += w as i32;
                 }
                 TextElement::WithCaret(val) => {
@@ -2675,7 +2684,7 @@ pub fn setup() {
             .as_mut()
             .unwrap()
             .as_mut()
-            .drw_font_create(&*fonts)
+            .drw_font_create(font)
             .is_none()
         {
             eprintln!("no fonts could be loaded");
