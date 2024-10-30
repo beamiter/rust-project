@@ -3,14 +3,7 @@
 // #![allow(unused_mut)]
 
 use std::{
-    cell::RefCell,
-    ffi::CString,
-    i32,
-    mem::zeroed,
-    process::exit,
-    ptr::{null, null_mut},
-    rc::Rc,
-    u32, usize,
+    cell::RefCell, ffi::CString, i32, mem::zeroed, process::exit, ptr::null_mut, rc::Rc, u32, usize,
 };
 
 use log::info;
@@ -29,7 +22,7 @@ use pango::{
 use x11::{
     xft::{XftColor, XftColorAllocName, XftDraw, XftDrawCreate, XftDrawDestroy},
     xlib::{
-        self, CapButt, Cursor, Drawable, False, JoinMiter, LineSolid,  Window, XCopyArea,
+        self, CapButt, Cursor, Drawable, False, JoinMiter, LineSolid, Window, XCopyArea,
         XCreateFontCursor, XCreateGC, XCreatePixmap, XDefaultColormap, XDefaultDepth,
         XDefaultVisual, XDrawRectangle, XFillRectangle, XFreeCursor, XFreeGC, XFreePixmap,
         XSetForeground, XSetLineAttributes, XSync, GC,
@@ -337,33 +330,48 @@ impl Drw {
                 w -= lpad;
             }
 
-            let len = text.len();
+            let mut len = text.len();
+            let max_buf_len = 1024;
             if len > 0 {
-                // (TODO)
                 Self::drw_font_gettexts(self.font.clone(), text, len, &mut ew, &mut eh, markup);
-                let th = eh;
+                let mut th = eh;
                 // shorten text if necessary.
-                // (TODO)
+                len = len.min(max_buf_len);
+                while len > 0 {
+                    if ew <= w {
+                        break;
+                    }
+                    Self::drw_font_gettexts(self.font.clone(), text, len, &mut ew, &mut eh, markup);
+                    if eh > th {
+                        th = eh;
+                    }
+                    len -= 1;
+                }
 
                 if len > 0 {
-                    // drw ... //nop
+                    let mut buf = text[0..len].to_string();
+                    if len < text.len() && len > 3 {
+                        // drw "..."
+                        buf.truncate(buf.len() - 3);
+                        buf.push_str("...");
+                    }
 
                     if render {
                         let ty = y + (h - th) as i32 / 2;
                         if markup {
                             pango_layout_set_markup(
                                 self.font.as_ref().unwrap().borrow_mut().layout,
-                                null(),
+                                buf.as_ptr() as *const _,
                                 len as i32,
                             );
                         } else {
                             pango_layout_set_text(
                                 self.font.as_ref().unwrap().borrow_mut().layout,
-                                null(),
+                                buf.as_ptr() as *const _,
                                 len as i32,
                             );
                         }
-                        // pango_xft_render_layout
+                        // (TODO) pango_xft_render_layout
                         if markup {
                             // clear markup attributes
                             pango_layout_set_attributes(
