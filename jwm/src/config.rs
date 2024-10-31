@@ -61,11 +61,12 @@ pub const colors: [&[&'static str; 3]; 10] = [
     &[col_white, col_red, col_red],
 ];
 
+// No need rules.
 pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
     vec![
         // class | instance | title | tags mask | isfloating | monitor
-        Rule::new("Gimp", "", "", 0, false, -1),
-        Rule::new("Firefox", "", "", 1 << 8, false, -1),
+        // Rule::new("Gimp", "", "", 0, false, -1),
+        // Rule::new("Firefox", "", "", 1 << 8, false, -1),
     ]
 });
 // https://symbl.cc/en/
