@@ -2,6 +2,7 @@
 #![allow(non_snake_case)]
 // #![allow(unused_mut)]
 
+use pango::{prelude::FontMapExt, FontDescription, Layout};
 use std::{
     cell::RefCell, ffi::CString, i32, mem::zeroed, process::exit, ptr::null_mut, rc::Rc, u32, usize,
 };
@@ -151,17 +152,15 @@ impl Drw {
         font.dpy = self.dpy;
 
         unsafe {
-            let context = pango_context_new();
-            let cstring = CString::new(fontname).expect("fail to connect");
-            let desc = pango_font_description_from_string(cstring.as_ptr());
-            font.layout = pango_layout_new(context);
-            pango_layout_set_font_description(font.layout, desc);
-
-            let metrics = pango_context_get_metrics(context, desc, null_mut());
-            font.h = pango_font_metrics_get_height(metrics) as u32;
-
-            pango_font_metrics_unref(metrics);
-            g_object_unref(context as *mut _);
+            let font_map = pangocairo::FontMap::default();
+            let context = font_map.create_context();
+            let layout = Layout::new(&context);
+            let desc = FontDescription::from_string("SauceCodePro Nerd Font Regular 12");
+            let desc = Some(&desc);
+            layout.set_font_description(desc);
+            // font.layout = pango_layout_new(context);
+            let metrics = context.metrics(desc, None);
+            font.h = metrics.height() as u32;
         }
 
         return Some(Rc::new(RefCell::new(font)));
