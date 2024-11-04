@@ -10,3 +10,4 @@ pango = "0.20.4"
 pangocairo = "0.20.4"
 x11 = "2.21.0"
 cairo-rs ={ version = "0.20.5", features = ["png", "xlib"] }
+cairo-sys-rs = { version = "0.20.0", features = ["png", "xlib", "x11"] }
