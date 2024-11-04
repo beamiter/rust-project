@@ -2,9 +2,13 @@
 #![allow(non_snake_case)]
 // #![allow(unused_mut)]
 
+use cairo::{Context, Surface};
+use cairo_sys::cairo_xlib_surface_create;
 use pango::{prelude::FontMapExt, FontDescription, Layout};
+use pangocairo::functions::{create_context, show_layout, update_layout};
 use std::{
-    cell::RefCell, ffi::CString, i32, mem::zeroed, process::exit, ptr::null_mut, rc::Rc, u32, usize,
+    cell::RefCell, error::Error, ffi::CString, i32, mem::zeroed, process::exit, ptr::null_mut,
+    rc::Rc, u32, usize,
 };
 
 use log::info;
@@ -79,6 +83,7 @@ pub struct Drw {
     pub gc: GC,
     pub scheme: Vec<Option<Rc<Clr>>>,
     pub font: Option<Rc<RefCell<Fnt>>>,
+    pub cr: Result<Context, cairo::Error>,
 }
 impl Drw {
     pub fn new() -> Self {
@@ -93,6 +98,7 @@ impl Drw {
             gc: null_mut(),
             scheme: vec![],
             font: None,
+            cr: Err(cairo::Error::NullPointer),
         }
     }
     pub fn textw(&mut self, X: &str) -> u32 {
@@ -152,15 +158,26 @@ impl Drw {
         let mut font = Fnt::new();
         font.dpy = self.dpy;
 
-        let font_map = pangocairo::FontMap::default();
-        let context = font_map.create_context();
-        let layout = Layout::new(&context);
-        let desc = FontDescription::from_string("SauceCodePro Nerd Font Regular 12");
-        let desc = Some(&desc);
-        layout.set_font_description(desc);
-        let metrics = context.metrics(desc, None);
-        font.h = metrics.height() as u32;
-        font.layout = Some(layout);
+        unsafe {
+            let xlib_surface = cairo_xlib_surface_create(
+                self.dpy,
+                self.root,
+                xlib::XDefaultVisual(self.dpy, self.screen) as *mut _,
+                200,
+                100,
+            );
+            let surface = Surface::from_raw_none(xlib_surface);
+            self.cr = Context::new(&surface);
+            let pango_context = create_context(self.cr.as_ref().unwrap());
+            let layout = Layout::new(&pango_context);
+            let desc = FontDescription::from_string("SauceCodePro Nerd Font Regular 12");
+            let desc = Some(&desc);
+            layout.set_font_description(desc);
+            // (TODO)
+            // let metrics = context.metrics(desc, None);
+            font.h = 20 as u32;
+            font.layout = Some(layout);
+        }
 
         return Some(Rc::new(RefCell::new(font)));
     }
@@ -376,16 +393,19 @@ impl Drw {
                                 .set_text(&buf);
                         }
                         // (TODO) pango_xft_render_layout
-                        let context = self
-                            .font
-                            .as_ref()
-                            .unwrap()
-                            .borrow_mut()
-                            .layout
-                            .as_ref()
-                            .unwrap().context();
-                        pangocairo::functions::show_layout(
-                            &context,
+                        update_layout(
+                            &self.cr.as_ref().unwrap(),
+                            &self
+                                .font
+                                .as_ref()
+                                .unwrap()
+                                .borrow_mut()
+                                .layout
+                                .as_ref()
+                                .unwrap(),
+                        );
+                        show_layout(
+                            &self.cr.as_ref().unwrap(),
                             &self
                                 .font
                                 .as_ref()

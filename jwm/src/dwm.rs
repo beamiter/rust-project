@@ -1721,6 +1721,9 @@ pub fn run() {
         XSync(dpy, False);
         let mut i: u64 = 0;
         while running.load(Ordering::SeqCst) && XNextEvent(dpy, &mut ev) <= 0 {
+            if ev.type_ as usize >= handler.len() {
+                continue;
+            }
             // info!("running frame: {}, handler type: {}", i, ev.type_);
             i = (i + 1) % std::u64::MAX;
             if let Some(hd) = handler[ev.type_ as usize] {
