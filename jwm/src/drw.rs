@@ -7,8 +7,7 @@ use cairo_sys::cairo_xlib_surface_create;
 use pango::{prelude::FontMapExt, FontDescription, Layout};
 use pangocairo::functions::{create_context, show_layout, update_layout};
 use std::{
-    cell::RefCell, error::Error, ffi::CString, i32, mem::zeroed, process::exit, ptr::null_mut,
-    rc::Rc, u32, usize,
+    cell::RefCell, error::Error, ffi::CString, fs::File, i32, mem::zeroed, process::exit, ptr::null_mut, rc::Rc, u32, usize
 };
 
 use log::info;
@@ -392,7 +391,15 @@ impl Drw {
                                 .unwrap()
                                 .set_text(&buf);
                         }
-                        // (TODO) pango_xft_render_layout
+                        self.font
+                            .as_ref()
+                            .unwrap()
+                            .borrow_mut()
+                            .layout
+                            .as_ref()
+                            .unwrap()
+                            .set_text("🦄🦄🦄🦄🦄🦄🦄🦄🦄🦄🦄🦄🦄🦄");
+                            // .set_text("🍇🍵🎦🎮🎵🏖🐣🐶🦄 fuck the world 🍇🍵🎦🎮🎵🏖🐣🐶🦄");
                         update_layout(
                             &self.cr.as_ref().unwrap(),
                             &self
