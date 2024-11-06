@@ -4,10 +4,15 @@
 
 use cairo::{Context, Surface};
 use cairo_sys::cairo_xlib_surface_create;
-use pango::{prelude::FontMapExt, FontDescription, Layout};
+use pango::{
+    ffi::{pango_font_map_create_context, PangoFontMap},
+    prelude::FontMapExt,
+    FontDescription, Layout,
+};
 use pangocairo::functions::{create_context, show_layout, update_layout};
 use std::{
-    cell::RefCell, error::Error, ffi::CString, fs::File, i32, mem::zeroed, process::exit, ptr::null_mut, rc::Rc, u32, usize
+    cell::RefCell, error::Error, ffi::CString, fs::File, i32, mem::zeroed, process::exit,
+    ptr::null_mut, rc::Rc, u32, usize,
 };
 
 use log::info;
@@ -32,7 +37,10 @@ use x11::{
         XDefaultVisual, XDrawRectangle, XFillRectangle, XFreeCursor, XFreeGC, XFreePixmap,
         XSetForeground, XSetLineAttributes, XSync, GC,
     },
+    xrender::XGlyphInfo,
 };
+
+use crate::pangoxft::*;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Cur {
@@ -48,14 +56,14 @@ impl Cur {
 pub struct Fnt {
     pub dpy: *mut xlib::Display,
     pub h: u32,
-    pub layout: Option<Layout>,
+    pub layout: *mut PangoLayout,
 }
 impl Fnt {
     pub fn new() -> Self {
         Fnt {
             dpy: null_mut(),
             h: 0,
-            layout: None,
+            layout: null_mut(),
         }
     }
 }
@@ -158,36 +166,30 @@ impl Drw {
         font.dpy = self.dpy;
 
         unsafe {
-            let xlib_surface = cairo_xlib_surface_create(
-                self.dpy,
-                self.root,
-                xlib::XDefaultVisual(self.dpy, self.screen) as *mut _,
-                200,
-                100,
-            );
-            let surface = Surface::from_raw_none(xlib_surface);
-            self.cr = Context::new(&surface);
-            let pango_context = create_context(self.cr.as_ref().unwrap());
-            let layout = Layout::new(&pango_context);
-            let desc = FontDescription::from_string("SauceCodePro Nerd Font Regular 12");
-            let desc = Some(&desc);
-            layout.set_font_description(desc);
-            // (TODO)
-            // let metrics = context.metrics(desc, None);
-            font.h = 20 as u32;
-            font.layout = Some(layout);
+            let fontmap = pango_xft_get_font_map(self.dpy, self.screen);
+            let context = pango_font_map_create_context(fontmap);
+            let cstring = CString::new(fontname).expect("fail to convert");
+            let desc = pango_font_description_from_string(cstring.as_ptr());
+            font.layout = pango_layout_new(context);
+            pango_layout_set_font_description(font.layout, desc);
+
+            let metrics = pango_context_get_metrics(context, desc, null_mut());
+            font.h = (pango_font_metrics_get_height(metrics) / PANGO_SCALE) as u32;
+
+            pango_font_metrics_unref(metrics);
+            g_object_unref(context as *mut _);
         }
 
         return Some(Rc::new(RefCell::new(font)));
     }
-    pub fn drw_font_create(&mut self, font: &str) -> Option<Rc<RefCell<Fnt>>> {
+    pub fn drw_font_create(&mut self, font: &str) -> bool {
         if font.is_empty() {
-            return None;
+            return false;
         }
 
         let fnt = self.xfont_create(font);
         self.font = fnt;
-        return self.font.clone();
+        return self.font.is_some();
     }
     pub fn drw_font_free(&self, font: Option<Rc<RefCell<Fnt>>>) {
         if font.is_some() {
@@ -216,7 +218,7 @@ impl Drw {
         }
 
         unsafe {
-            let cstring = CString::new(clrname).expect("fail to connect");
+            let cstring = CString::new(clrname).expect("fail to convert");
             let mut dest: Clr = std::mem::zeroed();
             let dpy = self.dpy;
             let screen = self.screen;
@@ -347,7 +349,14 @@ impl Drw {
             let mut len = text.len();
             let max_buf_len = 1024;
             if len > 0 {
-                Self::drw_font_gettexts(self.font.clone(), text, &mut ew, &mut eh, markup);
+                Self::drw_font_gettexts(
+                    self.font.clone(),
+                    text,
+                    len as i32,
+                    &mut ew,
+                    &mut eh,
+                    markup,
+                );
                 let mut th = eh;
                 // shorten text if necessary.
                 len = len.min(max_buf_len);
@@ -355,7 +364,14 @@ impl Drw {
                     if ew <= w {
                         break;
                     }
-                    Self::drw_font_gettexts(self.font.clone(), text, &mut ew, &mut eh, markup);
+                    Self::drw_font_gettexts(
+                        self.font.clone(),
+                        text,
+                        len as i32,
+                        &mut ew,
+                        &mut eh,
+                        markup,
+                    );
                     if eh > th {
                         th = eh;
                     }
@@ -372,66 +388,41 @@ impl Drw {
 
                     if render {
                         let ty = y + (h - th) as i32 / 2;
+                        let cstring = CString::new(buf).expect("fail to convert");
                         if markup {
-                            self.font
-                                .as_ref()
-                                .unwrap()
-                                .borrow_mut()
-                                .layout
-                                .as_ref()
-                                .unwrap()
-                                .set_markup(&buf);
+                            pango_layout_set_markup(
+                                self.font.as_ref().unwrap().borrow_mut().layout,
+                                cstring.as_ptr(),
+                                len as i32,
+                            );
                         } else {
-                            self.font
-                                .as_ref()
-                                .unwrap()
-                                .borrow_mut()
-                                .layout
-                                .as_ref()
-                                .unwrap()
-                                .set_text(&buf);
+                            pango_layout_set_text(
+                                self.font.as_ref().unwrap().borrow_mut().layout,
+                                cstring.as_ptr(),
+                                len as i32,
+                            );
                         }
-                        self.font
-                            .as_ref()
-                            .unwrap()
-                            .borrow_mut()
-                            .layout
-                            .as_ref()
-                            .unwrap()
-                            .set_text("🦄🦄🦄🦄🦄🦄🦄🦄🦄🦄🦄🦄🦄🦄");
-                            // .set_text("🍇🍵🎦🎮🎵🏖🐣🐶🦄 fuck the world 🍇🍵🎦🎮🎵🏖🐣🐶🦄");
-                        update_layout(
-                            &self.cr.as_ref().unwrap(),
-                            &self
-                                .font
-                                .as_ref()
-                                .unwrap()
-                                .borrow_mut()
-                                .layout
-                                .as_ref()
-                                .unwrap(),
+                        let idx = if invert > 0 {
+                            Col::ColBg as usize
+                        } else {
+                            Col::ColFg as usize
+                        };
+                        // This is too tricky.
+                        let mut clr = (*self.scheme[idx].clone().unwrap()).clone();
+                        pango_xft_render_layout(
+                            d,
+                            &mut clr as *mut _,
+                            self.font.as_ref().unwrap().borrow_mut().layout,
+                            x * PANGO_SCALE,
+                            ty * PANGO_SCALE,
                         );
-                        show_layout(
-                            &self.cr.as_ref().unwrap(),
-                            &self
-                                .font
-                                .as_ref()
-                                .unwrap()
-                                .borrow_mut()
-                                .layout
-                                .as_ref()
-                                .unwrap(),
-                        );
+                        // .set_text("🍇🍵🎦🎮🎵🏖🐣🐶🦄 fuck the world 🍇🍵🎦🎮🎵🏖🐣🐶🦄");
                         if markup {
                             // clear markup attributes
-                            self.font
-                                .as_ref()
-                                .unwrap()
-                                .borrow_mut()
-                                .layout
-                                .as_ref()
-                                .unwrap()
-                                .set_attributes(None);
+                            pango_layout_set_attributes(
+                                self.font.as_ref().unwrap().borrow_mut().layout,
+                                null_mut(),
+                            );
                         }
                     }
                     x += ew as i32;
@@ -454,9 +445,10 @@ impl Drw {
     }
     fn xfont_free(font: Option<Rc<RefCell<Fnt>>>) {
         if let Some(ref font_opt) = font {
-            if font_opt.borrow_mut().layout.is_some() {
-                // no need.
-                // g_object_unref();
+            if !font_opt.borrow_mut().layout.is_null() {
+                unsafe {
+                    g_object_unref(font_opt.borrow_mut().layout as *mut _);
+                }
             }
         }
     }
@@ -464,6 +456,7 @@ impl Drw {
     fn drw_font_gettexts(
         font: Option<Rc<RefCell<Fnt>>>,
         text: &str,
+        len: i32,
         w: &mut u32,
         h: &mut u32,
         markup: bool,
@@ -473,13 +466,21 @@ impl Drw {
         }
         let font = font.as_ref().unwrap().borrow_mut();
 
-        if markup {
-            font.layout.as_ref().unwrap().set_markup(text);
-        } else {
-            font.layout.as_ref().unwrap().set_text(text);
+        let cstring = CString::new(text).expect("fail to convert");
+        unsafe {
+            if markup {
+                pango_layout_set_markup(font.layout, cstring.as_ptr(), len as i32);
+            } else {
+                pango_layout_set_text(font.layout, cstring.as_ptr(), len as i32);
+            }
+            if markup {
+                // clear markup attributes.
+                pango_layout_set_attributes(font.layout, null_mut());
+            }
+            let mut r: PangoRectangle = zeroed();
+            pango_layout_get_extents(font.layout, null_mut(), &mut r);
+            *w = (r.width / PANGO_SCALE) as u32;
+            *h = (r.height / PANGO_SCALE) as u32;
         }
-        let (_, r) = font.layout.as_ref().unwrap().extents();
-        *w = (r.width() / PANGO_SCALE) as u32;
-        *h = (r.height() / PANGO_SCALE) as u32;
     }
 }

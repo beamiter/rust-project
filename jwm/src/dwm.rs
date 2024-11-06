@@ -2683,13 +2683,7 @@ pub fn setup() {
             dpy, screen, root, sw as u32, sh as u32,
         )));
         info!("[setup] drw_fontset_create");
-        if drw
-            .as_mut()
-            .unwrap()
-            .as_mut()
-            .drw_font_create(font)
-            .is_none()
-        {
+        if !drw.as_mut().unwrap().as_mut().drw_font_create(font) {
             eprintln!("no fonts could be loaded");
             exit(0);
         }

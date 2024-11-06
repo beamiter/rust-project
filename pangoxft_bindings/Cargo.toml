@@ -1,0 +1,12 @@
+[package]
+name = "pangoxft_bindings"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[dependencies]
+bindgen = "0.70.1"
+libc = "0.2.161"
+
+[build-dependencies]
+bindgen = "0.70.1"
