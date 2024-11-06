@@ -13,10 +13,6 @@ libc = "0.2.158"
 log = "0.4.22"
 once_cell = "1.19.0"
 pango = { version = "0.20.4", features = ["v1_44"]}
-pangocairo = "0.20.4"
-cairo-rs ={ version = "0.20.5", features = ["png", "xlib"] }
-cairo-sys-rs = { version = "0.20.0", features = ["png", "xlib", "x11"] }
-pangocairo-sys = "0.20.4"
 regex = "1.11.0"
 simplelog = "0.12.2"
 sysinfo = "0.32.0"

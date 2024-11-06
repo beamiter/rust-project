@@ -10,6 +10,7 @@ fn main() {
 
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")
+        // .raw_line("#![allow(non_snake_case, non_camel_case_types, non_upper_case_globals)]")
         // Add necessary clang args, such as include paths or defines
         .clang_arg("-I/usr/include/pango-1.0") // This path might differ
         .clang_arg("-I/usr/include/freetype2") // These are example paths

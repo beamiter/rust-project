@@ -2,17 +2,9 @@
 #![allow(non_snake_case)]
 // #![allow(unused_mut)]
 
-use cairo::{Context, Surface};
-use cairo_sys::cairo_xlib_surface_create;
-use pango::{
-    ffi::{pango_font_map_create_context, PangoFontMap},
-    prelude::FontMapExt,
-    FontDescription, Layout,
-};
-use pangocairo::functions::{create_context, show_layout, update_layout};
+use pango::ffi::pango_font_map_create_context;
 use std::{
-    cell::RefCell, error::Error, ffi::CString, fs::File, i32, mem::zeroed, process::exit,
-    ptr::null_mut, rc::Rc, u32, usize,
+    cell::RefCell, ffi::CString, i32, mem::zeroed, process::exit, ptr::null_mut, rc::Rc, u32, usize,
 };
 
 use log::info;
@@ -21,14 +13,13 @@ use log::info;
 // If you use Pango however, Unicode will work great and this includes flag emojis.
 use pango::{
     ffi::{
-        pango_context_get_metrics, pango_context_new, pango_font_description_from_string,
+        pango_context_get_metrics, pango_font_description_from_string,
         pango_font_metrics_get_height, pango_font_metrics_unref, pango_layout_get_extents,
         pango_layout_new, pango_layout_set_attributes, pango_layout_set_font_description,
         pango_layout_set_markup, pango_layout_set_text, PangoLayout, PangoRectangle, PANGO_SCALE,
     },
     glib::gobject_ffi::g_object_unref,
 };
-use pango_cairo_sys::pango_cairo_create_context;
 use x11::{
     xft::{XftColor, XftColorAllocName, XftDraw, XftDrawCreate, XftDrawDestroy},
     xlib::{
@@ -37,10 +28,9 @@ use x11::{
         XDefaultVisual, XDrawRectangle, XFillRectangle, XFreeCursor, XFreeGC, XFreePixmap,
         XSetForeground, XSetLineAttributes, XSync, GC,
     },
-    xrender::XGlyphInfo,
 };
 
-use crate::pangoxft::*;
+use crate::pangoxft_sys::*;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Cur {
@@ -90,7 +80,6 @@ pub struct Drw {
     pub gc: GC,
     pub scheme: Vec<Option<Rc<Clr>>>,
     pub font: Option<Rc<RefCell<Fnt>>>,
-    pub cr: Result<Context, cairo::Error>,
 }
 impl Drw {
     pub fn new() -> Self {
@@ -105,7 +94,6 @@ impl Drw {
             gc: null_mut(),
             scheme: vec![],
             font: None,
-            cr: Err(cairo::Error::NullPointer),
         }
     }
     pub fn textw(&mut self, X: &str) -> u32 {
