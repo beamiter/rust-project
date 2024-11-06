@@ -162,7 +162,8 @@ impl Drw {
             pango_layout_set_font_description(font.layout, desc);
 
             let metrics = pango_context_get_metrics(context, desc, null_mut());
-            font.h = (pango_font_metrics_get_height(metrics) / PANGO_SCALE) as u32;
+            // font.h = (pango_font_metrics_get_height(metrics) / PANGO_SCALE) as u32;
+            font.h = 20;
 
             pango_font_metrics_unref(metrics);
             g_object_unref(context as *mut _);
