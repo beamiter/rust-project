@@ -20,44 +20,47 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::{os::raw::c_long, usize};
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
+use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
 
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
-    AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow,
-    Below, ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBackPixmap,
-    CWBorderWidth, CWCursor, CWEventMask, CWHeight, CWOverrideRedirect, CWSibling, CWStackMode,
-    CWWidth, ClientMessage, ConfigureNotify, ConfigureRequest, ControlMask, CopyFromParent,
-    CurrentTime, DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose,
-    ExposureMask, False, FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess,
-    InputHint, IsViewable, KeyPress, KeySym, LASTEvent, LeaveWindowMask, LockMask, MapRequest,
-    MappingKeyboard, MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask, Mod5Mask, MotionNotify,
-    NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc,
-    PSize, ParentRelative, PointerMotionMask, PointerRoot, PropModeAppend, PropModeReplace,
-    PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer, RevertToPointerRoot,
-    ShiftMask, StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask, Success,
-    Time, True, UnmapNotify, Window, XAllowEvents, XChangeProperty, XChangeWindowAttributes,
-    XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow, XConnectionNumber,
-    XCreateSimpleWindow, XCreateWindow, XDefaultDepth, XDefaultRootWindow, XDefaultScreen,
-    XDefaultVisual, XDefineCursor, XDeleteProperty, XDestroyWindow, XDisplayHeight,
-    XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap, XGetClassHint,
-    XGetKeyboardMapping, XGetModifierMapping, XGetTextProperty, XGetTransientForHint, XGetWMHints,
-    XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton,
-    XGrabKey, XGrabPointer, XGrabServer, XInternAtom, XKeycodeToKeysym, XKeysymToKeycode,
-    XKillClient, XMapRaised, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent,
-    XQueryPointer, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput,
-    XSendEvent, XSetClassHint, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints,
-    XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton,
-    XUngrabKey, XUngrabPointer, XUngrabServer, XUnmapWindow, XUrgencyHint, XWarpPointer,
-    XWindowAttributes, XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING,
-    XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    AllocNone, AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadLength, BadMatch,
+    BadWindow, Below, ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBackPixel,
+    CWBorderPixel, CWBorderWidth, CWColormap, CWCursor, CWEventMask, CWHeight, CWOverrideRedirect,
+    CWSibling, CWStackMode, CWWidth, ClientMessage, Colormap, ConfigureNotify, ConfigureRequest,
+    ControlMask, CurrentTime, DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask,
+    Expose, ExposureMask, False, FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync,
+    GrabSuccess, InputHint, InputOutput, IsViewable, KeyPress, KeySym, LASTEvent, LeaveWindowMask,
+    LockMask, MapRequest, MappingKeyboard, MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask,
+    Mod5Mask, MotionNotify, NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize,
+    PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask, PointerRoot, PropModeAppend,
+    PropModeReplace, PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer,
+    RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureNotifyMask,
+    SubstructureRedirectMask, Success, Time, True, TrueColor, UnmapNotify, Visual, VisualClassMask,
+    VisualDepthMask, VisualScreenMask, Window, XAllowEvents, XChangeProperty,
+    XChangeWindowAttributes, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
+    XConnectionNumber, XCreateColormap, XCreateSimpleWindow, XCreateWindow, XDefaultColormap,
+    XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDefineCursor,
+    XDeleteProperty, XDestroyWindow, XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent,
+    XEvent, XFree, XFreeModifiermap, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping,
+    XGetTextProperty, XGetTransientForHint, XGetVisualInfo, XGetWMHints, XGetWMNormalHints,
+    XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer,
+    XGrabServer, XInternAtom, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised,
+    XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree,
+    XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetClassHint,
+    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
+    XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabPointer,
+    XUngrabServer, XUnmapWindow, XUrgencyHint, XVisualInfo, XWarpPointer, XWindowAttributes,
+    XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW,
+    XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
 
 use crate::config::{
-    borderpx, buttons, colors, dmenucmd, dmenumon, font, horizpadbar, keys, layouts,
-    lockfullscreen, mfact, nmaster, resizehints, rules, showbar, sidepad, snap, tagmask, tags,
-    topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad, vertpadbar,
+    alphas, borderpx, buttons, colors, dmenucmd, dmenumon, font, horizpadbar, keys, layouts,
+    lockfullscreen, mfact, nmaster, resizehints, rules, showbar, sidepad, snap, statusalpha,
+    tagmask, tags, topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad, vertpadbar,
 };
 use crate::drw::{Clr, Col, Cur, Drw};
 use crate::xproto::{
@@ -99,6 +102,10 @@ pub static mut root: Window = 0;
 pub static mut wmcheckwin: Window = 0;
 pub static mut xerrorxlib: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int> =
     None;
+pub static mut useargb: bool = false;
+pub static mut visual: *mut Visual = null_mut();
+pub static mut depth: i32 = 0;
+pub static mut cmap: Colormap = 0;
 
 pub static mut handler: Lazy<[Option<fn(*mut XEvent)>; LASTEvent as usize]> = Lazy::new(|| {
     let mut res: [Option<fn(*mut XEvent)>; LASTEvent as usize] = [None; LASTEvent as usize];
@@ -1437,10 +1444,12 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
                 TextElement::WithCaret(val) => {
                     if val.starts_with('c') {
                         let color = &val[1..];
-                        drw_mut.scheme[Col::ColFg as usize] = drw_mut.drw_clr_create(color);
+                        drw_mut.scheme[Col::ColFg as usize] =
+                            drw_mut.drw_clr_create(color, statusalpha);
                     } else if val.starts_with('b') {
                         let color = &val[1..];
-                        drw_mut.scheme[Col::ColBg as usize] = drw_mut.drw_clr_create(color);
+                        drw_mut.scheme[Col::ColBg as usize] =
+                            drw_mut.drw_clr_create(color, statusalpha);
                     } else if val.starts_with('d') {
                         drw_mut.scheme[Col::ColFg as usize] =
                             scheme[SCHEME::SchemeNorm as usize][Col::ColFg as usize].clone();
@@ -2151,7 +2160,9 @@ pub fn updatebars() {
     unsafe {
         let mut wa: XSetWindowAttributes = zeroed();
         wa.override_redirect = True;
-        wa.background_pixmap = ParentRelative as u64;
+        wa.background_pixel = 0;
+        wa.border_pixel = 0;
+        wa.colormap = cmap;
         wa.event_mask = ButtonPressMask | ExposureMask;
         let mut ch: XClassHint = zeroed();
         let c_string = CString::new("jwm").expect("fail to convert");
@@ -2173,10 +2184,10 @@ pub fn updatebars() {
                 ww - 2 * sp as u32,
                 bh as u32,
                 0,
-                XDefaultDepth(dpy, screen),
-                CopyFromParent as u32,
-                XDefaultVisual(dpy, screen),
-                CWOverrideRedirect | CWBackPixmap | CWEventMask,
+                depth as i32,
+                InputOutput as u32,
+                visual,
+                CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWColormap | CWEventMask,
                 &mut wa,
             );
             let barwin = m_opt.borrow_mut().barwin;
@@ -2189,6 +2200,37 @@ pub fn updatebars() {
             XSetClassHint(dpy, barwin, &mut ch);
             let next = m_opt.borrow_mut().next.clone();
             m = next;
+        }
+    }
+}
+pub fn xinitvisual() {
+    unsafe {
+        let mut tpl: XVisualInfo = zeroed();
+        tpl.screen = screen;
+        tpl.depth = 32;
+        tpl.class = TrueColor;
+        let masks = VisualScreenMask | VisualDepthMask | VisualClassMask;
+
+        let mut nitems: i32 = 0;
+        let infos = XGetVisualInfo(dpy, masks, &mut tpl, &mut nitems);
+        visual = null_mut();
+        for i in 0..nitems {
+            let fmt = XRenderFindVisualFormat(dpy, (*infos.wrapping_add(i as usize)).visual);
+            if (*fmt).type_ == PictTypeDirect && (*fmt).direct.alphaMask > 0 {
+                visual = (*infos.wrapping_add(i as usize)).visual;
+                depth = (*infos.wrapping_add(i as usize)).depth;
+                cmap = XCreateColormap(dpy, root, visual, AllocNone);
+                useargb = true;
+                break;
+            }
+        }
+
+        XFree(infos as *mut _);
+
+        if visual.is_null() {
+            visual = XDefaultVisual(dpy, screen);
+            depth = XDefaultDepth(dpy, screen);
+            cmap = XDefaultColormap(dpy, screen);
         }
     }
 }
@@ -2679,8 +2721,9 @@ pub fn setup() {
         sw = XDisplayWidth(dpy, screen);
         sh = XDisplayHeight(dpy, screen);
         root = XRootWindow(dpy, screen);
+        xinitvisual();
         drw = Some(Box::new(Drw::drw_create(
-            dpy, screen, root, sw as u32, sh as u32,
+            dpy, screen, root, sw as u32, sh as u32, visual, depth, cmap,
         )));
         info!("[setup] drw_fontset_create");
         if !drw.as_mut().unwrap().as_mut().drw_font_create(font) {
@@ -2746,7 +2789,11 @@ pub fn setup() {
         // init appearance
         scheme = vec![vec![]; colors.len()];
         for i in 0..colors.len() {
-            scheme[i] = drw.as_mut().unwrap().drw_scm_create(colors[i]);
+            scheme[i] = drw.as_mut().unwrap().drw_scm_create(
+                colors[i],
+                &alphas[i as usize % alphas.len()],
+                3,
+            );
         }
         // init bars
         info!("[setup] updatebars");

@@ -13,20 +13,19 @@ use log::info;
 // If you use Pango however, Unicode will work great and this includes flag emojis.
 use pango::{
     ffi::{
-        pango_context_get_metrics, pango_font_description_from_string,
-        pango_font_metrics_get_height, pango_font_metrics_unref, pango_layout_get_extents,
-        pango_layout_new, pango_layout_set_attributes, pango_layout_set_font_description,
-        pango_layout_set_markup, pango_layout_set_text, PangoLayout, PangoRectangle, PANGO_SCALE,
+        pango_context_get_metrics, pango_font_description_from_string, pango_font_metrics_unref,
+        pango_layout_get_extents, pango_layout_new, pango_layout_set_attributes,
+        pango_layout_set_font_description, pango_layout_set_markup, pango_layout_set_text,
+        PangoLayout, PangoRectangle, PANGO_SCALE,
     },
     glib::gobject_ffi::g_object_unref,
 };
 use x11::{
     xft::{XftColor, XftColorAllocName, XftDraw, XftDrawCreate, XftDrawDestroy},
     xlib::{
-        self, CapButt, Cursor, Drawable, False, JoinMiter, LineSolid, Window, XCopyArea,
-        XCreateFontCursor, XCreateGC, XCreatePixmap, XDefaultColormap, XDefaultDepth,
-        XDefaultVisual, XDrawRectangle, XFillRectangle, XFreeCursor, XFreeGC, XFreePixmap,
-        XSetForeground, XSetLineAttributes, XSync, GC,
+        self, CapButt, Colormap, Cursor, Drawable, False, JoinMiter, LineSolid, Visual, Window,
+        XCopyArea, XCreateFontCursor, XCreateGC, XCreatePixmap, XDrawRectangle, XFillRectangle,
+        XFreeCursor, XFreeGC, XFreePixmap, XSetForeground, XSetLineAttributes, XSync, GC,
     },
 };
 
@@ -76,6 +75,9 @@ pub struct Drw {
     // sum of left and right padding for text
     pub lrpad: i32,
     pub root: Window,
+    visual: *mut Visual,
+    depth: i32,
+    cmap: Colormap,
     pub drawable: Drawable,
     pub gc: GC,
     pub scheme: Vec<Option<Rc<Clr>>>,
@@ -90,6 +92,9 @@ impl Drw {
             screen: 0,
             lrpad: 0,
             root: 0,
+            visual: null_mut(),
+            depth: 0,
+            cmap: 0,
             drawable: 0,
             gc: null_mut(),
             scheme: vec![],
@@ -102,7 +107,16 @@ impl Drw {
     pub fn textwm(&mut self, X: &str) -> u32 {
         self.drw_font_getwidth(X, true) + self.lrpad as u32
     }
-    pub fn drw_create(dpy: *mut xlib::Display, screen: i32, root: Window, w: u32, h: u32) -> Self {
+    pub fn drw_create(
+        dpy: *mut xlib::Display,
+        screen: i32,
+        root: Window,
+        w: u32,
+        h: u32,
+        visual: *mut Visual,
+        depth: i32,
+        cmap: Colormap,
+    ) -> Self {
         let mut drw = Drw::new();
         drw.dpy = dpy;
         drw.screen = screen;
@@ -110,15 +124,12 @@ impl Drw {
         drw.w = w;
         drw.h = h;
         unsafe {
-            drw.drawable = XCreatePixmap(
-                dpy,
-                root,
-                w,
-                h,
-                XDefaultDepth(dpy, screen).try_into().unwrap(),
-            );
-            drw.gc = XCreateGC(dpy, root, 0, null_mut());
+            drw.drawable = XCreatePixmap(dpy, root, w, h, depth as u32);
+            drw.gc = XCreateGC(dpy, drw.drawable, 0, null_mut());
             XSetLineAttributes(dpy, drw.gc, 1, LineSolid, CapButt, JoinMiter);
+            drw.visual = visual;
+            drw.depth = depth;
+            drw.cmap = cmap;
         }
         return drw;
     }
@@ -129,13 +140,7 @@ impl Drw {
             if self.drawable > 0 {
                 XFreePixmap(self.dpy, self.drawable);
             }
-            self.drawable = XCreatePixmap(
-                self.dpy,
-                self.root,
-                w,
-                h,
-                XDefaultDepth(self.dpy, self.screen).try_into().unwrap(),
-            );
+            self.drawable = XCreatePixmap(self.dpy, self.root, w, h, self.depth as u32);
         }
     }
     pub fn drw_free(&mut self) {
@@ -162,7 +167,7 @@ impl Drw {
             pango_layout_set_font_description(font.layout, desc);
 
             let metrics = pango_context_get_metrics(context, desc, null_mut());
-            // font.h = (pango_font_metrics_get_height(metrics) / PANGO_SCALE) as u32;
+            //font.h = (pango_font_metrics_get_height(metrics) / PANGO_SCALE) as u32;
             font.h = 20;
 
             pango_font_metrics_unref(metrics);
@@ -201,7 +206,7 @@ impl Drw {
         }
         return n.min(tmp);
     }
-    pub fn drw_clr_create(&mut self, clrname: &str) -> Option<Rc<Clr>> {
+    pub fn drw_clr_create(&mut self, clrname: &str, alpha: u8) -> Option<Rc<Clr>> {
         if clrname.is_empty() {
             return None;
         }
@@ -209,12 +214,10 @@ impl Drw {
         unsafe {
             let cstring = CString::new(clrname).expect("fail to convert");
             let mut dest: Clr = std::mem::zeroed();
-            let dpy = self.dpy;
-            let screen = self.screen;
             if XftColorAllocName(
-                dpy,
-                XDefaultVisual(dpy, screen),
-                XDefaultColormap(dpy, screen),
+                self.dpy,
+                self.visual,
+                self.cmap,
                 cstring.as_ptr(),
                 &mut dest,
             ) <= 0
@@ -222,19 +225,25 @@ impl Drw {
                 eprintln!("error, cannot allocate color: {}", clrname);
                 return None;
             }
-            dest.pixel |= 0xff << 24;
+            dest.pixel = (dest.pixel & 0x00ffffffu64) | ((alpha as u64) << 24);
             return Some(Rc::new(dest));
         }
     }
-    pub fn drw_scm_create(&mut self, clrnames: &[&str]) -> Vec<Option<Rc<Clr>>> {
-        let clrcount = clrnames.len();
+    pub fn drw_scm_create(
+        &mut self,
+        clrnames: &[&'static str; 3],
+        alphas: &[u8; 3],
+        clrcount: usize,
+    ) -> Vec<Option<Rc<Clr>>> {
         // Need at least two colors for a scheme.
         if clrnames.is_empty() || clrcount < 2 {
             return vec![];
         }
         let mut ret: Vec<Option<Rc<Clr>>> = vec![];
-        for clrname in clrnames {
-            let one_ret = self.drw_clr_create(clrname);
+        for i in 0..clrcount {
+            let clrname = clrnames[i];
+            let alpha = alphas[i];
+            let one_ret = self.drw_clr_create(clrname, alpha);
             ret.push(one_ret);
         }
         return ret;
@@ -325,12 +334,7 @@ impl Drw {
                 let idx = if invert > 0 { Col::ColFg } else { Col::ColBg } as usize;
                 XSetForeground(self.dpy, self.gc, self.scheme[idx].as_ref().unwrap().pixel);
                 XFillRectangle(self.dpy, self.drawable, self.gc, x, y, w, h);
-                d = XftDrawCreate(
-                    self.dpy,
-                    self.drawable,
-                    XDefaultVisual(self.dpy, self.screen),
-                    XDefaultColormap(self.dpy, self.screen),
-                );
+                d = XftDrawCreate(self.dpy, self.drawable, self.visual, self.cmap);
                 x += lpad as i32;
                 w -= lpad;
             }

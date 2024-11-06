@@ -11,6 +11,7 @@ fn main() {
     println!("cargo:rustc-link-lib=fontconfig");
     println!("cargo:rustc-link-lib=Xinerama");
     println!("cargo:rustc-link-lib=Xft");
+    println!("cargo:rustc-link-lib=Xrender");
     // Use pkg_config to find and link the Pango library.
     match pkg_config::find_library("pango") {
         Ok(_) => {}
