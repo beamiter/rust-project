@@ -2,10 +2,8 @@
 #![allow(non_snake_case)]
 // #![allow(unused_mut)]
 
-use pango::{ffi::pango_font_map_create_context, glib::translate::Ptr};
-use std::{
-    cell::RefCell, ffi::CString, i32, mem::zeroed, process::exit, ptr::null_mut, rc::Rc, u32, usize,
-};
+use pango::ffi::pango_font_map_create_context;
+use std::{cell::RefCell, ffi::CString, i32, mem::zeroed, ptr::null_mut, rc::Rc, u32, usize};
 
 use log::info;
 // use log::warn;
@@ -413,7 +411,6 @@ impl Drw {
                             x * PANGO_SCALE,
                             ty * PANGO_SCALE,
                         );
-                        // .set_text("🍇🍵🎦🎮🎵🏖🐣🐶🦄 fuck the world 🍇🍵🎦🎮🎵🏖🐣🐶🦄");
                         if markup {
                             // clear markup attributes
                             pango_layout_set_attributes(

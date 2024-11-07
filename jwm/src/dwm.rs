@@ -58,10 +58,9 @@ use x11::xlib::{
 use std::cmp::{max, min};
 
 use crate::config::{
-    alphas, baralpha, borderalpha, borderpx, buttons, colors, dmenucmd, dmenumon, font,
-    horizpadbar, keys, layouts, lockfullscreen, mfact, nmaster, resizehints, rules, showbar,
-    sidepad, snap, tagmask, tags, topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad,
-    vertpadbar,
+    alphas, baralpha, borderpx, buttons, colors, dmenucmd, dmenumon, font, horizpadbar, keys,
+    layouts, lockfullscreen, mfact, nmaster, resizehints, rules, showbar, sidepad, snap, tagmask,
+    tags, topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad, vertpadbar, OPAQUE,
 };
 use crate::drw::{Clr, Col, Cur, Drw};
 use crate::xproto::{
@@ -1419,11 +1418,7 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
         let ret = ww - w as i32;
         let mut x = ret - 2 * sp;
         drw_mut.drw_setscheme(scheme[SCHEME::SchemeStatus as usize].clone());
-        drw_mut.scheme[Col::ColFg as usize] =
-            scheme[SCHEME::SchemeNorm as usize][Col::ColFg as usize].clone();
-        drw_mut.scheme[Col::ColBg as usize] =
-            scheme[SCHEME::SchemeNorm as usize][Col::ColBg as usize].clone();
-        drw_mut.drw_rect(x, 0, w, bh0, 1, 1);
+        drw_mut.drw_rect(x, 0, w, bh0, 1, 0);
         x += horizpadbar / 2;
         for element in &parsed_elements {
             // println!("element {:?}", element);
@@ -1445,8 +1440,7 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
                 TextElement::WithCaret(val) => {
                     if val.starts_with('c') {
                         let color = &val[1..];
-                        drw_mut.scheme[Col::ColFg as usize] =
-                            drw_mut.drw_clr_create(color, borderalpha);
+                        drw_mut.scheme[Col::ColFg as usize] = drw_mut.drw_clr_create(color, OPAQUE);
                     } else if val.starts_with('b') {
                         let color = &val[1..];
                         drw_mut.scheme[Col::ColBg as usize] =
@@ -1470,7 +1464,7 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
                                 ry + vertpadbar / 2,
                                 rw as u32,
                                 rh as u32,
-                                1,
+                                0,
                                 0,
                             );
                         }
@@ -1549,7 +1543,6 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                 .unwrap()
                 .as_mut()
                 .drw_setscheme(scheme[idx].clone());
-            // info!("[drawbar] drw_text 1");
             drw.as_mut().unwrap().drw_text(
                 x,
                 0,
@@ -1572,7 +1565,6 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             }
             if (occ & 1 << i) > 0 {
                 let selmon_mut = { selmon.as_ref().unwrap().borrow_mut() };
-                // info!("[drawbar] drw_rect 0");
                 let filled = (Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap())
                     && selmon_mut.sel.is_some()
                     && (selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 & 1 << i > 0))
@@ -1597,7 +1589,6 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
             .unwrap()
             .as_mut()
             .drw_setscheme(scheme[SCHEME::SchemeTagsNorm as usize].clone());
-        // info!("[drawbar] drw_text 2, w: {}", w);
         x = drw.as_mut().unwrap().drw_text(
             x,
             0,
@@ -1622,11 +1613,6 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     .unwrap()
                     .as_mut()
                     .drw_setscheme(scheme[idx].clone());
-                // info!(
-                //     "[drawbar] drw_text 3: idx: {}, name: {}",
-                //     idx,
-                //     sel_opt.borrow_mut().name
-                // );
                 drw.as_mut().unwrap().drw_text(
                     x,
                     0,
@@ -1638,25 +1624,16 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
                     false,
                 );
                 if sel_opt.borrow_mut().isfloating {
-                    info!("[drawbar] drw_rect 1");
-                    drw.as_mut().unwrap().drw_rect(
-                        x + boxs as i32,
-                        boxs as i32,
-                        boxw,
-                        boxw,
-                        sel_opt.borrow_mut().isfixed as i32,
-                        0,
-                    );
+                    // Useless, drw rectangle.
                 }
             } else {
                 drw.as_mut()
                     .unwrap()
                     .as_mut()
                     .drw_setscheme(scheme[SCHEME::SchemeInfoNorm as usize].clone());
-                info!("[drawbar] drw_rect 2");
                 drw.as_mut()
                     .unwrap()
-                    .drw_rect(x, 0, (w - 2 * sp) as u32, bh as u32, 1, 1);
+                    .drw_rect(x, 0, (w - 2 * sp) as u32, bh as u32, 1, 0);
             }
         }
         let barwin = { m.as_ref().unwrap().borrow_mut().barwin };
@@ -2775,11 +2752,10 @@ pub fn setup() {
         // init appearance
         scheme = vec![vec![]; colors.len()];
         for i in 0..colors.len() {
-            scheme[i] = drw.as_mut().unwrap().drw_scm_create(
-                colors[i],
-                &alphas[i as usize % alphas.len()],
-                3,
-            );
+            scheme[i] = drw
+                .as_mut()
+                .unwrap()
+                .drw_scm_create(colors[i], &alphas[i], 3);
         }
         // init bars
         info!("[setup] updatebars");

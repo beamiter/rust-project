@@ -2,8 +2,8 @@
 // https://doc.rust-lang.org/cargo/reference/build-scripts.html#rustc-link-lib
 // https://doc.rust-lang.org/rustc/command-line-arguments.html#option-l-link-lib
 
+use std::env;
 use std::path::PathBuf;
-use std::{env, path};
 
 pub const BUILD_IN_NIX_SHELL: bool = true;
 

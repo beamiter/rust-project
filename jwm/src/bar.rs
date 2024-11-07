@@ -51,7 +51,7 @@ pub fn battery_capacity() -> String {
 
         battery_state = format!("Battery {:.2}%", percentage);
     }
-    format!("^c{}^ 🎑 {}", BLUE, battery_state.trim())
+    format!("^c{}^ 🎑 {}", BLACK, battery_state.trim())
 }
 
 // Function to get memory usage
