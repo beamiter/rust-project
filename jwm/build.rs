@@ -5,6 +5,8 @@
 use std::env;
 use std::path::PathBuf;
 
+pub const BUILD_IN_NIX_SHELL: bool = true;
+
 fn main() {
     // Link against the `X11` library on Unix-like systems
     println!("cargo:rustc-link-lib=X11");
@@ -33,6 +35,12 @@ fn main() {
     // println!("cargo:rustc-link-lib=crypto");
 
     println!("cargo:rerun-if-changed=wrapper.h");
+
+    // If build in nix environment.
+    if BUILD_IN_NIX_SHELL {
+        let clang_path = "/nix/store/p3bv60x7rzlnfz7ms7i1rm5ps0481idg-clang-18.1.8-lib/lib/";
+        env::set_var("LIBCLANG_PATH", PathBuf::from(clang_path));
+    }
 
     let bindings = bindgen::Builder::default()
         .header("wrapper.h")

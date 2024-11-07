@@ -1512,22 +1512,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         let ww = { m.as_ref().unwrap().borrow_mut().ww };
         // draw status first so it can be overdrawn by tags later.
         if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
-            // // status is only drawn on selected monitor.
-            // drw.as_mut()
-            //     .unwrap()
-            //     .drw_setscheme(scheme[SCHEME::SchemeNorm as usize].clone());
-            // // 2px right padding.
-            // tw = drw.as_mut().unwrap().textw(&*stext) as i32 - lrpad + 2;
-            // // info!("[drawbar] drw_text 0, tw: {}, ww: {}", tw, ww);
-            // drw.as_mut().unwrap().drw_text(
-            //     ww - tw - 2 * sp,
-            //     0,
-            //     tw as u32,
-            //     bh as u32,
-            //     0,
-            //     &*stext,
-            //     0,
-            // );
+            // status is only drawn on selected monitor.
             // draw status bar here
             tw = ww - drawstatusbar(m.clone(), bh as u32, &*stext);
         }

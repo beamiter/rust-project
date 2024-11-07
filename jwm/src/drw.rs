@@ -2,7 +2,7 @@
 #![allow(non_snake_case)]
 // #![allow(unused_mut)]
 
-use pango::ffi::pango_font_map_create_context;
+use pango::{ffi::pango_font_map_create_context, glib::translate::Ptr};
 use std::{
     cell::RefCell, ffi::CString, i32, mem::zeroed, process::exit, ptr::null_mut, rc::Rc, u32, usize,
 };
@@ -152,7 +152,7 @@ impl Drw {
     }
     pub fn xfont_create(&mut self, fontname: &str) -> Option<Rc<RefCell<Fnt>>> {
         if fontname.is_empty() {
-            exit(0);
+            return None;
         }
 
         let mut font = Fnt::new();
@@ -161,8 +161,12 @@ impl Drw {
         unsafe {
             let fontmap = pango_xft_get_font_map(self.dpy, self.screen);
             let context = pango_font_map_create_context(fontmap);
+            println!("[xfont_create] fontname: {}", fontname);
             let cstring = CString::new(fontname).expect("fail to convert");
             let desc = pango_font_description_from_string(cstring.as_ptr());
+            if desc.is_null() {
+                return None;
+            }
             font.layout = pango_layout_new(context);
             pango_layout_set_font_description(font.layout, desc);
 

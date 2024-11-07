@@ -30,6 +30,8 @@ pub const horizpadbar: i32 = 0;
 // vertical padding for statusbar
 pub const vertpadbar: i32 = 2;
 // pub const fonts: Lazy<Vec<&str>> = Lazy::new(|| vec!["SauceCodeProNerdFontRegular:size=12"]);
+// pub const font: &str = "Sans Bold 12";
+// pub const dmenufont: &str = "Sans Bold 11";
 pub const font: &str = "SauceCodeProNerdFontRegular:size=12";
 pub const dmenufont: &str = "SauceCodeProNerdFontRegular:size=11";
 pub const col_gray1: &str = "#222222";

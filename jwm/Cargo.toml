@@ -5,7 +5,7 @@ edition = "2021"
 build = "build.rs"
 
 [dependencies]
-alsa = "0.9.1"
+# alsa = "0.9.1"
 battery = "0.7.8"
 chrono = "0.4.38"
 lazy_static = "1.5.0"

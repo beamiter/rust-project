@@ -25,7 +25,7 @@ pub fn cpu_load() -> String {
     // Refresh CPUs again to get actual value.
     s.refresh_cpu_usage();
     format!(
-        "^c{}^^b{}^ ☘ CPU ^c{}^^b{}^ {:.2}%",
+        "^c{}^^b{}^ 🫒 CPU ^c{}^^b{}^ {:.2}%",
         BLACK,
         GREEN,
         WHITE,
@@ -51,7 +51,7 @@ pub fn battery_capacity() -> String {
 
         battery_state = format!("Battery {:.2}%", percentage);
     }
-    format!("^c{}^  {}", BLUE, battery_state.trim())
+    format!("^c{}^ 🎑 {}", BLUE, battery_state.trim())
 }
 
 // Function to get memory usage
@@ -61,7 +61,7 @@ pub fn mem_usage() -> String {
     let used = sys.used_memory() as f64 / 1e9;
     let free = sys.free_memory() as f64 / 1e9;
     format!(
-        "^c{}^^b{}^   ^c{}^{:.1}^c{}^ ◔ {:.1}",
+        "^c{}^^b{}^ ⌛  ^c{}^{:.1}^c{}^ ◔ {:.1}",
         BLUE, BLACK, BLUE, used, RED, free
     )
 }
@@ -81,12 +81,12 @@ pub fn wlan_status() -> String {
         if let Ok(state) = read_file(operstate_path.to_str().unwrap()) {
             if state.trim() == "up" {
                 status = "Connected".to_owned();
-                return format!("^c{}^^b{}^ 󰤨  ^d^^c{}^ {}", BLACK, BLUE, BLUE, status);
+                return format!("^c{}^^b{}^ 📶  ^d^^c{}^ {}", BLACK, BLUE, BLUE, status);
             }
         }
     }
 
-    format!("^c{}^^b{}^ 󰤭  ^d^^c{}^ {}", BLACK, BLUE, BLUE, status)
+    format!("^c{}^^b{}^ 📴 ^d^^c{}^ {}", BLACK, BLUE, BLUE, status)
 }
 
 #[allow(unused)]
@@ -98,7 +98,7 @@ pub fn cool_symbol() -> String {
 pub fn current_time() -> String {
     let now = chrono::Local::now();
     format!(
-        "^c{}^^b{}^ 󱑆  ^c{}^^b{}^ {} ⌘ ",
+        "^c{}^^b{}^ ⏰ ^c{}^^b{}^ {} 🦁 ",
         BLACK,
         DARKBLUE,
         BLACK,
