@@ -2,8 +2,8 @@
 // https://doc.rust-lang.org/cargo/reference/build-scripts.html#rustc-link-lib
 // https://doc.rust-lang.org/rustc/command-line-arguments.html#option-l-link-lib
 
-use std::env;
 use std::path::PathBuf;
+use std::{env, path};
 
 pub const BUILD_IN_NIX_SHELL: bool = true;
 
@@ -39,7 +39,10 @@ fn main() {
     // If build in nix environment.
     if BUILD_IN_NIX_SHELL {
         let clang_path = "/nix/store/p3bv60x7rzlnfz7ms7i1rm5ps0481idg-clang-18.1.8-lib/lib/";
-        env::set_var("LIBCLANG_PATH", PathBuf::from(clang_path));
+        let path_buf = PathBuf::from(clang_path);
+        if path_buf.as_path().exists() && path_buf.as_path().is_dir() {
+            env::set_var("LIBCLANG_PATH", path_buf);
+        }
     }
 
     let bindings = bindgen::Builder::default()

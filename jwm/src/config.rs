@@ -44,9 +44,8 @@ pub const col_red: &str = "#ff0000";
 pub const col_yellow: &str = "#ffff00";
 pub const col_white: &str = "#ffffff";
 pub const OPAQUE: u8 = 0xffu8;
-pub const baralpha: u8 = 0xa0u8;
+pub const baralpha: u8 = 0x00u8;
 pub const borderalpha: u8 = OPAQUE;
-pub const statusalpha: u8 = 0xa0u8;
 
 pub const colors: [&[&'static str; 3]; 10] = [
     // fg | bg | border

@@ -58,9 +58,10 @@ use x11::xlib::{
 use std::cmp::{max, min};
 
 use crate::config::{
-    alphas, borderpx, buttons, colors, dmenucmd, dmenumon, font, horizpadbar, keys, layouts,
-    lockfullscreen, mfact, nmaster, resizehints, rules, showbar, sidepad, snap, statusalpha,
-    tagmask, tags, topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad, vertpadbar,
+    alphas, baralpha, borderalpha, borderpx, buttons, colors, dmenucmd, dmenumon, font,
+    horizpadbar, keys, layouts, lockfullscreen, mfact, nmaster, resizehints, rules, showbar,
+    sidepad, snap, tagmask, tags, topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad,
+    vertpadbar,
 };
 use crate::drw::{Clr, Col, Cur, Drw};
 use crate::xproto::{
@@ -1445,11 +1446,11 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
                     if val.starts_with('c') {
                         let color = &val[1..];
                         drw_mut.scheme[Col::ColFg as usize] =
-                            drw_mut.drw_clr_create(color, statusalpha);
+                            drw_mut.drw_clr_create(color, borderalpha);
                     } else if val.starts_with('b') {
                         let color = &val[1..];
                         drw_mut.scheme[Col::ColBg as usize] =
-                            drw_mut.drw_clr_create(color, statusalpha);
+                            drw_mut.drw_clr_create(color, baralpha);
                     } else if val.starts_with('d') {
                         drw_mut.scheme[Col::ColFg as usize] =
                             scheme[SCHEME::SchemeNorm as usize][Col::ColFg as usize].clone();
