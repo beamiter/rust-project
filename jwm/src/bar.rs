@@ -61,7 +61,7 @@ pub fn mem_usage() -> String {
     let used = sys.used_memory() as f64 / 1e9;
     let free = sys.free_memory() as f64 / 1e9;
     format!(
-        "^c{}^^b{}^ ⌛  ^c{}^{:.1}^c{}^ ◔ {:.1}",
+        "^c{}^^b{}^ ⌛  ^c{}^{:.1}^c{}^ 🌏 {:.1}",
         BLUE, BLACK, BLUE, used, RED, free
     )
 }
