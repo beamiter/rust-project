@@ -3945,6 +3945,7 @@ pub fn updategeom() -> bool {
     return dirty;
 }
 
+#[allow(dead_code)]
 pub fn remove_control_characters(s: &String) -> String {
     let control_chars_regex = Regex::new(
         r"[\x00-\x1F\x7F-\x9F\u{200b}-\u{200f}\u{202a}-\u{202e}\u{2060}-\u{206f}\u{feff}]+",
@@ -3965,35 +3966,49 @@ pub fn gettextprop(w: Window, atom: Atom, text: &mut String) -> bool {
         let mut n: i32 = 0;
         if name.encoding == XA_STRING {
             let c_str = CStr::from_ptr(name.value as *const _);
-            let mut tmp = remove_control_characters(&c_str.to_str().unwrap().to_string());
-            while tmp.as_bytes().len() > stext_max_len {
-                tmp.pop();
+            match c_str.to_str() {
+                Ok(val) => {
+                    let mut tmp = val.to_string();
+                    while tmp.as_bytes().len() > stext_max_len {
+                        tmp.pop();
+                    }
+                    *text = tmp;
+                    info!(
+                        "[gettextprop]text from string, len: {}, text: {:?}",
+                        text.len(),
+                        *text
+                    );
+                }
+                Err(val) => {
+                    info!("[gettextprop]text from string error: {:?}", val);
+                    println!("[gettextprop]text from string error: {:?}", val);
+                    return false;
+                }
             }
-            *text = tmp;
-            // deprecated, since memory borrowed
-            // XFree(name.value as *mut _);
-            info!(
-                "[gettextprop]text from string, len: {}, text: {:?}",
-                text.len(),
-                *text
-            );
         } else if XmbTextPropertyToTextList(dpy, &mut name, &mut list, &mut n) >= Success as i32
             && n > 0
             && !list.is_null()
         {
             let c_str = CStr::from_ptr(*list);
-            let mut tmp = remove_control_characters(&c_str.to_str().unwrap().to_string());
-            while tmp.as_bytes().len() > stext_max_len {
-                tmp.pop();
+            match c_str.to_str() {
+                Ok(val) => {
+                    let mut tmp = val.to_string();
+                    while tmp.as_bytes().len() > stext_max_len {
+                        tmp.pop();
+                    }
+                    *text = tmp;
+                    info!(
+                        "[gettextprop]text from string list, len: {},  text: {:?}",
+                        text.len(),
+                        *text
+                    );
+                }
+                Err(val) => {
+                    info!("[gettextprop]text from string list error: {:?}", val);
+                    println!("[gettextprop]text from string list error: {:?}", val);
+                    return false;
+                }
             }
-            *text = tmp;
-            // deprecated, since memory borrowed
-            // XFreeStringList(list);
-            info!(
-                "[gettextprop]text from string list, len: {},  text: {:?}",
-                text.len(),
-                *text
-            );
         }
     }
     true

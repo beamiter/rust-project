@@ -21,7 +21,7 @@ fn main() -> glib::ExitCode {
     // Connect to the "activate" signal of the application
     app.connect_activate(|app| {
         // Create a new application window
-        let window_opacity = Cell::new(0.8);
+        let window_opacity = Cell::new(0.95);
         let window = ApplicationWindow::builder()
             .application(app)
             .default_width(320)
