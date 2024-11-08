@@ -2108,7 +2108,6 @@ pub fn spawn(arg: *const Arg) {
                 info!("[spawn] arg v: {:?}", v);
                 if let Err(val) = Command::new(v[0])
                     .args(&v[1..])
-                    .stdout(Stdio::piped())
                     .spawn()
                 {
                     info!("[spawn] Command exited with error {:?}", val);

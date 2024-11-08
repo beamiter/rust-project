@@ -35,7 +35,7 @@ pub fn init_auto_start() {
         Some(path) => {
             let start_fehbg = path.as_path().join(".fehbg");
             println!("fehbg: {:?}", start_fehbg);
-            if let Err(_) = Command::new(start_fehbg).stdout(Stdio::piped()).spawn() {
+            if let Err(_) = Command::new(start_fehbg).spawn() {
                 println!("[spawn] Start fehbg failed");
                 info!("[spawn] Start fehbg failed");
             }
@@ -43,7 +43,7 @@ pub fn init_auto_start() {
         None => eprintln!("Could not find the home directory."),
     }
     let start_picom = "picom";
-    if let Err(_) = Command::new(start_picom).stdout(Stdio::piped()).spawn() {
+    if let Err(_) = Command::new(start_picom).spawn() {
         println!("[spawn] Start picom failed");
         info!("[spawn] Start picom failed");
         panic!("[spawn] Start picom failed");
