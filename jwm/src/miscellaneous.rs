@@ -1,6 +1,6 @@
 use dirs_next::home_dir;
 use log::info;
-use std::process::{Command, Stdio};
+use std::process::Command;
 
 use crate::dwm::remove_control_characters;
 

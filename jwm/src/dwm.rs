@@ -13,7 +13,7 @@ use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
-use std::process::{Command, Stdio};
+use std::process::Command;
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -50,8 +50,8 @@ use x11::xlib::{
     XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
     XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabPointer,
     XUngrabServer, XUnmapWindow, XUrgencyHint, XVisualInfo, XWarpPointer, XWindowAttributes,
-    XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_STRING, XA_WINDOW,
-    XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_CARDINAL, XA_STRING,
+    XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -158,7 +158,8 @@ pub enum NET {
     NetWMWindowType = 6,
     NetWMWindowTypeDialog = 7,
     NetClientList = 8,
-    NetLast = 9,
+    NetClientInfo = 9,
+    NetLast = 10,
 }
 
 #[repr(C)]
@@ -2106,10 +2107,7 @@ pub fn spawn(arg: *const Arg) {
                 sigaction(SIGCHLD, &sa, null_mut());
 
                 info!("[spawn] arg v: {:?}", v);
-                if let Err(val) = Command::new(v[0])
-                    .args(&v[1..])
-                    .spawn()
-                {
+                if let Err(val) = Command::new(v[0]).args(&v[1..]).spawn() {
                     info!("[spawn] Command exited with error {:?}", val);
                 }
             }
@@ -2397,6 +2395,7 @@ pub fn tag(arg: *const Arg) {
             let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
             if sel.is_some() && (ui & tagmask) > 0 {
                 sel.as_ref().unwrap().borrow_mut().tags0 = ui & tagmask;
+                setclienttagprop(sel.as_ref().unwrap());
                 focus(None);
                 arrange(selmon.clone());
             }
@@ -2651,6 +2650,7 @@ pub fn toggletag(arg: *const Arg) {
             let newtags = selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 ^ (ui & tagmask);
             if newtags > 0 {
                 selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 = newtags;
+                setclienttagprop(selmon_mut.sel.as_ref().unwrap());
                 focus(None);
                 arrange(selmon.clone());
             }
@@ -2730,6 +2730,8 @@ pub fn setup() {
         netatom[NET::NetWMWindowTypeDialog as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
         c_string = CString::new("_NET_CLIENT_LIST").expect("fail to convert");
         netatom[NET::NetClientList as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
+        c_string = CString::new("_NET_CLIENT_INFO").expect("fail to convert");
+        netatom[NET::NetClientInfo as usize] = XInternAtom(dpy, c_string.as_ptr(), False);
 
         // init cursors
         cursor[CUR::CurNormal as usize] = drw
@@ -2805,6 +2807,7 @@ pub fn setup() {
             NET::NetLast as i32,
         );
         XDeleteProperty(dpy, root, netatom[NET::NetClientList as usize]);
+        XDeleteProperty(dpy, root, netatom[NET::NetClientInfo as usize]);
         // select events
         wa.cursor = cursor[CUR::CurNormal as usize].as_ref().unwrap().cursor;
         wa.event_mask = SubstructureRedirectMask
@@ -3216,6 +3219,25 @@ pub fn updatenumlockmask() {
         XFreeModifiermap(modmap);
     }
 }
+pub fn setclienttagprop(c: &Rc<RefCell<Client>>) {
+    let c_mut = c.borrow_mut();
+    let data: [u8; 2] = [
+        c_mut.tags0 as u8,
+        c_mut.mon.as_ref().unwrap().borrow_mut().num as u8,
+    ];
+    unsafe {
+        XChangeProperty(
+            dpy,
+            c_mut.win,
+            netatom[NET::NetClientInfo as usize],
+            XA_CARDINAL,
+            32,
+            PropModeReplace,
+            data.as_ptr(),
+            2,
+        );
+    }
+}
 pub fn grabbuttons(c: Option<Rc<RefCell<Client>>>, focused: bool) {
     info!("[grabbuttons]");
     updatenumlockmask();
@@ -3495,6 +3517,7 @@ pub fn sendmon(c: Option<Rc<RefCell<Client>>>, m: Option<Rc<RefCell<Monitor>>>) 
     };
     attach(c.clone());
     attachstack(c.clone());
+    setclienttagprop(c.as_ref().unwrap());
     focus(None);
     arrange(None);
 }
@@ -3608,6 +3631,44 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
         updatewindowtype(c.as_ref().unwrap());
         updatesizehints(c.as_ref().unwrap());
         updatewmhints(c.as_ref().unwrap());
+        {
+            let mut format: i32 = 0;
+            let mut n: u64 = 0;
+            let mut extra: u64 = 0;
+            let mut atom: Atom = 0;
+            let mut data: *mut u8 = null_mut();
+            if XGetWindowProperty(
+                dpy,
+                c.as_ref().unwrap().borrow_mut().win,
+                netatom[NET::NetClientInfo as usize],
+                0,
+                2,
+                False,
+                XA_CARDINAL,
+                &mut atom,
+                &mut format,
+                &mut n,
+                &mut extra,
+                &mut data,
+            ) == Success as i32
+                && n == 2
+            {
+                c.as_ref().unwrap().borrow_mut().tags0 = *data.wrapping_add(0) as u32;
+                let mut m = mons.clone();
+                while let Some(ref m_opt) = m {
+                    if m_opt.borrow_mut().num == *data.wrapping_add(1) as i32 {
+                        c.as_ref().unwrap().borrow_mut().mon = m;
+                        break;
+                    }
+                    let next = m_opt.borrow_mut().next.clone();
+                    m = next;
+                }
+            }
+            if n > 0 {
+                XFree(data as *mut _);
+            }
+            setclienttagprop(c.as_ref().unwrap());
+        }
         XSelectInput(
             dpy,
             w,
