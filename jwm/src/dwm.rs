@@ -1,6 +1,5 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
-// #![allow(unused_mut)]
 
 use libc::{
     close, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
@@ -14,7 +13,7 @@ use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
-use std::process::Command;
+use std::process::{Command, Stdio};
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -2107,12 +2106,12 @@ pub fn spawn(arg: *const Arg) {
                 sigaction(SIGCHLD, &sa, null_mut());
 
                 info!("[spawn] arg v: {:?}", v);
-                let status = Command::new(v[0])
+                if let Err(val) = Command::new(v[0])
                     .args(&v[1..])
-                    .status()
-                    .expect("Failed to execute command");
-                if !status.success() {
-                    info!("[spawn] Command exited with non-zero status code");
+                    .stdout(Stdio::piped())
+                    .spawn()
+                {
+                    info!("[spawn] Command exited with error {:?}", val);
                 }
             }
         }
@@ -2670,7 +2669,7 @@ pub fn setup() {
     unsafe {
         let mut wa: XSetWindowAttributes = zeroed();
         let mut sa: sigaction = zeroed();
-        // do not transform children into zombies whien they terminate
+        //do not transform children into zombies whien they terminate
         sigemptyset(&mut sa.sa_mask);
         sa.sa_flags = SA_NOCLDSTOP | SA_NOCLDWAIT | SA_RESTART;
         sa.sa_sigaction = SIG_IGN;
