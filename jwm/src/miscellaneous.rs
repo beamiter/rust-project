@@ -1,3 +1,7 @@
+use dirs_next::home_dir;
+use log::info;
+use std::process::Command;
+
 use crate::dwm::remove_control_characters;
 
 pub fn for_test() {
@@ -24,4 +28,23 @@ pub fn for_test() {
     let binding = &remove_control_characters(&text.to_string());
     text = binding;
     println!("{}", text.len());
+}
+
+pub fn init_auto_start() {
+    match home_dir() {
+        Some(path) => {
+            let start_fehbg = path.as_path().join(".fehbg");
+            println!("fehbg: {:?}", start_fehbg);
+            if let Err(_) = Command::new(start_fehbg).status() {
+                println!("[spawn] Start fehbg failed");
+                info!("[spawn] Start fehbg failed");
+            }
+        }
+        None => eprintln!("Could not find the home directory."),
+    }
+    let start_picom = "picom&";
+    if let Err(_) = Command::new(start_picom).status() {
+        println!("[spawn] Start picom failed");
+        info!("[spawn] Start picom failed");
+    }
 }

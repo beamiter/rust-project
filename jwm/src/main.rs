@@ -36,6 +36,7 @@ mod tests;
 
 fn main() {
     miscellaneous::for_test();
+    miscellaneous::init_auto_start();
 
     let status = format!(
         "{} {} {} {} {}",
