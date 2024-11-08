@@ -66,7 +66,7 @@ fn main() {
                     break;
                 }
             }
-            thread::sleep(Duration::from_secs(10));
+            thread::sleep(Duration::from_millis(500));
         }
     });
 
