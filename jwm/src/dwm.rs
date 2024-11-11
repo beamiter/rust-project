@@ -7,12 +7,14 @@ use libc::{
 };
 use log::{info, warn};
 use once_cell::sync::Lazy;
+use pango::glib::translate::Ptr;
 use regex::Regex;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
+use std::ops::Sub;
 use std::process::Command;
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
@@ -251,6 +253,7 @@ pub struct Client {
     pub name: String,
     pub mina: f32,
     pub maxa: f32,
+    pub cfact: f32,
     pub x: i32,
     pub y: i32,
     pub w: i32,
@@ -289,6 +292,7 @@ impl Client {
             name: String::new(),
             mina: 0.,
             maxa: 0.,
+            cfact: 0.,
             x: 0,
             y: 0,
             w: 0,
@@ -342,7 +346,7 @@ impl Client {
 pub struct Monitor {
     pub ltsymbol: &'static str,
     pub mfact0: f32,
-    pub nmaster0: i32,
+    pub nmaster0: u32,
     pub num: i32,
     pub by: i32,
     pub mx: i32,
@@ -2231,9 +2235,16 @@ pub fn updateclientlist() {
 pub fn tile(m: *mut Monitor) {
     info!("[tile]");
     let mut n: u32 = 0;
+    let mut mfacts: f32 = 0.;
+    let mut sfacts: f32 = 0.;
     unsafe {
         let mut c = nexttiled((*m).clients.clone());
         while c.is_some() {
+            if n < (*m).nmaster0 {
+                mfacts += c.as_ref().unwrap().borrow_mut().cfact;
+            } else {
+                sfacts += c.as_ref().unwrap().borrow_mut().cfact;
+            }
             let next = nexttiled(c.as_ref().unwrap().borrow_mut().next.clone());
             c = next;
             n += 1;
@@ -2243,7 +2254,7 @@ pub fn tile(m: *mut Monitor) {
         }
 
         let mw: u32;
-        if n > (*m).nmaster0 as u32 {
+        if n > (*m).nmaster0 {
             mw = if (*m).nmaster0 > 0 {
                 ((*m).ww as f32 * (*m).mfact0) as u32
             } else {
@@ -2258,8 +2269,10 @@ pub fn tile(m: *mut Monitor) {
         let mut h: u32;
         c = nexttiled((*m).clients.clone());
         while c.is_some() {
-            if i < (*m).nmaster0 as u32 {
-                h = ((*m).wh as u32 - my) / (n.min((*m).nmaster0 as u32) - i);
+            if i < (*m).nmaster0 {
+                // h = ((*m).wh as u32 - my) / (n.min((*m).nmaster0) - i);
+                let cfact = c.as_ref().unwrap().borrow_mut().cfact;
+                h = (((*m).wh as u32 - my) as f32 * (cfact / mfacts)) as u32;
                 let bw = c.as_ref().unwrap().borrow_mut().bw;
                 resize(
                     c.as_ref().unwrap(),
@@ -2273,8 +2286,11 @@ pub fn tile(m: *mut Monitor) {
                 if my + height < (*m).wh as u32 {
                     my += height;
                 }
+                mfacts -= cfact;
             } else {
-                h = ((*m).wh as u32 - ty) / (n - i);
+                // h = ((*m).wh as u32 - ty) / (n - i);
+                let cfact = c.as_ref().unwrap().borrow_mut().cfact;
+                h = (((*m).wh as u32 - ty) as f32 * (cfact / sfacts)) as u32;
                 let bw = c.as_ref().unwrap().borrow_mut().bw;
                 resize(
                     c.as_ref().unwrap(),
@@ -2288,6 +2304,7 @@ pub fn tile(m: *mut Monitor) {
                 if ty as i32 + height < (*m).wh {
                     ty += height as u32;
                 }
+                sfacts -= cfact;
             }
 
             let next = nexttiled(c.as_ref().unwrap().borrow_mut().next.clone());
@@ -2498,9 +2515,38 @@ pub fn incnmaster(arg: *const Arg) {
     unsafe {
         if let Arg::I(i) = *arg {
             let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-            selmon_mut.nmaster0 = 0.max(selmon_mut.nmaster0 + i);
+            selmon_mut.nmaster0 = 0.max(selmon_mut.nmaster0 + i as u32);
         }
         arrange(selmon.clone());
+    }
+}
+pub fn setcfact(arg: *const Arg) {
+    info!("[setcfact]");
+    if arg.is_null() {
+        return;
+    }
+    unsafe {
+        let c = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+        if c.is_none() {
+            return;
+        }
+        let lt_arrange = {
+            let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+            selmon_mut.lt[selmon_mut.sellt].arrange
+        };
+        if lt_arrange.is_none() {
+            return;
+        }
+        if let Arg::F(f0) = *arg {
+            let mut f = f0 + c.as_ref().unwrap().borrow_mut().cfact;
+            if f0.abs() < 0.0001 {
+                f = 1.0;
+            } else if f < 0.25 || f > 4.0 {
+                return;
+            }
+            c.as_ref().unwrap().borrow_mut().cfact = f;
+            arrange(selmon.clone());
+        }
     }
 }
 pub fn setmfact(arg: *const Arg) {
@@ -3581,6 +3627,7 @@ pub fn manage(w: Window, wa: *mut XWindowAttributes) {
             c.as_ref().unwrap().borrow_mut().h = (*wa).height;
             c.as_ref().unwrap().borrow_mut().oldh = (*wa).height;
             c.as_ref().unwrap().borrow_mut().oldbw = (*wa).border_width;
+            c.as_ref().unwrap().borrow_mut().cfact = 1.;
         }
 
         updatetitle(c.as_ref().unwrap());

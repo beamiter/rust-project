@@ -9,8 +9,8 @@ use once_cell::unsync::Lazy;
 use x11::{
     keysym::{
         XK_Return, XK_Tab, XK_b, XK_c, XK_comma, XK_d, XK_e, XK_f, XK_h, XK_i, XK_j, XK_k, XK_l,
-        XK_m, XK_period, XK_q, XK_r, XK_space, XK_t, XK_0, XK_1, XK_2, XK_3, XK_4, XK_5, XK_6,
-        XK_7, XK_8, XK_9,
+        XK_m, XK_o, XK_period, XK_q, XK_r, XK_space, XK_t, XK_0, XK_1, XK_2, XK_3, XK_4, XK_5,
+        XK_6, XK_7, XK_8, XK_9,
     },
     xlib::{Button1, Button2, Button3, ControlMask, Mod1Mask, ShiftMask},
 };
@@ -94,7 +94,7 @@ pub const tags: [&str; 9] = ["🍇", "🍵", "🎦", "🎮", "🎵", "🏖", "�
 pub const tagmask: u32 = (1 << tags.len()) - 1;
 
 pub const mfact: f32 = 0.55;
-pub const nmaster: i32 = 1;
+pub const nmaster: u32 = 1;
 pub const resizehints: bool = true;
 pub const lockfullscreen: bool = true;
 
@@ -192,6 +192,24 @@ pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
             XK_h.into(),
             Some(dwm::setmfact),
             dwm::Arg::F(-0.025),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_h.into(),
+            Some(dwm::setcfact),
+            dwm::Arg::F(0.2),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_l.into(),
+            Some(dwm::setcfact),
+            dwm::Arg::F(-0.2),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_o.into(),
+            Some(dwm::setcfact),
+            dwm::Arg::F(0.0),
         ),
         Key::new(MODKEY, XK_l.into(), Some(dwm::setmfact), dwm::Arg::F(0.025)),
         Key::new(MODKEY, XK_Return.into(), Some(dwm::zoom), dwm::Arg::I(0)),
