@@ -28,6 +28,16 @@ pub fn for_test() {
     let binding = &remove_control_characters(&text.to_string());
     text = binding;
     println!("{}", text.len());
+
+    let word = "goodbye";
+
+    let count = word.chars().count();
+    assert_eq!(7, count);
+
+    let mut chars = word.chars();
+    chars.next();
+    let rebuilt_word: String = chars.collect();
+    println!("rebuilt_word: {}", rebuilt_word);
 }
 
 pub fn init_auto_start() {

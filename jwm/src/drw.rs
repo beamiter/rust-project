@@ -342,7 +342,6 @@ impl Drw {
             }
 
             let mut len = text.len();
-            let max_buf_len = 1024;
             if len > 0 {
                 Self::drw_font_gettexts(
                     self.font.clone(),
@@ -353,32 +352,43 @@ impl Drw {
                     markup,
                 );
                 let mut th = eh;
-                // shorten text if necessary.
-                len = len.min(max_buf_len);
-                while len > 0 {
-                    if ew <= w {
-                        break;
+                let mut chars = text.chars().rev();
+                if ew > w {
+                    //shorten text if necessary.
+                    while let Some(ref val) = chars.next() {
+                        len -= val.len_utf8();
+                        Self::drw_font_gettexts(
+                            self.font.clone(),
+                            text,
+                            len as i32,
+                            &mut ew,
+                            &mut eh,
+                            markup,
+                        );
+                        if eh > th {
+                            th = eh;
+                        }
+                        if ew <= w {
+                            break;
+                        }
                     }
-                    Self::drw_font_gettexts(
-                        self.font.clone(),
-                        text,
-                        len as i32,
-                        &mut ew,
-                        &mut eh,
-                        markup,
-                    );
-                    if eh > th {
-                        th = eh;
-                    }
-                    len -= 1;
                 }
-
                 if len > 0 {
-                    let mut buf = text[0..len].to_string();
+                    let mut buf: String;
                     if len < text.len() && len > 3 {
                         // drw "..."
-                        buf.truncate(buf.len() - 3);
+                        let prev_len = len;
+                        while let Some(ref val) = chars.next() {
+                            len -= val.len_utf8();
+                            if prev_len > 3 + len {
+                                break;
+                            }
+                        }
+                        buf = chars.rev().collect();
                         buf.push_str("...");
+                        len += 3;
+                    } else {
+                        buf = chars.rev().collect();
                     }
 
                     if render {
@@ -402,7 +412,6 @@ impl Drw {
                         } else {
                             Col::ColFg as usize
                         };
-                        // This is too tricky.
                         let mut clr = (*self.scheme[idx].clone().unwrap()).clone();
                         pango_xft_render_layout(
                             d,
