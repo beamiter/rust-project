@@ -612,31 +612,25 @@ pub fn applysizehints(
                 *y = 0;
             }
         } else {
-            let wx;
-            let wy;
-            let ww;
-            let wh;
-            {
-                let cc = c.as_ref().borrow_mut();
-                wx = cc.mon.as_ref().unwrap().borrow_mut().wx;
-                wy = cc.mon.as_ref().unwrap().borrow_mut().wy;
-                ww = cc.mon.as_ref().unwrap().borrow_mut().ww;
-                wh = cc.mon.as_ref().unwrap().borrow_mut().wh;
-                let width = cc.width();
-                let height = cc.height();
-                if *x >= wx + ww {
-                    *x = wx + ww - width;
-                }
-                if *y >= wy + wh {
-                    *y = wy + wh - height;
-                }
-                let bw = cc.bw;
-                if *x + *w + 2 * bw <= wx {
-                    *x = wx;
-                }
-                if *y + *h + 2 * bw <= wy {
-                    *y = wy;
-                }
+            let cc = c.as_ref().borrow_mut();
+            let wx = cc.mon.as_ref().unwrap().borrow_mut().wx;
+            let wy = cc.mon.as_ref().unwrap().borrow_mut().wy;
+            let ww = cc.mon.as_ref().unwrap().borrow_mut().ww;
+            let wh = cc.mon.as_ref().unwrap().borrow_mut().wh;
+            let width = cc.width();
+            let height = cc.height();
+            if *x >= wx + ww {
+                *x = wx + ww - width;
+            }
+            if *y >= wy + wh {
+                *y = wy + wh - height;
+            }
+            let bw = cc.bw;
+            if *x + *w + 2 * bw <= wx {
+                *x = wx;
+            }
+            if *y + *h + 2 * bw <= wy {
+                *y = wy;
             }
         }
         if *h < bh {
@@ -890,18 +884,11 @@ pub fn setfullscreen(c: &Rc<RefCell<Client>>, fullscreen: bool) {
                 c.bw = 0;
                 c.isfloating = true;
             }
-            let mx;
-            let my;
-            let mw;
-            let mh;
-            {
-                let mon = c.borrow_mut().mon.clone();
-                let mon_mut = mon.as_ref().unwrap().borrow_mut();
-                mx = mon_mut.mx;
-                my = mon_mut.my;
-                mw = mon_mut.mw;
-                mh = mon_mut.mh;
-            }
+            let (mx, my, mw, mh) = {
+                let c_mon = &c.borrow().mon;
+                let mon_mut = c_mon.as_ref().unwrap().borrow();
+                (mon_mut.mx, mon_mut.my, mon_mut.mw, mon_mut.mh)
+            };
             resizeclient(&mut *c.borrow_mut(), mx, my, mw, mh);
             XRaiseWindow(dpy, win);
         } else if !fullscreen && isfullscreen {
@@ -2331,28 +2318,33 @@ pub fn togglebar(_arg: *const Arg) {
 pub fn togglefloating(_arg: *const Arg) {
     info!("[togglefloating]");
     unsafe {
-        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        if selmon_mut.sel.is_none() {
+        if selmon.is_none() {
             return;
         }
-        // no support for fullscreen windows.
-        if selmon_mut.sel.as_ref().unwrap().borrow_mut().isfullscreen {
+        let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+        if let Some(ref sel_opt) = sel {
+            // no support for fullscreen windows.
+            let isfullscreen = { sel_opt.borrow_mut().isfullscreen };
+            if isfullscreen {
+                return;
+            }
+            {
+                let isfloating = sel_opt.borrow_mut().isfloating;
+                let isfixed = sel_opt.borrow_mut().isfixed;
+                sel_opt.borrow_mut().isfloating = !isfloating || isfixed;
+            }
+            let isfloating = { sel_opt.borrow_mut().isfloating };
+            if isfloating {
+                let (x, y, w, h) = {
+                    let sel_opt_mut = sel_opt.borrow_mut();
+                    (sel_opt_mut.x, sel_opt_mut.y, sel_opt_mut.w, sel_opt_mut.h)
+                };
+                resize(sel_opt, x, y, w, h, false);
+            }
+            arrange(selmon.clone());
+        } else {
             return;
         }
-        (*selmon_mut.sel.as_ref().unwrap().borrow_mut()).isfloating =
-            !(*selmon_mut.sel.as_ref().unwrap().borrow_mut()).isfloating
-                || (*selmon_mut.sel.as_ref().unwrap().borrow_mut()).isfixed;
-        if (*selmon_mut.sel.as_ref().unwrap().borrow_mut()).isfloating {
-            resize(
-                selmon_mut.sel.as_ref().unwrap(),
-                (*selmon_mut.sel.as_ref().unwrap().borrow_mut()).x,
-                (*selmon_mut.sel.as_ref().unwrap().borrow_mut()).y,
-                (*selmon_mut.sel.as_ref().unwrap().borrow_mut()).w,
-                (*selmon_mut.sel.as_ref().unwrap().borrow_mut()).h,
-                false,
-            );
-        }
-        arrange(selmon.clone());
     }
 }
 pub fn focusin(e: *mut XEvent) {
@@ -2636,6 +2628,19 @@ pub fn toggleview(arg: *const Arg) {
                     arrange(selmon.clone());
                 }
             }
+        }
+    }
+}
+pub fn togglefullscr(arg: *const Arg) {
+    info!("[togglefullscr]");
+    unsafe {
+        if let Some(ref selmon_opt) = selmon {
+            let sel = { selmon_opt.borrow_mut().sel.clone() };
+            if sel.is_none() {
+                return;
+            }
+            let isfullscreen = { sel.as_ref().unwrap().borrow_mut().isfullscreen };
+            setfullscreen(sel.as_ref().unwrap(), !isfullscreen);
         }
     }
 }

@@ -232,6 +232,12 @@ pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
             Some(dwm::togglefloating),
             dwm::Arg::I(0),
         ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_f.into(),
+            Some(dwm::togglefullscr),
+            dwm::Arg::I(0),
+        ),
         Key::new(MODKEY, XK_0.into(), Some(dwm::view), dwm::Arg::Ui(!0)),
         Key::new(
             MODKEY | ShiftMask,
