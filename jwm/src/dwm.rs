@@ -2549,6 +2549,22 @@ pub fn setcfact(arg: *const Arg) {
         }
     }
 }
+pub fn movestack(arg: *const Arg) {
+    unsafe {
+        if let Arg::I(i) = *arg {
+            if i > 0 {
+                // Find the client after selmon->sel
+
+            } else {
+                // Find the client before selmon->sel
+            }
+            // Find the client before selmon->sel and c
+            // Swap c and selmon->sel selmon->clietns in the selmon->clients list
+        } else {
+            return;
+        }
+    }
+}
 pub fn setmfact(arg: *const Arg) {
     info!("[setmfact]");
     unsafe {
