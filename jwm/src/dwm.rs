@@ -7,14 +7,12 @@ use libc::{
 };
 use log::{info, warn};
 use once_cell::sync::Lazy;
-use pango::glib::translate::Ptr;
 use regex::Regex;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
-use std::ops::Sub;
 use std::process::Command;
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
@@ -2551,15 +2549,153 @@ pub fn setcfact(arg: *const Arg) {
 }
 pub fn movestack(arg: *const Arg) {
     unsafe {
-        if let Arg::I(i) = *arg {
-            if i > 0 {
+        let mut c: Option<Rc<RefCell<Client>>> = None;
+        let mut i: Option<Rc<RefCell<Client>>>;
+        let mut p: Option<Rc<RefCell<Client>>> = None;
+        let mut pc: Option<Rc<RefCell<Client>>> = None;
+        if let Arg::I(arg_i) = *arg {
+            if arg_i > 0 {
                 // Find the client after selmon->sel
-
+                c = selmon
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .sel
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .next
+                    .clone();
+                while c.is_some() {
+                    let isvisible = c.as_ref().unwrap().borrow_mut().isvisible();
+                    let isfloating = c.as_ref().unwrap().borrow_mut().isfloating;
+                    let condition = !isvisible || isfloating;
+                    if !condition {
+                        break;
+                    }
+                    let next = c.as_ref().unwrap().borrow_mut().next.clone();
+                    c = next;
+                }
+                if c.is_none() {
+                    c = selmon.as_ref().unwrap().borrow_mut().clients.clone();
+                }
+                while c.is_some() {
+                    let isvisible = c.as_ref().unwrap().borrow_mut().isvisible();
+                    let isfloating = c.as_ref().unwrap().borrow_mut().isfloating;
+                    let condition = !isvisible || isfloating;
+                    if !condition {
+                        break;
+                    }
+                    let next = c.as_ref().unwrap().borrow_mut().next.clone();
+                    c = next;
+                }
             } else {
                 // Find the client before selmon->sel
+                i = selmon.as_ref().unwrap().borrow_mut().clients.clone();
+                let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+                while !Rc::ptr_eq(i.as_ref().unwrap(), sel.as_ref().unwrap()) {
+                    let isvisible = i.as_ref().unwrap().borrow_mut().isvisible();
+                    let isfloating = i.as_ref().unwrap().borrow_mut().isfloating;
+                    if isvisible && !isfloating {
+                        c = i.clone();
+                    }
+                    let next = i.as_ref().unwrap().borrow_mut().next.clone();
+                    i = next;
+                }
+                if c.is_none() {
+                    while i.is_some() {
+                        let isvisible = i.as_ref().unwrap().borrow_mut().isvisible();
+                        let isfloating = i.as_ref().unwrap().borrow_mut().isfloating;
+                        if isvisible && !isfloating {
+                            c = i.clone();
+                        }
+                        let next = i.as_ref().unwrap().borrow_mut().next.clone();
+                        i = next;
+                    }
+                }
             }
             // Find the client before selmon->sel and c
+            i = selmon.as_ref().unwrap().borrow_mut().clients.clone();
+            let sel = selmon.as_ref().unwrap().borrow_mut().sel.clone();
+            while i.is_some() && (p.is_none() || pc.is_none()) {
+                let next = i.as_ref().unwrap().borrow_mut().next.clone();
+                if next.is_some()
+                    && sel.is_some()
+                    && Rc::ptr_eq(next.as_ref().unwrap(), sel.as_ref().unwrap())
+                {
+                    p = i.clone();
+                }
+                if next.is_some()
+                    && c.is_some()
+                    && Rc::ptr_eq(next.as_ref().unwrap(), c.as_ref().unwrap())
+                {
+                    pc = i.clone();
+                }
+                i = next;
+            }
             // Swap c and selmon->sel selmon->clietns in the selmon->clients list
+            if c.is_some()
+                && sel.is_some()
+                && !Rc::ptr_eq(c.as_ref().unwrap(), sel.as_ref().unwrap())
+            {
+                let sel_next = selmon
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .sel
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .next
+                    .clone();
+                let temp = if sel_next.is_some()
+                    && c.is_some()
+                    && Rc::ptr_eq(sel_next.as_ref().unwrap(), c.as_ref().unwrap())
+                {
+                    selmon.as_ref().unwrap().borrow_mut().sel.clone()
+                } else {
+                    sel_next
+                };
+                let sel = selmon.as_ref().unwrap().borrow_mut().sel.clone();
+                let c_next = c.as_ref().unwrap().borrow_mut().next.clone();
+                selmon
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .sel
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .next = if c_next.is_some()
+                    && sel.is_some()
+                    && Rc::ptr_eq(c_next.as_ref().unwrap(), sel.as_ref().unwrap())
+                {
+                    c.clone()
+                } else {
+                    c_next
+                };
+                c.as_ref().unwrap().borrow_mut().next = temp;
+
+                if p.is_some() && !Rc::ptr_eq(p.as_ref().unwrap(), c.as_ref().unwrap()) {
+                    p.as_ref().unwrap().borrow_mut().next = c.clone();
+                }
+                if pc.is_some() {
+                    let sel = selmon.as_ref().unwrap().borrow_mut().sel.clone();
+                    if !Rc::ptr_eq(pc.as_ref().unwrap(), sel.as_ref().unwrap()) {
+                        pc.as_ref().unwrap().borrow_mut().next = sel;
+                    }
+                }
+
+                let sel = selmon.as_ref().unwrap().borrow_mut().sel.clone();
+                let clients = selmon.as_ref().unwrap().borrow_mut().clients.clone();
+                if Rc::ptr_eq(sel.as_ref().unwrap(), clients.as_ref().unwrap()) {
+                    selmon.as_ref().unwrap().borrow_mut().clients = c;
+                } else if Rc::ptr_eq(c.as_ref().unwrap(), clients.as_ref().unwrap()) {
+                    selmon.as_ref().unwrap().borrow_mut().clients = sel;
+                }
+
+                arrange(selmon.clone());
+            }
         } else {
             return;
         }
@@ -2693,7 +2829,7 @@ pub fn toggleview(arg: *const Arg) {
         }
     }
 }
-pub fn togglefullscr(arg: *const Arg) {
+pub fn togglefullscr(_: *const Arg) {
     info!("[togglefullscr]");
     unsafe {
         if let Some(ref selmon_opt) = selmon {

@@ -201,6 +201,18 @@ pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
         ),
         Key::new(
             MODKEY | ShiftMask,
+            XK_j.into(),
+            Some(dwm::movestack),
+            dwm::Arg::I(1),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_k.into(),
+            Some(dwm::movestack),
+            dwm::Arg::I(-1),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
             XK_l.into(),
             Some(dwm::setcfact),
             dwm::Arg::F(-0.2),
