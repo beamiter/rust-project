@@ -59,7 +59,8 @@ use std::cmp::{max, min};
 use crate::config::{
     alphas, baralpha, borderpx, buttons, colors, dmenucmd, dmenumon, font, horizpadbar, keys,
     layouts, lockfullscreen, mfact, nmaster, resizehints, rules, showbar, sidepad, snap, tagmask,
-    tags, topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad, vertpadbar, OPAQUE,
+    tags, tags_length, topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad, vertpadbar,
+    OPAQUE,
 };
 use crate::drw::{Clr, Col, Cur, Drw};
 use crate::xproto::{
@@ -230,6 +231,40 @@ impl Key {
             keysym,
             func,
             arg,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Pertag {
+    // current tag
+    pub curtag: u32,
+    // previous tag
+    pub prevtag: u32,
+    // number of windows in master area
+    pub nmasters: [i32; tags_length + 1],
+    // mfacts per tag
+    pub mfacts: [f32; tags_length + 1],
+    // selected layouts
+    pub sellts: [u32; tags_length + 1],
+    // matrix of tags and layouts indexes
+    ltidxs: [[Option<Rc<Layout>>; tags_length + 1]; 2],
+    // display bar for the current tag
+    pub showbars: [bool; tags_length + 1],
+    // selected client
+    pub sel: [Option<Rc<RefCell<Client>>>; tags_length + 1],
+}
+impl Pertag {
+    pub fn new() -> Self {
+        Self {
+            curtag: 0,
+            prevtag: 0,
+            nmasters: [0; tags_length + 1],
+            mfacts: [0.; tags_length + 1],
+            sellts: [0; tags_length + 1],
+            ltidxs: unsafe { zeroed() },
+            showbars: [false; tags_length + 1],
+            sel: unsafe { zeroed() },
         }
     }
 }

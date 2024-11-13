@@ -89,9 +89,10 @@ pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
     ]
 });
 // https://symbl.cc/en/
-pub const tags: [&str; 9] = ["🍇", "🍵", "🎦", "🎮", "🎵", "🏖", "🐣", "🐶", "🦄"];
+pub const tags_length: usize = 9;
+pub const tags: [&str; tags_length] = ["🍇", "🍵", "🎦", "🎮", "🎵", "🏖", "🐣", "🐶", "🦄"];
 // pub const tags: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
-pub const tagmask: u32 = (1 << tags.len()) - 1;
+pub const tagmask: u32 = (1 << tags_length) - 1;
 
 pub const mfact: f32 = 0.55;
 pub const nmaster: u32 = 1;
