@@ -248,7 +248,7 @@ pub struct Pertag {
     // selected layouts
     pub sellts: [usize; tags_length + 1],
     // matrix of tags and layouts indexes
-    ltidxs: [[Option<Rc<Layout>>; tags_length + 1]; 2],
+    ltidxs: [[Option<Rc<Layout>>; 2]; tags_length + 1],
     // display bar for the current tag
     pub showbars: [bool; tags_length + 1],
     // selected client
@@ -360,11 +360,10 @@ impl Client {
     }
     pub fn isvisible(&self) -> bool {
         info!("[ISVISIBLE]");
-        info!("[ISVISIBLE] X borrow_mut valid");
-        let tags0 = self.tags0;
-        let seltags = self.mon.as_ref().unwrap().borrow_mut().seltags;
-        let b = tags0 & self.mon.as_ref().unwrap().borrow_mut().tagset[seltags];
-        info!("[ISVISIBLE] mon borrow_mut valid");
+        let b = {
+            let seltags = self.mon.as_ref().unwrap().borrow_mut().seltags;
+            self.tags0 & self.mon.as_ref().unwrap().borrow_mut().tagset[seltags]
+        };
         b > 0
     }
     pub fn width(&self) -> i32 {
@@ -2368,9 +2367,10 @@ pub fn togglebar(_arg: *const Arg) {
     unsafe {
         {
             let mut selmon_mut = selmon.as_mut().unwrap().borrow_mut();
-            selmon_mut.showbar0 = !selmon_mut.showbar0;
             let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-            selmon_mut.pertag.as_mut().unwrap().showbars[curtag] = selmon_mut.showbar0;
+            selmon_mut.pertag.as_mut().unwrap().showbars[curtag] = !selmon_mut.showbar0;
+            selmon_mut.showbar0 = selmon_mut.pertag.as_mut().unwrap().showbars[curtag];
+
             updatebarpos(&mut *selmon_mut);
             XMoveResizeWindow(
                 dpy,
@@ -2567,10 +2567,11 @@ pub fn incnmaster(arg: *const Arg) {
     unsafe {
         if let Arg::I(i) = *arg {
             let mut selmon_mut = selmon.as_mut().unwrap().borrow_mut();
-            selmon_mut.nmaster0 = 0.max(selmon_mut.nmaster0 + i as u32);
-
             let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-            selmon_mut.pertag.as_mut().unwrap().nmasters[curtag] = selmon_mut.nmaster0;
+            selmon_mut.pertag.as_mut().unwrap().nmasters[curtag] =
+                0.max(selmon_mut.nmaster0 + i as u32);
+
+            selmon_mut.nmaster0 = selmon_mut.pertag.as_ref().unwrap().nmasters[curtag];
         }
         arrange(selmon.clone());
     }
@@ -2778,9 +2779,9 @@ pub fn setmfact(arg: *const Arg) {
             if f < 0.05 || f > 0.95 {
                 return;
             }
-            selmon_mut.mfact0 = f;
             let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
             selmon_mut.pertag.as_mut().unwrap().mfacts[curtag] = f;
+            selmon_mut.mfact0 = selmon_mut.pertag.as_mut().unwrap().mfacts[curtag];
         }
         arrange(selmon.clone());
     }
@@ -2799,16 +2800,19 @@ pub fn setlayout(arg: *const Arg) {
                     false
                 }
             {
-                selmon_mut.sellt ^= 1;
                 let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
                 selmon_mut.pertag.as_mut().unwrap().sellts[curtag] ^= 1;
+                selmon_mut.sellt = selmon_mut.pertag.as_ref().unwrap().sellts[curtag];
             }
             if !arg.is_null() {
                 if let Arg::Lt(ref lt) = *arg {
                     let sellt = selmon_mut.sellt;
-                    selmon_mut.lt[sellt] = lt.clone();
                     let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
                     selmon_mut.pertag.as_mut().unwrap().ltidxs[curtag][sellt] = Some(lt.clone());
+                    selmon_mut.lt[sellt] = selmon_mut.pertag.as_mut().unwrap().ltidxs[curtag]
+                        [sellt]
+                        .clone()
+                        .expect("None unwrap");
                 }
             }
             selmon_mut.ltsymbol = selmon_mut.lt[selmon_mut.sellt].symbol;
@@ -2864,13 +2868,55 @@ pub fn view(arg: *const Arg) {
             // toggle sel tagset.
             selmon_mut.seltags ^= 1;
             if ui & tagmask > 0 {
-                let index = selmon_mut.seltags;
-                selmon_mut.tagset[index] = ui & tagmask;
+                let seltags = selmon_mut.seltags;
+                selmon_mut.tagset[seltags] = ui & tagmask;
+
+                let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
+                selmon_mut.pertag.as_mut().unwrap().prevtag = curtag;
+
+                if ui == !0 {
+                    selmon_mut.pertag.as_mut().unwrap().curtag = 0;
+                } else {
+                    let mut i = 0;
+                    loop {
+                        let condition = ui & 1 << i;
+                        if condition > 0 {
+                            break;
+                        }
+                        selmon_mut.pertag.as_mut().unwrap().curtag = i + 1;
+                        i += 1;
+                    }
+                }
+            } else {
+                let tmptag = selmon_mut.pertag.as_mut().unwrap().prevtag;
+                let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
+                selmon_mut.pertag.as_mut().unwrap().prevtag = curtag;
+                selmon_mut.pertag.as_mut().unwrap().curtag = tmptag;
             }
         } else {
             return;
         }
-        focus(None);
+        let sel = {
+            let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+            let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
+            selmon_mut.nmaster0 = selmon_mut.pertag.as_ref().unwrap().nmasters[curtag];
+            selmon_mut.mfact0 = selmon_mut.pertag.as_ref().unwrap().mfacts[curtag];
+            selmon_mut.sellt = selmon_mut.pertag.as_ref().unwrap().sellts[curtag];
+            let sellt = selmon_mut.sellt;
+            selmon_mut.lt[sellt] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag][sellt]
+                .clone()
+                .expect("None unwrap");
+            selmon_mut.lt[sellt ^ 1] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag]
+                [sellt ^ 1]
+                .clone()
+                .expect("None unwrap");
+
+            if selmon_mut.showbar0 != selmon_mut.pertag.as_ref().unwrap().showbars[curtag] {
+                togglebar(null_mut());
+            }
+            selmon_mut.pertag.as_ref().unwrap().sel[curtag].clone()
+        };
+        focus(sel);
         arrange(selmon.clone());
     }
 }
@@ -2878,59 +2924,58 @@ pub fn toggleview(arg: *const Arg) {
     info!("[toggleview]");
     unsafe {
         if let Arg::Ui(ui) = *arg {
-            if let Some(mut selmon_opt) = addr_of_mut!(selmon) {
-                let mut selmon_mut = selmon_opt.borrow_mut();
-                let seltags = selmon_mut.seltags;
-                let newtagset = selmon_mut.tagset[seltags] ^ (ui & tagmask);
-                if newtagset > 0 {
-                    {
-                        selmon_mut.tagset[seltags] = newtagset;
+            if selmon.is_none() {
+                return;
+            }
+            let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+            let seltags = selmon_mut.seltags;
+            let newtagset = selmon_mut.tagset[seltags] ^ (ui & tagmask);
+            if newtagset > 0 {
+                {
+                    selmon_mut.tagset[seltags] = newtagset;
 
-                        if newtagset == !0 {
-                            let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-                            selmon_mut.pertag.as_mut().unwrap().prevtag = curtag;
-                            selmon_mut.pertag.as_mut().unwrap().curtag = 0;
-                        }
-
-                        // test if the user did not select the same tag
+                    if newtagset == !0 {
                         let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-                        if newtagset & 1 << (curtag - 1) <= 0 {
-                            selmon_mut.pertag.as_mut().unwrap().prevtag = curtag;
-                            let mut i = 0;
-                            loop {
-                                let condition = newtagset & 1 << i;
-                                if condition > 0 {
-                                    break;
-                                }
-                                selmon_mut.pertag.as_mut().unwrap().curtag = i + 1;
-                                i += 1;
+                        selmon_mut.pertag.as_mut().unwrap().prevtag = curtag;
+                        selmon_mut.pertag.as_mut().unwrap().curtag = 0;
+                    }
+
+                    // test if the user did not select the same tag
+                    let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
+                    if newtagset & 1 << (curtag - 1) <= 0 {
+                        selmon_mut.pertag.as_mut().unwrap().prevtag = curtag;
+                        let mut i = 0;
+                        loop {
+                            let condition = newtagset & 1 << i;
+                            if condition > 0 {
+                                break;
                             }
-                        }
-
-                        // apply settings for this view
-                        let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-                        selmon_mut.nmaster0 = selmon_mut.pertag.as_ref().unwrap().nmasters[curtag];
-                        selmon_mut.mfact0 = selmon_mut.pertag.as_ref().unwrap().mfacts[curtag];
-                        selmon_mut.sellt = selmon_mut.pertag.as_ref().unwrap().sellts[curtag];
-                        let sellt = selmon_mut.sellt;
-                        selmon_mut.lt[sellt] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag]
-                            [sellt]
-                            .clone()
-                            .expect("None unwrap");
-                        selmon_mut.lt[sellt ^ 1] = selmon_mut.pertag.as_ref().unwrap().ltidxs
-                            [curtag][sellt ^ 1]
-                            .clone()
-                            .expect("None unwrap");
-
-                        if selmon_mut.showbar0
-                            != selmon_mut.pertag.as_ref().unwrap().showbars[curtag]
-                        {
-                            togglebar(null_mut());
+                            selmon_mut.pertag.as_mut().unwrap().curtag = i + 1;
+                            i += 1;
                         }
                     }
-                    focus(None);
-                    arrange(selmon.clone());
+
+                    // apply settings for this view
+                    let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
+                    selmon_mut.nmaster0 = selmon_mut.pertag.as_ref().unwrap().nmasters[curtag];
+                    selmon_mut.mfact0 = selmon_mut.pertag.as_ref().unwrap().mfacts[curtag];
+                    selmon_mut.sellt = selmon_mut.pertag.as_ref().unwrap().sellts[curtag];
+                    let sellt = selmon_mut.sellt;
+                    selmon_mut.lt[sellt] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag]
+                        [sellt]
+                        .clone()
+                        .expect("None unwrap");
+                    selmon_mut.lt[sellt ^ 1] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag]
+                        [sellt ^ 1]
+                        .clone()
+                        .expect("None unwrap");
+
+                    if selmon_mut.showbar0 != selmon_mut.pertag.as_ref().unwrap().showbars[curtag] {
+                        togglebar(null_mut());
+                    }
                 }
+                focus(None);
+                arrange(selmon.clone());
             }
         }
     }
@@ -4124,7 +4169,7 @@ pub fn unmanage(c: Option<Rc<RefCell<Client>>>, destroyed: bool) {
         let mut wc: XWindowChanges = zeroed();
 
         for i in 0..=tags_length {
-            let mut cel_i = c
+            let cel_i = c
                 .as_ref()
                 .unwrap()
                 .borrow_mut()
@@ -4138,7 +4183,17 @@ pub fn unmanage(c: Option<Rc<RefCell<Client>>>, destroyed: bool) {
                 .sel[i]
                 .clone();
             if cel_i.is_some() && Rc::ptr_eq(cel_i.as_ref().unwrap(), c.as_ref().unwrap()) {
-                cel_i = None;
+                c.as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .mon
+                    .as_mut()
+                    .unwrap()
+                    .borrow_mut()
+                    .pertag
+                    .as_mut()
+                    .unwrap()
+                    .sel[i] = None;
             }
         }
 
