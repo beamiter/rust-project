@@ -2883,14 +2883,14 @@ pub fn view(arg: *const Arg) {
                         if condition > 0 {
                             break;
                         }
-                        selmon_mut.pertag.as_mut().unwrap().curtag = i + 1;
                         i += 1;
                     }
+                    selmon_mut.pertag.as_mut().unwrap().curtag = i + 1;
                 }
             } else {
                 let tmptag = selmon_mut.pertag.as_mut().unwrap().prevtag;
-                let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-                selmon_mut.pertag.as_mut().unwrap().prevtag = curtag;
+                selmon_mut.pertag.as_mut().unwrap().prevtag =
+                    selmon_mut.pertag.as_ref().unwrap().curtag;
                 selmon_mut.pertag.as_mut().unwrap().curtag = tmptag;
             }
         } else {
@@ -2935,8 +2935,8 @@ pub fn toggleview(arg: *const Arg) {
                     selmon_mut.tagset[seltags] = newtagset;
 
                     if newtagset == !0 {
-                        let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-                        selmon_mut.pertag.as_mut().unwrap().prevtag = curtag;
+                        selmon_mut.pertag.as_mut().unwrap().prevtag =
+                            selmon_mut.pertag.as_ref().unwrap().curtag;
                         selmon_mut.pertag.as_mut().unwrap().curtag = 0;
                     }
 
@@ -2950,9 +2950,9 @@ pub fn toggleview(arg: *const Arg) {
                             if condition > 0 {
                                 break;
                             }
-                            selmon_mut.pertag.as_mut().unwrap().curtag = i + 1;
                             i += 1;
                         }
+                        selmon_mut.pertag.as_mut().unwrap().curtag = i + 1;
                     }
 
                     // apply settings for this view
