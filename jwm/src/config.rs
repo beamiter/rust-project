@@ -318,6 +318,12 @@ pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
     ));
     m
 });
+
+// Button1: 鼠标左键
+// Button2: 鼠标中键（通常是滚轮按下的动作）
+// Button3: 鼠标右键
+// Button4: 向上滚动滚轮
+// Button5: 向下滚动滚轮
 pub const buttons: Lazy<Vec<Button>> = Lazy::new(|| {
     vec![
         Button::new(

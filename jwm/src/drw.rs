@@ -275,11 +275,11 @@ impl Drw {
 
     // Drawing functions.
     pub fn drw_rect(&mut self, x: i32, y: i32, w: u32, h: u32, filled: i32, invert: i32) {
-        info!("[drw_rect]");
-        info!(
-            "[drw_rect] x: {}, y: {},w: {},h: {}, filled: {}, invert: {}",
-            x, y, w, h, filled, invert
-        );
+        // info!("[drw_rect]");
+        // info!(
+        //     "[drw_rect] x: {}, y: {},w: {},h: {}, filled: {}, invert: {}",
+        //     x, y, w, h, filled, invert
+        // );
         unsafe {
             if self.scheme.is_empty() {
                 return;
@@ -312,11 +312,11 @@ impl Drw {
         invert: i32,
         markup: bool,
     ) -> i32 {
-        info!("[drw_text]");
-        info!(
-            "[drw_text] x: {}, y: {},w: {},h: {}, lpad: {}, text: {:?}, invert: {}",
-            x, y, w, h, lpad, text, invert
-        );
+        // info!("[drw_text]");
+        // info!(
+        //     "[drw_text] x: {}, y: {},w: {},h: {}, lpad: {}, text: {:?}, invert: {}",
+        //     x, y, w, h, lpad, text, invert
+        // );
         let render = x > 0 || y > 0 || w > 0 || h > 0;
         if (render && (self.scheme.is_empty())) || text.is_empty() || self.font.is_none() {
             return 0;
