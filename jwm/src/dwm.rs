@@ -1669,11 +1669,12 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         }
         let barwin = { m.as_ref().unwrap().borrow_mut().barwin };
         let ww: u32 = { m.as_ref().unwrap().borrow_mut().ww } as u32;
+        info!("[drawbar] drw_map");
         drw.as_mut()
             .unwrap()
             .as_mut()
             .drw_map(barwin, 0, 0, ww, bh as u32);
-        // info!("[drawbar] finish");
+        info!("[drawbar] finish");
     }
 }
 

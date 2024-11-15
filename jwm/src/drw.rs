@@ -197,17 +197,19 @@ impl Drw {
         if self.font.is_none() || text.is_empty() {
             return 0;
         }
-        return self.drw_text(0, 0, 0, 0, 0, text, 0, markup) as u32;
+        let mut ew: u32 = 0;
+        let mut eh: u32 = 0;
+        Self::drw_font_gettexts(
+            self.font.clone(),
+            text,
+            text.len() as i32,
+            &mut ew,
+            &mut eh,
+            markup,
+        );
+        return ew;
     }
 
-    #[allow(dead_code)]
-    pub fn drw_font_getwidth_clamp(&mut self, text: &str, n: u32, markup: bool) -> u32 {
-        let mut tmp: u32 = 0;
-        if self.font.is_some() && (n > 0) {
-            tmp = self.drw_text(0, 0, 0, 0, 0, text, n as i32, markup) as u32;
-        }
-        return n.min(tmp);
-    }
     pub fn drw_clr_create(&mut self, clrname: &str, alpha: u8) -> Option<Rc<Clr>> {
         if clrname.is_empty() {
             return None;
@@ -317,8 +319,10 @@ impl Drw {
         //     "[drw_text] x: {}, y: {},w: {},h: {}, lpad: {}, text: {:?}, invert: {}",
         //     x, y, w, h, lpad, text, invert
         // );
-        let render = x > 0 || y > 0 || w > 0 || h > 0;
-        if (render && (self.scheme.is_empty())) || text.is_empty() || self.font.is_none() {
+        if w <= 0 || h <= 0 {
+            return 0;
+        }
+        if (self.scheme.is_empty()) || text.is_empty() || self.font.is_none() {
             return 0;
         }
         let mut d: *mut XftDraw = null_mut();
@@ -326,118 +330,105 @@ impl Drw {
         let mut eh: u32 = 0;
 
         unsafe {
-            if !render {
-                w = if invert > 0 {
-                    invert as u32
-                } else {
-                    (!invert) as u32
-                };
-            } else {
-                let idx = if invert > 0 { Col::ColFg } else { Col::ColBg } as usize;
-                XSetForeground(self.dpy, self.gc, self.scheme[idx].as_ref().unwrap().pixel);
-                XFillRectangle(self.dpy, self.drawable, self.gc, x, y, w, h);
-                d = XftDrawCreate(self.dpy, self.drawable, self.visual, self.cmap);
-                x += lpad as i32;
-                w -= lpad;
-            }
+            let idx = if invert > 0 { Col::ColFg } else { Col::ColBg } as usize;
+            XSetForeground(self.dpy, self.gc, self.scheme[idx].as_ref().unwrap().pixel);
+            XFillRectangle(self.dpy, self.drawable, self.gc, x, y, w, h);
+            d = XftDrawCreate(self.dpy, self.drawable, self.visual, self.cmap);
+            x += lpad as i32;
+            w -= lpad;
 
+            // Already guaranteed not empty.
             let mut len = text.len();
-            if len > 0 {
-                Self::drw_font_gettexts(
-                    self.font.clone(),
-                    text,
-                    len as i32,
-                    &mut ew,
-                    &mut eh,
-                    markup,
-                );
-                let mut th = eh;
-                let mut chars = text.chars().rev();
-                if ew > w {
-                    //shorten text if necessary.
-                    while let Some(ref val) = chars.next() {
-                        len -= val.len_utf8();
-                        Self::drw_font_gettexts(
-                            self.font.clone(),
-                            text,
-                            len as i32,
-                            &mut ew,
-                            &mut eh,
-                            markup,
-                        );
-                        if eh > th {
-                            th = eh;
-                        }
-                        if ew <= w {
-                            break;
-                        }
+            Self::drw_font_gettexts(
+                self.font.clone(),
+                text,
+                len as i32,
+                &mut ew,
+                &mut eh,
+                markup,
+            );
+            let mut th = eh;
+            let mut chars = text.chars().rev();
+            if ew > w {
+                //shorten text if necessary.
+                while let Some(ref val) = chars.next() {
+                    len -= val.len_utf8();
+                    Self::drw_font_gettexts(
+                        self.font.clone(),
+                        text,
+                        len as i32,
+                        &mut ew,
+                        &mut eh,
+                        markup,
+                    );
+                    if eh > th {
+                        th = eh;
                     }
-                }
-                if len > 0 {
-                    let mut buf: String;
-                    if len < text.len() && len > 3 {
-                        // drw "..."
-                        let prev_len = len;
-                        while let Some(ref val) = chars.next() {
-                            len -= val.len_utf8();
-                            if prev_len > 3 + len {
-                                break;
-                            }
-                        }
-                        buf = chars.rev().collect();
-                        buf.push_str("...");
-                        len += 3;
-                    } else {
-                        buf = chars.rev().collect();
+                    if ew <= w {
+                        break;
                     }
-
-                    if render {
-                        let ty = y + (h - th) as i32 / 2;
-                        let cstring = CString::new(buf).expect("fail to convert");
-                        if markup {
-                            pango_layout_set_markup(
-                                self.font.as_ref().unwrap().borrow_mut().layout,
-                                cstring.as_ptr(),
-                                len as i32,
-                            );
-                        } else {
-                            pango_layout_set_text(
-                                self.font.as_ref().unwrap().borrow_mut().layout,
-                                cstring.as_ptr(),
-                                len as i32,
-                            );
-                        }
-                        let idx = if invert > 0 {
-                            Col::ColBg as usize
-                        } else {
-                            Col::ColFg as usize
-                        };
-                        let mut clr = (*self.scheme[idx].clone().unwrap()).clone();
-                        pango_xft_render_layout(
-                            d,
-                            &mut clr as *mut _,
-                            self.font.as_ref().unwrap().borrow_mut().layout,
-                            x * PANGO_SCALE,
-                            ty * PANGO_SCALE,
-                        );
-                        if markup {
-                            // clear markup attributes
-                            pango_layout_set_attributes(
-                                self.font.as_ref().unwrap().borrow_mut().layout,
-                                null_mut(),
-                            );
-                        }
-                    }
-                    x += ew as i32;
-                    w -= ew;
                 }
             }
+            let mut buf: String;
+            if len < text.len() && len > 3 {
+                // drw "..."
+                let prev_len = len;
+                while let Some(ref val) = chars.next() {
+                    len -= val.len_utf8();
+                    if prev_len > 3 + len {
+                        break;
+                    }
+                }
+                buf = chars.rev().collect();
+                buf.push_str("...");
+                len += 3;
+            } else {
+                buf = chars.rev().collect();
+            }
+
+            let ty = y + (h - th) as i32 / 2;
+            let cstring = CString::new(buf).expect("fail to convert");
+            if markup {
+                pango_layout_set_markup(
+                    self.font.as_ref().unwrap().borrow_mut().layout,
+                    cstring.as_ptr(),
+                    len as i32,
+                );
+            } else {
+                pango_layout_set_text(
+                    self.font.as_ref().unwrap().borrow_mut().layout,
+                    cstring.as_ptr(),
+                    len as i32,
+                );
+            }
+            let idx = if invert > 0 {
+                Col::ColBg as usize
+            } else {
+                Col::ColFg as usize
+            };
+            let mut clr = (*self.scheme[idx].clone().unwrap()).clone();
+            pango_xft_render_layout(
+                d,
+                &mut clr as *mut _,
+                self.font.as_ref().unwrap().borrow_mut().layout,
+                x * PANGO_SCALE,
+                ty * PANGO_SCALE,
+            );
+            if markup {
+                // clear markup attributes
+                pango_layout_set_attributes(
+                    self.font.as_ref().unwrap().borrow_mut().layout,
+                    null_mut(),
+                );
+            }
+            x += ew as i32;
+            w -= ew;
             if !d.is_null() {
                 XftDrawDestroy(d);
             }
         }
 
-        return x + if render { w as i32 } else { 0 };
+        return x + w as i32;
     }
 
     pub fn drw_map(&mut self, win: Window, x: i32, y: i32, w: u32, h: u32) {
