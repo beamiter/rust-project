@@ -2920,7 +2920,7 @@ pub fn toggleview(arg: *const Arg) {
             let seltags;
             let newtagset;
             {
-                let mut selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+                let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
                 seltags = selmon_mut.seltags;
                 newtagset = selmon_mut.tagset[seltags] ^ (ui & tagmask);
             }
@@ -4383,15 +4383,6 @@ pub fn updategeom() -> bool {
         }
     }
     return dirty;
-}
-
-#[allow(dead_code)]
-pub fn remove_control_characters(s: &String) -> String {
-    let control_chars_regex = Regex::new(
-        r"[\x00-\x1F\x7F-\x9F\u{200b}-\u{200f}\u{202a}-\u{202e}\u{2060}-\u{206f}\u{feff}]+",
-    )
-    .unwrap();
-    control_chars_regex.replace_all(s, "").into_owned()
 }
 
 pub fn gettextprop(w: Window, atom: Atom, text: &mut String) -> bool {
