@@ -338,7 +338,7 @@ pub const buttons: Lazy<Vec<Button>> = Lazy::new(|| {
             0,
             Button3,
             Some(dwm::setlayout),
-            dwm::Arg::Lt(layouts[0].clone()),
+            dwm::Arg::I(0),
         ),
         Button::new(
             CLICK::ClkWinTitle as u32,
