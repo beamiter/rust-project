@@ -1424,7 +1424,7 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
     // compute width of the status text
     let mut w: u32 = 0;
     let parsed_elements = parse_string(text0);
-    // println!("parsed_elements: {:?}", parsed_elements);
+    // info!("[drawstatusbar] parsed_elements: {:?}", parsed_elements);
     unsafe {
         let drw_mut = drw.as_mut().unwrap();
         for element in &parsed_elements {
@@ -1452,7 +1452,7 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
         drw_mut.drw_rect(x, 0, w, bh0, 1, 0);
         x += horizpadbar / 2;
         for element in &parsed_elements {
-            // println!("element {:?}", element);
+            // info!("[drawstatusbar] element {:?}", element);
             match element {
                 TextElement::WithoutCaret(val) => {
                     w = drw_mut.textw(val) - drw_mut.lrpad as u32;
@@ -1669,12 +1669,12 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         }
         let barwin = { m.as_ref().unwrap().borrow_mut().barwin };
         let ww: u32 = { m.as_ref().unwrap().borrow_mut().ww } as u32;
-        info!("[drawbar] drw_map");
+        // info!("[drawbar] drw_map");
         drw.as_mut()
             .unwrap()
             .as_mut()
             .drw_map(barwin, 0, 0, ww, bh as u32);
-        info!("[drawbar] finish");
+        // info!("[drawbar] finish");
     }
 }
 

@@ -4,7 +4,7 @@
 // use std::fs::File;
 
 // use cairo::{Context, Format, ImageSurface};
-// use pango::{FontDescription, Layout};
+use pango::{FontDescription, Layout};
 // use pangocairo::functions::{create_context, show_layout, update_layout};
 
 // fn main() {
