@@ -7,7 +7,6 @@ use libc::{
 };
 use log::{info, warn};
 use once_cell::sync::Lazy;
-use regex::Regex;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt;
@@ -1520,7 +1519,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
     let mut occ: u32 = 0;
     let mut urg: u32 = 0;
     {
-        info!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
+        // info!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
     }
     unsafe {
         let boxs;
@@ -3291,14 +3290,14 @@ pub fn propertynotify(e: *mut XEvent) {
     }
 }
 pub fn movemouse(_arg: *const Arg) {
-    // info!("[movemouse]");
+    info!("[movemouse]");
     unsafe {
         let c = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
         if c.is_none() {
             return;
         }
         if c.as_ref().unwrap().borrow_mut().isfullscreen {
-            // no support mmoving fullscreen windows by mouse
+            // no support moving fullscreen windows by mouse
             return;
         }
         restack(selmon.clone());
@@ -3321,7 +3320,9 @@ pub fn movemouse(_arg: *const Arg) {
         let mut x: i32 = 0;
         let mut y: i32 = 0;
         let mut lasttime: Time = 0;
-        if getrootptr(&mut x, &mut y) <= 0 {
+        let root_ptr = getrootptr(&mut x, &mut y);
+        info!("[movemouse] root_ptr: {}", root_ptr);
+        if root_ptr <= 0 {
             return;
         }
         let mut ev: XEvent = zeroed();
@@ -3344,43 +3345,48 @@ pub fn movemouse(_arg: *const Arg) {
                     }
                     lasttime = ev.motion.time;
 
-                    let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+                    let wx;
+                    let wy;
+                    let ww;
+                    let wh;
+                    {
+                        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+                        wx = selmon_mut.wx;
+                        wy = selmon_mut.wy;
+                        ww = selmon_mut.ww;
+                        wh = selmon_mut.wh;
+                    }
                     let mut nx = ocx + ev.motion.x - x;
                     let mut ny = ocy + ev.motion.y - y;
                     let width = { c.as_ref().unwrap().borrow_mut().width() };
                     let height = { c.as_ref().unwrap().borrow_mut().height() };
-                    if (selmon_mut.wx - nx).abs() < snap as i32 {
-                        nx = selmon_mut.wx;
-                    } else if ((selmon_mut.wx + selmon_mut.ww) - (nx + width)).abs() < snap as i32 {
-                        nx = selmon_mut.wx + selmon_mut.ww - width;
+                    if (wx - nx).abs() < snap as i32 {
+                        nx = wx;
+                    } else if ((wx + ww) - (nx + width)).abs() < snap as i32 {
+                        nx = wx + ww - width;
                     }
-                    if (selmon_mut.wy - ny).abs() < snap as i32 {
-                        ny = selmon_mut.wy;
-                    } else if ((selmon_mut.wy + selmon_mut.wh) - (ny + height)).abs() < snap as i32
-                    {
-                        ny = selmon_mut.wy + selmon_mut.wh - height;
+                    if (wy - ny).abs() < snap as i32 {
+                        ny = wy;
+                    } else if ((wy + wh) - (ny + height)).abs() < snap as i32 {
+                        ny = wy + wh - height;
                     }
                     let isfloating = c.as_ref().unwrap().borrow_mut().isfloating;
                     let x = c.as_ref().unwrap().borrow_mut().x;
                     let y = c.as_ref().unwrap().borrow_mut().y;
+                    let arrange = {
+                        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+                        selmon_mut.lt[selmon_mut.sellt].arrange.clone()
+                    };
                     if !isfloating
-                        && selmon_mut.lt[selmon_mut.sellt].arrange.is_some()
-                        && (nx - x).abs() > snap as i32
-                        || (ny - y).abs() > snap as i32
+                        && arrange.is_some()
+                        && ((nx - x).abs() > snap as i32 || (ny - y).abs() > snap as i32)
                     {
                         togglefloating(null_mut());
                     }
-                    if (*selmon_mut.lt[selmon_mut.sellt]).arrange.is_none()
-                        || (*c.as_ref().unwrap().borrow_mut()).isfloating
-                    {
-                        resize(
-                            c.as_ref().unwrap(),
-                            nx,
-                            ny,
-                            c.as_ref().unwrap().borrow_mut().w,
-                            c.as_ref().unwrap().borrow_mut().h,
-                            true,
-                        );
+                    let w = c.as_ref().unwrap().borrow_mut().w;
+                    let h = c.as_ref().unwrap().borrow_mut().h;
+                    if arrange.is_none() || c.as_ref().unwrap().borrow_mut().isfloating {
+                        resize(c.as_ref().unwrap(), nx, ny, w, h, true);
                     }
                 }
                 _ => {}
@@ -3390,13 +3396,18 @@ pub fn movemouse(_arg: *const Arg) {
             }
         }
         XUngrabPointer(dpy, CurrentTime);
-        let m = recttomon(
-            c.as_ref().unwrap().borrow_mut().x,
-            c.as_ref().unwrap().borrow_mut().y,
-            c.as_ref().unwrap().borrow_mut().w,
-            c.as_ref().unwrap().borrow_mut().h,
-        );
-        if m != selmon {
+        let x;
+        let y;
+        let w;
+        let h;
+        {
+            x = c.as_ref().unwrap().borrow_mut().x;
+            y = c.as_ref().unwrap().borrow_mut().y;
+            w = c.as_ref().unwrap().borrow_mut().w;
+            h = c.as_ref().unwrap().borrow_mut().h;
+        }
+        let m = recttomon(x, y, w, h);
+        if !Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
             sendmon(c, m.clone());
             selmon = m;
             focus(None);
@@ -3406,18 +3417,17 @@ pub fn movemouse(_arg: *const Arg) {
 pub fn resizemouse(_arg: *const Arg) {
     info!("[resizemouse]");
     unsafe {
-        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        let c = selmon_mut.sel.clone();
+        let c = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
         if c.is_none() {
             return;
         }
-        if (*c.as_ref().unwrap().borrow_mut()).isfullscreen {
+        if c.as_ref().unwrap().borrow_mut().isfullscreen {
             // no support mmoving fullscreen windows by mouse
             return;
         }
         restack(selmon.clone());
-        let ocx = (*c.as_ref().unwrap().borrow_mut()).x;
-        let ocy = (*c.as_ref().unwrap().borrow_mut()).y;
+        let ocx = c.as_ref().unwrap().borrow_mut().x;
+        let ocy = c.as_ref().unwrap().borrow_mut().y;
         if XGrabPointer(
             dpy,
             root,
@@ -3426,23 +3436,23 @@ pub fn resizemouse(_arg: *const Arg) {
             GrabModeAsync,
             GrabModeAsync,
             0,
-            cursor[CUR::CurMove as usize].as_ref().unwrap().cursor,
+            cursor[CUR::CurResize as usize].as_ref().unwrap().cursor,
             CurrentTime,
         ) != GrabSuccess
         {
             return;
         }
-        XWarpPointer(
-            dpy,
-            0,
-            (*c.as_ref().unwrap().borrow_mut()).win,
-            0,
-            0,
-            0,
-            0,
-            (*c.as_ref().unwrap().borrow_mut()).w + (*c.as_ref().unwrap().borrow_mut()).bw - 1,
-            (*c.as_ref().unwrap().borrow_mut()).h + (*c.as_ref().unwrap().borrow_mut()).bw - 1,
-        );
+        let win;
+        let w;
+        let h;
+        let bw;
+        {
+            win = c.as_ref().unwrap().borrow_mut().win;
+            w = c.as_ref().unwrap().borrow_mut().w;
+            bw = c.as_ref().unwrap().borrow_mut().bw;
+            h = c.as_ref().unwrap().borrow_mut().h;
+        }
+        XWarpPointer(dpy, 0, win, 0, 0, 0, 0, w + bw - 1, h + bw - 1);
         let mut lasttime: Time = 0;
         let mut ev: XEvent = zeroed();
         loop {
@@ -3462,62 +3472,64 @@ pub fn resizemouse(_arg: *const Arg) {
                         continue;
                     }
                     lasttime = ev.motion.time;
-                    let nw =
-                        (ev.motion.x - ocx - 2 * (*c.as_ref().unwrap().borrow_mut()).bw + 1).max(1);
-                    let nh =
-                        (ev.motion.y - ocy - 2 * (*c.as_ref().unwrap().borrow_mut()).bw + 1).max(1);
-                    if (*c.as_ref().unwrap().borrow_mut())
-                        .mon
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .wx
-                        + nw
-                        >= selmon_mut.wx
-                        && (*c.as_ref().unwrap().borrow_mut())
-                            .mon
-                            .as_ref()
-                            .unwrap()
-                            .borrow_mut()
-                            .wx
-                            + nw
-                            <= selmon_mut.wx + selmon_mut.ww
-                        && (*c.as_ref().unwrap().borrow_mut())
-                            .mon
-                            .as_ref()
-                            .unwrap()
-                            .borrow_mut()
-                            .wy
-                            + nh
-                            >= selmon_mut.wy
-                        && (*c.as_ref().unwrap().borrow_mut())
-                            .mon
-                            .as_ref()
-                            .unwrap()
-                            .borrow_mut()
-                            .wy
-                            + nh
-                            <= selmon_mut.wy + selmon_mut.wh
+                    let nw = (ev.motion.x - ocx - 2 * bw + 1).max(1);
+                    let nh = (ev.motion.y - ocy - 2 * bw + 1).max(1);
+                    let wx;
+                    let wy;
+                    let ww;
+                    let wh;
                     {
-                        if !(*c.as_ref().unwrap().borrow_mut()).isfloating
-                            && (*selmon_mut.lt[selmon_mut.sellt]).arrange.is_some()
+                        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+                        wx = selmon_mut.wx;
+                        wy = selmon_mut.wy;
+                        ww = selmon_mut.ww;
+                        wh = selmon_mut.wh;
+                    }
+                    let mon_wx;
+                    let mon_wy;
+                    {
+                        mon_wx = c
+                            .as_ref()
+                            .unwrap()
+                            .borrow_mut()
+                            .mon
+                            .as_ref()
+                            .unwrap()
+                            .borrow_mut()
+                            .wx;
+                        mon_wy = c
+                            .as_ref()
+                            .unwrap()
+                            .borrow_mut()
+                            .mon
+                            .as_ref()
+                            .unwrap()
+                            .borrow_mut()
+                            .wy;
+                    }
+                    let arrange = {
+                        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
+                        selmon_mut.lt[selmon_mut.sellt].arrange.clone()
+                    };
+                    if mon_wx + nw >= wx
+                        && mon_wx + nw <= wx + ww
+                        && mon_wy + nh >= wy
+                        && mon_wy + nh <= wy + wh
+                    {
+                        let isfloating = { c.as_ref().unwrap().borrow_mut().isfloating };
+                        if !isfloating
+                            && arrange.is_some()
                             && ((nw - (*c.as_ref().unwrap().borrow_mut()).w).abs() > snap as i32
                                 || (nh - (*c.as_ref().unwrap().borrow_mut()).h).abs() > snap as i32)
                         {
                             togglefloating(null_mut());
                         }
                     }
-                    if (*selmon_mut.lt[selmon_mut.sellt]).arrange.is_none()
-                        || (*c.as_ref().unwrap().borrow_mut()).isfloating
-                    {
-                        resize(
-                            c.as_ref().unwrap(),
-                            (*c.as_ref().unwrap().borrow_mut()).x,
-                            (*c.as_ref().unwrap().borrow_mut()).y,
-                            nw,
-                            nh,
-                            true,
-                        );
+                    let isfloating = c.as_ref().unwrap().borrow_mut().isfloating;
+                    let x = c.as_ref().unwrap().borrow_mut().x;
+                    let y = c.as_ref().unwrap().borrow_mut().y;
+                    if arrange.is_none() || isfloating {
+                        resize(c.as_ref().unwrap(), x, y, nw, nh, true);
                     }
                 }
                 _ => {}
@@ -3526,25 +3538,24 @@ pub fn resizemouse(_arg: *const Arg) {
                 break;
             }
         }
-        XWarpPointer(
-            dpy,
-            0,
-            (*c.as_ref().unwrap().borrow_mut()).win,
-            0,
-            0,
-            0,
-            0,
-            (*c.as_ref().unwrap().borrow_mut()).w + (*c.as_ref().unwrap().borrow_mut()).bw - 1,
-            (*c.as_ref().unwrap().borrow_mut()).h + (*c.as_ref().unwrap().borrow_mut()).bw - 1,
-        );
+        let win;
+        let w;
+        let h;
+        let x;
+        let y;
+        let bw;
+        {
+            win = c.as_ref().unwrap().borrow_mut().win;
+            w = c.as_ref().unwrap().borrow_mut().w;
+            h = c.as_ref().unwrap().borrow_mut().h;
+            x = c.as_ref().unwrap().borrow_mut().x;
+            y = c.as_ref().unwrap().borrow_mut().y;
+            bw = c.as_ref().unwrap().borrow_mut().bw;
+        }
+        XWarpPointer(dpy, 0, win, 0, 0, 0, 0, w + bw - 1, h + bw - 1);
         XUngrabPointer(dpy, CurrentTime);
         while XCheckMaskEvent(dpy, EnterWindowMask, &mut ev) > 0 {}
-        let m = recttomon(
-            (*c.as_ref().unwrap().borrow_mut()).x,
-            (*c.as_ref().unwrap().borrow_mut()).y,
-            (*c.as_ref().unwrap().borrow_mut()).w,
-            (*c.as_ref().unwrap().borrow_mut()).h,
-        );
+        let m = recttomon(x, y, w, h);
         if m != selmon {
             sendmon(c, m.clone());
             selmon = m;
@@ -3621,7 +3632,7 @@ pub fn grabbuttons(c: Option<Rc<RefCell<Client>>>, focused: bool) {
                         c.win,
                         False,
                         BUTTONMASK as u32,
-                        GrabModeSync,
+                        GrabModeAsync,
                         GrabModeSync,
                         0,
                         0,
@@ -4407,11 +4418,11 @@ pub fn gettextprop(w: Window, atom: Atom, text: &mut String) -> bool {
                         tmp.pop();
                     }
                     *text = tmp;
-                    info!(
-                        "[gettextprop]text from string, len: {}, text: {:?}",
-                        text.len(),
-                        *text
-                    );
+                    // info!(
+                    //     "[gettextprop]text from string, len: {}, text: {:?}",
+                    //     text.len(),
+                    //     *text
+                    // );
                 }
                 Err(val) => {
                     info!("[gettextprop]text from string error: {:?}", val);
@@ -4431,11 +4442,11 @@ pub fn gettextprop(w: Window, atom: Atom, text: &mut String) -> bool {
                         tmp.pop();
                     }
                     *text = tmp;
-                    info!(
-                        "[gettextprop]text from string list, len: {},  text: {:?}",
-                        text.len(),
-                        *text
-                    );
+                    // info!(
+                    //     "[gettextprop]text from string list, len: {},  text: {:?}",
+                    //     text.len(),
+                    //     *text
+                    // );
                 }
                 Err(val) => {
                     info!("[gettextprop]text from string list error: {:?}", val);
