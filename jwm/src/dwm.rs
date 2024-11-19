@@ -526,12 +526,15 @@ pub fn applyrules(c: &Rc<RefCell<Client>>) {
         } else {
             broken
         };
-        // info!("[applyrules] class: {}, instance: {}", class, instance);
+        // info!(
+        //     "[applyrules] class: {}, instance: {}, name: {}",
+        //     class, instance, c.name
+        // );
 
         for r in &*rules {
-            if (r.title.is_empty() || c.name.find(r.title).is_some())
-                && (r.class.is_empty() || class.find(r.class).is_some())
-                && (r.instance.is_empty() || instance.find(r.instance).is_some())
+            if (!r.title.is_empty() && c.name.find(r.title).is_some())
+                || (!r.class.is_empty() && class.find(r.class).is_some())
+                || (!r.instance.is_empty() && instance.find(r.instance).is_some())
             {
                 c.isfloating = r.isfloating;
                 c.tags0 |= r.tags0 as u32;
@@ -3762,7 +3765,6 @@ pub fn expose(e: *mut XEvent) {
         let m = wintomon(ev.window);
 
         if ev.count == 0 && m.is_some() {
-            info!("expose");
             drawbar(m);
         }
     }
