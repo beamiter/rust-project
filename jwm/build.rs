@@ -52,6 +52,7 @@ fn main() {
         .clang_arg("-I/usr/include/freetype2") // These are example paths
         .clang_arg("-I/usr/include/xft") // Adjust them for your system
         .clang_arg("-I/usr/include/glib-2.0")
+        .clang_arg("-I/usr/lib64/glib-2.0/include")
         .clang_arg("-I/usr/include/harfbuzz")
         .clang_arg("-I/usr/lib/x86_64-linux-gnu/glib-2.0/include")
         .blocklist_item("_XDisplay")
