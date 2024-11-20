@@ -3556,7 +3556,7 @@ pub fn resizemouse(_arg: *const Arg) {
         XUngrabPointer(dpy, CurrentTime);
         while XCheckMaskEvent(dpy, EnterWindowMask, &mut ev) > 0 {}
         let m = recttomon(x, y, w, h);
-        if m != selmon {
+        if !Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
             sendmon(c, m.clone());
             selmon = m;
             focus(None);
