@@ -317,6 +317,42 @@ pub struct Client {
     pub mon: Option<Rc<RefCell<Monitor>>>,
     pub win: Window,
 }
+impl fmt::Display for Client {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "Client {{ name: {}, mina: {}, maxa: {}, cfact: {}, x: {}, y: {}, w: {}, h: {}, oldx: {}, oldy: {}, oldw: {}, oldh: {}, basew: {}, baseh: {}, incw: {}, inch: {}, maxw: {}, maxh: {}, minw: {}, minh: {}, hintsvalid: {}, bw: {}, oldbw: {}, tags0: {}, isfixed: {}, isfloating: {}, isurgent: {}, nerverfocus: {}, oldstate: {}, isfullscreen: {} }}",
+    self.name,
+    self.mina,
+    self.maxa,
+    self.cfact,
+    self.x,
+    self.y,
+    self.w,
+    self.h,
+    self.oldx,
+    self.oldy,
+    self.oldw,
+    self.oldh,
+    self.basew,
+    self.baseh,
+    self.incw,
+    self.inch,
+    self.maxw,
+    self.maxh,
+    self.minw,
+    self.minh,
+    self.hintsvalid,
+    self.bw,
+    self.oldbw,
+    self.tags0,
+    self.isfixed,
+    self.isfloating,
+    self.isurgent,
+    self.nerverfocus,
+    self.oldstate,
+    self.isfullscreen
+        )
+    }
+}
 impl Client {
     #[allow(unused)]
     pub fn new() -> Self {
@@ -3179,20 +3215,21 @@ pub fn setup() {
     }
 }
 pub fn killclient(_arg: *const Arg) {
-    // info!("[killclient]");
+    info!("[killclient]");
     unsafe {
-        let selmon_mut = selmon.as_ref().unwrap().borrow_mut();
-        if selmon_mut.sel.is_none() {
+        let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+        if sel.is_none() {
             return;
         }
+        info!("[killclient] {}", sel.as_ref().unwrap().borrow_mut());
         if !sendevent(
-            &mut *selmon_mut.sel.as_ref().unwrap().borrow_mut(),
+            &mut sel.as_ref().unwrap().borrow_mut(),
             wmatom[WM::WMDelete as usize],
         ) {
             XGrabServer(dpy);
             XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
             XSetCloseDownMode(dpy, DestroyAll);
-            XKillClient(dpy, selmon_mut.sel.as_ref().unwrap().borrow_mut().win);
+            XKillClient(dpy, sel.as_ref().unwrap().borrow_mut().win);
             XSync(dpy, False);
             XSetErrorHandler(Some(transmute(xerror as *const ())));
             XUngrabServer(dpy);
@@ -3679,7 +3716,7 @@ pub fn grabkeys() {
     }
 }
 pub fn sendevent(c: &mut Client, proto: Atom) -> bool {
-    // info!("[sendevent]");
+    info!("[sendevent] {}", c);
     let mut protocols: *mut Atom = null_mut();
     let mut n: i32 = 0;
     let mut exists: bool = false;
@@ -3726,7 +3763,7 @@ pub fn setfocus(c: &Rc<RefCell<Client>>) {
                 1,
             );
         }
-        sendevent(&mut *c, wmatom[WM::WMTakeFocus as usize]);
+        sendevent(&mut c, wmatom[WM::WMTakeFocus as usize]);
     }
 }
 pub fn drawbars() {

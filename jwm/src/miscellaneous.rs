@@ -46,7 +46,11 @@ pub fn init_auto_start() {
         None => eprintln!("Could not find the home directory."),
     }
     let start_picom = "picom";
-    if let Err(_) = Command::new(start_picom).spawn() {
+    if let Err(_) = Command::new(start_picom)
+        .arg("--backend")
+        .arg("xrender")
+        .spawn()
+    {
         println!("[spawn] Start picom failed");
         info!("[spawn] Start picom failed");
         panic!("[spawn] Start picom failed");
