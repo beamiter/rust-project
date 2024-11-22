@@ -1,4 +1,5 @@
 use chrono::prelude::*;
+use coredump::register_panic_handler;
 use std::process::Command;
 use std::{ffi::CString, process::exit, ptr::null_mut};
 use std::{thread, time::Duration};
@@ -16,8 +17,8 @@ mod config;
 mod drw;
 mod dwm;
 mod miscellaneous;
-mod xproto;
 mod pangoxft_sys;
+mod xproto;
 
 mod tests;
 
@@ -35,6 +36,7 @@ mod tests;
 // xrandr --output HDMI-1 --rotate normal --left-of eDP-1 --auto &
 
 fn main() {
+    let _ = register_panic_handler();
     miscellaneous::for_test();
     miscellaneous::init_auto_start();
 
