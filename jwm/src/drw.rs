@@ -403,7 +403,8 @@ impl Drw {
             }
 
             let ty = y + (h - th) as i32 / 2;
-            let cstring = CString::new(buf).expect("fail to convert");
+            let filtered_buf: String = buf.chars().filter(|&c| c != '\0').collect();
+            let cstring = CString::new(filtered_buf).expect("fail to convert");
             let layout_mut_ptr: *mut PangoLayout = self
                 .font
                 .as_ref()
