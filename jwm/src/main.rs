@@ -16,6 +16,7 @@ use bar::*;
 mod config;
 mod drw;
 mod dwm;
+// mod icon_gallery;
 mod miscellaneous;
 mod pangoxft_sys;
 mod xproto;
