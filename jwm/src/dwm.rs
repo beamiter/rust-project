@@ -1459,10 +1459,10 @@ fn parse_string(input: &str) -> Vec<TextElement> {
     elements
 }
 
-pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> i32 {
+pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, text: &str) -> i32 {
     // compute width of the status text
     let mut w: u32 = 0;
-    let parsed_elements = parse_string(text0);
+    let parsed_elements = parse_string(text);
     // info!("[drawstatusbar] parsed_elements: {:?}", parsed_elements);
     unsafe {
         let drw_mut = drw.as_mut().unwrap();
@@ -1482,13 +1482,11 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
         }
 
         w += horizpadbar as u32;
-        // NO padding is cooler.
-        // w += 2; // 1px padding on both sides
         let ww = { m.as_ref().unwrap().borrow_mut().ww };
         let ret = ww - w as i32;
         let mut x = ret - 2 * sp;
         drw_mut.drw_setscheme(scheme[SCHEME::SchemeStatus as usize].clone());
-        drw_mut.drw_rect(x, 0, w, bh0, 1, 0);
+        drw_mut.drw_rect(x, 0, w, bh as u32, 1, 0);
         x += horizpadbar / 2;
         for element in &parsed_elements {
             // info!("[drawstatusbar] element {:?}", element);
@@ -1499,7 +1497,7 @@ pub fn drawstatusbar(m: Option<Rc<RefCell<Monitor>>>, bh0: u32, text0: &str) -> 
                         x,
                         vertpadbar / 2,
                         w,
-                        bh0 - vertpadbar as u32,
+                        bh as u32 - vertpadbar as u32,
                         0,
                         &val,
                         0,
@@ -1579,7 +1577,7 @@ pub fn drawbar(m: Option<Rc<RefCell<Monitor>>>) {
         if Rc::ptr_eq(m.as_ref().unwrap(), selmon.as_ref().unwrap()) {
             // status is only drawn on selected monitor.
             // draw status bar here
-            tw = ww - drawstatusbar(m.clone(), bh as u32, &*stext);
+            tw = ww - drawstatusbar(m.clone(), &*stext);
         }
         {
             let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();

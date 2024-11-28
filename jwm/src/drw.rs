@@ -3,8 +3,8 @@
 // #![allow(unused_mut)]
 
 use cairo::ffi::{
-    cairo_create, cairo_destroy, cairo_move_to, cairo_set_source_rgba, cairo_surface_destroy,
-    cairo_xlib_surface_create,
+    cairo_create, cairo_destroy, cairo_fill, cairo_move_to, cairo_rectangle, cairo_set_source_rgba,
+    cairo_stroke, cairo_surface_destroy, cairo_xlib_surface_create,
 };
 use pango::ffi::pango_font_description_free;
 use pangocairo::ffi::{
@@ -29,8 +29,8 @@ use x11::{
     xft::{XftColor, XftColorAllocName},
     xlib::{
         self, CapButt, Colormap, Cursor, Drawable, False, JoinMiter, LineSolid, Visual, Window,
-        XCopyArea, XCreateFontCursor, XCreateGC, XCreatePixmap, XDrawRectangle, XFillRectangle,
-        XFreeCursor, XFreeGC, XFreePixmap, XSetForeground, XSetLineAttributes, XSync, GC,
+        XCopyArea, XCreateFontCursor, XCreateGC, XCreatePixmap, XFillRectangle, XFreeCursor,
+        XFreeGC, XFreePixmap, XSetForeground, XSetLineAttributes, XSync, GC,
     },
 };
 
@@ -169,7 +169,6 @@ impl Drw {
             let surface =
                 cairo_xlib_surface_create(self.dpy, self.drawable, self.visual, 3000, 200);
             let cr = cairo_create(surface);
-            cairo_set_source_rgba(cr, 0., 0., 0., 1.);
             let layout = pango_cairo_create_layout(cr);
             let cstring = CString::new(fontname).expect("fail to convert");
             let desc = pango_font_description_from_string(cstring.as_ptr());
@@ -292,6 +291,10 @@ impl Drw {
         self.scheme = scm;
     }
 
+    pub fn change_hexadecimal_color_to_float(&self, ch: u16) -> f64 {
+        return ch as f64 / 65535.;
+    }
+
     // Drawing functions.
     pub fn drw_rect(&mut self, x: i32, y: i32, w: u32, h: u32, filled: i32, invert: i32) {
         // info!("[drw_rect]");
@@ -303,19 +306,25 @@ impl Drw {
             if self.scheme.is_empty() {
                 return;
             }
-            XSetForeground(
-                self.dpy,
-                self.gc,
-                if invert > 0 {
-                    self.scheme[Col::ColBg as usize].as_ref().unwrap().pixel
-                } else {
-                    self.scheme[Col::ColFg as usize].as_ref().unwrap().pixel
-                },
+            let cr = self.font.as_ref().unwrap().borrow_mut().cr;
+            let color = if invert > 0 {
+                self.scheme[Col::ColBg as usize].as_ref().unwrap().color
+            } else {
+                self.scheme[Col::ColFg as usize].as_ref().unwrap().color
+            };
+            cairo_set_source_rgba(
+                cr,
+                self.change_hexadecimal_color_to_float(color.red),
+                self.change_hexadecimal_color_to_float(color.green),
+                self.change_hexadecimal_color_to_float(color.blue),
+                self.change_hexadecimal_color_to_float(color.alpha),
             );
             if filled > 0 {
-                XFillRectangle(self.dpy, self.drawable, self.gc, x, y, w, h);
+                cairo_rectangle(cr, x as f64, y as f64, w as f64, h as f64);
+                cairo_fill(cr);
             } else {
-                XDrawRectangle(self.dpy, self.drawable, self.gc, x, y, w - 1, h - 1);
+                cairo_rectangle(cr, x as f64, y as f64, w as f64 - 1., h as f64 - 1.);
+                cairo_stroke(cr);
             }
         }
     }
@@ -411,6 +420,19 @@ impl Drw {
             } else {
                 pango_layout_set_text(layout, cstring.as_ptr(), len as i32);
             }
+            let idx = if invert > 0 {
+                Col::ColBg as usize
+            } else {
+                Col::ColFg as usize
+            };
+            let color = self.scheme[idx].clone().unwrap().color;
+            cairo_set_source_rgba(
+                cr,
+                self.change_hexadecimal_color_to_float(color.red),
+                self.change_hexadecimal_color_to_float(color.green),
+                self.change_hexadecimal_color_to_float(color.blue),
+                self.change_hexadecimal_color_to_float(color.alpha),
+            );
             pango_cairo_update_layout(cr, layout);
             cairo_move_to(cr, x as f64, 0.);
             pango_cairo_show_layout(cr, layout);
