@@ -2,11 +2,19 @@
 #![allow(non_snake_case)]
 // #![allow(unused_mut)]
 
+use cairo::ffi::{
+    cairo_create, cairo_destroy, cairo_set_source_rgba, cairo_surface_destroy,
+    cairo_xlib_surface_create,
+};
+use pango::ffi::pango_font_description_free;
 use pango::glib::translate::ToGlibPtr;
 use pango::{
     ffi::{pango_font_map_create_context, PangoContext},
     glib::translate::from_glib_full,
     Layout,
+};
+use pangocairo::ffi::{
+    pango_cairo_create_layout, pango_cairo_show_layout, pango_cairo_update_layout,
 };
 use std::{cell::RefCell, ffi::CString, i32, mem::zeroed, ptr::null_mut, rc::Rc, u32, usize};
 
@@ -14,6 +22,7 @@ use log::info;
 // use log::warn;
 // For whatever reason, dmenu and other suckless tools use libXft, which does not support Unicode properly.
 // If you use Pango however, Unicode will work great and this includes flag emojis.
+use cairo::ffi::cairo_t;
 use pango::{
     ffi::{
         pango_context_get_metrics, pango_font_description_from_string, pango_font_metrics_unref,
@@ -31,8 +40,6 @@ use x11::{
         XFreeCursor, XFreeGC, XFreePixmap, XSetForeground, XSetLineAttributes, XSync, GC,
     },
 };
-
-use crate::pangoxft_sys::*;
 
 #[derive(Debug, Clone, Copy)]
 pub struct Cur {
@@ -54,14 +61,16 @@ impl Haha for Layout {}
 pub struct Fnt {
     pub dpy: *mut xlib::Display,
     pub h: u32,
-    pub layout: Option<Layout>,
+    pub layout: *mut PangoLayout,
+    pub cr: *mut cairo_t,
 }
 impl Fnt {
     pub fn new() -> Self {
         Fnt {
             dpy: null_mut(),
             h: 0,
-            layout: None,
+            layout: null_mut(),
+            cr: null_mut(),
         }
     }
 }
@@ -170,24 +179,29 @@ impl Drw {
         font.dpy = self.dpy;
 
         unsafe {
-            let fontmap = pango_xft_get_font_map(self.dpy, self.screen);
-            let context = pango_font_map_create_context(fontmap);
-            println!("[xfont_create] fontname: {}", fontname);
+            let surface = cairo_xlib_surface_create(self.dpy, self.drawable, self.visual, 200, 200);
+            let cr = cairo_create(surface);
+            let layout = pango_cairo_create_layout(cr);
+            let cstring = CString::new("hehehehe").expect("fail to convert");
+            pango_layout_set_text(layout, cstring.as_ptr(), -1);
             let cstring = CString::new(fontname).expect("fail to convert");
             let desc = pango_font_description_from_string(cstring.as_ptr());
             if desc.is_null() {
                 return None;
             }
-            font.layout = Some(Layout::new0(context));
-            let layout_mut_ptr: *mut PangoLayout = font.layout.as_mut().unwrap().to_glib_none().0;
-            pango_layout_set_font_description(layout_mut_ptr, desc);
+            pango_layout_set_font_description(layout, desc);
+            pango_font_description_free(desc);
 
-            let metrics = pango_context_get_metrics(context, desc, null_mut());
-            //font.h = (pango_font_metrics_get_height(metrics) / PANGO_SCALE) as u32;
+            // cairo_set_source_rgba(cr, 0., 0., 0., 0.);
+            // pango_cairo_update_layout(cr, layout);
+            // pango_cairo_show_layout(cr, layout);
+            //
+            // g_object_unref(layout as *mut _);
+            // cairo_destroy(cr);
+            // cairo_surface_destroy(surface);
+
+            font.layout = layout;
             font.h = 20;
-
-            pango_font_metrics_unref(metrics);
-            g_object_unref(context as *mut _);
         }
 
         return Some(Rc::new(RefCell::new(font)));
@@ -405,20 +419,11 @@ impl Drw {
             let ty = y + (h - th) as i32 / 2;
             let filtered_buf: String = buf.chars().filter(|&c| c != '\0').collect();
             let cstring = CString::new(filtered_buf).expect("fail to convert");
-            let layout_mut_ptr: *mut PangoLayout = self
-                .font
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .layout
-                .as_mut()
-                .unwrap()
-                .to_glib_none()
-                .0;
+            let layout: *mut PangoLayout = self.font.as_ref().unwrap().borrow_mut().layout;
             if markup {
-                pango_layout_set_markup(layout_mut_ptr, cstring.as_ptr(), len as i32);
+                pango_layout_set_markup(layout, cstring.as_ptr(), len as i32);
             } else {
-                pango_layout_set_text(layout_mut_ptr, cstring.as_ptr(), len as i32);
+                pango_layout_set_text(layout, cstring.as_ptr(), len as i32);
             }
             let idx = if invert > 0 {
                 Col::ColBg as usize
@@ -426,16 +431,11 @@ impl Drw {
                 Col::ColFg as usize
             };
             let mut clr = (*self.scheme[idx].clone().unwrap()).clone();
-            pango_xft_render_layout(
-                d,
-                &mut clr as *mut _,
-                layout_mut_ptr,
-                x * PANGO_SCALE,
-                ty * PANGO_SCALE,
-            );
+            pango_cairo_update_layout(cr, layout);
+            pango_cairo_show_layout(cr, layout);
             if markup {
                 // clear markup attributes
-                pango_layout_set_attributes(layout_mut_ptr, null_mut());
+                pango_layout_set_attributes(layout, null_mut());
             }
             x += ew as i32;
             w -= ew;

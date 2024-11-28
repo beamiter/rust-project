@@ -18,7 +18,6 @@ mod drw;
 mod dwm;
 mod icon_gallery;
 mod miscellaneous;
-mod pangoxft_sys;
 mod xproto;
 
 mod tests;
