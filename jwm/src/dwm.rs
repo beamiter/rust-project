@@ -62,6 +62,7 @@ use crate::config::{
     OPAQUE,
 };
 use crate::drw::{Clr, Col, Cur, Drw};
+use crate::icon_gallery::generate_random_tags;
 use crate::xproto::{
     IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
     X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8,
@@ -2396,6 +2397,7 @@ pub fn togglebar(_arg: *const Arg) {
     // info!("[togglebar]");
     unsafe {
         {
+            *tags = generate_random_tags();
             let mut selmon_mut = selmon.as_mut().unwrap().borrow_mut();
             let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
             selmon_mut.pertag.as_mut().unwrap().showbars[curtag] = !selmon_mut.showbar0;

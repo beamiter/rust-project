@@ -3,9 +3,10 @@
 #![allow(unused_mut)]
 #![allow(unused)]
 
+use rand::Rng;
 use std::rc::Rc;
 
-use once_cell::unsync::Lazy;
+use once_cell::sync::Lazy;
 use x11::{
     keysym::{
         XK_Return, XK_Tab, XK_b, XK_c, XK_comma, XK_d, XK_e, XK_f, XK_h, XK_i, XK_j, XK_k, XK_l,
@@ -15,7 +16,10 @@ use x11::{
     xlib::{Button1, Button2, Button3, ControlMask, Mod1Mask, ShiftMask},
 };
 
-use crate::dwm::{self, monocle, tile, Button, Key, Layout, Rule, CLICK};
+use crate::{
+    dwm::{self, monocle, tile, Button, Key, Layout, Rule, CLICK},
+    icon_gallery::{generate_random_tags, ICON_GALLERY},
+};
 
 // border pixel of windows
 pub const borderpx: u32 = 1;
@@ -80,7 +84,6 @@ pub const alphas: [&[u8; 3]; 10] = [
     &[OPAQUE, baralpha, borderalpha],
 ];
 
-// No need rules.
 pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
     vec![
         // class | instance | title | tags mask | isfloating | monitor
@@ -90,7 +93,10 @@ pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
 });
 // https://symbl.cc/en/
 pub const tags_length: usize = 9;
-pub const tags: [&str; tags_length] = ["🍇", "🍵", "🎦", "🎮", "🎵", "🏖", "🐣", "🐶", "🦄"];
+pub static mut tags: Lazy<Vec<&str>> = Lazy::new(|| {
+    return generate_random_tags();
+});
+// pub const tags: [&str; tags_length] = ["🍇", "🍵", "🎦", "🎮", "🎵", "🏖", "🐣", "🐶", "🦄"];
 // pub const tags: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
 pub const tagmask: u32 = (1 << tags_length) - 1;
 
