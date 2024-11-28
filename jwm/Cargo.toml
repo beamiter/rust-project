@@ -2,7 +2,7 @@
 name = "jwm"
 version = "0.1.0"
 edition = "2021"
-# build = "build.rs"
+build = "build.rs"
 
 [dependencies]
 # alsa = "0.9.1"
@@ -24,6 +24,6 @@ sysinfo = "0.32.0"
 x11 = { version = "2.21.0", features = ["all"] }
 yeslogic-fontconfig-sys = "6.0.0"
 
-# [build-dependencies]
-# bindgen = "0.70.1"
-# pkg-config = "0.3"
+[build-dependencies]
+bindgen = "0.70.1"
+pkg-config = "0.3"

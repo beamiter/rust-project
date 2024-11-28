@@ -39,7 +39,7 @@ pub fn battery_capacity() -> String {
     // Create an instance of the battery manager
     let manager = Manager::new();
 
-    let mut battery_state = "No Battery".to_string();
+    let mut battery_state = "Plugged".to_string();
     // Get the first battery (assuming there is at least one)
     if let Some(battery) = manager.unwrap().batteries().unwrap().next() {
         let battery = battery.unwrap();
@@ -61,7 +61,7 @@ pub fn mem_usage() -> String {
     let used = sys.used_memory() as f64 / 1e9;
     let free = sys.free_memory() as f64 / 1e9;
     format!(
-        "^c{}^^b{}^ ⌛  ^c{}^{:.1}^c{}^ 🌏 {:.1}",
+        "^c{}^^b{}^ ⌛ ^c{}^{:.1}^c{}^ 🌏 {:.1}",
         BLUE, BLACK, BLUE, used, RED, free
     )
 }
@@ -81,7 +81,7 @@ pub fn wlan_status() -> String {
         if let Ok(state) = read_file(operstate_path.to_str().unwrap()) {
             if state.trim() == "up" {
                 status = "Connected".to_owned();
-                return format!("^c{}^^b{}^ 📶  ^d^^c{}^ {}", BLACK, BLUE, BLUE, status);
+                return format!("^c{}^^b{}^ 📶 ^d^^c{}^ {}", BLACK, BLUE, BLUE, status);
             }
         }
     }
@@ -98,7 +98,7 @@ pub fn cool_symbol() -> String {
 pub fn current_time() -> String {
     let now = chrono::Local::now();
     format!(
-        "^c{}^^b{}^ ⏰ ^c{}^^b{}^ {} 🦁 ",
+        "^c{}^^b{}^ ⏰ ^c{}^^b{}^ {} 🦁",
         BLACK,
         DARKBLUE,
         BLACK,

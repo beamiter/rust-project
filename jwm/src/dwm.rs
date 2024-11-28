@@ -5,7 +5,7 @@ use libc::{
     close, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
     SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
-use log::{info, warn};
+use log::info;
 use once_cell::sync::Lazy;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
