@@ -92,6 +92,7 @@ pub static mut numlockmask: u32 = 0;
 pub static mut wmatom: [Atom; WM::WMLast as usize] = unsafe { zeroed() };
 pub static mut netatom: [Atom; NET::NetLast as usize] = unsafe { zeroed() };
 pub static mut running: AtomicBool = AtomicBool::new(true);
+pub static mut refresh_bar_icon: AtomicBool = AtomicBool::new(false);
 pub static mut cursor: [Option<Box<Cur>>; CUR::CurLast as usize] = [None, None, None];
 pub static mut scheme: Vec<Vec<Option<Rc<Clr>>>> = vec![];
 pub static mut dpy: *mut Display = null_mut();

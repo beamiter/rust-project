@@ -1,3 +1,3 @@
-Xephyr :2 -screen 1900x1000 &
+Xephyr :2 -screen 1800x900 &
 DISPLAY=:2 jwm
 

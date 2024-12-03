@@ -40,25 +40,10 @@ fn main() {
     miscellaneous::for_test();
     miscellaneous::init_auto_start();
 
-    let status = format!(
-        "{} {} {} {} {}",
-        battery_capacity(),
-        cpu_load(),
-        mem_usage(),
-        wlan_status(),
-        current_time()
-    );
-    println!("{}", status);
+    let status_bar = StatusBar::new();
     let status_update_thread = thread::spawn(move || {
         loop {
-            let status = format!(
-                "{} {} {} {} {}",
-                battery_capacity(),
-                cpu_load(),
-                mem_usage(),
-                wlan_status(),
-                current_time(),
-            );
+            let status = status_bar.broadcast_string();
 
             // println!("{}", status);
             // Update X root window name (status bar), here we will just print to stdout
