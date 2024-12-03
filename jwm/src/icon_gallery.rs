@@ -16,15 +16,15 @@ pub const ICON_GALLERY: [&str; 216] = [
 ];
 
 use rand::seq::SliceRandom;
-pub fn generate_random_tags() -> Vec<&'static str> {
+pub fn generate_random_tags(num: usize) -> Vec<&'static str> {
     let mut numbers: Vec<usize> = (0..ICON_GALLERY.len()).collect();
 
     // Shuffle the vector
     let mut rng = rand::thread_rng();
     numbers.shuffle(&mut rng);
 
-    // Take the first 9 elements to get 9 unique random values
-    let random_indices: Vec<_> = numbers.into_iter().take(9).collect();
+    // Take the first num elements to get num unique random values
+    let random_indices: Vec<_> = numbers.into_iter().take(num).collect();
     // Print the random numbers
     println!("Random indices: {:?}", random_indices);
 

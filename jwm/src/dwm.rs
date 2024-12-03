@@ -2396,7 +2396,8 @@ pub fn togglebar(_arg: *const Arg) {
     // info!("[togglebar]");
     unsafe {
         {
-            *tags = generate_random_tags();
+            refresh_bar_icon.store(true, std::sync::atomic::Ordering::SeqCst);
+            *tags = generate_random_tags(tags_length);
             let mut selmon_mut = selmon.as_mut().unwrap().borrow_mut();
             let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
             selmon_mut.pertag.as_mut().unwrap().showbars[curtag] = !selmon_mut.showbar0;

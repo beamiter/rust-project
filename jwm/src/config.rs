@@ -94,7 +94,7 @@ pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
 // https://symbl.cc/en/
 pub const tags_length: usize = 9;
 pub static mut tags: Lazy<Vec<&str>> = Lazy::new(|| {
-    return generate_random_tags();
+    return generate_random_tags(tags_length);
 });
 // pub const tags: [&str; tags_length] = ["🍇", "🍵", "🎦", "🎮", "🎵", "🏖", "🐣", "🐶", "🦄"];
 // pub const tags: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];

@@ -2,6 +2,8 @@ use battery::Manager;
 use std::fs;
 use sysinfo::{CpuRefreshKind, RefreshKind, System};
 
+use crate::icon_gallery::generate_random_tags;
+
 pub const BLACK: &str = "#222526";
 pub const GREEN: &str = "#89b482";
 pub const WHITE: &str = "#c7b89d";
@@ -11,7 +13,9 @@ pub const BLUE: &str = "#6f8faf";
 pub const RED: &str = "#ec6b64";
 pub const DARKBLUE: &str = "#6080a0";
 
-pub struct StatusBar {}
+pub struct StatusBar {
+    icon_list: Vec<&'static str>,
+}
 impl StatusBar {
     // Function to read file contents
     fn read_file(&self, path: &str) -> Result<String, std::io::Error> {
@@ -19,7 +23,13 @@ impl StatusBar {
     }
 
     pub fn new() -> Self {
-        StatusBar {}
+        StatusBar {
+            icon_list: generate_random_tags(20),
+        }
+    }
+
+    pub fn update_icon_list(&mut self) {
+        self.icon_list = generate_random_tags(20);
     }
 
     // Function to get CPU load
@@ -31,9 +41,10 @@ impl StatusBar {
         // Refresh CPUs again to get actual value.
         s.refresh_cpu_usage();
         format!(
-            "^c{}^^b{}^ 🫒 CPU ^c{}^^b{}^ {:.2}%",
+            "^c{}^^b{}^ {} CPU ^c{}^^b{}^ {:.2}%",
             BLACK,
             GREEN,
+            self.icon_list[0],
             WHITE,
             GREY,
             s.global_cpu_usage()
@@ -57,7 +68,12 @@ impl StatusBar {
 
             battery_state = format!("Battery {:.2}%", percentage);
         }
-        format!("^c{}^ 🎑 {}", BLACK, battery_state.trim())
+        format!(
+            "^c{}^ {} {}",
+            BLACK,
+            self.icon_list[1],
+            battery_state.trim()
+        )
     }
 
     // Function to get memory usage
@@ -67,8 +83,8 @@ impl StatusBar {
         let used = sys.used_memory() as f64 / 1e9;
         let free = sys.free_memory() as f64 / 1e9;
         format!(
-            "^c{}^^b{}^ ⌛ ^c{}^{:.1}^c{}^ 🌏 {:.1}",
-            BLUE, BLACK, BLUE, used, RED, free
+            "^c{}^^b{}^ {} ^c{}^{:.1}^c{}^ {} {:.1}",
+            BLUE, BLACK, self.icon_list[2], BLUE, used, RED, self.icon_list[3], free
         )
     }
 
@@ -87,24 +103,32 @@ impl StatusBar {
             if let Ok(state) = self.read_file(operstate_path.to_str().unwrap()) {
                 if state.trim() == "up" {
                     status = "Connected".to_owned();
-                    return format!("^c{}^^b{}^ 📶 ^d^^c{}^ {}", BLACK, BLUE, BLUE, status);
+                    return format!(
+                        "^c{}^^b{}^ {} ^d^^c{}^ {}",
+                        BLACK, BLUE, self.icon_list[4], BLUE, status
+                    );
                 }
             }
         }
 
-        format!("^c{}^^b{}^ 📴 ^d^^c{}^ {}", BLACK, BLUE, BLUE, status)
+        format!(
+            "^c{}^^b{}^ {} ^d^^c{}^ {}",
+            BLACK, BLUE, self.icon_list[5], BLUE, status
+        )
     }
 
     // Function to get current time
     pub fn current_time(&self) -> String {
         let now = chrono::Local::now();
         format!(
-            "^c{}^^b{}^ ⏰ ^c{}^^b{}^ {} 🦁",
+            "^c{}^^b{}^ {} ^c{}^^b{}^ {} {}",
             BLACK,
             DARKBLUE,
+            self.icon_list[6],
             BLACK,
             BLUE,
-            now.format("%d/%m/%Y %H:%M")
+            now.format("%d/%m/%Y %H:%M"),
+            self.icon_list[7],
         )
     }
 

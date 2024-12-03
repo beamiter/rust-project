@@ -7,7 +7,7 @@ use std::{thread, time::Duration};
 use log::info;
 use simplelog::*;
 
-use dwm::{checkotherwm, cleanup, dpy, run, running, scan, setup};
+use dwm::{checkotherwm, cleanup, dpy, refresh_bar_icon, run, running, scan, setup};
 use libc::{setlocale, LC_CTYPE};
 use x11::xlib::{XCloseDisplay, XOpenDisplay, XSupportsLocale};
 
@@ -40,9 +40,15 @@ fn main() {
     miscellaneous::for_test();
     miscellaneous::init_auto_start();
 
-    let status_bar = StatusBar::new();
+    let mut status_bar = StatusBar::new();
     let status_update_thread = thread::spawn(move || {
         loop {
+            unsafe {
+                if refresh_bar_icon.load(std::sync::atomic::Ordering::SeqCst) {
+                    refresh_bar_icon.store(false, std::sync::atomic::Ordering::SeqCst);
+                    status_bar.update_icon_list();
+                }
+            }
             let status = status_bar.broadcast_string();
 
             // println!("{}", status);
