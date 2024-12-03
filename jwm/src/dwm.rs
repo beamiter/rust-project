@@ -3335,6 +3335,9 @@ pub fn movemouse(_arg: *const Arg) {
         if c.is_none() {
             return;
         }
+        {
+            info!("[movemouse] {}", c.as_ref().unwrap().borrow_mut().name);
+        }
         if c.as_ref().unwrap().borrow_mut().isfullscreen {
             // no support moving fullscreen windows by mouse
             return;
