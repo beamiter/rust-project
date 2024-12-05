@@ -5,7 +5,7 @@ use std::{ffi::CString, process::exit, ptr::null_mut};
 use std::{thread, time::Duration};
 
 use log::info;
-use simplelog::*;
+// use simplelog::*;
 
 use dwm::{checkotherwm, cleanup, dpy, refresh_bar_icon, run, running, scan, setup};
 use libc::{setlocale, LC_CTYPE};
@@ -70,7 +70,7 @@ fn main() {
     let _log_file = std::fs::File::create(log_filename).unwrap();
     // WriteLogger::init(LevelFilter::Warn, Config::default(), _log_file).unwrap();
     // WriteLogger::init(LevelFilter::Info, Config::default(), _log_file).unwrap();
-    WriteLogger::init(LevelFilter::Info, Config::default(), std::io::stdout()).unwrap();
+    // WriteLogger::init(LevelFilter::Info, Config::default(), std::io::stdout()).unwrap();
     unsafe {
         let c_string = CString::new("").unwrap();
         if setlocale(LC_CTYPE, c_string.as_ptr()).is_null() || XSupportsLocale() <= 0 {
