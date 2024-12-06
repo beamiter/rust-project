@@ -32,7 +32,8 @@ pub fn for_test() {
     let rebuilt_word: String = chars.collect();
     println!("rebuilt_word: {}", rebuilt_word);
 
-    let text = "en\0"; // This has a null byte in the middle.
+    // let text = "en\0"; // This has a null byte in the middle.
+    let text = "en\000\000"; // This has a null byte in the middle.
     let c_str = CString::new(text);
 
     match c_str {

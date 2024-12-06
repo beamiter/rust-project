@@ -6,6 +6,7 @@ use cairo::ffi::{
     cairo_create, cairo_destroy, cairo_fill, cairo_move_to, cairo_rectangle, cairo_set_source_rgba,
     cairo_stroke, cairo_surface_destroy, cairo_xlib_surface_create,
 };
+use log::info;
 use pango::ffi::pango_font_description_free;
 use pangocairo::ffi::{
     pango_cairo_create_layout, pango_cairo_show_layout, pango_cairo_update_layout,
@@ -170,7 +171,12 @@ impl Drw {
                 cairo_xlib_surface_create(self.dpy, self.drawable, self.visual, 3000, 200);
             let cr = cairo_create(surface);
             let layout = pango_cairo_create_layout(cr);
-            let cstring = CString::new(fontname).expect("fail to convert");
+            let cstring = CString::new(fontname);
+            if let Err(e) = cstring {
+                info!("[xfont_create] an error occured: {}", e);
+                return None;
+            }
+            let cstring = cstring.expect("fail to convert");
             let desc = pango_font_description_from_string(cstring.as_ptr());
             if desc.is_null() {
                 println!("fail to parse font description");
@@ -232,7 +238,12 @@ impl Drw {
         }
 
         unsafe {
-            let cstring = CString::new(clrname).expect("fail to convert");
+            let cstring = CString::new(clrname);
+            if let Err(e) = cstring {
+                info!("[drw_clr_create] an error occured: {}", e);
+                return None;
+            }
+            let cstring = cstring.expect("fail to convert");
             let mut dest: Clr = std::mem::zeroed();
             if XftColorAllocName(
                 self.dpy,
@@ -412,7 +423,12 @@ impl Drw {
 
             // let ty = y + (h - th) as i32 / 2;
             let filtered_buf: String = buf.chars().filter(|&c| c != '\0').collect();
-            let cstring = CString::new(filtered_buf).expect("fail to convert");
+            let cstring = CString::new(filtered_buf);
+            if let Err(e) = cstring {
+                info!("[drw_text] an error occured: {}", e);
+                return 0;
+            }
+            let cstring = cstring.expect("fail to convert");
             let layout = self.font.as_ref().unwrap().borrow_mut().layout;
             let cr = self.font.as_ref().unwrap().borrow_mut().cr;
             if markup {
@@ -478,7 +494,13 @@ impl Drw {
         }
         let layout = font.as_ref().unwrap().borrow_mut().layout;
 
-        let cstring = CString::new(text).expect("fail to convert");
+        let cstring = CString::new(text);
+        // Error catching
+        if let Err(e) = cstring {
+            info!("[drw_font_gettexts] an error occured: {}", e);
+            return;
+        }
+        let cstring = cstring.expect("fail to convert");
         unsafe {
             if markup {
                 pango_layout_set_markup(layout, cstring.as_ptr(), len as i32);
