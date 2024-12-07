@@ -59,6 +59,7 @@ pub fn init_auto_start() {
             if let Err(_) = Command::new(start_fehbg).spawn() {
                 println!("[spawn] Start fehbg failed");
                 info!("[spawn] Start fehbg failed");
+                panic!("[spawn] Start fehbg failed");
             }
         }
         None => eprintln!("Could not find the home directory."),
