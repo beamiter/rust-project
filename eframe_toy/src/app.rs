@@ -5,10 +5,16 @@ pub struct TemplateApp {
     host: String,
     username: String,
     password: String,
-    command: String,
+    show_password: bool,
+    ddp_time: String,
+    product: String,
+    #[serde(skip)] // This how you opt-out of serialization of a field
+    bag: String,
     #[serde(skip)] // This how you opt-out of serialization of a field
     output: String,
 }
+
+const COMMAND_PREFIX: &str = "docker exec fpp-container-mnt-data-maf_planning ./sim fpp play -v ";
 
 impl Default for TemplateApp {
     fn default() -> Self {
@@ -16,7 +22,10 @@ impl Default for TemplateApp {
             host: "10.21.31.17:22".into(),
             username: "root".into(),
             password: "1".into(),
-            command: "docker exec fpp-container-mnt-data-maf_planning ./sim fpp play -v --ddp-time 2 --product MNP backup/bags/1210/PLEAW5372_event_light_recording_20241206-144429_0.bag".into(),
+            show_password: false,
+            bag: "backup/bags/1210/PLEAW5372_event_light_recording_20241206-144429_0.bag".into(),
+            ddp_time: "2.0".into(),
+            product: "MNP".into(),
             output: String::new(),
         }
     }
@@ -54,7 +63,15 @@ impl TemplateApp {
         }
 
         let mut channel = sess.channel_session()?;
-        channel.exec(&self.command)?;
+        let output_command = COMMAND_PREFIX.to_owned()
+            + "--ddp-time "
+            + &self.ddp_time
+            + " --product "
+            + &self.product
+            + " "
+            + &self.bag;
+        println!("command: {}", output_command);
+        channel.exec(&output_command)?;
 
         let mut output = String::new();
         channel.read_to_string(&mut output)?;
@@ -106,6 +123,7 @@ impl eframe::App for TemplateApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
             ui.heading("SSH Command Executor");
+            ui.separator();
 
             ui.horizontal(|ui| {
                 ui.label("Host: ");
@@ -113,15 +131,30 @@ impl eframe::App for TemplateApp {
             });
             ui.horizontal(|ui| {
                 ui.label("Username: ");
-                ui.text_edit_singleline(&mut self.username);
-            });
-            ui.horizontal(|ui| {
+                ui.add(egui::TextEdit::singleline(&mut self.username).desired_width(100.));
                 ui.label("Password: ");
-                ui.text_edit_singleline(&mut self.password);
+                if self.show_password {
+                    ui.text_edit_singleline(&mut self.password);
+                } else {
+                    ui.add(egui::TextEdit::singleline(&mut self.password).password(true));
+                }
+                if ui
+                    .button(if self.show_password { "Hide" } else { "Show" })
+                    .clicked()
+                {
+                    self.show_password = !self.show_password;
+                }
             });
             ui.horizontal(|ui| {
-                ui.label("Command: ");
-                ui.text_edit_singleline(&mut self.command);
+                ui.label("ddp_time: ");
+                ui.add(egui::TextEdit::singleline(&mut self.ddp_time).desired_width(100.));
+                ui.label("product: ");
+                ui.text_edit_singleline(&mut self.product);
+            });
+            ui.horizontal(|ui| {
+                ui.label("bag: ");
+                let remaining_width = ui.available_width() - ui.spacing().item_spacing.x;
+                ui.add(egui::TextEdit::singleline(&mut self.bag).desired_width(remaining_width));
             });
 
             if ui.button("Execute").clicked() {
@@ -134,13 +167,15 @@ impl eframe::App for TemplateApp {
             ui.separator();
             ui.heading("Output:");
 
-            for line in self.output.lines() {
-                if let Some(link) = parse_hyperlink(line) {
-                    ui.hyperlink_to(line, link);
-                } else {
-                    ui.label(line);
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                for line in self.output.lines() {
+                    if let Some(link) = parse_hyperlink(line) {
+                        ui.hyperlink_to(line, link);
+                    } else {
+                        ui.label(line);
+                    }
                 }
-            }
+            });
 
             ui.separator();
 
