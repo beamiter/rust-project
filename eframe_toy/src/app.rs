@@ -127,16 +127,20 @@ impl eframe::App for TemplateApp {
 
             ui.horizontal(|ui| {
                 ui.label("Host: ");
-                ui.text_edit_singleline(&mut self.host);
+                ui.add(egui::TextEdit::singleline(&mut self.host).desired_width(150.));
             });
             ui.horizontal(|ui| {
                 ui.label("Username: ");
                 ui.add(egui::TextEdit::singleline(&mut self.username).desired_width(100.));
                 ui.label("Password: ");
                 if self.show_password {
-                    ui.text_edit_singleline(&mut self.password);
+                    ui.add(egui::TextEdit::singleline(&mut self.password).desired_width(100.));
                 } else {
-                    ui.add(egui::TextEdit::singleline(&mut self.password).password(true));
+                    ui.add(
+                        egui::TextEdit::singleline(&mut self.password)
+                            .password(true)
+                            .desired_width(100.),
+                    );
                 }
                 if ui
                     .button(if self.show_password { "Hide" } else { "Show" })
@@ -149,7 +153,7 @@ impl eframe::App for TemplateApp {
                 ui.label("ddp_time: ");
                 ui.add(egui::TextEdit::singleline(&mut self.ddp_time).desired_width(100.));
                 ui.label("product: ");
-                ui.text_edit_singleline(&mut self.product);
+                ui.add(egui::TextEdit::singleline(&mut self.product).desired_width(100.));
             });
             ui.horizontal(|ui| {
                 ui.label("bag: ");
