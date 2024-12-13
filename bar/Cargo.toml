@@ -6,8 +6,10 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-pango = "0.20.4"
-pangocairo = "0.20.4"
-x11 = "2.21.0"
-cairo-rs ={ version = "0.20.5", features = ["png", "xlib"] }
-cairo-sys-rs = { version = "0.20.0", features = ["png", "xlib", "x11"] }
+chrono = "0.4.39"
+indicatif = "0.17.9"
+regex = "1.11.1"
+reqwest = { version = "0.12.9", features = ["json"]}
+serde = "1.0.216"
+serde_json = "1.0.133"
+tokio = { version = "1.42.0", features = ["full"] }
