@@ -87,7 +87,7 @@ pub const alphas: [&[u8; 3]; 10] = [
 pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
     vec![
         // class | instance | title | tags mask | isfloating | monitor
-        Rule::new("", "", "Ozone X11", 0, true, -1),
+        // Rule::new("", "", "Ozone X11", 0, true, -1),
         // Rule::new("Firefox", "", "", 1 << 8, false, -1),
     ]
 });
