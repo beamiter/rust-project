@@ -2,12 +2,20 @@ use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use reqwest::{self};
 use serde_json::Value;
-use std::collections::HashMap;
 use std::error::Error;
 use std::fs::File;
 use std::io::{self, Write};
 use std::os::unix::fs::PermissionsExt;
 use tokio;
+
+struct VersionInfo {
+    version: String,
+    url: String,
+}
+
+fn find_version<'a>(versions: &'a Vec<VersionInfo>, query: &str) -> Option<&'a VersionInfo> {
+    versions.iter().find(|&vi| vi.version == query)
+}
 
 fn extract_version(url: &str) -> Option<String> {
     // 定义一个正则表达式来查找版本号
@@ -104,7 +112,7 @@ async fn post_process_vim(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-async fn down_vim(vim_version_map: &mut HashMap<String, String>) -> Result<(), Box<dyn Error>> {
+async fn down_vim(vim_version_vec: &mut Vec<VersionInfo>) -> Result<(), Box<dyn Error>> {
     println!("down vim");
     // GitHub API URL for the releases of the vim-appimage repository
     let url = "https://api.github.com/repos/vim/vim-appimage/releases";
@@ -132,7 +140,10 @@ async fn down_vim(vim_version_map: &mut HashMap<String, String>) -> Result<(), B
                         match extract_version(url) {
                             Some(version) => {
                                 // println!("Found version: {} in URL: {}", version, url);
-                                vim_version_map.insert(version, url.to_string());
+                                vim_version_vec.push(VersionInfo {
+                                    version,
+                                    url: url.to_string(),
+                                });
                             }
                             None => println!("No version found in URL: {}", url),
                         }
@@ -148,7 +159,7 @@ async fn down_vim(vim_version_map: &mut HashMap<String, String>) -> Result<(), B
     Ok(())
 }
 
-async fn down_nvim(nvim_version_map: &mut HashMap<String, String>) -> Result<(), Box<dyn Error>> {
+async fn down_nvim(nvim_version_vec: &mut Vec<VersionInfo>) -> Result<(), Box<dyn Error>> {
     println!("down neovim");
     // GitHub API URL for the releases of the vim-appimage repository
     // let url = "https://github.com/neovim/neovim/releases";
@@ -176,7 +187,10 @@ async fn down_nvim(nvim_version_map: &mut HashMap<String, String>) -> Result<(),
                         match extract_version(url) {
                             Some(version) => {
                                 // println!("Found version: {} in URL: {}", version, url);
-                                nvim_version_map.insert(version, url.to_string());
+                                nvim_version_vec.push(VersionInfo {
+                                    version,
+                                    url: url.to_string(),
+                                });
                             }
                             None => println!("No version found in URL: {}", url),
                         }
@@ -192,14 +206,7 @@ async fn down_nvim(nvim_version_map: &mut HashMap<String, String>) -> Result<(),
     Ok(())
 }
 
-async fn install_menu(choice: i32, version_map: &HashMap<String, String>) {
-    let version = prompt("enter version: ");
-    let url = version_map.get(&version);
-    if url.is_none() {
-        print!("no match version!!!");
-        return;
-    }
-    let url = url.unwrap();
+async fn install_menu(choice: i32, url: &String) {
     match choice {
         0 => {
             let _ = post_process_vim(&url).await;
@@ -213,13 +220,13 @@ async fn install_menu(choice: i32, version_map: &HashMap<String, String>) {
 
 // 0 for vim, 1 for neovim
 async fn sub_menu(choice: i32) {
-    let mut version_map: HashMap<String, String> = HashMap::new();
+    let mut version_vec: Vec<VersionInfo> = Vec::new();
     match choice {
         0 => {
-            let _ = down_vim(&mut version_map).await;
+            let _ = down_vim(&mut version_vec).await;
         }
         1 => {
-            let _ = down_nvim(&mut version_map).await;
+            let _ = down_nvim(&mut version_vec).await;
         }
         _ => {
             print!("Invalid");
@@ -228,22 +235,25 @@ async fn sub_menu(choice: i32) {
     }
 
     loop {
-        match prompt("0: list; 1: install; 2: quit\nplease enter: ").as_str() {
-            "0" => {
-                let keys: Vec<&str> = version_map.keys().map(|s| s.as_str()).collect();
-                let joined_keys = keys.join(" | ");
-                println!("{}", joined_keys);
-            }
-            "1" => {
-                install_menu(choice, &version_map).await;
-                break;
-            }
-            "2" => {
-                break;
-            }
-            _ => {
-                println!("error!!! please re-input")
-            }
+        println!("list and install, 0 for quit");
+        let joined_versions = version_vec
+            .iter()
+            .map(|vi| vi.version.clone()) // or map(|vi| &vi.version) if you don't need to own the strings
+            .collect::<Vec<String>>() // Collect into a vector of Strings
+            .join(" | "); // Join all strings in the vector with " | "
+        println!("{}", joined_versions);
+        let version = prompt("enter version: ");
+        if version == "0" {
+            break;
+        }
+        let version_info = find_version(&version_vec, &version);
+        if let Some(ref version_info) = version_info {
+            install_menu(choice, &version_info.url).await;
+            println!("Install finished");
+            break;
+        } else {
+            print!("no match version!!!");
+            continue;
         }
     }
 }
