@@ -541,6 +541,13 @@ impl Rule {
     }
 }
 
+fn are_equal_rc<T>(a: &Option<Rc<RefCell<T>>>, b: &Option<Rc<RefCell<T>>>) -> bool {
+    match (a, b) {
+        (Some(rc_a), Some(rc_b)) => Rc::ptr_eq(rc_a, rc_b),
+        _ => false,
+    }
+}
+
 // function declarations and implementations.
 pub fn applyrules(c: &Rc<RefCell<Client>>) {
     // info!("[applyrules]");
@@ -824,10 +831,7 @@ pub fn cleanupmon(mon: Option<Rc<RefCell<Monitor>>>) {
         } else {
             let mut m = mons.clone();
             while let Some(ref m_opt) = m {
-                if Rc::ptr_eq(
-                    m_opt.borrow_mut().next.as_ref().unwrap(),
-                    mon.as_ref().unwrap(),
-                ) {
+                if are_equal_rc(&m_opt.borrow_mut().next, &mon) {
                     break;
                 }
                 let next = m_opt.borrow_mut().next.clone();
@@ -863,7 +867,7 @@ pub fn clientmessage(e: *mut XEvent) {
         } else if cme.message_type == netatom[NET::NetActiveWindow as usize] {
             let isurgent = { c.as_ref().unwrap().borrow_mut().isurgent };
             let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
-            if !Rc::ptr_eq(c.as_ref().unwrap(), sel.as_ref().unwrap()) && !isurgent {
+            if !are_equal_rc(&c, &sel) && !isurgent {
                 seturgent(c.as_ref().unwrap(), true);
             }
         }
@@ -1286,7 +1290,7 @@ pub fn detach(c: Option<Rc<RefCell<Client>>>) {
     };
     let mut prev: Option<Rc<RefCell<Client>>> = None;
     while let Some(ref current_opt) = current {
-        if Rc::ptr_eq(current.as_ref().unwrap(), c.as_ref().unwrap()) {
+        if are_equal_rc(&current, &c) {
             let next = { current_opt.borrow_mut().next.clone() };
             if let Some(ref prev_opt) = prev {
                 prev_opt.borrow_mut().next = next;
@@ -1322,7 +1326,7 @@ pub fn detachstack(c: Option<Rc<RefCell<Client>>>) {
     };
     let mut prev: Option<Rc<RefCell<Client>>> = None;
     while let Some(ref current_opt) = current {
-        if Rc::ptr_eq(current.as_ref().unwrap(), c.as_ref().unwrap()) {
+        if are_equal_rc(&current, &c) {
             let snext = { current_opt.borrow_mut().snext.clone() };
             if let Some(ref prev_opt) = prev {
                 prev_opt.borrow_mut().snext = snext;
@@ -1345,10 +1349,8 @@ pub fn detachstack(c: Option<Rc<RefCell<Client>>>) {
 
     let mut condition = false;
     if let Some(ref mon_opt) = c.as_ref().unwrap().borrow_mut().mon {
-        if let Some(ref sel_opt) = mon_opt.borrow_mut().sel {
-            if Rc::ptr_eq(c.as_ref().unwrap(), sel_opt) {
-                condition = true;
-            }
+        if are_equal_rc(&c, &mon_opt.borrow_mut().sel) {
+            condition = true;
         }
     }
     if condition {
@@ -2570,7 +2572,7 @@ pub fn focusstack(arg: *const Arg) {
                 cl = selmon_mut.clients.clone();
                 sel = selmon_mut.sel.clone();
             }
-            while !Rc::ptr_eq(cl.as_ref().unwrap(), sel.as_ref().unwrap()) {
+            while !are_equal_rc(&cl, &sel) {
                 if cl.as_ref().unwrap().borrow_mut().isvisible() {
                     c = cl.clone();
                 }
@@ -2682,7 +2684,7 @@ pub fn movestack(arg: *const Arg) {
                 // Find the client before selmon->sel
                 i = selmon.as_ref().unwrap().borrow_mut().clients.clone();
                 let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
-                while !Rc::ptr_eq(i.as_ref().unwrap(), sel.as_ref().unwrap()) {
+                while !are_equal_rc(&i, &sel) {
                     let isvisible = i.as_ref().unwrap().borrow_mut().isvisible();
                     let isfloating = i.as_ref().unwrap().borrow_mut().isfloating;
                     if isvisible && !isfloating {
@@ -2708,25 +2710,16 @@ pub fn movestack(arg: *const Arg) {
             let sel = selmon.as_ref().unwrap().borrow_mut().sel.clone();
             while i.is_some() && (p.is_none() || pc.is_none()) {
                 let next = i.as_ref().unwrap().borrow_mut().next.clone();
-                if next.is_some()
-                    && sel.is_some()
-                    && Rc::ptr_eq(next.as_ref().unwrap(), sel.as_ref().unwrap())
-                {
+                if next.is_some() && sel.is_some() && are_equal_rc(&next, &sel) {
                     p = i.clone();
                 }
-                if next.is_some()
-                    && c.is_some()
-                    && Rc::ptr_eq(next.as_ref().unwrap(), c.as_ref().unwrap())
-                {
+                if next.is_some() && c.is_some() && are_equal_rc(&next, &c) {
                     pc = i.clone();
                 }
                 i = next;
             }
             // Swap c and selmon->sel selmon->clietns in the selmon->clients list
-            if c.is_some()
-                && sel.is_some()
-                && !Rc::ptr_eq(c.as_ref().unwrap(), sel.as_ref().unwrap())
-            {
+            if c.is_some() && sel.is_some() && !are_equal_rc(&c, &sel) {
                 let sel_next = selmon
                     .as_ref()
                     .unwrap()
@@ -2737,10 +2730,7 @@ pub fn movestack(arg: *const Arg) {
                     .borrow_mut()
                     .next
                     .clone();
-                let temp = if sel_next.is_some()
-                    && c.is_some()
-                    && Rc::ptr_eq(sel_next.as_ref().unwrap(), c.as_ref().unwrap())
-                {
+                let temp = if sel_next.is_some() && c.is_some() && are_equal_rc(&sel_next, &c) {
                     selmon.as_ref().unwrap().borrow_mut().sel.clone()
                 } else {
                     sel_next
@@ -2755,31 +2745,28 @@ pub fn movestack(arg: *const Arg) {
                     .as_ref()
                     .unwrap()
                     .borrow_mut()
-                    .next = if c_next.is_some()
-                    && sel.is_some()
-                    && Rc::ptr_eq(c_next.as_ref().unwrap(), sel.as_ref().unwrap())
-                {
+                    .next = if c_next.is_some() && sel.is_some() && are_equal_rc(&c_next, &sel) {
                     c.clone()
                 } else {
                     c_next
                 };
                 c.as_ref().unwrap().borrow_mut().next = temp;
 
-                if p.is_some() && !Rc::ptr_eq(p.as_ref().unwrap(), c.as_ref().unwrap()) {
+                if p.is_some() && !are_equal_rc(&p, &c) {
                     p.as_ref().unwrap().borrow_mut().next = c.clone();
                 }
                 if pc.is_some() {
                     let sel = selmon.as_ref().unwrap().borrow_mut().sel.clone();
-                    if !Rc::ptr_eq(pc.as_ref().unwrap(), sel.as_ref().unwrap()) {
+                    if !are_equal_rc(&pc, &sel) {
                         pc.as_ref().unwrap().borrow_mut().next = sel;
                     }
                 }
 
                 let sel = selmon.as_ref().unwrap().borrow_mut().sel.clone();
                 let clients = selmon.as_ref().unwrap().borrow_mut().clients.clone();
-                if Rc::ptr_eq(sel.as_ref().unwrap(), clients.as_ref().unwrap()) {
+                if are_equal_rc(&sel, &clients) {
                     selmon.as_ref().unwrap().borrow_mut().clients = c;
-                } else if Rc::ptr_eq(c.as_ref().unwrap(), clients.as_ref().unwrap()) {
+                } else if are_equal_rc(&c, &clients) {
                     selmon.as_ref().unwrap().borrow_mut().clients = sel;
                 }
 
@@ -2877,7 +2864,7 @@ pub fn zoom(_arg: *const Arg) {
         {
             nexttiled_c = nexttiled(sel_c);
         }
-        if Rc::ptr_eq(c.as_ref().unwrap(), nexttiled_c.as_ref().unwrap()) {
+        if are_equal_rc(&c, &nexttiled_c) {
             let next = nexttiled(c.as_ref().unwrap().borrow_mut().next.clone());
             c = next;
             if c.is_none() {
@@ -3314,10 +3301,7 @@ pub fn propertynotify(e: *mut XEvent) {
                         .sel
                         .clone()
                 };
-                if c.is_some()
-                    && sel.is_some()
-                    && Rc::ptr_eq(c.as_ref().unwrap(), sel.as_ref().unwrap())
-                {
+                if c.is_some() && sel.is_some() && are_equal_rc(&c, &sel) {
                     let mon = { c.as_ref().unwrap().borrow_mut().mon.clone() };
                     drawbar(mon);
                 }
@@ -3800,12 +3784,7 @@ pub fn enternotify(e: *mut XEvent) {
         if !mon_eq {
             unfocus(selmon.as_ref().unwrap().borrow_mut().sel.clone(), true);
             selmon = m;
-        } else if c.is_none()
-            || Rc::ptr_eq(
-                c.as_ref().unwrap(),
-                selmon.as_ref().unwrap().borrow_mut().sel.as_ref().unwrap(),
-            )
-        {
+        } else if c.is_none() || are_equal_rc(&c, &selmon.as_ref().unwrap().borrow_mut().sel) {
             return;
         }
         focus(c);
@@ -3840,9 +3819,7 @@ pub fn focus(mut c: Option<Rc<RefCell<Client>>>) {
                 }
             }
             let sel = { selmon.as_ref().unwrap().borrow_mut().sel.clone() };
-            if sel.is_some()
-                && (c.is_none() || !Rc::ptr_eq(sel.as_ref().unwrap(), c.as_ref().unwrap()))
-            {
+            if sel.is_some() && !are_equal_rc(&sel, &c) {
                 unfocus(sel.clone(), false);
             }
         }
@@ -3904,10 +3881,7 @@ pub fn unfocus(c: Option<Rc<RefCell<Client>>>, setfocus: bool) {
 }
 pub fn sendmon(c: Option<Rc<RefCell<Client>>>, m: Option<Rc<RefCell<Monitor>>>) {
     // info!("[sendmon]");
-    if Rc::ptr_eq(
-        c.as_ref().unwrap().borrow_mut().mon.as_ref().unwrap(),
-        m.as_ref().unwrap(),
-    ) {
+    if are_equal_rc(&c.as_ref().unwrap().borrow_mut().mon, &m) {
         return;
     }
     unfocus(c.clone(), true);
@@ -4232,7 +4206,7 @@ pub fn unmanage(c: Option<Rc<RefCell<Client>>>, destroyed: bool) {
                 .unwrap()
                 .sel[i]
                 .clone();
-            if cel_i.is_some() && Rc::ptr_eq(cel_i.as_ref().unwrap(), c.as_ref().unwrap()) {
+            if are_equal_rc(&cel_i, &c) {
                 c.as_ref()
                     .unwrap()
                     .borrow_mut()
