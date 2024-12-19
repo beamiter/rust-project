@@ -520,8 +520,6 @@ pub struct Dwm {
     pub visual: *mut Visual,
     pub depth: i32,
     pub cmap: Colormap,
-
-    pub handler: [Option<fn(*mut XEvent)>; LASTEvent as usize],
 }
 
 #[derive(Debug)]
@@ -530,22 +528,28 @@ enum TextElement {
     WithoutCaret(String),
 }
 impl Dwm {
+    fn handler(&mut self, key: i32, e: *mut XEvent) {
+        match key {
+            ButtonPress => self.buttonpress(e),
+            ClientMessage => self.clientmessage(e),
+            ConfigureRequest => self.configurerequest(e),
+            ConfigureNotify => self.configurenotify(e),
+            DestroyNotify => self.destroynotify(e),
+            EnterNotify => self.enternotify(e),
+            Expose => self.expose(e),
+            FocusIn => self.focusin(e),
+            KeyPress => self.keypress(e),
+            MappingNotify => self.mappingnotify(e),
+            MapRequest => self.maprequest(e),
+            MotionNotify => self.motionnotify(e),
+            PropertyNotify => self.propertynotify(e),
+            UnmapNotify => self.unmapnotify(e),
+            _ => {
+                info!("Unsupported event type: {}", key)
+            }
+        }
+    }
     pub fn new(&mut self) -> Self {
-        let mut res: [Option<fn(*mut XEvent)>; LASTEvent as usize] = [None; LASTEvent as usize];
-        res[ButtonPress as usize] = Some(self.buttonpress);
-        res[ClientMessage as usize] = Some(self.clientmessage);
-        res[ConfigureRequest as usize] = Some(self.configurerequest);
-        res[ConfigureNotify as usize] = Some(self.configurenotify);
-        res[DestroyNotify as usize] = Some(self.destroynotify);
-        res[EnterNotify as usize] = Some(self.enternotify);
-        res[Expose as usize] = Some(self.expose);
-        res[FocusIn as usize] = Some(self.focusin);
-        res[KeyPress as usize] = Some(self.keypress);
-        res[MappingNotify as usize] = Some(self.mappingnotify);
-        res[MapRequest as usize] = Some(self.maprequest);
-        res[MotionNotify as usize] = Some(self.motionnotify);
-        res[PropertyNotify as usize] = Some(self.propertynotify);
-        res[UnmapNotify as usize] = Some(self.unmapnotify);
         Dwm {
             broken: "broken".to_string(),
             stext_max_len: 512,
@@ -574,7 +578,6 @@ impl Dwm {
             visual: null_mut(),
             depth: 0,
             cmap: 0,
-            handler: res,
         }
     }
 
@@ -1822,7 +1825,7 @@ impl Dwm {
         }
     }
 
-    pub fn run(&self) {
+    pub fn run(&mut self) {
         // info!("[run]");
         // main event loop
         unsafe {
@@ -1830,16 +1833,9 @@ impl Dwm {
             XSync(self.dpy, False);
             let mut i: u64 = 0;
             while self.running.load(Ordering::SeqCst) && XNextEvent(self.dpy, &mut ev) <= 0 {
-                if ev.type_ as usize >= self.handler.len() {
-                    continue;
-                }
                 // info!("running frame: {}, handler type: {}", i, ev.type_);
                 i = (i + 1) % std::u64::MAX;
-                if let Some(hd) = self.handler[ev.type_ as usize] {
-                    // call handler
-                    // warn!("*********** handler type: {} valid", ev.type_);
-                    hd(&mut ev);
-                }
+                self.handler(ev.type_, &mut ev);
             }
         }
     }
