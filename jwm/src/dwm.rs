@@ -592,7 +592,7 @@ impl Dwm {
             PropertyNotify => self.propertynotify(e),
             UnmapNotify => self.unmapnotify(e),
             _ => {
-                info!("Unsupported event type: {}", key)
+                // info!("Unsupported event type: {}", key)
             }
         }
     }
@@ -2231,10 +2231,13 @@ impl Dwm {
             let mut mut_arg: Arg = (*arg).clone();
             if let Arg::V(ref mut v) = mut_arg {
                 if *v == *dmenucmd {
-                    let tmp = char::from_u32(self.selmon.as_ref().unwrap().borrow_mut().num as u32)
-                        .unwrap_or('0')
-                        .to_string();
-                    info!("[spawn] dmenumon {}", tmp);
+                    let tmp = (b'0' + self.selmon.as_ref().unwrap().borrow_mut().num as u8) as char;
+                    let tmp = tmp.to_string();
+                    info!(
+                        "[spawn] dmenumon tmp: {}, num: {}",
+                        tmp,
+                        self.selmon.as_ref().unwrap().borrow_mut().num
+                    );
                     (*v)[2] = tmp;
                 }
                 if fork() == 0 {
