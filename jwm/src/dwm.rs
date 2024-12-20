@@ -15,6 +15,7 @@ use std::process::Command;
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
 use std::{os::raw::c_long, usize};
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
 use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
@@ -25,14 +26,13 @@ use x11::xlib::{
     BadWindow, Below, ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBackPixel,
     CWBorderPixel, CWBorderWidth, CWColormap, CWCursor, CWEventMask, CWHeight, CWOverrideRedirect,
     CWSibling, CWStackMode, CWWidth, ClientMessage, Colormap, ConfigureNotify, ConfigureRequest,
-    ControlMask, CurrentTime, DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask,
-    Expose, ExposureMask, False, FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync,
-    GrabSuccess, InputHint, InputOutput, IsViewable, KeyPress, KeySym, LASTEvent, LeaveWindowMask,
-    LockMask, MapRequest, MappingKeyboard, MappingNotify, Mod1Mask, Mod2Mask, Mod3Mask, Mod4Mask,
-    Mod5Mask, MotionNotify, NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize,
-    PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask, PointerRoot, PropModeAppend,
-    PropModeReplace, PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer,
-    RevertToPointerRoot, ShiftMask, StructureNotifyMask, SubstructureNotifyMask,
+    CurrentTime, DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose,
+    ExposureMask, False, FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess,
+    InputHint, InputOutput, IsViewable, KeyPress, KeySym, LeaveWindowMask, LockMask, MapRequest,
+    MappingKeyboard, MappingNotify, MotionNotify, NoEventMask, NotifyInferior, NotifyNormal,
+    PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask, PointerRoot,
+    PropModeAppend, PropModeReplace, PropertyChangeMask, PropertyDelete, PropertyNotify,
+    ReplayPointer, RevertToPointerRoot, StructureNotifyMask, SubstructureNotifyMask,
     SubstructureRedirectMask, Success, Time, True, TrueColor, UnmapNotify, Visual, VisualClassMask,
     VisualDepthMask, VisualScreenMask, Window, XAllowEvents, XChangeProperty,
     XChangeWindowAttributes, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
@@ -55,9 +55,9 @@ use x11::xlib::{
 use std::cmp::{max, min};
 
 use crate::config::{
-    alphas, baralpha, borderpx, buttons, colors, dmenucmd, dmenumon, font, horizpadbar, keys,
-    layouts, lockfullscreen, mfact, nmaster, resizehints, rules, showbar, sidepad, snap, tagmask,
-    tags, tags_length, topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad, vertpadbar,
+    alphas, baralpha, borderpx, buttons, colors, dmenucmd, font, horizpadbar, keys, layouts,
+    lockfullscreen, mfact, nmaster, resizehints, rules, showbar, sidepad, snap, tagmask, tags,
+    tags_length, topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad, vertpadbar,
     OPAQUE,
 };
 use crate::drw::{Clr, Col, Cur, Drw};
@@ -69,12 +69,6 @@ use crate::xproto::{
 };
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
-#[inline]
-fn CLEANMASK(mask: u32) -> u32 {
-    return mask;
-    // & unsafe { !(numlockmask | LockMask) }
-    // & (ShiftMask | ControlMask | Mod1Mask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask);
-}
 pub const MOUSEMASK: c_long = BUTTONMASK | PointerMotionMask;
 
 #[repr(C)]
@@ -142,7 +136,7 @@ pub enum Arg {
     I(i32),
     Ui(u32),
     F(f32),
-    V(Vec<&'static str>),
+    V(Vec<String>),
     Lt(Rc<Layout>),
 }
 
@@ -151,12 +145,18 @@ pub struct Button {
     pub click: u32,
     pub mask: u32,
     pub button: u32,
-    pub func: Option<fn(*const Arg)>,
+    pub func: Option<fn(&mut Dwm, *const Arg)>,
     pub arg: Arg,
 }
 impl Button {
     #[allow(unused)]
-    pub fn new(click: u32, mask: u32, button: u32, func: Option<fn(*const Arg)>, arg: Arg) -> Self {
+    pub fn new(
+        click: u32,
+        mask: u32,
+        button: u32,
+        func: Option<fn(&mut Dwm, *const Arg)>,
+        arg: Arg,
+    ) -> Self {
         Self {
             click,
             mask,
@@ -171,12 +171,17 @@ impl Button {
 pub struct Key {
     pub mod0: u32,
     pub keysym: KeySym,
-    pub func: Option<fn(*const Arg)>,
+    pub func: Option<fn(&mut Dwm, *const Arg)>,
     pub arg: Arg,
 }
 impl Key {
     #[allow(unused)]
-    pub fn new(mod0: u32, keysym: KeySym, func: Option<fn(*const Arg)>, arg: Arg) -> Self {
+    pub fn new(
+        mod0: u32,
+        keysym: KeySym,
+        func: Option<fn(&mut Dwm, *const Arg)>,
+        arg: Arg,
+    ) -> Self {
         Self {
             mod0,
             keysym,
@@ -223,11 +228,11 @@ impl Pertag {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
     pub symbol: &'static str,
-    pub arrange: Option<fn(*mut Monitor)>,
+    pub arrange: Option<fn(&mut Dwm, *mut Monitor)>,
 }
 impl Layout {
     #[allow(unused)]
-    pub fn new(symbol: &'static str, arrange: Option<fn(*mut Monitor)>) -> Self {
+    pub fn new(symbol: &'static str, arrange: Option<fn(&mut Dwm, *mut Monitor)>) -> Self {
         Self { symbol, arrange }
     }
 }
@@ -363,7 +368,7 @@ impl Client {
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct Monitor {
-    pub ltsymbol: &'static str,
+    pub ltsymbol: String,
     pub mfact0: f32,
     pub nmaster0: u32,
     pub num: i32,
@@ -393,7 +398,7 @@ impl Monitor {
     #[allow(unused)]
     pub fn new() -> Self {
         Self {
-            ltsymbol: "",
+            ltsymbol: String::new(),
             mfact0: 0.0,
             nmaster0: 0,
             num: 0,
@@ -491,42 +496,6 @@ impl Rule {
     }
 }
 
-#[derive(Debug)]
-pub struct Dwm {
-    pub broken: String,
-    pub stext_max_len: usize,
-    pub stext: String,
-    pub screen: i32,
-    pub sw: i32,
-    pub sh: i32,
-    pub bh: i32,
-    pub vp: i32, // vertical padding for bar
-    pub sp: i32, // side padding for bar
-    pub numlockmask: u32,
-    pub wmatom: [Atom; WM::WMLast as usize],
-    pub netatom: [Atom; NET::NetLast as usize],
-    pub running: AtomicBool,
-    pub refresh_bar_icon: AtomicBool,
-    pub cursor: [Option<Box<Cur>>; CUR::CurLast as usize],
-    pub scheme: Vec<Vec<Option<Rc<Clr>>>>,
-    pub dpy: *mut Display,
-    pub drw: Option<Box<Drw>>,
-    pub mons: Option<Rc<RefCell<Monitor>>>,
-    pub selmon: Option<Rc<RefCell<Monitor>>>,
-    pub root: Window,
-    pub wmcheckwin: Window,
-    pub useargb: bool,
-    pub visual: *mut Visual,
-    pub depth: i32,
-    pub cmap: Colormap,
-}
-
-#[derive(Debug)]
-enum TextElement {
-    WithCaret(String),
-    WithoutCaret(String),
-}
-
 static mut xerrorxlib: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int> = None;
 pub fn xerrorstart(_: *mut Display, _: *mut XErrorEvent) -> i32 {
     // info!("[xerrorstart]");
@@ -567,6 +536,44 @@ pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
     // info!("[xerrordummy]");
     0
 }
+
+#[derive(Debug)]
+pub struct Dwm {
+    pub broken: String,
+    pub stext_max_len: usize,
+    pub stext: String,
+    pub screen: i32,
+    pub sw: i32,
+    pub sh: i32,
+    pub bh: i32,
+    pub vp: i32, // vertical padding for bar
+    pub sp: i32, // side padding for bar
+    pub numlockmask: u32,
+    pub wmatom: [Atom; WM::WMLast as usize],
+    pub netatom: [Atom; NET::NetLast as usize],
+    pub running: AtomicBool,
+    pub cursor: [Option<Box<Cur>>; CUR::CurLast as usize],
+    pub scheme: Vec<Vec<Option<Rc<Clr>>>>,
+    pub dpy: *mut Display,
+    pub drw: Option<Box<Drw>>,
+    pub mons: Option<Rc<RefCell<Monitor>>>,
+    pub motionmon: Option<Rc<RefCell<Monitor>>>,
+    pub selmon: Option<Rc<RefCell<Monitor>>>,
+    pub root: Window,
+    pub wmcheckwin: Window,
+    pub useargb: bool,
+    pub visual: *mut Visual,
+    pub depth: i32,
+    pub cmap: Colormap,
+    pub sender: Sender<u8>,
+}
+
+#[derive(Debug)]
+enum TextElement {
+    WithCaret(String),
+    WithoutCaret(String),
+}
+
 impl Dwm {
     fn handler(&mut self, key: i32, e: *mut XEvent) {
         match key {
@@ -589,7 +596,7 @@ impl Dwm {
             }
         }
     }
-    pub fn new(&mut self) -> Self {
+    pub fn new(sender: Sender<u8>) -> Self {
         Dwm {
             broken: "broken".to_string(),
             stext_max_len: 512,
@@ -604,12 +611,12 @@ impl Dwm {
             wmatom: [0; WM::WMLast as usize],
             netatom: [0; NET::NetLast as usize],
             running: AtomicBool::new(true),
-            refresh_bar_icon: AtomicBool::new(false),
             cursor: [const { None }; CUR::CurLast as usize],
             scheme: vec![],
             dpy: null_mut(),
             drw: None,
             mons: None,
+            motionmon: None,
             selmon: None,
             root: 0,
             wmcheckwin: 0,
@@ -617,6 +624,7 @@ impl Dwm {
             visual: null_mut(),
             depth: 0,
             cmap: 0,
+            sender,
         }
     }
 
@@ -627,6 +635,16 @@ impl Dwm {
         }
     }
 
+    fn CLEANMASK(&self, mask: u32) -> u32 {
+        mask & !(self.numlockmask | LockMask)
+            & (x11::xlib::ShiftMask
+                | x11::xlib::ControlMask
+                | x11::xlib::Mod1Mask
+                | x11::xlib::Mod2Mask
+                | x11::xlib::Mod3Mask
+                | x11::xlib::Mod4Mask
+                | x11::xlib::Mod5Mask)
+    }
     // function declarations and implementations.
     pub fn applyrules(&mut self, c: &Rc<RefCell<Client>>) {
         // info!("[applyrules]");
@@ -1317,7 +1335,7 @@ impl Dwm {
         m.topbar0 = topbar;
         m.lt[0] = layouts[0].clone();
         m.lt[1] = layouts[1 % layouts.len()].clone();
-        m.ltsymbol = layouts[0].symbol;
+        m.ltsymbol = layouts[0].symbol.to_string();
         info!(
             "[createmon]: ltsymbol: {:?}, mfact0: {}, nmaster0: {}, showbar0: {}, topbar0: {}",
             m.ltsymbol, m.mfact0, m.nmaster0, m.showbar0, m.topbar0
@@ -1355,7 +1373,7 @@ impl Dwm {
         {
             let mut mm = m.borrow_mut();
             sellt = (mm).sellt;
-            mm.ltsymbol = (mm).lt[sellt].symbol;
+            mm.ltsymbol = (mm).lt[sellt].symbol.to_string();
             info!("[arrangemon] sellt: {}, ltsymbol: {:?}", sellt, mm.ltsymbol);
         }
         let arrange;
@@ -1367,7 +1385,7 @@ impl Dwm {
             {
                 m_ptr = &mut *m.borrow_mut();
             }
-            (arrange0)(m_ptr);
+            (arrange0)(self, m_ptr);
         }
     }
     // This is cool!
@@ -1693,7 +1711,7 @@ impl Dwm {
             }
             let mut x = 0;
             let mut w;
-            for i in 0..tags.len() {
+            for i in 0..tags_length {
                 w = self.drw.as_mut().unwrap().textw(tags[i]) as i32;
                 let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
                 let tagset = { m.as_ref().unwrap().borrow_mut().tagset };
@@ -1754,7 +1772,7 @@ impl Dwm {
                 .as_mut()
                 .unwrap()
                 .as_mut()
-                .textw(m.as_ref().unwrap().borrow_mut().ltsymbol) as i32;
+                .textw(&m.as_ref().unwrap().borrow_mut().ltsymbol) as i32;
             self.drw
                 .as_mut()
                 .unwrap()
@@ -1766,7 +1784,7 @@ impl Dwm {
                 w as u32,
                 self.bh as u32,
                 (lrpad / 2) as u32,
-                m.as_ref().unwrap().borrow_mut().ltsymbol,
+                &m.as_ref().unwrap().borrow_mut().ltsymbol,
                 0,
                 false,
             );
@@ -2120,7 +2138,7 @@ impl Dwm {
                 info!("[buttonpress] barwin: {}, ev.x: {}", barwin, ev.x);
                 let mut i: usize = 0;
                 let mut x: u32 = 0;
-                for tag_i in 0..tags.len() {
+                for tag_i in 0..tags_length {
                     x += self.drw.as_mut().unwrap().textw(tags[tag_i]);
                     if ev.x < x as i32 {
                         break;
@@ -2129,11 +2147,11 @@ impl Dwm {
                     info!("[buttonpress] x: {}, i: {}", x, i);
                 }
                 let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
-                if i < tags.len() {
+                if i < tags_length {
                     click = CLICK::ClkTagBar;
                     arg = Arg::Ui(1 << i);
                     info!("[buttonpress] ClkTagBar");
-                } else if ev.x < (x + self.drw.as_mut().unwrap().textw(selmon_mut.ltsymbol)) as i32
+                } else if ev.x < (x + self.drw.as_mut().unwrap().textw(&selmon_mut.ltsymbol)) as i32
                 {
                     click = CLICK::ClkLtSymbol;
                     info!("[buttonpress] ClkLtSymbol");
@@ -2159,14 +2177,14 @@ impl Dwm {
                 if click as u32 == buttons[i].click
                     && buttons[i].func.is_some()
                     && buttons[i].button == ev.button
-                    && CLEANMASK(buttons[i].mask) == CLEANMASK(ev.state)
+                    && self.CLEANMASK(buttons[i].mask) == self.CLEANMASK(ev.state)
                 {
                     if let Some(ref func) = buttons[i].func {
                         info!(
                             "[buttonpress] click: {}, button: {}, mask: {}",
                             buttons[i].click, buttons[i].button, buttons[i].mask
                         );
-                        func({
+                        func(self, {
                             if click as u32 == CLICK::ClkTagBar as u32 && {
                                 if let Arg::Ui(0) = buttons[i].arg {
                                     true
@@ -2209,17 +2227,15 @@ impl Dwm {
         info!("[spawn]");
         unsafe {
             let mut sa: sigaction = zeroed();
-            static mut tmp: String = String::new();
 
             let mut mut_arg: Arg = (*arg).clone();
             if let Arg::V(ref mut v) = mut_arg {
                 if *v == *dmenucmd {
-                    // Comment for test
-                    tmp = ((b'0' + self.selmon.as_ref().unwrap().borrow_mut().num as u8) as char)
+                    let tmp = char::from_u32(self.selmon.as_ref().unwrap().borrow_mut().num as u32)
+                        .unwrap_or('0')
                         .to_string();
-                    dmenumon = tmp.as_str();
-                    info!("[spawn] dmenumon {}", dmenumon);
-                    (*v)[2] = dmenumon;
+                    info!("[spawn] dmenumon {}", tmp);
+                    (*v)[2] = tmp;
                 }
                 if fork() == 0 {
                     if !self.dpy.is_null() {
@@ -2233,7 +2249,7 @@ impl Dwm {
                     sigaction(SIGCHLD, &sa, null_mut());
 
                     info!("[spawn] arg v: {:?}", v);
-                    if let Err(val) = Command::new(v[0]).args(&v[1..]).spawn() {
+                    if let Err(val) = Command::new(&v[0]).args(&v[1..]).spawn() {
                         info!("[spawn] Command exited with error {:?}", val);
                     }
                 }
@@ -2458,8 +2474,7 @@ impl Dwm {
         // info!("[togglebar]");
         unsafe {
             {
-                self.refresh_bar_icon
-                    .store(true, std::sync::atomic::Ordering::SeqCst);
+                let _ = self.sender.send(1);
                 *tags = generate_random_tags(tags_length);
                 {
                     let mut selmon_clone = self.selmon.clone();
@@ -2902,7 +2917,7 @@ impl Dwm {
                             .expect("None unwrap");
                     }
                 }
-                selmon_mut.ltsymbol = selmon_mut.lt[selmon_mut.sellt].symbol;
+                selmon_mut.ltsymbol = selmon_mut.lt[selmon_mut.sellt].symbol.to_string();
                 sel = selmon_mut.sel.clone();
             }
             if sel.is_some() {
@@ -3106,6 +3121,7 @@ impl Dwm {
     pub fn quit(&mut self, _arg: *const Arg) {
         // info!("[quit]");
         self.running.store(false, Ordering::SeqCst);
+        let _ = self.sender.send(0);
     }
     pub fn setup(&mut self) {
         // info!("[setup]");
@@ -3243,7 +3259,7 @@ impl Dwm {
                 XA_WINDOW,
                 32,
                 PropModeReplace,
-                addr_of_mut!(self.wmcheckwin) as *const _,
+                &mut self.wmcheckwin as *mut u64 as *const _,
                 1,
             );
             c_string = CString::new("jwm").unwrap();
@@ -3264,7 +3280,7 @@ impl Dwm {
                 XA_WINDOW,
                 32,
                 PropModeReplace,
-                self.wmcheckwin as *const _,
+                &mut self.wmcheckwin as *mut u64 as *const _,
                 1,
             );
             // EWMH support per view
@@ -4043,15 +4059,15 @@ impl Dwm {
             info!(
                 "[keypress] keysym: {}, mask: {}",
                 keysym,
-                CLEANMASK(ev.state)
+                self.CLEANMASK(ev.state)
             );
             for i in 0..keys.len() {
                 if keysym == keys[i].keysym
-                    && CLEANMASK(keys[i].mod0) == CLEANMASK(ev.state)
+                    && self.CLEANMASK(keys[i].mod0) == self.CLEANMASK(ev.state)
                     && keys[i].func.is_some()
                 {
                     info!("[keypress] i: {}, arg: {:?}", i, keys[i].arg);
-                    keys[i].func.unwrap()(&keys[i].arg);
+                    keys[i].func.unwrap()(self, &keys[i].arg);
                 }
             }
         }
@@ -4258,7 +4274,6 @@ impl Dwm {
         // info!("[monocle]");
         unsafe {
             // This idea is cool!.
-            static mut formatted_string: String = String::new();
             let mut n: u32 = 0;
             let mut c = (*m).clients.clone();
             while let Some(ref c_opt) = c {
@@ -4270,9 +4285,9 @@ impl Dwm {
             }
             if n > 0 {
                 // override layout symbol
-                formatted_string = format!("[{}]", n);
+                let formatted_string = format!("[{}]", n);
                 info!("[monocle] formatted_string: {}", formatted_string);
-                (*m).ltsymbol = formatted_string.as_str();
+                (*m).ltsymbol = formatted_string;
             }
             c = self.nexttiled((*m).clients.clone());
             while let Some(ref c_opt) = c {
@@ -4293,21 +4308,18 @@ impl Dwm {
     pub fn motionnotify(&mut self, e: *mut XEvent) {
         // info!("[motionnotify]");
         unsafe {
-            // This idea is cool
-            static mut motionmon: Option<Rc<RefCell<Monitor>>> = None;
             let ev = (*e).motion;
             if ev.window != self.root {
                 return;
             }
             let m = self.recttomon(ev.x_root, ev.y_root, 1, 1);
-            if motionmon.is_some() && !Rc::ptr_eq(m.as_ref().unwrap(), motionmon.as_ref().unwrap())
-            {
+            if !Self::are_equal_rc(&m, &self.motionmon) {
                 let selmon_mut_sel = self.selmon.as_ref().unwrap().borrow_mut().sel.clone();
                 self.unfocus(selmon_mut_sel, true);
                 self.selmon = m.clone();
                 self.focus(None);
             }
-            motionmon = m;
+            self.motionmon = m;
         }
     }
     pub fn unmanage(&mut self, c: Option<Rc<RefCell<Client>>>, destroyed: bool) {

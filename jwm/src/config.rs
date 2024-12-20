@@ -17,7 +17,7 @@ use x11::{
 };
 
 use crate::{
-    dwm::{self, Button, Key, Layout, Rule, CLICK},
+    dwm::{self, Button, Dwm, Key, Layout, Rule, CLICK},
     icon_gallery::{generate_random_tags, ICON_GALLERY},
 };
 
@@ -112,216 +112,215 @@ pub const ulineall: bool = false; // true to show underline on all tags, false f
 
 pub const layouts: Lazy<Vec<Rc<Layout>>> = Lazy::new(|| {
     vec![
-        // Rc::new(Layout::new("[]=", Some(tile))),
-        // Rc::new(Layout::new("><>", None)),
-        // Rc::new(Layout::new("[M]", Some(monocle))),
+        Rc::new(Layout::new("[]=", Some(Dwm::tile))),
+        Rc::new(Layout::new("><>", None)),
+        Rc::new(Layout::new("[M]", Some(Dwm::monocle))),
     ]
 });
 
-// fn TAGKEYS(KEY: u32, TAG: i32) -> Vec<Key> {
-//     vec![
-//         Key::new(MODKEY, KEY.into(), Some(dwm::view), dwm::Arg::Ui(1 << TAG)),
-//         Key::new(
-//             MODKEY | ControlMask,
-//             KEY.into(),
-//             Some(dwm::toggleview),
-//             dwm::Arg::Ui(1 << TAG),
-//         ),
-//         Key::new(
-//             MODKEY | ShiftMask,
-//             KEY.into(),
-//             Some(dwm::tag),
-//             dwm::Arg::Ui(1 << TAG),
-//         ),
-//         Key::new(
-//             MODKEY | ControlMask | ShiftMask,
-//             KEY.into(),
-//             Some(dwm::toggletag),
-//             dwm::Arg::Ui(1 << TAG),
-//         ),
-//     ]
-// }
+fn TAGKEYS(KEY: u32, TAG: i32) -> Vec<Key> {
+    vec![
+        Key::new(MODKEY, KEY.into(), Some(Dwm::view), dwm::Arg::Ui(1 << TAG)),
+        Key::new(
+            MODKEY | ControlMask,
+            KEY.into(),
+            Some(Dwm::toggleview),
+            dwm::Arg::Ui(1 << TAG),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            KEY.into(),
+            Some(Dwm::tag),
+            dwm::Arg::Ui(1 << TAG),
+        ),
+        Key::new(
+            MODKEY | ControlMask | ShiftMask,
+            KEY.into(),
+            Some(Dwm::toggletag),
+            dwm::Arg::Ui(1 << TAG),
+        ),
+    ]
+}
 
 pub const MODKEY: u32 = Mod1Mask;
-pub static mut dmenumon: &'static str = "0";
 macro_rules! enclose_in_quotes {
     ($val:expr) => {
         concat!("\"", $val, "\"")
     };
 }
 // dmenu_run -m 0 -fn "monospace:size=10" -nb "#222222" -nf "#bbbbbb" -sb "#005577" -sf "#eeeeee"
-pub const dmenucmd: Lazy<Vec<&'static str>> = Lazy::new(|| {
+pub const dmenucmd: Lazy<Vec<String>> = Lazy::new(|| {
     vec![
-        "dmenu_run",
-        "-m",
-        unsafe { dmenumon },
-        "-fn",
-        dmenufont,
-        "-nb",
-        col_gray1,
-        "-nf",
-        col_gray3,
-        "-sb",
-        col_cyan,
-        "-sf",
-        col_gray4,
+        "dmenu_run".to_string(),
+        "-m".to_string(),
+        "0".to_string(),
+        "-fn".to_string(),
+        dmenufont.to_string(),
+        "-nb".to_string(),
+        col_gray1.to_string(),
+        "-nf".to_string(),
+        col_gray3.to_string(),
+        "-sb".to_string(),
+        col_cyan.to_string(),
+        "-sf".to_string(),
+        col_gray4.to_string(),
     ]
 });
-pub const termcmd: Lazy<Vec<&'static str>> = Lazy::new(|| vec!["warp-terminal", ""]);
+pub const termcmd: Lazy<Vec<String>> = Lazy::new(|| vec!["warp-terminal".to_string()]);
 pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
     let mut m = vec![
         // modifier | key | function | argument
-        // Key::new(
-        //     MODKEY,
-        //     XK_e.into(),
-        //     Some(dwm::spawn),
-        //     dwm::Arg::V(dmenucmd.clone()),
-        // ),
-        // Key::new(
-        //     MODKEY,
-        //     XK_r.into(),
-        //     Some(dwm::spawn),
-        //     dwm::Arg::V(dmenucmd.clone()),
-        // ),
-        // Key::new(
-        //     MODKEY | ShiftMask,
-        //     XK_Return.into(),
-        //     Some(dwm::spawn),
-        //     dwm::Arg::V(termcmd.clone()),
-        // ),
-        // Key::new(MODKEY, XK_b.into(), Some(dwm::togglebar), dwm::Arg::I(0)),
-        // Key::new(MODKEY, XK_j.into(), Some(dwm::focusstack), dwm::Arg::I(1)),
-        // Key::new(MODKEY, XK_k.into(), Some(dwm::focusstack), dwm::Arg::I(-1)),
-        // Key::new(MODKEY, XK_i.into(), Some(dwm::incnmaster), dwm::Arg::I(1)),
-        // Key::new(MODKEY, XK_d.into(), Some(dwm::incnmaster), dwm::Arg::I(-1)),
-        // Key::new(
-        //     MODKEY,
-        //     XK_h.into(),
-        //     Some(dwm::setmfact),
-        //     dwm::Arg::F(-0.025),
-        // ),
-        // Key::new(
-        //     MODKEY | ShiftMask,
-        //     XK_h.into(),
-        //     Some(dwm::setcfact),
-        //     dwm::Arg::F(0.2),
-        // ),
-        // Key::new(
-        //     MODKEY | ShiftMask,
-        //     XK_j.into(),
-        //     Some(dwm::movestack),
-        //     dwm::Arg::I(1),
-        // ),
-        // Key::new(
-        //     MODKEY | ShiftMask,
-        //     XK_k.into(),
-        //     Some(dwm::movestack),
-        //     dwm::Arg::I(-1),
-        // ),
-        // Key::new(
-        //     MODKEY | ShiftMask,
-        //     XK_l.into(),
-        //     Some(dwm::setcfact),
-        //     dwm::Arg::F(-0.2),
-        // ),
-        // Key::new(
-        //     MODKEY | ShiftMask,
-        //     XK_o.into(),
-        //     Some(dwm::setcfact),
-        //     dwm::Arg::F(0.0),
-        // ),
-        // Key::new(MODKEY, XK_l.into(), Some(dwm::setmfact), dwm::Arg::F(0.025)),
-        // Key::new(MODKEY, XK_Return.into(), Some(dwm::zoom), dwm::Arg::I(0)),
-        // Key::new(MODKEY, XK_Tab.into(), Some(dwm::view), dwm::Arg::Ui(0)),
-        // Key::new(
-        //     MODKEY | ShiftMask,
-        //     XK_c.into(),
-        //     Some(dwm::killclient),
-        //     dwm::Arg::I(0),
-        // ),
-        // Key::new(
-        //     MODKEY,
-        //     XK_t.into(),
-        //     Some(dwm::setlayout),
-        //     dwm::Arg::Lt(layouts[0].clone()),
-        // ),
-        // Key::new(
-        //     MODKEY,
-        //     XK_f.into(),
-        //     Some(dwm::setlayout),
-        //     dwm::Arg::Lt(layouts[1].clone()),
-        // ),
-        // Key::new(
-        //     MODKEY,
-        //     XK_m.into(),
-        //     Some(dwm::setlayout),
-        //     dwm::Arg::Lt(layouts[2].clone()),
-        // ),
-        // Key::new(
-        //     MODKEY,
-        //     XK_space.into(),
-        //     Some(dwm::setlayout),
-        //     dwm::Arg::I(0),
-        // ),
-        // Key::new(
-        //     MODKEY | ShiftMask,
-        //     XK_space.into(),
-        //     Some(dwm::togglefloating),
-        //     dwm::Arg::I(0),
-        // ),
-        // Key::new(
-        //     MODKEY | ShiftMask,
-        //     XK_f.into(),
-        //     Some(dwm::togglefullscr),
-        //     dwm::Arg::I(0),
-        // ),
-        // Key::new(MODKEY, XK_0.into(), Some(dwm::view), dwm::Arg::Ui(!0)),
-        // Key::new(
-        //     MODKEY | ShiftMask,
-        //     XK_0.into(),
-        //     Some(dwm::tag),
-        //     dwm::Arg::Ui(!0),
-        // ),
-        // Key::new(
-        //     MODKEY,
-        //     XK_comma.into(),
-        //     Some(dwm::focusmon),
-        //     dwm::Arg::I(-1),
-        // ),
-        // Key::new(
-        //     MODKEY,
-        //     XK_period.into(),
-        //     Some(dwm::focusmon),
-        //     dwm::Arg::I(1),
-        // ),
-        // Key::new(
-        //     MODKEY | ShiftMask,
-        //     XK_comma.into(),
-        //     Some(dwm::tagmon),
-        //     dwm::Arg::I(-1),
-        // ),
-        // Key::new(
-        //     MODKEY | ShiftMask,
-        //     XK_period.into(),
-        //     Some(dwm::tagmon),
-        //     dwm::Arg::I(1),
-        // ),
+        Key::new(
+            MODKEY,
+            XK_e.into(),
+            Some(Dwm::spawn),
+            dwm::Arg::V(dmenucmd.to_vec()),
+        ),
+        Key::new(
+            MODKEY,
+            XK_r.into(),
+            Some(Dwm::spawn),
+            dwm::Arg::V(dmenucmd.clone()),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_Return.into(),
+            Some(Dwm::spawn),
+            dwm::Arg::V(termcmd.clone()),
+        ),
+        Key::new(MODKEY, XK_b.into(), Some(Dwm::togglebar), dwm::Arg::I(0)),
+        Key::new(MODKEY, XK_j.into(), Some(Dwm::focusstack), dwm::Arg::I(1)),
+        Key::new(MODKEY, XK_k.into(), Some(Dwm::focusstack), dwm::Arg::I(-1)),
+        Key::new(MODKEY, XK_i.into(), Some(Dwm::incnmaster), dwm::Arg::I(1)),
+        Key::new(MODKEY, XK_d.into(), Some(Dwm::incnmaster), dwm::Arg::I(-1)),
+        Key::new(
+            MODKEY,
+            XK_h.into(),
+            Some(Dwm::setmfact),
+            dwm::Arg::F(-0.025),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_h.into(),
+            Some(Dwm::setcfact),
+            dwm::Arg::F(0.2),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_j.into(),
+            Some(Dwm::movestack),
+            dwm::Arg::I(1),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_k.into(),
+            Some(Dwm::movestack),
+            dwm::Arg::I(-1),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_l.into(),
+            Some(Dwm::setcfact),
+            dwm::Arg::F(-0.2),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_o.into(),
+            Some(Dwm::setcfact),
+            dwm::Arg::F(0.0),
+        ),
+        Key::new(MODKEY, XK_l.into(), Some(Dwm::setmfact), dwm::Arg::F(0.025)),
+        Key::new(MODKEY, XK_Return.into(), Some(Dwm::zoom), dwm::Arg::I(0)),
+        Key::new(MODKEY, XK_Tab.into(), Some(Dwm::view), dwm::Arg::Ui(0)),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_c.into(),
+            Some(Dwm::killclient),
+            dwm::Arg::I(0),
+        ),
+        Key::new(
+            MODKEY,
+            XK_t.into(),
+            Some(Dwm::setlayout),
+            dwm::Arg::Lt(layouts[0].clone()),
+        ),
+        Key::new(
+            MODKEY,
+            XK_f.into(),
+            Some(Dwm::setlayout),
+            dwm::Arg::Lt(layouts[1].clone()),
+        ),
+        Key::new(
+            MODKEY,
+            XK_m.into(),
+            Some(Dwm::setlayout),
+            dwm::Arg::Lt(layouts[2].clone()),
+        ),
+        Key::new(
+            MODKEY,
+            XK_space.into(),
+            Some(Dwm::setlayout),
+            dwm::Arg::I(0),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_space.into(),
+            Some(Dwm::togglefloating),
+            dwm::Arg::I(0),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_f.into(),
+            Some(Dwm::togglefullscr),
+            dwm::Arg::I(0),
+        ),
+        Key::new(MODKEY, XK_0.into(), Some(Dwm::view), dwm::Arg::Ui(!0)),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_0.into(),
+            Some(Dwm::tag),
+            dwm::Arg::Ui(!0),
+        ),
+        Key::new(
+            MODKEY,
+            XK_comma.into(),
+            Some(Dwm::focusmon),
+            dwm::Arg::I(-1),
+        ),
+        Key::new(
+            MODKEY,
+            XK_period.into(),
+            Some(Dwm::focusmon),
+            dwm::Arg::I(1),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_comma.into(),
+            Some(Dwm::tagmon),
+            dwm::Arg::I(-1),
+        ),
+        Key::new(
+            MODKEY | ShiftMask,
+            XK_period.into(),
+            Some(Dwm::tagmon),
+            dwm::Arg::I(1),
+        ),
     ];
-    // m.extend(TAGKEYS(XK_1, 0));
-    // m.extend(TAGKEYS(XK_2, 1));
-    // m.extend(TAGKEYS(XK_3, 2));
-    // m.extend(TAGKEYS(XK_4, 3));
-    // m.extend(TAGKEYS(XK_5, 4));
-    // m.extend(TAGKEYS(XK_6, 5));
-    // m.extend(TAGKEYS(XK_7, 6));
-    // m.extend(TAGKEYS(XK_8, 7));
-    // m.extend(TAGKEYS(XK_9, 8));
-    // m.push(Key::new(
-    //     MODKEY | ShiftMask,
-    //     XK_q.into(),
-    //     Some(dwm::quit),
-    //     dwm::Arg::I(0),
-    // ));
+    m.extend(TAGKEYS(XK_1, 0));
+    m.extend(TAGKEYS(XK_2, 1));
+    m.extend(TAGKEYS(XK_3, 2));
+    m.extend(TAGKEYS(XK_4, 3));
+    m.extend(TAGKEYS(XK_5, 4));
+    m.extend(TAGKEYS(XK_6, 5));
+    m.extend(TAGKEYS(XK_7, 6));
+    m.extend(TAGKEYS(XK_8, 7));
+    m.extend(TAGKEYS(XK_9, 8));
+    m.push(Key::new(
+        MODKEY | ShiftMask,
+        XK_q.into(),
+        Some(Dwm::quit),
+        dwm::Arg::I(0),
+    ));
     m
 });
 
@@ -332,82 +331,82 @@ pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
 // Button5: 向下滚动滚轮
 pub const buttons: Lazy<Vec<Button>> = Lazy::new(|| {
     vec![
-    //     Button::new(
-    //         CLICK::ClkLtSymbol as u32,
-    //         0,
-    //         Button1,
-    //         Some(dwm::setlayout),
-    //         dwm::Arg::I(0),
-    //     ),
-    //     Button::new(
-    //         CLICK::ClkLtSymbol as u32,
-    //         0,
-    //         Button3,
-    //         Some(dwm::setlayout),
-    //         dwm::Arg::I(0),
-    //     ),
-    //     Button::new(
-    //         CLICK::ClkWinTitle as u32,
-    //         0,
-    //         Button2,
-    //         Some(dwm::zoom),
-    //         dwm::Arg::I(0),
-    //     ),
-    //     Button::new(
-    //         CLICK::ClkStatusText as u32,
-    //         0,
-    //         Button2,
-    //         Some(dwm::spawn),
-    //         dwm::Arg::V(termcmd.clone()),
-    //     ),
-    //     Button::new(
-    //         CLICK::ClkClientWin as u32,
-    //         MODKEY,
-    //         Button1,
-    //         Some(dwm::movemouse),
-    //         dwm::Arg::I(0),
-    //     ),
-    //     Button::new(
-    //         CLICK::ClkClientWin as u32,
-    //         MODKEY,
-    //         Button2,
-    //         Some(dwm::togglefloating),
-    //         dwm::Arg::I(0),
-    //     ),
-    //     Button::new(
-    //         CLICK::ClkClientWin as u32,
-    //         MODKEY,
-    //         Button3,
-    //         Some(dwm::resizemouse),
-    //         dwm::Arg::I(0),
-    //     ),
-    //     Button::new(
-    //         CLICK::ClkTagBar as u32,
-    //         0,
-    //         Button1,
-    //         Some(dwm::view),
-    //         dwm::Arg::Ui(0),
-    //     ),
-    //     Button::new(
-    //         CLICK::ClkTagBar as u32,
-    //         0,
-    //         Button3,
-    //         Some(dwm::toggleview),
-    //         dwm::Arg::Ui(0),
-    //     ),
-    //     Button::new(
-    //         CLICK::ClkTagBar as u32,
-    //         MODKEY,
-    //         Button1,
-    //         Some(dwm::tag),
-    //         dwm::Arg::Ui(0),
-    //     ),
-    //     Button::new(
-    //         CLICK::ClkTagBar as u32,
-    //         MODKEY,
-    //         Button3,
-    //         Some(dwm::toggletag),
-    //         dwm::Arg::Ui(0),
-    //     ),
+        Button::new(
+            CLICK::ClkLtSymbol as u32,
+            0,
+            Button1,
+            Some(Dwm::setlayout),
+            dwm::Arg::I(0),
+        ),
+        Button::new(
+            CLICK::ClkLtSymbol as u32,
+            0,
+            Button3,
+            Some(Dwm::setlayout),
+            dwm::Arg::I(0),
+        ),
+        Button::new(
+            CLICK::ClkWinTitle as u32,
+            0,
+            Button2,
+            Some(Dwm::zoom),
+            dwm::Arg::I(0),
+        ),
+        Button::new(
+            CLICK::ClkStatusText as u32,
+            0,
+            Button2,
+            Some(Dwm::spawn),
+            dwm::Arg::V(termcmd.clone()),
+        ),
+        Button::new(
+            CLICK::ClkClientWin as u32,
+            MODKEY,
+            Button1,
+            Some(Dwm::movemouse),
+            dwm::Arg::I(0),
+        ),
+        Button::new(
+            CLICK::ClkClientWin as u32,
+            MODKEY,
+            Button2,
+            Some(Dwm::togglefloating),
+            dwm::Arg::I(0),
+        ),
+        Button::new(
+            CLICK::ClkClientWin as u32,
+            MODKEY,
+            Button3,
+            Some(Dwm::resizemouse),
+            dwm::Arg::I(0),
+        ),
+        Button::new(
+            CLICK::ClkTagBar as u32,
+            0,
+            Button1,
+            Some(Dwm::view),
+            dwm::Arg::Ui(0),
+        ),
+        Button::new(
+            CLICK::ClkTagBar as u32,
+            0,
+            Button3,
+            Some(Dwm::toggleview),
+            dwm::Arg::Ui(0),
+        ),
+        Button::new(
+            CLICK::ClkTagBar as u32,
+            MODKEY,
+            Button1,
+            Some(Dwm::tag),
+            dwm::Arg::Ui(0),
+        ),
+        Button::new(
+            CLICK::ClkTagBar as u32,
+            MODKEY,
+            Button3,
+            Some(Dwm::toggletag),
+            dwm::Arg::Ui(0),
+        ),
     ]
 });

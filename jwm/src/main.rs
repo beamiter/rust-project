@@ -1,6 +1,8 @@
 use chrono::prelude::*;
 use coredump::register_panic_handler;
+use dwm::Dwm;
 use std::process::Command;
+use std::sync::mpsc;
 use std::{ffi::CString, process::exit, ptr::null_mut};
 use std::{thread, time::Duration};
 
@@ -39,65 +41,70 @@ fn main() {
     miscellaneous::for_test();
     miscellaneous::init_auto_start();
 
-    // let mut status_bar = StatusBar::new();
-    // let status_update_thread = thread::spawn(move || {
-    //     loop {
-    //         unsafe {
-    //             if refresh_bar_icon.load(std::sync::atomic::Ordering::SeqCst) {
-    //                 refresh_bar_icon.store(false, std::sync::atomic::Ordering::SeqCst);
-    //                 status_bar.update_icon_list();
-    //             }
-    //         }
-    //         let status = status_bar.broadcast_string();
-    //
-    //         // println!("{}", status);
-    //         // Update X root window name (status bar), here we will just print to stdout
-    //         let _output = Command::new("xsetroot").arg("-name").arg(status).output();
-    //
-    //         unsafe {
-    //             if !running.load(std::sync::atomic::Ordering::SeqCst) {
-    //                 break;
-    //             }
-    //         }
-    //         thread::sleep(Duration::from_millis(500));
-    //     }
-    // });
-    //
-    // let now = Local::now();
-    // let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
-    // let log_filename = format!("/tmp/jwm_{}.log", timestamp);
-    // let _log_file = std::fs::File::create(log_filename).unwrap();
-    // // WriteLogger::init(LevelFilter::Warn, Config::default(), _log_file).unwrap();
-    // // WriteLogger::init(LevelFilter::Info, Config::default(), _log_file).unwrap();
-    // WriteLogger::init(LevelFilter::Info, Config::default(), std::io::stdout()).unwrap();
-    // unsafe {
-    //     let c_string = CString::new("").unwrap();
-    //     if setlocale(LC_CTYPE, c_string.as_ptr()).is_null() || XSupportsLocale() <= 0 {
-    //         eprintln!("warning: no locale support");
-    //     }
-    //     dpy = XOpenDisplay(null_mut());
-    //     if dpy.is_null() {
-    //         eprintln!("jwm: cannot open display");
-    //         exit(1);
-    //     }
-    //     info!("[main] main begin");
-    //     info!("[main] checkotherwm");
-    //     checkotherwm();
-    //     info!("[main] setup");
-    //     setup();
-    //     info!("[main] scan");
-    //     scan();
-    //     info!("[main] run");
-    //     run();
-    //     info!("[main] cleanup");
-    //     cleanup();
-    //     info!("[main] XCloseDisplay");
-    //     XCloseDisplay(dpy);
-    //     info!("[main] end");
-    // }
-    //
-    // match status_update_thread.join() {
-    //     Ok(_) => println!("Status update thread finished successfully."),
-    //     Err(e) => eprintln!("Error joining status update thread: {:?}", e),
-    // }
+    let (tx, rx) = mpsc::channel();
+
+    let mut dwm = Dwm::new(tx);
+
+    let mut status_bar = StatusBar::new();
+    let status_update_thread = thread::spawn(move || {
+        loop {
+            match rx.try_recv() {
+                Ok(val) => match val {
+                    0 => {
+                        break;
+                    }
+                    1 => {
+                        status_bar.update_icon_list();
+                    }
+                    _ => {
+                        break;
+                    }
+                },
+                Err(_) => {}
+            }
+            let status = status_bar.broadcast_string();
+            // println!("{}", status);
+            // Update X root window name (status bar), here we will just print to stdout
+            let _output = Command::new("xsetroot").arg("-name").arg(status).output();
+            thread::sleep(Duration::from_millis(500));
+        }
+    });
+
+    let now = Local::now();
+    let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
+    let log_filename = format!("/tmp/jwm_{}.log", timestamp);
+    let _log_file = std::fs::File::create(log_filename).unwrap();
+    // WriteLogger::init(LevelFilter::Warn, Config::default(), _log_file).unwrap();
+    // WriteLogger::init(LevelFilter::Info, Config::default(), _log_file).unwrap();
+    WriteLogger::init(LevelFilter::Info, Config::default(), std::io::stdout()).unwrap();
+    unsafe {
+        let c_string = CString::new("").unwrap();
+        if setlocale(LC_CTYPE, c_string.as_ptr()).is_null() || XSupportsLocale() <= 0 {
+            eprintln!("warning: no locale support");
+        }
+        dwm.dpy = XOpenDisplay(null_mut());
+        if dwm.dpy.is_null() {
+            eprintln!("jwm: cannot open display");
+            exit(1);
+        }
+        info!("[main] main begin");
+        info!("[main] checkotherwm");
+        dwm.checkotherwm();
+        info!("[main] setup");
+        dwm.setup();
+        info!("[main] scan");
+        dwm.scan();
+        info!("[main] run");
+        dwm.run();
+        info!("[main] cleanup");
+        dwm.cleanup();
+        info!("[main] XCloseDisplay");
+        XCloseDisplay(dwm.dpy);
+        info!("[main] end");
+    }
+
+    match status_update_thread.join() {
+        Ok(_) => println!("Status update thread finished successfully."),
+        Err(e) => eprintln!("Error joining status update thread: {:?}", e),
+    }
 }
