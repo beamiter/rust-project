@@ -71,9 +71,9 @@ use crate::xproto::{
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
 #[inline]
 fn CLEANMASK(mask: u32) -> u32 {
-    return mask
-        & unsafe { !(numlockmask | LockMask) }
-        & (ShiftMask | ControlMask | Mod1Mask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask);
+    return mask;
+    // & unsafe { !(numlockmask | LockMask) }
+    // & (ShiftMask | ControlMask | Mod1Mask | Mod2Mask | Mod3Mask | Mod4Mask | Mod5Mask);
 }
 pub const MOUSEMASK: c_long = BUTTONMASK | PointerMotionMask;
 
@@ -515,7 +515,6 @@ pub struct Dwm {
     pub selmon: Option<Rc<RefCell<Monitor>>>,
     pub root: Window,
     pub wmcheckwin: Window,
-    pub xerrorxlib: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int>,
     pub useargb: bool,
     pub visual: *mut Visual,
     pub depth: i32,
@@ -526,6 +525,47 @@ pub struct Dwm {
 enum TextElement {
     WithCaret(String),
     WithoutCaret(String),
+}
+
+static mut xerrorxlib: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int> = None;
+pub fn xerrorstart(_: *mut Display, _: *mut XErrorEvent) -> i32 {
+    // info!("[xerrorstart]");
+    eprintln!("jwm: another window manager is already running");
+    unsafe {
+        exit(1);
+    }
+}
+// There's no way to check accesses to destroyed windows, thus those cases are ignored (especially
+// on UnmapNotify's). Other types of errors call xlibs default error handler, which may call exit.
+pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
+    // info!("[xerror]");
+    let hack_request_code: u8 = 139;
+    unsafe {
+        if (*ee).error_code == BadWindow
+            || ((*ee).request_code == X_SetInputFocus && (*ee).error_code == BadMatch)
+            || ((*ee).request_code == X_PolyText8 && (*ee).error_code == BadDrawable)
+            || ((*ee).request_code == X_PolyFillRectangle && (*ee).error_code == BadDrawable)
+            || ((*ee).request_code == X_PolySegment && (*ee).error_code == BadDrawable)
+            || ((*ee).request_code == X_ConfigureWindow && (*ee).error_code == BadMatch)
+            || ((*ee).request_code == X_GrabButton && (*ee).error_code == BadAccess)
+            || ((*ee).request_code == X_GrabKey && (*ee).error_code == BadAccess)
+            || ((*ee).request_code == X_CopyArea && (*ee).error_code == BadDrawable)
+            || ((*ee).request_code == hack_request_code && (*ee).error_code == BadLength)
+        {
+            return 0;
+        }
+        info!(
+            "jwm: fatal error: request code = {}, error code = {}",
+            (*ee).request_code,
+            (*ee).error_code
+        );
+        // (TODO): check here, may call exit.
+        return -1;
+    }
+}
+pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
+    // info!("[xerrordummy]");
+    0
 }
 impl Dwm {
     fn handler(&mut self, key: i32, e: *mut XEvent) {
@@ -573,7 +613,6 @@ impl Dwm {
             selmon: None,
             root: 0,
             wmcheckwin: 0,
-            xerrorxlib: None,
             useargb: false,
             visual: null_mut(),
             depth: 0,
@@ -589,7 +628,7 @@ impl Dwm {
     }
 
     // function declarations and implementations.
-    pub fn applyrules(&self, c: &Rc<RefCell<Client>>) {
+    pub fn applyrules(&mut self, c: &Rc<RefCell<Client>>) {
         // info!("[applyrules]");
         unsafe {
             // rule matching
@@ -651,7 +690,7 @@ impl Dwm {
         }
     }
 
-    pub fn updatesizehints(&self, c: &Rc<RefCell<Client>>) {
+    pub fn updatesizehints(&mut self, c: &Rc<RefCell<Client>>) {
         // info!("[updatesizehints]");
         let mut c = c.as_ref().borrow_mut();
         unsafe {
@@ -708,7 +747,7 @@ impl Dwm {
     }
 
     pub fn applysizehints(
-        &self,
+        &mut self,
         c: &Rc<RefCell<Client>>,
         x: &mut i32,
         y: &mut i32,
@@ -820,7 +859,7 @@ impl Dwm {
             return *x != cc.x || (*y) != cc.y || *w != cc.w || *h != cc.h;
         }
     }
-    pub fn cleanup(&self) {
+    pub fn cleanup(&mut self) {
         // info!("[cleanup]");
         // Bitwise or to get max value.
         let mut a: Arg = Arg::Ui(!0);
@@ -861,7 +900,7 @@ impl Dwm {
             XSetInputFocus(
                 self.dpy,
                 PointerRoot as u64,
-                RevertToPointerself.root,
+                RevertToPointerRoot,
                 CurrentTime,
             );
             XDeleteProperty(
@@ -973,7 +1012,7 @@ impl Dwm {
         }
     }
 
-    pub fn configure(&self, c: &mut Client) {
+    pub fn configure(&mut self, c: &mut Client) {
         // info!("[configure]");
         unsafe {
             let mut ce: XConfigureEvent = zeroed();
@@ -1058,7 +1097,7 @@ impl Dwm {
             }
         }
     }
-    pub fn resizeclient(&self, c: &mut Client, x: i32, y: i32, w: i32, h: i32) {
+    pub fn resizeclient(&mut self, c: &mut Client, x: i32, y: i32, w: i32, h: i32) {
         // info!("[resizeclient]");
         unsafe {
             let mut wc: XWindowChanges = zeroed();
@@ -1087,7 +1126,7 @@ impl Dwm {
     }
 
     pub fn resize(
-        &self,
+        &mut self,
         c: &Rc<RefCell<Client>>,
         mut x: i32,
         mut y: i32,
@@ -1101,7 +1140,7 @@ impl Dwm {
         }
     }
 
-    pub fn seturgent(&self, c: &Rc<RefCell<Client>>, urg: bool) {
+    pub fn seturgent(&mut self, c: &Rc<RefCell<Client>>, urg: bool) {
         // info!("[seturgent]");
         unsafe {
             c.borrow_mut().isurgent = urg;
@@ -1120,7 +1159,7 @@ impl Dwm {
         }
     }
 
-    pub fn showhide(&self, c: Option<Rc<RefCell<Client>>>) {
+    pub fn showhide(&mut self, c: Option<Rc<RefCell<Client>>>) {
         // info!("[showhide]");
         if c.is_none() {
             return;
@@ -1178,7 +1217,7 @@ impl Dwm {
             }
         }
     }
-    pub fn configurerequest(&self, e: *mut XEvent) {
+    pub fn configurerequest(&mut self, e: *mut XEvent) {
         // info!("[configurerequest]");
         unsafe {
             let ev = (*e).configure_request;
@@ -1267,7 +1306,7 @@ impl Dwm {
             XSync(self.dpy, False);
         }
     }
-    pub fn createmon(&self) -> Monitor {
+    pub fn createmon(&mut self) -> Monitor {
         // info!("[createmon]");
         let mut m: Monitor = Monitor::new();
         m.tagset[0] = 1;
@@ -1300,7 +1339,7 @@ impl Dwm {
 
         return m;
     }
-    pub fn destroynotify(&self, e: *mut XEvent) {
+    pub fn destroynotify(&mut self, e: *mut XEvent) {
         // info!("[destroynotify]");
         unsafe {
             let ev = (*e).destroy_window;
@@ -1310,7 +1349,7 @@ impl Dwm {
             }
         }
     }
-    pub fn arrangemon(&self, m: &Rc<RefCell<Monitor>>) {
+    pub fn arrangemon(&mut self, m: &Rc<RefCell<Monitor>>) {
         // info!("[arrangemon]");
         let sellt;
         {
@@ -1332,7 +1371,7 @@ impl Dwm {
         }
     }
     // This is cool!
-    pub fn detach(&self, c: Option<Rc<RefCell<Client>>>) {
+    pub fn detach(&mut self, c: Option<Rc<RefCell<Client>>>) {
         // info!("[detach]");
         let mut current = {
             c.as_ref()
@@ -1368,7 +1407,7 @@ impl Dwm {
             current = next;
         }
     }
-    pub fn detachstack(&self, c: Option<Rc<RefCell<Client>>>) {
+    pub fn detachstack(&mut self, c: Option<Rc<RefCell<Client>>>) {
         // info!("[detachstack]");
         let mut current = {
             c.as_ref()
@@ -1442,7 +1481,7 @@ impl Dwm {
             };
         }
     }
-    pub fn dirtomon(&self, dir: i32) -> Option<Rc<RefCell<Monitor>>> {
+    pub fn dirtomon(&mut self, dir: i32) -> Option<Rc<RefCell<Monitor>>> {
         // info!("[dirtomon]");
         let mut m: Option<Rc<RefCell<Monitor>>>;
         if dir > 0 {
@@ -1637,7 +1676,8 @@ impl Dwm {
             if Rc::ptr_eq(m.as_ref().unwrap(), self.selmon.as_ref().unwrap()) {
                 // status is only drawn on selected monitor.
                 // draw status bar here
-                tw = ww - self.drawstatusbar(m.clone(), &*self.stext);
+                let stext = self.stext.clone();
+                tw = ww - self.drawstatusbar(m.clone(), &stext);
             }
             {
                 let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
@@ -1910,20 +1950,20 @@ impl Dwm {
         }
     }
 
-    pub fn attach(&self, c: Option<Rc<RefCell<Client>>>) {
+    pub fn attach(&mut self, c: Option<Rc<RefCell<Client>>>) {
         // info!("[attach]");
         let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
         c.as_ref().unwrap().borrow_mut().next = mon.as_ref().unwrap().borrow_mut().clients.clone();
         mon.as_ref().unwrap().borrow_mut().clients = c.clone();
     }
-    pub fn attachstack(&self, c: Option<Rc<RefCell<Client>>>) {
+    pub fn attachstack(&mut self, c: Option<Rc<RefCell<Client>>>) {
         // info!("[attachstack]");
         let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
         c.as_ref().unwrap().borrow_mut().snext = mon.as_ref().unwrap().borrow_mut().stack.clone();
         mon.as_ref().unwrap().borrow_mut().stack = c.clone();
     }
 
-    pub fn getatomprop(&self, c: &mut Client, prop: Atom) -> u64 {
+    pub fn getatomprop(&mut self, c: &mut Client, prop: Atom) -> u64 {
         // info!("[getatomprop]");
         let mut di = 0;
         let mut dl: u64 = 0;
@@ -1954,7 +1994,7 @@ impl Dwm {
         return atom;
     }
 
-    pub fn getrootptr(&self, x: &mut i32, y: &mut i32) -> i32 {
+    pub fn getrootptr(&mut self, x: &mut i32, y: &mut i32) -> i32 {
         // info!("[getrootptr]");
         let mut di: i32 = 0;
         let mut dui: u32 = 0;
@@ -1967,7 +2007,7 @@ impl Dwm {
         }
     }
 
-    pub fn getstate(&self, w: Window) -> i64 {
+    pub fn getstate(&mut self, w: Window) -> i64 {
         // info!("[getstate]");
         let mut format: i32 = 0;
         let mut result: i64 = -1;
@@ -2001,7 +2041,7 @@ impl Dwm {
         return result;
     }
 
-    pub fn recttomon(&self, x: i32, y: i32, w: i32, h: i32) -> Option<Rc<RefCell<Monitor>>> {
+    pub fn recttomon(&mut self, x: i32, y: i32, w: i32, h: i32) -> Option<Rc<RefCell<Monitor>>> {
         // info!("[recttomon]");
         let mut area: i32 = 0;
 
@@ -2019,7 +2059,7 @@ impl Dwm {
         return r;
     }
 
-    pub fn wintoclient(&self, w: Window) -> Option<Rc<RefCell<Client>>> {
+    pub fn wintoclient(&mut self, w: Window) -> Option<Rc<RefCell<Client>>> {
         // info!("[wintoclient]");
         let mut m = self.mons.clone();
         while let Some(ref m_opt) = m {
@@ -2038,7 +2078,7 @@ impl Dwm {
         None
     }
 
-    pub fn wintomon(&self, w: Window) -> Option<Rc<RefCell<Monitor>>> {
+    pub fn wintomon(&mut self, w: Window) -> Option<Rc<RefCell<Monitor>>> {
         // info!("[wintomon]");
         let mut x: i32 = 0;
         let mut y: i32 = 0;
@@ -2148,56 +2188,10 @@ impl Dwm {
         }
     }
 
-    pub fn xerrordummy(&self, _: *mut Display, _: *mut XErrorEvent) -> i32 {
-        // info!("[xerrordummy]");
-        0
-    }
-    // #[no_mangle]
-    // pub extern "C" fn xerrorstart(dpy0: *mut Display, ee: *mut XErrorEvent) -> i32 {
-    //     eprintln!("jwm: another window manager is already running");
-    //     return -1;
-    // }
-    // Or use the method above.
-    #[allow(dead_code)]
-    pub fn xerrorstart(&self, _: *mut Display, _: *mut XErrorEvent) -> i32 {
-        // info!("[xerrorstart]");
-        eprintln!("jwm: another window manager is already running");
-        unsafe {
-            exit(1);
-        }
-    }
-    // There's no way to check accesses to destroyed windows, thus those cases are ignored (especially
-    // on UnmapNotify's). Other types of errors call xlibs default error handler, which may call exit.
-    pub fn xerror(&self, _: *mut Display, ee: *mut XErrorEvent) -> i32 {
-        // info!("[xerror]");
-        let hack_request_code: u8 = 139;
-        unsafe {
-            if (*ee).error_code == BadWindow
-                || ((*ee).request_code == X_SetInputFocus && (*ee).error_code == BadMatch)
-                || ((*ee).request_code == X_PolyText8 && (*ee).error_code == BadDrawable)
-                || ((*ee).request_code == X_PolyFillRectangle && (*ee).error_code == BadDrawable)
-                || ((*ee).request_code == X_PolySegment && (*ee).error_code == BadDrawable)
-                || ((*ee).request_code == X_ConfigureWindow && (*ee).error_code == BadMatch)
-                || ((*ee).request_code == X_GrabButton && (*ee).error_code == BadAccess)
-                || ((*ee).request_code == X_GrabKey && (*ee).error_code == BadAccess)
-                || ((*ee).request_code == X_CopyArea && (*ee).error_code == BadDrawable)
-                || ((*ee).request_code == hack_request_code && (*ee).error_code == BadLength)
-            {
-                return 0;
-            }
-            info!(
-                "jwm: fatal error: request code = {}, error code = {}",
-                (*ee).request_code,
-                (*ee).error_code
-            );
-            // may call exit.
-            return self.xerrorxlib.unwrap()(self.dpy, ee);
-        }
-    }
-    pub fn checkotherwm(&self) {
+    pub fn checkotherwm(&mut self) {
         info!("[checkotherwm]");
         unsafe {
-            self.xerrorxlib = XSetErrorHandler(Some(transmute(self.xerrorstart as *const ())));
+            xerrorxlib = XSetErrorHandler(Some(transmute(xerrorstart as *const ())));
             // this causes an error if some other window manager is running.
             XSelectInput(
                 self.dpy,
@@ -2206,12 +2200,12 @@ impl Dwm {
             );
             XSync(self.dpy, False);
             // Attention what transmut does is great;
-            XSetErrorHandler(Some(transmute(self.xerror as *const ())));
+            XSetErrorHandler(Some(transmute(xerror as *const ())));
             XSync(self.dpy, False);
         }
     }
 
-    pub fn spawn(&self, arg: *const Arg) {
+    pub fn spawn(&mut self, arg: *const Arg) {
         info!("[spawn]");
         unsafe {
             let mut sa: sigaction = zeroed();
@@ -2246,7 +2240,7 @@ impl Dwm {
             }
         }
     }
-    pub fn updatebars(&self) {
+    pub fn updatebars(&mut self) {
         // info!("[updatebars]");
         unsafe {
             let mut wa: XSetWindowAttributes = zeroed();
@@ -2329,7 +2323,7 @@ impl Dwm {
             }
         }
     }
-    pub fn updatebarpos(&self, m: &mut Monitor) {
+    pub fn updatebarpos(&mut self, m: &mut Monitor) {
         // info!("[updatebarpos]");
         m.wy = m.my;
         m.wh = m.mh;
@@ -2349,7 +2343,7 @@ impl Dwm {
             m.by = -self.bh - self.vp;
         }
     }
-    pub fn updateclientlist(&self) {
+    pub fn updateclientlist(&mut self) {
         // info!("[updateclientlist]");
         unsafe {
             XDeleteProperty(
@@ -2379,7 +2373,7 @@ impl Dwm {
             }
         }
     }
-    pub fn tile(&self, m: *mut Monitor) {
+    pub fn tile(&mut self, m: *mut Monitor) {
         // info!("[tile]");
         let mut n: u32 = 0;
         let mut mfacts: f32 = 0.;
@@ -2467,20 +2461,22 @@ impl Dwm {
                 self.refresh_bar_icon
                     .store(true, std::sync::atomic::Ordering::SeqCst);
                 *tags = generate_random_tags(tags_length);
-                let mut selmon_mut = self.selmon.as_mut().unwrap().borrow_mut();
-                let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-                selmon_mut.pertag.as_mut().unwrap().showbars[curtag] = !selmon_mut.showbar0;
-                selmon_mut.showbar0 = selmon_mut.pertag.as_mut().unwrap().showbars[curtag];
-
-                self.updatebarpos(&mut *selmon_mut);
-                XMoveResizeWindow(
-                    self.dpy,
-                    selmon_mut.barwin,
-                    selmon_mut.wx + self.sp,
-                    selmon_mut.by + self.vp,
-                    (selmon_mut.ww - 2 * self.sp) as u32,
-                    self.bh as u32,
-                );
+                {
+                    let mut selmon_clone = self.selmon.clone();
+                    let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
+                    let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
+                    selmon_mut.pertag.as_mut().unwrap().showbars[curtag] = !selmon_mut.showbar0;
+                    selmon_mut.showbar0 = selmon_mut.pertag.as_mut().unwrap().showbars[curtag];
+                    self.updatebarpos(&mut selmon_mut);
+                    XMoveResizeWindow(
+                        self.dpy,
+                        selmon_mut.barwin,
+                        selmon_mut.wx + self.sp,
+                        selmon_mut.by + self.vp,
+                        (selmon_mut.ww - 2 * self.sp) as u32,
+                        self.bh as u32,
+                    );
+                }
             }
             self.arrange(self.selmon.clone());
         }
@@ -2515,10 +2511,11 @@ impl Dwm {
             return;
         }
     }
-    pub fn focusin(&self, e: *mut XEvent) {
+    pub fn focusin(&mut self, e: *mut XEvent) {
         // info!("[focusin]");
         unsafe {
-            let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
+            let mut selmon_clone = self.selmon.clone();
+            let selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
             let ev = (*e).focus_change;
             if selmon_mut.sel.is_some()
                 && ev.window != (*selmon_mut.sel.as_ref().unwrap().borrow_mut()).win
@@ -2575,7 +2572,8 @@ impl Dwm {
                 }
             }
             if let Arg::I(i) = *arg {
-                if let Some(ref selmon_opt) = self.selmon {
+                let selmon_clone = self.selmon.clone();
+                if let Some(ref selmon_opt) = selmon_clone {
                     let dir_i_mon = self.dirtomon(i);
                     let sel = { selmon_opt.borrow_mut().sel.clone() };
                     self.sendmon(sel, dir_i_mon);
@@ -2984,7 +2982,8 @@ impl Dwm {
                 return;
             }
             let sel = {
-                let mut selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
+                let mut selmon_clone = self.selmon.clone();
+                let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
                 let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
                 selmon_mut.nmaster0 = selmon_mut.pertag.as_ref().unwrap().nmasters[curtag];
                 selmon_mut.mfact0 = selmon_mut.pertag.as_ref().unwrap().mfacts[curtag];
@@ -3023,7 +3022,8 @@ impl Dwm {
                 }
                 if newtagset > 0 {
                     {
-                        let mut selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
+                        let mut selmon_clone = self.selmon.clone();
+                        let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
                         selmon_mut.tagset[seltags] = newtagset;
 
                         if newtagset == !0 {
@@ -3103,7 +3103,7 @@ impl Dwm {
             }
         }
     }
-    pub fn quit(&self, _arg: *const Arg) {
+    pub fn quit(&mut self, _arg: *const Arg) {
         // info!("[quit]");
         self.running.store(false, Ordering::SeqCst);
     }
@@ -3309,7 +3309,7 @@ impl Dwm {
             self.focus(None);
         }
     }
-    pub fn killclient(&self, _arg: *const Arg) {
+    pub fn killclient(&mut self, _arg: *const Arg) {
         info!("[killclient]");
         unsafe {
             let sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
@@ -3322,16 +3322,16 @@ impl Dwm {
                 self.wmatom[WM::WMDelete as usize],
             ) {
                 XGrabServer(self.dpy);
-                XSetErrorHandler(Some(transmute(self.xerrordummy as *const ())));
+                XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
                 XSetCloseDownMode(self.dpy, DestroyAll);
                 XKillClient(self.dpy, sel.as_ref().unwrap().borrow_mut().win);
                 XSync(self.dpy, False);
-                XSetErrorHandler(Some(transmute(self.xerror as *const ())));
+                XSetErrorHandler(Some(transmute(xerror as *const ())));
                 XUngrabServer(self.dpy);
             }
         }
     }
-    pub fn nexttiled(&self, mut c: Option<Rc<RefCell<Client>>>) -> Option<Rc<RefCell<Client>>> {
+    pub fn nexttiled(&mut self, mut c: Option<Rc<RefCell<Client>>>) -> Option<Rc<RefCell<Client>>> {
         // info!("[nexttiled]");
         while let Some(ref c_opt) = c {
             let isfloating = c_opt.borrow_mut().isfloating;
@@ -3466,9 +3466,7 @@ impl Dwm {
                 );
                 match ev.type_ {
                     ConfigureRequest | Expose | MapRequest => {
-                        if let Some(ha) = self.handler[ev.type_ as usize] {
-                            ha(&mut ev);
-                        }
+                        self.handler(ev.type_, &mut ev);
                     }
                     MotionNotify => {
                         // info!("[movemouse] MotionNotify");
@@ -3598,9 +3596,7 @@ impl Dwm {
                 );
                 match ev.type_ {
                     ConfigureRequest | Expose | MapRequest => {
-                        if let Some(ha) = self.handler[ev.type_ as usize] {
-                            ha(&mut ev);
-                        }
+                        self.handler(ev.type_, &mut ev);
                     }
                     MotionNotify => {
                         if ev.motion.time - lasttime <= (1000 / 60) {
@@ -3719,7 +3715,7 @@ impl Dwm {
             XFreeModifiermap(modmap);
         }
     }
-    pub fn setclienttagprop(&self, c: &Rc<RefCell<Client>>) {
+    pub fn setclienttagprop(&mut self, c: &Rc<RefCell<Client>>) {
         let c_mut = c.borrow_mut();
         let data: [u8; 2] = [
             c_mut.tags0 as u8,
@@ -3815,7 +3811,7 @@ impl Dwm {
             XFree(syms as *mut _);
         }
     }
-    pub fn sendevent(&self, c: &mut Client, proto: Atom) -> bool {
+    pub fn sendevent(&mut self, c: &mut Client, proto: Atom) -> bool {
         info!("[sendevent] {}", c);
         let mut protocols: *mut Atom = null_mut();
         let mut n: i32 = 0;
@@ -3846,7 +3842,7 @@ impl Dwm {
         }
         return exists;
     }
-    pub fn setfocus(&self, c: &Rc<RefCell<Client>>) {
+    pub fn setfocus(&mut self, c: &Rc<RefCell<Client>>) {
         // info!("[setfocus]");
         unsafe {
             let mut c = c.borrow_mut();
@@ -3891,7 +3887,9 @@ impl Dwm {
             };
             let mon_eq = { Rc::ptr_eq(m.as_ref().unwrap(), self.selmon.as_ref().unwrap()) };
             if !mon_eq {
-                self.unfocus(self.selmon.as_ref().unwrap().borrow_mut().sel.clone(), true);
+                let mut selmon_clone = self.selmon.clone();
+                let selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
+                self.unfocus(selmon_mut.sel.clone(), true);
                 self.selmon = m;
             } else if c.is_none()
                 || Self::are_equal_rc(&c, &self.selmon.as_ref().unwrap().borrow_mut().sel)
@@ -4021,7 +4019,7 @@ impl Dwm {
         self.focus(None);
         self.arrange(None);
     }
-    pub fn setclientstate(&self, c: &Rc<RefCell<Client>>, mut state: i64) {
+    pub fn setclientstate(&mut self, c: &Rc<RefCell<Client>>, mut state: i64) {
         // info!("[setclientstate]");
         unsafe {
             let win = c.borrow_mut().win;
@@ -4037,7 +4035,7 @@ impl Dwm {
             );
         }
     }
-    pub fn keypress(&self, e: *mut XEvent) {
+    pub fn keypress(&mut self, e: *mut XEvent) {
         info!("[keypress]");
         unsafe {
             let ev = (*e).key;
@@ -4216,10 +4214,9 @@ impl Dwm {
                 );
             }
             if mon_eq_selmon {
-                self.unfocus(
-                    self.selmon.as_ref().unwrap().borrow_mut().sel.clone(),
-                    false,
-                );
+                let mut selmon_clone = self.selmon.clone();
+                let selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
+                self.unfocus(selmon_mut.sel.clone(), false);
             }
             {
                 let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
@@ -4257,7 +4254,7 @@ impl Dwm {
             }
         }
     }
-    pub fn monocle(&self, m: *mut Monitor) {
+    pub fn monocle(&mut self, m: *mut Monitor) {
         // info!("[monocle]");
         unsafe {
             // This idea is cool!.
@@ -4293,7 +4290,7 @@ impl Dwm {
             }
         }
     }
-    pub fn motionnotify(&self, e: *mut XEvent) {
+    pub fn motionnotify(&mut self, e: *mut XEvent) {
         // info!("[motionnotify]");
         unsafe {
             // This idea is cool
@@ -4302,7 +4299,7 @@ impl Dwm {
             if ev.window != self.root {
                 return;
             }
-            let m = self.recttomon(ev.x_self.root, ev.y_root, 1, 1);
+            let m = self.recttomon(ev.x_root, ev.y_root, 1, 1);
             if motionmon.is_some() && !Rc::ptr_eq(m.as_ref().unwrap(), motionmon.as_ref().unwrap())
             {
                 let selmon_mut_sel = self.selmon.as_ref().unwrap().borrow_mut().sel.clone();
@@ -4313,7 +4310,7 @@ impl Dwm {
             motionmon = m;
         }
     }
-    pub fn unmanage(&self, c: Option<Rc<RefCell<Client>>>, destroyed: bool) {
+    pub fn unmanage(&mut self, c: Option<Rc<RefCell<Client>>>, destroyed: bool) {
         // info!("[unmanage]");
         unsafe {
             let mut wc: XWindowChanges = zeroed();
@@ -4355,14 +4352,14 @@ impl Dwm {
                 wc.border_width = oldbw;
                 // avoid race conditions.
                 XGrabServer(self.dpy);
-                XSetErrorHandler(Some(transmute(self.xerrordummy as *const ())));
+                XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
                 XSelectInput(self.dpy, win, NoEventMask);
                 // restore border.
                 XConfigureWindow(self.dpy, win, CWBorderWidth as u32, &mut wc);
                 XUngrabButton(self.dpy, AnyButton as u32, AnyModifier, win);
                 self.setclientstate(c.as_ref().unwrap(), WithdrawnState as i64);
                 XSync(self.dpy, False);
-                XSetErrorHandler(Some(transmute(self.xerror as *const ())));
+                XSetErrorHandler(Some(transmute(xerror as *const ())));
                 XUngrabServer(self.dpy);
             }
             self.focus(None);
@@ -4370,7 +4367,7 @@ impl Dwm {
             self.arrange(c.as_ref().unwrap().borrow_mut().mon.clone());
         }
     }
-    pub fn unmapnotify(&self, e: *mut XEvent) {
+    pub fn unmapnotify(&mut self, e: *mut XEvent) {
         // info!("[unmapnotify]");
         unsafe {
             let ev = (*e).unmap;
@@ -4386,7 +4383,7 @@ impl Dwm {
     }
 
     pub fn isuniquegeom(
-        &self,
+        &mut self,
         unique: &mut Vec<XineramaScreenInfo>,
         info: *mut XineramaScreenInfo,
     ) -> bool {
@@ -4526,7 +4523,8 @@ impl Dwm {
                     self.mons = Some(Rc::new(RefCell::new(self.createmon())));
                 }
                 {
-                    let mut mons_mut = self.mons.as_ref().unwrap().borrow_mut();
+                    let mons_clone = self.mons.clone();
+                    let mut mons_mut = mons_clone.as_ref().unwrap().borrow_mut();
                     if mons_mut.mw != self.sw || mons_mut.mh != self.sh {
                         dirty = true;
                         mons_mut.mw = self.sw;
@@ -4545,7 +4543,7 @@ impl Dwm {
         return dirty;
     }
 
-    pub fn gettextprop(&self, w: Window, atom: Atom, text: &mut String) -> bool {
+    pub fn gettextprop(&mut self, w: Window, atom: Atom, text: &mut String) -> bool {
         // info!("[gettextprop]");
         unsafe {
             let mut name: XTextProperty = zeroed();
@@ -4607,7 +4605,8 @@ impl Dwm {
     }
     pub fn updatestatus(&mut self) {
         // info!("[updatestatus]");
-        if !self.gettextprop(self.root, XA_WM_NAME, &mut self.stext) {
+        let mut stext = self.stext.clone();
+        if !self.gettextprop(self.root, XA_WM_NAME, &mut stext) {
             self.stext = "jwm-1.0".to_string();
         }
         self.drawbar(self.selmon.clone());
@@ -4630,7 +4629,7 @@ impl Dwm {
             c.isfloating = true;
         }
     }
-    pub fn updatewmhints(&self, c: &Rc<RefCell<Client>>) {
+    pub fn updatewmhints(&mut self, c: &Rc<RefCell<Client>>) {
         // info!("[updatewmhints]");
         unsafe {
             let mut cc = c.borrow_mut();
@@ -4659,7 +4658,7 @@ impl Dwm {
             }
         }
     }
-    pub fn updatetitle(&self, c: &Rc<RefCell<Client>>) {
+    pub fn updatetitle(&mut self, c: &Rc<RefCell<Client>>) {
         // info!("[updatetitle]");
         let mut c = c.borrow_mut();
         if !self.gettextprop(c.win, self.netatom[NET::NetWMName as usize], &mut c.name) {
