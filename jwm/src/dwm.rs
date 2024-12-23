@@ -2156,7 +2156,7 @@ impl Dwm {
                     click = CLICK::ClkLtSymbol;
                     info!("[buttonpress] ClkLtSymbol");
                 } else if ev.x
-                    > selmon_mut.ww - self.drw.as_mut().unwrap().textwm(&*self.stext) as i32
+                    > selmon_mut.ww - self.drw.as_mut().unwrap().textwm(&self.stext) as i32
                 {
                     click = CLICK::ClkStatusText;
                     info!("[buttonpress] ClkStatusText");
@@ -4623,6 +4623,8 @@ impl Dwm {
         let mut stext = self.stext.clone();
         if !self.gettextprop(self.root, XA_WM_NAME, &mut stext) {
             self.stext = "jwm-1.0".to_string();
+        } else {
+            self.stext = stext;
         }
         self.drawbar(self.selmon.clone());
     }

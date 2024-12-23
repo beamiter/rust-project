@@ -63,7 +63,7 @@ fn main() {
                 Err(_) => {}
             }
             let status = status_bar.broadcast_string();
-            // println!("status string: {}", status);
+            // info!("status string: {}", status);
             // Update X root window name (status bar), here we will just print to stdout
             let _output = Command::new("xsetroot").arg("-name").arg(status).output();
             thread::sleep(Duration::from_millis(500));
