@@ -2,10 +2,10 @@ use indicatif::{ProgressBar, ProgressStyle};
 use regex::Regex;
 use reqwest::{self};
 use serde_json::Value;
-use std::error::Error;
 use std::fs::File;
-use std::io::{self, Write};
+use std::io::{self, ErrorKind, Write};
 use std::os::unix::fs::PermissionsExt;
+use std::process::Command;
 use tokio;
 
 struct VersionInfo {
@@ -26,6 +26,43 @@ fn extract_version(url: &str) -> Option<String> {
         .captures(url)
         .and_then(|caps| caps.get(1).map(|match_| match_.as_str().to_string()))
 }
+
+fn move_file(file_path: &str, target_path: &str) -> io::Result<()> {
+    print!("正在移动文件... ");
+    io::stdout().flush()?;
+    let mv_output = Command::new("sudo")
+        .args(["mv", file_path, target_path])
+        .output()?;
+    if !mv_output.status.success() {
+        println!("失败");
+        return Err(io::Error::new(
+            ErrorKind::Other,
+            format!(
+                "移动文件失败: {}",
+                String::from_utf8_lossy(&mv_output.stderr)
+            ),
+        ));
+    }
+    println!("成功");
+    print!("设置文件权限... ");
+    io::stdout().flush()?;
+    let chmod_output = Command::new("sudo")
+        .args(["chmod", "755", target_path])
+        .output()?;
+    if !chmod_output.status.success() {
+        println!("失败");
+        return Err(io::Error::new(
+            ErrorKind::Other,
+            format!(
+                "设置权限失败: {}",
+                String::from_utf8_lossy(&chmod_output.stderr)
+            ),
+        ));
+    }
+    println!("成功");
+    Ok(())
+}
+
 async fn post_process_neovim(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     let file_path = "/tmp/neovim.appimage";
 
@@ -64,7 +101,8 @@ async fn post_process_neovim(url: &str) -> Result<(), Box<dyn std::error::Error>
     perms.set_mode(0o755); // 类似于 chmod 755
     file.set_permissions(perms)?;
 
-    println!("Neovim AppImage here: {}", file_path);
+    let target_path = "/usr/local/bin/nvim";
+    let _ = move_file(file_path, target_path);
 
     Ok(())
 }
@@ -107,12 +145,15 @@ async fn post_process_vim(url: &str) -> Result<(), Box<dyn std::error::Error>> {
     perms.set_mode(0o755); // 类似于 chmod 755
     file.set_permissions(perms)?;
 
-    println!("Vim AppImage here: {}", file_path);
+    let target_path = "/usr/local/bin/vim";
+    let _ = move_file(file_path, target_path);
 
     Ok(())
 }
 
-async fn down_vim(vim_version_vec: &mut Vec<VersionInfo>) -> Result<(), Box<dyn Error>> {
+async fn down_vim(
+    vim_version_vec: &mut Vec<VersionInfo>,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("down vim");
     // GitHub API URL for the releases of the vim-appimage repository
     let url = "https://api.github.com/repos/vim/vim-appimage/releases";
@@ -159,7 +200,9 @@ async fn down_vim(vim_version_vec: &mut Vec<VersionInfo>) -> Result<(), Box<dyn 
     Ok(())
 }
 
-async fn down_nvim(nvim_version_vec: &mut Vec<VersionInfo>) -> Result<(), Box<dyn Error>> {
+async fn down_nvim(
+    nvim_version_vec: &mut Vec<VersionInfo>,
+) -> Result<(), Box<dyn std::error::Error>> {
     println!("down neovim");
     // GitHub API URL for the releases of the vim-appimage repository
     // let url = "https://github.com/neovim/neovim/releases";
