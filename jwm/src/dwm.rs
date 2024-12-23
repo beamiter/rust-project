@@ -880,6 +880,7 @@ impl Dwm {
     pub fn cleanup(&mut self) {
         // info!("[cleanup]");
         // Bitwise or to get max value.
+        drop(self.sender.clone());
         let mut a: Arg = Arg::Ui(!0);
         let foo: Layout = Layout::new("", None);
         unsafe {

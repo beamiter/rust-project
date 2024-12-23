@@ -51,6 +51,7 @@ fn main() {
             match rx.try_recv() {
                 Ok(val) => match val {
                     0 => {
+                        info!("Recieve {}, shut down", val);
                         break;
                     }
                     1 => {
