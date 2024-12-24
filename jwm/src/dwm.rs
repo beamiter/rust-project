@@ -54,12 +54,7 @@ use x11::xlib::{
 
 use std::cmp::{max, min};
 
-use crate::config::{
-    alphas, baralpha, borderpx, buttons, colors, dmenucmd, font, horizpadbar, keys, layouts,
-    lockfullscreen, mfact, nmaster, resizehints, rules, showbar, sidepad, snap, tagmask, tags,
-    tags_length, topbar, ulineall, ulinepad, ulinestroke, ulinevoffset, vertpad, vertpadbar,
-    OPAQUE,
-};
+use crate::config::{tags, Config};
 use crate::drw::{Clr, Col, Cur, Drw};
 use crate::icon_gallery::generate_random_tags;
 use crate::xproto::{
@@ -198,28 +193,28 @@ pub struct Pertag {
     // previous tag
     pub prevtag: usize,
     // number of windows in master area
-    pub nmasters: [u32; tags_length + 1],
+    pub nmasters: [u32; Config::tags_length + 1],
     // mfacts per tag
-    pub mfacts: [f32; tags_length + 1],
+    pub mfacts: [f32; Config::tags_length + 1],
     // selected layouts
-    pub sellts: [usize; tags_length + 1],
+    pub sellts: [usize; Config::tags_length + 1],
     // matrix of tags and layouts indexes
-    ltidxs: [[Option<Rc<Layout>>; 2]; tags_length + 1],
+    ltidxs: [[Option<Rc<Layout>>; 2]; Config::tags_length + 1],
     // display bar for the current tag
-    pub showbars: [bool; tags_length + 1],
+    pub showbars: [bool; Config::tags_length + 1],
     // selected client
-    pub sel: [Option<Rc<RefCell<Client>>>; tags_length + 1],
+    pub sel: [Option<Rc<RefCell<Client>>>; Config::tags_length + 1],
 }
 impl Pertag {
     pub fn new() -> Self {
         Self {
             curtag: 0,
             prevtag: 0,
-            nmasters: [0; tags_length + 1],
-            mfacts: [0.; tags_length + 1],
-            sellts: [0; tags_length + 1],
+            nmasters: [0; Config::tags_length + 1],
+            mfacts: [0.; Config::tags_length + 1],
+            sellts: [0; Config::tags_length + 1],
             ltidxs: unsafe { zeroed() },
-            showbars: [false; tags_length + 1],
+            showbars: [false; Config::tags_length + 1],
             sel: unsafe { zeroed() },
         }
     }
@@ -672,7 +667,7 @@ impl Dwm {
             //     class, instance, c.name
             // );
 
-            for r in &*rules {
+            for r in &*Config::rules {
                 if (!r.title.is_empty() && c.name.find(r.title).is_some())
                     || (!r.class.is_empty() && class.find(r.class).is_some())
                     || (!r.instance.is_empty() && instance.find(r.instance).is_some())
@@ -698,7 +693,7 @@ impl Dwm {
             if !ch.res_name.is_null() {
                 XFree(ch.res_name as *mut _);
             }
-            let condition = c.tags0 & tagmask;
+            let condition = c.tags0 & Config::tagmask;
             c.tags0 = if condition > 0 {
                 condition
             } else {
@@ -828,7 +823,7 @@ impl Dwm {
             let x = mon.as_ref().unwrap().borrow_mut().lt[sellt].arrange;
             x
         };
-        if resizehints || isfloating || arrange.is_none() {
+        if Config::resizehints || isfloating || arrange.is_none() {
             if !c.as_ref().borrow_mut().hintsvalid {
                 self.updatesizehints(c);
             }
@@ -1330,13 +1325,13 @@ impl Dwm {
         let mut m: Monitor = Monitor::new();
         m.tagset[0] = 1;
         m.tagset[1] = 1;
-        m.mfact0 = mfact;
-        m.nmaster0 = nmaster;
-        m.showbar0 = showbar;
-        m.topbar0 = topbar;
-        m.lt[0] = layouts[0].clone();
-        m.lt[1] = layouts[1 % layouts.len()].clone();
-        m.ltsymbol = layouts[0].symbol.to_string();
+        m.mfact0 = Config::mfact;
+        m.nmaster0 = Config::nmaster;
+        m.showbar0 = Config::showbar;
+        m.topbar0 = Config::topbar;
+        m.lt[0] = Config::layouts[0].clone();
+        m.lt[1] = Config::layouts[1 % Config::layouts.len()].clone();
+        m.ltsymbol = Config::layouts[0].symbol.to_string();
         info!(
             "[createmon]: ltsymbol: {:?}, mfact0: {}, nmaster0: {}, showbar0: {}, topbar0: {}",
             m.ltsymbol, m.mfact0, m.nmaster0, m.showbar0, m.topbar0
@@ -1345,7 +1340,7 @@ impl Dwm {
         let ref_pertag = m.pertag.as_mut().unwrap();
         ref_pertag.curtag = 1;
         ref_pertag.prevtag = 1;
-        for i in 0..=tags_length {
+        for i in 0..=Config::tags_length {
             ref_pertag.nmasters[i] = m.nmaster0;
             ref_pertag.mfacts[i] = m.mfact0;
 
@@ -1592,13 +1587,13 @@ impl Dwm {
             }
         }
 
-        w += horizpadbar as u32;
+        w += Config::horizpadbar as u32;
         let ww = { m.as_ref().unwrap().borrow_mut().ww };
         let ret = ww - w as i32;
         let mut x = ret - 2 * self.sp;
         drw_mut.drw_setscheme(self.scheme[SCHEME::SchemeStatus as usize].clone());
         drw_mut.drw_rect(x, 0, w, self.bh as u32, 1, 0);
-        x += horizpadbar / 2;
+        x += Config::horizpadbar / 2;
         for element in &parsed_elements {
             // info!("[drawstatusbar] element {:?}", element);
             match element {
@@ -1606,9 +1601,9 @@ impl Dwm {
                     w = drw_mut.textw(val) - drw_mut.lrpad as u32;
                     drw_mut.drw_text(
                         x,
-                        vertpadbar / 2,
+                        Config::vertpadbar / 2,
                         w,
-                        self.bh as u32 - vertpadbar as u32,
+                        self.bh as u32 - Config::vertpadbar as u32,
                         0,
                         &val,
                         0,
@@ -1619,11 +1614,12 @@ impl Dwm {
                 TextElement::WithCaret(val) => {
                     if val.starts_with('c') {
                         let color = &val[1..];
-                        drw_mut.scheme[Col::ColFg as usize] = drw_mut.drw_clr_create(color, OPAQUE);
+                        drw_mut.scheme[Col::ColFg as usize] =
+                            drw_mut.drw_clr_create(color, Config::OPAQUE);
                     } else if val.starts_with('b') {
                         let color = &val[1..];
                         drw_mut.scheme[Col::ColBg as usize] =
-                            drw_mut.drw_clr_create(color, baralpha);
+                            drw_mut.drw_clr_create(color, Config::baralpha);
                     } else if val.starts_with('d') {
                         drw_mut.scheme[Col::ColFg as usize] =
                             self.scheme[SCHEME::SchemeNorm as usize][Col::ColFg as usize].clone();
@@ -1640,7 +1636,7 @@ impl Dwm {
                             let rh = numbers[3];
                             drw_mut.drw_rect(
                                 rx + x,
-                                ry + vertpadbar / 2,
+                                ry + Config::vertpadbar / 2,
                                 rw as u32,
                                 rh as u32,
                                 0,
@@ -1712,7 +1708,7 @@ impl Dwm {
             }
             let mut x = 0;
             let mut w;
-            for i in 0..tags_length {
+            for i in 0..Config::tags_length {
                 w = self.drw.as_mut().unwrap().textw(tags[i]) as i32;
                 let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
                 let tagset = { m.as_ref().unwrap().borrow_mut().tagset };
@@ -1741,12 +1737,12 @@ impl Dwm {
                     (urg & 1 << i) as i32,
                     false,
                 );
-                if ulineall || is_selected_tag {
+                if Config::ulineall || is_selected_tag {
                     self.drw.as_mut().unwrap().drw_rect(
-                        x + ulinepad as i32,
-                        self.bh - ulinestroke as i32 - ulinevoffset as i32,
-                        w as u32 - (ulinepad * 2),
-                        ulinestroke,
+                        x + Config::ulinepad as i32,
+                        self.bh - Config::ulinestroke as i32 - Config::ulinevoffset as i32,
+                        w as u32 - (Config::ulinepad * 2),
+                        Config::ulinestroke,
                         1,
                         0,
                     );
@@ -2139,7 +2135,7 @@ impl Dwm {
                 info!("[buttonpress] barwin: {}, ev.x: {}", barwin, ev.x);
                 let mut i: usize = 0;
                 let mut x: u32 = 0;
-                for tag_i in 0..tags_length {
+                for tag_i in 0..Config::tags_length {
                     x += self.drw.as_mut().unwrap().textw(tags[tag_i]);
                     if ev.x < x as i32 {
                         break;
@@ -2148,7 +2144,7 @@ impl Dwm {
                     info!("[buttonpress] x: {}, i: {}", x, i);
                 }
                 let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
-                if i < tags_length {
+                if i < Config::tags_length {
                     click = CLICK::ClkTagBar;
                     arg = Arg::Ui(1 << i);
                     info!("[buttonpress] ClkTagBar");
@@ -2174,20 +2170,22 @@ impl Dwm {
                 XAllowEvents(self.dpy, ReplayPointer, CurrentTime);
                 click = CLICK::ClkClientWin;
             }
-            for i in 0..buttons.len() {
-                if click as u32 == buttons[i].click
-                    && buttons[i].func.is_some()
-                    && buttons[i].button == ev.button
-                    && self.CLEANMASK(buttons[i].mask) == self.CLEANMASK(ev.state)
+            for i in 0..Config::buttons.len() {
+                if click as u32 == Config::buttons[i].click
+                    && Config::buttons[i].func.is_some()
+                    && Config::buttons[i].button == ev.button
+                    && self.CLEANMASK(Config::buttons[i].mask) == self.CLEANMASK(ev.state)
                 {
-                    if let Some(ref func) = buttons[i].func {
+                    if let Some(ref func) = Config::buttons[i].func {
                         info!(
                             "[buttonpress] click: {}, button: {}, mask: {}",
-                            buttons[i].click, buttons[i].button, buttons[i].mask
+                            Config::buttons[i].click,
+                            Config::buttons[i].button,
+                            Config::buttons[i].mask
                         );
                         func(self, {
                             if click as u32 == CLICK::ClkTagBar as u32 && {
-                                if let Arg::Ui(0) = buttons[i].arg {
+                                if let Arg::Ui(0) = Config::buttons[i].arg {
                                     true
                                 } else {
                                     false
@@ -2197,7 +2195,7 @@ impl Dwm {
                                 &mut arg
                             } else {
                                 info!("[buttonpress] use button arg");
-                                &mut buttons[i].arg.clone()
+                                &mut Config::buttons[i].arg.clone()
                             }
                         });
                         break;
@@ -2231,7 +2229,7 @@ impl Dwm {
 
             let mut mut_arg: Arg = (*arg).clone();
             if let Arg::V(ref mut v) = mut_arg {
-                if *v == *dmenucmd {
+                if *v == *Config::dmenucmd {
                     let tmp = (b'0' + self.selmon.as_ref().unwrap().borrow_mut().num as u8) as char;
                     let tmp = tmp.to_string();
                     info!(
@@ -2479,7 +2477,7 @@ impl Dwm {
         unsafe {
             {
                 let _ = self.sender.send(1);
-                *tags = generate_random_tags(tags_length);
+                *tags = generate_random_tags(Config::tags_length);
                 {
                     let mut selmon_clone = self.selmon.clone();
                     let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
@@ -2568,8 +2566,8 @@ impl Dwm {
         unsafe {
             if let Arg::Ui(ui) = *arg {
                 let sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
-                if sel.is_some() && (ui & tagmask) > 0 {
-                    sel.as_ref().unwrap().borrow_mut().tags0 = ui & tagmask;
+                if sel.is_some() && (ui & Config::tagmask) > 0 {
+                    sel.as_ref().unwrap().borrow_mut().tags0 = ui & Config::tagmask;
                     self.setclienttagprop(sel.as_ref().unwrap());
                     self.focus(None);
                     self.arrange(self.selmon.clone());
@@ -2607,7 +2605,7 @@ impl Dwm {
                 let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
                 if selmon_mut.sel.is_none()
                     || (selmon_mut.sel.as_ref().unwrap().borrow_mut().isfullscreen
-                        && lockfullscreen)
+                        && Config::lockfullscreen)
                 {
                     return;
                 }
@@ -2966,14 +2964,14 @@ impl Dwm {
             if let Arg::Ui(ui) = *arg {
                 info!("[view] ui: {}", ui);
                 let mut selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
-                if (ui & tagmask) == selmon_mut.tagset[selmon_mut.seltags] {
+                if (ui & Config::tagmask) == selmon_mut.tagset[selmon_mut.seltags] {
                     return;
                 }
                 // toggle sel tagset.
                 selmon_mut.seltags ^= 1;
-                if ui & tagmask > 0 {
+                if ui & Config::tagmask > 0 {
                     let seltags = selmon_mut.seltags;
-                    selmon_mut.tagset[seltags] = ui & tagmask;
+                    selmon_mut.tagset[seltags] = ui & Config::tagmask;
 
                     let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
                     selmon_mut.pertag.as_mut().unwrap().prevtag = curtag;
@@ -3037,7 +3035,7 @@ impl Dwm {
                 {
                     let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
                     seltags = selmon_mut.seltags;
-                    newtagset = selmon_mut.tagset[seltags] ^ (ui & tagmask);
+                    newtagset = selmon_mut.tagset[seltags] ^ (ui & Config::tagmask);
                 }
                 if newtagset > 0 {
                     {
@@ -3112,7 +3110,7 @@ impl Dwm {
                 return;
             }
             if let Arg::Ui(ui) = *arg {
-                let newtags = sel.as_ref().unwrap().borrow_mut().tags0 ^ (ui & tagmask);
+                let newtags = sel.as_ref().unwrap().borrow_mut().tags0 ^ (ui & Config::tagmask);
                 if newtags > 0 {
                     sel.as_ref().unwrap().borrow_mut().tags0 = newtags;
                     self.setclienttagprop(sel.as_ref().unwrap());
@@ -3158,7 +3156,13 @@ impl Dwm {
                 self.cmap,
             )));
             // info!("[setup] drw_fontset_create");
-            if !self.drw.as_mut().unwrap().as_mut().drw_font_create(font) {
+            if !self
+                .drw
+                .as_mut()
+                .unwrap()
+                .as_mut()
+                .drw_font_create(Config::font)
+            {
                 eprintln!("no fonts could be loaded");
                 exit(0);
             }
@@ -3173,10 +3177,14 @@ impl Dwm {
                     .borrow_mut()
                     .h as i32;
                 self.drw.as_mut().unwrap().lrpad = h;
-                self.bh = h + vertpadbar;
+                self.bh = h + Config::vertpadbar;
             }
-            self.sp = sidepad;
-            self.vp = if topbar { vertpad } else { -vertpad };
+            self.sp = Config::sidepad;
+            self.vp = if Config::topbar {
+                Config::vertpad
+            } else {
+                -Config::vertpad
+            };
             // info!("[setup] updategeom");
             self.updategeom();
             // init atoms
@@ -3241,13 +3249,13 @@ impl Dwm {
                 .as_mut()
                 .drw_cur_create(XC_fleur as i32);
             // init appearance
-            self.scheme = vec![vec![]; colors.len()];
-            for i in 0..colors.len() {
-                self.scheme[i] = self
-                    .drw
-                    .as_mut()
-                    .unwrap()
-                    .drw_scm_create(colors[i], &alphas[i], 3);
+            self.scheme = vec![vec![]; Config::colors.len()];
+            for i in 0..Config::colors.len() {
+                self.scheme[i] = self.drw.as_mut().unwrap().drw_scm_create(
+                    Config::colors[i],
+                    &Config::alphas[i],
+                    3,
+                );
             }
             // init bars
             // info!("[setup] updatebars");
@@ -3510,14 +3518,14 @@ impl Dwm {
                         let mut ny = ocy + ev.motion.y - y;
                         let width = { c.as_ref().unwrap().borrow_mut().width() };
                         let height = { c.as_ref().unwrap().borrow_mut().height() };
-                        if (wx - nx).abs() < snap as i32 {
+                        if (wx - nx).abs() < Config::snap as i32 {
                             nx = wx;
-                        } else if ((wx + ww) - (nx + width)).abs() < snap as i32 {
+                        } else if ((wx + ww) - (nx + width)).abs() < Config::snap as i32 {
                             nx = wx + ww - width;
                         }
-                        if (wy - ny).abs() < snap as i32 {
+                        if (wy - ny).abs() < Config::snap as i32 {
                             ny = wy;
-                        } else if ((wy + wh) - (ny + height)).abs() < snap as i32 {
+                        } else if ((wy + wh) - (ny + height)).abs() < Config::snap as i32 {
                             ny = wy + wh - height;
                         }
                         let isfloating = c.as_ref().unwrap().borrow_mut().isfloating;
@@ -3529,7 +3537,8 @@ impl Dwm {
                         };
                         if !isfloating
                             && arrange.is_some()
-                            && ((nx - x).abs() > snap as i32 || (ny - y).abs() > snap as i32)
+                            && ((nx - x).abs() > Config::snap as i32
+                                || (ny - y).abs() > Config::snap as i32)
                         {
                             self.togglefloating(null_mut());
                         }
@@ -3671,9 +3680,9 @@ impl Dwm {
                             if !isfloating
                                 && arrange.is_some()
                                 && ((nw - (*c.as_ref().unwrap().borrow_mut()).w).abs()
-                                    > snap as i32
+                                    > Config::snap as i32
                                     || (nh - (*c.as_ref().unwrap().borrow_mut()).h).abs()
-                                        > snap as i32)
+                                        > Config::snap as i32)
                             {
                                 self.togglefloating(null_mut());
                             }
@@ -3775,13 +3784,13 @@ impl Dwm {
                     0,
                 );
             }
-            for i in 0..buttons.len() {
-                if buttons[i].click == CLICK::ClkClientWin as u32 {
+            for i in 0..Config::buttons.len() {
+                if Config::buttons[i].click == CLICK::ClkClientWin as u32 {
                     for j in 0..modifiers.len() {
                         XGrabButton(
                             self.dpy,
-                            buttons[i].button,
-                            buttons[i].mask | modifiers[j],
+                            Config::buttons[i].button,
+                            Config::buttons[i].mask | modifiers[j],
                             c.win,
                             False,
                             BUTTONMASK as u32,
@@ -3811,14 +3820,14 @@ impl Dwm {
                 return;
             }
             for k in start..=end {
-                for i in 0..keys.len() {
+                for i in 0..Config::keys.len() {
                     // skip modifier codes, we do that ourselves.
-                    if keys[i].keysym == *syms.wrapping_add(((k - start) * skip) as usize) {
+                    if Config::keys[i].keysym == *syms.wrapping_add(((k - start) * skip) as usize) {
                         for j in 0..modifiers.len() {
                             XGrabKey(
                                 self.dpy,
                                 k,
-                                keys[i].mod0 | modifiers[j],
+                                Config::keys[i].mod0 | modifiers[j],
                                 self.root,
                                 True,
                                 GrabModeAsync,
@@ -4065,13 +4074,13 @@ impl Dwm {
                 keysym,
                 self.CLEANMASK(ev.state)
             );
-            for i in 0..keys.len() {
-                if keysym == keys[i].keysym
-                    && self.CLEANMASK(keys[i].mod0) == self.CLEANMASK(ev.state)
-                    && keys[i].func.is_some()
+            for i in 0..Config::keys.len() {
+                if keysym == Config::keys[i].keysym
+                    && self.CLEANMASK(Config::keys[i].mod0) == self.CLEANMASK(ev.state)
+                    && Config::keys[i].func.is_some()
                 {
-                    info!("[keypress] i: {}, arg: {:?}", i, keys[i].arg);
-                    keys[i].func.unwrap()(self, &keys[i].arg);
+                    info!("[keypress] i: {}, arg: {:?}", i, Config::keys[i].arg);
+                    Config::keys[i].func.unwrap()(self, &Config::keys[i].arg);
                 }
             }
         }
@@ -4134,7 +4143,7 @@ impl Dwm {
                 c.as_ref().unwrap().borrow_mut().x = x.max(wx);
                 let y = c.as_ref().unwrap().borrow_mut().y;
                 c.as_ref().unwrap().borrow_mut().y = y.max(wy);
-                c.as_ref().unwrap().borrow_mut().bw = borderpx as i32;
+                c.as_ref().unwrap().borrow_mut().bw = Config::borderpx as i32;
                 wc.border_width = c.as_ref().unwrap().borrow_mut().bw;
                 XConfigureWindow(self.dpy, w, CWBorderWidth as u32, &mut wc);
                 XSetWindowBorder(
@@ -4331,7 +4340,7 @@ impl Dwm {
         unsafe {
             let mut wc: XWindowChanges = zeroed();
 
-            for i in 0..=tags_length {
+            for i in 0..=Config::tags_length {
                 let cel_i = c
                     .as_ref()
                     .unwrap()
