@@ -17,7 +17,7 @@ use x11::{
 };
 
 use crate::{
-    dwm::{self, Button, Dwm, Key, Layout, Rule, CLICK},
+    dwm::{self, Button, Dwm, Key, Layout, LayoutType, Rule, CLICK},
     icon_gallery::{generate_random_tags, ICON_GALLERY},
 };
 
@@ -111,9 +111,9 @@ impl Config {
     pub const tagmask: u32 = (1 << Self::tags_length) - 1;
     pub const layouts: Lazy<Vec<Rc<Layout>>> = Lazy::new(|| {
         vec![
-            Rc::new(Layout::new("[]=", Some(Dwm::tile))),
-            Rc::new(Layout::new("><>", None)),
-            Rc::new(Layout::new("[M]", Some(Dwm::monocle))),
+            Rc::new(Layout::new("[]=", Some(LayoutType::TypeTile))),
+            Rc::new(Layout::new("><>", Some(LayoutType::TypeFloat))),
+            Rc::new(Layout::new("[M]", Some(LayoutType::TypeMonocle))),
         ]
     });
 
@@ -383,7 +383,7 @@ impl Config {
                 0,
                 Button3,
                 Some(Dwm::setlayout),
-                dwm::Arg::I(2),
+                dwm::Arg::Lt(Self::layouts[2].clone()),
             ),
             Button::new(
                 CLICK::ClkWinTitle as u32,

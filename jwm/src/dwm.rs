@@ -221,14 +221,24 @@ impl Pertag {
 }
 
 #[derive(Debug, Clone, PartialEq)]
+pub enum LayoutType {
+    TypeTile,
+    TypeFloat,
+    TypeMonocle,
+}
+
+#[derive(Debug, Clone, PartialEq)]
 pub struct Layout {
     pub symbol: &'static str,
-    pub arrange: Option<fn(&mut Dwm, *mut Monitor)>,
+    pub layout_type: Option<LayoutType>,
 }
 impl Layout {
     #[allow(unused)]
-    pub fn new(symbol: &'static str, arrange: Option<fn(&mut Dwm, *mut Monitor)>) -> Self {
-        Self { symbol, arrange }
+    pub fn new(symbol: &'static str, layout_type: Option<LayoutType>) -> Self {
+        Self {
+            symbol,
+            layout_type,
+        }
     }
 }
 
@@ -419,11 +429,11 @@ impl Monitor {
             lt: [
                 Rc::new(Layout {
                     symbol: "",
-                    arrange: None,
+                    layout_type: None,
                 }),
                 Rc::new(Layout {
                     symbol: "",
-                    arrange: None,
+                    layout_type: None,
                 }),
             ],
             pertag: None,
@@ -817,13 +827,15 @@ impl Dwm {
             *w = self.bh;
         }
         let isfloating = { c.as_ref().borrow_mut().isfloating };
-        let arrange = {
+        let layout_type = {
             let mon = c.as_ref().borrow_mut().mon.clone();
             let sellt = mon.as_ref().unwrap().borrow_mut().sellt;
-            let x = mon.as_ref().unwrap().borrow_mut().lt[sellt].arrange;
+            let x = mon.as_ref().unwrap().borrow_mut().lt[sellt]
+                .layout_type
+                .clone();
             x
         };
-        if Config::resizehints || isfloating || arrange.is_none() {
+        if Config::resizehints || isfloating || layout_type.is_none() {
             if !c.as_ref().borrow_mut().hintsvalid {
                 self.updatesizehints(c);
             }
@@ -1191,7 +1203,7 @@ impl Dwm {
                 let isfloating = c.as_ref().unwrap().borrow_mut().isfloating;
                 let isfullscreen = c.as_ref().unwrap().borrow_mut().isfullscreen;
                 if (mon.as_ref().unwrap().borrow_mut().lt[sellt]
-                    .arrange
+                    .layout_type
                     .is_none()
                     || isfloating)
                     && !isfullscreen
@@ -1237,16 +1249,16 @@ impl Dwm {
             let ev = (*e).configure_request;
             let c = self.wintoclient(ev.window);
             if let Some(c_opt) = c {
-                let arrange = {
+                let layout_type = {
                     let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
                     let sellt = selmon_mut.sellt;
-                    selmon_mut.lt[sellt].arrange.clone()
+                    selmon_mut.lt[sellt].layout_type.clone()
                 };
                 let isfloating = { c_opt.borrow_mut().isfloating };
                 if ev.value_mask & CWBorderWidth as u64 > 0 {
                     let mut c_mut = c_opt.borrow_mut();
                     c_mut.bw = ev.border_width;
-                } else if isfloating || arrange.is_none() {
+                } else if isfloating || layout_type.is_none() {
                     let mx;
                     let my;
                     let mw;
@@ -1363,6 +1375,17 @@ impl Dwm {
             }
         }
     }
+    pub fn applylayout(&mut self, layout_type: &LayoutType, m: *mut Monitor) {
+        match layout_type {
+            LayoutType::TypeTile => {
+                self.tile(m);
+            }
+            LayoutType::TypeFloat => {}
+            LayoutType::TypeMonocle => {
+                self.monocle(m);
+            }
+        }
+    }
     pub fn arrangemon(&mut self, m: &Rc<RefCell<Monitor>>) {
         // info!("[arrangemon]");
         let sellt;
@@ -1372,16 +1395,13 @@ impl Dwm {
             mm.ltsymbol = (mm).lt[sellt].symbol.to_string();
             info!("[arrangemon] sellt: {}, ltsymbol: {:?}", sellt, mm.ltsymbol);
         }
-        let arrange;
-        {
-            arrange = m.borrow_mut().lt[sellt].arrange;
-        }
-        if let Some(arrange0) = arrange {
+        let layout_type = { m.borrow_mut().lt[sellt].layout_type.clone() };
+        if let Some(ref layout_type) = layout_type {
             let m_ptr: *mut Monitor;
             {
                 m_ptr = &mut *m.borrow_mut();
             }
-            (arrange0)(self, m_ptr);
+            self.applylayout(layout_type, m_ptr);
         }
     }
     // This is cool!
@@ -1853,12 +1873,16 @@ impl Dwm {
             }
             let isfloating = sel.as_ref().unwrap().borrow_mut().isfloating;
             let sellt = m.as_ref().unwrap().borrow_mut().sellt;
-            let arrange = { m.as_ref().unwrap().borrow_mut().lt[sellt].arrange };
-            if isfloating || arrange.is_none() {
+            let layout_type = {
+                m.as_ref().unwrap().borrow_mut().lt[sellt]
+                    .layout_type
+                    .clone()
+            };
+            if isfloating || layout_type.is_none() {
                 let win = sel.as_ref().unwrap().borrow_mut().win;
                 XRaiseWindow(self.dpy, win);
             }
-            if arrange.is_some() {
+            if layout_type.is_some() {
                 wc.stack_mode = Below;
                 wc.sibling = m.as_ref().unwrap().borrow_mut().barwin;
                 let mut c = m.as_ref().unwrap().borrow_mut().stack.clone();
@@ -2700,11 +2724,11 @@ impl Dwm {
             if c.is_none() {
                 return;
             }
-            let lt_arrange = {
+            let lt_layout_type = {
                 let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
-                selmon_mut.lt[selmon_mut.sellt].arrange
+                selmon_mut.lt[selmon_mut.sellt].layout_type.clone()
             };
-            if lt_arrange.is_none() {
+            if lt_layout_type.is_none() {
                 return;
             }
             if let Arg::F(f0) = *arg {
@@ -2865,11 +2889,11 @@ impl Dwm {
     pub fn setmfact(&mut self, arg: *const Arg) {
         // info!("[setmfact]");
         unsafe {
-            let lt_arrange = {
+            let lt_layout_type = {
                 let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
-                selmon_mut.lt[selmon_mut.sellt].arrange
+                selmon_mut.lt[selmon_mut.sellt].layout_type.clone()
             };
-            if arg.is_null() || lt_arrange.is_none() {
+            if arg.is_null() || lt_layout_type.is_none() {
                 return;
             }
             if let Arg::F(f) = *arg {
@@ -2938,7 +2962,7 @@ impl Dwm {
             let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
             c = selmon_mut.sel.clone();
             let sellt = selmon_mut.sellt;
-            if selmon_mut.lt[sellt].arrange.is_none()
+            if selmon_mut.lt[sellt].layout_type.is_none()
                 || c.is_none()
                 || c.as_ref().unwrap().borrow_mut().isfloating
             {
@@ -3533,7 +3557,7 @@ impl Dwm {
                         let y = c.as_ref().unwrap().borrow_mut().y;
                         let arrange = {
                             let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
-                            selmon_mut.lt[selmon_mut.sellt].arrange.clone()
+                            selmon_mut.lt[selmon_mut.sellt].layout_type.clone()
                         };
                         if !isfloating
                             && arrange.is_some()
@@ -3667,9 +3691,9 @@ impl Dwm {
                                 .borrow_mut()
                                 .wy;
                         }
-                        let arrange = {
+                        let layout_type = {
                             let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
-                            selmon_mut.lt[selmon_mut.sellt].arrange.clone()
+                            selmon_mut.lt[selmon_mut.sellt].layout_type.clone()
                         };
                         if mon_wx + nw >= wx
                             && mon_wx + nw <= wx + ww
@@ -3678,7 +3702,7 @@ impl Dwm {
                         {
                             let isfloating = { c.as_ref().unwrap().borrow_mut().isfloating };
                             if !isfloating
-                                && arrange.is_some()
+                                && layout_type.is_some()
                                 && ((nw - (*c.as_ref().unwrap().borrow_mut()).w).abs()
                                     > Config::snap as i32
                                     || (nh - (*c.as_ref().unwrap().borrow_mut()).h).abs()
@@ -3690,7 +3714,7 @@ impl Dwm {
                         let isfloating = c.as_ref().unwrap().borrow_mut().isfloating;
                         let x = c.as_ref().unwrap().borrow_mut().x;
                         let y = c.as_ref().unwrap().borrow_mut().y;
-                        if arrange.is_none() || isfloating {
+                        if layout_type.is_none() || isfloating {
                             self.resize(c.as_ref().unwrap(), x, y, nw, nh, true);
                         }
                     }
