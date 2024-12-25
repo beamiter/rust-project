@@ -2207,21 +2207,15 @@ impl Dwm {
                             Config::buttons[i].button,
                             Config::buttons[i].mask
                         );
-                        func(self, {
-                            if click as u32 == CLICK::ClkTagBar as u32 && {
-                                if let Arg::Ui(0) = Config::buttons[i].arg {
-                                    true
-                                } else {
-                                    false
-                                }
-                            } {
+                        if let Arg::Ui(0) = Config::buttons[i].arg {
+                            if click as u32 == CLICK::ClkTagBar as u32 {
                                 info!("[buttonpress] use fresh arg");
-                                &mut arg
-                            } else {
-                                info!("[buttonpress] use button arg");
-                                &mut Config::buttons[i].arg.clone()
+                                func(self, &arg);
+                                break;
                             }
-                        });
+                        }
+                        info!("[buttonpress] use button arg");
+                        func(self, &Config::buttons[i].arg);
                         break;
                     }
                 }
