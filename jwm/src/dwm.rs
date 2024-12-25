@@ -2683,7 +2683,7 @@ impl Dwm {
                 let mut selmon_mut = self.selmon.as_mut().unwrap().borrow_mut();
                 let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
                 selmon_mut.pertag.as_mut().unwrap().nmasters[curtag] =
-                    0.max(selmon_mut.nmaster0 + i as u32);
+                    0.max(selmon_mut.nmaster0 as i32 + i) as u32;
 
                 selmon_mut.nmaster0 = selmon_mut.pertag.as_ref().unwrap().nmasters[curtag];
             }
