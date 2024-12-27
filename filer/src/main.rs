@@ -36,9 +36,10 @@ fn main() -> eframe::Result {
 #[allow(dead_code)]
 struct MyApp {
     current_path: PathBuf,
-    current_path_string: String,
-    selected_item: Option<PathBuf>,
-    files: Vec<FileItem>,
+    current_files: Vec<FileItem>,
+    edit_path_string: String,
+    hovered_path: Option<PathBuf>,
+    hovered_files: Vec<FileItem>,
 }
 #[allow(dead_code)]
 struct FileItem {
@@ -52,73 +53,108 @@ impl Default for MyApp {
     fn default() -> Self {
         let current_path = std::env::current_dir().unwrap_or_default();
         let mut explorer = Self {
-            current_path_string: current_path.to_string_lossy().to_string(),
+            edit_path_string: current_path.to_string_lossy().to_string(),
             current_path,
-            selected_item: None,
-            files: Vec::new(),
+            hovered_path: None,
+            current_files: Vec::new(),
+            hovered_files: Vec::new(),
         };
         explorer.refresh_files();
         explorer
     }
 }
 impl MyApp {
+    fn load_directory(&self, path: &PathBuf) -> Vec<FileItem> {
+        std::fs::read_dir(path)
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .map(|entry| {
+                        let is_dir = entry.file_type().map(|t| t.is_dir()).unwrap_or(false);
+                        FileItem {
+                            name: entry.file_name().to_string_lossy().to_string(),
+                            path: entry.path(),
+                            metadata: entry.metadata().unwrap(),
+                            is_dir,
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
     fn refresh_files(&mut self) {
-        self.current_path_string = self.current_path.to_string_lossy().to_string();
-        self.files.clear();
-        if let Ok(entries) = std::fs::read_dir(&self.current_path) {
-            for entry in entries.flatten() {
-                if let Ok(metadata) = entry.metadata() {
-                    self.files.push(FileItem {
-                        name: entry.file_name().to_string_lossy().to_string(),
-                        path: entry.path(),
-                        is_dir: metadata.is_dir(),
-                        metadata,
-                    });
-                }
-            }
-        }
-        self.files.sort_by(|a, b| match (a.is_dir, b.is_dir) {
-            (true, false) => std::cmp::Ordering::Less,
-            (false, true) => std::cmp::Ordering::Greater,
-            _ => a.name.cmp(&b.name),
-        });
+        self.edit_path_string = self.current_path.to_string_lossy().to_string();
+        self.current_files = self.load_directory(&self.current_path);
+        self.current_files
+            .sort_by(|a, b| match (a.is_dir, b.is_dir) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.name.cmp(&b.name),
+            });
     }
 
     fn render_folder_tree(&mut self, ui: &mut egui::Ui) {
-        if let Ok(entries) = std::fs::read_dir(&self.current_path) {
-            ui.vertical(|ui| {
-                egui::ScrollArea::vertical()
-                    .id_salt("main_list")
-                    .show(ui, |ui| {
-                        for entry in entries.flatten() {
-                            if let Ok(metadata) = entry.metadata() {
-                                let path = entry.path();
-                                let is_selected = self.current_path == path;
-                                let folder_name = path
-                                    .file_name()
-                                    .unwrap_or_default()
-                                    .to_string_lossy()
-                                    .to_string();
-                                let is_dir = metadata.is_dir();
-                                let icon = if is_dir { "📁" } else { "📄" };
-                                let response = ui.selectable_label(
-                                    is_selected,
-                                    format!("{} {}", icon, folder_name),
-                                );
-                                if response.clicked() {
-                                    if is_dir {
-                                        self.current_path = path.to_path_buf();
-                                        self.refresh_files();
-                                    } else {
-                                        self.current_path_string =
-                                            path.to_path_buf().to_string_lossy().to_string();
-                                    }
+        ui.horizontal(|ui| {
+            egui::ScrollArea::vertical()
+                .id_salt("main_list")
+                .show(ui, |ui| {
+                    ui.vertical(|ui| {
+                        for i in 0..self.current_files.len() {
+                            let fs = &self.current_files[i];
+                            let path = &fs.path;
+                            let path_string = path.to_path_buf().to_string_lossy().to_string();
+                            let is_selected = self.current_path == *path;
+                            let folder_name = &fs.name;
+                            let is_dir = fs.is_dir;
+                            let icon = if is_dir { "📁" } else { "📄" };
+                            let response = ui
+                                .selectable_label(is_selected, format!("{} {}", icon, folder_name));
+                            if response.clicked() {
+                                if is_dir {
+                                    self.current_path = path.to_path_buf();
+                                    self.refresh_files();
+                                    break;
+                                } else {
+                                    self.edit_path_string = path_string.clone();
+                                }
+                            }
+                            if response.hovered() {
+                                response.on_hover_text(path_string);
+                                if self.hovered_path.as_ref() != Some(path) {
+                                    self.hovered_path = Some(path.clone());
+                                }
+                                if is_dir {
+                                    self.hovered_files = self.load_directory(path);
+                                } else {
+                                    self.hovered_files.clear();
                                 }
                             }
                         }
                     });
+                });
+            egui::ScrollArea::vertical().show(ui, |ui| {
+                if !self.hovered_files.is_empty() {
+                    ui.horizontal(|ui| {
+                        egui::ScrollArea::vertical().show(ui, |ui| {
+                            ui.vertical(|ui| {
+                                for i in 0..self.hovered_files.len() {
+                                    let fs = &self.hovered_files[i];
+                                    let path = &fs.path;
+                                    let is_selected = self.hovered_path == Some(path.to_path_buf());
+                                    let folder_name = &fs.name;
+                                    let is_dir = fs.is_dir;
+                                    let icon = if is_dir { "📁" } else { "📄" };
+                                    let _ = ui.selectable_label(
+                                        is_selected,
+                                        format!("{} {}", icon, folder_name),
+                                    );
+                                }
+                            });
+                        });
+                    });
+                }
             });
-        }
+        });
     }
 }
 
@@ -129,21 +165,22 @@ impl eframe::App for MyApp {
                 if ui.button("<").clicked() {
                     if let Some(parent) = self.current_path.parent() {
                         self.current_path = parent.to_path_buf();
-
                         self.refresh_files();
+                        self.hovered_path = None;
+                        self.hovered_files.clear();
                     }
                 }
                 let response = ui.add(
-                    egui::TextEdit::singleline(&mut self.current_path_string)
+                    egui::TextEdit::singleline(&mut self.edit_path_string)
                         .desired_width(ui.available_width()),
                 );
                 if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    if let Ok(new_path) = PathBuf::from(&self.current_path_string).canonicalize() {
+                    if let Ok(new_path) = PathBuf::from(&self.edit_path_string).canonicalize() {
                         self.current_path = new_path;
                         self.refresh_files();
                     } else {
                         // Keep unchanged
-                        self.current_path_string = self.current_path.to_string_lossy().to_string();
+                        self.edit_path_string = self.current_path.to_string_lossy().to_string();
                     }
                 }
             });
