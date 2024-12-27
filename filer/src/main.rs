@@ -9,9 +9,9 @@ fn configure_text_styles(ctx: &egui::Context) {
 
     let text_styles: BTreeMap<TextStyle, FontId> = [
         (TextStyle::Small, FontId::new(12.0, Proportional)),
-        (TextStyle::Body, FontId::new(20.0, Proportional)),
-        (TextStyle::Monospace, FontId::new(20.0, Monospace)),
-        (TextStyle::Button, FontId::new(20.0, Proportional)),
+        (TextStyle::Body, FontId::new(16.0, Proportional)),
+        (TextStyle::Monospace, FontId::new(16.0, Monospace)),
+        (TextStyle::Button, FontId::new(16.0, Proportional)),
         (TextStyle::Heading, FontId::new(25.0, Proportional)),
     ]
     .into();
@@ -36,6 +36,7 @@ fn main() -> eframe::Result {
 #[allow(dead_code)]
 struct MyApp {
     current_path: PathBuf,
+    current_path_string: String,
     selected_item: Option<PathBuf>,
     files: Vec<FileItem>,
 }
@@ -51,6 +52,7 @@ impl Default for MyApp {
     fn default() -> Self {
         let current_path = std::env::current_dir().unwrap_or_default();
         let mut explorer = Self {
+            current_path_string: current_path.to_string_lossy().to_string(),
             current_path,
             selected_item: None,
             files: Vec::new(),
@@ -113,19 +115,26 @@ impl MyApp {
 impl eframe::App for MyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
-            if ui.button("~").clicked() {
-                if let Some(parent) = self.current_path.parent() {
-                    self.current_path = parent.to_path_buf();
-                    self.refresh_files();
-                }
-                let mut path_string = self.current_path.to_string_lossy().to_string();
-                if ui.text_edit_singleline(&mut path_string).lost_focus() {
-                    if let Ok(new_path) = PathBuf::from(&path_string).canonicalize() {
-                        self.current_path = new_path;
+            ui.horizontal(|ui| {
+                if ui.button("<").clicked() {
+                    if let Some(parent) = self.current_path.parent() {
+                        self.current_path = parent.to_path_buf();
+                        self.current_path_string = self.current_path.to_string_lossy().to_string();
+
                         self.refresh_files();
                     }
                 }
-            }
+                let response = ui.text_edit_singleline(&mut self.current_path_string);
+                if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                    if let Ok(new_path) = PathBuf::from(&self.current_path_string).canonicalize() {
+                        self.current_path = new_path;
+                        self.refresh_files();
+                    } else {
+                        // Keep unchanged
+                        self.current_path_string = self.current_path.to_string_lossy().to_string();
+                    }
+                }
+            });
         });
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Folders");
