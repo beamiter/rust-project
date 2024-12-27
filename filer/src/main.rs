@@ -63,6 +63,7 @@ impl Default for MyApp {
 }
 impl MyApp {
     fn refresh_files(&mut self) {
+        self.current_path_string = self.current_path.to_string_lossy().to_string();
         self.files.clear();
         if let Ok(entries) = std::fs::read_dir(&self.current_path) {
             for entry in entries.flatten() {
@@ -85,28 +86,37 @@ impl MyApp {
 
     fn render_folder_tree(&mut self, ui: &mut egui::Ui) {
         if let Ok(entries) = std::fs::read_dir(&self.current_path) {
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for entry in entries.flatten() {
-                    if let Ok(metadata) = entry.metadata() {
-                        let path = entry.path();
-                        let is_selected = self.current_path == path;
-                        let folder_name = path
-                            .file_name()
-                            .unwrap_or_default()
-                            .to_string_lossy()
-                            .to_string();
-                        ui.horizontal(|ui| {
-                            let is_dir = metadata.is_dir();
-                            if is_dir {
-                                ui.label("📁");
+            ui.vertical(|ui| {
+                egui::ScrollArea::vertical()
+                    .id_salt("main_list")
+                    .show(ui, |ui| {
+                        for entry in entries.flatten() {
+                            if let Ok(metadata) = entry.metadata() {
+                                let path = entry.path();
+                                let is_selected = self.current_path == path;
+                                let folder_name = path
+                                    .file_name()
+                                    .unwrap_or_default()
+                                    .to_string_lossy()
+                                    .to_string();
+                                let is_dir = metadata.is_dir();
+                                let icon = if is_dir { "📁" } else { "📄" };
+                                let response = ui.selectable_label(
+                                    is_selected,
+                                    format!("{} {}", icon, folder_name),
+                                );
+                                if response.clicked() {
+                                    if is_dir {
+                                        self.current_path = path.to_path_buf();
+                                        self.refresh_files();
+                                    } else {
+                                        self.current_path_string =
+                                            path.to_path_buf().to_string_lossy().to_string();
+                                    }
+                                }
                             }
-                            if ui.selectable_label(is_selected, folder_name).clicked() && is_dir {
-                                self.current_path = path.to_path_buf();
-                                self.refresh_files();
-                            }
-                        });
-                    }
-                }
+                        }
+                    });
             });
         }
     }
@@ -119,12 +129,14 @@ impl eframe::App for MyApp {
                 if ui.button("<").clicked() {
                     if let Some(parent) = self.current_path.parent() {
                         self.current_path = parent.to_path_buf();
-                        self.current_path_string = self.current_path.to_string_lossy().to_string();
 
                         self.refresh_files();
                     }
                 }
-                let response = ui.text_edit_singleline(&mut self.current_path_string);
+                let response = ui.add(
+                    egui::TextEdit::singleline(&mut self.current_path_string)
+                        .desired_width(ui.available_width()),
+                );
                 if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
                     if let Ok(new_path) = PathBuf::from(&self.current_path_string).canonicalize() {
                         self.current_path = new_path;
