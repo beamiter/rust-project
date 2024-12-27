@@ -33,17 +33,14 @@ fn main() -> eframe::Result {
     )
 }
 
-#[allow(dead_code)]
 struct MyApp {
-    current_path: PathBuf,
-    current_files: Vec<FileItem>,
+    edit_path: PathBuf,
     edit_path_string: String,
-    hovered_path: Option<PathBuf>,
-    hovered_files: Vec<FileItem>,
-    selected_path_chain: [Option<PathBuf>; Self::MAX_DEPTH],
+    selected_path_chain: Vec<Option<PathBuf>>,
     sub_dirs_dict: HashMap<PathBuf, Vec<FileItem>>,
 }
 #[allow(dead_code)]
+#[derive(Debug, Clone)]
 struct FileItem {
     name: String,
     path: PathBuf,
@@ -56,21 +53,17 @@ impl Default for MyApp {
         let current_path = std::env::current_dir().unwrap_or_default();
         let mut res = Self {
             edit_path_string: current_path.to_string_lossy().to_string(),
-            current_path,
-            hovered_path: None,
-            current_files: Vec::new(),
-            hovered_files: Vec::new(),
-            selected_path_chain: [const { None }; Self::MAX_DEPTH],
+            selected_path_chain: Vec::with_capacity(Self::MAX_DEPTH),
             sub_dirs_dict: HashMap::new(),
+            edit_path: current_path.clone(),
         };
-        res.selected_path_chain[0] = Some(res.current_path.clone());
-        res.refresh_sub_dirs(&res.current_path.clone());
-        // explorer.refresh_files();
+        res.selected_path_chain.push(Some(current_path.clone()));
+        res.refresh_sub_dirs(&current_path);
         res
     }
 }
 impl MyApp {
-    const MAX_DEPTH: usize = 4;
+    const MAX_DEPTH: usize = 8;
     fn load_directory(&self, path: &PathBuf) -> Vec<FileItem> {
         std::fs::read_dir(path)
             .map(|entries| {
@@ -89,19 +82,34 @@ impl MyApp {
             })
             .unwrap_or_default()
     }
+
     fn refresh_sub_dirs(&mut self, path: &PathBuf) {
         let files = self.load_directory(path);
         self.sub_dirs_dict.insert(path.to_path_buf(), files);
     }
-    fn refresh_files(&mut self) {
-        self.edit_path_string = self.current_path.to_string_lossy().to_string();
-        self.current_files = self.load_directory(&self.current_path);
-        self.current_files
-            .sort_by(|a, b| match (a.is_dir, b.is_dir) {
-                (true, false) => std::cmp::Ordering::Less,
-                (false, true) => std::cmp::Ordering::Greater,
-                _ => a.name.cmp(&b.name),
-            });
+
+    fn get_sub_dirs(&self, node: &PathBuf) -> Vec<FileItem> {
+        match self.sub_dirs_dict.get(node) {
+            Some(ref val) => {
+                return val.to_vec();
+            }
+            None => {
+                return Vec::new();
+            }
+        }
+    }
+
+    fn is_in_path_chain(&self, path: &PathBuf) -> bool {
+        for tmp in &self.selected_path_chain {
+            if let Some(ref val) = tmp {
+                if path == val {
+                    return true;
+                }
+            } else {
+                break;
+            }
+        }
+        false
     }
 
     fn render_folder_tree(&mut self, ui: &mut egui::Ui) {
@@ -109,12 +117,15 @@ impl MyApp {
         ui.horizontal(|ui| {
             ui.set_max_height(available_height);
             for idx in 0..Self::MAX_DEPTH {
+                if idx >= self.selected_path_chain.len() {
+                    break;
+                }
                 let node_i = self.selected_path_chain[idx].clone();
                 if node_i.is_none() {
                     break;
                 }
                 let node_i = node_i.unwrap();
-                let sub_dirs_i = self.sub_dirs_dict.get(&node_i).unwrap_or(&Vec::new());
+                let sub_dirs_i = self.get_sub_dirs(&node_i);
                 if sub_dirs_i.is_empty() {
                     break;
                 }
@@ -123,21 +134,20 @@ impl MyApp {
                         .id_salt(format!("level_{}", idx))
                         .show(ui, |ui| {
                             for i in 0..sub_dirs_i.len() {
-                                let fs = &self.current_files[i];
+                                let fs = &sub_dirs_i[i];
                                 let path = &fs.path;
                                 let path_string = path.to_path_buf().to_string_lossy().to_string();
-                                let is_selected = self.current_path == *path;
+                                let is_selected = self.is_in_path_chain(path);
                                 let folder_name = &fs.name;
                                 let is_dir = fs.is_dir;
-                                let icon = if is_dir { "📁" } else { "📄" };
+                                let icon = if is_dir { "📁" } else { "  " };
                                 let response = ui.selectable_label(
                                     is_selected,
                                     format!("{} {}", icon, folder_name),
                                 );
                                 if response.clicked() {
                                     if is_dir {
-                                        self.current_path = path.to_path_buf();
-                                        self.refresh_files();
+                                        self.reset_root_with_path(path);
                                         break;
                                     } else {
                                         self.edit_path_string = path_string.clone();
@@ -145,53 +155,31 @@ impl MyApp {
                                 }
                                 if response.hovered() {
                                     response.on_hover_text(path_string);
-                                    if self.hovered_path.as_ref() != Some(path) {
-                                        self.hovered_path = Some(path.clone());
+                                    let next_idx = idx + 1;
+                                    if next_idx >= self.selected_path_chain.len() {
+                                        self.selected_path_chain.push(Some(path.to_path_buf()));
+                                    } else {
+                                        self.selected_path_chain[next_idx] =
+                                            Some(path.to_path_buf());
+                                        self.selected_path_chain.truncate(next_idx + 1);
                                     }
                                     if is_dir {
-                                        self.hovered_files = self.load_directory(path);
-                                    } else {
-                                        self.hovered_files.clear();
+                                        self.refresh_sub_dirs(path);
                                     }
                                 }
                             }
                         });
                 });
             }
-            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                // 第二个ScrollArea
-                egui::ScrollArea::vertical()
-                    .id_salt("side_list")
-                    .show(ui, |ui| {
-                        if !self.hovered_files.is_empty() {
-                            for i in 0..self.hovered_files.len() {
-                                let fs = &self.hovered_files[i];
-                                let path = &fs.path;
-                                let path_string = path.to_path_buf().to_string_lossy().to_string();
-                                let is_selected = self.hovered_path == Some(path.to_path_buf());
-                                let folder_name = &fs.name;
-                                let is_dir = fs.is_dir;
-                                let icon = if is_dir { "📁" } else { "📄" };
-                                let response = ui.selectable_label(
-                                    is_selected,
-                                    format!("{} {}", icon, folder_name),
-                                );
-                                if response.clicked() {
-                                    if is_dir {
-                                        self.current_path = path.to_path_buf();
-                                        self.refresh_files();
-                                        self.hovered_path = None;
-                                        self.hovered_files.clear();
-                                        break;
-                                    } else {
-                                        self.edit_path_string = path_string.clone();
-                                    }
-                                }
-                            }
-                        }
-                    });
-            });
         });
+    }
+
+    fn reset_root_with_path(&mut self, path: &PathBuf) {
+        self.selected_path_chain.clear();
+        self.selected_path_chain.push(Some(path.clone()));
+        self.edit_path = path.clone();
+        self.edit_path_string = self.edit_path.to_string_lossy().to_string();
+        self.refresh_sub_dirs(&path);
     }
 }
 
@@ -200,11 +188,8 @@ impl eframe::App for MyApp {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {
                 if ui.button("<").clicked() {
-                    if let Some(parent) = self.current_path.parent() {
-                        self.current_path = parent.to_path_buf();
-                        self.refresh_files();
-                        self.hovered_path = None;
-                        self.hovered_files.clear();
+                    if let Some(parent) = self.edit_path.parent() {
+                        self.reset_root_with_path(&parent.to_path_buf());
                     }
                 }
                 let response = ui.add(
@@ -212,12 +197,11 @@ impl eframe::App for MyApp {
                         .desired_width(ui.available_width()),
                 );
                 if response.lost_focus() || ui.input(|i| i.key_pressed(egui::Key::Enter)) {
-                    if let Ok(new_path) = PathBuf::from(&self.edit_path_string).canonicalize() {
-                        self.current_path = new_path;
-                        self.refresh_files();
+                    if let Ok(path) = PathBuf::from(&self.edit_path_string).canonicalize() {
+                        self.reset_root_with_path(&path);
                     } else {
                         // Keep unchanged
-                        self.edit_path_string = self.current_path.to_string_lossy().to_string();
+                        self.edit_path_string = self.edit_path.to_string_lossy().to_string();
                     }
                 }
             });
