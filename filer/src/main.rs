@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::{collections::HashMap, path::PathBuf};
 
 use eframe::egui;
 use egui::{FontFamily, FontId, TextStyle};
@@ -40,6 +40,8 @@ struct MyApp {
     edit_path_string: String,
     hovered_path: Option<PathBuf>,
     hovered_files: Vec<FileItem>,
+    selected_path_chain: [Option<PathBuf>; Self::MAX_DEPTH],
+    sub_dirs_dict: HashMap<PathBuf, Vec<FileItem>>,
 }
 #[allow(dead_code)]
 struct FileItem {
@@ -52,18 +54,23 @@ struct FileItem {
 impl Default for MyApp {
     fn default() -> Self {
         let current_path = std::env::current_dir().unwrap_or_default();
-        let mut explorer = Self {
+        let mut res = Self {
             edit_path_string: current_path.to_string_lossy().to_string(),
             current_path,
             hovered_path: None,
             current_files: Vec::new(),
             hovered_files: Vec::new(),
+            selected_path_chain: [const { None }; Self::MAX_DEPTH],
+            sub_dirs_dict: HashMap::new(),
         };
-        explorer.refresh_files();
-        explorer
+        res.selected_path_chain[0] = Some(res.current_path.clone());
+        res.refresh_sub_dirs(&res.current_path.clone());
+        // explorer.refresh_files();
+        res
     }
 }
 impl MyApp {
+    const MAX_DEPTH: usize = 4;
     fn load_directory(&self, path: &PathBuf) -> Vec<FileItem> {
         std::fs::read_dir(path)
             .map(|entries| {
@@ -82,6 +89,10 @@ impl MyApp {
             })
             .unwrap_or_default()
     }
+    fn refresh_sub_dirs(&mut self, path: &PathBuf) {
+        let files = self.load_directory(path);
+        self.sub_dirs_dict.insert(path.to_path_buf(), files);
+    }
     fn refresh_files(&mut self) {
         self.edit_path_string = self.current_path.to_string_lossy().to_string();
         self.current_files = self.load_directory(&self.current_path);
@@ -97,44 +108,56 @@ impl MyApp {
         let available_height = ui.available_height();
         ui.horizontal(|ui| {
             ui.set_max_height(available_height);
-            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
-                // 第一个ScrollArea
-                egui::ScrollArea::vertical()
-                    .id_salt("main_list")
-                    .show(ui, |ui| {
-                        for i in 0..self.current_files.len() {
-                            let fs = &self.current_files[i];
-                            let path = &fs.path;
-                            let path_string = path.to_path_buf().to_string_lossy().to_string();
-                            let is_selected = self.current_path == *path;
-                            let folder_name = &fs.name;
-                            let is_dir = fs.is_dir;
-                            let icon = if is_dir { "📁" } else { "📄" };
-                            let response = ui
-                                .selectable_label(is_selected, format!("{} {}", icon, folder_name));
-                            if response.clicked() {
-                                if is_dir {
-                                    self.current_path = path.to_path_buf();
-                                    self.refresh_files();
-                                    break;
-                                } else {
-                                    self.edit_path_string = path_string.clone();
+            for idx in 0..Self::MAX_DEPTH {
+                let node_i = self.selected_path_chain[idx].clone();
+                if node_i.is_none() {
+                    break;
+                }
+                let node_i = node_i.unwrap();
+                let sub_dirs_i = self.sub_dirs_dict.get(&node_i).unwrap_or(&Vec::new());
+                if sub_dirs_i.is_empty() {
+                    break;
+                }
+                ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                    egui::ScrollArea::vertical()
+                        .id_salt(format!("level_{}", idx))
+                        .show(ui, |ui| {
+                            for i in 0..sub_dirs_i.len() {
+                                let fs = &self.current_files[i];
+                                let path = &fs.path;
+                                let path_string = path.to_path_buf().to_string_lossy().to_string();
+                                let is_selected = self.current_path == *path;
+                                let folder_name = &fs.name;
+                                let is_dir = fs.is_dir;
+                                let icon = if is_dir { "📁" } else { "📄" };
+                                let response = ui.selectable_label(
+                                    is_selected,
+                                    format!("{} {}", icon, folder_name),
+                                );
+                                if response.clicked() {
+                                    if is_dir {
+                                        self.current_path = path.to_path_buf();
+                                        self.refresh_files();
+                                        break;
+                                    } else {
+                                        self.edit_path_string = path_string.clone();
+                                    }
+                                }
+                                if response.hovered() {
+                                    response.on_hover_text(path_string);
+                                    if self.hovered_path.as_ref() != Some(path) {
+                                        self.hovered_path = Some(path.clone());
+                                    }
+                                    if is_dir {
+                                        self.hovered_files = self.load_directory(path);
+                                    } else {
+                                        self.hovered_files.clear();
+                                    }
                                 }
                             }
-                            if response.hovered() {
-                                response.on_hover_text(path_string);
-                                if self.hovered_path.as_ref() != Some(path) {
-                                    self.hovered_path = Some(path.clone());
-                                }
-                                if is_dir {
-                                    self.hovered_files = self.load_directory(path);
-                                } else {
-                                    self.hovered_files.clear();
-                                }
-                            }
-                        }
-                    });
-            });
+                        });
+                });
+            }
             ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
                 // 第二个ScrollArea
                 egui::ScrollArea::vertical()
