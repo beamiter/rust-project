@@ -94,11 +94,14 @@ impl MyApp {
     }
 
     fn render_folder_tree(&mut self, ui: &mut egui::Ui) {
+        let available_height = ui.available_height();
         ui.horizontal(|ui| {
-            egui::ScrollArea::vertical()
-                .id_salt("main_list")
-                .show(ui, |ui| {
-                    ui.vertical(|ui| {
+            ui.set_max_height(available_height);
+            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                // 第一个ScrollArea
+                egui::ScrollArea::vertical()
+                    .id_salt("main_list")
+                    .show(ui, |ui| {
                         for i in 0..self.current_files.len() {
                             let fs = &self.current_files[i];
                             let path = &fs.path;
@@ -131,28 +134,39 @@ impl MyApp {
                             }
                         }
                     });
-                });
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                if !self.hovered_files.is_empty() {
-                    ui.horizontal(|ui| {
-                        egui::ScrollArea::vertical().show(ui, |ui| {
-                            ui.vertical(|ui| {
-                                for i in 0..self.hovered_files.len() {
-                                    let fs = &self.hovered_files[i];
-                                    let path = &fs.path;
-                                    let is_selected = self.hovered_path == Some(path.to_path_buf());
-                                    let folder_name = &fs.name;
-                                    let is_dir = fs.is_dir;
-                                    let icon = if is_dir { "📁" } else { "📄" };
-                                    let _ = ui.selectable_label(
-                                        is_selected,
-                                        format!("{} {}", icon, folder_name),
-                                    );
+            });
+            ui.with_layout(egui::Layout::top_down(egui::Align::LEFT), |ui| {
+                // 第二个ScrollArea
+                egui::ScrollArea::vertical()
+                    .id_salt("side_list")
+                    .show(ui, |ui| {
+                        if !self.hovered_files.is_empty() {
+                            for i in 0..self.hovered_files.len() {
+                                let fs = &self.hovered_files[i];
+                                let path = &fs.path;
+                                let path_string = path.to_path_buf().to_string_lossy().to_string();
+                                let is_selected = self.hovered_path == Some(path.to_path_buf());
+                                let folder_name = &fs.name;
+                                let is_dir = fs.is_dir;
+                                let icon = if is_dir { "📁" } else { "📄" };
+                                let response = ui.selectable_label(
+                                    is_selected,
+                                    format!("{} {}", icon, folder_name),
+                                );
+                                if response.clicked() {
+                                    if is_dir {
+                                        self.current_path = path.to_path_buf();
+                                        self.refresh_files();
+                                        self.hovered_path = None;
+                                        self.hovered_files.clear();
+                                        break;
+                                    } else {
+                                        self.edit_path_string = path_string.clone();
+                                    }
                                 }
-                            });
-                        });
+                            }
+                        }
                     });
-                }
             });
         });
     }
