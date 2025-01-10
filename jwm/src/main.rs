@@ -49,18 +49,23 @@ fn main() {
         let mut status_bar = StatusBar::new();
         loop {
             match rx.try_recv() {
-                Ok(val) => match val {
-                    0 => {
-                        info!("Recieve {}, shut down", val);
-                        break;
+                Ok(mut latest_value) => {
+                    while let Ok(value) = rx.try_recv() {
+                        latest_value = value;
                     }
-                    1 => {
-                        status_bar.update_icon_list();
+                    match latest_value {
+                        0 => {
+                            info!("Recieve {}, shut down", latest_value);
+                            break;
+                        }
+                        1 => {
+                            status_bar.update_icon_list();
+                        }
+                        _ => {
+                            break;
+                        }
                     }
-                    _ => {
-                        break;
-                    }
-                },
+                }
                 Err(_) => {}
             }
             let status = status_bar.broadcast_string();

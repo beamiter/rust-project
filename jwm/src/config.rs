@@ -452,9 +452,9 @@ impl Config {
     });
 }
 
-pub static mut tags: Lazy<Vec<&str>> = Lazy::new(|| {
-    return generate_random_tags(Config::tags_length);
-});
+// pub static mut tags: Lazy<Vec<&str>> = Lazy::new(|| {
+//     return generate_random_tags(Config::tags_length);
+// });
 // pub static mut tags: Lazy<RwLock<Vec<&str>>> = Lazy::new(|| {
 //     return RwLock::new(generate_random_tags(Config::tags_length));
 // });

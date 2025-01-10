@@ -54,7 +54,7 @@ use x11::xlib::{
 
 use std::cmp::{max, min};
 
-use crate::config::{tags, Config};
+use crate::config::Config;
 use crate::drw::{Clr, Col, Cur, Drw};
 use crate::icon_gallery::generate_random_tags;
 use crate::xproto::{
@@ -571,6 +571,7 @@ pub struct Dwm {
     pub depth: i32,
     pub cmap: Colormap,
     pub sender: Sender<u8>,
+    pub tags: Vec<&'static str>,
 }
 
 #[derive(Debug)]
@@ -630,6 +631,7 @@ impl Dwm {
             depth: 0,
             cmap: 0,
             sender,
+            tags: generate_random_tags(Config::tags_length),
         }
     }
 
@@ -1682,66 +1684,138 @@ impl Dwm {
         {
             // info!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
         }
-        unsafe {
-            let boxs;
-            let boxw;
-            let lrpad;
-            {
-                let h = self
-                    .drw
-                    .as_ref()
-                    .unwrap()
-                    .font
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .h;
-                lrpad = self.drw.as_ref().unwrap().lrpad;
-                boxs = h / 9;
-                boxw = h / 6 + 2;
-                // info!("[drawbar] boxs: {}, boxw: {}, lrpad: {}", boxs, boxw, lrpad);
-            }
-            let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
-            if !showbar0 {
-                return;
-            }
+        let boxs;
+        let boxw;
+        let lrpad;
+        {
+            let h = self
+                .drw
+                .as_ref()
+                .unwrap()
+                .font
+                .as_ref()
+                .unwrap()
+                .borrow_mut()
+                .h;
+            lrpad = self.drw.as_ref().unwrap().lrpad;
+            boxs = h / 9;
+            boxw = h / 6 + 2;
+            // info!("[drawbar] boxs: {}, boxw: {}, lrpad: {}", boxs, boxw, lrpad);
+        }
+        let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
+        if !showbar0 {
+            return;
+        }
 
-            let ww = { m.as_ref().unwrap().borrow_mut().ww };
-            // draw status first so it can be overdrawn by tags later.
-            if Rc::ptr_eq(m.as_ref().unwrap(), self.selmon.as_ref().unwrap()) {
-                // status is only drawn on selected monitor.
-                // draw status bar here
-                let stext = self.stext.clone();
-                tw = ww - self.drawstatusbar(m.clone(), &stext);
-            }
-            {
-                let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
-                while let Some(ref c_opt) = c {
-                    let tags0 = c_opt.borrow_mut().tags0;
-                    occ |= tags0;
-                    if c_opt.borrow_mut().isurgent {
-                        urg |= tags0;
-                    }
-                    let next = c_opt.borrow_mut().next.clone();
-                    c = next;
+        let ww = { m.as_ref().unwrap().borrow_mut().ww };
+        // draw status first so it can be overdrawn by tags later.
+        if Rc::ptr_eq(m.as_ref().unwrap(), self.selmon.as_ref().unwrap()) {
+            // status is only drawn on selected monitor.
+            // draw status bar here
+            let stext = self.stext.clone();
+            tw = ww - self.drawstatusbar(m.clone(), &stext);
+        }
+        {
+            let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
+            while let Some(ref c_opt) = c {
+                let tags0 = c_opt.borrow_mut().tags0;
+                occ |= tags0;
+                if c_opt.borrow_mut().isurgent {
+                    urg |= tags0;
                 }
+                let next = c_opt.borrow_mut().next.clone();
+                c = next;
             }
-            let mut x = 0;
-            let mut w;
-            for i in 0..Config::tags_length {
-                w = self.drw.as_mut().unwrap().textw(tags[i]) as i32;
-                let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
-                let tagset = { m.as_ref().unwrap().borrow_mut().tagset };
-                let is_selected_tag = tagset[seltags] & 1 << i > 0;
-                let idx = if is_selected_tag {
-                    SCHEME::SchemeTagsSel as usize
+        }
+        let mut x = 0;
+        let mut w;
+        for i in 0..Config::tags_length {
+            w = self.drw.as_mut().unwrap().textw(self.tags[i]) as i32;
+            let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
+            let tagset = { m.as_ref().unwrap().borrow_mut().tagset };
+            let is_selected_tag = tagset[seltags] & 1 << i > 0;
+            let idx = if is_selected_tag {
+                SCHEME::SchemeTagsSel as usize
+            } else {
+                SCHEME::SchemeTagsNorm as usize
+            };
+            // info!(
+            //     "[drawbar] seltags: {}, tagset: {:?}, i: {}: idx: {}, w: {}",
+            //     seltags, tagset, i, idx, w
+            // );
+            self.drw
+                .as_mut()
+                .unwrap()
+                .as_mut()
+                .drw_setscheme(self.scheme[idx].clone());
+            self.drw.as_mut().unwrap().drw_text(
+                x,
+                0,
+                w as u32,
+                self.bh as u32,
+                (lrpad / 2) as u32,
+                self.tags[i],
+                (urg & 1 << i) as i32,
+                false,
+            );
+            if Config::ulineall || is_selected_tag {
+                self.drw.as_mut().unwrap().drw_rect(
+                    x + Config::ulinepad as i32,
+                    self.bh - Config::ulinestroke as i32 - Config::ulinevoffset as i32,
+                    w as u32 - (Config::ulinepad * 2),
+                    Config::ulinestroke,
+                    1,
+                    0,
+                );
+            }
+            if (occ & 1 << i) > 0 {
+                let selmon_mut = { self.selmon.as_ref().unwrap().borrow_mut() };
+                let filled = (Rc::ptr_eq(m.as_ref().unwrap(), self.selmon.as_ref().unwrap())
+                    && selmon_mut.sel.is_some()
+                    && (selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 & 1 << i > 0))
+                    as i32;
+                self.drw.as_mut().unwrap().drw_rect(
+                    x + boxs as i32,
+                    boxs as i32,
+                    boxw,
+                    boxw,
+                    filled,
+                    (urg & 1 << i) as i32,
+                );
+            }
+            x += w;
+        }
+        w = self
+            .drw
+            .as_mut()
+            .unwrap()
+            .as_mut()
+            .textw(&m.as_ref().unwrap().borrow_mut().ltsymbol) as i32;
+        self.drw
+            .as_mut()
+            .unwrap()
+            .as_mut()
+            .drw_setscheme(self.scheme[SCHEME::SchemeTagsNorm as usize].clone());
+        x = self.drw.as_mut().unwrap().drw_text(
+            x,
+            0,
+            w as u32,
+            self.bh as u32,
+            (lrpad / 2) as u32,
+            &m.as_ref().unwrap().borrow_mut().ltsymbol,
+            0,
+            false,
+        );
+
+        w = ww - tw - x;
+        // info!("[drawbar] tw: {}, x: {}, w: {}, bh: {}", tw, x, w, bh);
+        if w > self.bh {
+            if let Some(ref sel_opt) = m.as_ref().unwrap().borrow_mut().sel {
+                let idx = if Rc::ptr_eq(m.as_ref().unwrap(), self.selmon.as_ref().unwrap()) {
+                    SCHEME::SchemeInfoSel
                 } else {
-                    SCHEME::SchemeTagsNorm as usize
-                };
-                // info!(
-                //     "[drawbar] seltags: {}, tagset: {:?}, i: {}: idx: {}, w: {}",
-                //     seltags, tagset, i, idx, w
-                // );
+                    SCHEME::SchemeInfoNorm
+                } as usize;
                 self.drw
                     .as_mut()
                     .unwrap()
@@ -1750,115 +1824,41 @@ impl Dwm {
                 self.drw.as_mut().unwrap().drw_text(
                     x,
                     0,
-                    w as u32,
+                    (w - 2 * self.sp) as u32,
                     self.bh as u32,
                     (lrpad / 2) as u32,
-                    tags[i],
-                    (urg & 1 << i) as i32,
+                    &sel_opt.borrow_mut().name,
+                    0,
                     false,
                 );
-                if Config::ulineall || is_selected_tag {
-                    self.drw.as_mut().unwrap().drw_rect(
-                        x + Config::ulinepad as i32,
-                        self.bh - Config::ulinestroke as i32 - Config::ulinevoffset as i32,
-                        w as u32 - (Config::ulinepad * 2),
-                        Config::ulinestroke,
-                        1,
-                        0,
-                    );
+                if sel_opt.borrow_mut().isfloating {
+                    // Useless, drw rectangle.
                 }
-                if (occ & 1 << i) > 0 {
-                    let selmon_mut = { self.selmon.as_ref().unwrap().borrow_mut() };
-                    let filled = (Rc::ptr_eq(m.as_ref().unwrap(), self.selmon.as_ref().unwrap())
-                        && selmon_mut.sel.is_some()
-                        && (selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 & 1 << i > 0))
-                        as i32;
-                    self.drw.as_mut().unwrap().drw_rect(
-                        x + boxs as i32,
-                        boxs as i32,
-                        boxw,
-                        boxw,
-                        filled,
-                        (urg & 1 << i) as i32,
-                    );
-                }
-                x += w;
+            } else {
+                self.drw
+                    .as_mut()
+                    .unwrap()
+                    .as_mut()
+                    .drw_setscheme(self.scheme[SCHEME::SchemeInfoNorm as usize].clone());
+                self.drw.as_mut().unwrap().drw_rect(
+                    x,
+                    0,
+                    (w - 2 * self.sp) as u32,
+                    self.bh as u32,
+                    1,
+                    0,
+                );
             }
-            w = self
-                .drw
-                .as_mut()
-                .unwrap()
-                .as_mut()
-                .textw(&m.as_ref().unwrap().borrow_mut().ltsymbol) as i32;
-            self.drw
-                .as_mut()
-                .unwrap()
-                .as_mut()
-                .drw_setscheme(self.scheme[SCHEME::SchemeTagsNorm as usize].clone());
-            x = self.drw.as_mut().unwrap().drw_text(
-                x,
-                0,
-                w as u32,
-                self.bh as u32,
-                (lrpad / 2) as u32,
-                &m.as_ref().unwrap().borrow_mut().ltsymbol,
-                0,
-                false,
-            );
-
-            w = ww - tw - x;
-            // info!("[drawbar] tw: {}, x: {}, w: {}, bh: {}", tw, x, w, bh);
-            if w > self.bh {
-                if let Some(ref sel_opt) = m.as_ref().unwrap().borrow_mut().sel {
-                    let idx = if Rc::ptr_eq(m.as_ref().unwrap(), self.selmon.as_ref().unwrap()) {
-                        SCHEME::SchemeInfoSel
-                    } else {
-                        SCHEME::SchemeInfoNorm
-                    } as usize;
-                    self.drw
-                        .as_mut()
-                        .unwrap()
-                        .as_mut()
-                        .drw_setscheme(self.scheme[idx].clone());
-                    self.drw.as_mut().unwrap().drw_text(
-                        x,
-                        0,
-                        (w - 2 * self.sp) as u32,
-                        self.bh as u32,
-                        (lrpad / 2) as u32,
-                        &sel_opt.borrow_mut().name,
-                        0,
-                        false,
-                    );
-                    if sel_opt.borrow_mut().isfloating {
-                        // Useless, drw rectangle.
-                    }
-                } else {
-                    self.drw
-                        .as_mut()
-                        .unwrap()
-                        .as_mut()
-                        .drw_setscheme(self.scheme[SCHEME::SchemeInfoNorm as usize].clone());
-                    self.drw.as_mut().unwrap().drw_rect(
-                        x,
-                        0,
-                        (w - 2 * self.sp) as u32,
-                        self.bh as u32,
-                        1,
-                        0,
-                    );
-                }
-            }
-            let barwin = { m.as_ref().unwrap().borrow_mut().barwin };
-            let ww: u32 = { m.as_ref().unwrap().borrow_mut().ww } as u32;
-            // info!("[drawbar] drw_map");
-            self.drw
-                .as_mut()
-                .unwrap()
-                .as_mut()
-                .drw_map(barwin, 0, 0, ww, self.bh as u32);
-            // info!("[drawbar] finish");
         }
+        let barwin = { m.as_ref().unwrap().borrow_mut().barwin };
+        let ww: u32 = { m.as_ref().unwrap().borrow_mut().ww } as u32;
+        // info!("[drawbar] drw_map");
+        self.drw
+            .as_mut()
+            .unwrap()
+            .as_mut()
+            .drw_map(barwin, 0, 0, ww, self.bh as u32);
+        // info!("[drawbar] finish");
     }
 
     pub fn restack(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
@@ -2160,7 +2160,7 @@ impl Dwm {
                 let mut i: usize = 0;
                 let mut x: u32 = 0;
                 for tag_i in 0..Config::tags_length {
-                    x += self.drw.as_mut().unwrap().textw(tags[tag_i]);
+                    x += self.drw.as_mut().unwrap().textw(self.tags[tag_i]);
                     if ev.x < x as i32 {
                         break;
                     }
@@ -2494,24 +2494,24 @@ impl Dwm {
         // info!("[togglebar]");
         unsafe {
             {
-                let _ = self.sender.send(1);
-                *tags = generate_random_tags(Config::tags_length);
-                {
-                    let mut selmon_clone = self.selmon.clone();
-                    let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
-                    let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-                    selmon_mut.pertag.as_mut().unwrap().showbars[curtag] = !selmon_mut.showbar0;
-                    selmon_mut.showbar0 = selmon_mut.pertag.as_mut().unwrap().showbars[curtag];
-                    self.updatebarpos(&mut selmon_mut);
-                    XMoveResizeWindow(
-                        self.dpy,
-                        selmon_mut.barwin,
-                        selmon_mut.wx + self.sp,
-                        selmon_mut.by + self.vp,
-                        (selmon_mut.ww - 2 * self.sp) as u32,
-                        self.bh as u32,
-                    );
+                let mut selmon_clone = self.selmon.clone();
+                let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
+                let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
+                selmon_mut.pertag.as_mut().unwrap().showbars[curtag] = !selmon_mut.showbar0;
+                selmon_mut.showbar0 = selmon_mut.pertag.as_mut().unwrap().showbars[curtag];
+                if !selmon_mut.showbar0 {
+                    let _ = self.sender.send(1);
+                    self.tags = generate_random_tags(Config::tags_length);
                 }
+                self.updatebarpos(&mut selmon_mut);
+                XMoveResizeWindow(
+                    self.dpy,
+                    selmon_mut.barwin,
+                    selmon_mut.wx + self.sp,
+                    selmon_mut.by + self.vp,
+                    (selmon_mut.ww - 2 * self.sp) as u32,
+                    self.bh as u32,
+                );
             }
             self.arrange(self.selmon.clone());
         }
