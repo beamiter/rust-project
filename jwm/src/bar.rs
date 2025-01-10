@@ -1,6 +1,6 @@
 use battery::Manager;
 use std::fs;
-use sysinfo::{CpuRefreshKind, RefreshKind, System};
+use sysinfo::System;
 
 use crate::icon_gallery::generate_random_tags;
 
@@ -15,6 +15,7 @@ pub const DARKBLUE: &str = "#6080a0";
 
 pub struct StatusBar {
     icon_list: Vec<&'static str>,
+    sys: System,
 }
 impl StatusBar {
     // Function to read file contents
@@ -25,6 +26,7 @@ impl StatusBar {
     pub fn new() -> Self {
         StatusBar {
             icon_list: generate_random_tags(20),
+            sys: System::new_all(),
         }
     }
 
@@ -33,13 +35,12 @@ impl StatusBar {
     }
 
     // Function to get CPU load
-    pub fn cpu_load(&self) -> String {
-        let mut s =
-            System::new_with_specifics(RefreshKind::new().with_cpu(CpuRefreshKind::everything()));
+    pub fn cpu_load(&mut self) -> String {
+        self.sys.refresh_cpu_all();
         // Wait a bit because CPU usage is based on diff.
         std::thread::sleep(sysinfo::MINIMUM_CPU_UPDATE_INTERVAL);
         // Refresh CPUs again to get actual value.
-        s.refresh_cpu_usage();
+        self.sys.refresh_cpu_all();
         format!(
             "^c{}^^b{}^ {} CPU ^c{}^^b{}^ {:.2}%",
             BLACK,
@@ -47,7 +48,7 @@ impl StatusBar {
             self.icon_list[0],
             WHITE,
             GREY,
-            s.global_cpu_usage()
+            self.sys.global_cpu_usage()
         )
     }
 
@@ -77,14 +78,13 @@ impl StatusBar {
     }
 
     // Function to get memory usage
-    pub fn mem_usage(&self) -> String {
-        let mut sys = System::new_all();
-        sys.refresh_all();
-        let used = sys.used_memory() as f64 / 1e9;
-        let free = sys.free_memory() as f64 / 1e9;
+    pub fn mem_usage(&mut self) -> String {
+        self.sys.refresh_memory();
+        let unavailable = (self.sys.total_memory() - self.sys.available_memory()) as f64 / 1e9;
+        let available = self.sys.available_memory() as f64 / 1e9;
         format!(
             "^c{}^^b{}^ {} ^c{}^{:.1}^c{}^ {} {:.1}",
-            BLUE, BLACK, self.icon_list[2], BLUE, used, RED, self.icon_list[3], free
+            BLUE, BLACK, self.icon_list[2], BLUE, unavailable, RED, self.icon_list[3], available
         )
     }
 
@@ -132,7 +132,7 @@ impl StatusBar {
         )
     }
 
-    pub fn broadcast_string(&self) -> String {
+    pub fn broadcast_string(&mut self) -> String {
         let status = format!(
             "{} {} {} {} {}",
             self.battery_capacity(),

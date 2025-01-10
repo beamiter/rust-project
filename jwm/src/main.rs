@@ -45,8 +45,8 @@ fn main() {
 
     let mut dwm = Dwm::new(tx);
 
-    let mut status_bar = StatusBar::new();
     let status_update_thread = thread::spawn(move || {
+        let mut status_bar = StatusBar::new();
         loop {
             match rx.try_recv() {
                 Ok(val) => match val {
