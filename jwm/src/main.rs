@@ -48,6 +48,7 @@ fn main() {
     let status_update_thread = thread::spawn(move || {
         let mut status_bar = StatusBar::new();
         loop {
+            let mut need_sleep = true;
             match rx.try_recv() {
                 Ok(mut latest_value) => {
                     while let Ok(value) = rx.try_recv() {
@@ -59,6 +60,7 @@ fn main() {
                             break;
                         }
                         1 => {
+                            need_sleep = false;
                             status_bar.update_icon_list();
                         }
                         _ => {
@@ -72,7 +74,9 @@ fn main() {
             // info!("status string: {}", status);
             // Update X root window name (status bar), here we will just print to stdout
             let _output = Command::new("xsetroot").arg("-name").arg(status).output();
-            thread::sleep(Duration::from_millis(500));
+            if need_sleep {
+                thread::sleep(Duration::from_millis(500));
+            }
         }
     });
 
