@@ -3017,25 +3017,40 @@ impl Dwm {
                 return;
             }
             let sel = {
-                let mut selmon_clone = self.selmon.clone();
-                let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
-                let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-                selmon_mut.nmaster0 = selmon_mut.pertag.as_ref().unwrap().nmasters[curtag];
-                selmon_mut.mfact0 = selmon_mut.pertag.as_ref().unwrap().mfacts[curtag];
-                selmon_mut.sellt = selmon_mut.pertag.as_ref().unwrap().sellts[curtag];
-                let sellt = selmon_mut.sellt;
-                selmon_mut.lt[sellt] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag][sellt]
-                    .clone()
-                    .expect("None unwrap");
-                selmon_mut.lt[sellt ^ 1] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag]
-                    [sellt ^ 1]
-                    .clone()
-                    .expect("None unwrap");
+                let condition;
+                let curtag;
+                {
+                    let mut selmon_clone = self.selmon.clone();
+                    let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
+                    curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
+                    selmon_mut.nmaster0 = selmon_mut.pertag.as_ref().unwrap().nmasters[curtag];
+                    selmon_mut.mfact0 = selmon_mut.pertag.as_ref().unwrap().mfacts[curtag];
+                    selmon_mut.sellt = selmon_mut.pertag.as_ref().unwrap().sellts[curtag];
+                    let sellt = selmon_mut.sellt;
+                    selmon_mut.lt[sellt] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag]
+                        [sellt]
+                        .clone()
+                        .expect("None unwrap");
+                    selmon_mut.lt[sellt ^ 1] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag]
+                        [sellt ^ 1]
+                        .clone()
+                        .expect("None unwrap");
 
-                if selmon_mut.showbar0 != selmon_mut.pertag.as_ref().unwrap().showbars[curtag] {
+                    condition =
+                        selmon_mut.showbar0 != selmon_mut.pertag.as_ref().unwrap().showbars[curtag];
+                }
+                if condition {
                     self.togglebar(null_mut());
                 }
-                selmon_mut.pertag.as_ref().unwrap().sel[curtag].clone()
+                self.selmon
+                    .as_mut()
+                    .unwrap()
+                    .borrow_mut()
+                    .pertag
+                    .as_ref()
+                    .unwrap()
+                    .sel[curtag]
+                    .clone()
             };
             self.focus(sel);
             self.arrange(self.selmon.clone());
