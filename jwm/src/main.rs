@@ -1,6 +1,8 @@
 use chrono::prelude::*;
 use coredump::register_panic_handler;
 use dwm::Dwm;
+use std::fs::File;
+use std::io::Write;
 use std::process::Command;
 use std::sync::mpsc;
 use std::{ffi::CString, process::exit, ptr::null_mut};
@@ -40,12 +42,20 @@ fn main() {
     let _ = register_panic_handler();
     miscellaneous::for_test();
     miscellaneous::init_auto_start();
-
     let (tx, rx) = mpsc::channel();
 
-    let mut dwm = Dwm::new(tx);
+    let pipe_path = "/tmp/egui_pipe";
+    if !std::path::Path::new(pipe_path).exists() {
+        Command::new("mkfifo").arg(pipe_path).status().unwrap();
+    }
+    let mut _child = Command::new("egui_bar")
+        .arg(pipe_path)
+        .spawn()
+        .expect("Failed to start egui app");
 
-    let status_update_thread = thread::spawn(move || {
+    let mut dwm = Dwm::new(tx, pipe_path.to_string());
+
+    let _status_update_thread = thread::spawn(move || {
         let mut status_bar = StatusBar::new();
         loop {
             let mut need_sleep = true;
@@ -113,8 +123,10 @@ fn main() {
         info!("[main] end");
     }
 
-    match status_update_thread.join() {
-        Ok(_) => println!("Status update thread finished successfully."),
-        Err(e) => eprintln!("Error joining status update thread: {:?}", e),
-    }
+    // match status_update_thread.join() {
+    //     Ok(_) => println!("Status update thread finished successfully."),
+    //     Err(e) => eprintln!("Error joining status update thread: {:?}", e),
+    // }
+
+    // child.wait().expect("Failed to wait on child");
 }

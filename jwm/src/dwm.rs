@@ -9,6 +9,8 @@ use log::info;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt;
+use std::fs::File;
+use std::io::Write;
 use std::mem::transmute;
 use std::mem::zeroed;
 use std::process::Command;
@@ -572,6 +574,7 @@ pub struct Dwm {
     pub cmap: Colormap,
     pub sender: Sender<u8>,
     pub tags: Vec<&'static str>,
+    pub pipe: File,
 }
 
 #[derive(Debug)]
@@ -602,7 +605,7 @@ impl Dwm {
             }
         }
     }
-    pub fn new(sender: Sender<u8>) -> Self {
+    pub fn new(sender: Sender<u8>, pipe_path: String) -> Self {
         Dwm {
             broken: "broken".to_string(),
             stext_max_len: 512,
@@ -632,6 +635,7 @@ impl Dwm {
             cmap: 0,
             sender,
             tags: generate_random_tags(Config::tags_length),
+            pipe: File::create(pipe_path).unwrap(),
         }
     }
 
@@ -1683,6 +1687,8 @@ impl Dwm {
         let mut urg: u32 = 0;
         {
             // info!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
+            let formatted_string = format!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
+            self.pipe.write_all(formatted_string.as_bytes()).unwrap();
         }
         let boxs;
         let boxw;
