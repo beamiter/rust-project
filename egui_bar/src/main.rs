@@ -4,7 +4,7 @@ use std::env;
 
 fn main() -> eframe::Result {
     let args: Vec<String> = env::args().collect();
-    let pipe_path = &args[1];
+    let pipe_path = args.get(1).cloned().unwrap_or_else(|| "".to_string());
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([1000.0, 20.0]) // Initial height
