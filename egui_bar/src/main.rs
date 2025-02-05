@@ -1,7 +1,10 @@
 mod egui_bar;
-use egui::Pos2;
+use egui::{FontFamily, FontId, TextStyle};
+use egui::{Margin, Pos2};
 pub use egui_bar::MyEguiApp;
+use std::collections::BTreeMap;
 use std::env;
+use FontFamily::Monospace;
 
 use font_kit::source::SystemSource;
 
@@ -67,7 +70,7 @@ fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::
     // 寻找Nerd Font
     let font_handle = system_source.select_best_match(
         &[font_kit::family_name::FamilyName::Title(
-            "JetBrainsMono Nerd Font".to_string(),
+            "SauceCodePro Nerd Font".to_string(),
         )],
         &font_kit::properties::Properties::new(),
     )?;
@@ -101,17 +104,41 @@ fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::
     Ok(())
 }
 
+fn configure_text_styles(ctx: &egui::Context) {
+    ctx.all_styles_mut(move |style| {
+        let text_styles: BTreeMap<TextStyle, FontId> = [
+            (
+                TextStyle::Body,
+                FontId::new(MyEguiApp::FONT_SIZE, Monospace),
+            ),
+            (
+                TextStyle::Monospace,
+                FontId::new(MyEguiApp::FONT_SIZE, Monospace),
+            ),
+        ]
+        .into();
+        style.text_styles = text_styles;
+        // style.spacing.item_spacing = egui::vec2(8.0, 0.0);
+        // style.spacing.window_margin = Margin::symmetric(0., 0.);
+        // style.spacing.window_margin = Margin::ZERO;
+        style.spacing.window_margin = Margin::same(0.0);
+        style.spacing.menu_spacing = 0.0;
+        style.spacing.menu_margin = Margin::same(0.0);
+    });
+}
+
 fn main() -> eframe::Result {
     let args: Vec<String> = env::args().collect();
     let pipe_path = args.get(1).cloned().unwrap_or_else(|| "".to_string());
-    let screen_width = get_screen_width() / 1.66666666;
+    // let screen_width = get_screen_width() / 1.66666666;
+    let screen_width = get_screen_width();
     println!("screen_width: {}", screen_width);
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_window_type(egui::X11WindowType::Dock)
+            // .with_window_type(egui::X11WindowType::Dock)
             .with_position(Pos2::new(0., 0.))
-            .with_inner_size([screen_width, 30.0]) // Initial height
-            .with_min_inner_size([screen_width, 30.0]) // Minimum size
+            .with_inner_size([screen_width, MyEguiApp::FONT_SIZE + 18.]) // Initial height
+            .with_min_inner_size([screen_width, MyEguiApp::FONT_SIZE + 18.]) // Minimum size
             // .with_max_inner_size([f32::INFINITY, 20.0]) // Set max height to 20.0
             .with_decorations(false), // Hide title bar and decorations
         // .with_always_on_top(), // Keep window always on top
@@ -120,8 +147,9 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "My egui App",
         native_options,
-        Box::new(|_cc| {
-            let _ = load_system_nerd_font(&_cc.egui_ctx);
+        Box::new(|cc| {
+            let _ = load_system_nerd_font(&cc.egui_ctx);
+            configure_text_styles(&cc.egui_ctx);
             Ok(Box::new(MyEguiApp::new(pipe_path.to_string())))
         }),
     )
