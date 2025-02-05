@@ -574,7 +574,7 @@ pub struct Dwm {
     pub cmap: Colormap,
     pub sender: Sender<u8>,
     pub tags: Vec<&'static str>,
-    pub pipe: File,
+    pub pipe: Option<File>,
 }
 
 #[derive(Debug)]
@@ -635,7 +635,11 @@ impl Dwm {
             cmap: 0,
             sender,
             tags: generate_random_tags(Config::tags_length),
-            pipe: File::create(pipe_path).unwrap(),
+            pipe: if pipe_path.is_empty() {
+                None
+            } else {
+                Some(File::create(pipe_path).unwrap())
+            },
         }
     }
 
@@ -1688,7 +1692,13 @@ impl Dwm {
         {
             // info!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
             let formatted_string = format!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
-            self.pipe.write_all(formatted_string.as_bytes()).unwrap();
+            if self.pipe.is_some() {
+                self.pipe
+                    .as_mut()
+                    .unwrap()
+                    .write_all(formatted_string.as_bytes())
+                    .unwrap();
+            }
         }
         let boxs;
         let boxw;

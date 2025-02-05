@@ -53,6 +53,7 @@ fn main() {
     //     .spawn()
     //     .expect("Failed to start egui app");
 
+    let pipe_path = String::new();
     let mut dwm = Dwm::new(tx, pipe_path.to_string());
 
     let _status_update_thread = thread::spawn(move || {

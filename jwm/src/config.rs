@@ -101,6 +101,7 @@ impl Config {
             // class | instance | title | tags mask | isfloating | monitor
             // Rule::new("", "", "Ozone X11", 0, true, -1),
             // Rule::new("Firefox", "", "", 1 << 8, false, -1),
+            Rule::new("egui_bar", "", "", 0, true, -1),
         ]
     });
 
