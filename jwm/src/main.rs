@@ -48,10 +48,10 @@ fn main() {
     if !std::path::Path::new(pipe_path).exists() {
         Command::new("mkfifo").arg(pipe_path).status().unwrap();
     }
-    let mut _child = Command::new("egui_bar")
-        .arg(pipe_path)
-        .spawn()
-        .expect("Failed to start egui app");
+    // let mut _child = Command::new("egui_bar")
+    //     .arg(pipe_path)
+    //     .spawn()
+    //     .expect("Failed to start egui app");
 
     let mut dwm = Dwm::new(tx, pipe_path.to_string());
 
