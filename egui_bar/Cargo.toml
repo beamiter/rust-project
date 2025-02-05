@@ -6,3 +6,6 @@ edition = "2021"
 [dependencies]
 eframe = "0.30.0"
 egui = "0.30.0"
+font-kit = "0.14.2"
+winit = "0.30.8"
+x11rb = "0.13.1"

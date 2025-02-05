@@ -1301,7 +1301,8 @@ impl Dwm {
                         }
                         if (c_mut.x + c_mut.w) > mx + mw && c_mut.isfloating {
                             // center in x direction
-                            c_mut.x = mx + (mw / 2 - c_mut.width() / 2);
+                            // c_mut.x = mx + (mw / 2 - c_mut.width() / 2);
+                            c_mut.x = 0;
                         }
                         if (c_mut.y + c_mut.h) > my + mh && c_mut.isfloating {
                             // center in y direction
