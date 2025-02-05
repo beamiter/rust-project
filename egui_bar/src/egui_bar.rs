@@ -83,7 +83,6 @@ impl eframe::App for MyEguiApp {
                 ui.label(format!("FPS: {:.2}", fps));
             });
         });
-        std::thread::sleep(Duration::from_millis(500));
-        ctx.request_repaint();
+        ctx.request_repaint_after_secs(0.5);
     }
 }

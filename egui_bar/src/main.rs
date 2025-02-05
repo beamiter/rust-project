@@ -108,6 +108,7 @@ fn main() -> eframe::Result {
     println!("screen_width: {}", screen_width);
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_window_type(egui::X11WindowType::Dock)
             .with_position(Pos2::new(0., 0.))
             .with_inner_size([screen_width, 30.0]) // Initial height
             .with_min_inner_size([screen_width, 30.0]) // Minimum size
