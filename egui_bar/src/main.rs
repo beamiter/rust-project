@@ -146,7 +146,7 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "My egui App",
+        "egui_bar",
         native_options,
         Box::new(|cc| {
             let _ = load_system_nerd_font(&cc.egui_ctx);

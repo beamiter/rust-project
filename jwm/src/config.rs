@@ -27,7 +27,7 @@ impl Config {
     pub const borderpx: u32 = 1;
     // snap pixel
     pub const snap: u32 = 32;
-    pub const showbar: bool = true;
+    pub const showbar: bool = false;
     pub const topbar: bool = true;
     pub const vertpad: i32 = 8;
     pub const sidepad: i32 = 8;
