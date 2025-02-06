@@ -127,11 +127,12 @@ fn configure_text_styles(ctx: &egui::Context) {
     });
 }
 
+const SCALE_FACTOR: f32 = 1.66666666;
+
 fn main() -> eframe::Result {
     let args: Vec<String> = env::args().collect();
     let pipe_path = args.get(1).cloned().unwrap_or_else(|| "".to_string());
-    // let screen_width = get_screen_width() / 1.66666666;
-    let screen_width = get_screen_width();
+    let screen_width = get_screen_width() / SCALE_FACTOR;
     println!("screen_width: {}", screen_width);
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
