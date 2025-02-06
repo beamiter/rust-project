@@ -1,5 +1,5 @@
 use eframe::egui;
-use egui::{Align, Layout};
+use egui::{Align, Layout, Vec2};
 use std::fs::File;
 use std::io::Read;
 use std::time::{Duration, Instant};
@@ -10,7 +10,7 @@ pub struct MyEguiApp {
     last_update: Instant,
     frame_durations: Vec<Duration>,
     current_time: String,
-    screen_width: f32,
+    screen_rect_size: Vec2,
 }
 
 impl MyEguiApp {
@@ -22,7 +22,7 @@ impl MyEguiApp {
             last_update: Instant::now(),
             frame_durations: Vec::with_capacity(100),
             current_time: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
-            screen_width: 0.0,
+            screen_rect_size: Vec2::ZERO,
         }
     }
 }
@@ -55,7 +55,9 @@ impl eframe::App for MyEguiApp {
             }
         }
         let scale_factor = ctx.pixels_per_point();
+        self.screen_rect_size = ctx.screen_rect().size();
         egui::CentralPanel::default().show(ctx, |ui| {
+            // self.viewpoint_size = ui.available_size();
             ui.horizontal_centered(|ui| {
                 for cs in [
                     " 🍟 ", " 😃 ", " 🚀 ", " 🎉 ", " 🍕 ", " 🍖 ", " 🏍 ", " 🍔 ", " 🍘 ",
@@ -65,6 +67,8 @@ impl eframe::App for MyEguiApp {
                     );
                 }
                 ui.label(egui::RichText::new(" []= ").color(egui::Color32::from_rgb(255, 0, 0)));
+
+                ui.label(format!("size: {:?}", self.screen_rect_size));
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     // Calculate the time difference between frames
@@ -107,11 +111,15 @@ impl eframe::App for MyEguiApp {
         ctx.request_repaint_after_secs(0.5);
 
         let screen_width = get_screen_width() / scale_factor;
-        self.screen_width = screen_width;
+        let width_offset = 6.0;
+        let desired_width = screen_width - width_offset;
         let hight_offset = 16.0;
-        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2 {
-            x: (screen_width - 6.),
-            y: (MyEguiApp::FONT_SIZE + hight_offset),
-        }));
+        let desired_height = MyEguiApp::FONT_SIZE + hight_offset;
+        if desired_width != self.screen_rect_size.x {
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2 {
+                x: (desired_width),
+                y: (desired_height),
+            }));
+        }
     }
 }
