@@ -10,6 +10,7 @@ pub struct MyEguiApp {
     last_update: Instant,
     frame_durations: Vec<Duration>,
     current_time: String,
+    screen_width: f32,
 }
 
 impl MyEguiApp {
@@ -21,7 +22,18 @@ impl MyEguiApp {
             last_update: Instant::now(),
             frame_durations: Vec::with_capacity(100),
             current_time: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            screen_width: 0.0,
         }
+    }
+}
+
+fn get_screen_width() -> f32 {
+    #[cfg(target_os = "linux")]
+    {
+        use x11rb::connection::Connection;
+        let (conn, screen_num) = x11rb::connect(None).unwrap();
+        let screen = &conn.setup().roots[screen_num];
+        screen.width_in_pixels as f32
     }
 }
 
@@ -42,6 +54,7 @@ impl eframe::App for MyEguiApp {
                 self.message = "fail to open pipe: 🍔🍕🍖🍗🍘🍟".to_string();
             }
         }
+        let scale_factor = ctx.pixels_per_point();
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
                 for cs in [
@@ -72,7 +85,6 @@ impl eframe::App for MyEguiApp {
                         self.frame_durations.remove(0); // Keep only the latest 100 frames
                     }
 
-                    let scale_factor = ctx.pixels_per_point();
                     ui.label(
                         egui::RichText::new(format!("{}", scale_factor))
                             .color(egui::Color32::from_rgb(0, 255, 0)),
@@ -86,12 +98,20 @@ impl eframe::App for MyEguiApp {
                     let fps = 1.0 / avg_frame_duration.as_secs_f64();
                     ui.label(
                         egui::RichText::new(format!("{:.2}", fps))
-                            .color(egui::Color32::from_rgb(0, 255, 0)), // .font(egui::FontId::monospace(MyEguiApp::FONT_SIZE)),
+                            .color(egui::Color32::from_rgb(0, 255, 0)),
                     );
                     ui.label("FPS");
                 });
             });
         });
         ctx.request_repaint_after_secs(0.5);
+
+        let screen_width = get_screen_width() / scale_factor;
+        self.screen_width = screen_width;
+        let hight_offset = 16.0;
+        ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2 {
+            x: (screen_width - 6.),
+            y: (MyEguiApp::FONT_SIZE + hight_offset),
+        }));
     }
 }

@@ -575,6 +575,8 @@ pub struct Dwm {
     pub sender: Sender<u8>,
     pub tags: Vec<&'static str>,
     pub pipe: Option<File>,
+    pub egui_bar_height: Option<i32>,
+    pub egui_bar_xy: [i32; 2],
 }
 
 #[derive(Debug)]
@@ -640,6 +642,8 @@ impl Dwm {
             } else {
                 Some(File::create(pipe_path).unwrap())
             },
+            egui_bar_height: None,
+            egui_bar_xy: [0, 0],
         }
     }
 
@@ -1069,7 +1073,7 @@ impl Dwm {
         }
     }
     pub fn setfullscreen(&mut self, c: &Rc<RefCell<Client>>, fullscreen: bool) {
-        // info!("[setfullscreen]");
+        info!("[setfullscreen]");
         unsafe {
             let isfullscreen = { c.borrow_mut().isfullscreen };
             let win = { c.borrow_mut().win };
@@ -1117,6 +1121,7 @@ impl Dwm {
                     c.bw = c.oldbw;
                     c.x = c.oldx;
                     c.y = c.oldy;
+                    println!("line: {}, {}", line!(), c.y);
                     c.w = c.oldw;
                     c.h = c.oldh;
                 }
@@ -1134,7 +1139,7 @@ impl Dwm {
         }
     }
     pub fn resizeclient(&mut self, c: &mut Client, x: i32, y: i32, w: i32, h: i32) {
-        // info!("[resizeclient]");
+        info!("[resizeclient]");
         unsafe {
             let mut wc: XWindowChanges = zeroed();
             c.oldx = c.x;
@@ -1142,6 +1147,7 @@ impl Dwm {
             wc.x = x;
             c.oldy = c.y;
             c.y = y;
+            // println!("line: {}, {}", line!(), c.y);
             wc.y = y;
             c.oldw = c.w;
             c.w = w;
@@ -1170,7 +1176,7 @@ impl Dwm {
         mut h: i32,
         interact: bool,
     ) {
-        // info!("[resize]");
+        info!("[resize]");
         if self.applysizehints(c, &mut x, &mut y, &mut w, &mut h, interact) {
             self.resizeclient(&mut *c.borrow_mut(), x, y, w, h);
         }
@@ -1333,6 +1339,7 @@ impl Dwm {
                 let mut wc: XWindowChanges = zeroed();
                 wc.x = ev.x;
                 wc.y = ev.y;
+                // println!("line: {}, {}", line!(), wc.y);
                 wc.width = ev.width;
                 wc.height = ev.height;
                 wc.border_width = ev.border_width;
@@ -1398,7 +1405,7 @@ impl Dwm {
         }
     }
     pub fn arrangemon(&mut self, m: &Rc<RefCell<Monitor>>) {
-        // info!("[arrangemon]");
+        info!("[arrangemon]");
         let sellt;
         {
             let mut mm = m.borrow_mut();
@@ -1978,7 +1985,7 @@ impl Dwm {
     }
 
     pub fn arrange(&mut self, mut m: Option<Rc<RefCell<Monitor>>>) {
-        // info!("[arrange]");
+        info!("[arrange]");
         if let Some(ref m_opt) = m {
             {
                 let stack = { m_opt.borrow_mut().stack.clone() };
@@ -2426,20 +2433,31 @@ impl Dwm {
             }
         }
     }
+
+    pub fn client_y_offset(&self, showbar0: bool) -> i32 {
+        if showbar0 {
+            return 0;
+        }
+        if let Some(egui_bar_height) = self.egui_bar_height {
+            return egui_bar_height + Config::egui_bar_pad + self.egui_bar_xy[0];
+        }
+        return 0;
+    }
+
     pub fn tile(&mut self, m: *mut Monitor) {
-        // info!("[tile]");
+        info!("[tile]");
         let mut n: u32 = 0;
         let mut mfacts: f32 = 0.;
         let mut sfacts: f32 = 0.;
         unsafe {
             let mut c = self.nexttiled((*m).clients.clone());
-            while c.is_some() {
+            while let Some(c_opt) = c {
                 if n < (*m).nmaster0 {
-                    mfacts += c.as_ref().unwrap().borrow_mut().cfact;
+                    mfacts += c_opt.borrow_mut().cfact;
                 } else {
-                    sfacts += c.as_ref().unwrap().borrow_mut().cfact;
+                    sfacts += c_opt.borrow_mut().cfact;
                 }
-                let next = self.nexttiled(c.as_ref().unwrap().borrow_mut().next.clone());
+                let next = self.nexttiled(c_opt.borrow_mut().next.clone());
                 c = next;
                 n += 1;
             }
@@ -2462,53 +2480,54 @@ impl Dwm {
             let mut i: u32 = 0;
             let mut h: u32;
             c = self.nexttiled((*m).clients.clone());
-            while c.is_some() {
+            let client_y_offset = self.client_y_offset((*m).showbar0);
+            while let Some(ref c_opt) = c {
                 if i < (*m).nmaster0 {
                     // h = ((*m).wh as u32 - my) / (n.min((*m).nmaster0) - i);
-                    let cfact = c.as_ref().unwrap().borrow_mut().cfact;
+                    let cfact = c_opt.borrow_mut().cfact;
                     h = (((*m).wh as u32 - my) as f32 * (cfact / mfacts)) as u32;
-                    let bw = c.as_ref().unwrap().borrow_mut().bw;
+                    let bw = c_opt.borrow_mut().bw;
                     self.resize(
-                        c.as_ref().unwrap(),
+                        &c_opt,
                         (*m).wx,
-                        (*m).wy + my as i32,
+                        (*m).wy + my as i32 + client_y_offset,
                         mw as i32 - (2 * bw),
-                        h as i32 - (2 * bw),
+                        h as i32 - (2 * bw) - client_y_offset,
                         false,
                     );
-                    let height = c.as_ref().unwrap().borrow_mut().height() as u32;
+                    let height = c_opt.borrow_mut().height() as u32;
                     if my + height < (*m).wh as u32 {
                         my += height;
                     }
                     mfacts -= cfact;
                 } else {
                     // h = ((*m).wh as u32 - ty) / (n - i);
-                    let cfact = c.as_ref().unwrap().borrow_mut().cfact;
+                    let cfact = c_opt.borrow_mut().cfact;
                     h = (((*m).wh as u32 - ty) as f32 * (cfact / sfacts)) as u32;
-                    let bw = c.as_ref().unwrap().borrow_mut().bw;
+                    let bw = c_opt.borrow_mut().bw;
                     self.resize(
-                        c.as_ref().unwrap(),
+                        &c_opt,
                         (*m).wx + mw as i32,
-                        (*m).wy + ty as i32,
+                        (*m).wy + ty as i32 + client_y_offset,
                         (*m).ww - mw as i32 - (2 * bw),
-                        h as i32 - (2 * bw),
+                        h as i32 - (2 * bw) - client_y_offset,
                         false,
                     );
-                    let height = c.as_ref().unwrap().borrow_mut().height();
+                    let height = c_opt.borrow_mut().height();
                     if ty as i32 + height < (*m).wh {
                         ty += height as u32;
                     }
                     sfacts -= cfact;
                 }
 
-                let next = self.nexttiled(c.as_ref().unwrap().borrow_mut().next.clone());
+                let next = self.nexttiled(c_opt.borrow_mut().next.clone());
                 c = next;
                 i += 1;
             }
         }
     }
     pub fn togglebar(&mut self, _arg: *const Arg) {
-        // info!("[togglebar]");
+        info!("[togglebar]");
         unsafe {
             {
                 let mut selmon_clone = self.selmon.clone();
@@ -3892,6 +3911,10 @@ impl Dwm {
     }
     pub fn sendevent(&mut self, c: &mut Client, proto: Atom) -> bool {
         info!("[sendevent] {}", c);
+        if c.name == "egui_bar" {
+            self.egui_bar_height = Some(c.h);
+            self.egui_bar_xy = [c.x, c.y];
+        }
         let mut protocols: *mut Atom = null_mut();
         let mut n: i32 = 0;
         let mut exists: bool = false;
@@ -4334,7 +4357,7 @@ impl Dwm {
         }
     }
     pub fn monocle(&mut self, m: *mut Monitor) {
-        // info!("[monocle]");
+        info!("[monocle]");
         unsafe {
             // This idea is cool!.
             let mut n: u32 = 0;
