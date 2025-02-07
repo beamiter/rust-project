@@ -1,8 +1,6 @@
 use chrono::prelude::*;
 use coredump::register_panic_handler;
 use dwm::Dwm;
-use std::fs::File;
-use std::io::Write;
 use std::process::Command;
 use std::sync::mpsc;
 use std::{ffi::CString, process::exit, ptr::null_mut};
@@ -48,14 +46,8 @@ fn main() {
     if !std::path::Path::new(pipe_path).exists() {
         Command::new("mkfifo").arg(pipe_path).status().unwrap();
     }
-    // let mut _child = Command::new("egui_bar")
-    //     .arg(pipe_path)
-    //     .spawn()
-    //     .expect("Failed to start egui app");
-
-    let pipe_path = String::new();
     let mut _child = Command::new("egui_bar")
-        .arg(&pipe_path)
+        .arg(pipe_path)
         .spawn()
         .expect("Failed to start egui app");
     let mut dwm = Dwm::new(tx, pipe_path.to_string());

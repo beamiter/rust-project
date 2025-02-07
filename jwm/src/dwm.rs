@@ -1,11 +1,13 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
+use bincode::serialize;
 use libc::{
     close, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
     SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
 use log::info;
+use shared_structures::SharedMessage;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt;
@@ -640,7 +642,8 @@ impl Dwm {
             pipe: if pipe_path.is_empty() {
                 None
             } else {
-                Some(File::create(pipe_path).unwrap())
+                Some(File::create(&pipe_path).unwrap());
+                Some(File::create(&pipe_path).unwrap())
             },
             egui_bar_height: None,
             egui_bar_xy: [0, 0],
@@ -1692,21 +1695,30 @@ impl Dwm {
         }
         return ret;
     }
+    fn write_message(&mut self, message: &SharedMessage) -> std::io::Result<()> {
+        let serialized = serialize(message).expect("Serialization failed");
+        if let Some(file) = self.pipe.as_mut() {
+            file.write_all(&(serialized.len() as u32).to_le_bytes())?;
+            file.write_all(&serialized)?;
+        }
+        Ok(())
+    }
     pub fn drawbar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
         // info!("[drawbar]");
         let mut tw: i32 = 0;
         let mut occ: u32 = 0;
         let mut urg: u32 = 0;
         {
-            // info!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
-            let formatted_string = format!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
-            if self.pipe.is_some() {
-                self.pipe
-                    .as_mut()
+            info!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
+            let message = SharedMessage {
+                id: 1,
+                content: "Test message".to_string(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
                     .unwrap()
-                    .write_all(formatted_string.as_bytes())
-                    .unwrap();
-            }
+                    .as_millis(),
+            };
+            let _ = self.write_message(&message);
         }
         let boxs;
         let boxw;

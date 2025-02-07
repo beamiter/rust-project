@@ -7,6 +7,7 @@ build = "build.rs"
 [dependencies]
 # alsa = "0.9.1"
 battery = "0.7.8"
+bincode = "1.3.3"
 cairo-rs = { version = "0.20.5", features = ["xlib"]}
 chrono = "0.4.38"
 coredump = "0.1.2"
@@ -19,6 +20,8 @@ pango = { version = "0.20.4", features = ["v1_44"]}
 pangocairo = "0.20.4"
 rand = "0.8.5"
 regex = "1.11.0"
+serde = { version = "1.0.217", features = ["derive"] }
+shared_structures = { version = "0.1.0", path = "../shared_structures" }
 simplelog = "0.12.2"
 sysinfo = "0.32.0"
 x11 = { version = "2.21.0", features = ["all"] }

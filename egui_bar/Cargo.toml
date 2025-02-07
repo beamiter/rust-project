@@ -4,9 +4,12 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+bincode = "1.3.3"
 chrono = "0.4.39"
 eframe = "0.30.0"
 egui = "0.30.0"
 font-kit = "0.14.2"
+serde = { version = "1.0.217", features = ["derive"] }
+shared_structures = { version = "0.1.0", path = "../shared_structures" }
 winit = "0.30.8"
 x11rb = "0.13.1"
