@@ -2615,16 +2615,45 @@ impl Dwm {
             }
         }
     }
+    pub fn tag_egui_bar(&mut self, arg: *const Arg) {
+        info!("[tag_egui_bar]");
+        unsafe {
+            if let Arg::Ui(ui) = *arg {
+                let mut sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+                let target_tag = ui & Config::tagmask;
+                if sel.is_none() || target_tag <= 0 {
+                    return;
+                }
+                // Find egui_bar client.
+                while let Some(sel_opt) = sel {
+                    let name = { sel_opt.borrow_mut().name.clone() };
+                    if name == "egui_bar" {
+                        sel_opt.borrow_mut().tags0 = target_tag;
+                        self.setclienttagprop(&sel_opt);
+                        self.focus(None);
+                        self.arrange(self.selmon.clone());
+                        break;
+                    }
+
+                    let next = sel_opt.borrow_mut().next.clone();
+                    sel = next;
+                }
+            }
+        }
+    }
     pub fn tag(&mut self, arg: *const Arg) {
         // info!("[tag]");
         unsafe {
             if let Arg::Ui(ui) = *arg {
                 let sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
-                if sel.is_some() && (ui & Config::tagmask) > 0 {
-                    sel.as_ref().unwrap().borrow_mut().tags0 = ui & Config::tagmask;
-                    self.setclienttagprop(sel.as_ref().unwrap());
-                    self.focus(None);
-                    self.arrange(self.selmon.clone());
+                let target_tag = ui & Config::tagmask;
+                if let Some(ref sel_opt) = sel {
+                    if target_tag > 0 {
+                        sel_opt.borrow_mut().tags0 = target_tag;
+                        self.setclienttagprop(sel_opt);
+                        self.focus(None);
+                        self.arrange(self.selmon.clone());
+                    }
                 }
             }
         }
@@ -3017,48 +3046,38 @@ impl Dwm {
         unsafe {
             if let Arg::Ui(ui) = *arg {
                 info!("[view] ui: {}", ui);
+                let target_tag = ui & Config::tagmask;
                 let mut selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
-                if (ui & Config::tagmask) == selmon_mut.tagset[selmon_mut.seltags] {
+                if target_tag == selmon_mut.tagset[selmon_mut.seltags] {
                     return;
                 }
                 // toggle sel tagset.
                 selmon_mut.seltags ^= 1;
-                if ui & Config::tagmask > 0 {
+                if target_tag > 0 {
                     let seltags = selmon_mut.seltags;
-                    selmon_mut.tagset[seltags] = ui & Config::tagmask;
-
-                    let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-                    selmon_mut.pertag.as_mut().unwrap().prevtag = curtag;
-
+                    selmon_mut.tagset[seltags] = target_tag;
+                    if let Some(pertag) = selmon_mut.pertag.as_mut() {
+                        pertag.prevtag = pertag.curtag;
+                    }
                     if ui == !0 {
                         selmon_mut.pertag.as_mut().unwrap().curtag = 0;
                     } else {
-                        let mut i = 0;
-                        loop {
-                            let condition = ui & 1 << i;
-                            if condition > 0 {
-                                break;
-                            }
-                            i += 1;
-                        }
+                        // cool
+                        let i = ui.trailing_zeros() as usize;
                         selmon_mut.pertag.as_mut().unwrap().curtag = i + 1;
                     }
                 } else {
-                    let tmptag = selmon_mut.pertag.as_mut().unwrap().prevtag;
-                    selmon_mut.pertag.as_mut().unwrap().prevtag =
-                        selmon_mut.pertag.as_ref().unwrap().curtag;
-                    selmon_mut.pertag.as_mut().unwrap().curtag = tmptag;
+                    if let Some(pertag) = selmon_mut.pertag.as_mut() {
+                        std::mem::swap(&mut pertag.prevtag, &mut pertag.curtag);
+                    }
                 }
             } else {
                 return;
             }
             let sel = {
-                let condition;
-                let curtag;
-                {
-                    let mut selmon_clone = self.selmon.clone();
-                    let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
-                    curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
+                let (curtag, condition) = {
+                    let mut selmon_mut = self.selmon.as_mut().unwrap().borrow_mut();
+                    let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
                     selmon_mut.nmaster0 = selmon_mut.pertag.as_ref().unwrap().nmasters[curtag];
                     selmon_mut.mfact0 = selmon_mut.pertag.as_ref().unwrap().mfacts[curtag];
                     selmon_mut.sellt = selmon_mut.pertag.as_ref().unwrap().sellts[curtag];
@@ -3071,10 +3090,10 @@ impl Dwm {
                         [sellt ^ 1]
                         .clone()
                         .expect("None unwrap");
-
-                    condition =
+                    let condition =
                         selmon_mut.showbar0 != selmon_mut.pertag.as_ref().unwrap().showbars[curtag];
-                }
+                    (curtag, condition)
+                };
                 if condition {
                     self.togglebar(null_mut());
                 }
@@ -3088,6 +3107,8 @@ impl Dwm {
                     .sel[curtag]
                     .clone()
             };
+            // for egui bar
+            self.tag_egui_bar(arg);
             self.focus(sel);
             self.arrange(self.selmon.clone());
         }
