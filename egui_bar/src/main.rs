@@ -68,6 +68,7 @@ fn main() -> eframe::Result {
     let shared_path = args.get(1).cloned().unwrap_or_else(|| "".to_string());
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
+            .with_transparent(true)
             .with_window_type(egui::X11WindowType::Dock)
             .with_position(Pos2::new(2., 1.))
             .with_inner_size([800., MyEguiApp::FONT_SIZE]) // Initial height
@@ -106,7 +107,7 @@ fn main() -> eframe::Result {
                         // println!("send counter: {}", count);
                     }
                     last_secs = cur_secs;
-                    thread::sleep(Duration::from_millis(500));
+                    thread::sleep(Duration::from_millis(100));
                 }
             });
 
