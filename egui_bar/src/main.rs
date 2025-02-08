@@ -4,7 +4,7 @@ use egui::{Margin, Pos2};
 pub use egui_bar::MyEguiApp;
 use std::collections::BTreeMap;
 use std::sync::mpsc;
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{env, thread};
 use FontFamily::Monospace;
 
@@ -78,23 +78,37 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
 
-    let (sender, receiver) = mpsc::channel();
-    thread::spawn(move || {
-        let mut count = 0;
-        loop {
-            count += 1;
-            sender.send(count).unwrap();
-            println!("send counter: {}", count);
-            thread::sleep(Duration::from_secs(1));
-        }
-    });
-
     eframe::run_native(
         "egui_bar",
         native_options,
         Box::new(|cc| {
             let _ = load_system_nerd_font(&cc.egui_ctx);
             configure_text_styles(&cc.egui_ctx);
+
+            let (sender, receiver) = mpsc::channel();
+            let egui_ctx = cc.egui_ctx.clone();
+            thread::spawn(move || {
+                let mut count: usize = 0;
+                let mut last_secs = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_secs();
+                loop {
+                    let cur_secs = SystemTime::now()
+                        .duration_since(UNIX_EPOCH)
+                        .unwrap()
+                        .as_secs();
+                    // println!("{}, {}", last_secs, cur_secs);
+                    if cur_secs != last_secs {
+                        egui_ctx.request_repaint();
+                        count = count.wrapping_add(1);
+                        sender.send(count).unwrap();
+                        // println!("send counter: {}", count);
+                    }
+                    last_secs = cur_secs;
+                    thread::sleep(Duration::from_millis(500));
+                }
+            });
 
             Ok(Box::new(MyEguiApp::new(
                 cc,

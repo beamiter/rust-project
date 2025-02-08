@@ -4,6 +4,7 @@ use egui::{Align, Layout, Vec2};
 use shared_memory::{Shmem, ShmemConf};
 use shared_structures::SharedMessage;
 use std::{
+    collections::VecDeque,
     sync::mpsc,
     time::{Duration, Instant},
 };
@@ -11,9 +12,8 @@ use std::{
 pub struct MyEguiApp {
     message: Option<SharedMessage>,
     shmem: Option<Shmem>,
-    last_update: Instant,
-    frame_durations: Vec<Duration>,
-    current_time: String,
+    update_time: Instant,
+    elapsed_duration: VecDeque<Duration>,
     screen_rect_size: Vec2,
     counter: usize,
     receiver: mpsc::Receiver<usize>,
@@ -33,9 +33,8 @@ impl MyEguiApp {
             } else {
                 Some(ShmemConf::new().flink(shared_path).open().unwrap())
             },
-            last_update: Instant::now(),
-            frame_durations: Vec::with_capacity(100),
-            current_time: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
+            update_time: Instant::now(),
+            elapsed_duration: VecDeque::with_capacity(2),
             screen_rect_size: Vec2::ZERO,
             counter: 0,
             receiver,
@@ -73,14 +72,20 @@ fn get_screen_width() -> f32 {
 
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if self.elapsed_duration.len() >= self.elapsed_duration.capacity() {
+            self.elapsed_duration.pop_front();
+        }
+        self.elapsed_duration
+            .push_back(Instant::now().duration_since(self.update_time));
+        self.update_time = Instant::now();
         if let Ok(message) = self.read_message() {
             self.message = Some(message);
         } else {
             self.message = None;
         }
-        if let Ok(count) = self.receiver.try_recv() {
+        while let Ok(count) = self.receiver.try_recv() {
             self.counter = count;
-            println!("receive counter: {}", self.counter);
+            // println!("receive counter: {}", self.counter);
         }
         // println!("{:?}", self.message);
         let scale_factor = ctx.pixels_per_point();
@@ -100,23 +105,12 @@ impl eframe::App for MyEguiApp {
                 ui.label(format!("message: {:?}", self.message));
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    // Calculate the time difference between frames
-                    let now = Instant::now();
-                    let elapsed = now.duration_since(self.last_update);
-                    self.last_update = now;
-                    self.current_time =
-                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
+                    let current_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                     ui.label(
-                        egui::RichText::new(format!("{}", self.current_time))
+                        egui::RichText::new(format!("{}", current_time))
                             .color(egui::Color32::from_rgb(0, 255, 0)),
                     );
                     ui.label("current_time");
-
-                    // Store the frame durations
-                    self.frame_durations.push(elapsed);
-                    if self.frame_durations.len() > 1 {
-                        self.frame_durations.remove(0); // Keep only the latest 100 frames
-                    }
 
                     ui.label(
                         egui::RichText::new(format!("{}", scale_factor))
@@ -124,20 +118,17 @@ impl eframe::App for MyEguiApp {
                     );
                     ui.label("scale_factor");
 
-                    // Calculate the average frame duration and FPS
-                    let avg_frame_duration: Duration =
-                        self.frame_durations.iter().sum::<Duration>()
-                            / self.frame_durations.len() as u32;
-                    let fps = 1.0 / avg_frame_duration.as_secs_f64();
+                    let average_duration = self.elapsed_duration.iter().sum::<Duration>()
+                        / self.elapsed_duration.len() as u32;
+                    let fps = 1.0 / average_duration.as_secs_f64();
                     ui.label(
-                        egui::RichText::new(format!("{:.2}", fps))
+                        egui::RichText::new(format!("{:.1}", fps))
                             .color(egui::Color32::from_rgb(0, 255, 0)),
                     );
                     ui.label("FPS");
                 });
             });
         });
-        ctx.request_repaint_after_secs(0.5);
 
         let screen_width = get_screen_width() / scale_factor;
         let width_offset = 6.0;
