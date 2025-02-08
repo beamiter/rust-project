@@ -1,8 +1,6 @@
 use chrono::prelude::*;
 use coredump::register_panic_handler;
 use dwm::Dwm;
-use shared_memory::ShmemConf;
-use shared_structures::SharedMessage;
 use std::process::Command;
 use std::sync::mpsc;
 use std::{ffi::CString, process::exit, ptr::null_mut};
@@ -22,7 +20,6 @@ mod dwm;
 mod icon_gallery;
 mod miscellaneous;
 mod xproto;
-use bincode::{deserialize, serialize};
 
 mod tests;
 

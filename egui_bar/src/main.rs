@@ -1,14 +1,10 @@
 mod egui_bar;
-use bincode::{deserialize, serialize};
 use egui::{FontFamily, FontId, TextStyle};
 use egui::{Margin, Pos2};
 pub use egui_bar::MyEguiApp;
-use shared_memory::*;
-use shared_structures::SharedMessage;
 use std::collections::BTreeMap;
-use std::env;
-use std::thread;
 use std::time::Duration;
+use std::{env, thread};
 use FontFamily::Monospace;
 
 use font_kit::source::SystemSource;
@@ -76,16 +72,18 @@ fn main() -> eframe::Result {
             .with_inner_size([800., MyEguiApp::FONT_SIZE]) // Initial height
             .with_min_inner_size([800., MyEguiApp::FONT_SIZE]) // Minimum size
             // .with_max_inner_size([f32::INFINITY, 20.0]) // Set max height to 20.0
-            .with_decorations(false) // Hide title bar and decorations
-            .with_always_on_top(), // Keep window always on top
+            .with_decorations(false), // Hide title bar and decorations
+        // .with_always_on_top(), // Keep window always on top
         ..Default::default()
     };
+
     eframe::run_native(
         "egui_bar",
         native_options,
         Box::new(|cc| {
             let _ = load_system_nerd_font(&cc.egui_ctx);
             configure_text_styles(&cc.egui_ctx);
+
             Ok(Box::new(MyEguiApp::new(shared_path.to_string())))
         }),
     )

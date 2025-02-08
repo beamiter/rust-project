@@ -36,11 +36,11 @@ impl MyEguiApp {
             let data = shmem.as_ptr();
             let serialized = unsafe { std::slice::from_raw_parts(data, shmem.len()) };
             let message: SharedMessage = deserialize(serialized).unwrap();
-            println!(
-                "Process egui_bar: Data read from shared memory: {:?}, shmem len: {}",
-                message,
-                shmem.len()
-            );
+            // println!(
+            //     "Process egui_bar: Data read from shared memory: {:?}, shmem len: {}",
+            //     message,
+            //     shmem.len()
+            // );
             return Ok(message);
         }
         Err(std::io::Error::new(
@@ -62,7 +62,11 @@ fn get_screen_width() -> f32 {
 
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.message = Some(self.read_message().unwrap());
+        if let Ok(message) = self.read_message() {
+            self.message = Some(message);
+        } else {
+            self.message = None;
+        }
         // println!("{:?}", self.message);
         let scale_factor = ctx.pixels_per_point();
         self.screen_rect_size = ctx.screen_rect().size();

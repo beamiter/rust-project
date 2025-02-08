@@ -12,8 +12,6 @@ use shared_structures::SharedMessage;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt;
-use std::fs::File;
-use std::io::Write;
 use std::mem::transmute;
 use std::mem::zeroed;
 use std::process::Command;
@@ -1130,7 +1128,7 @@ impl Dwm {
                     c.bw = c.oldbw;
                     c.x = c.oldx;
                     c.y = c.oldy;
-                    println!("line: {}, {}", line!(), c.y);
+                    // println!("line: {}, {}", line!(), c.y);
                     c.w = c.oldw;
                     c.h = c.oldh;
                 }
@@ -1707,7 +1705,6 @@ impl Dwm {
             let data = shmem.as_ptr();
             let data_slice = unsafe { std::slice::from_raw_parts_mut(data, serialized.len()) };
             data_slice.copy_from_slice(&serialized);
-            println!("Process jwm: Data written to shared memory.");
         }
         Ok(())
     }
