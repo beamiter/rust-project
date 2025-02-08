@@ -21,6 +21,7 @@ pangocairo = "0.20.4"
 rand = "0.8.5"
 regex = "1.11.0"
 serde = { version = "1.0.217", features = ["derive"] }
+shared_memory = "0.12.4"
 shared_structures = { version = "0.1.0", path = "../shared_structures" }
 simplelog = "0.12.2"
 sysinfo = "0.32.0"

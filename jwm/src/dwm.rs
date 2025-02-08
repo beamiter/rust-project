@@ -7,6 +7,7 @@ use libc::{
     SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
 use log::info;
+use shared_memory::{Shmem, ShmemConf};
 use shared_structures::SharedMessage;
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
@@ -546,7 +547,6 @@ pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
     0
 }
 
-#[derive(Debug)]
 pub struct Dwm {
     pub broken: String,
     pub stext_max_len: usize,
@@ -576,7 +576,7 @@ pub struct Dwm {
     pub cmap: Colormap,
     pub sender: Sender<u8>,
     pub tags: Vec<&'static str>,
-    pub pipe: Option<File>,
+    pub shmem: Option<Shmem>,
     pub egui_bar_height: Option<i32>,
     pub egui_bar_xy: [i32; 2],
 }
@@ -609,7 +609,7 @@ impl Dwm {
             }
         }
     }
-    pub fn new(sender: Sender<u8>, pipe_path: String) -> Self {
+    pub fn new(sender: Sender<u8>, shared_path: String) -> Self {
         Dwm {
             broken: "broken".to_string(),
             stext_max_len: 512,
@@ -639,11 +639,17 @@ impl Dwm {
             cmap: 0,
             sender,
             tags: generate_random_tags(Config::tags_length),
-            pipe: if pipe_path.is_empty() {
+            shmem: if shared_path.is_empty() {
                 None
             } else {
-                Some(File::create(&pipe_path).unwrap());
-                Some(File::create(&pipe_path).unwrap())
+                Some(
+                    ShmemConf::new()
+                        .size(1024)
+                        .flink(shared_path)
+                        .force_create_flink()
+                        .create()
+                        .unwrap(),
+                )
             },
             egui_bar_height: None,
             egui_bar_xy: [0, 0],
@@ -1697,29 +1703,28 @@ impl Dwm {
     }
     fn write_message(&mut self, message: &SharedMessage) -> std::io::Result<()> {
         let serialized = serialize(message).expect("Serialization failed");
-        if let Some(file) = self.pipe.as_mut() {
-            file.write_all(&(serialized.len() as u32).to_le_bytes())?;
-            file.write_all(&serialized)?;
+        if let Some(shmem) = self.shmem.as_mut() {
+            let data = shmem.as_ptr();
+            let data_slice = unsafe { std::slice::from_raw_parts_mut(data, serialized.len()) };
+            data_slice.copy_from_slice(&serialized);
+            println!("Process jwm: Data written to shared memory.");
         }
         Ok(())
     }
     pub fn drawbar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
         // info!("[drawbar]");
+        {
+            info!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
+            let message = SharedMessage::new(1, "Test message".to_string());
+            let _ = self.write_message(&message);
+        }
+        let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
+        if !showbar0 {
+            return;
+        }
         let mut tw: i32 = 0;
         let mut occ: u32 = 0;
         let mut urg: u32 = 0;
-        {
-            info!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
-            let message = SharedMessage {
-                id: 1,
-                content: "Test message".to_string(),
-                timestamp: std::time::SystemTime::now()
-                    .duration_since(std::time::UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis(),
-            };
-            let _ = self.write_message(&message);
-        }
         let boxs;
         let boxw;
         let lrpad;
@@ -1737,10 +1742,6 @@ impl Dwm {
             boxs = h / 9;
             boxw = h / 6 + 2;
             // info!("[drawbar] boxs: {}, boxw: {}, lrpad: {}", boxs, boxw, lrpad);
-        }
-        let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
-        if !showbar0 {
-            return;
         }
 
         let ww = { m.as_ref().unwrap().borrow_mut().ww };

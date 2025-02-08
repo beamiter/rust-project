@@ -1,14 +1,13 @@
 use bincode::deserialize;
 use eframe::egui;
 use egui::{Align, Layout, Vec2};
+use shared_memory::{Shmem, ShmemConf};
 use shared_structures::SharedMessage;
-use std::fs::File;
-use std::io::Read;
 use std::time::{Duration, Instant};
 
 pub struct MyEguiApp {
     message: Option<SharedMessage>,
-    pipe: Option<File>,
+    shmem: Option<Shmem>,
     last_update: Instant,
     frame_durations: Vec<Duration>,
     current_time: String,
@@ -17,13 +16,13 @@ pub struct MyEguiApp {
 
 impl MyEguiApp {
     pub const FONT_SIZE: f32 = 16.0;
-    pub fn new(pipe_path: String) -> Self {
+    pub fn new(shared_path: String) -> Self {
         Self {
             message: None,
-            pipe: if pipe_path.is_empty() {
+            shmem: if shared_path.is_empty() {
                 None
             } else {
-                Some(File::open(pipe_path).unwrap())
+                Some(ShmemConf::new().flink(shared_path).open().unwrap())
             },
             last_update: Instant::now(),
             frame_durations: Vec::with_capacity(100),
@@ -33,18 +32,20 @@ impl MyEguiApp {
     }
 
     fn read_message(&mut self) -> std::io::Result<SharedMessage> {
-        if let Some(file) = self.pipe.as_mut() {
-            let mut len_bytes = [0u8; 4];
-            file.read_exact(&mut len_bytes)?;
-            let len = u32::from_le_bytes(len_bytes) as usize;
-            let mut buffer = vec![0u8; len];
-            file.read_exact(&mut buffer)?;
-            let message: SharedMessage = deserialize(&buffer).expect("Deserialization failed");
+        if let Some(shmem) = self.shmem.as_mut() {
+            let data = shmem.as_ptr();
+            let serialized = unsafe { std::slice::from_raw_parts(data, shmem.len()) };
+            let message: SharedMessage = deserialize(serialized).unwrap();
+            println!(
+                "Process egui_bar: Data read from shared memory: {:?}, shmem len: {}",
+                message,
+                shmem.len()
+            );
             return Ok(message);
         }
         Err(std::io::Error::new(
             std::io::ErrorKind::Other,
-            "pipe is empty",
+            "shmem is empty",
         ))
     }
 }
@@ -117,7 +118,7 @@ impl eframe::App for MyEguiApp {
                 });
             });
         });
-        ctx.request_repaint_after_secs(0.25);
+        ctx.request_repaint_after_secs(0.5);
 
         let screen_width = get_screen_width() / scale_factor;
         let width_offset = 6.0;

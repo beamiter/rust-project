@@ -1,6 +1,8 @@
 use chrono::prelude::*;
 use coredump::register_panic_handler;
 use dwm::Dwm;
+use shared_memory::ShmemConf;
+use shared_structures::SharedMessage;
 use std::process::Command;
 use std::sync::mpsc;
 use std::{ffi::CString, process::exit, ptr::null_mut};
@@ -20,6 +22,7 @@ mod dwm;
 mod icon_gallery;
 mod miscellaneous;
 mod xproto;
+use bincode::{deserialize, serialize};
 
 mod tests;
 
@@ -42,15 +45,12 @@ fn main() {
     miscellaneous::init_auto_start();
     let (tx, rx) = mpsc::channel();
 
-    let pipe_path = "/tmp/egui_pipe";
-    if !std::path::Path::new(pipe_path).exists() {
-        Command::new("mkfifo").arg(pipe_path).status().unwrap();
-    }
+    let shared_path = "/dev/shm/my_shared_memory";
     let mut _child = Command::new("egui_bar")
-        .arg(pipe_path)
+        .arg(shared_path)
         .spawn()
         .expect("Failed to start egui app");
-    let mut dwm = Dwm::new(tx, pipe_path.to_string());
+    let mut dwm = Dwm::new(tx, shared_path.to_string());
 
     let _status_update_thread = thread::spawn(move || {
         let mut status_bar = StatusBar::new();
