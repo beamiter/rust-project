@@ -3,7 +3,10 @@ use eframe::egui;
 use egui::{Align, Layout, Vec2};
 use shared_memory::{Shmem, ShmemConf};
 use shared_structures::SharedMessage;
-use std::time::{Duration, Instant};
+use std::{
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 
 pub struct MyEguiApp {
     message: Option<SharedMessage>,
@@ -12,11 +15,17 @@ pub struct MyEguiApp {
     frame_durations: Vec<Duration>,
     current_time: String,
     screen_rect_size: Vec2,
+    counter: usize,
+    receiver: mpsc::Receiver<usize>,
 }
 
 impl MyEguiApp {
     pub const FONT_SIZE: f32 = 16.0;
-    pub fn new(shared_path: String) -> Self {
+    pub fn new(
+        _cc: &eframe::CreationContext<'_>,
+        receiver: mpsc::Receiver<usize>,
+        shared_path: String,
+    ) -> Self {
         Self {
             message: None,
             shmem: if shared_path.is_empty() {
@@ -28,6 +37,8 @@ impl MyEguiApp {
             frame_durations: Vec::with_capacity(100),
             current_time: chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string(),
             screen_rect_size: Vec2::ZERO,
+            counter: 0,
+            receiver,
         }
     }
 
@@ -66,6 +77,10 @@ impl eframe::App for MyEguiApp {
             self.message = Some(message);
         } else {
             self.message = None;
+        }
+        if let Ok(count) = self.receiver.try_recv() {
+            self.counter = count;
+            println!("receive counter: {}", self.counter);
         }
         // println!("{:?}", self.message);
         let scale_factor = ctx.pixels_per_point();

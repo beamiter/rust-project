@@ -3,6 +3,7 @@ use egui::{FontFamily, FontId, TextStyle};
 use egui::{Margin, Pos2};
 pub use egui_bar::MyEguiApp;
 use std::collections::BTreeMap;
+use std::sync::mpsc;
 use std::time::Duration;
 use std::{env, thread};
 use FontFamily::Monospace;
@@ -77,6 +78,17 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
 
+    let (sender, receiver) = mpsc::channel();
+    thread::spawn(move || {
+        let mut count = 0;
+        loop {
+            count += 1;
+            sender.send(count).unwrap();
+            println!("send counter: {}", count);
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+
     eframe::run_native(
         "egui_bar",
         native_options,
@@ -84,7 +96,11 @@ fn main() -> eframe::Result {
             let _ = load_system_nerd_font(&cc.egui_ctx);
             configure_text_styles(&cc.egui_ctx);
 
-            Ok(Box::new(MyEguiApp::new(shared_path.to_string())))
+            Ok(Box::new(MyEguiApp::new(
+                cc,
+                receiver,
+                shared_path.to_string(),
+            )))
         }),
     )
 }
