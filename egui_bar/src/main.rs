@@ -15,9 +15,9 @@ fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::
     let system_source = SystemSource::new();
     println!("all fonts: {:?}", system_source.all_fonts());
     for font_name in [
-        "SauceCodeProNerdFont".to_string(),
         "Noto Sans CJK SC".to_string(),
         "Noto Sans CJK TC".to_string(),
+        "SauceCodeProNerdFont".to_string(),
     ] {
         let font_handle = system_source.select_best_match(
             &[font_kit::family_name::FamilyName::Title(font_name.clone())],

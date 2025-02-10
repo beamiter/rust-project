@@ -6,13 +6,15 @@ pub struct TagStatus {
     pub is_selected: bool,
     pub is_urg: bool,
     pub is_filled: bool,
+    pub is_occ: bool,
 }
 impl TagStatus {
-    pub fn new(is_selected: bool, is_urg: bool, is_filled: bool) -> Self {
+    pub fn new(is_selected: bool, is_urg: bool, is_filled: bool, is_occ: bool) -> Self {
         Self {
             is_selected,
             is_urg,
             is_filled,
+            is_occ,
         }
     }
 }

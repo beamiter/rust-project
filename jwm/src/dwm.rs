@@ -4843,7 +4843,7 @@ impl Dwm {
                             .map_or(false, |sel| sel.borrow_mut().tags0 & tag_i != 0);
                 }
             }
-            let tag_status = TagStatus::new(is_selected_tag, is_urg_tag, is_filled_tag);
+            let tag_status = TagStatus::new(is_selected_tag, is_urg_tag, is_filled_tag, is_occ_tag);
             message.tag_status_vec.push(tag_status);
         }
         let mut sel_client_name = String::new();
