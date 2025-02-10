@@ -577,6 +577,7 @@ pub struct Dwm {
     pub shmem: Option<Shmem>,
     pub egui_bar_height: Option<i32>,
     pub egui_bar_xy: [i32; 2],
+    pub message: SharedMessage,
 }
 
 #[derive(Debug)]
@@ -651,6 +652,7 @@ impl Dwm {
             },
             egui_bar_height: None,
             egui_bar_xy: [0, 0],
+            message: SharedMessage::new(),
         }
     }
 
@@ -1314,7 +1316,7 @@ impl Dwm {
                         }
                         if (c_mut.x + c_mut.w) > mx + mw && c_mut.isfloating {
                             // center in x direction
-                            if c_mut.name == "egui_bar" {
+                            if c_mut.name == Config::egui_bar_name {
                                 c_mut.x = 0;
                             } else {
                                 c_mut.x = mx + (mw / 2 - c_mut.width() / 2);
@@ -2638,7 +2640,7 @@ impl Dwm {
                 // Find egui_bar client.
                 while let Some(ref sel_opt) = sel {
                     let name = { sel_opt.borrow_mut().name.clone() };
-                    if name == "egui_bar" {
+                    if name == Config::egui_bar_name {
                         sel_opt.borrow_mut().tags0 = target_tag;
                         self.setclienttagprop(&sel_opt);
                         self.focus(None);
@@ -3943,7 +3945,7 @@ impl Dwm {
     }
     pub fn sendevent(&mut self, c: &mut Client, proto: Atom) -> bool {
         info!("[sendevent] {}", c);
-        if c.name == "egui_bar" {
+        if c.name == Config::egui_bar_name {
             self.egui_bar_height = Some(c.h);
             self.egui_bar_xy = [c.x, c.y];
         }
@@ -4851,8 +4853,12 @@ impl Dwm {
             // draw client name
             sel_client_name = sel_opt.borrow_mut().name.clone();
         }
-        message.client_name = sel_client_name;
-
+        if sel_client_name == Config::egui_bar_name {
+            message.client_name = self.message.client_name.clone();
+        } else {
+            message.client_name = sel_client_name;
+        }
         let _ = self.write_message(&message);
+        self.message = message;
     }
 }

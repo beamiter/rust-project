@@ -29,6 +29,7 @@ impl Config {
     pub const snap: u32 = 32;
     pub const showbar: bool = false;
     pub const show_egui_bar: bool = true;
+    pub const egui_bar_name: &str = "egui_bar";
     pub const topbar: bool = true;
     pub const vertpad: i32 = 8;
     pub const sidepad: i32 = 8;
@@ -103,7 +104,7 @@ impl Config {
             // class | instance | title | tags mask | isfloating | monitor
             // Rule::new("", "", "Ozone X11", 0, true, -1),
             // Rule::new("Firefox", "", "", 1 << 8, false, -1),
-            Rule::new("egui_bar", "", "", 0, true, -1),
+            Rule::new(Config::egui_bar_name, "", "", 0, true, -1),
         ]
     });
 
