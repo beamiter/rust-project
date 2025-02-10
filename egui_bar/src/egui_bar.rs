@@ -119,7 +119,7 @@ impl eframe::App for MyEguiApp {
                 }
                 ui.label(egui::RichText::new(" []= ").color(egui::Color32::from_rgb(255, 0, 0)));
 
-                println!("client_name: {}", client_name);
+                // println!("client_name: {}", client_name);
                 ui.label(format!("{}", client_name));
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

@@ -16,7 +16,8 @@ fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::
     println!("all fonts: {:?}", system_source.all_fonts());
     for font_name in [
         "SauceCodeProNerdFont".to_string(),
-        // "NotoSansCJK".to_string(),
+        "Noto Sans CJK SC".to_string(),
+        "Noto Sans CJK TC".to_string(),
     ] {
         let font_handle = system_source.select_best_match(
             &[font_kit::family_name::FamilyName::Title(font_name.clone())],
@@ -87,7 +88,7 @@ fn main() -> eframe::Result {
         "egui_bar",
         native_options,
         Box::new(|cc| {
-            let _ = load_system_nerd_font(&cc.egui_ctx).unwrap();
+            let _ = load_system_nerd_font(&cc.egui_ctx);
             configure_text_styles(&cc.egui_ctx);
 
             let (sender, receiver) = mpsc::channel();
