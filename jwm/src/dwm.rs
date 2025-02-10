@@ -274,7 +274,7 @@ pub struct Client {
     pub isfixed: bool,
     pub isfloating: bool,
     pub isurgent: bool,
-    pub nerverfocus: bool,
+    pub neverfocus: bool,
     pub oldstate: bool,
     pub isfullscreen: bool,
     pub next: Option<Rc<RefCell<Client>>>,
@@ -284,7 +284,7 @@ pub struct Client {
 }
 impl fmt::Display for Client {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Client {{ name: {}, mina: {}, maxa: {}, cfact: {}, x: {}, y: {}, w: {}, h: {}, oldx: {}, oldy: {}, oldw: {}, oldh: {}, basew: {}, baseh: {}, incw: {}, inch: {}, maxw: {}, maxh: {}, minw: {}, minh: {}, hintsvalid: {}, bw: {}, oldbw: {}, tags0: {}, isfixed: {}, isfloating: {}, isurgent: {}, nerverfocus: {}, oldstate: {}, isfullscreen: {} }}",
+        write!(f, "Client {{ name: {}, mina: {}, maxa: {}, cfact: {}, x: {}, y: {}, w: {}, h: {}, oldx: {}, oldy: {}, oldw: {}, oldh: {}, basew: {}, baseh: {}, incw: {}, inch: {}, maxw: {}, maxh: {}, minw: {}, minh: {}, hintsvalid: {}, bw: {}, oldbw: {}, tags0: {}, isfixed: {}, isfloating: {}, isurgent: {}, neverfocus: {}, oldstate: {}, isfullscreen: {} }}",
     self.name,
     self.mina,
     self.maxa,
@@ -312,7 +312,7 @@ impl fmt::Display for Client {
     self.isfixed,
     self.isfloating,
     self.isurgent,
-    self.nerverfocus,
+    self.neverfocus,
     self.oldstate,
     self.isfullscreen
         )
@@ -349,7 +349,7 @@ impl Client {
             isfixed: false,
             isfloating: false,
             isurgent: false,
-            nerverfocus: false,
+            neverfocus: false,
             oldstate: false,
             isfullscreen: false,
             next: None,
@@ -983,7 +983,7 @@ impl Dwm {
         }
     }
     pub fn clientmessage(&mut self, e: *mut XEvent) {
-        // info!("[clientmessage]");
+        info!("[clientmessage]");
         unsafe {
             let cme = (*e).client_message;
             let c = self.wintoclient(cme.window);
@@ -1013,7 +1013,7 @@ impl Dwm {
     }
 
     pub fn configurenotify(&mut self, e: *mut XEvent) {
-        // info!("[configurenotify]");
+        info!("[configurenotify]");
         unsafe {
             let ev = (*e).configure;
             if ev.window == self.root {
@@ -1269,7 +1269,7 @@ impl Dwm {
         }
     }
     pub fn configurerequest(&mut self, e: *mut XEvent) {
-        // info!("[configurerequest]");
+        info!("[configurerequest]");
         unsafe {
             let ev = (*e).configure_request;
             let c = self.wintoclient(ev.window);
@@ -1396,7 +1396,7 @@ impl Dwm {
         return m;
     }
     pub fn destroynotify(&mut self, e: *mut XEvent) {
-        // info!("[destroynotify]");
+        info!("[destroynotify]");
         unsafe {
             let ev = (*e).destroy_window;
             let c = self.wintoclient(ev.window);
@@ -1949,7 +1949,7 @@ impl Dwm {
             XSync(self.dpy, False);
             let mut i: u64 = 0;
             while self.running.load(Ordering::SeqCst) && XNextEvent(self.dpy, &mut ev) <= 0 {
-                // info!("running frame: {}, handler type: {}", i, ev.type_);
+                info!("running frame: {}, handler type: {}", i, ev.type_);
                 i = (i + 1) % std::u64::MAX;
                 self.handler(ev.type_, &mut ev);
             }
@@ -2177,7 +2177,7 @@ impl Dwm {
     }
 
     pub fn buttonpress(&mut self, e: *mut XEvent) {
-        // info!("[buttonpress]");
+        info!("[buttonpress]");
         let mut arg: Arg = Arg::Ui(0);
         unsafe {
             let c: Option<Rc<RefCell<Client>>>;
@@ -2596,7 +2596,7 @@ impl Dwm {
         }
     }
     pub fn focusin(&mut self, e: *mut XEvent) {
-        // info!("[focusin]");
+        info!("[focusin]");
         unsafe {
             let mut selmon_clone = self.selmon.clone();
             let selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
@@ -3485,7 +3485,7 @@ impl Dwm {
         self.arrange(mon);
     }
     pub fn propertynotify(&mut self, e: *mut XEvent) {
-        // info!("[propertynotify]");
+        info!("[propertynotify]");
         unsafe {
             let c: Option<Rc<RefCell<Client>>>;
             let ev = (*e).property;
@@ -3970,7 +3970,6 @@ impl Dwm {
                 ev.client_message.window = c.win;
                 ev.client_message.message_type = self.wmatom[WM::WMProtocols as usize];
                 ev.client_message.format = 32;
-                // This data is cool!
                 ev.client_message.data.as_longs_mut()[0] = proto as i64;
                 ev.client_message.data.as_longs_mut()[1] = CurrentTime as i64;
                 XSendEvent(self.dpy, c.win, False, NoEventMask, &mut ev);
@@ -3979,10 +3978,10 @@ impl Dwm {
         return exists;
     }
     pub fn setfocus(&mut self, c: &Rc<RefCell<Client>>) {
-        // info!("[setfocus]");
+        info!("[setfocus]");
         unsafe {
             let mut c = c.borrow_mut();
-            if !c.nerverfocus {
+            if !c.neverfocus {
                 XSetInputFocus(self.dpy, c.win, RevertToPointerRoot, CurrentTime);
                 XChangeProperty(
                     self.dpy,
@@ -4009,7 +4008,7 @@ impl Dwm {
         }
     }
     pub fn enternotify(&mut self, e: *mut XEvent) {
-        // info!("[enternotify]");
+        info!("[enternotify]");
         unsafe {
             let ev = (*e).crossing;
             if (ev.mode != NotifyNormal || ev.detail == NotifyInferior) && ev.window != self.root {
@@ -4036,7 +4035,7 @@ impl Dwm {
         }
     }
     pub fn expose(&mut self, e: *mut XEvent) {
-        // info!("[expose]");
+        info!("[expose]");
         unsafe {
             let ev = (*e).expose;
             let m = self.wintomon(ev.window);
@@ -4047,7 +4046,7 @@ impl Dwm {
         }
     }
     pub fn focus(&mut self, mut c: Option<Rc<RefCell<Client>>>) {
-        // info!("[focus]");
+        info!("[focus]");
         unsafe {
             {
                 let isvisible = { c.is_some() && c.as_ref().unwrap().borrow_mut().isvisible() };
@@ -4366,7 +4365,7 @@ impl Dwm {
         }
     }
     pub fn mappingnotify(&mut self, e: *mut XEvent) {
-        // info!("[mappingnotify]");
+        info!("[mappingnotify]");
         unsafe {
             let mut ev = (*e).mapping;
             XRefreshKeyboardMapping(&mut ev);
@@ -4376,7 +4375,7 @@ impl Dwm {
         }
     }
     pub fn maprequest(&mut self, e: *mut XEvent) {
-        // info!("[maprequest]");
+        info!("[maprequest]");
         unsafe {
             let ev = (*e).map_request;
             static mut wa: XWindowAttributes = unsafe { zeroed() };
@@ -4426,7 +4425,7 @@ impl Dwm {
         }
     }
     pub fn motionnotify(&mut self, e: *mut XEvent) {
-        // info!("[motionnotify]");
+        info!("[motionnotify]");
         unsafe {
             let ev = (*e).motion;
             if ev.window != self.root {
@@ -4500,7 +4499,7 @@ impl Dwm {
         }
     }
     pub fn unmapnotify(&mut self, e: *mut XEvent) {
-        // info!("[unmapnotify]");
+        info!("[unmapnotify]");
         unsafe {
             let ev = (*e).unmap;
             let c = self.wintoclient(ev.window);
@@ -4784,9 +4783,9 @@ impl Dwm {
                     };
                 }
                 if (*wmh).flags & InputHint > 0 {
-                    cc.nerverfocus = (*wmh).input <= 0;
+                    cc.neverfocus = (*wmh).input <= 0;
                 } else {
-                    cc.nerverfocus = false;
+                    cc.neverfocus = false;
                 }
                 XFree(wmh as *mut _);
             }
@@ -4804,8 +4803,9 @@ impl Dwm {
     }
 
     pub fn draw_egui_bar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
+        info!("[draw_egui_bar]");
         {
-            info!("[draw_egui_bar] {}", m.as_ref().unwrap().borrow_mut());
+            // info!("[draw_egui_bar] {}", m.as_ref().unwrap().borrow_mut());
         }
         let mut message = SharedMessage::new();
         let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };

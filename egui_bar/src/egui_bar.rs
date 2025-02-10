@@ -107,6 +107,7 @@ impl eframe::App for MyEguiApp {
         self.elapsed_duration
             .push_back(Instant::now().duration_since(self.update_time));
         self.update_time = Instant::now();
+        // (TODO): Put this in single thread.
         if let Ok(message) = self.read_message() {
             self.message = Some(message);
         } else {
@@ -195,5 +196,7 @@ impl eframe::App for MyEguiApp {
                 y: (desired_height),
             }));
         }
+
+        ctx.request_repaint_after_secs(0.5);
     }
 }
