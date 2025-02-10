@@ -13,28 +13,32 @@ use font_kit::source::SystemSource;
 fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::Error>> {
     let mut fonts = egui::FontDefinitions::default();
     let system_source = SystemSource::new();
-    let font_handle = system_source.select_best_match(
-        &[font_kit::family_name::FamilyName::Title(
-            "SauceCodePro Nerd Font".to_string(),
-        )],
-        &font_kit::properties::Properties::new(),
-    )?;
-    let font = font_handle.load()?;
-    let font_data = font.copy_font_data().ok_or("Failed to copy font data")?;
-    fonts.font_data.insert(
-        "nerd-font".to_owned(),
-        egui::FontData::from_owned(font_data.to_vec()).into(),
-    );
-    // fonts
-    //     .families
-    //     .get_mut(&egui::FontFamily::Proportional)
-    //     .unwrap()
-    //     .insert(0, "nerd-font".to_owned());
-    fonts
-        .families
-        .get_mut(&egui::FontFamily::Monospace)
-        .unwrap()
-        .insert(0, "nerd-font".to_owned());
+    println!("all fonts: {:?}", system_source.all_fonts());
+    for font_name in [
+        "SauceCodeProNerdFont".to_string(),
+        // "NotoSansCJK".to_string(),
+    ] {
+        let font_handle = system_source.select_best_match(
+            &[font_kit::family_name::FamilyName::Title(font_name.clone())],
+            &font_kit::properties::Properties::new(),
+        )?;
+        let font = font_handle.load()?;
+        let font_data = font.copy_font_data().ok_or("Failed to copy font data")?;
+        fonts.font_data.insert(
+            font_name.clone(),
+            egui::FontData::from_owned(font_data.to_vec()).into(),
+        );
+        // fonts
+        //     .families
+        //     .get_mut(&egui::FontFamily::Proportional)
+        //     .unwrap()
+        //     .insert(0, "nerd-font".to_owned());
+        fonts
+            .families
+            .get_mut(&egui::FontFamily::Monospace)
+            .unwrap()
+            .insert(0, font_name);
+    }
     println!("{:?}", fonts.families);
     ctx.set_fonts(fonts);
     Ok(())
@@ -83,7 +87,7 @@ fn main() -> eframe::Result {
         "egui_bar",
         native_options,
         Box::new(|cc| {
-            let _ = load_system_nerd_font(&cc.egui_ctx);
+            let _ = load_system_nerd_font(&cc.egui_ctx).unwrap();
             configure_text_styles(&cc.egui_ctx);
 
             let (sender, receiver) = mpsc::channel();
