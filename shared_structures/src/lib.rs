@@ -1,23 +1,38 @@
+use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
-use serde::{Serialize, Deserialize};
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TagStatus {
+    pub is_selected: bool,
+    pub is_urg: bool,
+    pub is_filled: bool,
+}
+impl TagStatus {
+    pub fn new(is_selected: bool, is_urg: bool, is_filled: bool) -> Self {
+        Self {
+            is_selected,
+            is_urg,
+            is_filled,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedMessage {
-    pub id: u64,
-    pub content: String,
+    pub client_name: String,
     pub timestamp: u128,
+    pub tag_status_vec: Vec<TagStatus>,
 }
 
 impl SharedMessage {
-    /// 创建一个新的 `SharedMessage` 实例
-    pub fn new(id: u64, content: String) -> Self {
+    pub fn new() -> Self {
         Self {
-            id,
-            content,
+            client_name: String::new(),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis(),
+            tag_status_vec: Vec::new(),
         }
     }
 }
@@ -28,9 +43,7 @@ mod tests {
 
     #[test]
     fn test_shared_message() {
-        let message = SharedMessage::new(1, "Test message".to_string());
-        assert_eq!(message.id, 1);
-        assert_eq!(message.content, "Test message");
+        let message = SharedMessage::new();
         assert!(message.timestamp > 0);
     }
 }

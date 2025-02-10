@@ -2,7 +2,7 @@ use bincode::deserialize;
 use eframe::egui;
 use egui::{Align, Layout, Vec2};
 use shared_memory::{Shmem, ShmemConf};
-use shared_structures::SharedMessage;
+use shared_structures::{SharedMessage, TagStatus};
 use std::{
     collections::VecDeque,
     sync::mpsc,
@@ -21,6 +21,10 @@ pub struct MyEguiApp {
 
 impl MyEguiApp {
     pub const FONT_SIZE: f32 = 16.0;
+    pub const TAG_ICONS: [&str; 9] = [
+        " 🍟 ", " 😃 ", " 🚀 ", " 🎉 ", " 🍕 ", " 🍖 ", " 🏍 ", " 🍔 ", " 🍘 ",
+    ];
+
     pub fn new(
         _cc: &eframe::CreationContext<'_>,
         receiver: mpsc::Receiver<usize>,
@@ -92,17 +96,31 @@ impl eframe::App for MyEguiApp {
         self.screen_rect_size = ctx.screen_rect().size();
         egui::CentralPanel::default().show(ctx, |ui| {
             // self.viewpoint_size = ui.available_size();
+            let mut tag_status_vec: Vec<TagStatus> = Vec::new();
+            let mut client_name = String::new();
+            if let Some(ref message) = self.message {
+                tag_status_vec = message.tag_status_vec.clone();
+                client_name = message.client_name.clone();
+            }
             ui.horizontal_centered(|ui| {
-                for cs in [
-                    " 🍟 ", " 😃 ", " 🚀 ", " 🎉 ", " 🍕 ", " 🍖 ", " 🏍 ", " 🍔 ", " 🍘 ",
-                ] {
-                    ui.label(
-                        egui::RichText::new(cs).font(egui::FontId::monospace(MyEguiApp::FONT_SIZE)),
-                    );
+                for i in 0..MyEguiApp::TAG_ICONS.len() {
+                    let tag_icon = MyEguiApp::TAG_ICONS.get(i).unwrap();
+                    let mut rich_text = egui::RichText::new(tag_icon.to_string())
+                        .font(egui::FontId::monospace(MyEguiApp::FONT_SIZE));
+                    if let Some(ref tag_status) = tag_status_vec.get(i) {
+                        if tag_status.is_selected {
+                            rich_text = rich_text.underline();
+                        }
+                        if tag_status.is_filled {
+                            rich_text = rich_text.strong();
+                        }
+                    }
+                    ui.label(rich_text);
                 }
                 ui.label(egui::RichText::new(" []= ").color(egui::Color32::from_rgb(255, 0, 0)));
 
-                ui.label(format!("message: {:?}", self.message));
+                println!("client_name: {}", client_name);
+                ui.label(format!("{}", client_name));
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let current_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();

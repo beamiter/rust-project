@@ -28,6 +28,7 @@ impl Config {
     // snap pixel
     pub const snap: u32 = 32;
     pub const showbar: bool = false;
+    pub const show_egui_bar: bool = true;
     pub const topbar: bool = true;
     pub const vertpad: i32 = 8;
     pub const sidepad: i32 = 8;

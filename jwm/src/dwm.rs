@@ -8,7 +8,7 @@ use libc::{
 };
 use log::info;
 use shared_memory::{Shmem, ShmemConf};
-use shared_structures::SharedMessage;
+use shared_structures::{SharedMessage, TagStatus};
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, CStr, CString};
 use std::fmt;
@@ -1026,7 +1026,7 @@ impl Dwm {
                         .drw_resize(self.sw as u32, self.bh as u32);
                     self.updatebars();
                     let mut m = self.mons.clone();
-                    while let Some(m_opt) = m {
+                    while let Some(ref m_opt) = m {
                         let mut c = m_opt.borrow_mut().clients.clone();
                         while c.is_some() {
                             if c.as_ref().unwrap().borrow_mut().isfullscreen {
@@ -1271,7 +1271,7 @@ impl Dwm {
         unsafe {
             let ev = (*e).configure_request;
             let c = self.wintoclient(ev.window);
-            if let Some(c_opt) = c {
+            if let Some(ref c_opt) = c {
                 let layout_type = {
                     let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
                     let sellt = selmon_mut.sellt;
@@ -1314,8 +1314,11 @@ impl Dwm {
                         }
                         if (c_mut.x + c_mut.w) > mx + mw && c_mut.isfloating {
                             // center in x direction
-                            // c_mut.x = mx + (mw / 2 - c_mut.width() / 2);
-                            c_mut.x = 0;
+                            if c_mut.name == "egui_bar" {
+                                c_mut.x = 0;
+                            } else {
+                                c_mut.x = mx + (mw / 2 - c_mut.width() / 2);
+                            }
                         }
                         if (c_mut.y + c_mut.h) > my + mh && c_mut.isfloating {
                             // center in y direction
@@ -1701,7 +1704,7 @@ impl Dwm {
     }
     fn write_message(&mut self, message: &SharedMessage) -> std::io::Result<()> {
         let serialized = serialize(message).expect("Serialization failed");
-        if let Some(shmem) = self.shmem.as_mut() {
+        if let Some(ref shmem) = self.shmem.as_mut() {
             let data = shmem.as_ptr();
             let data_slice = unsafe { std::slice::from_raw_parts_mut(data, serialized.len()) };
             data_slice.copy_from_slice(&serialized);
@@ -1710,10 +1713,8 @@ impl Dwm {
     }
     pub fn drawbar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
         // info!("[drawbar]");
-        {
-            info!("[drawbar] {}", m.as_ref().unwrap().borrow_mut());
-            let message = SharedMessage::new(1, "Test message".to_string());
-            let _ = self.write_message(&message);
+        if Config::show_egui_bar {
+            return self.draw_egui_bar(m);
         }
         let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
         if !showbar0 {
@@ -2424,7 +2425,7 @@ impl Dwm {
             let mut m = self.mons.clone();
             while let Some(ref m_opt) = m {
                 let mut c = m_opt.borrow_mut().clients.clone();
-                while let Some(c_opt) = c {
+                while let Some(ref c_opt) = c {
                     XChangeProperty(
                         self.dpy,
                         self.root,
@@ -2635,7 +2636,7 @@ impl Dwm {
                     return;
                 }
                 // Find egui_bar client.
-                while let Some(sel_opt) = sel {
+                while let Some(ref sel_opt) = sel {
                     let name = { sel_opt.borrow_mut().name.clone() };
                     if name == "egui_bar" {
                         sel_opt.borrow_mut().tags0 = target_tag;
@@ -4798,5 +4799,60 @@ impl Dwm {
         if c.name.is_empty() {
             c.name = self.broken.to_string();
         }
+    }
+
+    pub fn draw_egui_bar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
+        {
+            info!("[draw_egui_bar] {}", m.as_ref().unwrap().borrow_mut());
+        }
+        let mut message = SharedMessage::new();
+        let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
+        if showbar0 {
+            let _ = self.write_message(&message);
+            return;
+        }
+        let mut occ: u32 = 0;
+        let mut urg: u32 = 0;
+        {
+            let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
+            while let Some(ref c_opt) = c {
+                let tags0 = c_opt.borrow_mut().tags0;
+                occ |= tags0;
+                if c_opt.borrow_mut().isurgent {
+                    urg |= tags0;
+                }
+                let next = c_opt.borrow_mut().next.clone();
+                c = next;
+            }
+        }
+        for i in 0..Config::tags_length {
+            let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
+            let tagset = { m.as_ref().unwrap().borrow_mut().tagset };
+            let tag_i = 1 << i;
+            let is_selected_tag = tagset[seltags] & tag_i != 0;
+            let is_urg_tag = urg & tag_i != 0;
+            let is_occ_tag = occ & tag_i != 0;
+            let mut is_filled_tag: bool = false;
+            if is_occ_tag {
+                if let Some(selmon_opt) = self.selmon.as_mut() {
+                    is_filled_tag = Rc::ptr_eq(m.as_ref().unwrap(), &selmon_opt)
+                        && selmon_opt
+                            .borrow_mut()
+                            .sel
+                            .as_mut()
+                            .map_or(false, |sel| sel.borrow_mut().tags0 & tag_i != 0);
+                }
+            }
+            let tag_status = TagStatus::new(is_selected_tag, is_urg_tag, is_filled_tag);
+            message.tag_status_vec.push(tag_status);
+        }
+        let mut sel_client_name = String::new();
+        if let Some(ref sel_opt) = m.as_ref().unwrap().borrow_mut().sel {
+            // draw client name
+            sel_client_name = sel_opt.borrow_mut().name.clone();
+        }
+        message.client_name = sel_client_name;
+
+        let _ = self.write_message(&message);
     }
 }
