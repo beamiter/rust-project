@@ -1,16 +1,11 @@
 use eframe::egui;
 use egui::{Align, Color32, Layout, Vec2};
-use shared_structures::{SharedMessage, TagStatus};
-use std::{
-    collections::VecDeque,
-    sync::mpsc,
-    time::{Duration, Instant},
-};
+use shared_structures::{MonitorInfo, SharedMessage, TagStatus};
+use std::sync::mpsc;
 
 pub struct MyEguiApp {
     message: Option<SharedMessage>,
-    update_time: Instant,
-    elapsed_duration: VecDeque<Duration>,
+    id: usize,
     screen_rect_size: Vec2,
     receiver: mpsc::Receiver<SharedMessage>,
 }
@@ -49,8 +44,7 @@ impl MyEguiApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, receiver: mpsc::Receiver<SharedMessage>) -> Self {
         Self {
             message: None,
-            update_time: Instant::now(),
-            elapsed_duration: VecDeque::with_capacity(2),
+            id: 0,
             screen_rect_size: Vec2::ZERO,
             receiver,
         }
@@ -69,12 +63,7 @@ fn get_screen_width() -> f32 {
 
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if self.elapsed_duration.len() >= self.elapsed_duration.capacity() {
-            self.elapsed_duration.pop_front();
-        }
-        self.elapsed_duration
-            .push_back(Instant::now().duration_since(self.update_time));
-        self.update_time = Instant::now();
+        self.id = self.id.wrapping_add(1).wrapping_rem(8);
         while let Ok(message) = self.receiver.try_recv() {
             self.message = Some(message);
         }
@@ -85,9 +74,20 @@ impl eframe::App for MyEguiApp {
             // self.viewpoint_size = ui.available_size();
             let mut tag_status_vec: Vec<TagStatus> = Vec::new();
             let mut client_name = String::new();
+            // (TODO): support multi-monitor.
             if let Some(ref message) = self.message {
-                tag_status_vec = message.tag_status_vec.clone();
-                client_name = message.client_name.clone();
+                tag_status_vec = message
+                    .monitor_infos
+                    .get(0)
+                    .unwrap_or(&MonitorInfo::default())
+                    .tag_status_vec
+                    .clone();
+                client_name = message
+                    .monitor_infos
+                    .get(0)
+                    .unwrap_or(&MonitorInfo::default())
+                    .client_name
+                    .clone();
             }
             ui.horizontal_centered(|ui| {
                 for i in 0..MyEguiApp::TAG_ICONS.len() {
@@ -104,7 +104,9 @@ impl eframe::App for MyEguiApp {
                         }
                         if tag_status.is_occ {
                             rich_text = rich_text.color(tag_color.clone());
-                            // rich_text = rich_text.background_color(tag_color.clone());
+                        }
+                        if tag_status.is_urg {
+                            rich_text = rich_text.background_color(tag_color.clone());
                         }
                     }
                     ui.label(rich_text);
@@ -119,20 +121,11 @@ impl eframe::App for MyEguiApp {
                     );
                     ui.label("current_time");
 
-                    // ui.label(
-                    //     egui::RichText::new(format!("{}", scale_factor))
-                    //         .color(Color32::from_rgb(0, 255, 0)),
-                    // );
-                    // ui.label("scale_factor");
-
-                    let average_duration = self.elapsed_duration.iter().sum::<Duration>()
-                        / self.elapsed_duration.len() as u32;
-                    let fps = 1.0 / average_duration.as_secs_f64();
                     ui.label(
-                        egui::RichText::new(format!("{:.1}", fps))
-                            .color(Color32::from_rgb(0, 255, 0)),
+                        egui::RichText::new(format!("{}", "⬅".repeat(self.id)))
+                            .color(MyEguiApp::OLIVE_GREEN)
+                            .font(egui::FontId::monospace(MyEguiApp::FONT_SIZE / 2.)),
                     );
-                    ui.label("FPS");
                     ui.horizontal(|ui| {
                         ui.with_layout(
                             egui::Layout::left_to_right(Align::Center).with_main_wrap(true),

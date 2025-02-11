@@ -84,6 +84,7 @@ fn main() -> eframe::Result {
             // .with_max_inner_size([f32::INFINITY, 20.0]) // Set max height to 20.0
             .with_decorations(false), // Hide title bar and decorations
         // .with_always_on_top(), // Keep window always on top
+        vsync: true,
         ..Default::default()
     };
 

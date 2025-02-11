@@ -18,23 +18,51 @@ impl TagStatus {
         }
     }
 }
+impl Default for TagStatus {
+    fn default() -> Self {
+        Self {
+            is_selected: false,
+            is_urg: false,
+            is_filled: false,
+            is_occ: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorInfo {
+    pub client_name: String,
+    pub tag_status_vec: Vec<TagStatus>,
+    pub monitor_num: u8,
+    pub monitor_width: u32,
+    pub monitor_height: u32,
+}
+impl Default for MonitorInfo {
+    fn default() -> Self {
+        Self {
+            client_name: String::new(),
+            tag_status_vec: Vec::new(),
+            monitor_num: 0,
+            monitor_width: 0,
+            monitor_height: 0,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SharedMessage {
-    pub client_name: String,
     pub timestamp: u128,
-    pub tag_status_vec: Vec<TagStatus>,
+    pub monitor_infos: Vec<MonitorInfo>,
 }
 
-impl SharedMessage {
-    pub fn new() -> Self {
+impl Default for SharedMessage {
+    fn default() -> Self {
         Self {
-            client_name: String::new(),
             timestamp: SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap()
                 .as_millis(),
-            tag_status_vec: Vec::new(),
+            monitor_infos: Vec::new(),
         }
     }
 }
@@ -45,7 +73,7 @@ mod tests {
 
     #[test]
     fn test_shared_message() {
-        let message = SharedMessage::new();
+        let message = SharedMessage::default();
         assert!(message.timestamp > 0);
     }
 }

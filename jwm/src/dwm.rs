@@ -8,9 +8,9 @@ use libc::{
 };
 use log::info;
 use shared_memory::{Shmem, ShmemConf};
-use shared_structures::{SharedMessage, TagStatus};
+use shared_structures::{MonitorInfo, SharedMessage, TagStatus};
 use std::cell::RefCell;
-use std::ffi::{c_char, c_int, CStr, CString};
+use std::ffi::{c_int, CStr, CString};
 use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
@@ -43,16 +43,16 @@ use x11::xlib::{
     XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDefineCursor,
     XDeleteProperty, XDestroyWindow, XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent,
     XEvent, XFree, XFreeModifiermap, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping,
-    XGetTextProperty, XGetTransientForHint, XGetVisualInfo, XGetWMHints, XGetWMNormalHints,
-    XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer,
-    XGrabServer, XInternAtom, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised,
-    XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree,
+    XGetTransientForHint, XGetVisualInfo, XGetWMHints, XGetWMNormalHints, XGetWMProtocols,
+    XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
+    XInternAtom, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMapWindow,
+    XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree,
     XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetClassHint,
     XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
-    XSetWindowBorder, XSizeHints, XSync, XTextProperty, XUngrabButton, XUngrabKey, XUngrabPointer,
-    XUngrabServer, XUnmapWindow, XUrgencyHint, XVisualInfo, XWarpPointer, XWindowAttributes,
-    XWindowChanges, XmbTextPropertyToTextList, CWX, CWY, XA_ATOM, XA_CARDINAL, XA_STRING,
-    XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer,
+    XUnmapWindow, XUrgencyHint, XVisualInfo, XWarpPointer, XWindowAttributes, XWindowChanges, CWX,
+    CWY, XA_ATOM, XA_CARDINAL, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS,
+    XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -652,7 +652,7 @@ impl Dwm {
             },
             egui_bar_height: None,
             egui_bar_xy: [0, 0],
-            message: SharedMessage::new(),
+            message: SharedMessage::default(),
         }
     }
 
@@ -1949,8 +1949,8 @@ impl Dwm {
             XSync(self.dpy, False);
             let mut i: u64 = 0;
             while self.running.load(Ordering::SeqCst) && XNextEvent(self.dpy, &mut ev) <= 0 {
-                info!("running frame: {}, handler type: {}", i, ev.type_);
-                i = (i + 1) % std::u64::MAX;
+                // info!("running frame: {}, handler type: {}", i, ev.type_);
+                i = i.wrapping_add(1);
                 self.handler(ev.type_, &mut ev);
             }
         }
@@ -3363,8 +3363,7 @@ impl Dwm {
             // init bars
             // info!("[setup] updatebars");
             self.updatebars();
-            // info!("[setup] updatestatus");
-            self.updatestatus();
+            // self.updatestatus();
             // supporting window fot NetWMCheck
             self.wmcheckwin = XCreateSimpleWindow(self.dpy, self.root, 0, 0, 1, 1, 0, 0, 0);
             XChangeProperty(
@@ -3491,7 +3490,7 @@ impl Dwm {
             let ev = (*e).property;
             let mut trans: Window = 0;
             if ev.window == self.root && ev.atom == XA_WM_NAME {
-                self.updatestatus();
+                // self.updatestatus();
             } else if ev.state == PropertyDelete {
                 // ignore
                 return;
@@ -3998,14 +3997,17 @@ impl Dwm {
         }
     }
     pub fn drawbars(&mut self) {
-        // info!("[drawbars]");
+        info!("[drawbars]");
         let mut m = self.mons.clone();
+        self.message = SharedMessage::default();
         while let Some(ref m_opt) = m {
             info!("[drawbars] barwin: {}", m_opt.borrow_mut().barwin);
             self.drawbar(m.clone());
             let next = m_opt.borrow_mut().next.clone();
             m = next;
         }
+        info!("[drawbars] message: {:?}", self.message);
+        let _ = self.write_message(&self.message.clone());
     }
     pub fn enternotify(&mut self, e: *mut XEvent) {
         // info!("[enternotify]");
@@ -4674,76 +4676,6 @@ impl Dwm {
         return dirty;
     }
 
-    pub fn gettextprop(&mut self, w: Window, atom: Atom, text: &mut String) -> bool {
-        // info!("[gettextprop]");
-        unsafe {
-            let mut name: XTextProperty = zeroed();
-            if XGetTextProperty(self.dpy, w, &mut name, atom) <= 0 || name.nitems <= 0 {
-                return false;
-            }
-            *text = "".to_string();
-            let mut list: *mut *mut c_char = null_mut();
-            let mut n: i32 = 0;
-            if name.encoding == XA_STRING {
-                let c_str = CStr::from_ptr(name.value as *const _);
-                match c_str.to_str() {
-                    Ok(val) => {
-                        let mut tmp = val.to_string();
-                        while tmp.as_bytes().len() > self.stext_max_len {
-                            tmp.pop();
-                        }
-                        *text = tmp;
-                        // info!(
-                        //     "[gettextprop]text from string, len: {}, text: {:?}",
-                        //     text.len(),
-                        //     *text
-                        // );
-                    }
-                    Err(val) => {
-                        info!("[gettextprop]text from string error: {:?}", val);
-                        println!("[gettextprop]text from string error: {:?}", val);
-                        return false;
-                    }
-                }
-            } else if XmbTextPropertyToTextList(self.dpy, &mut name, &mut list, &mut n)
-                >= Success as i32
-                && n > 0
-                && !list.is_null()
-            {
-                let c_str = CStr::from_ptr(*list);
-                match c_str.to_str() {
-                    Ok(val) => {
-                        let mut tmp = val.to_string();
-                        while tmp.as_bytes().len() > self.stext_max_len {
-                            tmp.pop();
-                        }
-                        *text = tmp;
-                        // info!(
-                        //     "[gettextprop]text from string list, len: {},  text: {:?}",
-                        //     text.len(),
-                        //     *text
-                        // );
-                    }
-                    Err(val) => {
-                        info!("[gettextprop]text from string list error: {:?}", val);
-                        println!("[gettextprop]text from string list error: {:?}", val);
-                        return false;
-                    }
-                }
-            }
-        }
-        true
-    }
-    pub fn updatestatus(&mut self) {
-        // info!("[updatestatus]");
-        let mut stext = self.stext.clone();
-        if !self.gettextprop(self.root, XA_WM_NAME, &mut stext) {
-            self.stext = "jwm-1.0".to_string();
-        } else {
-            self.stext = stext;
-        }
-        self.drawbar(self.selmon.clone());
-    }
     pub fn updatewindowtype(&mut self, c: &Rc<RefCell<Client>>) {
         // info!("[updatewindowtype]");
         let state;
@@ -4807,12 +4739,8 @@ impl Dwm {
         {
             // info!("[draw_egui_bar] {}", m.as_ref().unwrap().borrow_mut());
         }
-        let mut message = SharedMessage::new();
-        let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
-        if showbar0 {
-            let _ = self.write_message(&message);
-            return;
-        }
+        let mut monitor_info = MonitorInfo::default();
+        let _showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
         let mut occ: u32 = 0;
         let mut urg: u32 = 0;
         {
@@ -4846,19 +4774,14 @@ impl Dwm {
                 }
             }
             let tag_status = TagStatus::new(is_selected_tag, is_urg_tag, is_filled_tag, is_occ_tag);
-            message.tag_status_vec.push(tag_status);
+            monitor_info.tag_status_vec.push(tag_status);
         }
         let mut sel_client_name = String::new();
         if let Some(ref sel_opt) = m.as_ref().unwrap().borrow_mut().sel {
             // draw client name
             sel_client_name = sel_opt.borrow_mut().name.clone();
         }
-        if sel_client_name == Config::egui_bar_name {
-            message.client_name = self.message.client_name.clone();
-        } else {
-            message.client_name = sel_client_name;
-        }
-        let _ = self.write_message(&message);
-        self.message = message;
+        monitor_info.client_name = sel_client_name;
+        self.message.monitor_infos.push(monitor_info);
     }
 }

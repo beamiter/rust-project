@@ -20,6 +20,7 @@ mod dwm;
 mod icon_gallery;
 mod miscellaneous;
 mod xproto;
+mod deprecated;
 
 mod tests;
 
