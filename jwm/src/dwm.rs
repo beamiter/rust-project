@@ -983,7 +983,7 @@ impl Dwm {
         }
     }
     pub fn clientmessage(&mut self, e: *mut XEvent) {
-        info!("[clientmessage]");
+        // info!("[clientmessage]");
         unsafe {
             let cme = (*e).client_message;
             let c = self.wintoclient(cme.window);
@@ -1013,7 +1013,7 @@ impl Dwm {
     }
 
     pub fn configurenotify(&mut self, e: *mut XEvent) {
-        info!("[configurenotify]");
+        // info!("[configurenotify]");
         unsafe {
             let ev = (*e).configure;
             if ev.window == self.root {
@@ -1269,7 +1269,7 @@ impl Dwm {
         }
     }
     pub fn configurerequest(&mut self, e: *mut XEvent) {
-        info!("[configurerequest]");
+        // info!("[configurerequest]");
         unsafe {
             let ev = (*e).configure_request;
             let c = self.wintoclient(ev.window);
@@ -1396,7 +1396,7 @@ impl Dwm {
         return m;
     }
     pub fn destroynotify(&mut self, e: *mut XEvent) {
-        info!("[destroynotify]");
+        // info!("[destroynotify]");
         unsafe {
             let ev = (*e).destroy_window;
             let c = self.wintoclient(ev.window);
@@ -2177,7 +2177,7 @@ impl Dwm {
     }
 
     pub fn buttonpress(&mut self, e: *mut XEvent) {
-        info!("[buttonpress]");
+        // info!("[buttonpress]");
         let mut arg: Arg = Arg::Ui(0);
         unsafe {
             let c: Option<Rc<RefCell<Client>>>;
@@ -2596,7 +2596,7 @@ impl Dwm {
         }
     }
     pub fn focusin(&mut self, e: *mut XEvent) {
-        info!("[focusin]");
+        // info!("[focusin]");
         unsafe {
             let mut selmon_clone = self.selmon.clone();
             let selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
@@ -3485,7 +3485,7 @@ impl Dwm {
         self.arrange(mon);
     }
     pub fn propertynotify(&mut self, e: *mut XEvent) {
-        info!("[propertynotify]");
+        // info!("[propertynotify]");
         unsafe {
             let c: Option<Rc<RefCell<Client>>>;
             let ev = (*e).property;
@@ -4008,7 +4008,7 @@ impl Dwm {
         }
     }
     pub fn enternotify(&mut self, e: *mut XEvent) {
-        info!("[enternotify]");
+        // info!("[enternotify]");
         unsafe {
             let ev = (*e).crossing;
             if (ev.mode != NotifyNormal || ev.detail == NotifyInferior) && ev.window != self.root {
@@ -4035,7 +4035,7 @@ impl Dwm {
         }
     }
     pub fn expose(&mut self, e: *mut XEvent) {
-        info!("[expose]");
+        // info!("[expose]");
         unsafe {
             let ev = (*e).expose;
             let m = self.wintomon(ev.window);
@@ -4171,7 +4171,7 @@ impl Dwm {
         }
     }
     pub fn keypress(&mut self, e: *mut XEvent) {
-        info!("[keypress]");
+        // info!("[keypress]");
         unsafe {
             let ev = (*e).key;
             let keysym = XKeycodeToKeysym(self.dpy, ev.keycode as u8, 0);
@@ -4365,7 +4365,7 @@ impl Dwm {
         }
     }
     pub fn mappingnotify(&mut self, e: *mut XEvent) {
-        info!("[mappingnotify]");
+        // info!("[mappingnotify]");
         unsafe {
             let mut ev = (*e).mapping;
             XRefreshKeyboardMapping(&mut ev);
@@ -4375,7 +4375,7 @@ impl Dwm {
         }
     }
     pub fn maprequest(&mut self, e: *mut XEvent) {
-        info!("[maprequest]");
+        // info!("[maprequest]");
         unsafe {
             let ev = (*e).map_request;
             static mut wa: XWindowAttributes = unsafe { zeroed() };
@@ -4425,7 +4425,7 @@ impl Dwm {
         }
     }
     pub fn motionnotify(&mut self, e: *mut XEvent) {
-        info!("[motionnotify]");
+        // info!("[motionnotify]");
         unsafe {
             let ev = (*e).motion;
             if ev.window != self.root {
@@ -4499,7 +4499,7 @@ impl Dwm {
         }
     }
     pub fn unmapnotify(&mut self, e: *mut XEvent) {
-        info!("[unmapnotify]");
+        // info!("[unmapnotify]");
         unsafe {
             let ev = (*e).unmap;
             let c = self.wintoclient(ev.window);

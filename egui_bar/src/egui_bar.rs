@@ -1,7 +1,5 @@
-use bincode::deserialize;
 use eframe::egui;
 use egui::{Align, Color32, Layout, Vec2};
-use shared_memory::{Shmem, ShmemConf};
 use shared_structures::{SharedMessage, TagStatus};
 use std::{
     collections::VecDeque,
@@ -11,12 +9,10 @@ use std::{
 
 pub struct MyEguiApp {
     message: Option<SharedMessage>,
-    shmem: Option<Shmem>,
     update_time: Instant,
     elapsed_duration: VecDeque<Duration>,
     screen_rect_size: Vec2,
-    counter: usize,
-    receiver: mpsc::Receiver<usize>,
+    receiver: mpsc::Receiver<SharedMessage>,
 }
 
 impl MyEguiApp {
@@ -50,42 +46,14 @@ impl MyEguiApp {
         " 🍟 ", " 😃 ", " 🚀 ", " 🎉 ", " 🍕 ", " 🍖 ", " 🏍 ", " 🍔 ", " 🍘 ",
     ];
 
-    pub fn new(
-        _cc: &eframe::CreationContext<'_>,
-        receiver: mpsc::Receiver<usize>,
-        shared_path: String,
-    ) -> Self {
+    pub fn new(_cc: &eframe::CreationContext<'_>, receiver: mpsc::Receiver<SharedMessage>) -> Self {
         Self {
             message: None,
-            shmem: if shared_path.is_empty() {
-                None
-            } else {
-                Some(ShmemConf::new().flink(shared_path).open().unwrap())
-            },
             update_time: Instant::now(),
             elapsed_duration: VecDeque::with_capacity(2),
             screen_rect_size: Vec2::ZERO,
-            counter: 0,
             receiver,
         }
-    }
-
-    fn read_message(&mut self) -> std::io::Result<SharedMessage> {
-        if let Some(shmem) = self.shmem.as_mut() {
-            let data = shmem.as_ptr();
-            let serialized = unsafe { std::slice::from_raw_parts(data, shmem.len()) };
-            let message: SharedMessage = deserialize(serialized).unwrap();
-            // println!(
-            //     "Process egui_bar: Data read from shared memory: {:?}, shmem len: {}",
-            //     message,
-            //     shmem.len()
-            // );
-            return Ok(message);
-        }
-        Err(std::io::Error::new(
-            std::io::ErrorKind::Other,
-            "shmem is empty",
-        ))
     }
 }
 
@@ -107,17 +75,10 @@ impl eframe::App for MyEguiApp {
         self.elapsed_duration
             .push_back(Instant::now().duration_since(self.update_time));
         self.update_time = Instant::now();
-        // (TODO): Put this in single thread.
-        if let Ok(message) = self.read_message() {
+        while let Ok(message) = self.receiver.try_recv() {
             self.message = Some(message);
-        } else {
-            self.message = None;
         }
-        while let Ok(count) = self.receiver.try_recv() {
-            self.counter = count;
-            // println!("receive counter: {}", self.counter);
-        }
-        // println!("{:?}", self.message);
+        // println!("receive message: {:?}", self.message);
         let scale_factor = ctx.pixels_per_point();
         self.screen_rect_size = ctx.screen_rect().size();
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -196,7 +157,5 @@ impl eframe::App for MyEguiApp {
                 y: (desired_height),
             }));
         }
-
-        ctx.request_repaint_after_secs(0.5);
     }
 }

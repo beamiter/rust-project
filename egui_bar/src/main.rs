@@ -1,7 +1,10 @@
 mod egui_bar;
+use bincode::deserialize;
 use egui::{FontFamily, FontId, TextStyle};
 use egui::{Margin, Pos2};
 pub use egui_bar::MyEguiApp;
+use shared_memory::{Shmem, ShmemConf};
+use shared_structures::SharedMessage;
 use std::collections::BTreeMap;
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -13,7 +16,7 @@ use font_kit::source::SystemSource;
 fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::Error>> {
     let mut fonts = egui::FontDefinitions::default();
     let system_source = SystemSource::new();
-    println!("all fonts: {:?}", system_source.all_fonts());
+    // println!("all fonts: {:?}", system_source.all_fonts());
     for font_name in [
         "Noto Sans CJK SC".to_string(),
         "Noto Sans CJK TC".to_string(),
@@ -94,7 +97,18 @@ fn main() -> eframe::Result {
             let (sender, receiver) = mpsc::channel();
             let egui_ctx = cc.egui_ctx.clone();
             thread::spawn(move || {
-                let mut count: usize = 0;
+                let shmem: Option<Shmem> = {
+                    if shared_path.is_empty() {
+                        None
+                    } else {
+                        Some(ShmemConf::new().flink(shared_path.clone()).open().unwrap())
+                    }
+                };
+
+                let mut prev_timestamp = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis();
                 let mut last_secs = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
@@ -104,23 +118,33 @@ fn main() -> eframe::Result {
                         .duration_since(UNIX_EPOCH)
                         .unwrap()
                         .as_secs();
+
+                    let mut need_request_repaint = false;
+                    if let Some(shmem) = shmem.as_ref() {
+                        let data = shmem.as_ptr();
+                        let serialized = unsafe { std::slice::from_raw_parts(data, shmem.len()) };
+                        let message: SharedMessage = deserialize(serialized).unwrap();
+                        if prev_timestamp != message.timestamp {
+                            prev_timestamp = message.timestamp;
+                            // println!("send message: {:?}", message);
+                            let _ = sender.send(message);
+                            need_request_repaint = true;
+                        }
+                    }
+
                     // println!("{}, {}", last_secs, cur_secs);
                     if cur_secs != last_secs {
+                        need_request_repaint = true;
+                    }
+                    if need_request_repaint {
                         egui_ctx.request_repaint();
-                        count = count.wrapping_add(1);
-                        sender.send(count).unwrap();
-                        // println!("send counter: {}", count);
                     }
                     last_secs = cur_secs;
                     thread::sleep(Duration::from_millis(100));
                 }
             });
 
-            Ok(Box::new(MyEguiApp::new(
-                cc,
-                receiver,
-                shared_path.to_string(),
-            )))
+            Ok(Box::new(MyEguiApp::new(cc, receiver)))
         }),
     )
 }
