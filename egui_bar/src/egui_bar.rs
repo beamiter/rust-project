@@ -26,6 +26,7 @@ impl MyEguiApp {
     pub const SILVER: Color32 = Color32::from_rgb(192, 192, 192);
     pub const OLIVE_GREEN: Color32 = Color32::from_rgb(128, 128, 0);
     pub const ROYALBLUE: Color32 = Color32::from_rgb(65, 105, 225);
+    pub const LYRIC: [usize; 14] = [0, 1, 2, 3, 4, 5, 6, 7, 6, 5, 4, 3, 2, 1];
     pub const TAG_COLORS: [Color32; 9] = [
         MyEguiApp::RED,
         MyEguiApp::ORANGE,
@@ -63,7 +64,8 @@ fn get_screen_width() -> f32 {
 
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.id = self.id.wrapping_add(1).wrapping_rem(8);
+        self.id = self.id.wrapping_add(1).wrapping_rem(MyEguiApp::LYRIC.len());
+        // println!("frame id: {}", self.id);
         while let Ok(message) = self.receiver.try_recv() {
             self.message = Some(message);
         }
@@ -122,9 +124,12 @@ impl eframe::App for MyEguiApp {
                     ui.label("current_time");
 
                     ui.label(
-                        egui::RichText::new(format!("{}", "⬅".repeat(self.id)))
-                            .color(MyEguiApp::OLIVE_GREEN)
-                            .font(egui::FontId::monospace(MyEguiApp::FONT_SIZE / 2.)),
+                        egui::RichText::new(format!(
+                            "{}",
+                            "⬅".repeat(*MyEguiApp::LYRIC.get(self.id).unwrap_or(&0))
+                        ))
+                        .color(MyEguiApp::OLIVE_GREEN)
+                        .font(egui::FontId::monospace(MyEguiApp::FONT_SIZE / 2.)),
                     );
                     ui.horizontal(|ui| {
                         ui.with_layout(

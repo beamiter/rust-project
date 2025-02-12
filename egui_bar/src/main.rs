@@ -138,10 +138,11 @@ fn main() -> eframe::Result {
                         need_request_repaint = true;
                     }
                     if need_request_repaint {
-                        egui_ctx.request_repaint();
+                        // println!("request_repaint");
+                        egui_ctx.request_repaint_after(Duration::from_micros(1));
                     }
                     last_secs = cur_secs;
-                    thread::sleep(Duration::from_millis(100));
+                    thread::sleep(Duration::from_millis(10));
                 }
             });
 
