@@ -2,6 +2,7 @@
 #![allow(non_snake_case)]
 
 use bincode::serialize;
+use core::num;
 use libc::{
     close, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
     SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
@@ -10,11 +11,12 @@ use log::info;
 use shared_memory::{Shmem, ShmemConf};
 use shared_structures::{MonitorInfo, SharedMessage, TagStatus};
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::ffi::{c_int, CStr, CString};
 use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
-use std::process::Command;
+use std::process::{Child, Command};
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -284,7 +286,7 @@ pub struct Client {
 }
 impl fmt::Display for Client {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Client {{ name: {}, mina: {}, maxa: {}, cfact: {}, x: {}, y: {}, w: {}, h: {}, oldx: {}, oldy: {}, oldw: {}, oldh: {}, basew: {}, baseh: {}, incw: {}, inch: {}, maxw: {}, maxh: {}, minw: {}, minh: {}, hintsvalid: {}, bw: {}, oldbw: {}, tags0: {}, isfixed: {}, isfloating: {}, isurgent: {}, neverfocus: {}, oldstate: {}, isfullscreen: {} }}",
+        write!(f, "Client {{ name: {}, mina: {}, maxa: {}, cfact: {}, x: {}, y: {}, w: {}, h: {}, oldx: {}, oldy: {}, oldw: {}, oldh: {}, basew: {}, baseh: {}, incw: {}, inch: {}, maxw: {}, maxh: {}, minw: {}, minh: {}, hintsvalid: {}, bw: {}, oldbw: {}, tags0: {}, isfixed: {}, isfloating: {}, isurgent: {}, neverfocus: {}, oldstate: {}, isfullscreen: {}, win: {} }}",
     self.name,
     self.mina,
     self.maxa,
@@ -314,7 +316,8 @@ impl fmt::Display for Client {
     self.isurgent,
     self.neverfocus,
     self.oldstate,
-    self.isfullscreen
+    self.isfullscreen,
+    self.win,
         )
     }
 }
@@ -545,6 +548,14 @@ pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
     0
 }
 
+#[derive(Debug, Default)]
+pub struct BarShape {
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+}
+
 pub struct Dwm {
     pub broken: String,
     pub stext_max_len: usize,
@@ -575,8 +586,8 @@ pub struct Dwm {
     pub sender: Sender<u8>,
     pub tags: Vec<&'static str>,
     pub shmem: Option<Shmem>,
-    pub egui_bar_height: Option<i32>,
-    pub egui_bar_xy: [i32; 2],
+    pub egui_bar_child: HashMap<i32, Child>,
+    pub egui_bar_shape: HashMap<i32, BarShape>,
     pub message: SharedMessage,
 }
 
@@ -650,8 +661,8 @@ impl Dwm {
                         .unwrap(),
                 )
             },
-            egui_bar_height: None,
-            egui_bar_xy: [0, 0],
+            egui_bar_child: HashMap::new(),
+            egui_bar_shape: HashMap::new(),
             message: SharedMessage::default(),
         }
     }
@@ -2447,12 +2458,14 @@ impl Dwm {
         }
     }
 
-    pub fn client_y_offset(&self, showbar0: bool) -> i32 {
+    pub fn client_y_offset(&self, m: &mut Monitor) -> i32 {
+        let showbar0 = m.showbar0;
         if showbar0 {
             return 0;
         }
-        if let Some(egui_bar_height) = self.egui_bar_height {
-            return egui_bar_height + Config::egui_bar_pad + self.egui_bar_xy[0];
+        let num = m.num;
+        if let Some(bar_shape) = self.egui_bar_shape.get(&num) {
+            return bar_shape.height + Config::egui_bar_pad + bar_shape.x;
         }
         return 0;
     }
@@ -2493,7 +2506,7 @@ impl Dwm {
             let mut i: u32 = 0;
             let mut h: u32;
             c = self.nexttiled((*m).clients.clone());
-            let client_y_offset = self.client_y_offset((*m).showbar0);
+            let client_y_offset = self.client_y_offset(&mut *m);
             while let Some(ref c_opt) = c {
                 if i < (*m).nmaster0 {
                     // h = ((*m).wh as u32 - my) / (n.min((*m).nmaster0) - i);
@@ -3945,8 +3958,17 @@ impl Dwm {
     pub fn sendevent(&mut self, c: &mut Client, proto: Atom) -> bool {
         info!("[sendevent] {}", c);
         if c.name == Config::egui_bar_name {
-            self.egui_bar_height = Some(c.h);
-            self.egui_bar_xy = [c.x, c.y];
+            if let Some(mon) = &c.mon {
+                let num = mon.borrow_mut().num;
+                let bar_shape = BarShape {
+                    x: c.x,
+                    y: c.y,
+                    width: c.w,
+                    height: c.h,
+                };
+                println!("[sendevent] num: {}, bar_shape: {:?}", num, bar_shape);
+                self.egui_bar_shape.insert(num, bar_shape);
+            }
         }
         let mut protocols: *mut Atom = null_mut();
         let mut n: i32 = 0;
@@ -4737,14 +4759,19 @@ impl Dwm {
     pub fn draw_egui_bar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
         info!("[draw_egui_bar]");
         {
-            // info!("[draw_egui_bar] {}", m.as_ref().unwrap().borrow_mut());
+            info!("[draw_egui_bar] {}", m.as_ref().unwrap().borrow_mut());
         }
         let mut monitor_info = MonitorInfo::default();
-        let _showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
         let mut occ: u32 = 0;
         let mut urg: u32 = 0;
         {
-            let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
+            let m_mut = m.as_ref().unwrap().borrow_mut();
+            monitor_info.monitor_x = m_mut.wx;
+            monitor_info.monitor_y = m_mut.wy;
+            monitor_info.monitor_width = m_mut.ww;
+            monitor_info.monitor_height = m_mut.wh;
+            monitor_info.monitor_num = m_mut.num;
+            let mut c = m_mut.clients.clone();
             while let Some(ref c_opt) = c {
                 let tags0 = c_opt.borrow_mut().tags0;
                 occ |= tags0;
@@ -4782,6 +4809,6 @@ impl Dwm {
             sel_client_name = sel_opt.borrow_mut().name.clone();
         }
         monitor_info.client_name = sel_client_name;
-        self.message.monitor_infos.push(monitor_info);
+        self.message.monitor_info = monitor_info;
     }
 }

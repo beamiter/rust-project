@@ -44,10 +44,10 @@ fn main() {
     let (tx, rx) = mpsc::channel();
 
     let shared_path = "/dev/shm/my_shared_memory";
-    let mut _child = Command::new("egui_bar")
-        .arg(shared_path)
-        .spawn()
-        .expect("Failed to start egui app");
+    // let mut _child = Command::new("egui_bar")
+    //     .arg(shared_path)
+    //     .spawn()
+    //     .expect("Failed to start egui app");
     let mut dwm = Dwm::new(tx, shared_path.to_string());
 
     let _status_update_thread = thread::spawn(move || {

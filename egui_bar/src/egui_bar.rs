@@ -1,6 +1,6 @@
 use eframe::egui;
 use egui::{Align, Color32, Layout, Vec2};
-use shared_structures::{MonitorInfo, SharedMessage, TagStatus};
+use shared_structures::{SharedMessage, TagStatus};
 use std::sync::mpsc;
 
 pub struct MyEguiApp {
@@ -78,18 +78,8 @@ impl eframe::App for MyEguiApp {
             let mut client_name = String::new();
             // (TODO): support multi-monitor.
             if let Some(ref message) = self.message {
-                tag_status_vec = message
-                    .monitor_infos
-                    .get(0)
-                    .unwrap_or(&MonitorInfo::default())
-                    .tag_status_vec
-                    .clone();
-                client_name = message
-                    .monitor_infos
-                    .get(0)
-                    .unwrap_or(&MonitorInfo::default())
-                    .client_name
-                    .clone();
+                tag_status_vec = message.monitor_info.tag_status_vec.clone();
+                client_name = message.monitor_info.client_name.clone();
             }
             ui.horizontal_centered(|ui| {
                 for i in 0..MyEguiApp::TAG_ICONS.len() {
