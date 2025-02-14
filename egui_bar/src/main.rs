@@ -78,7 +78,7 @@ fn main() -> eframe::Result {
         viewport: egui::ViewportBuilder::default()
             .with_transparent(true)
             .with_window_type(egui::X11WindowType::Dock)
-            .with_position(Pos2::new(2., 1.))
+            .with_position(Pos2::new(0., 0.))
             .with_inner_size([800., MyEguiApp::FONT_SIZE]) // Initial height
             .with_min_inner_size([800., MyEguiApp::FONT_SIZE]) // Minimum size
             // .with_max_inner_size([f32::INFINITY, 20.0]) // Set max height to 20.0

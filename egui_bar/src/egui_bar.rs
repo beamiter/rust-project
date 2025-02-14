@@ -1,12 +1,11 @@
 use eframe::egui;
-use egui::{Align, Color32, Layout, Vec2};
+use egui::{Align, Color32, Layout, Pos2};
 use shared_structures::{SharedMessage, TagStatus};
 use std::sync::mpsc;
 
 pub struct MyEguiApp {
     message: Option<SharedMessage>,
     id: usize,
-    screen_rect_size: Vec2,
     receiver: mpsc::Receiver<SharedMessage>,
 }
 
@@ -46,12 +45,12 @@ impl MyEguiApp {
         Self {
             message: None,
             id: 0,
-            screen_rect_size: Vec2::ZERO,
             receiver,
         }
     }
 }
 
+#[allow(dead_code)]
 fn get_screen_width() -> f32 {
     #[cfg(target_os = "linux")]
     {
@@ -63,7 +62,8 @@ fn get_screen_width() -> f32 {
 }
 
 impl eframe::App for MyEguiApp {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let _cpu_usage = frame.info().cpu_usage.unwrap_or(0.);
         self.id = self.id.wrapping_add(1).wrapping_rem(MyEguiApp::LYRIC.len());
         // println!("frame id: {}", self.id);
         while let Ok(message) = self.receiver.try_recv() {
@@ -71,7 +71,14 @@ impl eframe::App for MyEguiApp {
         }
         // println!("receive message: {:?}", self.message);
         let scale_factor = ctx.pixels_per_point();
-        self.screen_rect_size = ctx.screen_rect().size();
+        let screen_rect = ctx.screen_rect();
+        // println!("screen_rect {}", screen_rect);
+        let outer_rect = ctx.input(|i| i.viewport().outer_rect).unwrap();
+        // println!("outer_rect {:?}", outer_rect);
+        // let inner_rect = ctx.input(|i| i.viewport().inner_rect).unwrap();
+        // println!("inner_rect {:?}", inner_rect);
+
+        // print!("{:?}", viewport);
         egui::CentralPanel::default().show(ctx, |ui| {
             // self.viewpoint_size = ui.available_size();
             let mut tag_status_vec: Vec<TagStatus> = Vec::new();
@@ -134,16 +141,25 @@ impl eframe::App for MyEguiApp {
             });
         });
 
-        let screen_width = get_screen_width() / scale_factor;
-        let width_offset = 6.0 / scale_factor;
-        let desired_width = screen_width - width_offset;
-        let hight_offset = 18.0 / scale_factor;
-        let desired_height = MyEguiApp::FONT_SIZE + hight_offset;
-        if desired_width != self.screen_rect_size.x {
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2 {
-                x: (desired_width),
-                y: (desired_height),
-            }));
+        if let Some(message) = self.message.as_ref() {
+            let monitor_width = message.monitor_info.monitor_width as f32 / scale_factor;
+            let width_offset = 6.0 / scale_factor;
+            let desired_width = monitor_width - width_offset;
+            let hight_offset = 18.0 / scale_factor;
+            let desired_height = MyEguiApp::FONT_SIZE + hight_offset;
+            let desired_size = egui::Vec2::new(desired_width, desired_height);
+            if desired_width != screen_rect.size().x {
+                println!(" desired_size: {}", desired_size);
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));
+            }
+            let outer_rect_min = outer_rect.min;
+            let desired_x = message.monitor_info.monitor_x as f32 + 2.;
+            let desired_y = message.monitor_info.monitor_y as f32 + 1.;
+            if desired_x != outer_rect_min.x - 1. && desired_y != outer_rect_min.y - 1. {
+                let desired_outer_position = Pos2::new(desired_x as f32, desired_y as f32);
+                println!(" desired_outer_position: {}", desired_outer_position);
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(desired_outer_position));
+            }
         }
     }
 }

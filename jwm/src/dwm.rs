@@ -2,7 +2,6 @@
 #![allow(non_snake_case)]
 
 use bincode::serialize;
-use core::num;
 use libc::{
     close, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
     SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
@@ -548,6 +547,7 @@ pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
     0
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Default)]
 pub struct BarShape {
     pub x: i32,
@@ -585,7 +585,7 @@ pub struct Dwm {
     pub cmap: Colormap,
     pub sender: Sender<u8>,
     pub tags: Vec<&'static str>,
-    pub shmem: Option<Shmem>,
+    pub egui_bar_shmem: HashMap<i32, Shmem>,
     pub egui_bar_child: HashMap<i32, Child>,
     pub egui_bar_shape: HashMap<i32, BarShape>,
     pub message: SharedMessage,
@@ -619,7 +619,7 @@ impl Dwm {
             }
         }
     }
-    pub fn new(sender: Sender<u8>, shared_path: String) -> Self {
+    pub fn new(sender: Sender<u8>) -> Self {
         Dwm {
             broken: "broken".to_string(),
             stext_max_len: 512,
@@ -649,18 +649,7 @@ impl Dwm {
             cmap: 0,
             sender,
             tags: generate_random_tags(Config::tags_length),
-            shmem: if shared_path.is_empty() {
-                None
-            } else {
-                Some(
-                    ShmemConf::new()
-                        .size(1024)
-                        .flink(shared_path)
-                        .force_create_flink()
-                        .create()
-                        .unwrap(),
-                )
-            },
+            egui_bar_shmem: HashMap::new(),
             egui_bar_child: HashMap::new(),
             egui_bar_shape: HashMap::new(),
             message: SharedMessage::default(),
@@ -1715,9 +1704,9 @@ impl Dwm {
         }
         return ret;
     }
-    fn write_message(&mut self, message: &SharedMessage) -> std::io::Result<()> {
+    fn write_message(&mut self, num: i32, message: &SharedMessage) -> std::io::Result<()> {
         let serialized = serialize(message).expect("Serialization failed");
-        if let Some(ref shmem) = self.shmem.as_mut() {
+        if let Some(ref shmem) = self.egui_bar_shmem.get(&num).as_mut() {
             let data = shmem.as_ptr();
             let data_slice = unsafe { std::slice::from_raw_parts_mut(data, serialized.len()) };
             data_slice.copy_from_slice(&serialized);
@@ -2611,13 +2600,12 @@ impl Dwm {
     pub fn focusin(&mut self, e: *mut XEvent) {
         // info!("[focusin]");
         unsafe {
-            let mut selmon_clone = self.selmon.clone();
-            let selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
+            let sel = { self.selmon.as_mut().unwrap().borrow_mut().sel.clone() };
             let ev = (*e).focus_change;
-            if selmon_mut.sel.is_some()
-                && ev.window != (*selmon_mut.sel.as_ref().unwrap().borrow_mut()).win
-            {
-                self.setfocus(selmon_mut.sel.as_ref().unwrap());
+            if let Some(sel) = sel.as_ref() {
+                if ev.window != sel.borrow_mut().win {
+                    self.setfocus(sel);
+                }
             }
         }
     }
@@ -4023,13 +4011,35 @@ impl Dwm {
         let mut m = self.mons.clone();
         self.message = SharedMessage::default();
         while let Some(ref m_opt) = m {
-            info!("[drawbars] barwin: {}", m_opt.borrow_mut().barwin);
+            let barwin = m_opt.borrow_mut().barwin;
+            let num = m_opt.borrow_mut().num;
+            info!("[drawbars] barwin: {}, num: {}", barwin, num);
             self.drawbar(m.clone());
             let next = m_opt.borrow_mut().next.clone();
             m = next;
+
+            let shared_path = format!("/dev/shm/monitor_{}", num);
+            if !self.egui_bar_shmem.contains_key(&num) {
+                self.egui_bar_shmem.insert(
+                    num,
+                    ShmemConf::new()
+                        .size(1024)
+                        .flink(&shared_path)
+                        .force_create_flink()
+                        .create()
+                        .unwrap(),
+                );
+            }
+            info!("[drawbars] message: {:?}", self.message);
+            let _ = self.write_message(num, &self.message.clone());
+            if !self.egui_bar_child.contains_key(&num) {
+                let child = Command::new(Config::egui_bar_name)
+                    .arg(shared_path)
+                    .spawn()
+                    .expect("Failled to start egui app");
+                self.egui_bar_child.insert(num, child);
+            }
         }
-        info!("[drawbars] message: {:?}", self.message);
-        let _ = self.write_message(&self.message.clone());
     }
     pub fn enternotify(&mut self, e: *mut XEvent) {
         // info!("[enternotify]");

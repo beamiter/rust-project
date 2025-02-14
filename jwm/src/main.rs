@@ -15,12 +15,12 @@ use x11::xlib::{XCloseDisplay, XOpenDisplay, XSupportsLocale};
 mod bar;
 use bar::*;
 mod config;
+mod deprecated;
 mod drw;
 mod dwm;
 mod icon_gallery;
 mod miscellaneous;
 mod xproto;
-mod deprecated;
 
 mod tests;
 
@@ -43,12 +43,7 @@ fn main() {
     miscellaneous::init_auto_start();
     let (tx, rx) = mpsc::channel();
 
-    let shared_path = "/dev/shm/my_shared_memory";
-    // let mut _child = Command::new("egui_bar")
-    //     .arg(shared_path)
-    //     .spawn()
-    //     .expect("Failed to start egui app");
-    let mut dwm = Dwm::new(tx, shared_path.to_string());
+    let mut dwm = Dwm::new(tx);
 
     let _status_update_thread = thread::spawn(move || {
         let mut status_bar = StatusBar::new();
