@@ -73,7 +73,7 @@ impl eframe::App for MyEguiApp {
         let scale_factor = ctx.pixels_per_point();
         let screen_rect = ctx.screen_rect();
         // println!("screen_rect {}", screen_rect);
-        let outer_rect = ctx.input(|i| i.viewport().outer_rect).unwrap();
+        let outer_rect = ctx.input(|i| i.viewport().outer_rect);
         // println!("outer_rect {:?}", outer_rect);
         // let inner_rect = ctx.input(|i| i.viewport().inner_rect).unwrap();
         // println!("inner_rect {:?}", inner_rect);
@@ -152,13 +152,17 @@ impl eframe::App for MyEguiApp {
                 // println!(" desired_size: {}", desired_size);
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));
             }
-            let outer_rect_min = outer_rect.min;
-            let desired_x = message.monitor_info.monitor_x as f32 + 2.;
-            let desired_y = message.monitor_info.monitor_y as f32 + 1.;
-            if desired_x != outer_rect_min.x - 1. && desired_y != outer_rect_min.y - 1. {
-                let desired_outer_position = Pos2::new(desired_x as f32, desired_y as f32);
-                // println!(" desired_outer_position: {}", desired_outer_position);
-                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(desired_outer_position));
+            if let Some(outer_rect) = outer_rect.as_ref() {
+                let outer_rect_min = outer_rect.min;
+                let desired_x = message.monitor_info.monitor_x as f32 + 2.;
+                let desired_y = message.monitor_info.monitor_y as f32 + 1.;
+                if desired_x != outer_rect_min.x - 1. && desired_y != outer_rect_min.y - 1. {
+                    let desired_outer_position = Pos2::new(desired_x as f32, desired_y as f32);
+                    // println!(" desired_outer_position: {}", desired_outer_position);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
+                        desired_outer_position,
+                    ));
+                }
             }
         }
     }

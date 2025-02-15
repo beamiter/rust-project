@@ -1317,7 +1317,8 @@ impl Dwm {
                         if (c_mut.x + c_mut.w) > mx + mw && c_mut.isfloating {
                             // center in x direction
                             if c_mut.name == Config::egui_bar_name {
-                                c_mut.x = 0;
+                                println!("fuck: {}", c_mut.x);
+                                // c_mut.x = 0;
                             } else {
                                 c_mut.x = mx + (mw / 2 - c_mut.width() / 2);
                             }
