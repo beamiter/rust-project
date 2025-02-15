@@ -149,7 +149,7 @@ impl eframe::App for MyEguiApp {
             let desired_height = MyEguiApp::FONT_SIZE + hight_offset;
             let desired_size = egui::Vec2::new(desired_width, desired_height);
             if desired_width != screen_rect.size().x {
-                println!(" desired_size: {}", desired_size);
+                // println!(" desired_size: {}", desired_size);
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));
             }
             let outer_rect_min = outer_rect.min;
@@ -157,7 +157,7 @@ impl eframe::App for MyEguiApp {
             let desired_y = message.monitor_info.monitor_y as f32 + 1.;
             if desired_x != outer_rect_min.x - 1. && desired_y != outer_rect_min.y - 1. {
                 let desired_outer_position = Pos2::new(desired_x as f32, desired_y as f32);
-                println!(" desired_outer_position: {}", desired_outer_position);
+                // println!(" desired_outer_position: {}", desired_outer_position);
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(desired_outer_position));
             }
         }
