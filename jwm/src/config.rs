@@ -169,7 +169,7 @@ impl Config {
             Self::col_gray4.to_string(),
         ]
     });
-    pub const termcmd: Lazy<Vec<String>> = Lazy::new(|| vec!["warp-terminal".to_string()]);
+    pub const termcmd: Lazy<Vec<String>> = Lazy::new(|| vec!["gnome-terminal".to_string()]);
 
     pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
         let mut m = vec![
