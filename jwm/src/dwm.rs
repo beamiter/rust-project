@@ -4035,8 +4035,9 @@ impl Dwm {
             info!("[drawbars] message: {:?}", self.message);
             let _ = self.write_message(num, &self.message.clone());
             if !self.egui_bar_child.contains_key(&num) {
+                let process_name = format!("{}_{}", Config::egui_bar_name, num);
                 let child = Command::new(Config::egui_bar_name)
-                    .arg0("fuck_the_world") // This change the class and instance
+                    .arg0(process_name) // This change the class and instance
                     .arg(shared_path)
                     .spawn()
                     .expect("Failled to start egui app");
