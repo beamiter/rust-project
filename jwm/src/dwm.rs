@@ -15,6 +15,7 @@ use std::ffi::{c_int, CStr, CString};
 use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
+use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
@@ -695,10 +696,10 @@ impl Dwm {
             } else {
                 &self.broken
             };
-            // info!(
-            //     "[applyrules] class: {}, instance: {}, name: {}",
-            //     class, instance, c.name
-            // );
+            info!(
+                "[applyrules] class: {}, instance: {}, name: {}",
+                class, instance, c.name
+            );
 
             for r in &*Config::rules {
                 if (!r.title.is_empty() && c.name.find(r.title).is_some())
@@ -4035,6 +4036,7 @@ impl Dwm {
             let _ = self.write_message(num, &self.message.clone());
             if !self.egui_bar_child.contains_key(&num) {
                 let child = Command::new(Config::egui_bar_name)
+                    .arg0("fuck_the_world") // This change the class and instance
                     .arg(shared_path)
                     .spawn()
                     .expect("Failled to start egui app");
