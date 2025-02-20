@@ -85,8 +85,8 @@ fn main() {
     let log_filename = format!("/tmp/jwm_{}.log", timestamp);
     let _log_file = std::fs::File::create(log_filename).unwrap();
     // WriteLogger::init(LevelFilter::Warn, Config::default(), _log_file).unwrap();
-    // WriteLogger::init(LevelFilter::Info, Config::default(), _log_file).unwrap();
-    WriteLogger::init(LevelFilter::Info, Config::default(), std::io::stdout()).unwrap();
+    WriteLogger::init(LevelFilter::Info, Config::default(), _log_file).unwrap();
+    // WriteLogger::init(LevelFilter::Info, Config::default(), std::io::stdout()).unwrap();
     unsafe {
         let c_string = CString::new("").unwrap();
         if setlocale(LC_CTYPE, c_string.as_ptr()).is_null() || XSupportsLocale() <= 0 {

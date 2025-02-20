@@ -481,7 +481,7 @@ impl fmt::Display for Monitor {
 pub struct Rule {
     pub class: &'static str,
     pub instance: &'static str,
-    pub title: &'static str,
+    pub name: &'static str,
     pub tags0: usize,
     pub isfloating: bool,
     pub monitor: i32,
@@ -491,7 +491,7 @@ impl Rule {
     pub fn new(
         class: &'static str,
         instance: &'static str,
-        title: &'static str,
+        name: &'static str,
         tags0: usize,
         isfloating: bool,
         monitor: i32,
@@ -499,7 +499,7 @@ impl Rule {
         Rule {
             class,
             instance,
-            title,
+            name,
             tags0,
             isfloating,
             monitor,
@@ -696,16 +696,21 @@ impl Dwm {
             } else {
                 &self.broken
             };
+
             info!(
                 "[applyrules] class: {}, instance: {}, name: {}",
                 class, instance, c.name
             );
-
             for r in &*Config::rules {
-                if (!r.title.is_empty() && c.name.find(r.title).is_some())
-                    || (!r.class.is_empty() && class.find(r.class).is_some())
-                    || (!r.instance.is_empty() && instance.find(r.instance).is_some())
+                if (!r.name.is_empty() || !r.class.is_empty() || !r.instance.is_empty())
+                    && (r.name.is_empty() || c.name.find(&r.name).is_some())
+                    && (r.class.is_empty() || class.find(&r.class).is_some())
+                    && (r.instance.is_empty() || instance.find(&r.instance).is_some())
                 {
+                    info!(
+                        "[############################### applyrules] class: {}, instance: {}, name: {}",
+                        class, instance, c.name
+                    );
                     c.isfloating = r.isfloating;
                     c.tags0 |= r.tags0 as u32;
                     let mut m = self.mons.clone();
@@ -1318,7 +1323,7 @@ impl Dwm {
                         if (c_mut.x + c_mut.w) > mx + mw && c_mut.isfloating {
                             // center in x direction
                             if c_mut.name == Config::egui_bar_name {
-                                println!("fuck: {}", c_mut.x);
+                                println!("[configurerequest] egui bar x: {}", c_mut.x);
                                 // c_mut.x = 0;
                             } else {
                                 c_mut.x = mx + (mw / 2 - c_mut.width() / 2);
