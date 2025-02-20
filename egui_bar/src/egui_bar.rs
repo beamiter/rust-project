@@ -7,6 +7,8 @@ pub struct MyEguiApp {
     message: Option<SharedMessage>,
     id: usize,
     receiver: mpsc::Receiver<SharedMessage>,
+    reset_size: bool,
+    reset_position: bool,
 }
 
 impl MyEguiApp {
@@ -46,6 +48,8 @@ impl MyEguiApp {
             message: None,
             id: 0,
             receiver,
+            reset_size: false,
+            reset_position: false,
         }
     }
 }
@@ -82,11 +86,9 @@ impl eframe::App for MyEguiApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             // self.viewpoint_size = ui.available_size();
             let mut tag_status_vec: Vec<TagStatus> = Vec::new();
-            let mut client_name = String::new();
-            // (TODO): support multi-monitor.
             if let Some(ref message) = self.message {
                 tag_status_vec = message.monitor_info.tag_status_vec.clone();
-                client_name = message.monitor_info.client_name.clone();
+                let _client_name = message.monitor_info.client_name.clone();
             }
             ui.horizontal_centered(|ui| {
                 for i in 0..MyEguiApp::TAG_ICONS.len() {
@@ -128,42 +130,65 @@ impl eframe::App for MyEguiApp {
                         .color(MyEguiApp::OLIVE_GREEN)
                         .font(egui::FontId::monospace(MyEguiApp::FONT_SIZE / 2.)),
                     );
-                    ui.horizontal(|ui| {
-                        ui.with_layout(
-                            egui::Layout::left_to_right(Align::Center).with_main_wrap(true),
-                            |ui| {
-                                // println!("client_name: {}", client_name);
-                                ui.label(egui::RichText::new(format!("{}", client_name)).weak());
-                            },
-                        );
-                    });
+                    // ui.horizontal(|ui| {
+                    //     ui.with_layout(
+                    //         egui::Layout::left_to_right(Align::Center).with_main_wrap(true),
+                    //         |ui| {
+                    //             // println!("client_name: {}", client_name);
+                    //             ui.label(egui::RichText::new(format!("{}", client_name)).weak());
+                    //         },
+                    //     );
+                    // });
+
+                    if let Some(message) = self.message.as_ref() {
+                        let monitor_width =
+                            message.monitor_info.monitor_width as f32 / scale_factor;
+                        let width_offset = 6.0 / scale_factor;
+                        let desired_width = monitor_width - width_offset;
+                        let hight_offset = 18.0 / scale_factor;
+                        let desired_height = MyEguiApp::FONT_SIZE + hight_offset;
+                        let desired_size = egui::Vec2::new(desired_width, desired_height);
+                        if desired_width != screen_rect.size().x {
+                            let size_log_info = format!(
+                                "desired_size: {}, screen_rect: {};",
+                                desired_size,
+                                screen_rect.size()
+                            );
+                            ui.label(&size_log_info);
+                            println!("{}", size_log_info);
+                            if !self.reset_size {
+                                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
+                                    desired_size,
+                                ));
+                                self.reset_size = true;
+                            }
+                        }
+                        if let Some(outer_rect) = outer_rect.as_ref() {
+                            let outer_rect_min = outer_rect.min;
+                            let desired_x = message.monitor_info.monitor_x as f32 + 2.;
+                            let desired_y = message.monitor_info.monitor_y as f32 + 1.;
+                            if desired_x != outer_rect_min.x - 1.
+                                && desired_y != outer_rect_min.y - 1.
+                            {
+                                let desired_outer_position =
+                                    Pos2::new(desired_x as f32, desired_y as f32);
+                                let position_log_info = format!(
+                                    "desired_outer_position: {}, outer_rect_min: {};",
+                                    desired_outer_position, outer_rect_min
+                                );
+                                ui.label(&position_log_info);
+                                println!("{}", position_log_info);
+                                if !self.reset_position {
+                                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
+                                        desired_outer_position,
+                                    ));
+                                    self.reset_position = true;
+                                }
+                            }
+                        }
+                    }
                 });
             });
         });
-
-        if let Some(message) = self.message.as_ref() {
-            let monitor_width = message.monitor_info.monitor_width as f32 / scale_factor;
-            let width_offset = 6.0 / scale_factor;
-            let desired_width = monitor_width - width_offset;
-            let hight_offset = 18.0 / scale_factor;
-            let desired_height = MyEguiApp::FONT_SIZE + hight_offset;
-            let desired_size = egui::Vec2::new(desired_width, desired_height);
-            if desired_width != screen_rect.size().x {
-                // println!(" desired_size: {}", desired_size);
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));
-            }
-            if let Some(outer_rect) = outer_rect.as_ref() {
-                let outer_rect_min = outer_rect.min;
-                let desired_x = message.monitor_info.monitor_x as f32 + 2.;
-                let desired_y = message.monitor_info.monitor_y as f32 + 1.;
-                if desired_x != outer_rect_min.x - 1. && desired_y != outer_rect_min.y - 1. {
-                    let desired_outer_position = Pos2::new(desired_x as f32, desired_y as f32);
-                    // println!(" desired_outer_position: {}", desired_outer_position);
-                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
-                        desired_outer_position,
-                    ));
-                }
-            }
-        }
     }
 }

@@ -112,7 +112,7 @@ impl Config {
                 Config::egui_bar_name,
                 0,
                 true,
-                1,
+                0,
             ),
             Rule::new(
                 Config::egui_bar_1,
@@ -122,8 +122,8 @@ impl Config {
                 true,
                 1,
             ),
-            Rule::new("", "", "jterm4", 0, false, 1),
-            Rule::new("egui_bar", "egui_bar", "egui_bar", 0, false, 1),
+            // Rule::new("", "", "jterm4", 0, false, 1),
+            // Rule::new("egui_bar", "egui_bar", "egui_bar", 0, false, 1),
         ]
     });
 
