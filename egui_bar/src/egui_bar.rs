@@ -1,13 +1,15 @@
 use eframe::egui;
-use egui::{Align, Color32, Layout, Pos2};
+use egui::{Align, Color32, Layout};
 use shared_structures::{SharedMessage, TagStatus};
 use std::sync::mpsc;
+use sysinfo::System;
 
+#[allow(unused)]
 pub struct MyEguiApp {
     message: Option<SharedMessage>,
     id: usize,
     receiver: mpsc::Receiver<SharedMessage>,
-    // reset_position: bool,
+    sys: System,
 }
 
 impl MyEguiApp {
@@ -47,7 +49,7 @@ impl MyEguiApp {
             message: None,
             id: 0,
             receiver,
-            // reset_position: false,
+            sys: System::new_all(),
         }
     }
 }
@@ -75,7 +77,7 @@ impl eframe::App for MyEguiApp {
         let scale_factor = ctx.pixels_per_point();
         let screen_rect = ctx.screen_rect();
         // println!("screen_rect {}", screen_rect);
-        let outer_rect = ctx.input(|i| i.viewport().outer_rect);
+        // let outer_rect = ctx.input(|i| i.viewport().outer_rect);
         // println!("outer_rect {:?}", outer_rect);
         // let inner_rect = ctx.input(|i| i.viewport().inner_rect).unwrap();
         // println!("inner_rect {:?}", inner_rect);
@@ -119,7 +121,7 @@ impl eframe::App for MyEguiApp {
                             .color(Color32::from_rgb(0, 255, 0)),
                     );
                     ui.label(format!(
-                        "monitor {}, scale {:.2}",
+                        "<{}> scale {:.2}",
                         self.message
                             .clone()
                             .unwrap_or_default()
@@ -146,9 +148,20 @@ impl eframe::App for MyEguiApp {
                     //     );
                     // });
 
+                    self.sys.refresh_memory();
+                    let unavailable =
+                        (self.sys.total_memory() - self.sys.available_memory()) as f64 / 1e9;
+                    ui.label(
+                        egui::RichText::new(format!("{:.1}", unavailable)).color(MyEguiApp::SILVER),
+                    );
+                    let available = self.sys.available_memory() as f64 / 1e9;
+                    ui.label(
+                        egui::RichText::new(format!("{:.1}", available)).color(MyEguiApp::CYAN),
+                    );
+
                     if let Some(message) = self.message.as_ref() {
                         let monitor_width = message.monitor_info.monitor_width as f32;
-                        let width_offset = 6.0;
+                        let width_offset = 12.0;
                         let desired_width = monitor_width - width_offset;
                         let hight_offset = 18.0;
                         let desired_height = MyEguiApp::FONT_SIZE + hight_offset;
@@ -164,29 +177,7 @@ impl eframe::App for MyEguiApp {
                             // ui.label(&size_log_info);
                             // println!("{}", size_log_info);
                             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));
-                        }
-                        if let Some(outer_rect) = outer_rect.as_ref() {
-                            let outer_rect_min = outer_rect.min;
-                            let desired_x = message.monitor_info.monitor_x as f32 + 2.;
-                            let desired_y = message.monitor_info.monitor_y as f32 + 1.;
-                            if desired_x != outer_rect_min.x - 1.
-                                && desired_y != outer_rect_min.y - 1.
-                            {
-                                let desired_outer_position =
-                                    Pos2::new(desired_x as f32, desired_y as f32);
-                                let position_log_info = format!(
-                                    "desired_outer_position: {}, outer_rect_min: {};",
-                                    desired_outer_position, outer_rect_min
-                                );
-                                ui.label(&position_log_info);
-                                println!("{}", position_log_info);
-                                // if !self.reset_position {
-                                //     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
-                                //         desired_outer_position,
-                                //     ));
-                                //     self.reset_position = true;
-                                // }
-                            }
+                            ctx.send_viewport_cmd(egui::ViewportCommand::Transparent(true));
                         }
                     }
                 });
