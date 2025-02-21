@@ -7,8 +7,7 @@ pub struct MyEguiApp {
     message: Option<SharedMessage>,
     id: usize,
     receiver: mpsc::Receiver<SharedMessage>,
-    reset_size: bool,
-    reset_position: bool,
+    // reset_position: bool,
 }
 
 impl MyEguiApp {
@@ -48,8 +47,7 @@ impl MyEguiApp {
             message: None,
             id: 0,
             receiver,
-            reset_size: false,
-            reset_position: false,
+            // reset_position: false,
         }
     }
 }
@@ -120,7 +118,15 @@ impl eframe::App for MyEguiApp {
                         egui::RichText::new(format!("{}", current_time))
                             .color(Color32::from_rgb(0, 255, 0)),
                     );
-                    ui.label("current_time");
+                    ui.label(format!(
+                        "monitor {}, scale {:.2}",
+                        self.message
+                            .clone()
+                            .unwrap_or_default()
+                            .monitor_info
+                            .monitor_num,
+                        scale_factor
+                    ));
 
                     ui.label(
                         egui::RichText::new(format!(
@@ -141,27 +147,23 @@ impl eframe::App for MyEguiApp {
                     // });
 
                     if let Some(message) = self.message.as_ref() {
-                        let monitor_width =
-                            message.monitor_info.monitor_width as f32 / scale_factor;
-                        let width_offset = 6.0 / scale_factor;
+                        let monitor_width = message.monitor_info.monitor_width as f32;
+                        let width_offset = 6.0;
                         let desired_width = monitor_width - width_offset;
-                        let hight_offset = 18.0 / scale_factor;
+                        let hight_offset = 18.0;
                         let desired_height = MyEguiApp::FONT_SIZE + hight_offset;
-                        let desired_size = egui::Vec2::new(desired_width, desired_height);
-                        if desired_width != screen_rect.size().x {
-                            let size_log_info = format!(
-                                "desired_size: {}, screen_rect: {};",
-                                desired_size,
-                                screen_rect.size()
-                            );
-                            ui.label(&size_log_info);
-                            println!("{}", size_log_info);
-                            if !self.reset_size {
-                                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(
-                                    desired_size,
-                                ));
-                                self.reset_size = true;
-                            }
+                        let desired_size =
+                            egui::Vec2::new(desired_width / scale_factor, desired_height);
+                        // No need to care about height
+                        if desired_size.x != screen_rect.size().x {
+                            // let size_log_info = format!(
+                            //     "desired_size: {}, screen_rect: {};",
+                            //     desired_size,
+                            //     screen_rect.size()
+                            // );
+                            // ui.label(&size_log_info);
+                            // println!("{}", size_log_info);
+                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));
                         }
                         if let Some(outer_rect) = outer_rect.as_ref() {
                             let outer_rect_min = outer_rect.min;
@@ -178,12 +180,12 @@ impl eframe::App for MyEguiApp {
                                 );
                                 ui.label(&position_log_info);
                                 println!("{}", position_log_info);
-                                if !self.reset_position {
-                                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
-                                        desired_outer_position,
-                                    ));
-                                    self.reset_position = true;
-                                }
+                                // if !self.reset_position {
+                                //     ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
+                                //         desired_outer_position,
+                                //     ));
+                                //     self.reset_position = true;
+                                // }
                             }
                         }
                     }

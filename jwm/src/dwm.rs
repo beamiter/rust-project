@@ -2461,7 +2461,7 @@ impl Dwm {
         }
         let num = m.num;
         if let Some(bar_shape) = self.egui_bar_shape.get(&num) {
-            return bar_shape.height + Config::egui_bar_pad + bar_shape.x;
+            return bar_shape.height + Config::egui_bar_pad + bar_shape.y;
         }
         return 0;
     }
