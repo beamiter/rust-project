@@ -92,7 +92,7 @@ impl eframe::App for MyEguiApp {
         // println!("inner_rect {:?}", inner_rect);
 
         // print!("{:?}", viewport);
-        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
+        egui::CentralPanel::default().show(ctx, |ui| {
             // self.viewpoint_size = ui.available_size();
             let mut tag_status_vec: Vec<TagStatus> = Vec::new();
             if let Some(ref message) = self.message {
