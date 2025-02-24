@@ -130,14 +130,6 @@ impl eframe::App for MyEguiApp {
                         scale_factor
                     ));
 
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{}",
-                            "⬅".repeat(*MyEguiApp::LYRIC.get(self.id).unwrap_or(&0))
-                        ))
-                        .color(MyEguiApp::OLIVE_GREEN)
-                        .font(egui::FontId::monospace(MyEguiApp::FONT_SIZE / 2.)),
-                    );
                     // ui.horizontal(|ui| {
                     //     ui.with_layout(
                     //         egui::Layout::left_to_right(Align::Center).with_main_wrap(true),
@@ -157,6 +149,15 @@ impl eframe::App for MyEguiApp {
                     let available = self.sys.available_memory() as f64 / 1e9;
                     ui.label(
                         egui::RichText::new(format!("{:.1}", available)).color(MyEguiApp::CYAN),
+                    );
+
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{}",
+                            "⬅".repeat(*MyEguiApp::LYRIC.get(self.id).unwrap_or(&0))
+                        ))
+                        .color(MyEguiApp::OLIVE_GREEN)
+                        .font(egui::FontId::monospace(MyEguiApp::FONT_SIZE / 2.)),
                     );
 
                     if let Some(message) = self.message.as_ref() {
