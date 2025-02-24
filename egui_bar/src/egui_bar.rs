@@ -1,15 +1,17 @@
 use eframe::egui;
 use egui::{Align, Color32, Layout};
+use egui_plot::{Line, Plot, PlotPoints};
 use shared_structures::{SharedMessage, TagStatus};
-use std::sync::mpsc;
+use std::{f64::consts::PI, sync::mpsc};
 use sysinfo::System;
 
 #[allow(unused)]
 pub struct MyEguiApp {
     message: Option<SharedMessage>,
-    id: usize,
     receiver: mpsc::Receiver<SharedMessage>,
     sys: System,
+    point_index: usize,
+    points: Vec<[f64; 2]>,
 }
 
 impl MyEguiApp {
@@ -28,7 +30,6 @@ impl MyEguiApp {
     pub const SILVER: Color32 = Color32::from_rgb(192, 192, 192);
     pub const OLIVE_GREEN: Color32 = Color32::from_rgb(128, 128, 0);
     pub const ROYALBLUE: Color32 = Color32::from_rgb(65, 105, 225);
-    pub const LYRIC: [usize; 14] = [0, 1, 2, 3, 4, 5, 6, 7, 6, 5, 4, 3, 2, 1];
     pub const TAG_COLORS: [Color32; 9] = [
         MyEguiApp::RED,
         MyEguiApp::ORANGE,
@@ -47,9 +48,19 @@ impl MyEguiApp {
     pub fn new(_cc: &eframe::CreationContext<'_>, receiver: mpsc::Receiver<SharedMessage>) -> Self {
         Self {
             message: None,
-            id: 0,
             receiver,
             sys: System::new_all(),
+            point_index: 0,
+            points: {
+                let step_num = 60;
+                let step: f64 = PI / step_num as f64;
+                (-step_num..=step_num)
+                    .map(|x| {
+                        let tmp_x = x as f64 * step;
+                        [tmp_x, tmp_x.cos()]
+                    })
+                    .collect()
+            },
         }
     }
 }
@@ -68,8 +79,6 @@ fn get_screen_width() -> f32 {
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         let _cpu_usage = frame.info().cpu_usage.unwrap_or(0.);
-        self.id = self.id.wrapping_add(1).wrapping_rem(MyEguiApp::LYRIC.len());
-        // println!("frame id: {}", self.id);
         while let Ok(message) = self.receiver.try_recv() {
             self.message = Some(message);
         }
@@ -83,7 +92,7 @@ impl eframe::App for MyEguiApp {
         // println!("inner_rect {:?}", inner_rect);
 
         // print!("{:?}", viewport);
-        egui::CentralPanel::default().show(ctx, |ui| {
+        egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             // self.viewpoint_size = ui.available_size();
             let mut tag_status_vec: Vec<TagStatus> = Vec::new();
             if let Some(ref message) = self.message {
@@ -113,6 +122,33 @@ impl eframe::App for MyEguiApp {
                     ui.label(rich_text);
                 }
                 ui.label(egui::RichText::new(" []= ").color(Color32::from_rgb(255, 0, 0)));
+                let reset_view = ui.small_button("R").clicked();
+                let aspect = 8.0;
+                let mut plot = Plot::new("live plot")
+                    .view_aspect(aspect)
+                    .height(ui.available_height());
+                if reset_view {
+                    self.point_index = 0;
+                    plot = plot.reset();
+                }
+                let mut vis_points: Vec<[f64; 2]> = vec![];
+                for i in 0..self.points.len() {
+                    let index = self
+                        .point_index
+                        .wrapping_add(i)
+                        .wrapping_rem(self.points.len());
+                    let x = self.points[i][0];
+                    let y = self.points[index][1];
+                    vis_points.push([x, y]);
+                }
+                self.point_index = self
+                    .point_index
+                    .wrapping_add(1)
+                    .wrapping_rem(self.points.len());
+                let line = Line::new(PlotPoints::from(vis_points)).name("cosine");
+                plot.show(ui, |plot_ui| {
+                    plot_ui.line(line);
+                });
 
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let current_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
@@ -130,16 +166,6 @@ impl eframe::App for MyEguiApp {
                         scale_factor
                     ));
 
-                    // ui.horizontal(|ui| {
-                    //     ui.with_layout(
-                    //         egui::Layout::left_to_right(Align::Center).with_main_wrap(true),
-                    //         |ui| {
-                    //             // println!("client_name: {}", client_name);
-                    //             ui.label(egui::RichText::new(format!("{}", client_name)).weak());
-                    //         },
-                    //     );
-                    // });
-
                     self.sys.refresh_memory();
                     let unavailable =
                         (self.sys.total_memory() - self.sys.available_memory()) as f64 / 1e9;
@@ -149,15 +175,6 @@ impl eframe::App for MyEguiApp {
                     let available = self.sys.available_memory() as f64 / 1e9;
                     ui.label(
                         egui::RichText::new(format!("{:.1}", available)).color(MyEguiApp::CYAN),
-                    );
-
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{}",
-                            "⬅".repeat(*MyEguiApp::LYRIC.get(self.id).unwrap_or(&0))
-                        ))
-                        .color(MyEguiApp::OLIVE_GREEN)
-                        .font(egui::FontId::monospace(MyEguiApp::FONT_SIZE / 2.)),
                     );
 
                     if let Some(message) = self.message.as_ref() {
