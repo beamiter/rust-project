@@ -157,7 +157,7 @@ impl eframe::App for MyEguiApp {
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         let available_width = ui.available_width();
                         let plot_height = ui.available_height();
-                        let plot_width = (8.0 * plot_height).min(available_width * 0.5);
+                        let plot_width = (20.0 * plot_height).min(available_width * 0.5);
                         ui.add_space(available_width - plot_width - 2.);
                         let mut plot = Plot::new("live plot").width(plot_width).height(plot_height);
                         if reset_view {
