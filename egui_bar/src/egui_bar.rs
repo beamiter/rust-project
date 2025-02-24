@@ -12,6 +12,7 @@ pub struct MyEguiApp {
     sys: System,
     point_index: usize,
     points: Vec<[f64; 2]>,
+    point_speed: usize,
 }
 
 impl MyEguiApp {
@@ -61,6 +62,7 @@ impl MyEguiApp {
                     })
                     .collect()
             },
+            point_speed: 2,
         }
     }
 }
@@ -122,49 +124,23 @@ impl eframe::App for MyEguiApp {
                     ui.label(rich_text);
                 }
                 ui.label(egui::RichText::new(" []= ").color(Color32::from_rgb(255, 0, 0)));
-                let reset_view = ui.small_button("R").clicked();
-                let aspect = 8.0;
-                let mut plot = Plot::new("live plot")
-                    .view_aspect(aspect)
-                    .height(ui.available_height());
-                if reset_view {
-                    self.point_index = 0;
-                    plot = plot.reset();
-                }
-                let mut vis_points: Vec<[f64; 2]> = vec![];
-                for i in 0..self.points.len() {
-                    let index = self
-                        .point_index
-                        .wrapping_add(i)
-                        .wrapping_rem(self.points.len());
-                    let x = self.points[i][0];
-                    let y = self.points[index][1];
-                    vis_points.push([x, y]);
-                }
-                self.point_index = self
-                    .point_index
-                    .wrapping_add(1)
-                    .wrapping_rem(self.points.len());
-                let line = Line::new(PlotPoints::from(vis_points)).name("cosine");
-                plot.show(ui, |plot_ui| {
-                    plot_ui.line(line);
-                });
-
+                let num_emoji_vec = vec!["⓪", "①"];
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let current_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
                     ui.label(
                         egui::RichText::new(format!("{}", current_time))
                             .color(Color32::from_rgb(0, 255, 0)),
                     );
-                    ui.label(format!(
-                        "<{}> scale {:.2}",
-                        self.message
+                    ui.label(egui::RichText::new(format!("[ⓢ {:.2}]", scale_factor)));
+                    ui.label(egui::RichText::new(format!(
+                        "[{}]",
+                        num_emoji_vec[self
+                            .message
                             .clone()
                             .unwrap_or_default()
                             .monitor_info
-                            .monitor_num,
-                        scale_factor
-                    ));
+                            .monitor_num as usize],
+                    )).strong());
 
                     self.sys.refresh_memory();
                     let unavailable =
@@ -176,6 +152,37 @@ impl eframe::App for MyEguiApp {
                     ui.label(
                         egui::RichText::new(format!("{:.1}", available)).color(MyEguiApp::CYAN),
                     );
+                    let reset_view = ui.small_button("R").clicked();
+
+                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                        let available_width = ui.available_width();
+                        let plot_height = ui.available_height();
+                        let plot_width = (8.0 * plot_height).min(available_width * 0.5);
+                        ui.add_space(available_width - plot_width - 2.);
+                        let mut plot = Plot::new("live plot").width(plot_width).height(plot_height);
+                        if reset_view {
+                            self.point_index = 0;
+                            plot = plot.reset();
+                        }
+                        let mut vis_points: Vec<[f64; 2]> = vec![];
+                        for i in 0..self.points.len() {
+                            let index = self
+                                .point_index
+                                .wrapping_add(i)
+                                .wrapping_rem(self.points.len());
+                            let x = self.points[i][0];
+                            let y = self.points[index][1];
+                            vis_points.push([x, y]);
+                        }
+                        self.point_index = self
+                            .point_index
+                            .wrapping_add(self.point_speed)
+                            .wrapping_rem(self.points.len());
+                        let line = Line::new(PlotPoints::from(vis_points)).name("cosine");
+                        plot.show(ui, |plot_ui| {
+                            plot_ui.line(line);
+                        });
+                    });
 
                     if let Some(message) = self.message.as_ref() {
                         let monitor_width = message.monitor_info.monitor_width as f32;
