@@ -27,7 +27,7 @@ impl Config {
     pub const borderpx: u32 = 1;
     // snap pixel
     pub const snap: u32 = 32;
-    pub const showbar: bool = false;
+    pub const showbar: bool = true;
     pub const show_egui_bar: bool = true;
     pub const egui_bar_name: &str = "egui_bar";
     pub const egui_bar_0: &str = "egui_bar_0";

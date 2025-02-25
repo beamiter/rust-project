@@ -13,6 +13,8 @@ pub struct MyEguiApp {
     point_index: usize,
     points: Vec<[f64; 2]>,
     point_speed: usize,
+    toggle_time_style: bool,
+    visible: bool,
 }
 
 impl MyEguiApp {
@@ -31,6 +33,7 @@ impl MyEguiApp {
     pub const SILVER: Color32 = Color32::from_rgb(192, 192, 192);
     pub const OLIVE_GREEN: Color32 = Color32::from_rgb(128, 128, 0);
     pub const ROYALBLUE: Color32 = Color32::from_rgb(65, 105, 225);
+    pub const WHEAT: Color32 = Color32::from_rgb(245, 222, 179);
     pub const TAG_COLORS: [Color32; 9] = [
         MyEguiApp::RED,
         MyEguiApp::ORANGE,
@@ -63,6 +66,8 @@ impl MyEguiApp {
                     .collect()
             },
             point_speed: 2,
+            toggle_time_style: false,
+            visible: true,
         }
     }
 }
@@ -80,6 +85,7 @@ fn get_screen_width() -> f32 {
 
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        let desired_height = MyEguiApp::FONT_SIZE + 18.0;
         let _cpu_usage = frame.info().cpu_usage.unwrap_or(0.);
         while let Ok(message) = self.receiver.try_recv() {
             self.message = Some(message);
@@ -118,7 +124,7 @@ impl eframe::App for MyEguiApp {
                             rich_text = rich_text.color(tag_color.clone());
                         }
                         if tag_status.is_urg {
-                            rich_text = rich_text.background_color(tag_color.clone());
+                            rich_text = rich_text.background_color(MyEguiApp::WHEAT);
                         }
                     }
                     ui.label(rich_text);
@@ -126,13 +132,22 @@ impl eframe::App for MyEguiApp {
                 ui.label(egui::RichText::new(" []= ").color(Color32::from_rgb(255, 0, 0)));
                 let num_emoji_vec = vec!["⓪", "①"];
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    let current_time = chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string();
-                    ui.label(
-                        egui::RichText::new(format!("{}", current_time))
-                            .color(Color32::from_rgb(0, 255, 0)),
-                    );
-                    ui.label(egui::RichText::new(format!("({:.2})", scale_factor)));
-                    if ui.small_button("ⓢ").clicked() {
+                    let current_time = if self.toggle_time_style {
+                        chrono::Local::now().format("%Y-%m-%d %H:%M:%S").to_string()
+                    } else {
+                        chrono::Local::now().format("%Y-%m-%d %H:%M").to_string()
+                    };
+                    if ui
+                        .selectable_label(
+                            true,
+                            egui::RichText::new(format!("{}", current_time))
+                                .color(Color32::from_rgb(0, 255, 0)),
+                        )
+                        .clicked()
+                    {
+                        self.toggle_time_style = !self.toggle_time_style;
+                    }
+                    if ui.small_button(format!("ⓢ {:.2}", scale_factor)).clicked() {
                         let _ = Command::new("flameshot").arg("gui").spawn();
                     }
                     ui.label(
@@ -162,10 +177,14 @@ impl eframe::App for MyEguiApp {
 
                     ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                         let available_width = ui.available_width();
-                        let plot_height = ui.available_height();
+                        let plot_height = ui.available_height().max(desired_height);
                         let plot_width = (20.0 * plot_height).min(available_width * 0.5);
                         ui.add_space(available_width - plot_width - 2.);
-                        let mut plot = Plot::new("live plot").width(plot_width).height(plot_height);
+                        let mut plot = Plot::new("live plot")
+                            .x_axis_formatter(|_, _| String::new())
+                            .y_axis_formatter(|_, _| String::new())
+                            .width(plot_width)
+                            .height(plot_height);
                         if reset_view {
                             self.point_index = 0;
                             plot = plot.reset();
@@ -191,11 +210,9 @@ impl eframe::App for MyEguiApp {
                     });
 
                     if let Some(message) = self.message.as_ref() {
+                        self.visible = message.monitor_info.showbar0;
                         let monitor_width = message.monitor_info.monitor_width as f32;
-                        let width_offset = 12.0;
-                        let desired_width = monitor_width - width_offset;
-                        let hight_offset = 18.0;
-                        let desired_height = MyEguiApp::FONT_SIZE + hight_offset;
+                        let desired_width = monitor_width;
                         let desired_size =
                             egui::Vec2::new(desired_width / scale_factor, desired_height);
                         // No need to care about height
@@ -207,8 +224,10 @@ impl eframe::App for MyEguiApp {
                             // );
                             // ui.label(&size_log_info);
                             // println!("{}", size_log_info);
+                            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
+                                egui::Pos2::ZERO,
+                            ));
                             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));
-                            ctx.send_viewport_cmd(egui::ViewportCommand::Transparent(true));
                         }
                     }
                 });

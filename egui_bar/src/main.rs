@@ -10,6 +10,7 @@ use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{env, thread};
 use FontFamily::Monospace;
+use FontFamily::Proportional;
 
 use font_kit::source::SystemSource;
 
@@ -59,6 +60,18 @@ fn configure_text_styles(ctx: &egui::Context) {
             (
                 TextStyle::Monospace,
                 FontId::new(MyEguiApp::FONT_SIZE, Monospace),
+            ),
+            (
+                TextStyle::Button,
+                FontId::new(MyEguiApp::FONT_SIZE, Monospace),
+            ),
+            (
+                TextStyle::Small,
+                FontId::new(MyEguiApp::FONT_SIZE / 2., Proportional),
+            ),
+            (
+                TextStyle::Heading,
+                FontId::new(MyEguiApp::FONT_SIZE * 2., Proportional),
             ),
         ]
         .into();

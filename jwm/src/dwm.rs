@@ -250,6 +250,8 @@ impl Layout {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Client {
     pub name: String,
+    pub class: String,
+    pub instance: String,
     pub mina: f32,
     pub maxa: f32,
     pub cfact: f32,
@@ -326,6 +328,8 @@ impl Client {
     pub fn new() -> Self {
         Self {
             name: String::new(),
+            class: String::new(),
+            instance: String::new(),
             mina: 0.,
             maxa: 0.,
             cfact: 0.,
@@ -684,32 +688,32 @@ impl Dwm {
             c.tags0 = 0;
             let mut ch: XClassHint = zeroed();
             XGetClassHint(self.dpy, c.win, &mut ch);
-            let class = if !ch.res_class.is_null() {
+            c.class = if !ch.res_class.is_null() {
                 let c_str = CStr::from_ptr(ch.res_class);
-                c_str.to_str().unwrap()
+                c_str.to_str().unwrap().to_string()
             } else {
-                &self.broken
+                self.broken.to_string()
             };
-            let instance = if !ch.res_name.is_null() {
+            c.instance = if !ch.res_name.is_null() {
                 let c_str = CStr::from_ptr(ch.res_name);
-                c_str.to_str().unwrap()
+                c_str.to_str().unwrap().to_string()
             } else {
-                &self.broken
+                self.broken.to_string()
             };
 
             info!(
                 "[applyrules] class: {}, instance: {}, name: {}",
-                class, instance, c.name
+                c.class, c.instance, c.name
             );
             for r in &*Config::rules {
                 if (!r.name.is_empty() || !r.class.is_empty() || !r.instance.is_empty())
                     && (r.name.is_empty() || c.name.find(&r.name).is_some())
-                    && (r.class.is_empty() || class.find(&r.class).is_some())
-                    && (r.instance.is_empty() || instance.find(&r.instance).is_some())
+                    && (r.class.is_empty() || c.class.find(&r.class).is_some())
+                    && (r.instance.is_empty() || c.instance.find(&r.instance).is_some())
                 {
                     info!(
                         "[############################### applyrules] class: {}, instance: {}, name: {}",
-                        class, instance, c.name
+                        c.class, c.instance, c.name
                     );
                     c.isfloating = r.isfloating;
                     c.tags0 |= r.tags0 as u32;
@@ -3952,7 +3956,10 @@ impl Dwm {
     }
     pub fn sendevent(&mut self, c: &mut Client, proto: Atom) -> bool {
         info!("[sendevent] {}", c);
-        if c.name == Config::egui_bar_name {
+        if c.name == Config::egui_bar_name
+            && ((c.class == Config::egui_bar_0 && c.instance == Config::egui_bar_0)
+                || (c.class == Config::egui_bar_1 && c.instance == Config::egui_bar_1))
+        {
             if let Some(mon) = &c.mon {
                 let num = mon.borrow_mut().num;
                 let bar_shape = BarShape {
@@ -3961,7 +3968,7 @@ impl Dwm {
                     width: c.w,
                     height: c.h,
                 };
-                println!("[sendevent] num: {}, bar_shape: {:?}", num, bar_shape);
+                info!("[sendevent] num: {}, bar_shape: {:?}", num, bar_shape);
                 self.egui_bar_shape.insert(num, bar_shape);
             }
         }
@@ -4790,6 +4797,7 @@ impl Dwm {
             monitor_info.monitor_width = m_mut.ww;
             monitor_info.monitor_height = m_mut.wh;
             monitor_info.monitor_num = m_mut.num;
+            monitor_info.showbar0 = m_mut.showbar0;
             let mut c = m_mut.clients.clone();
             while let Some(ref c_opt) = c {
                 let tags0 = c_opt.borrow_mut().tags0;
