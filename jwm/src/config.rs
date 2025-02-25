@@ -39,7 +39,7 @@ impl Config {
     pub const horizpadbar: i32 = 0;
     // vertical padding for statusbar
     pub const vertpadbar: i32 = 2;
-    pub const egui_bar_pad: i32 = 4;
+    pub const egui_bar_pad: i32 = 8;
     // pub const fonts: Lazy<Vec<&str>> = Lazy::new(|| vec!["SauceCodeProNerdFontRegular:size=12"]);
     // pub const font: &str = "Sans Bold 12";
     // pub const dmenufont: &str = "Sans Bold 11";

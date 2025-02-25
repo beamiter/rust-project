@@ -2411,6 +2411,7 @@ impl Dwm {
         // info!("[updatebarpos]");
         m.wy = m.my;
         m.wh = m.mh;
+        return;
         if m.showbar0 {
             m.wh = m.wh - 3 * self.vp / 2 - self.bh;
             m.by = if m.topbar0 {
@@ -2460,11 +2461,11 @@ impl Dwm {
 
     pub fn client_y_offset(&self, m: &mut Monitor) -> i32 {
         let showbar0 = m.showbar0;
-        if showbar0 {
-            return 0;
-        }
         let num = m.num;
         if let Some(bar_shape) = self.egui_bar_shape.get(&num) {
+            if showbar0 {
+                return bar_shape.height + bar_shape.y;
+            }
             return bar_shape.height + Config::egui_bar_pad + bar_shape.y;
         }
         return 0;
