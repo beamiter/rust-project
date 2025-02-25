@@ -90,11 +90,6 @@ impl Config {
     pub const resizehints: bool = true;
     pub const lockfullscreen: bool = true;
 
-    pub const ulinepad: u32 = 5; // horizontal padding between the underline and tag
-    pub const ulinestroke: u32 = 2; // thickness /height of the unerline
-    pub const ulinevoffset: u32 = 0; // how far above the bottom of the bar the line should appear
-    pub const ulineall: bool = false; // true to show underline on all tags, false for just the acitve ones
-
     pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
         vec![
             // class | instance | name | tags mask | isfloating | monitor

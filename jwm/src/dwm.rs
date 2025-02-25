@@ -4315,6 +4315,7 @@ impl Dwm {
             monitor_info.monitor_height = m_mut.wh;
             monitor_info.monitor_num = m_mut.num;
             monitor_info.showbar0 = m_mut.showbar0;
+            monitor_info.ltsymbol = m_mut.ltsymbol.clone();
             let mut c = m_mut.clients.clone();
             while let Some(ref c_opt) = c {
                 let tags0 = c_opt.borrow_mut().tags0;

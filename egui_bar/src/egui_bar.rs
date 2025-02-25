@@ -98,6 +98,26 @@ impl eframe::App for MyEguiApp {
         // println!("outer_rect {:?}", outer_rect);
         // let inner_rect = ctx.input(|i| i.viewport().inner_rect).unwrap();
         // println!("inner_rect {:?}", inner_rect);
+        let mut ltsymbol = String::from(" Nan ");
+        if let Some(message) = self.message.as_ref() {
+            self.visible = message.monitor_info.showbar0;
+            ltsymbol = message.monitor_info.ltsymbol.clone();
+            let monitor_width = message.monitor_info.monitor_width as f32;
+            let desired_width = monitor_width;
+            let desired_size = egui::Vec2::new(desired_width / scale_factor, desired_height);
+            // No need to care about height
+            if desired_size.x != screen_rect.size().x {
+                // let size_log_info = format!(
+                //     "desired_size: {}, screen_rect: {};",
+                //     desired_size,
+                //     screen_rect.size()
+                // );
+                // ui.label(&size_log_info);
+                // println!("{}", size_log_info);
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::Pos2::ZERO));
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));
+            }
+        }
 
         // print!("{:?}", viewport);
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -129,7 +149,7 @@ impl eframe::App for MyEguiApp {
                     }
                     ui.label(rich_text);
                 }
-                ui.label(egui::RichText::new(" []= ").color(Color32::from_rgb(255, 0, 0)));
+                ui.label(egui::RichText::new(ltsymbol).color(Color32::from_rgb(255, 0, 0)));
                 let num_emoji_vec = vec!["⓪", "①"];
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                     let current_time = if self.toggle_time_style {
@@ -208,28 +228,6 @@ impl eframe::App for MyEguiApp {
                             plot_ui.line(line);
                         });
                     });
-
-                    if let Some(message) = self.message.as_ref() {
-                        self.visible = message.monitor_info.showbar0;
-                        let monitor_width = message.monitor_info.monitor_width as f32;
-                        let desired_width = monitor_width;
-                        let desired_size =
-                            egui::Vec2::new(desired_width / scale_factor, desired_height);
-                        // No need to care about height
-                        if desired_size.x != screen_rect.size().x {
-                            // let size_log_info = format!(
-                            //     "desired_size: {}, screen_rect: {};",
-                            //     desired_size,
-                            //     screen_rect.size()
-                            // );
-                            // ui.label(&size_log_info);
-                            // println!("{}", size_log_info);
-                            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(
-                                egui::Pos2::ZERO,
-                            ));
-                            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));
-                        }
-                    }
                 });
             });
         });

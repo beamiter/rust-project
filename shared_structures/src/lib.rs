@@ -29,6 +29,7 @@ pub struct MonitorInfo {
     pub monitor_x: i32,
     pub monitor_y: i32,
     pub showbar0: bool,
+    pub ltsymbol: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
