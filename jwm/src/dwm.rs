@@ -28,33 +28,31 @@ use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
     AllocNone, AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadLength, BadMatch,
-    BadWindow, Below, ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBackPixel,
-    CWBorderPixel, CWBorderWidth, CWColormap, CWCursor, CWEventMask, CWHeight, CWOverrideRedirect,
-    CWSibling, CWStackMode, CWWidth, ClientMessage, Colormap, ConfigureNotify, ConfigureRequest,
-    CurrentTime, DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose,
-    ExposureMask, False, FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess,
-    InputHint, InputOutput, IsViewable, KeyPress, KeySym, LeaveWindowMask, LockMask, MapRequest,
-    MappingKeyboard, MappingNotify, MotionNotify, NoEventMask, NotifyInferior, NotifyNormal,
-    PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask, PointerRoot,
-    PropModeAppend, PropModeReplace, PropertyChangeMask, PropertyDelete, PropertyNotify,
-    ReplayPointer, RevertToPointerRoot, StructureNotifyMask, SubstructureNotifyMask,
-    SubstructureRedirectMask, Success, Time, True, TrueColor, UnmapNotify, Visual, VisualClassMask,
-    VisualDepthMask, VisualScreenMask, Window, XAllowEvents, XChangeProperty,
-    XChangeWindowAttributes, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
-    XConnectionNumber, XCreateColormap, XCreateSimpleWindow, XCreateWindow, XDefaultColormap,
-    XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDefineCursor,
-    XDeleteProperty, XDestroyWindow, XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent,
-    XEvent, XFree, XFreeModifiermap, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping,
+    BadWindow, Below, ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask,
+    CWBorderWidth, CWCursor, CWEventMask, CWHeight, CWSibling, CWStackMode, CWWidth, ClientMessage,
+    Colormap, ConfigureNotify, ConfigureRequest, CurrentTime, DestroyAll, DestroyNotify, Display,
+    EnterNotify, EnterWindowMask, Expose, ExposureMask, False, FocusChangeMask, FocusIn,
+    GrabModeAsync, GrabModeSync, GrabSuccess, InputHint, IsViewable, KeyPress, KeySym,
+    LeaveWindowMask, LockMask, MapRequest, MappingKeyboard, MappingNotify, MotionNotify,
+    NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc,
+    PSize, PointerMotionMask, PointerRoot, PropModeAppend, PropModeReplace, PropertyChangeMask,
+    PropertyDelete, PropertyNotify, ReplayPointer, RevertToPointerRoot, StructureNotifyMask,
+    SubstructureNotifyMask, SubstructureRedirectMask, Success, Time, True, TrueColor, UnmapNotify,
+    Visual, VisualClassMask, VisualDepthMask, VisualScreenMask, Window, XAllowEvents,
+    XChangeProperty, XChangeWindowAttributes, XCheckMaskEvent, XClassHint, XConfigureEvent,
+    XConfigureWindow, XConnectionNumber, XCreateColormap, XCreateSimpleWindow, XDefaultColormap,
+    XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDeleteProperty,
+    XDestroyWindow, XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree,
+    XFreeModifiermap, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping,
     XGetTransientForHint, XGetVisualInfo, XGetWMHints, XGetWMNormalHints, XGetWMProtocols,
     XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
-    XInternAtom, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapRaised, XMapWindow,
-    XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree,
-    XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetClassHint,
-    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
-    XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer,
-    XUnmapWindow, XUrgencyHint, XVisualInfo, XWarpPointer, XWindowAttributes, XWindowChanges, CWX,
-    CWY, XA_ATOM, XA_CARDINAL, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS,
-    XA_WM_TRANSIENT_FOR,
+    XInternAtom, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent,
+    XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow,
+    XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetCloseDownMode,
+    XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes, XSetWindowBorder,
+    XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer, XUrgencyHint,
+    XVisualInfo, XWarpPointer, XWindowAttributes, XWindowChanges, CWX, CWY, XA_ATOM, XA_CARDINAL,
+    XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -85,11 +83,6 @@ pub enum CUR {
 pub enum SCHEME {
     SchemeNorm = 0,
     SchemeSel = 1,
-    SchemeStatus = 2,
-    SchemeTagsSel = 3,
-    SchemeTagsNorm = 4,
-    SchemeInfoSel = 5,
-    SchemeInfoNorm = 6,
 }
 
 #[repr(C)]
@@ -405,7 +398,6 @@ pub struct Monitor {
     pub sel: Option<Rc<RefCell<Client>>>,
     pub stack: Option<Rc<RefCell<Client>>>,
     pub next: Option<Rc<RefCell<Monitor>>>,
-    pub barwin: Window,
     pub lt: [Rc<Layout>; 2],
     pub pertag: Option<Pertag>,
 }
@@ -435,7 +427,6 @@ impl Monitor {
             sel: None,
             stack: None,
             next: None,
-            barwin: 0,
             lt: [
                 Rc::new(Layout {
                     symbol: "",
@@ -456,7 +447,7 @@ impl Monitor {
 }
 impl fmt::Display for Monitor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Monitor {{ ltsymbol: {}, mfact0: {}, nmaster0: {}, num: {}, by: {}, mx: {}, my: {}, mw: {}, mh: {}, wx: {}, wy: {}, ww: {}, wh: {}, seltags: {}, sellt: {}, tagset: [{}, {}], showbar0: {}, topbar0: {},  barwin: {}}}",
+        write!(f, "Monitor {{ ltsymbol: {}, mfact0: {}, nmaster0: {}, num: {}, by: {}, mx: {}, my: {}, mw: {}, mh: {}, wx: {}, wy: {}, ww: {}, wh: {}, seltags: {}, sellt: {}, tagset: [{}, {}], showbar0: {}, topbar0: {},  }}",
                self.ltsymbol,
                self.mfact0,
                self.nmaster0,
@@ -476,7 +467,6 @@ impl fmt::Display for Monitor {
                self.tagset[1],
                self.showbar0,
                self.topbar0,
-               self.barwin,
         )
     }
 }
@@ -568,9 +558,6 @@ pub struct Dwm {
     pub screen: i32,
     pub sw: i32,
     pub sh: i32,
-    pub bh: i32,
-    pub vp: i32, // vertical padding for bar
-    pub sp: i32, // side padding for bar
     pub numlockmask: u32,
     pub wmatom: [Atom; WM::WMLast as usize],
     pub netatom: [Atom; NET::NetLast as usize],
@@ -594,12 +581,6 @@ pub struct Dwm {
     pub egui_bar_child: HashMap<i32, Child>,
     pub egui_bar_shape: HashMap<i32, BarShape>,
     pub message: SharedMessage,
-}
-
-#[derive(Debug)]
-enum TextElement {
-    WithCaret(String),
-    WithoutCaret(String),
 }
 
 impl Dwm {
@@ -632,9 +613,6 @@ impl Dwm {
             screen: 0,
             sw: 0,
             sh: 0,
-            bh: 0,
-            vp: 0,
-            sp: 0,
             numlockmask: 0,
             wmatom: [0; WM::WMLast as usize],
             netatom: [0; NET::NetLast as usize],
@@ -853,12 +831,6 @@ impl Dwm {
                 *y = wy;
             }
         }
-        if *h < self.bh {
-            *h = self.bh;
-        }
-        if *w < self.bh {
-            *w = self.bh;
-        }
         let isfloating = { c.as_ref().borrow_mut().isfloating };
         let layout_type = {
             let mon = c.as_ref().borrow_mut().mon.clone();
@@ -971,25 +943,19 @@ impl Dwm {
     }
     pub fn cleanupmon(&mut self, mon: Option<Rc<RefCell<Monitor>>>) {
         // info!("[cleanupmon]");
-        unsafe {
-            if Rc::ptr_eq(mon.as_ref().unwrap(), self.mons.as_ref().unwrap()) {
-                let next = self.mons.as_ref().unwrap().borrow_mut().next.clone();
-                self.mons = next;
-            } else {
-                let mut m = self.mons.clone();
-                while let Some(ref m_opt) = m {
-                    if Dwm::are_equal_rc(&m_opt.borrow_mut().next, &mon) {
-                        break;
-                    }
-                    let next = m_opt.borrow_mut().next.clone();
-                    m = next;
+        if Rc::ptr_eq(mon.as_ref().unwrap(), self.mons.as_ref().unwrap()) {
+            let next = self.mons.as_ref().unwrap().borrow_mut().next.clone();
+            self.mons = next;
+        } else {
+            let mut m = self.mons.clone();
+            while let Some(ref m_opt) = m {
+                if Dwm::are_equal_rc(&m_opt.borrow_mut().next, &mon) {
+                    break;
                 }
-                m.as_ref().unwrap().borrow_mut().next =
-                    mon.as_ref().unwrap().borrow_mut().next.clone();
+                let next = m_opt.borrow_mut().next.clone();
+                m = next;
             }
-            let barwin = mon.as_ref().unwrap().borrow_mut().barwin;
-            XUnmapWindow(self.dpy, barwin);
-            XDestroyWindow(self.dpy, barwin);
+            m.as_ref().unwrap().borrow_mut().next = mon.as_ref().unwrap().borrow_mut().next.clone();
         }
     }
     pub fn clientmessage(&mut self, e: *mut XEvent) {
@@ -1035,8 +1001,7 @@ impl Dwm {
                         .as_mut()
                         .unwrap()
                         .as_mut()
-                        .drw_resize(self.sw as u32, self.bh as u32);
-                    self.updatebars();
+                        .drw_resize(self.sw as u32, 20);
                     let mut m = self.mons.clone();
                     while let Some(ref m_opt) = m {
                         let mut c = m_opt.borrow_mut().clients.clone();
@@ -1053,14 +1018,6 @@ impl Dwm {
                             let next = c.as_ref().unwrap().borrow_mut().next.clone();
                             c = next;
                         }
-                        XMoveResizeWindow(
-                            self.dpy,
-                            m_opt.borrow_mut().barwin,
-                            m_opt.borrow_mut().wx + self.sp,
-                            m_opt.borrow_mut().by + self.vp,
-                            (m_opt.borrow_mut().ww - 2 * self.sp) as u32,
-                            self.bh as u32,
-                        );
                         let next = m_opt.borrow_mut().next.clone();
                         m = next;
                     }
@@ -1589,132 +1546,6 @@ impl Dwm {
         m
     }
 
-    fn parse_string(input: &str) -> Vec<TextElement> {
-        let mut elements = Vec::new();
-        let mut current_segment = String::new();
-        let mut inside_caret = false;
-
-        for c in input.chars() {
-            match c {
-                '^' => {
-                    if !current_segment.is_empty() {
-                        // Push the current segment into the appropriate category.
-                        if inside_caret {
-                            elements.push(TextElement::WithCaret(current_segment));
-                        } else {
-                            elements.push(TextElement::WithoutCaret(current_segment));
-                        }
-                        current_segment = String::new();
-                    }
-                    inside_caret = !inside_caret;
-                }
-                _ => {
-                    // Add the current character to the current segment.
-                    current_segment.push(c);
-                }
-            }
-        }
-
-        // Add any remaining segment after the last caret or at the end of the string.
-        if !current_segment.is_empty() {
-            if inside_caret {
-                elements.push(TextElement::WithCaret(current_segment));
-            } else {
-                elements.push(TextElement::WithoutCaret(current_segment));
-            }
-        }
-
-        elements
-    }
-
-    pub fn drawstatusbar(&mut self, m: Option<Rc<RefCell<Monitor>>>, text: &str) -> i32 {
-        // compute width of the status text
-        let mut w: u32 = 0;
-        let parsed_elements = Self::parse_string(text);
-        // info!("[drawstatusbar] parsed_elements: {:?}", parsed_elements);
-        let drw_mut = self.drw.as_mut().unwrap();
-        for element in &parsed_elements {
-            match element {
-                TextElement::WithoutCaret(val) => {
-                    w += drw_mut.textw(&val) - drw_mut.lrpad as u32;
-                    if val.starts_with('f') {
-                        match val[1..].parse::<u32>() {
-                            Ok(num) => w += num,
-                            Err(e) => eprintln!("Failed to parse the number: {}", e),
-                        }
-                    }
-                }
-                _ => {}
-            }
-        }
-
-        w += Config::horizpadbar as u32;
-        let ww = { m.as_ref().unwrap().borrow_mut().ww };
-        let ret = ww - w as i32;
-        let mut x = ret - 2 * self.sp;
-        drw_mut.drw_setscheme(self.scheme[SCHEME::SchemeStatus as usize].clone());
-        drw_mut.drw_rect(x, 0, w, self.bh as u32, 1, 0);
-        x += Config::horizpadbar / 2;
-        for element in &parsed_elements {
-            // info!("[drawstatusbar] element {:?}", element);
-            match element {
-                TextElement::WithoutCaret(val) => {
-                    w = drw_mut.textw(val) - drw_mut.lrpad as u32;
-                    drw_mut.drw_text(
-                        x,
-                        Config::vertpadbar / 2,
-                        w,
-                        self.bh as u32 - Config::vertpadbar as u32,
-                        0,
-                        &val,
-                        0,
-                        false,
-                    );
-                    x += w as i32;
-                }
-                TextElement::WithCaret(val) => {
-                    if val.starts_with('c') {
-                        let color = &val[1..];
-                        drw_mut.scheme[Col::ColFg as usize] =
-                            drw_mut.drw_clr_create(color, Config::OPAQUE);
-                    } else if val.starts_with('b') {
-                        let color = &val[1..];
-                        drw_mut.scheme[Col::ColBg as usize] =
-                            drw_mut.drw_clr_create(color, Config::baralpha);
-                    } else if val.starts_with('d') {
-                        drw_mut.scheme[Col::ColFg as usize] =
-                            self.scheme[SCHEME::SchemeNorm as usize][Col::ColFg as usize].clone();
-                        drw_mut.scheme[Col::ColBg as usize] =
-                            self.scheme[SCHEME::SchemeNorm as usize][Col::ColBg as usize].clone();
-                    } else if val.starts_with('r') {
-                        let numbers: Result<Vec<i32>, _> =
-                            (&val[1..]).split(',').map(|s| s.parse::<i32>()).collect();
-                        if let Ok(numbers) = numbers {
-                            println!("numbers: {:?}", numbers);
-                            let rx = numbers[0];
-                            let ry = numbers[1];
-                            let rw = numbers[2];
-                            let rh = numbers[3];
-                            drw_mut.drw_rect(
-                                rx + x,
-                                ry + Config::vertpadbar / 2,
-                                rw as u32,
-                                rh as u32,
-                                0,
-                                0,
-                            );
-                        }
-                    } else if val.starts_with('f') {
-                        match val[1..].parse::<u32>() {
-                            Ok(num) => x += num as i32,
-                            Err(e) => eprintln!("Failed to parse the number: {}", e),
-                        }
-                    }
-                }
-            }
-        }
-        return ret;
-    }
     fn write_message(&mut self, num: i32, message: &SharedMessage) -> std::io::Result<()> {
         let serialized = serialize(message).expect("Serialization failed");
         if let Some(ref shmem) = self.egui_bar_shmem.get(&num).as_mut() {
@@ -1729,184 +1560,6 @@ impl Dwm {
         if Config::show_egui_bar {
             return self.draw_egui_bar(m);
         }
-        let showbar0 = { m.as_ref().unwrap().borrow_mut().showbar0 };
-        if !showbar0 {
-            return;
-        }
-        let mut tw: i32 = 0;
-        let mut occ: u32 = 0;
-        let mut urg: u32 = 0;
-        let boxs;
-        let boxw;
-        let lrpad;
-        {
-            let h = self
-                .drw
-                .as_ref()
-                .unwrap()
-                .font
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .h;
-            lrpad = self.drw.as_ref().unwrap().lrpad;
-            boxs = h / 9;
-            boxw = h / 6 + 2;
-            // info!("[drawbar] boxs: {}, boxw: {}, lrpad: {}", boxs, boxw, lrpad);
-        }
-
-        let ww = { m.as_ref().unwrap().borrow_mut().ww };
-        // draw status first so it can be overdrawn by tags later.
-        if Rc::ptr_eq(m.as_ref().unwrap(), self.selmon.as_ref().unwrap()) {
-            // status is only drawn on selected monitor.
-            // draw status bar here
-            let stext = self.stext.clone();
-            tw = ww - self.drawstatusbar(m.clone(), &stext);
-        }
-        {
-            let mut c = m.as_ref().unwrap().borrow_mut().clients.clone();
-            while let Some(ref c_opt) = c {
-                let tags0 = c_opt.borrow_mut().tags0;
-                occ |= tags0;
-                if c_opt.borrow_mut().isurgent {
-                    urg |= tags0;
-                }
-                let next = c_opt.borrow_mut().next.clone();
-                c = next;
-            }
-        }
-        let mut x = 0;
-        let mut w;
-        for i in 0..Config::tags_length {
-            w = self.drw.as_mut().unwrap().textw(self.tags[i]) as i32;
-            let seltags = { m.as_ref().unwrap().borrow_mut().seltags };
-            let tagset = { m.as_ref().unwrap().borrow_mut().tagset };
-            let is_selected_tag = tagset[seltags] & 1 << i > 0;
-            let idx = if is_selected_tag {
-                SCHEME::SchemeTagsSel as usize
-            } else {
-                SCHEME::SchemeTagsNorm as usize
-            };
-            // info!(
-            //     "[drawbar] seltags: {}, tagset: {:?}, i: {}: idx: {}, w: {}",
-            //     seltags, tagset, i, idx, w
-            // );
-            self.drw
-                .as_mut()
-                .unwrap()
-                .as_mut()
-                .drw_setscheme(self.scheme[idx].clone());
-            self.drw.as_mut().unwrap().drw_text(
-                x,
-                0,
-                w as u32,
-                self.bh as u32,
-                (lrpad / 2) as u32,
-                self.tags[i],
-                (urg & 1 << i) as i32,
-                false,
-            );
-            if Config::ulineall || is_selected_tag {
-                self.drw.as_mut().unwrap().drw_rect(
-                    x + Config::ulinepad as i32,
-                    self.bh - Config::ulinestroke as i32 - Config::ulinevoffset as i32,
-                    w as u32 - (Config::ulinepad * 2),
-                    Config::ulinestroke,
-                    1,
-                    0,
-                );
-            }
-            if (occ & 1 << i) > 0 {
-                let selmon_mut = { self.selmon.as_ref().unwrap().borrow_mut() };
-                let filled = (Rc::ptr_eq(m.as_ref().unwrap(), self.selmon.as_ref().unwrap())
-                    && selmon_mut.sel.is_some()
-                    && (selmon_mut.sel.as_ref().unwrap().borrow_mut().tags0 & 1 << i > 0))
-                    as i32;
-                self.drw.as_mut().unwrap().drw_rect(
-                    x + boxs as i32,
-                    boxs as i32,
-                    boxw,
-                    boxw,
-                    filled,
-                    (urg & 1 << i) as i32,
-                );
-            }
-            x += w;
-        }
-        w = self
-            .drw
-            .as_mut()
-            .unwrap()
-            .as_mut()
-            .textw(&m.as_ref().unwrap().borrow_mut().ltsymbol) as i32;
-        self.drw
-            .as_mut()
-            .unwrap()
-            .as_mut()
-            .drw_setscheme(self.scheme[SCHEME::SchemeTagsNorm as usize].clone());
-        x = self.drw.as_mut().unwrap().drw_text(
-            x,
-            0,
-            w as u32,
-            self.bh as u32,
-            (lrpad / 2) as u32,
-            &m.as_ref().unwrap().borrow_mut().ltsymbol,
-            0,
-            false,
-        );
-
-        w = ww - tw - x;
-        // info!("[drawbar] tw: {}, x: {}, w: {}, bh: {}", tw, x, w, bh);
-        if w > self.bh {
-            if let Some(ref sel_opt) = m.as_ref().unwrap().borrow_mut().sel {
-                let idx = if Rc::ptr_eq(m.as_ref().unwrap(), self.selmon.as_ref().unwrap()) {
-                    SCHEME::SchemeInfoSel
-                } else {
-                    SCHEME::SchemeInfoNorm
-                } as usize;
-                self.drw
-                    .as_mut()
-                    .unwrap()
-                    .as_mut()
-                    .drw_setscheme(self.scheme[idx].clone());
-                self.drw.as_mut().unwrap().drw_text(
-                    x,
-                    0,
-                    (w - 2 * self.sp) as u32,
-                    self.bh as u32,
-                    (lrpad / 2) as u32,
-                    &sel_opt.borrow_mut().name,
-                    0,
-                    false,
-                );
-                if sel_opt.borrow_mut().isfloating {
-                    // Useless, drw rectangle.
-                }
-            } else {
-                self.drw
-                    .as_mut()
-                    .unwrap()
-                    .as_mut()
-                    .drw_setscheme(self.scheme[SCHEME::SchemeInfoNorm as usize].clone());
-                self.drw.as_mut().unwrap().drw_rect(
-                    x,
-                    0,
-                    (w - 2 * self.sp) as u32,
-                    self.bh as u32,
-                    1,
-                    0,
-                );
-            }
-        }
-        let barwin = { m.as_ref().unwrap().borrow_mut().barwin };
-        let ww: u32 = { m.as_ref().unwrap().borrow_mut().ww } as u32;
-        // info!("[drawbar] drw_map");
-        self.drw
-            .as_mut()
-            .unwrap()
-            .as_mut()
-            .drw_map(barwin, 0, 0, ww, self.bh as u32);
-        // info!("[drawbar] finish");
     }
 
     pub fn restack(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
@@ -1932,7 +1585,6 @@ impl Dwm {
             }
             if layout_type.is_some() {
                 wc.stack_mode = Below;
-                wc.sibling = m.as_ref().unwrap().borrow_mut().barwin;
                 let mut c = m.as_ref().unwrap().borrow_mut().stack.clone();
                 while let Some(ref c_opt) = c {
                     let isfloating = { c_opt.borrow_mut().isfloating };
@@ -2172,14 +1824,6 @@ impl Dwm {
         if w == self.root && self.getrootptr(&mut x, &mut y) > 0 {
             return self.recttomon(x, y, 1, 1);
         }
-        let mut m = self.mons.clone();
-        while let Some(ref m_opt) = m {
-            if w == m_opt.borrow_mut().barwin {
-                return m;
-            }
-            let next = m_opt.borrow_mut().next.clone();
-            m = next;
-        }
         let c = self.wintoclient(w);
         if let Some(ref c_opt) = c {
             return c_opt.borrow_mut().mon.clone();
@@ -2189,7 +1833,7 @@ impl Dwm {
 
     pub fn buttonpress(&mut self, e: *mut XEvent) {
         // info!("[buttonpress]");
-        let mut arg: Arg = Arg::Ui(0);
+        let arg: Arg = Arg::Ui(0);
         unsafe {
             let c: Option<Rc<RefCell<Client>>>;
             let ev = (*e).button;
@@ -2202,38 +1846,7 @@ impl Dwm {
                 self.selmon = m;
                 self.focus(None);
             }
-            let barwin = { self.selmon.as_ref().unwrap().borrow_mut().barwin };
-            if ev.window == barwin {
-                info!("[buttonpress] barwin: {}, ev.x: {}", barwin, ev.x);
-                let mut i: usize = 0;
-                let mut x: u32 = 0;
-                for tag_i in 0..Config::tags_length {
-                    x += self.drw.as_mut().unwrap().textw(self.tags[tag_i]);
-                    if ev.x < x as i32 {
-                        break;
-                    }
-                    i = tag_i + 1;
-                    info!("[buttonpress] x: {}, i: {}", x, i);
-                }
-                let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
-                if i < Config::tags_length {
-                    click = CLICK::ClkTagBar;
-                    arg = Arg::Ui(1 << i);
-                    info!("[buttonpress] ClkTagBar");
-                } else if ev.x < (x + self.drw.as_mut().unwrap().textw(&selmon_mut.ltsymbol)) as i32
-                {
-                    click = CLICK::ClkLtSymbol;
-                    info!("[buttonpress] ClkLtSymbol");
-                } else if ev.x
-                    > selmon_mut.ww - self.drw.as_mut().unwrap().textwm(&self.stext) as i32
-                {
-                    click = CLICK::ClkStatusText;
-                    info!("[buttonpress] ClkStatusText");
-                } else {
-                    click = CLICK::ClkWinTitle;
-                    info!("[buttonpress] ClkWinTitle");
-                }
-            } else if {
+            if {
                 c = self.wintoclient(ev.window);
                 c.is_some()
             } {
@@ -2324,57 +1937,6 @@ impl Dwm {
             }
         }
     }
-    pub fn updatebars(&mut self) {
-        // info!("[updatebars]");
-        unsafe {
-            let mut wa: XSetWindowAttributes = zeroed();
-            wa.override_redirect = True;
-            wa.background_pixel = 0;
-            wa.border_pixel = 0;
-            wa.colormap = self.cmap;
-            wa.event_mask = ButtonPressMask | ExposureMask;
-            let mut ch: XClassHint = zeroed();
-            let c_string = CString::new("jwm").expect("fail to convert");
-            ch.res_name = c_string.as_ptr() as *mut _;
-            ch.res_class = c_string.as_ptr() as *mut _;
-            let mut m = self.mons.clone();
-            while let Some(ref m_opt) = m {
-                if m_opt.borrow_mut().barwin > 0 {
-                    continue;
-                }
-                let wx = m_opt.borrow_mut().wx;
-                let by = m_opt.borrow_mut().by;
-                let ww = m_opt.borrow_mut().ww as u32;
-                m_opt.borrow_mut().barwin = XCreateWindow(
-                    self.dpy,
-                    self.root,
-                    wx + self.sp,
-                    by + self.vp,
-                    ww - 2 * self.sp as u32,
-                    self.bh as u32,
-                    0,
-                    self.depth as i32,
-                    InputOutput as u32,
-                    self.visual,
-                    CWOverrideRedirect | CWBackPixel | CWBorderPixel | CWColormap | CWEventMask,
-                    &mut wa,
-                );
-                let barwin = m_opt.borrow_mut().barwin;
-                XDefineCursor(
-                    self.dpy,
-                    barwin,
-                    self.cursor[CUR::CurNormal as usize]
-                        .as_ref()
-                        .unwrap()
-                        .cursor,
-                );
-                XMapRaised(self.dpy, barwin);
-                XSetClassHint(self.dpy, barwin, &mut ch);
-                let next = m_opt.borrow_mut().next.clone();
-                m = next;
-            }
-        }
-    }
     pub fn xinitvisual(&mut self) {
         unsafe {
             let mut tpl: XVisualInfo = zeroed();
@@ -2405,27 +1967,6 @@ impl Dwm {
                 self.depth = XDefaultDepth(self.dpy, self.screen);
                 self.cmap = XDefaultColormap(self.dpy, self.screen);
             }
-        }
-    }
-    pub fn updatebarpos(&mut self, m: &mut Monitor) {
-        // info!("[updatebarpos]");
-        m.wy = m.my;
-        m.wh = m.mh;
-        return;
-        if m.showbar0 {
-            m.wh = m.wh - 3 * self.vp / 2 - self.bh;
-            m.by = if m.topbar0 {
-                m.wy
-            } else {
-                m.wy + m.wh + 3 * self.vp / 2
-            };
-            m.wy = if m.topbar0 {
-                m.wy + self.bh + 3 * self.vp / 2
-            } else {
-                m.wy
-            };
-        } else {
-            m.by = -self.bh - self.vp;
         }
     }
     pub fn updateclientlist(&mut self) {
@@ -2555,29 +2096,18 @@ impl Dwm {
     }
     pub fn togglebar(&mut self, _arg: *const Arg) {
         info!("[togglebar]");
-        unsafe {
-            {
-                let mut selmon_clone = self.selmon.clone();
-                let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
-                let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-                selmon_mut.pertag.as_mut().unwrap().showbars[curtag] = !selmon_mut.showbar0;
-                selmon_mut.showbar0 = selmon_mut.pertag.as_mut().unwrap().showbars[curtag];
-                if !selmon_mut.showbar0 {
-                    let _ = self.sender.send(1);
-                    self.tags = generate_random_tags(Config::tags_length);
-                }
-                self.updatebarpos(&mut selmon_mut);
-                XMoveResizeWindow(
-                    self.dpy,
-                    selmon_mut.barwin,
-                    selmon_mut.wx + self.sp,
-                    selmon_mut.by + self.vp,
-                    (selmon_mut.ww - 2 * self.sp) as u32,
-                    self.bh as u32,
-                );
+        {
+            let mut selmon_clone = self.selmon.clone();
+            let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
+            let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
+            selmon_mut.pertag.as_mut().unwrap().showbars[curtag] = !selmon_mut.showbar0;
+            selmon_mut.showbar0 = selmon_mut.pertag.as_mut().unwrap().showbars[curtag];
+            if !selmon_mut.showbar0 {
+                let _ = self.sender.send(1);
+                self.tags = generate_random_tags(Config::tags_length);
             }
-            self.arrange(self.selmon.clone());
         }
+        self.arrange(self.selmon.clone());
     }
     pub fn togglefloating(&mut self, _arg: *const Arg) {
         // info!("[togglefloating]");
@@ -3293,14 +2823,7 @@ impl Dwm {
                     .borrow_mut()
                     .h as i32;
                 self.drw.as_mut().unwrap().lrpad = h;
-                self.bh = h + Config::vertpadbar;
             }
-            self.sp = Config::sidepad;
-            self.vp = if Config::topbar {
-                Config::vertpad
-            } else {
-                -Config::vertpad
-            };
             // info!("[setup] updategeom");
             self.updategeom();
             // init atoms
@@ -3373,10 +2896,6 @@ impl Dwm {
                     3,
                 );
             }
-            // init bars
-            // info!("[setup] updatebars");
-            self.updatebars();
-            // self.updatestatus();
             // supporting window fot NetWMCheck
             self.wmcheckwin = XCreateSimpleWindow(self.dpy, self.root, 0, 0, 1, 1, 0, 0, 0);
             XChangeProperty(
@@ -4026,9 +3545,8 @@ impl Dwm {
         let mut m = self.mons.clone();
         self.message = SharedMessage::default();
         while let Some(ref m_opt) = m {
-            let barwin = m_opt.borrow_mut().barwin;
             let num = m_opt.borrow_mut().num;
-            info!("[drawbars] barwin: {}, num: {}", barwin, num);
+            info!("[drawbars]  num: {}", num);
             self.drawbar(m.clone());
             let next = m_opt.borrow_mut().next.clone();
             m = next;
@@ -4661,7 +4179,6 @@ impl Dwm {
                         m_mut.ww = unique[i].width as i32;
                         m_mut.mh = unique[i].height as i32;
                         m_mut.wh = unique[i].height as i32;
-                        self.updatebarpos(&mut *m_mut);
                     }
                     let next = { m.as_ref().unwrap().borrow_mut().next.clone() };
                     m = next;
@@ -4713,7 +4230,6 @@ impl Dwm {
                         mons_mut.ww = self.sw;
                         mons_mut.mh = self.sh;
                         mons_mut.wh = self.sh;
-                        self.updatebarpos(&mut *mons_mut);
                     }
                 }
             }

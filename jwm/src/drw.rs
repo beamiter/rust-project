@@ -3,15 +3,12 @@
 // #![allow(unused_mut)]
 
 use cairo::ffi::{
-    cairo_create, cairo_destroy, cairo_fill, cairo_move_to, cairo_rectangle, cairo_set_source_rgba,
-    cairo_stroke, cairo_surface_destroy, cairo_xlib_surface_create,
+    cairo_create, cairo_destroy, cairo_surface_destroy, cairo_xlib_surface_create,
 };
 use log::info;
 use pango::ffi::pango_font_description_free;
-use pangocairo::ffi::{
-    pango_cairo_create_layout, pango_cairo_show_layout, pango_cairo_update_layout,
-};
-use std::{cell::RefCell, ffi::CString, i32, mem::zeroed, ptr::null_mut, rc::Rc, u32, usize};
+use pangocairo::ffi::pango_cairo_create_layout;
+use std::{cell::RefCell, ffi::CString, i32, ptr::null_mut, rc::Rc, u32, usize};
 
 // use log::info;
 // use log::warn;
@@ -20,18 +17,18 @@ use std::{cell::RefCell, ffi::CString, i32, mem::zeroed, ptr::null_mut, rc::Rc, 
 use cairo::ffi::cairo_t;
 use pango::{
     ffi::{
-        pango_font_description_from_string, pango_layout_get_extents, pango_layout_set_attributes,
-        pango_layout_set_font_description, pango_layout_set_markup, pango_layout_set_text,
-        PangoLayout, PangoRectangle, PANGO_SCALE,
+        pango_font_description_from_string,
+        pango_layout_set_font_description,
+        PangoLayout,
     },
     glib::gobject_ffi::g_object_unref,
 };
 use x11::{
     xft::{XftColor, XftColorAllocName},
     xlib::{
-        self, CapButt, Colormap, Cursor, Drawable, False, JoinMiter, LineSolid, Visual, Window,
-        XCopyArea, XCreateFontCursor, XCreateGC, XCreatePixmap, XFillRectangle, XFreeCursor,
-        XFreeGC, XFreePixmap, XSetForeground, XSetLineAttributes, XSync, GC,
+        self, CapButt, Colormap, Cursor, Drawable, JoinMiter, LineSolid, Visual, Window,
+        XCreateFontCursor, XCreateGC, XCreatePixmap, XFreeCursor, XFreeGC,
+        XFreePixmap, XSetLineAttributes, GC,
     },
 };
 
@@ -64,6 +61,7 @@ impl Fnt {
 }
 
 #[repr(C)]
+#[allow(dead_code)]
 pub enum Col {
     ColFg = 0,
     ColBg = 1,
@@ -86,7 +84,6 @@ pub struct Drw {
     cmap: Colormap,
     pub drawable: Drawable,
     pub gc: GC,
-    pub scheme: Vec<Option<Rc<Clr>>>,
     pub font: Option<Rc<RefCell<Fnt>>>,
 }
 impl Drw {
@@ -103,16 +100,8 @@ impl Drw {
             cmap: 0,
             drawable: 0,
             gc: null_mut(),
-            scheme: vec![],
             font: None,
         }
-    }
-    pub fn textw(&mut self, X: &str) -> u32 {
-        // info!("[textw]");
-        self.drw_font_getwidth(X, false) + self.lrpad as u32
-    }
-    pub fn textwm(&mut self, X: &str) -> u32 {
-        self.drw_font_getwidth(X, true) + self.lrpad as u32
     }
     pub fn drw_create(
         dpy: *mut xlib::Display,
@@ -213,25 +202,6 @@ impl Drw {
         }
     }
 
-    pub fn drw_font_getwidth(&mut self, text: &str, markup: bool) -> u32 {
-        // info!("[drw_font_getwidth]");
-        if self.font.is_none() || text.is_empty() {
-            return 0;
-        }
-        let mut ew: u32 = 0;
-        let mut eh: u32 = 0;
-        Self::drw_font_gettexts(
-            self.font.clone(),
-            text,
-            text.len() as i32,
-            &mut ew,
-            &mut eh,
-            markup,
-        );
-        // info!("[drw_font_getwidth] finish");
-        return ew;
-    }
-
     pub fn drw_clr_create(&mut self, clrname: &str, alpha: u8) -> Option<Rc<Clr>> {
         if clrname.is_empty() {
             return None;
@@ -298,177 +268,8 @@ impl Drw {
         }
     }
 
-    pub fn drw_setscheme(&mut self, scm: Vec<Option<Rc<Clr>>>) {
-        self.scheme = scm;
-    }
-
-    pub fn change_hexadecimal_color_to_float(&self, ch: u16) -> f64 {
-        return ch as f64 / 65535.;
-    }
-
     // Drawing functions.
-    pub fn drw_rect(&mut self, x: i32, y: i32, w: u32, h: u32, filled: i32, invert: i32) {
-        // info!("[drw_rect]");
-        // info!(
-        //     "[drw_rect] x: {}, y: {},w: {},h: {}, filled: {}, invert: {}",
-        //     x, y, w, h, filled, invert
-        // );
-        unsafe {
-            if self.scheme.is_empty() {
-                return;
-            }
-            let cr = self.font.as_ref().unwrap().borrow_mut().cr;
-            let color = if invert > 0 {
-                self.scheme[Col::ColBg as usize].as_ref().unwrap().color
-            } else {
-                self.scheme[Col::ColFg as usize].as_ref().unwrap().color
-            };
-            cairo_set_source_rgba(
-                cr,
-                self.change_hexadecimal_color_to_float(color.red),
-                self.change_hexadecimal_color_to_float(color.green),
-                self.change_hexadecimal_color_to_float(color.blue),
-                self.change_hexadecimal_color_to_float(color.alpha),
-            );
-            if filled > 0 {
-                cairo_rectangle(cr, x as f64, y as f64, w as f64, h as f64);
-                cairo_fill(cr);
-            } else {
-                cairo_rectangle(cr, x as f64, y as f64, w as f64 - 1., h as f64 - 1.);
-                cairo_stroke(cr);
-            }
-        }
-    }
-    #[allow(unused_mut)]
-    pub fn drw_text(
-        &mut self,
-        mut x: i32,
-        mut y: i32,
-        mut w: u32,
-        mut h: u32,
-        lpad: u32,
-        mut text: &str,
-        invert: i32,
-        markup: bool,
-    ) -> i32 {
-        // info!("[drw_text]");
-        // info!(
-        //     "[drw_text] x: {}, y: {},w: {},h: {}, lpad: {}, text: {:?}, invert: {}",
-        //     x, y, w, h, lpad, text, invert
-        // );
-        if w <= 0 || h <= 0 {
-            return 0;
-        }
-        if (self.scheme.is_empty()) || text.is_empty() || self.font.is_none() {
-            return 0;
-        }
-        let mut ew: u32 = 0;
-        let mut eh: u32 = 0;
 
-        unsafe {
-            let idx = if invert > 0 { Col::ColFg } else { Col::ColBg } as usize;
-            XSetForeground(self.dpy, self.gc, self.scheme[idx].as_ref().unwrap().pixel);
-            XFillRectangle(self.dpy, self.drawable, self.gc, x, y, w, h);
-            x += lpad as i32;
-            w -= lpad;
-
-            // Already guaranteed not empty.
-            let mut len = text.len();
-            Self::drw_font_gettexts(
-                self.font.clone(),
-                text,
-                len as i32,
-                &mut ew,
-                &mut eh,
-                markup,
-            );
-            let mut th = eh;
-            let mut chars = text.chars().rev();
-            if ew > w {
-                //shorten text if necessary.
-                while let Some(ref val) = chars.next() {
-                    len -= val.len_utf8();
-                    Self::drw_font_gettexts(
-                        self.font.clone(),
-                        text,
-                        len as i32,
-                        &mut ew,
-                        &mut eh,
-                        markup,
-                    );
-                    if eh > th {
-                        th = eh;
-                    }
-                    if ew <= w {
-                        break;
-                    }
-                }
-            }
-            let mut buf: String;
-            if len < text.len() && len > 3 {
-                // drw "..."
-                let prev_len = len;
-                while let Some(ref val) = chars.next() {
-                    len -= val.len_utf8();
-                    if prev_len > 3 + len {
-                        break;
-                    }
-                }
-                buf = chars.rev().collect();
-                buf.push_str("...");
-                len += 3;
-            } else {
-                buf = chars.rev().collect();
-            }
-
-            // let ty = y + (h - th) as i32 / 2;
-            let filtered_buf: String = buf.chars().filter(|&c| c != '\0').collect();
-            let cstring = CString::new(filtered_buf);
-            if let Err(e) = cstring {
-                info!("[drw_text] an error occured: {}", e);
-                return 0;
-            }
-            let cstring = cstring.expect("fail to convert");
-            let layout = self.font.as_ref().unwrap().borrow_mut().layout;
-            let cr = self.font.as_ref().unwrap().borrow_mut().cr;
-            if markup {
-                pango_layout_set_markup(layout, cstring.as_ptr(), len as i32);
-            } else {
-                pango_layout_set_text(layout, cstring.as_ptr(), len as i32);
-            }
-            let idx = if invert > 0 {
-                Col::ColBg as usize
-            } else {
-                Col::ColFg as usize
-            };
-            let color = self.scheme[idx].clone().unwrap().color;
-            cairo_set_source_rgba(
-                cr,
-                self.change_hexadecimal_color_to_float(color.red),
-                self.change_hexadecimal_color_to_float(color.green),
-                self.change_hexadecimal_color_to_float(color.blue),
-                self.change_hexadecimal_color_to_float(color.alpha),
-            );
-            pango_cairo_update_layout(cr, layout);
-            cairo_move_to(cr, x as f64, 0.);
-            pango_cairo_show_layout(cr, layout);
-            if markup {
-                // clear markup attributes
-                pango_layout_set_attributes(layout, null_mut());
-            }
-            x += ew as i32;
-            w -= ew;
-        }
-
-        return x + w as i32;
-    }
-
-    pub fn drw_map(&mut self, win: Window, x: i32, y: i32, w: u32, h: u32) {
-        unsafe {
-            XCopyArea(self.dpy, self.drawable, win, self.gc, x, y, w, h, x, y);
-            XSync(self.dpy, False);
-        }
-    }
     fn xfont_free(font: Option<Rc<RefCell<Fnt>>>) {
         if let Some(ref font_opt) = font {
             if !font_opt.borrow_mut().layout.is_null() {
@@ -478,44 +279,5 @@ impl Drw {
                 }
             }
         }
-    }
-
-    fn drw_font_gettexts(
-        font: Option<Rc<RefCell<Fnt>>>,
-        text: &str,
-        len: i32,
-        w: &mut u32,
-        h: &mut u32,
-        markup: bool,
-    ) {
-        // info!("[drw_font_gettexts]");
-        if font.is_none() || text.is_empty() {
-            return;
-        }
-        let layout = font.as_ref().unwrap().borrow_mut().layout;
-
-        let cstring = CString::new(text);
-        // Error catching
-        if let Err(e) = cstring {
-            info!("[drw_font_gettexts] an error occured: {}", e);
-            return;
-        }
-        let cstring = cstring.expect("fail to convert");
-        unsafe {
-            if markup {
-                pango_layout_set_markup(layout, cstring.as_ptr(), len as i32);
-            } else {
-                pango_layout_set_text(layout, cstring.as_ptr(), len as i32);
-            }
-            if markup {
-                // clear markup attributes.
-                pango_layout_set_attributes(layout, null_mut());
-            }
-            let mut r: PangoRectangle = zeroed();
-            pango_layout_get_extents(layout, null_mut(), &mut r);
-            *w = (r.width / PANGO_SCALE) as u32;
-            *h = (r.height / PANGO_SCALE) as u32;
-        }
-        // info!("[drw_font_gettexts] finish");
     }
 }
