@@ -2,7 +2,7 @@ use eframe::egui;
 use egui::{Align, Color32, Layout};
 use egui_plot::{Line, Plot, PlotPoints};
 use shared_structures::{SharedMessage, TagStatus};
-use std::{f64::consts::PI, sync::mpsc};
+use std::{f64::consts::PI, process::Command, sync::mpsc};
 use sysinfo::System;
 
 #[allow(unused)]
@@ -131,16 +131,22 @@ impl eframe::App for MyEguiApp {
                         egui::RichText::new(format!("{}", current_time))
                             .color(Color32::from_rgb(0, 255, 0)),
                     );
-                    ui.label(egui::RichText::new(format!("[ⓢ {:.2}]", scale_factor)));
-                    ui.label(egui::RichText::new(format!(
-                        "[{}]",
-                        num_emoji_vec[self
-                            .message
-                            .clone()
-                            .unwrap_or_default()
-                            .monitor_info
-                            .monitor_num as usize],
-                    )).strong());
+                    ui.label(egui::RichText::new(format!("({:.2})", scale_factor)));
+                    if ui.small_button("ⓢ").clicked() {
+                        let _ = Command::new("flameshot").arg("gui").spawn();
+                    }
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "[{}]",
+                            num_emoji_vec[self
+                                .message
+                                .clone()
+                                .unwrap_or_default()
+                                .monitor_info
+                                .monitor_num as usize],
+                        ))
+                        .strong(),
+                    );
 
                     self.sys.refresh_memory();
                     let unavailable =
