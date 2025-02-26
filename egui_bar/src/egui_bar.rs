@@ -1,6 +1,6 @@
 use eframe::egui;
 use egui::{Align, Color32, Layout};
-use egui_plot::{Line, Plot, PlotPoints};
+use egui_plot::{Bar, BarChart, Line, Plot, PlotPoints};
 use shared_structures::{SharedMessage, TagStatus};
 use std::{f64::consts::PI, process::Command, sync::mpsc};
 use sysinfo::System;
@@ -15,6 +15,7 @@ pub struct MyEguiApp {
     point_speed: usize,
     toggle_time_style: bool,
     visible: bool,
+    data: Vec<f64>,
 }
 
 impl MyEguiApp {
@@ -69,6 +70,7 @@ impl MyEguiApp {
             point_speed: 2,
             toggle_time_style: false,
             visible: true,
+            data: Vec::new(),
         }
     }
 }
@@ -85,7 +87,42 @@ fn get_screen_width() -> f32 {
 }
 
 impl MyEguiApp {
-    fn render_cosine_curve(&mut self, ui: &mut egui::Ui) {
+    fn draw_histogram(&mut self, ui: &mut egui::Ui) {
+        let reset_view = ui.small_button("R").clicked();
+
+        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            let available_width = ui.available_width();
+            let plot_height = ui.available_height().max(MyEguiApp::DESIRED_HEIGHT);
+            let plot_width = (20.0 * plot_height).min(available_width * 0.5);
+            ui.add_space(available_width - plot_width - 2.);
+            let mut plot = Plot::new("Histogram")
+                .include_y(0.)
+                .include_y(1.)
+                .allow_zoom(false)
+                .x_axis_formatter(|_, _| String::new())
+                .y_axis_formatter(|_, _| String::new())
+                .width(plot_width)
+                .height(plot_height);
+            if reset_view {
+                plot = plot.reset();
+            }
+
+            let bar_width = 1.0;
+            let bars: Vec<Bar> = self
+                .data
+                .iter()
+                .enumerate()
+                .map(|(i, &value)| Bar::new(i as f64, value).width(bar_width.into()))
+                .collect();
+            let chart = BarChart::new(bars).color(egui::Color32::from_rgb(100, 150, 200));
+            plot.show(ui, |plot_ui| {
+                plot_ui.bar_chart(chart);
+            });
+        });
+    }
+
+    #[allow(dead_code)]
+    fn draw_cosine_curve(&mut self, ui: &mut egui::Ui) {
         let reset_view = ui.small_button("R").clicked();
 
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -226,8 +263,10 @@ impl eframe::App for MyEguiApp {
 
                     self.sys.refresh_memory();
                     self.sys.refresh_cpu_all();
-                    for (i, cpu) in self.sys.cpus().iter().enumerate() {
-                        println!("{}: {}%", i, cpu.cpu_usage());
+                    self.data.clear();
+                    for (_, cpu) in self.sys.cpus().iter().enumerate() {
+                        // println!("{}: {}%", i, cpu.cpu_usage());
+                        self.data.push((cpu.cpu_usage() / 100.).into());
                     }
                     let unavailable =
                         (self.sys.total_memory() - self.sys.available_memory()) as f64 / 1e9;
@@ -238,7 +277,8 @@ impl eframe::App for MyEguiApp {
                     ui.label(
                         egui::RichText::new(format!("{:.1}", available)).color(MyEguiApp::CYAN),
                     );
-                    self.render_cosine_curve(ui);
+                    self.draw_histogram(ui);
+                    // self.draw_cosine_curve(ui);
                 });
             });
         });
