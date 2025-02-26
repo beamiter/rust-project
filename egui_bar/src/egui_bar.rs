@@ -19,6 +19,7 @@ pub struct MyEguiApp {
 
 impl MyEguiApp {
     pub const FONT_SIZE: f32 = 16.0;
+    pub const DESIRED_HEIGHT: f32 = MyEguiApp::FONT_SIZE + 18.0;
     pub const RED: Color32 = Color32::from_rgb(255, 0, 0);
     pub const ORANGE: Color32 = Color32::from_rgb(255, 127, 0);
     pub const YELLOW: Color32 = Color32::from_rgb(255, 255, 0);
@@ -83,9 +84,48 @@ fn get_screen_width() -> f32 {
     }
 }
 
+impl MyEguiApp {
+    fn render_cosine_curve(&mut self, ui: &mut egui::Ui) {
+        let reset_view = ui.small_button("R").clicked();
+
+        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            let available_width = ui.available_width();
+            let plot_height = ui.available_height().max(MyEguiApp::DESIRED_HEIGHT);
+            let plot_width = (20.0 * plot_height).min(available_width * 0.5);
+            ui.add_space(available_width - plot_width - 2.);
+            let mut plot = Plot::new("live plot")
+                .x_axis_formatter(|_, _| String::new())
+                .y_axis_formatter(|_, _| String::new())
+                .width(plot_width)
+                .height(plot_height);
+            if reset_view {
+                self.point_index = 0;
+                plot = plot.reset();
+            }
+            let mut vis_points: Vec<[f64; 2]> = vec![];
+            for i in 0..self.points.len() {
+                let index = self
+                    .point_index
+                    .wrapping_add(i)
+                    .wrapping_rem(self.points.len());
+                let x = self.points[i][0];
+                let y = self.points[index][1];
+                vis_points.push([x, y]);
+            }
+            self.point_index = self
+                .point_index
+                .wrapping_add(self.point_speed)
+                .wrapping_rem(self.points.len());
+            let line = Line::new(PlotPoints::from(vis_points)).name("cosine");
+            plot.show(ui, |plot_ui| {
+                plot_ui.line(line);
+            });
+        });
+    }
+}
+
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
-        let desired_height = MyEguiApp::FONT_SIZE + 18.0;
         let _cpu_usage = frame.info().cpu_usage.unwrap_or(0.);
         while let Ok(message) = self.receiver.try_recv() {
             self.message = Some(message);
@@ -104,7 +144,8 @@ impl eframe::App for MyEguiApp {
             ltsymbol = message.monitor_info.ltsymbol.clone();
             let monitor_width = message.monitor_info.monitor_width as f32;
             let desired_width = monitor_width;
-            let desired_size = egui::Vec2::new(desired_width / scale_factor, desired_height);
+            let desired_size =
+                egui::Vec2::new(desired_width / scale_factor, MyEguiApp::DESIRED_HEIGHT);
             // No need to care about height
             if desired_size.x != screen_rect.size().x {
                 // let size_log_info = format!(
@@ -184,6 +225,10 @@ impl eframe::App for MyEguiApp {
                     );
 
                     self.sys.refresh_memory();
+                    self.sys.refresh_cpu_all();
+                    for (i, cpu) in self.sys.cpus().iter().enumerate() {
+                        println!("{}: {}%", i, cpu.cpu_usage());
+                    }
                     let unavailable =
                         (self.sys.total_memory() - self.sys.available_memory()) as f64 / 1e9;
                     ui.label(
@@ -193,41 +238,7 @@ impl eframe::App for MyEguiApp {
                     ui.label(
                         egui::RichText::new(format!("{:.1}", available)).color(MyEguiApp::CYAN),
                     );
-                    let reset_view = ui.small_button("R").clicked();
-
-                    ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                        let available_width = ui.available_width();
-                        let plot_height = ui.available_height().max(desired_height);
-                        let plot_width = (20.0 * plot_height).min(available_width * 0.5);
-                        ui.add_space(available_width - plot_width - 2.);
-                        let mut plot = Plot::new("live plot")
-                            .x_axis_formatter(|_, _| String::new())
-                            .y_axis_formatter(|_, _| String::new())
-                            .width(plot_width)
-                            .height(plot_height);
-                        if reset_view {
-                            self.point_index = 0;
-                            plot = plot.reset();
-                        }
-                        let mut vis_points: Vec<[f64; 2]> = vec![];
-                        for i in 0..self.points.len() {
-                            let index = self
-                                .point_index
-                                .wrapping_add(i)
-                                .wrapping_rem(self.points.len());
-                            let x = self.points[i][0];
-                            let y = self.points[index][1];
-                            vis_points.push([x, y]);
-                        }
-                        self.point_index = self
-                            .point_index
-                            .wrapping_add(self.point_speed)
-                            .wrapping_rem(self.points.len());
-                        let line = Line::new(PlotPoints::from(vis_points)).name("cosine");
-                        plot.show(ui, |plot_ui| {
-                            plot_ui.line(line);
-                        });
-                    });
+                    self.render_cosine_curve(ui);
                 });
             });
         });
