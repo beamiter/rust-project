@@ -93,7 +93,7 @@ impl MyEguiApp {
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             let available_width = ui.available_width();
             let plot_height = ui.available_height().max(MyEguiApp::DESIRED_HEIGHT);
-            let plot_width = (20.0 * plot_height).min(available_width * 0.5);
+            let plot_width = (10.0 * plot_height).min(available_width * 0.5);
             ui.add_space(available_width - plot_width - 2.);
             let mut plot = Plot::new("Histogram")
                 .include_y(0.)
@@ -128,7 +128,7 @@ impl MyEguiApp {
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             let available_width = ui.available_width();
             let plot_height = ui.available_height().max(MyEguiApp::DESIRED_HEIGHT);
-            let plot_width = (20.0 * plot_height).min(available_width * 0.5);
+            let plot_width = (10.0 * plot_height).min(available_width * 0.5);
             ui.add_space(available_width - plot_width - 2.);
             let mut plot = Plot::new("live plot")
                 .x_axis_formatter(|_, _| String::new())
