@@ -22,17 +22,27 @@ fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::
         "Noto Sans CJK SC".to_string(),
         "Noto Sans CJK TC".to_string(),
         "SauceCodeProNerdFont".to_string(),
+        "DejaVuSansMonoNerdFont".to_string(),
         "JetBrainsMonoNerdFont".to_string(),
     ] {
         let font_handle = system_source.select_best_match(
             &[font_kit::family_name::FamilyName::Title(font_name.clone())],
             &font_kit::properties::Properties::new(),
-        )?;
-        let font = font_handle.load()?;
-        let font_data = font.copy_font_data().ok_or("Failed to copy font data")?;
+        );
+        if font_handle.is_err() {
+            continue;
+        }
+        let font = font_handle.unwrap().load();
+        if font.is_err() {
+            continue;
+        }
+        let font_data = font.unwrap().copy_font_data();
+        if font_data.is_none() {
+            continue;
+        }
         fonts.font_data.insert(
             font_name.clone(),
-            egui::FontData::from_owned(font_data.to_vec()).into(),
+            egui::FontData::from_owned(font_data.unwrap().to_vec()).into(),
         );
         // fonts
         //     .families
