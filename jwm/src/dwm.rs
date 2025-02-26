@@ -2251,6 +2251,9 @@ impl Dwm {
             }
             let mut c: Option<Rc<RefCell<Client>>> = None;
             let i = if let Arg::I(i) = *arg { i } else { 0 };
+            if i == 0 {
+                return;
+            }
             if i > 0 {
                 c = {
                     self.selmon
@@ -2264,11 +2267,11 @@ impl Dwm {
                         .next
                         .clone()
                 };
-                while c.is_some() {
-                    if c.as_ref().unwrap().borrow_mut().isvisible() {
+                while let Some(ref c_opt) = c {
+                    if !c_opt.borrow_mut().neverfocus && c_opt.borrow_mut().isvisible() {
                         break;
                     }
-                    let next = c.as_ref().unwrap().borrow_mut().next.clone();
+                    let next = c_opt.borrow_mut().next.clone();
                     c = next;
                 }
                 if c.is_none() {
@@ -2277,7 +2280,7 @@ impl Dwm {
                         selmon_mut.clients.clone()
                     };
                     while let Some(ref c_opt) = c {
-                        if c_opt.borrow_mut().isvisible() {
+                        if !c_opt.borrow_mut().neverfocus && c_opt.borrow_mut().isvisible() {
                             break;
                         }
                         let next = c_opt.borrow_mut().next.clone();
@@ -2285,27 +2288,28 @@ impl Dwm {
                     }
                 }
             } else {
-                let mut cl;
-                let sel;
-                {
-                    let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
-                    cl = selmon_mut.clients.clone();
-                    sel = selmon_mut.sel.clone();
-                }
-                while !Self::are_equal_rc(&cl, &sel) {
-                    if cl.as_ref().unwrap().borrow_mut().isvisible() {
-                        c = cl.clone();
-                    }
-                    let next = cl.as_ref().unwrap().borrow_mut().next.clone();
-                    cl = next;
-                }
-                if c.is_none() {
-                    while let Some(ref cl_opt) = cl {
-                        if cl_opt.borrow_mut().isvisible() {
-                            c = cl.clone();
+                if let Some(ref selmon_opt) = self.selmon {
+                    let (mut cl, sel) = {
+                        let selmon_mut = selmon_opt.borrow_mut();
+                        (selmon_mut.clients.clone(), selmon_mut.sel.clone())
+                    };
+                    while !Self::are_equal_rc(&cl, &sel) {
+                        if let Some(ref cl_opt) = cl {
+                            if !cl_opt.borrow_mut().neverfocus && cl_opt.borrow_mut().isvisible() {
+                                c = cl.clone();
+                            }
+                            let next = cl_opt.borrow_mut().next.clone();
+                            cl = next;
                         }
-                        let next = cl_opt.borrow_mut().next.clone();
-                        cl = next;
+                    }
+                    if c.is_none() {
+                        while let Some(ref cl_opt) = cl {
+                            if !cl_opt.borrow_mut().neverfocus && cl_opt.borrow_mut().isvisible() {
+                                c = cl.clone();
+                            }
+                            let next = cl_opt.borrow_mut().next.clone();
+                            cl = next;
+                        }
                     }
                 }
             }
@@ -3480,6 +3484,7 @@ impl Dwm {
             && ((c.class == Config::egui_bar_0 && c.instance == Config::egui_bar_0)
                 || (c.class == Config::egui_bar_1 && c.instance == Config::egui_bar_1))
         {
+            c.neverfocus = true;
             if let Some(mon) = &c.mon {
                 let num = mon.borrow_mut().num;
                 let bar_shape = BarShape {
