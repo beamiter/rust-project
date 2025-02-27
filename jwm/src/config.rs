@@ -32,6 +32,7 @@ impl Config {
     pub const egui_bar_name: &str = "egui_bar";
     pub const egui_bar_0: &str = "egui_bar_0";
     pub const egui_bar_1: &str = "egui_bar_1";
+    pub const broken: &str = "broken";
     pub const topbar: bool = true;
     pub const egui_bar_pad: i32 = 8;
     // pub const fonts: Lazy<Vec<&str>> = Lazy::new(|| vec!["SauceCodeProNerdFontRegular:size=12"]);
@@ -93,7 +94,7 @@ impl Config {
     pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
         vec![
             // class | instance | name | tags mask | isfloating | monitor
-            // Rule::new("", "", "Ozone X11", 0, true, -1),
+            Rule::new(Config::broken, Config::broken, Config::broken, 0, true, -1),
             // Rule::new("Firefox", "", "", 1 << 8, false, -1),
             Rule::new(
                 Config::egui_bar_0,

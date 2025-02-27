@@ -281,8 +281,10 @@ pub struct Client {
 }
 impl fmt::Display for Client {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Client {{ name: {}, mina: {}, maxa: {}, cfact: {}, x: {}, y: {}, w: {}, h: {}, oldx: {}, oldy: {}, oldw: {}, oldh: {}, basew: {}, baseh: {}, incw: {}, inch: {}, maxw: {}, maxh: {}, minw: {}, minh: {}, hintsvalid: {}, bw: {}, oldbw: {}, tags0: {}, isfixed: {}, isfloating: {}, isurgent: {}, neverfocus: {}, oldstate: {}, isfullscreen: {}, win: {} }}",
+        write!(f, "Client {{ name: {}, class: {}, instance: {} mina: {}, maxa: {}, cfact: {}, x: {}, y: {}, w: {}, h: {}, oldx: {}, oldy: {}, oldw: {}, oldh: {}, basew: {}, baseh: {}, incw: {}, inch: {}, maxw: {}, maxh: {}, minw: {}, minh: {}, hintsvalid: {}, bw: {}, oldbw: {}, tags0: {}, isfixed: {}, isfloating: {}, isurgent: {}, neverfocus: {}, oldstate: {}, isfullscreen: {}, win: {} }}",
     self.name,
+    self.class,
+    self.instance,
     self.mina,
     self.maxa,
     self.cfact,
@@ -552,7 +554,6 @@ pub struct BarShape {
 }
 
 pub struct Dwm {
-    pub broken: String,
     pub stext_max_len: usize,
     pub stext: String,
     pub screen: i32,
@@ -607,7 +608,6 @@ impl Dwm {
     }
     pub fn new(sender: Sender<u8>) -> Self {
         Dwm {
-            broken: "broken".to_string(),
             stext_max_len: 512,
             stext: String::new(),
             screen: 0,
@@ -670,13 +670,13 @@ impl Dwm {
                 let c_str = CStr::from_ptr(ch.res_class);
                 c_str.to_str().unwrap().to_string()
             } else {
-                self.broken.to_string()
+                Config::broken.to_string()
             };
             c.instance = if !ch.res_name.is_null() {
                 let c_str = CStr::from_ptr(ch.res_name);
                 c_str.to_str().unwrap().to_string()
             } else {
-                self.broken.to_string()
+                Config::broken.to_string()
             };
 
             info!(
@@ -4300,7 +4300,7 @@ impl Dwm {
             self.gettextprop(c.win, XA_WM_NAME, &mut c.name);
         }
         if c.name.is_empty() {
-            c.name = self.broken.to_string();
+            c.name = Config::broken.to_string();
         }
     }
 
