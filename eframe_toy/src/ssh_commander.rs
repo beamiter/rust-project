@@ -1,7 +1,7 @@
 /// We derive Deserialize/Serialize so we can persist app state on shutdown.
 #[derive(serde::Deserialize, serde::Serialize)]
 #[serde(default)] // if we add new fields, give them default values when deserializing old state
-pub struct TemplateApp {
+pub struct SSHCommander {
     host: String,
     username: String,
     password: String,
@@ -16,7 +16,7 @@ pub struct TemplateApp {
 
 const COMMAND_PREFIX: &str = "docker exec fpp-container-mnt-data-maf_planning ./sim fpp play -v ";
 
-impl Default for TemplateApp {
+impl Default for SSHCommander {
     fn default() -> Self {
         Self {
             host: "10.21.31.17:22".into(),
@@ -34,7 +34,7 @@ impl Default for TemplateApp {
 use ssh2::Session;
 use std::{io::Read, net::TcpStream};
 
-impl TemplateApp {
+impl SSHCommander {
     /// Called once before the first frame.
     pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
         // This is also where you can customize the look and feel of egui using
@@ -90,7 +90,7 @@ fn parse_hyperlink(line: &str) -> Option<String> {
     None
 }
 
-impl eframe::App for TemplateApp {
+impl eframe::App for SSHCommander {
     /// Called by the frame work to save state before shutdown.
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
         eframe::set_value(storage, eframe::APP_KEY, self);
