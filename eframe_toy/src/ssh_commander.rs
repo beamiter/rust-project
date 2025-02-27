@@ -82,7 +82,7 @@ impl SSHCommander {
     }
 }
 
-fn parse_hyperlink(line: &str) -> Option<String> {
+pub fn parse_hyperlink(line: &str) -> Option<String> {
     let url_regex = regex::Regex::new(r"https?://[^\s]+").unwrap();
     if let Some(url_match) = url_regex.find(line) {
         return Some(url_match.as_str().to_string());
@@ -122,7 +122,7 @@ impl eframe::App for SSHCommander {
 
         egui::CentralPanel::default().show(ctx, |ui| {
             // The central panel the region left after adding TopPanel's and SidePanel's
-            ui.heading("SSH Command Executor");
+            ui.heading("SSH Commander");
             ui.separator();
 
             ui.horizontal(|ui| {

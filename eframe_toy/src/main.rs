@@ -13,9 +13,10 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
     eframe::run_native(
-        "eframe template",
+        "eframe toy",
         native_options,
-        Box::new(|cc| Ok(Box::new(toy::SSHCommander::new(cc)))),
+        // Box::new(|cc| Ok(Box::new(toy::SSHCommander::new(cc)))),
+        Box::new(|cc| Ok(Box::new(toy::ImageProcessor::new(cc)))),
     )
 }
 
