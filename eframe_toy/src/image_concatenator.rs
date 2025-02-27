@@ -11,6 +11,7 @@ pub struct ImageProcessor {
     paths: Vec<String>,
     add_image_log: String,
     save_image_log: String,
+    adding_on_progress: bool,
 }
 impl Default for ImageProcessor {
     fn default() -> Self {
@@ -24,6 +25,7 @@ impl Default for ImageProcessor {
             paths: vec![],
             add_image_log: String::new(),
             save_image_log: String::new(),
+            adding_on_progress: false,
         }
     }
 }
@@ -144,9 +146,10 @@ impl eframe::App for ImageProcessor {
             ui.horizontal(|ui| {
                 let button_width = 100.;
                 let button_height = 50.;
-                let button =
-                    egui::Button::new("add").min_size(egui::vec2(button_width, button_height));
-                if ui.add(button).clicked() {
+                let mut style: egui::Style = (*ctx.style()).clone();
+                style.spacing.interact_size = egui::vec2(button_width, button_height);
+                ctx.set_style(style);
+                if self.adding_on_progress {
                     if self.file_prefix == 0 {
                         clear_path(path);
                     }
@@ -161,11 +164,14 @@ impl eframe::App for ImageProcessor {
                     if status.success() {
                         self.add_image_log = format!("{}", &path_str);
                         self.paths.push(path_str.to_string());
+                        self.file_prefix += 1;
                     } else {
-                        self.add_image_log = format!("FAIL: {}", &path_str);
+                        self.adding_on_progress = false;
+                        self.add_image_log = "escape screen shot".to_string();
                     }
-                    self.file_prefix += 1;
                 }
+                ui.checkbox(&mut self.adding_on_progress, "start");
+
                 ui.label(&self.add_image_log);
                 ui.separator();
                 let button =
