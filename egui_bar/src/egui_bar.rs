@@ -107,7 +107,7 @@ impl MyEguiApp {
                 plot = plot.reset();
             }
 
-            let bar_width = 1.0;
+            let bar_width = 0.90;
             let bars: Vec<Bar> = self
                 .data
                 .iter()
