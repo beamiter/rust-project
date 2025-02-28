@@ -16,8 +16,7 @@ pub struct ImageProcessor {
     output_file: String,
     file_prefix: usize,
     paths: Vec<String>,
-    add_image_log: String,
-    save_image_log: String,
+    image_log: String,
     adding_on_progress: bool,
 }
 impl Default for ImageProcessor {
@@ -30,14 +29,22 @@ impl Default for ImageProcessor {
             output_file: String::from("output.png"),
             file_prefix: 0,
             paths: vec![],
-            add_image_log: String::new(),
-            save_image_log: String::new(),
+            image_log: String::new(),
             adding_on_progress: false,
         }
     }
 }
 
 impl ImageProcessor {
+    pub fn reset(&mut self) {
+        self.images.clear();
+        self.max_width = 0;
+        self.total_height = 0;
+        self.file_prefix = 0;
+        self.paths.clear();
+        self.image_log.clear();
+        self.adding_on_progress = false;
+    }
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         Default::default()
     }
@@ -96,23 +103,25 @@ impl ImageProcessor {
 
         Ok(dynamic_image)
     }
-}
 
-fn clear_path(path: &Path) {
-    if path.exists() {
-        println!("Clearing all files in {:?}", path);
-        match clear_directory(path) {
-            Ok(()) => {
-                println!("Successfully cleared all files in {:?}", path)
+    fn clear_path(&mut self, path: &Path) {
+        self.reset();
+        if path.exists() {
+            println!("Clearing all files in {:?}", path);
+            match clear_directory(path) {
+                Ok(()) => {
+                    println!("Successfully cleared all files in {:?}", path)
+                }
+                Err(e) => {
+                    eprintln!("Failed to clear directory {:?}: {}", path, e)
+                }
             }
-            Err(e) => {
-                eprintln!("Failed to clear directory {:?}: {}", path, e)
-            }
+        } else {
+            println!("Directory {:?} does not exist", path);
         }
-    } else {
-        println!("Directory {:?} does not exist", path);
     }
 }
+
 fn clear_directory<P: AsRef<Path>>(dir: P) -> std::io::Result<()> {
     for entry in fs::read_dir(dir.as_ref())? {
         let entry = entry?;
@@ -171,7 +180,7 @@ impl eframe::App for ImageProcessor {
                 if self.adding_on_progress {
                     self.adding_on_progress = false;
                     if self.file_prefix == 0 {
-                        clear_path(path);
+                        self.clear_path(path);
                     }
                     let mut path_buf = path.to_path_buf();
                     path_buf.push(format!("{}.png", self.file_prefix));
@@ -182,12 +191,12 @@ impl eframe::App for ImageProcessor {
                         .status()
                         .expect("Failed to execute scrot command");
                     if status.success() {
-                        self.add_image_log = format!("Current: {}", &path_str);
+                        self.image_log = format!("Current: {}", &path_str);
                         self.paths.push(path_str.to_string());
                         self.file_prefix += 1;
                     } else {
                         self.adding_on_progress = false;
-                        self.add_image_log = "escape screen shot".to_string();
+                        self.image_log = "escape screen shot".to_string();
                     }
                 }
                 let rich_text = egui::RichText::new("start".to_string())
@@ -206,9 +215,10 @@ impl eframe::App for ImageProcessor {
                     self.load_images(&paths).unwrap();
                     let mut path_buf = path.to_path_buf();
                     path_buf.push(&self.output_file);
-                    self.process(path_buf.to_str().unwrap()).unwrap();
-                    self.save_image_log = format!("Save to: {}", path_buf.to_str().unwrap());
-                    self.file_prefix = 0;
+                    if self.process(path_buf.to_str().unwrap()).is_ok() {
+                        self.image_log = format!("Save to: {}", path_buf.to_str().unwrap());
+                        self.file_prefix = 0;
+                    }
                 }
                 ui.separator();
                 let rich_text = egui::RichText::new("clear".to_string())
@@ -217,14 +227,10 @@ impl eframe::App for ImageProcessor {
                 let button =
                     egui::Button::new(rich_text).min_size(egui::vec2(button_width, button_height));
                 if ui.add(button).clicked() {
-                    self.file_prefix = 0;
-                    self.add_image_log.clear();
-                    self.save_image_log.clear();
-                    clear_path(path);
+                    self.clear_path(path);
                 }
             });
-            ui.label(&self.add_image_log);
-            ui.label(&self.save_image_log);
+            ui.label(format!("Log: {}", &self.image_log));
             ui.separator();
             ui.heading("Output:");
 
