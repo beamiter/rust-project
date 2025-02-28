@@ -1,5 +1,12 @@
-use image::{DynamicImage, ImageBuffer, ImageFormat};
-use std::{error::Error, fs, path::Path, process::Command};
+use copypasta::{ClipboardContext, ClipboardProvider};
+use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
+use std::{
+    error::Error,
+    fs,
+    io::{Cursor, Read},
+    path::Path,
+    process::Command,
+};
 
 pub struct ImageProcessor {
     images: Vec<DynamicImage>,
@@ -50,12 +57,16 @@ impl ImageProcessor {
         Ok(())
     }
 
-    fn process(&self) -> Result<DynamicImage, Box<dyn Error>> {
+    fn process<P: AsRef<Path>>(&self, path: P) -> Result<DynamicImage, Box<dyn Error>> {
         if self.images.is_empty() {
             return Err("No images loaded".into());
         }
 
-        let mut output = ImageBuffer::new(self.max_width, self.total_height);
+        // 创建一个白色背景的 ImageBuffer
+        let mut output = ImageBuffer::from_fn(self.max_width, self.total_height, |_, _| {
+            Rgba([255, 255, 255, 255]) // 白色 (R, G, B, A)
+        });
+
         let mut y_offset = 0;
 
         for img in &self.images {
@@ -65,17 +76,25 @@ impl ImageProcessor {
             y_offset += img.height() as i64;
         }
 
-        Ok(DynamicImage::ImageRgba8(output))
-    }
+        let dynamic_image = DynamicImage::ImageRgba8(output);
 
-    fn save_final<P: AsRef<Path>>(
-        &self,
-        path: P,
-        format: ImageFormat,
-    ) -> Result<(), Box<dyn Error>> {
-        let output = self.process()?;
-        output.save_with_format(path, format)?;
-        Ok(())
+        // 将图像保存为文件
+        dynamic_image.save_with_format(path, ImageFormat::Png)?;
+
+        // 将图像加载为字节数组
+        let mut buffer = Vec::new();
+        let mut cursor = Cursor::new(&mut buffer);
+        dynamic_image.write_to(&mut cursor, ImageFormat::Png)?;
+
+        // 将图像数据复制到剪贴板
+        let mut clipboard = ClipboardContext::new().unwrap();
+        let mut contents = String::new();
+        cursor.read_to_string(&mut contents).unwrap();
+        // clipboard.set_contents(contents).unwrap();
+        let msg = "Hello, world!";
+        clipboard.set_contents(msg.to_owned()).unwrap();
+
+        Ok(dynamic_image)
     }
 }
 
@@ -163,7 +182,7 @@ impl eframe::App for ImageProcessor {
                         .status()
                         .expect("Failed to execute scrot command");
                     if status.success() {
-                        self.add_image_log = format!("{}", &path_str);
+                        self.add_image_log = format!("Current: {}", &path_str);
                         self.paths.push(path_str.to_string());
                         self.file_prefix += 1;
                     } else {
@@ -176,7 +195,6 @@ impl eframe::App for ImageProcessor {
                     .font(egui::FontId::monospace(26.));
                 ui.checkbox(&mut self.adding_on_progress, rich_text);
 
-                ui.label(&self.add_image_log);
                 ui.separator();
                 let rich_text = egui::RichText::new("save".to_string())
                     .strong()
@@ -188,12 +206,10 @@ impl eframe::App for ImageProcessor {
                     self.load_images(&paths).unwrap();
                     let mut path_buf = path.to_path_buf();
                     path_buf.push(&self.output_file);
-                    self.save_final(path_buf.to_str().unwrap(), ImageFormat::Png)
-                        .unwrap();
-                    self.save_image_log = format!("{}", path_buf.to_str().unwrap());
+                    self.process(path_buf.to_str().unwrap()).unwrap();
+                    self.save_image_log = format!("Save to: {}", path_buf.to_str().unwrap());
                     self.file_prefix = 0;
                 }
-                ui.label(&self.save_image_log);
                 ui.separator();
                 let rich_text = egui::RichText::new("clear".to_string())
                     .strong()
@@ -207,7 +223,8 @@ impl eframe::App for ImageProcessor {
                     clear_path(path);
                 }
             });
-
+            ui.label(&self.add_image_log);
+            ui.label(&self.save_image_log);
             ui.separator();
             ui.heading("Output:");
 
