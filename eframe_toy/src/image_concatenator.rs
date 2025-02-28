@@ -1,8 +1,13 @@
 use arboard::Clipboard;
 use copypasta::{x11_clipboard::X11ClipboardContext, ClipboardContext};
-use egui::Button;
-use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
-use std::{error::Error, fs, path::Path, process::Command};
+use egui::{Button, Widget};
+use image::{DynamicImage, ImageBuffer, ImageFormat, ImageReader, Rgba};
+use std::{
+    error::Error,
+    fs,
+    path::{Path, PathBuf},
+    process::Command,
+};
 
 #[allow(dead_code)]
 pub struct ImageProcessor {
@@ -18,7 +23,8 @@ pub struct ImageProcessor {
     str_clipboard: X11ClipboardContext,
     image_clipboard: Clipboard,
     text: String,
-    image_output_file: String,
+    image_output_file: PathBuf,
+    texture: Option<egui::TextureHandle>,
 }
 impl Default for ImageProcessor {
     fn default() -> Self {
@@ -35,12 +41,31 @@ impl Default for ImageProcessor {
             str_clipboard: ClipboardContext::new().unwrap(),
             image_clipboard: Clipboard::new().unwrap(),
             text: String::new(),
-            image_output_file: String::new(),
+            image_output_file: PathBuf::new(),
+            texture: None,
         }
     }
 }
 
 impl ImageProcessor {
+    fn load_image_from_path(
+        &mut self,
+        path: &std::path::Path,
+        ctx: &egui::Context,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let image = ImageReader::open(path)?.decode()?;
+        let texture = ctx.load_texture(
+            "my_image",
+            egui::ColorImage::from_rgba_unmultiplied(
+                [image.width() as usize, image.height() as usize],
+                image.to_rgba8().as_raw(),
+            ),
+            Default::default(),
+        );
+        self.texture = Some(texture);
+        Ok(())
+    }
+
     pub fn reset(&mut self) {
         self.images.clear();
         self.max_width = 0;
@@ -50,6 +75,7 @@ impl ImageProcessor {
         self.image_log.clear();
         self.adding_on_progress = false;
         self.image_output_file.clear();
+        self.texture = None;
     }
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         Default::default()
@@ -104,13 +130,13 @@ impl ImageProcessor {
         let bytes = img_rgba.into_raw();
         println!("{width}, {height}, {}", bytes.len());
         // let mut clipboard = Clipboard::new().unwrap();
-        self.image_clipboard
-            .set_image(arboard::ImageData {
-                width,
-                height,
-                bytes: bytes.into(),
-            })
-            .unwrap();
+        // self.image_clipboard
+        //     .set_image(arboard::ImageData {
+        //         width,
+        //         height,
+        //         bytes: bytes.into(),
+        //     })
+        //     .unwrap();
         // let the_string = "testing!";
         // self.image_clipboard.set_text(the_string).unwrap();
         println!(
@@ -233,10 +259,9 @@ impl eframe::App for ImageProcessor {
                     self.load_images(&paths).unwrap();
                     let mut path_buf = path.to_path_buf();
                     path_buf.push(&self.file_name);
-                    let output_file = path_buf.to_str().unwrap().to_string();
-                    if self.process(&output_file).is_ok() {
-                        self.image_output_file = output_file;
-                        self.image_log = format!("Save to: {}", self.image_output_file);
+                    if self.process(&path_buf).is_ok() {
+                        self.image_output_file = path_buf;
+                        self.image_log = format!("Save to: {:?}", self.image_output_file);
                         self.file_prefix = 0;
                     }
                 }
@@ -263,16 +288,16 @@ impl eframe::App for ImageProcessor {
                 ui.label(format!("{}", &self.image_log));
             });
             ui.separator();
-            ui.heading("Output:");
-            let image_source = egui::include_image!("/tmp/image_dir/output.png");
-            ui.image(image_source);
+            let image_path = self.image_output_file.as_path().to_path_buf();
+            let _ = self.load_image_from_path(&image_path, ctx);
+            if let Some(texture) = &self.texture {
+                egui::Image::new(texture).shrink_to_fit().ui(ui);
+            } else {
+                ui.label("Failed to load image");
+            }
 
             ui.separator();
 
-            // ui.add(egui::github_link_file!(
-            //     "https://github.com/emilk/eframe_template/blob/main/",
-            //     "Source code."
-            // ));
             ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
                 powered_by_egui_and_eframe(ui);
                 egui::warn_if_debug_build(ui);
