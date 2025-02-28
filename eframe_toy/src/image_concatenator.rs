@@ -1,5 +1,6 @@
 use arboard::Clipboard;
 use copypasta::{x11_clipboard::X11ClipboardContext, ClipboardContext};
+use egui::Button;
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
 use std::{error::Error, fs, path::Path, process::Command};
 
@@ -9,13 +10,15 @@ pub struct ImageProcessor {
     max_width: u32,
     total_height: u32,
     save_path: String,
-    output_file: String,
+    file_name: String,
     file_prefix: usize,
     paths: Vec<String>,
     image_log: String,
     adding_on_progress: bool,
     str_clipboard: X11ClipboardContext,
     image_clipboard: Clipboard,
+    text: String,
+    image_output_file: String,
 }
 impl Default for ImageProcessor {
     fn default() -> Self {
@@ -24,13 +27,15 @@ impl Default for ImageProcessor {
             max_width: 0,
             total_height: 0,
             save_path: "/tmp/image_dir/".to_string(),
-            output_file: String::from("output.png"),
+            file_name: String::from("output.png"),
             file_prefix: 0,
             paths: vec![],
             image_log: String::new(),
             adding_on_progress: false,
             str_clipboard: ClipboardContext::new().unwrap(),
             image_clipboard: Clipboard::new().unwrap(),
+            text: String::new(),
+            image_output_file: String::new(),
         }
     }
 }
@@ -44,6 +49,7 @@ impl ImageProcessor {
         self.paths.clear();
         self.image_log.clear();
         self.adding_on_progress = false;
+        self.image_output_file.clear();
     }
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         Default::default()
@@ -183,9 +189,9 @@ impl eframe::App for ImageProcessor {
                     Err(e) => eprintln!("Failed to create {:?}: {}", path, e),
                 }
             }
+            let button_width = 100.;
+            let button_height = 50.;
             ui.horizontal(|ui| {
-                let button_width = 100.;
-                let button_height = 50.;
                 let mut style: egui::Style = (*ctx.style()).clone();
                 style.spacing.interact_size = egui::vec2(button_width, button_height);
                 ctx.set_style(style);
@@ -226,9 +232,11 @@ impl eframe::App for ImageProcessor {
                     let paths = self.paths.clone();
                     self.load_images(&paths).unwrap();
                     let mut path_buf = path.to_path_buf();
-                    path_buf.push(&self.output_file);
-                    if self.process(path_buf.to_str().unwrap()).is_ok() {
-                        self.image_log = format!("Save to: {}", path_buf.to_str().unwrap());
+                    path_buf.push(&self.file_name);
+                    let output_file = path_buf.to_str().unwrap().to_string();
+                    if self.process(&output_file).is_ok() {
+                        self.image_output_file = output_file;
+                        self.image_log = format!("Save to: {}", self.image_output_file);
                         self.file_prefix = 0;
                     }
                 }
@@ -242,9 +250,22 @@ impl eframe::App for ImageProcessor {
                     self.clear_path(path);
                 }
             });
-            ui.label(format!("Log: {}", &self.image_log));
+            ui.horizontal(|ui| {
+                if ui
+                    .add(
+                        Button::new("📋")
+                            .min_size(egui::vec2(button_width * 0.5, button_height * 0.5)),
+                    )
+                    .clicked()
+                {
+                    ui.ctx().copy_text(self.image_log.clone());
+                }
+                ui.label(format!("{}", &self.image_log));
+            });
             ui.separator();
             ui.heading("Output:");
+            let image_source = egui::include_image!("/tmp/image_dir/output.png");
+            ui.image(image_source);
 
             ui.separator();
 
