@@ -25,6 +25,7 @@ ssh2 = "0.9.4"
 regex = "1.11.1"
 image = "0.25.5"
 copypasta = "0.10.1"
+arboard = "3.4.1"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

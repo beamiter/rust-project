@@ -1,13 +1,9 @@
-use copypasta::{ClipboardContext, ClipboardProvider};
+use arboard::Clipboard;
+use copypasta::{x11_clipboard::X11ClipboardContext, ClipboardContext};
 use image::{DynamicImage, ImageBuffer, ImageFormat, Rgba};
-use std::{
-    error::Error,
-    fs,
-    io::{Cursor, Read},
-    path::Path,
-    process::Command,
-};
+use std::{error::Error, fs, path::Path, process::Command};
 
+#[allow(dead_code)]
 pub struct ImageProcessor {
     images: Vec<DynamicImage>,
     max_width: u32,
@@ -18,6 +14,8 @@ pub struct ImageProcessor {
     paths: Vec<String>,
     image_log: String,
     adding_on_progress: bool,
+    str_clipboard: X11ClipboardContext,
+    image_clipboard: Clipboard,
 }
 impl Default for ImageProcessor {
     fn default() -> Self {
@@ -31,6 +29,8 @@ impl Default for ImageProcessor {
             paths: vec![],
             image_log: String::new(),
             adding_on_progress: false,
+            str_clipboard: ClipboardContext::new().unwrap(),
+            image_clipboard: Clipboard::new().unwrap(),
         }
     }
 }
@@ -64,42 +64,54 @@ impl ImageProcessor {
         Ok(())
     }
 
-    fn process<P: AsRef<Path>>(&self, path: P) -> Result<DynamicImage, Box<dyn Error>> {
+    fn process<P: AsRef<Path>>(&mut self, path: P) -> Result<DynamicImage, Box<dyn Error>> {
         if self.images.is_empty() {
             return Err("No images loaded".into());
         }
 
-        // 创建一个白色背景的 ImageBuffer
         let mut output = ImageBuffer::from_fn(self.max_width, self.total_height, |_, _| {
-            Rgba([255, 255, 255, 255]) // 白色 (R, G, B, A)
+            Rgba([255, 255, 255, 255])
         });
 
         let mut y_offset = 0;
 
         for img in &self.images {
-            // 居中对齐
             let x_offset = (self.max_width - img.width()) / 2;
             image::imageops::overlay(&mut output, img, x_offset.into(), y_offset);
             y_offset += img.height() as i64;
         }
 
         let dynamic_image = DynamicImage::ImageRgba8(output);
+        println!("{}, {}", dynamic_image.width(), dynamic_image.height());
+        dynamic_image
+            .save_with_format(&path, ImageFormat::Png)
+            .unwrap();
 
-        // 将图像保存为文件
-        dynamic_image.save_with_format(path, ImageFormat::Png)?;
+        // let data = String::from("for test");
+        // self.str_clipboard.set_contents(data).unwrap();
+        // let content = self.str_clipboard.get_contents().unwrap();
+        // println!("content: {}", content);
 
-        // 将图像加载为字节数组
-        let mut buffer = Vec::new();
-        let mut cursor = Cursor::new(&mut buffer);
-        dynamic_image.write_to(&mut cursor, ImageFormat::Png)?;
-
-        // 将图像数据复制到剪贴板
-        let mut clipboard = ClipboardContext::new().unwrap();
-        let mut contents = String::new();
-        cursor.read_to_string(&mut contents).unwrap();
-        // clipboard.set_contents(contents).unwrap();
-        let msg = "Hello, world!";
-        clipboard.set_contents(msg.to_owned()).unwrap();
+        let img_rgba = dynamic_image.to_rgba8();
+        let width = img_rgba.width() as usize;
+        let height = img_rgba.height() as usize;
+        let bytes = img_rgba.into_raw();
+        println!("{width}, {height}, {}", bytes.len());
+        // let mut clipboard = Clipboard::new().unwrap();
+        self.image_clipboard
+            .set_image(arboard::ImageData {
+                width,
+                height,
+                bytes: bytes.into(),
+            })
+            .unwrap();
+        // let the_string = "testing!";
+        // self.image_clipboard.set_text(the_string).unwrap();
+        println!(
+            "But now the clipboard text should be: text \"{:?}\", image \"{:?}\"",
+            self.image_clipboard.get_text(),
+            self.image_clipboard.get_image().unwrap().bytes.len()
+        );
 
         Ok(dynamic_image)
     }
