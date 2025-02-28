@@ -150,6 +150,7 @@ impl eframe::App for ImageProcessor {
                 style.spacing.interact_size = egui::vec2(button_width, button_height);
                 ctx.set_style(style);
                 if self.adding_on_progress {
+                    self.adding_on_progress = false;
                     if self.file_prefix == 0 {
                         clear_path(path);
                     }
@@ -170,12 +171,18 @@ impl eframe::App for ImageProcessor {
                         self.add_image_log = "escape screen shot".to_string();
                     }
                 }
-                ui.checkbox(&mut self.adding_on_progress, "start");
+                let rich_text = egui::RichText::new("start".to_string())
+                    .strong()
+                    .font(egui::FontId::monospace(26.));
+                ui.checkbox(&mut self.adding_on_progress, rich_text);
 
                 ui.label(&self.add_image_log);
                 ui.separator();
+                let rich_text = egui::RichText::new("save".to_string())
+                    .strong()
+                    .font(egui::FontId::monospace(16.));
                 let button =
-                    egui::Button::new("save").min_size(egui::vec2(button_width, button_height));
+                    egui::Button::new(rich_text).min_size(egui::vec2(button_width, button_height));
                 if ui.add(button).clicked() {
                     let paths = self.paths.clone();
                     self.load_images(&paths).unwrap();
@@ -188,8 +195,11 @@ impl eframe::App for ImageProcessor {
                 }
                 ui.label(&self.save_image_log);
                 ui.separator();
+                let rich_text = egui::RichText::new("clear".to_string())
+                    .strong()
+                    .font(egui::FontId::monospace(16.));
                 let button =
-                    egui::Button::new("clear").min_size(egui::vec2(button_width, button_height));
+                    egui::Button::new(rich_text).min_size(egui::vec2(button_width, button_height));
                 if ui.add(button).clicked() {
                     self.file_prefix = 0;
                     self.add_image_log.clear();
