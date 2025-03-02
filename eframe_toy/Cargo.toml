@@ -26,6 +26,10 @@ regex = "1.11.1"
 image = "0.25.5"
 copypasta = "0.10.1"
 arboard = "3.4.1"
+enigo = "0.3.0"
+active-win-pos-rs = "0.9.0"
+device_query = "3.0.0"
+rayon = "1.10.0"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
