@@ -37,6 +37,8 @@ pub struct ImageProcessor {
     pub scroll_num: i32,
     pub selection: Option<ScreenSelection>,
     pub start_button_text: String,
+    pub scroll_delta_x: i32,
+    pub scroll_delta_y: i32,
 }
 impl Default for ImageProcessor {
     fn default() -> Self {
@@ -61,6 +63,8 @@ impl Default for ImageProcessor {
             scroll_num: 10,
             selection: None,
             start_button_text: "selection".to_string(),
+            scroll_delta_x: 0,
+            scroll_delta_y: 0,
         }
     }
 }
@@ -411,7 +415,19 @@ impl eframe::App for ImageProcessor {
             // The central panel the region left after adding TopPanel's and SidePanel's
             ui.heading("Image Concatenator");
             ui.separator();
-
+            ui.horizontal(|ui| {
+                if ui.button("calibration").clicked() {
+                    if let Ok((dx, dy)) = self.verify_scroll_pixel() {
+                        self.scroll_delta_x = dx;
+                        self.scroll_delta_y = dy;
+                    }
+                }
+                ui.label(format!(
+                    "scroll pixel dx: {}, dy: {}",
+                    self.scroll_delta_x, self.scroll_delta_y
+                ));
+            });
+            ui.separator();
             ui.horizontal(|ui| {
                 ui.heading("scroll num: ");
                 ui.add(
