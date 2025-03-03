@@ -9,6 +9,7 @@ use image::{DynamicImage, ImageBuffer, Rgba};
 use rayon::prelude::*;
 use std::error::Error;
 use std::path::PathBuf;
+use std::process::Command;
 use std::thread;
 use std::time::Duration;
 use std::{fs, path::Path};
@@ -65,6 +66,13 @@ impl Default for ImageProcessor {
 }
 
 impl ImageProcessor {
+    pub fn open_folder(&self, output_path: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let _ = Command::new("nautilus")
+            .arg(output_path)
+            .spawn()
+            .expect("failed to open folder");
+        Ok(())
+    }
     fn find_overlapping_region_ncc(
         &mut self,
         img1: &DynamicImage,
@@ -506,6 +514,23 @@ impl eframe::App for ImageProcessor {
                     }
                 }
                 ui.separator();
+                if ui
+                    .add(
+                        egui::Button::new("Foler 📋")
+                            .min_size(egui::vec2(button_width * 0.5, button_height * 0.5)),
+                    )
+                    .clicked()
+                {
+                    if self.image_output_file.is_file()
+                        && self
+                            .open_folder(self.image_output_file.to_str().unwrap())
+                            .is_ok()
+                    {
+                        self.image_log = "Open image folder".to_string();
+                    }
+                    // ui.ctx().copy_text(self.image_log.clone());
+                }
+                ui.separator();
                 let rich_text = egui::RichText::new("clear".to_string())
                     .strong()
                     .font(egui::FontId::monospace(16.));
@@ -516,18 +541,7 @@ impl eframe::App for ImageProcessor {
                     self.clear_path(path);
                 }
             });
-            ui.horizontal(|ui| {
-                if ui
-                    .add(
-                        egui::Button::new("📋")
-                            .min_size(egui::vec2(button_width * 0.5, button_height * 0.5)),
-                    )
-                    .clicked()
-                {
-                    ui.ctx().copy_text(self.image_log.clone());
-                }
-                ui.label(format!("{}", &self.image_log));
-            });
+            ui.label(format!("{}", &self.image_log));
             ui.separator();
             let image_path = self.image_output_file.as_path().to_path_buf();
             let _ = self.load_image_from_path(&image_path, ctx);
