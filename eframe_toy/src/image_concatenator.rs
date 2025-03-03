@@ -5,41 +5,37 @@ use egui::Widget;
 use enigo::Coordinate::Abs;
 use enigo::{Enigo, Mouse, Settings};
 use image::GenericImageView;
-use image::{DynamicImage, ImageBuffer, ImageFormat, ImageReader, Rgba};
+use image::{DynamicImage, ImageBuffer, Rgba};
 use rayon::prelude::*;
 use std::error::Error;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
-use std::{fs, path::Path, process::Command};
+use std::{fs, path::Path};
 
 use crate::ScreenSelection;
 
-#[allow(dead_code)]
 pub struct ImageProcessor {
-    images: Vec<DynamicImage>,
-    max_width: u32,
-    total_height: u32,
-    save_path: String,
-    file_name: String,
-    file_prefix: usize,
-    paths: Vec<String>,
-    image_log: String,
-    adding_on_progress: bool,
-    str_clipboard: X11ClipboardContext,
-    image_clipboard: Clipboard,
-    text: String,
-    image_output_file: PathBuf,
-    texture: Option<egui::TextureHandle>,
-    corner_points: Vec<(i32, i32)>,
-    corner_dx: i32,
-    corner_dy: i32,
-    device_state: DeviceState,
-    enigo: Enigo,
-    start_checkbox_pos: (i32, i32),
-    scroll_num: i32,
-    selection: Option<ScreenSelection>,
-    start_button_text: String,
+    pub images: Vec<DynamicImage>,
+    pub max_width: u32,
+    pub total_height: u32,
+    pub save_path: String,
+    pub file_name: String,
+    pub file_prefix: usize,
+    pub paths: Vec<String>,
+    pub image_log: String,
+    pub adding_on_progress: bool,
+    pub str_clipboard: X11ClipboardContext,
+    pub image_clipboard: Clipboard,
+    pub text: String,
+    pub image_output_file: PathBuf,
+    pub texture: Option<egui::TextureHandle>,
+    pub device_state: DeviceState,
+    pub enigo: Enigo,
+    pub start_checkbox_pos: (i32, i32),
+    pub scroll_num: i32,
+    pub selection: Option<ScreenSelection>,
+    pub start_button_text: String,
 }
 impl Default for ImageProcessor {
     fn default() -> Self {
@@ -58,9 +54,6 @@ impl Default for ImageProcessor {
             text: String::new(),
             image_output_file: PathBuf::new(),
             texture: None,
-            corner_points: Vec::new(),
-            corner_dx: 0,
-            corner_dy: 0,
             device_state: DeviceState::new(),
             enigo: Enigo::new(&Settings::default()).unwrap(),
             start_checkbox_pos: (0, 0),
@@ -324,77 +317,6 @@ impl ImageProcessor {
 
         Ok(())
     }
-    #[allow(dead_code)]
-    fn select_positions(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut left_button_was_pressed = false;
-        self.corner_points.clear();
-        loop {
-            let keys = self.device_state.get_keys();
-            let mouse = self.device_state.get_mouse();
-
-            if keys.contains(&device_query::Keycode::Escape) {
-                println!("cancel");
-                break;
-            }
-            let left_button_pressed = mouse.button_pressed[1];
-            if left_button_pressed && !left_button_was_pressed {
-                let coords = mouse.coords;
-                self.corner_points.push(coords);
-                println!(
-                    "pnt #{}: ({}, {})",
-                    self.corner_points.len(),
-                    coords.0,
-                    coords.1
-                );
-                if self.corner_points.len() >= 2 {
-                    self.display_results()?;
-                    break;
-                }
-            }
-            left_button_was_pressed = left_button_pressed;
-            thread::sleep(Duration::from_millis(10));
-        }
-        Ok(())
-    }
-
-    fn display_results(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let ref points = self.corner_points;
-        if points.len() < 2 {
-            return Ok(());
-        }
-        println!("\n=== 记录结果 ===");
-        println!("pnt1: ({}, {})", points[0].0, points[0].1);
-        println!("pnt2: ({}, {})", points[1].0, points[1].1);
-        let dx = points[1].0 - points[0].0;
-        let dy = points[1].1 - points[0].1;
-        assert!(dx >= 0);
-        assert!(dy >= 0);
-        let distance = ((dx * dx + dy * dy) as f64).sqrt();
-        println!("dx: {} 像素", dx.abs());
-        println!("dy: {} 像素", dy.abs());
-        println!("distance: {:.2} 像素", distance);
-        self.corner_dx = dx;
-        self.corner_dy = dy;
-        Ok(())
-    }
-    #[allow(dead_code)]
-    fn load_image_from_path(
-        &mut self,
-        path: &std::path::Path,
-        ctx: &egui::Context,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let image = ImageReader::open(path)?.decode()?;
-        let texture = ctx.load_texture(
-            "my_image",
-            egui::ColorImage::from_rgba_unmultiplied(
-                [image.width() as usize, image.height() as usize],
-                image.to_rgba8().as_raw(),
-            ),
-            Default::default(),
-        );
-        self.texture = Some(texture);
-        Ok(())
-    }
 
     pub fn reset(&mut self) {
         self.images.clear();
@@ -406,82 +328,11 @@ impl ImageProcessor {
         self.adding_on_progress = false;
         self.image_output_file.clear();
         self.texture = None;
-        self.corner_points.clear();
         self.selection = None;
         self.start_button_text = "selection".to_string();
     }
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         Default::default()
-    }
-
-    #[allow(dead_code)]
-    fn load_image<P: AsRef<Path>>(&mut self, path: P) -> Result<(), Box<dyn Error>> {
-        let img = image::open(path).unwrap();
-        self.max_width = self.max_width.max(img.width());
-        self.total_height += img.height();
-        self.images.push(img);
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn load_images<P: AsRef<Path>>(&mut self, paths: &[P]) -> Result<(), Box<dyn Error>> {
-        for path in paths {
-            self.load_image(path).unwrap();
-        }
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn process<P: AsRef<Path>>(&mut self, path: P) -> Result<DynamicImage, Box<dyn Error>> {
-        if self.images.is_empty() {
-            return Err("No images loaded".into());
-        }
-
-        let mut output = ImageBuffer::from_fn(self.max_width, self.total_height, |_, _| {
-            Rgba([255, 255, 255, 255])
-        });
-
-        let mut y_offset = 0;
-
-        for img in &self.images {
-            let x_offset = (self.max_width - img.width()) / 2;
-            image::imageops::overlay(&mut output, img, x_offset.into(), y_offset);
-            y_offset += img.height() as i64;
-        }
-
-        let dynamic_image = DynamicImage::ImageRgba8(output);
-        println!("{}, {}", dynamic_image.width(), dynamic_image.height());
-        dynamic_image
-            .save_with_format(&path, ImageFormat::Png)
-            .unwrap();
-
-        // let data = String::from("for test");
-        // self.str_clipboard.set_contents(data).unwrap();
-        // let content = self.str_clipboard.get_contents().unwrap();
-        // println!("content: {}", content);
-
-        let img_rgba = dynamic_image.to_rgba8();
-        let width = img_rgba.width() as usize;
-        let height = img_rgba.height() as usize;
-        let bytes = img_rgba.into_raw();
-        println!("{width}, {height}, {}", bytes.len());
-        // let mut clipboard = Clipboard::new().unwrap();
-        // self.image_clipboard
-        //     .set_image(arboard::ImageData {
-        //         width,
-        //         height,
-        //         bytes: bytes.into(),
-        //     })
-        //     .unwrap();
-        // let the_string = "testing!";
-        // self.image_clipboard.set_text(the_string).unwrap();
-        // println!(
-        //     "But now the clipboard text should be: text \"{:?}\", image \"{:?}\"",
-        //     self.image_clipboard.get_text(),
-        //     self.image_clipboard.get_image().unwrap().bytes.len()
-        // );
-
-        Ok(dynamic_image)
     }
 
     fn clear_path(&mut self, path: &Path) {
@@ -513,31 +364,6 @@ fn clear_directory<P: AsRef<Path>>(dir: P) -> std::io::Result<()> {
         }
     }
     Ok(())
-}
-
-#[allow(dead_code)]
-fn capture_screen_area(
-    x: i32,
-    y: i32,
-    width: i32,
-    height: i32,
-    output_path: &str,
-) -> Result<(), String> {
-    let output = Command::new("scrot")
-        .args(&[
-            "-a",
-            &format!("{},{},{},{}", x, y, width, height),
-            output_path,
-        ])
-        .output()
-        .map_err(|e| format!("执行scrot失败: {}", e))?;
-
-    if output.status.success() {
-        Ok(())
-    } else {
-        let error = String::from_utf8_lossy(&output.stderr);
-        Err(format!("scrot执行出错: {}", error))
-    }
 }
 
 impl eframe::App for ImageProcessor {

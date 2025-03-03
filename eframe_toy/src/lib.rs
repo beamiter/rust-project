@@ -8,3 +8,5 @@ pub use image_concatenator::ImageProcessor;
 
 mod screen_selection;
 pub use screen_selection::ScreenSelection;
+
+mod deprecated;
