@@ -1,6 +1,15 @@
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
+use clap::Parser;
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+struct Args {
+    #[arg(short, long, default_value_t = 1)]
+    instance: u8,
+}
+
 // When compiling natively:
 #[cfg(not(target_arch = "wasm32"))]
 fn main() -> eframe::Result {
@@ -12,12 +21,31 @@ fn main() -> eframe::Result {
             .with_min_inner_size([400.0, 300.0]),
         ..Default::default()
     };
-    eframe::run_native(
-        "eframe toy",
-        native_options,
-        // Box::new(|cc| Ok(Box::new(toy::SSHCommander::new(cc)))),
-        Box::new(|cc| Ok(Box::new(toy::ImageProcessor::new(cc)))),
-    )
+
+    let args = Args::parse();
+    match args.instance {
+        0 => eframe::run_native(
+            "ssh commander",
+            native_options,
+            Box::new(|cc| Ok(Box::new(toy::SSHCommander::new(cc)))),
+        ),
+        1 => eframe::run_native(
+            "image processor",
+            native_options,
+            Box::new(|cc| Ok(Box::new(toy::ImageProcessor::new(cc)))),
+        ),
+        2 => eframe::run_native(
+            "filer",
+            native_options,
+            Box::new(|cc| {
+                toy::configure_text_styles(&cc.egui_ctx);
+                Ok(Box::<toy::Filer>::default())
+            }),
+        ),
+        _ => {
+            panic!("unsupported instance");
+        }
+    }
 }
 
 // When compiling to web using trunk:

@@ -4,7 +4,7 @@ use eframe::egui;
 use egui::{FontFamily, FontId, TextStyle};
 use std::collections::BTreeMap;
 
-fn configure_text_styles(ctx: &egui::Context) {
+pub fn configure_text_styles(ctx: &egui::Context) {
     use FontFamily::{Monospace, Proportional};
 
     let text_styles: BTreeMap<TextStyle, FontId> = [
@@ -18,22 +18,7 @@ fn configure_text_styles(ctx: &egui::Context) {
     ctx.all_styles_mut(move |style| style.text_styles = text_styles.clone());
 }
 
-fn main() -> eframe::Result {
-    let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([900.0, 600.0]),
-        ..Default::default()
-    };
-    eframe::run_native(
-        "My egui App",
-        options,
-        Box::new(|cc| {
-            configure_text_styles(&cc.egui_ctx);
-            Ok(Box::<MyApp>::default())
-        }),
-    )
-}
-
-struct MyApp {
+pub struct Filer {
     edit_path: PathBuf,
     edit_path_string: String,
     selected_path_chain: Vec<Option<PathBuf>>,
@@ -48,7 +33,7 @@ struct FileItem {
     is_dir: bool,
 }
 
-impl Default for MyApp {
+impl Default for Filer {
     fn default() -> Self {
         let current_path = std::env::current_dir().unwrap_or_default();
         let mut res = Self {
@@ -62,7 +47,7 @@ impl Default for MyApp {
         res
     }
 }
-impl MyApp {
+impl Filer {
     const MAX_DEPTH: usize = 8;
     fn load_directory(&self, path: &PathBuf) -> Vec<FileItem> {
         std::fs::read_dir(path)
@@ -183,7 +168,7 @@ impl MyApp {
     }
 }
 
-impl eframe::App for MyApp {
+impl eframe::App for Filer {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::TopBottomPanel::top("top_panel").show(ctx, |ui| {
             ui.horizontal(|ui| {

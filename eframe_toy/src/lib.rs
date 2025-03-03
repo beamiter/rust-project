@@ -10,3 +10,7 @@ mod screen_selection;
 pub use screen_selection::ScreenSelection;
 
 mod deprecated;
+
+mod filer;
+pub use filer::configure_text_styles;
+pub use filer::Filer;

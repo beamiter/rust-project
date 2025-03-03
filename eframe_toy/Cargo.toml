@@ -30,6 +30,7 @@ enigo = "0.3.0"
 active-win-pos-rs = "0.9.0"
 device_query = "3.0.0"
 rayon = "1.10.0"
+clap = { version = "4.5.31", features = ["derive"] }
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
