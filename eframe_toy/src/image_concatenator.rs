@@ -1,7 +1,6 @@
 use arboard::Clipboard;
 use copypasta::{x11_clipboard::X11ClipboardContext, ClipboardContext};
 use device_query::{DeviceQuery, DeviceState};
-use egui::Widget;
 use enigo::Coordinate::Abs;
 use enigo::{Enigo, Mouse, Settings};
 use image::GenericImageView;
@@ -12,6 +11,8 @@ use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
 use std::{fs, path::Path, process::Command};
+
+use crate::ScreenSelection;
 
 #[allow(dead_code)]
 pub struct ImageProcessor {
@@ -36,6 +37,7 @@ pub struct ImageProcessor {
     enigo: Enigo,
     start_checkbox_pos: (i32, i32),
     scroll_num: i32,
+    selection: Option<ScreenSelection>,
 }
 impl Default for ImageProcessor {
     fn default() -> Self {
@@ -60,7 +62,8 @@ impl Default for ImageProcessor {
             device_state: DeviceState::new(),
             enigo: Enigo::new(&Settings::default()).unwrap(),
             start_checkbox_pos: (0, 0),
-            scroll_num: 2,
+            scroll_num: 10,
+            selection: None,
         }
     }
 }
@@ -318,6 +321,7 @@ impl ImageProcessor {
 
         Ok(())
     }
+    #[allow(dead_code)]
     fn select_positions(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut left_button_was_pressed = false;
         self.corner_points.clear();
@@ -370,6 +374,7 @@ impl ImageProcessor {
         self.corner_dy = dy;
         Ok(())
     }
+    #[allow(dead_code)]
     fn load_image_from_path(
         &mut self,
         path: &std::path::Path,
@@ -398,6 +403,8 @@ impl ImageProcessor {
         self.adding_on_progress = false;
         self.image_output_file.clear();
         self.texture = None;
+        self.corner_points.clear();
+        self.selection = None;
     }
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         Default::default()
@@ -505,6 +512,7 @@ fn clear_directory<P: AsRef<Path>>(dir: P) -> std::io::Result<()> {
     Ok(())
 }
 
+#[allow(dead_code)]
 fn capture_screen_area(
     x: i32,
     y: i32,
@@ -531,6 +539,13 @@ fn capture_screen_area(
 
 impl eframe::App for ImageProcessor {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // self.file_prefix += 1;
+        // self.enigo
+        //     .scroll(self.scroll_num, enigo::Axis::Vertical)
+        //     .unwrap();
+        // println!("scroll_num: {}, {}", self.scroll_num, self.file_prefix);
+        // ctx.request_repaint_after_secs(2.0);
+        // return;
         // match get_active_window() {
         //     Ok(window) => {
         //         println!("活动窗口标题: {}", window.title);
@@ -565,7 +580,7 @@ impl eframe::App for ImageProcessor {
                 ui.add(
                     egui::DragValue::new(&mut self.scroll_num)
                         .speed(1)
-                        .range(0..=4),
+                        .range(1..=20),
                 );
                 ui.heading("save path: ");
                 ui.add(egui::TextEdit::singleline(&mut self.save_path));
@@ -588,29 +603,25 @@ impl eframe::App for ImageProcessor {
                 if self.adding_on_progress {
                     self.adding_on_progress = false;
                     if self.file_prefix == 0 {
-                        // select position once.
-                        self.select_positions().unwrap();
                         self.clear_path(path);
+                        if let Ok(selection) = ScreenSelection::from_slop() {
+                            self.selection = Some(selection);
+                        }
                     }
-                    if self.corner_points.len() == 2 {
-                        let mut path_buf = path.to_path_buf();
-                        path_buf.push(format!("{}.png", self.file_prefix));
-                        let path_str = path_buf.to_str().unwrap();
-                        let left_corner_x = self.corner_points[0].0;
-                        let left_corner_y = self.corner_points[0].1;
-                        if let Ok(()) = capture_screen_area(
-                            left_corner_x,
-                            left_corner_y,
-                            self.corner_dx,
-                            self.corner_dy,
-                            path_str,
-                        ) {
+                    let mut path_buf = path.to_path_buf();
+                    path_buf.push(format!("{}.png", self.file_prefix));
+                    let path_str = path_buf.to_str().unwrap();
+                    if let Some(selection) = &self.selection {
+                        if let Ok(_) = selection.capture_screenshot(path_str) {
                             self.enigo
-                                .move_mouse(left_corner_x, left_corner_y, Abs)
+                                .move_mouse(selection.left_x(), selection.top_y(), Abs)
                                 .unwrap();
+                            thread::sleep(Duration::from_millis(10));
                             self.enigo
                                 .scroll(self.scroll_num, enigo::Axis::Vertical)
                                 .unwrap();
+                            //  Should sleep!
+                            thread::sleep(Duration::from_millis(10));
                             self.enigo
                                 .move_mouse(
                                     self.start_checkbox_pos.0,
@@ -623,8 +634,11 @@ impl eframe::App for ImageProcessor {
                             self.file_prefix += 1;
                         } else {
                             self.adding_on_progress = false;
-                            self.image_log = "escape screen shot".to_string();
+                            self.image_log = "No screenshot".to_string();
                         }
+                    } else {
+                        self.adding_on_progress = false;
+                        self.image_log = "No selection".to_string();
                     }
                 }
                 let rich_text = egui::RichText::new("start".to_string())
@@ -683,13 +697,13 @@ impl eframe::App for ImageProcessor {
                 ui.label(format!("{}", &self.image_log));
             });
             ui.separator();
-            let image_path = self.image_output_file.as_path().to_path_buf();
-            let _ = self.load_image_from_path(&image_path, ctx);
-            if let Some(texture) = &self.texture {
-                egui::Image::new(texture).shrink_to_fit().ui(ui);
-            } else {
-                ui.label("Failed to load image");
-            }
+            // let image_path = self.image_output_file.as_path().to_path_buf();
+            // let _ = self.load_image_from_path(&image_path, ctx);
+            // if let Some(texture) = &self.texture {
+            //     egui::Image::new(texture).shrink_to_fit().ui(ui);
+            // } else {
+            //     ui.label("Failed to load image");
+            // }
 
             ui.separator();
 
