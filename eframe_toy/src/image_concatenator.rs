@@ -417,7 +417,7 @@ impl eframe::App for ImageProcessor {
                 ui.add(
                     egui::DragValue::new(&mut self.scroll_num)
                         .speed(1)
-                        .range(1..=20),
+                        .range(0..=20),
                 );
                 ui.heading("save path: ");
                 ui.add(egui::TextEdit::singleline(&mut self.save_path));
