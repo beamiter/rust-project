@@ -1,6 +1,7 @@
 use arboard::Clipboard;
 use copypasta::{x11_clipboard::X11ClipboardContext, ClipboardContext};
 use device_query::{DeviceQuery, DeviceState};
+use egui::Widget;
 use enigo::Coordinate::Abs;
 use enigo::{Enigo, Mouse, Settings};
 use image::GenericImageView;
@@ -38,6 +39,7 @@ pub struct ImageProcessor {
     start_checkbox_pos: (i32, i32),
     scroll_num: i32,
     selection: Option<ScreenSelection>,
+    start_button_text: String,
 }
 impl Default for ImageProcessor {
     fn default() -> Self {
@@ -64,6 +66,7 @@ impl Default for ImageProcessor {
             start_checkbox_pos: (0, 0),
             scroll_num: 10,
             selection: None,
+            start_button_text: "selection".to_string(),
         }
     }
 }
@@ -405,6 +408,7 @@ impl ImageProcessor {
         self.texture = None;
         self.corner_points.clear();
         self.selection = None;
+        self.start_button_text = "selection".to_string();
     }
     pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
         Default::default()
@@ -481,7 +485,6 @@ impl ImageProcessor {
     }
 
     fn clear_path(&mut self, path: &Path) {
-        self.reset();
         if path.exists() {
             println!("Clearing all files in {:?}", path);
             match clear_directory(path) {
@@ -603,6 +606,7 @@ impl eframe::App for ImageProcessor {
                 if self.adding_on_progress {
                     self.adding_on_progress = false;
                     if self.file_prefix == 0 {
+                        self.reset();
                         self.clear_path(path);
                         if let Ok(selection) = ScreenSelection::from_slop() {
                             self.selection = Some(selection);
@@ -612,6 +616,7 @@ impl eframe::App for ImageProcessor {
                     path_buf.push(format!("{}.png", self.file_prefix));
                     let path_str = path_buf.to_str().unwrap();
                     if let Some(selection) = &self.selection {
+                        self.start_button_text = "step".to_string();
                         if let Ok(_) = selection.capture_screenshot(path_str) {
                             self.enigo
                                 .move_mouse(selection.left_x(), selection.top_y(), Abs)
@@ -641,7 +646,7 @@ impl eframe::App for ImageProcessor {
                         self.image_log = "No selection".to_string();
                     }
                 }
-                let rich_text = egui::RichText::new("start".to_string())
+                let rich_text = egui::RichText::new(&self.start_button_text)
                     .strong()
                     .font(egui::FontId::monospace(26.));
                 if ui
@@ -669,9 +674,9 @@ impl eframe::App for ImageProcessor {
                     //     self.file_prefix = 0;
                     // }
                     if self.concatenate_images(&path_buf).is_ok() {
+                        self.reset();
                         self.image_output_file = path_buf;
                         self.image_log = format!("Save to: {:?}", self.image_output_file);
-                        self.file_prefix = 0;
                     }
                 }
                 ui.separator();
@@ -681,6 +686,7 @@ impl eframe::App for ImageProcessor {
                 let button =
                     egui::Button::new(rich_text).min_size(egui::vec2(button_width, button_height));
                 if ui.add(button).clicked() {
+                    self.reset();
                     self.clear_path(path);
                 }
             });
@@ -697,13 +703,13 @@ impl eframe::App for ImageProcessor {
                 ui.label(format!("{}", &self.image_log));
             });
             ui.separator();
-            // let image_path = self.image_output_file.as_path().to_path_buf();
-            // let _ = self.load_image_from_path(&image_path, ctx);
-            // if let Some(texture) = &self.texture {
-            //     egui::Image::new(texture).shrink_to_fit().ui(ui);
-            // } else {
-            //     ui.label("Failed to load image");
-            // }
+            let image_path = self.image_output_file.as_path().to_path_buf();
+            let _ = self.load_image_from_path(&image_path, ctx);
+            if let Some(texture) = &self.texture {
+                egui::Image::new(texture).shrink_to_fit().ui(ui);
+            } else {
+                ui.label("Failed to load image");
+            }
 
             ui.separator();
 
