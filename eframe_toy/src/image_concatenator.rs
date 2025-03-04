@@ -14,12 +14,28 @@ use std::{fs, path::Path};
 
 use crate::{correlation_stitcher, direct_stitcher, ScreenSelection};
 
+use serde::{Deserialize, Serialize};
+#[derive(Serialize, Deserialize, Debug)]
+pub struct UserInfo {
+    pub save_path: String,
+    pub output_file_name: String,
+    pub scroll_num: i32,
+    pub pixels_per_scroll: i32,
+}
+impl Default for UserInfo {
+    fn default() -> Self {
+        Self {
+            save_path: "/tmp/image_dir/".to_string(),
+            output_file_name: String::from("output.png"),
+            scroll_num: 5,
+            pixels_per_scroll: 120,
+        }
+    }
+}
 pub struct ImageProcessor {
     pub images: Vec<DynamicImage>,
     pub max_width: u32,
     pub total_height: u32,
-    pub save_path: String,
-    pub file_name: String,
     pub file_prefix: usize,
     pub paths: Vec<String>,
     pub image_log: String,
@@ -32,12 +48,11 @@ pub struct ImageProcessor {
     pub device_state: DeviceState,
     pub enigo: Enigo,
     pub start_checkbox_pos: (i32, i32),
-    pub scroll_num: i32,
     pub selection: Option<ScreenSelection>,
     pub start_button_text: String,
     pub scroll_delta_x: i32,
     pub scroll_delta_y: i32,
-    pub pixels_per_scroll: i32,
+    pub user_info: UserInfo,
 }
 impl Default for ImageProcessor {
     fn default() -> Self {
@@ -45,8 +60,6 @@ impl Default for ImageProcessor {
             images: Vec::new(),
             max_width: 0,
             total_height: 0,
-            save_path: "/tmp/image_dir/".to_string(),
-            file_name: String::from("output.png"),
             file_prefix: 0,
             paths: vec![],
             image_log: String::new(),
@@ -59,12 +72,11 @@ impl Default for ImageProcessor {
             device_state: DeviceState::new(),
             enigo: Enigo::new(&Settings::default()).unwrap(),
             start_checkbox_pos: (0, 0),
-            scroll_num: 5,
             selection: None,
             start_button_text: "selection".to_string(),
             scroll_delta_x: 0,
             scroll_delta_y: 0,
-            pixels_per_scroll: 120,
+            user_info: UserInfo::default(),
         }
     }
 }
@@ -85,7 +97,7 @@ impl ImageProcessor {
         }
 
         let use_direct = false;
-        let y_offset = self.scroll_num * self.pixels_per_scroll;
+        let y_offset = self.user_info.scroll_num * self.user_info.pixels_per_scroll;
         let similarity_threshold = 0.9;
         let use_fixed_offset = false;
         if use_direct {
@@ -117,7 +129,15 @@ impl ImageProcessor {
         self.selection = None;
         self.start_button_text = "selection".to_string();
     }
-    pub fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    pub fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        if let Some(storage) = cc.storage {
+            let user_info =
+                eframe::get_value::<UserInfo>(storage, eframe::APP_KEY).unwrap_or_default();
+            return Self {
+                user_info,
+                ..Default::default()
+            };
+        }
         Default::default()
     }
 
@@ -153,6 +173,9 @@ fn clear_directory<P: AsRef<Path>>(dir: P) -> std::io::Result<()> {
 }
 
 impl eframe::App for ImageProcessor {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        eframe::set_value(storage, eframe::APP_KEY, &self.user_info);
+    }
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // self.file_prefix += 1;
         // self.enigo
@@ -203,7 +226,7 @@ impl eframe::App for ImageProcessor {
                 ui.separator();
                 ui.heading("pixels_per_scroll: ");
                 ui.add(
-                    egui::DragValue::new(&mut self.pixels_per_scroll)
+                    egui::DragValue::new(&mut self.user_info.pixels_per_scroll)
                         .speed(1)
                         .range(1..=200),
                 );
@@ -212,15 +235,15 @@ impl eframe::App for ImageProcessor {
             ui.horizontal(|ui| {
                 ui.heading("scroll num: ");
                 ui.add(
-                    egui::DragValue::new(&mut self.scroll_num)
+                    egui::DragValue::new(&mut self.user_info.scroll_num)
                         .speed(1)
                         .range(0..=20),
                 );
                 ui.heading("save path: ");
-                ui.add(egui::TextEdit::singleline(&mut self.save_path));
+                ui.add(egui::TextEdit::singleline(&mut self.user_info.save_path));
             });
             ui.separator();
-            let save_path = self.save_path.clone();
+            let save_path = self.user_info.save_path.clone();
             let path = Path::new(&save_path);
             if !path.exists() {
                 match fs::create_dir_all(path) {
@@ -231,9 +254,6 @@ impl eframe::App for ImageProcessor {
             let button_width = 100.;
             let button_height = 50.;
             ui.horizontal(|ui| {
-                let mut style: egui::Style = (*ctx.style()).clone();
-                style.spacing.interact_size = egui::vec2(button_width, button_height);
-                ctx.set_style(style);
                 if self.adding_on_progress {
                     self.adding_on_progress = false;
                     if self.file_prefix == 0 {
@@ -254,7 +274,7 @@ impl eframe::App for ImageProcessor {
                                 .unwrap();
                             thread::sleep(Duration::from_millis(10));
                             self.enigo
-                                .scroll(self.scroll_num, enigo::Axis::Vertical)
+                                .scroll(self.user_info.scroll_num, enigo::Axis::Vertical)
                                 .unwrap();
                             //  Should sleep!
                             thread::sleep(Duration::from_millis(10));
@@ -281,9 +301,13 @@ impl eframe::App for ImageProcessor {
                     .strong()
                     .font(egui::FontId::monospace(26.));
                 if ui
-                    .checkbox(&mut self.adding_on_progress, rich_text)
+                    .add(
+                        egui::Button::new(rich_text)
+                            .min_size(egui::vec2(button_width, button_height)),
+                    )
                     .clicked()
                 {
+                    self.adding_on_progress = true;
                     self.start_checkbox_pos = self.device_state.get_mouse().coords;
                 }
 
@@ -295,15 +319,7 @@ impl eframe::App for ImageProcessor {
                     egui::Button::new(rich_text).min_size(egui::vec2(button_width, button_height));
                 if ui.add(button).clicked() {
                     let mut path_buf = path.to_path_buf();
-                    path_buf.push(&self.file_name);
-                    // let paths = self.paths.clone();
-                    // self.load_images(&paths).unwrap();
-                    // No remove find_overlapping_region_ncc.
-                    // if self.process(&path_buf).is_ok() {
-                    //     self.image_output_file = path_buf;
-                    //     self.image_log = format!("Save to: {:?}", self.image_output_file);
-                    //     self.file_prefix = 0;
-                    // }
+                    path_buf.push(&self.user_info.output_file_name);
                     if self.concatenate_images(&path_buf).is_ok() {
                         self.reset();
                         self.image_output_file = path_buf;
@@ -314,7 +330,7 @@ impl eframe::App for ImageProcessor {
                 if ui
                     .add(
                         egui::Button::new("Foler 📋")
-                            .min_size(egui::vec2(button_width * 0.5, button_height * 0.5)),
+                            .min_size(egui::vec2(button_width, button_height)),
                     )
                     .clicked()
                 {

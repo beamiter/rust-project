@@ -183,7 +183,7 @@ impl ImageProcessor {
             if corner_points.len() == 1 && !scroll_once {
                 scroll_once = true;
                 self.enigo
-                    .scroll(self.scroll_num, enigo::Axis::Vertical)
+                    .scroll(self.user_info.scroll_num, enigo::Axis::Vertical)
                     .unwrap();
                 thread::sleep(Duration::from_millis(10));
             }
