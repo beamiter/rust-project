@@ -1,4 +1,4 @@
-use image::{DynamicImage, GenericImageView, ImageBuffer};
+use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba};
 use std::error::Error;
 use std::path::PathBuf;
 
@@ -166,7 +166,8 @@ impl ScrollStitcher {
         println!("创建 {}x{} 的输出图像", width, total_height);
 
         // 创建输出图像
-        let mut output = ImageBuffer::new(width, total_height);
+        let mut output =
+            ImageBuffer::from_fn(width, total_height, |_, _| Rgba([255, 255, 255, 255]));
 
         // 复制第一张图像
         for y in 0..images[0].height() {

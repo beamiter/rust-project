@@ -1,5 +1,4 @@
 use arboard::Clipboard;
-use copypasta::{x11_clipboard::X11ClipboardContext, ClipboardContext};
 use device_query::{DeviceQuery, DeviceState};
 use egui::Widget;
 use enigo::Coordinate::Abs;
@@ -33,14 +32,11 @@ impl Default for UserInfo {
     }
 }
 pub struct ImageProcessor {
-    pub images: Vec<DynamicImage>,
-    pub max_width: u32,
-    pub total_height: u32,
+    pub last_image: Option<DynamicImage>,
     pub file_prefix: usize,
     pub paths: Vec<String>,
     pub image_log: String,
     pub adding_on_progress: bool,
-    pub str_clipboard: X11ClipboardContext,
     pub image_clipboard: Clipboard,
     pub text: String,
     pub image_output_file: PathBuf,
@@ -57,14 +53,11 @@ pub struct ImageProcessor {
 impl Default for ImageProcessor {
     fn default() -> Self {
         Self {
-            images: Vec::new(),
-            max_width: 0,
-            total_height: 0,
+            last_image: None,
             file_prefix: 0,
             paths: vec![],
             image_log: String::new(),
             adding_on_progress: false,
-            str_clipboard: ClipboardContext::new().unwrap(),
             image_clipboard: Clipboard::new().unwrap(),
             text: String::new(),
             image_output_file: PathBuf::new(),
@@ -117,9 +110,7 @@ impl ImageProcessor {
     }
 
     pub fn reset(&mut self) {
-        self.images.clear();
-        self.max_width = 0;
-        self.total_height = 0;
+        self.last_image = None;
         self.file_prefix = 0;
         self.paths.clear();
         self.image_log.clear();
@@ -269,32 +260,42 @@ impl eframe::App for ImageProcessor {
                     if let Some(selection) = &self.selection {
                         self.start_button_text = "step".to_string();
                         if let Ok(_) = selection.capture_screenshot(path_str) {
-                            self.enigo
-                                .move_mouse(selection.left_x(), selection.top_y(), Abs)
-                                .unwrap();
-                            thread::sleep(Duration::from_millis(10));
-                            self.enigo
-                                .scroll(self.user_info.scroll_num, enigo::Axis::Vertical)
-                                .unwrap();
-                            //  Should sleep!
-                            thread::sleep(Duration::from_millis(10));
-                            self.enigo
-                                .move_mouse(
-                                    self.start_checkbox_pos.0,
-                                    self.start_checkbox_pos.1,
-                                    Abs,
-                                )
-                                .unwrap();
-                            self.image_log = format!("Current: {}", &path_str);
-                            self.paths.push(path_str.to_string());
-                            self.file_prefix += 1;
+                            let current_image = image::open(&path_buf).unwrap();
+                            let mut same_image = false;
+                            if let Some(prev_image) = &self.last_image {
+                                if *prev_image == current_image {
+                                    same_image = true;
+                                }
+                            }
+                            if same_image {
+                            self.image_log = "Skip same screenshot! ".to_string();
+                            } else {
+                                self.last_image = Some(current_image);
+                                self.enigo
+                                    .move_mouse(selection.left_x(), selection.top_y(), Abs)
+                                    .unwrap();
+                                thread::sleep(Duration::from_millis(10));
+                                self.enigo
+                                    .scroll(self.user_info.scroll_num, enigo::Axis::Vertical)
+                                    .unwrap();
+                                //  Should sleep!
+                                thread::sleep(Duration::from_millis(10));
+                                self.enigo
+                                    .move_mouse(
+                                        self.start_checkbox_pos.0,
+                                        self.start_checkbox_pos.1,
+                                        Abs,
+                                    )
+                                    .unwrap();
+                                self.image_log = format!("Current: {}", &path_str);
+                                self.paths.push(path_str.to_string());
+                                self.file_prefix += 1;
+                            }
                         } else {
-                            self.adding_on_progress = false;
-                            self.image_log = "No screenshot".to_string();
+                            self.image_log = "No screenshot!".to_string();
                         }
                     } else {
-                        self.adding_on_progress = false;
-                        self.image_log = "No selection".to_string();
+                        self.image_log = "No selection!".to_string();
                     }
                 }
                 let rich_text = egui::RichText::new(&self.start_button_text)
@@ -318,12 +319,17 @@ impl eframe::App for ImageProcessor {
                 let button =
                     egui::Button::new(rich_text).min_size(egui::vec2(button_width, button_height));
                 if ui.add(button).clicked() {
+                    let start = std::time::Instant::now();
                     let mut path_buf = path.to_path_buf();
                     path_buf.push(&self.user_info.output_file_name);
                     if self.concatenate_images(&path_buf).is_ok() {
                         self.reset();
                         self.image_output_file = path_buf;
-                        self.image_log = format!("Save to: {:?}", self.image_output_file);
+                        let time_cost = start.elapsed().as_secs_f32();
+                        self.image_log = format!(
+                            "Save to: {:?}, time cost: {time_cost} seconds",
+                            self.image_output_file
+                        );
                     }
                 }
                 ui.separator();
