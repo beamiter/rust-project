@@ -182,7 +182,9 @@ impl ImageProcessor {
             }
             if corner_points.len() == 1 && !scroll_once {
                 scroll_once = true;
-                self.enigo.scroll(1, enigo::Axis::Vertical).unwrap();
+                self.enigo
+                    .scroll(self.scroll_num, enigo::Axis::Vertical)
+                    .unwrap();
                 thread::sleep(Duration::from_millis(10));
             }
             let left_button_pressed = mouse.button_pressed[1];

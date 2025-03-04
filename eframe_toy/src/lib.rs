@@ -14,3 +14,7 @@ mod deprecated;
 mod filer;
 pub use filer::configure_text_styles;
 pub use filer::Filer;
+
+mod correlation_stitcher;
+
+mod direct_stitcher;

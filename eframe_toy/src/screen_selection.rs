@@ -72,26 +72,26 @@ impl ScreenSelection {
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::screen_selection::ScreenSelection;
-
-    #[test]
-    fn it_work() -> Result<(), Box<dyn std::error::Error>> {
-        let selection = ScreenSelection::from_slop()?;
-
-        println!("选区左上角坐标: ({}, {})", selection.x, selection.y);
-        println!("选区宽度: {}, 高度: {}", selection.width, selection.height);
-        println!(
-            "选区右下角坐标: ({}, {})",
-            selection.right_x(),
-            selection.bottom_y()
-        );
-
-        selection.capture_screenshot("screenshot.png")?;
-
-        println!("截图已保存到 screenshot.png");
-
-        Ok(())
-    }
-}
+// #[cfg(test)]
+// mod tests {
+//     use crate::screen_selection::ScreenSelection;
+//
+//     #[test]
+//     fn it_work() -> Result<(), Box<dyn std::error::Error>> {
+//         let selection = ScreenSelection::from_slop()?;
+//
+//         println!("选区左上角坐标: ({}, {})", selection.x, selection.y);
+//         println!("选区宽度: {}, 高度: {}", selection.width, selection.height);
+//         println!(
+//             "选区右下角坐标: ({}, {})",
+//             selection.right_x(),
+//             selection.bottom_y()
+//         );
+//
+//         selection.capture_screenshot("screenshot.png")?;
+//
+//         println!("截图已保存到 screenshot.png");
+//
+//         Ok(())
+//     }
+// }

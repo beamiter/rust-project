@@ -4,9 +4,7 @@ use device_query::{DeviceQuery, DeviceState};
 use egui::Widget;
 use enigo::Coordinate::Abs;
 use enigo::{Enigo, Mouse, Settings};
-use image::GenericImageView;
-use image::{DynamicImage, ImageBuffer, Rgba};
-use rayon::prelude::*;
+use image::DynamicImage;
 use std::error::Error;
 use std::path::PathBuf;
 use std::process::Command;
@@ -14,7 +12,7 @@ use std::thread;
 use std::time::Duration;
 use std::{fs, path::Path};
 
-use crate::ScreenSelection;
+use crate::{correlation_stitcher, direct_stitcher, ScreenSelection};
 
 pub struct ImageProcessor {
     pub images: Vec<DynamicImage>,
@@ -39,6 +37,7 @@ pub struct ImageProcessor {
     pub start_button_text: String,
     pub scroll_delta_x: i32,
     pub scroll_delta_y: i32,
+    pub pixels_per_scroll: i32,
 }
 impl Default for ImageProcessor {
     fn default() -> Self {
@@ -60,11 +59,12 @@ impl Default for ImageProcessor {
             device_state: DeviceState::new(),
             enigo: Enigo::new(&Settings::default()).unwrap(),
             start_checkbox_pos: (0, 0),
-            scroll_num: 10,
+            scroll_num: 5,
             selection: None,
             start_button_text: "selection".to_string(),
             scroll_delta_x: 0,
             scroll_delta_y: 0,
+            pixels_per_scroll: 120,
         }
     }
 }
@@ -77,255 +77,29 @@ impl ImageProcessor {
             .expect("failed to open folder");
         Ok(())
     }
-    fn find_overlapping_region_ncc(
-        &mut self,
-        img1: &DynamicImage,
-        img2: &DynamicImage,
-        max_overlap_height: Option<u32>,
-    ) -> Option<u32> {
-        let (width1, height1) = img1.dimensions();
-        let (width2, height2) = img2.dimensions();
-
-        let compare_width = width1.min(width2);
-
-        let max_overlap = max_overlap_height.unwrap_or_else(|| height1.min(height2).min(500));
-        let min_overlap = 10;
-
-        let mut best_match_height = 0;
-        let mut best_match_score = -1.0;
-
-        let results: Vec<(u32, f64)> = (min_overlap..=max_overlap)
-            .into_par_iter()
-            .map(|overlap_height| {
-                let bottom_rows = height1 - overlap_height;
-
-                let mut img1_data = Vec::with_capacity((overlap_height * compare_width) as usize);
-                let mut img2_data = Vec::with_capacity((overlap_height * compare_width) as usize);
-
-                for y in 0..overlap_height {
-                    for x in 0..compare_width {
-                        let pixel1 = img1.get_pixel(x, bottom_rows + y);
-                        let pixel2 = img2.get_pixel(x, y);
-
-                        let luma1 = 0.299 * pixel1[0] as f64
-                            + 0.587 * pixel1[1] as f64
-                            + 0.114 * pixel1[2] as f64;
-                        let luma2 = 0.299 * pixel2[0] as f64
-                            + 0.587 * pixel2[1] as f64
-                            + 0.114 * pixel2[2] as f64;
-
-                        img1_data.push(luma1);
-                        img2_data.push(luma2);
-                    }
-                }
-
-                let mean1 = img1_data.iter().sum::<f64>() / img1_data.len() as f64;
-                let mean2 = img2_data.iter().sum::<f64>() / img2_data.len() as f64;
-
-                let mut numerator = 0.0;
-                let mut denom1 = 0.0;
-                let mut denom2 = 0.0;
-
-                for i in 0..img1_data.len() {
-                    let diff1 = img1_data[i] - mean1;
-                    let diff2 = img2_data[i] - mean2;
-
-                    numerator += diff1 * diff2;
-                    denom1 += diff1 * diff1;
-                    denom2 += diff2 * diff2;
-                }
-
-                let ncc = if denom1 > 0.0 && denom2 > 0.0 {
-                    numerator / (denom1.sqrt() * denom2.sqrt())
-                } else {
-                    -1.0
-                };
-
-                (overlap_height, ncc)
-            })
-            .collect();
-
-        for (height, score) in results {
-            if score > best_match_score && score > 0.9 {
-                // 0.9是相关性阈值，可以调整
-                best_match_score = score;
-                best_match_height = height;
-            }
-        }
-
-        if best_match_height > 0 {
-            Some(best_match_height)
-        } else {
-            None
-        }
-    }
-
-    fn stitch_images_with_blend(
-        &mut self,
-        img1: &DynamicImage,
-        img2: &DynamicImage,
-        overlap_height: u32,
-    ) -> DynamicImage {
-        let (width1, height1) = img1.dimensions();
-        let (width2, height2) = img2.dimensions();
-
-        let result_width = width1.max(width2);
-        let result_height = height1 + height2 - overlap_height;
-
-        let mut result = ImageBuffer::new(result_width, result_height);
-
-        for y in 0..height1 - overlap_height {
-            for x in 0..width1 {
-                result.put_pixel(x, y, img1.get_pixel(x, y));
-            }
-        }
-
-        for y in 0..overlap_height {
-            let blend_factor = y as f32 / overlap_height as f32;
-            let img1_y = height1 - overlap_height + y;
-            let img2_y = y;
-
-            for x in 0..result_width {
-                if x < width1 && x < width2 {
-                    let pixel1 = img1.get_pixel(x, img1_y);
-                    let pixel2 = img2.get_pixel(x, img2_y);
-
-                    let blended = Rgba([
-                        ((1.0 - blend_factor) * pixel1[0] as f32 + blend_factor * pixel2[0] as f32)
-                            as u8,
-                        ((1.0 - blend_factor) * pixel1[1] as f32 + blend_factor * pixel2[1] as f32)
-                            as u8,
-                        ((1.0 - blend_factor) * pixel1[2] as f32 + blend_factor * pixel2[2] as f32)
-                            as u8,
-                        ((1.0 - blend_factor) * pixel1[3] as f32 + blend_factor * pixel2[3] as f32)
-                            as u8,
-                    ]);
-
-                    result.put_pixel(x, height1 - overlap_height + y, blended);
-                } else if x < width1 {
-                    result.put_pixel(x, height1 - overlap_height + y, img1.get_pixel(x, img1_y));
-                } else if x < width2 {
-                    result.put_pixel(x, height1 - overlap_height + y, img2.get_pixel(x, img2_y));
-                }
-            }
-        }
-
-        for y in overlap_height..height2 {
-            for x in 0..width2 {
-                result.put_pixel(x, height1 - overlap_height + y, img2.get_pixel(x, y));
-            }
-        }
-
-        DynamicImage::ImageRgba8(result)
-    }
-
-    fn stitch_multiple_images_parallel(
-        &mut self,
-        image_paths: &[PathBuf],
-        max_overlap_height: Option<u32>,
-        use_blend: bool,
-    ) -> Result<DynamicImage, Box<dyn Error>> {
-        if image_paths.is_empty() {
-            return Err("empty image paths".into());
-        }
-
-        println!("正在加载图片...");
-
-        let images: Vec<DynamicImage> = image_paths
-            .par_iter()
-            .map(|path| {
-                println!("加载图片: {}", path.display());
-                image::open(path).map_err(|e| format!("无法加载图片 {}: {}", path.display(), e))
-            })
-            .collect::<Result<Vec<_>, _>>()?;
-
-        if images.len() == 1 {
-            return Ok(images[0].clone());
-        }
-
-        println!("开始拼接图片...");
-
-        let mut result = images[0].clone();
-
-        for i in 1..images.len() {
-            println!("拼接图片 {}/{}", i, images.len() - 1);
-
-            let overlap_height =
-                match self.find_overlapping_region_ncc(&result, &images[i], max_overlap_height) {
-                    Some(height) => {
-                        println!("  检测到重叠高度: {} 像素", height);
-                        height
-                    }
-                    None => {
-                        println!("  未检测到明显重叠，将直接拼接");
-                        0
-                    }
-                };
-
-            if use_blend && overlap_height > 0 {
-                result = self.stitch_images_with_blend(&result, &images[i], overlap_height);
-            } else {
-                result = self.stitch_images(&result, &images[i], overlap_height);
-            }
-        }
-
-        println!("拼接完成!");
-
-        Ok(result)
-    }
-    fn stitch_images(
-        &mut self,
-        img1: &DynamicImage,
-        img2: &DynamicImage,
-        overlap_height: u32,
-    ) -> DynamicImage {
-        let (width1, height1) = img1.dimensions();
-        let (width2, height2) = img2.dimensions();
-
-        let result_width = width1.max(width2);
-        let result_height = height1 + height2 - overlap_height;
-
-        let mut result = ImageBuffer::new(result_width, result_height);
-
-        for y in 0..height1 {
-            for x in 0..width1 {
-                result.put_pixel(x, y, img1.get_pixel(x, y));
-            }
-        }
-
-        for y in overlap_height..height2 {
-            for x in 0..width2 {
-                result.put_pixel(x, height1 + y - overlap_height, img2.get_pixel(x, y));
-            }
-        }
-
-        DynamicImage::ImageRgba8(result)
-    }
 
     fn concatenate_images(&mut self, output_path: &PathBuf) -> Result<(), Box<dyn Error>> {
-        let max_overlap_height = None;
-        let use_blend = false;
         let mut image_paths = Vec::new();
         for dir in &self.paths {
             image_paths.push(PathBuf::from(dir));
         }
 
-        println!("将处理 {} 张图片", image_paths.len());
-        if let Some(max_height) = max_overlap_height {
-            println!("max_height: {} 像素", max_height);
+        let use_direct = false;
+        let y_offset = self.scroll_num * self.pixels_per_scroll;
+        let similarity_threshold = 0.9;
+        let use_fixed_offset = false;
+        if use_direct {
+            let offset_range = 0.2; //(±20%）
+            let stitcher = direct_stitcher::ScrollStitcher::new(y_offset as u32, offset_range);
+            stitcher.process_directory(image_paths, output_path.to_path_buf())?;
+        } else {
+            let stitcher = correlation_stitcher::ScrollStitcher::new(
+                y_offset as u32,
+                similarity_threshold,
+                use_fixed_offset,
+            );
+            stitcher.process_directory(image_paths, output_path.to_path_buf())?;
         }
-        if use_blend {
-            println!("use blend");
-        }
-
-        // 执行图片拼接
-        let result =
-            self.stitch_multiple_images_parallel(&image_paths, max_overlap_height, use_blend)?;
-
-        // 保存结果
-        println!("正在保存结果到: {}", output_path.display());
-        result.save(&output_path)?;
-        println!("保存完成!");
 
         Ok(())
     }
@@ -426,6 +200,13 @@ impl eframe::App for ImageProcessor {
                     "scroll pixel dx: {}, dy: {}",
                     self.scroll_delta_x, self.scroll_delta_y
                 ));
+                ui.separator();
+                ui.heading("pixels_per_scroll: ");
+                ui.add(
+                    egui::DragValue::new(&mut self.pixels_per_scroll)
+                        .speed(1)
+                        .range(1..=200),
+                );
             });
             ui.separator();
             ui.horizontal(|ui| {
