@@ -790,7 +790,7 @@ impl Dwm {
         h: &mut i32,
         interact: bool,
     ) -> bool {
-        // info!("[applysizehints]");
+        info!("[applysizehints] {x}, {y}, {w}, {h}");
         // set minimum possible.
         *w = 1.max(*w);
         *h = 1.max(*h);
@@ -1116,7 +1116,7 @@ impl Dwm {
         }
     }
     pub fn resizeclient(&mut self, c: &mut Client, x: i32, y: i32, w: i32, h: i32) {
-        info!("[resizeclient]");
+        info!("[resizeclient] {x}, {y}, {w}, {h}");
         unsafe {
             let mut wc: XWindowChanges = zeroed();
             c.oldx = c.x;
@@ -1153,7 +1153,7 @@ impl Dwm {
         mut h: i32,
         interact: bool,
     ) {
-        info!("[resize]");
+        info!("[resize] {x}, {y}, {w}, {h}");
         if self.applysizehints(c, &mut x, &mut y, &mut w, &mut h, interact) {
             self.resizeclient(&mut *c.borrow_mut(), x, y, w, h);
         }
@@ -1179,7 +1179,7 @@ impl Dwm {
     }
 
     pub fn showhide(&mut self, c: Option<Rc<RefCell<Client>>>) {
-        // info!("[showhide]");
+        info!("[showhide]");
         if c.is_none() {
             return;
         }
@@ -1187,6 +1187,8 @@ impl Dwm {
             let isvisible = { c.as_ref().unwrap().borrow_mut().isvisible() };
             if isvisible {
                 // show clients top down.
+                let name = c.as_ref().unwrap().borrow_mut().name.clone();
+                info!("[showhide] show clients top down: {name}");
                 let win = c.as_ref().unwrap().borrow_mut().win;
                 let x = c.as_ref().unwrap().borrow_mut().x;
                 let y = c.as_ref().unwrap().borrow_mut().y;
@@ -1218,6 +1220,8 @@ impl Dwm {
                 self.showhide(snext);
             } else {
                 // hide clients bottom up.
+                let name = c.as_ref().unwrap().borrow_mut().name.clone();
+                info!("[showhide] show clients bottom up: {name}");
                 let snext = c.as_ref().unwrap().borrow_mut().snext.clone();
                 self.showhide(snext);
                 let y;
@@ -2559,7 +2563,7 @@ impl Dwm {
         }
     }
     pub fn setlayout(&mut self, arg: *const Arg) {
-        // info!("[setlayout]");
+        info!("[setlayout]");
         unsafe {
             let sel;
             {
@@ -3969,7 +3973,7 @@ impl Dwm {
             let mut n: u32 = 0;
             let mut c = (*m).clients.clone();
             while let Some(ref c_opt) = c {
-                if c_opt.borrow_mut().isvisible() {
+                if c_opt.borrow_mut().isvisible() && !c_opt.borrow_mut().neverfocus {
                     n += 1;
                 }
                 let next = c_opt.borrow_mut().next.clone();
@@ -3982,14 +3986,15 @@ impl Dwm {
                 (*m).ltsymbol = formatted_string;
             }
             c = self.nexttiled((*m).clients.clone());
+            let client_y_offset = self.client_y_offset(&mut *m);
             while let Some(ref c_opt) = c {
                 let bw = c_opt.borrow_mut().bw;
                 self.resize(
                     c_opt,
                     (*m).wx,
-                    (*m).wy,
+                    (*m).wy + client_y_offset,
                     (*m).ww - 2 * bw,
-                    (*m).wh - 2 * bw,
+                    (*m).wh - 2 * bw - client_y_offset,
                     false,
                 );
                 let next = self.nexttiled(c_opt.borrow_mut().next.clone());
