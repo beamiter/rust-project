@@ -5,10 +5,8 @@ use std::process::Command;
 use std::sync::mpsc;
 use std::{ffi::CString, process::exit, ptr::null_mut};
 use std::{thread, time::Duration};
-
 use log::info;
 use simplelog::*;
-
 use libc::{setlocale, LC_CTYPE};
 use x11::xlib::{XCloseDisplay, XOpenDisplay, XSupportsLocale};
 

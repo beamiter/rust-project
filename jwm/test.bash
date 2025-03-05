@@ -1,3 +1,3 @@
-Xephyr :2 -screen 1200x700 &
+Xephyr :2 -screen 960x600 &
 DISPLAY=:2 jwm
 

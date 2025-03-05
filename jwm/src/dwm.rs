@@ -21,6 +21,7 @@ use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+use std::time::{SystemTime, UNIX_EPOCH};
 use std::{os::raw::c_long, usize};
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
 use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
@@ -1552,18 +1553,43 @@ impl Dwm {
             let data = shmem.as_ptr();
             let data_slice = unsafe { std::slice::from_raw_parts_mut(data, serialized.len()) };
             data_slice.copy_from_slice(&serialized);
+            info!("[write_message] {:?}", message);
         }
         Ok(())
     }
     pub fn drawbar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
-        // info!("[drawbar]");
         if Config::show_egui_bar {
-            return self.draw_egui_bar(m);
+            self.draw_egui_bar(m);
+            let num = self.message.monitor_info.monitor_num;
+            info!("[drawbar] num: {}", num);
+            let shared_path = format!("/dev/shm/monitor_{}", num);
+            if !self.egui_bar_shmem.contains_key(&num) {
+                self.egui_bar_shmem.insert(
+                    num,
+                    ShmemConf::new()
+                        .size(1024)
+                        .flink(&shared_path)
+                        .force_create_flink()
+                        .create()
+                        .unwrap(),
+                );
+            }
+            // info!("[drawbar] message: {:?}", self.message);
+            let _ = self.write_message(num, &self.message.clone());
+            if !self.egui_bar_child.contains_key(&num) {
+                let process_name = format!("{}_{}", Config::egui_bar_name, num);
+                let child = Command::new(Config::egui_bar_name)
+                    .arg0(process_name) // This change the class and instance
+                    .arg(shared_path)
+                    .spawn()
+                    .expect("Failled to start egui app");
+                self.egui_bar_child.insert(num, child);
+            }
         }
     }
 
     pub fn restack(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
-        // info!("[restack]");
+        info!("[restack]");
         self.drawbar(m.clone());
 
         unsafe {
@@ -3548,37 +3574,10 @@ impl Dwm {
     pub fn drawbars(&mut self) {
         info!("[drawbars]");
         let mut m = self.mons.clone();
-        self.message = SharedMessage::default();
         while let Some(ref m_opt) = m {
-            let num = m_opt.borrow_mut().num;
-            info!("[drawbars]  num: {}", num);
             self.drawbar(m.clone());
             let next = m_opt.borrow_mut().next.clone();
             m = next;
-
-            let shared_path = format!("/dev/shm/monitor_{}", num);
-            if !self.egui_bar_shmem.contains_key(&num) {
-                self.egui_bar_shmem.insert(
-                    num,
-                    ShmemConf::new()
-                        .size(1024)
-                        .flink(&shared_path)
-                        .force_create_flink()
-                        .create()
-                        .unwrap(),
-                );
-            }
-            info!("[drawbars] message: {:?}", self.message);
-            let _ = self.write_message(num, &self.message.clone());
-            if !self.egui_bar_child.contains_key(&num) {
-                let process_name = format!("{}_{}", Config::egui_bar_name, num);
-                let child = Command::new(Config::egui_bar_name)
-                    .arg0(process_name) // This change the class and instance
-                    .arg(shared_path)
-                    .spawn()
-                    .expect("Failled to start egui app");
-                self.egui_bar_child.insert(num, child);
-            }
         }
     }
     pub fn enternotify(&mut self, e: *mut XEvent) {
@@ -4307,8 +4306,16 @@ impl Dwm {
     pub fn draw_egui_bar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
         info!("[draw_egui_bar]");
         {
-            info!("[draw_egui_bar] {}", m.as_ref().unwrap().borrow_mut());
+            info!(
+                "[draw_egui_bar] {}, timestamp: {}",
+                m.as_ref().unwrap().borrow_mut(),
+                SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .unwrap()
+                    .as_millis()
+            );
         }
+        self.message = SharedMessage::default();
         let mut monitor_info = MonitorInfo::default();
         let mut occ: u32 = 0;
         let mut urg: u32 = 0;

@@ -1,11 +1,15 @@
 mod egui_bar;
 use bincode::deserialize;
+use chrono::Local;
 use egui::{FontFamily, FontId, TextStyle};
 use egui::{Margin, Pos2};
 pub use egui_bar::MyEguiApp;
+use log::info;
 use shared_memory::{Shmem, ShmemConf};
 use shared_structures::SharedMessage;
+use simplelog::*;
 use std::collections::BTreeMap;
+use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{env, thread};
@@ -55,7 +59,7 @@ fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::
             .unwrap()
             .insert(0, font_name);
     }
-    println!("{:?}", fonts.families);
+    info!("{:?}", fonts.families);
     ctx.set_fonts(fonts);
     Ok(())
 }
@@ -98,6 +102,18 @@ fn configure_text_styles(ctx: &egui::Context) {
 fn main() -> eframe::Result {
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_else(|| "".to_string());
+    let now = Local::now();
+    let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
+    let file_name = Path::new(&shared_path)
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("");
+    let log_filename = format!("/tmp/egui_bar_{file_name}_{timestamp}.log");
+    info!("{log_filename}");
+    let _log_file = std::fs::File::create(log_filename).unwrap();
+    // WriteLogger::init(LevelFilter::Warn, Config::default(), _log_file).unwrap();
+    WriteLogger::init(LevelFilter::Info, Config::default(), _log_file).unwrap();
+    // WriteLogger::init(LevelFilter::Info, Config::default(), std::io::stdout()).unwrap();
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_transparent(true)
@@ -151,7 +167,7 @@ fn main() -> eframe::Result {
                         let message: SharedMessage = deserialize(serialized).unwrap();
                         if prev_timestamp != message.timestamp {
                             prev_timestamp = message.timestamp;
-                            // println!("send message: {:?}", message);
+                            info!("send message: {:?}", message);
                             let _ = sender.send(message);
                             need_request_repaint = true;
                         }
@@ -162,7 +178,7 @@ fn main() -> eframe::Result {
                         need_request_repaint = true;
                     }
                     if need_request_repaint {
-                        // println!("request_repaint");
+                        info!("request_repaint");
                         egui_ctx.request_repaint_after(Duration::from_micros(1));
                     }
                     last_secs = cur_secs;
