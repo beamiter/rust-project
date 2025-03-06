@@ -790,7 +790,7 @@ impl Dwm {
         h: &mut i32,
         interact: bool,
     ) -> bool {
-        info!("[applysizehints] {x}, {y}, {w}, {h}");
+        // info!("[applysizehints] {x}, {y}, {w}, {h}");
         // set minimum possible.
         *w = 1.max(*w);
         *h = 1.max(*h);
@@ -1116,7 +1116,7 @@ impl Dwm {
         }
     }
     pub fn resizeclient(&mut self, c: &mut Client, x: i32, y: i32, w: i32, h: i32) {
-        info!("[resizeclient] {x}, {y}, {w}, {h}");
+        // info!("[resizeclient] {x}, {y}, {w}, {h}");
         unsafe {
             let mut wc: XWindowChanges = zeroed();
             c.oldx = c.x;
@@ -1153,7 +1153,7 @@ impl Dwm {
         mut h: i32,
         interact: bool,
     ) {
-        info!("[resize] {x}, {y}, {w}, {h}");
+        // info!("[resize] {x}, {y}, {w}, {h}");
         if self.applysizehints(c, &mut x, &mut y, &mut w, &mut h, interact) {
             self.resizeclient(&mut *c.borrow_mut(), x, y, w, h);
         }
@@ -1179,7 +1179,7 @@ impl Dwm {
     }
 
     pub fn showhide(&mut self, c: Option<Rc<RefCell<Client>>>) {
-        info!("[showhide]");
+        // info!("[showhide]");
         if c.is_none() {
             return;
         }
@@ -1187,8 +1187,8 @@ impl Dwm {
             let isvisible = { c.as_ref().unwrap().borrow_mut().isvisible() };
             if isvisible {
                 // show clients top down.
-                let name = c.as_ref().unwrap().borrow_mut().name.clone();
-                info!("[showhide] show clients top down: {name}");
+                // let name = c.as_ref().unwrap().borrow_mut().name.clone();
+                // info!("[showhide] show clients top down: {name}");
                 let win = c.as_ref().unwrap().borrow_mut().win;
                 let x = c.as_ref().unwrap().borrow_mut().x;
                 let y = c.as_ref().unwrap().borrow_mut().y;
@@ -1220,8 +1220,8 @@ impl Dwm {
                 self.showhide(snext);
             } else {
                 // hide clients bottom up.
-                let name = c.as_ref().unwrap().borrow_mut().name.clone();
-                info!("[showhide] show clients bottom up: {name}");
+                // let name = c.as_ref().unwrap().borrow_mut().name.clone();
+                // info!("[showhide] show clients bottom up: {name}");
                 let snext = c.as_ref().unwrap().borrow_mut().snext.clone();
                 self.showhide(snext);
                 let y;
@@ -2201,30 +2201,30 @@ impl Dwm {
             }
         }
     }
-    pub fn tag_egui_bar(&mut self, arg: *const Arg) {
-        info!("[tag_egui_bar]");
-        unsafe {
-            if let Arg::Ui(ui) = *arg {
-                let mut sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
-                let target_tag = ui & Config::tagmask;
-                if sel.is_none() || target_tag <= 0 {
-                    return;
-                }
-                // Find egui_bar client.
-                while let Some(ref sel_opt) = sel {
-                    let name = { sel_opt.borrow_mut().name.clone() };
-                    if name == Config::egui_bar_name {
-                        sel_opt.borrow_mut().tags0 = target_tag;
-                        self.setclienttagprop(&sel_opt);
-                        self.focus(None);
-                        self.arrange(self.selmon.clone());
-                        break;
-                    }
-
-                    let next = sel_opt.borrow_mut().next.clone();
-                    sel = next;
-                }
+    pub fn tag_egui_bar(&mut self, curtag: u32) {
+        let mut sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+        let target_tag = if curtag == 0 {
+            !curtag
+        } else {
+            1 << (curtag - 1)
+        } & Config::tagmask;
+        if sel.is_none() || target_tag <= 0 {
+            return;
+        }
+        // target_tag = 0.max(curtag);
+        // Find egui_bar client.
+        while let Some(ref sel_opt) = sel {
+            let name = { sel_opt.borrow_mut().name.clone() };
+            if name == Config::egui_bar_name {
+                sel_opt.borrow_mut().tags0 = target_tag;
+                self.setclienttagprop(&sel_opt);
+                self.focus(None);
+                self.arrange(self.selmon.clone());
+                break;
             }
+
+            let next = sel_opt.borrow_mut().next.clone();
+            sel = next;
         }
     }
     pub fn tag(&mut self, arg: *const Arg) {
@@ -2635,14 +2635,16 @@ impl Dwm {
         // info!("[view]");
         unsafe {
             if let Arg::Ui(ui) = *arg {
-                info!("[view] ui: {}", ui);
                 let target_tag = ui & Config::tagmask;
                 let mut selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
+                info!("[view] ui: {ui}, {target_tag}, {:?}", selmon_mut.tagset);
                 if target_tag == selmon_mut.tagset[selmon_mut.seltags] {
                     return;
                 }
                 // toggle sel tagset.
+                info!("[view] seltags: {}", selmon_mut.seltags);
                 selmon_mut.seltags ^= 1;
+                info!("[view] seltags: {}", selmon_mut.seltags);
                 if target_tag > 0 {
                     let seltags = selmon_mut.seltags;
                     selmon_mut.tagset[seltags] = target_tag;
@@ -2661,13 +2663,22 @@ impl Dwm {
                         std::mem::swap(&mut pertag.prevtag, &mut pertag.curtag);
                     }
                 }
+                if let Some(pertag) = selmon_mut.pertag.as_mut() {
+                    info!(
+                        "[view] prevtag: {}, curtag: {}",
+                        pertag.prevtag, pertag.curtag
+                    );
+                }
             } else {
                 return;
             }
-            let sel = {
-                let (curtag, condition) = {
+            let sel;
+            let curtag;
+            {
+                let condition;
+                {
                     let mut selmon_mut = self.selmon.as_mut().unwrap().borrow_mut();
-                    let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
+                    curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
                     selmon_mut.nmaster0 = selmon_mut.pertag.as_ref().unwrap().nmasters[curtag];
                     selmon_mut.mfact0 = selmon_mut.pertag.as_ref().unwrap().mfacts[curtag];
                     selmon_mut.sellt = selmon_mut.pertag.as_ref().unwrap().sellts[curtag];
@@ -2680,14 +2691,14 @@ impl Dwm {
                         [sellt ^ 1]
                         .clone()
                         .expect("None unwrap");
-                    let condition =
+                    condition =
                         selmon_mut.showbar0 != selmon_mut.pertag.as_ref().unwrap().showbars[curtag];
-                    (curtag, condition)
                 };
                 if condition {
                     self.togglebar(null_mut());
                 }
-                self.selmon
+                sel = self
+                    .selmon
                     .as_mut()
                     .unwrap()
                     .borrow_mut()
@@ -2698,7 +2709,7 @@ impl Dwm {
                     .clone()
             };
             // for egui bar
-            self.tag_egui_bar(arg);
+            self.tag_egui_bar(curtag as u32);
             self.focus(sel);
             self.arrange(self.selmon.clone());
         }
