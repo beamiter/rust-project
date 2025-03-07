@@ -268,7 +268,7 @@ impl eframe::App for ImageProcessor {
                                 }
                             }
                             if same_image {
-                            self.image_log = "Skip same screenshot! ".to_string();
+                                self.image_log = "Skip same screenshot! ".to_string();
                             } else {
                                 self.last_image = Some(current_image);
                                 self.enigo
@@ -327,8 +327,8 @@ impl eframe::App for ImageProcessor {
                         self.image_output_file = path_buf;
                         let time_cost = start.elapsed().as_secs_f32();
                         self.image_log = format!(
-                            "Save to: {:?}, time cost: {time_cost} seconds",
-                            self.image_output_file
+                            "Save to: {:?}, time cost: {:.3} seconds",
+                            self.image_output_file, time_cost
                         );
                     }
                 }
