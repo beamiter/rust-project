@@ -1,17 +1,14 @@
 use chrono::prelude::*;
 use coredump::register_panic_handler;
 use dwm::Dwm;
-use std::process::Command;
+use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+use libc::{setlocale, LC_CTYPE};
+use log::info;
 use std::sync::mpsc;
 use std::{ffi::CString, process::exit, ptr::null_mut};
 use std::{thread, time::Duration};
-use log::info;
-use simplelog::*;
-use libc::{setlocale, LC_CTYPE};
 use x11::xlib::{XCloseDisplay, XOpenDisplay, XSupportsLocale};
 
-mod bar;
-use bar::*;
 mod config;
 mod deprecated;
 mod drw;
@@ -43,48 +40,50 @@ fn main() {
 
     let mut dwm = Dwm::new(tx);
 
-    let _status_update_thread = thread::spawn(move || {
-        let mut status_bar = StatusBar::new();
-        loop {
-            let mut need_sleep = true;
-            match rx.try_recv() {
-                Ok(mut latest_value) => {
-                    while let Ok(value) = rx.try_recv() {
-                        latest_value = value;
+    let _status_update_thread = thread::spawn(move || loop {
+        match rx.try_recv() {
+            Ok(mut latest_value) => {
+                while let Ok(value) = rx.try_recv() {
+                    latest_value = value;
+                }
+                match latest_value {
+                    0 => {
+                        info!("Recieve {}, shut down", latest_value);
+                        break;
                     }
-                    match latest_value {
-                        0 => {
-                            info!("Recieve {}, shut down", latest_value);
-                            break;
-                        }
-                        1 => {
-                            need_sleep = false;
-                            status_bar.update_icon_list();
-                        }
-                        _ => {
-                            break;
-                        }
+                    _ => {
+                        break;
                     }
                 }
-                Err(_) => {}
             }
-            let status = status_bar.broadcast_string();
-            // info!("status string: {}", status);
-            // Update X root window name (status bar), here we will just print to stdout
-            let _output = Command::new("xsetroot").arg("-name").arg(status).output();
-            if need_sleep {
-                thread::sleep(Duration::from_millis(500));
-            }
+            Err(_) => {}
         }
+        thread::sleep(Duration::from_millis(100));
     });
 
     let now = Local::now();
     let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
-    let log_filename = format!("/tmp/jwm_{}.log", timestamp);
-    let _log_file = std::fs::File::create(log_filename).unwrap();
-    // WriteLogger::init(LevelFilter::Warn, Config::default(), _log_file).unwrap();
-    // WriteLogger::init(LevelFilter::Info, Config::default(), _log_file).unwrap();
-    WriteLogger::init(LevelFilter::Info, Config::default(), std::io::stdout()).unwrap();
+    let log_filename = format!("jwm_{}", timestamp);
+    Logger::try_with_str("info")
+        .unwrap()
+        .format(flexi_logger::colored_opt_format)
+        .log_to_file(
+            FileSpec::default()
+                .directory("/tmp")
+                .basename(format!("{log_filename}"))
+                .suffix("log"),
+        )
+        .duplicate_to_stdout(Duplicate::Info)
+        // .log_to_stdout()
+        // .buffer_capacity(1024)
+        // .use_background_worker(true)
+        .rotate(
+            Criterion::Size(10_000_000),
+            Naming::Numbers,
+            Cleanup::KeepLogFiles(5),
+        )
+        .start()
+        .unwrap();
     unsafe {
         let c_string = CString::new("").unwrap();
         if setlocale(LC_CTYPE, c_string.as_ptr()).is_null() || XSupportsLocale() <= 0 {

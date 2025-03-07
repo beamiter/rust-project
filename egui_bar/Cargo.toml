@@ -10,12 +10,12 @@ device_query = "3.0.0"
 eframe = "0.30"
 egui = "0.30"
 egui_plot = "0.30"
+flexi_logger = "0.29.8"
 font-kit = "0.14.2"
 log = "0.4.25"
 serde = { version = "1.0.217", features = ["derive"] }
 shared_memory = "0.12.4"
 shared_structures = { version = "0.1.0", path = "../shared_structures" }
-simplelog = "0.12.2"
 sysinfo = "0.33.1"
 winit = "0.30.8"
 x11rb = "0.13.1"

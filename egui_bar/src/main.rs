@@ -4,19 +4,20 @@ use chrono::Local;
 use egui::{FontFamily, FontId, TextStyle};
 use egui::{Margin, Pos2};
 pub use egui_bar::MyEguiApp;
+use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+use font_kit::source::SystemSource;
+use log::error;
 use log::info;
+use log::warn;
 use shared_memory::{Shmem, ShmemConf};
 use shared_structures::SharedMessage;
-use simplelog::*;
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::{env, thread};
+use std::{env, thread, u128};
 use FontFamily::Monospace;
 use FontFamily::Proportional;
-
-use font_kit::source::SystemSource;
 
 fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::Error>> {
     let mut fonts = egui::FontDefinitions::default();
@@ -108,12 +109,29 @@ fn main() -> eframe::Result {
         .file_name()
         .and_then(|name| name.to_str())
         .unwrap_or("");
-    let log_filename = format!("/tmp/egui_bar_{file_name}_{timestamp}.log");
+    let log_filename = format!("egui_bar_{file_name}_{timestamp}");
     info!("{log_filename}");
-    let _log_file = std::fs::File::create(log_filename).unwrap();
-    // WriteLogger::init(LevelFilter::Warn, Config::default(), _log_file).unwrap();
-    WriteLogger::init(LevelFilter::Info, Config::default(), _log_file).unwrap();
-    // WriteLogger::init(LevelFilter::Info, Config::default(), std::io::stdout()).unwrap();
+    Logger::try_with_str("info")
+        .unwrap()
+        .format(flexi_logger::colored_opt_format)
+        .log_to_file(
+            FileSpec::default()
+                .directory("/tmp")
+                .basename(format!("{log_filename}"))
+                .suffix("log"),
+        )
+        .duplicate_to_stdout(Duplicate::Info)
+        // .log_to_stdout()
+        // .buffer_capacity(1024)
+        // .use_background_worker(true)
+        .rotate(
+            Criterion::Size(10_000_000),
+            Naming::Numbers,
+            Cleanup::KeepLogFiles(5),
+        )
+        .start()
+        .unwrap();
+
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_transparent(true)
@@ -154,6 +172,7 @@ fn main() -> eframe::Result {
                     .duration_since(UNIX_EPOCH)
                     .unwrap()
                     .as_secs();
+                let mut frame: u128 = 0;
                 loop {
                     let cur_secs = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -171,17 +190,22 @@ fn main() -> eframe::Result {
                             let _ = sender.send(message);
                             need_request_repaint = true;
                         }
+                    } else {
+                        error!("shmem not valid");
                     }
 
-                    // println!("{}, {}", last_secs, cur_secs);
+                    if frame.wrapping_rem(100) == 0 {
+                        info!("frame {frame}: {last_secs}, {cur_secs}");
+                    }
                     if cur_secs != last_secs {
                         need_request_repaint = true;
                     }
                     if need_request_repaint {
-                        info!("request_repaint");
+                        warn!("request_repaint");
                         egui_ctx.request_repaint_after(Duration::from_micros(1));
                     }
                     last_secs = cur_secs;
+                    frame = frame.wrapping_add(1).wrapping_rem(u128::MAX);
                     thread::sleep(Duration::from_millis(10));
                 }
             });
