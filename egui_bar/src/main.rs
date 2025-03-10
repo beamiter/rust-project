@@ -183,12 +183,22 @@ fn main() -> eframe::Result {
                     if let Some(shmem) = shmem.as_ref() {
                         let data = shmem.as_ptr();
                         let serialized = unsafe { std::slice::from_raw_parts(data, shmem.len()) };
-                        let message: SharedMessage = deserialize(serialized).unwrap();
-                        if prev_timestamp != message.timestamp {
-                            prev_timestamp = message.timestamp;
-                            info!("send message: {:?}", message);
-                            let _ = sender.send(message);
-                            need_request_repaint = true;
+                        match deserialize::<SharedMessage>(serialized) {
+                            Ok(message) => {
+                                if prev_timestamp != message.timestamp {
+                                    prev_timestamp = message.timestamp;
+                                    info!("send message: {:?}", message);
+                                    if let Ok(_) = sender.send(message) {
+                                        need_request_repaint = true;
+                                    } else {
+                                        error!("Fail to send message");
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                error!("deserialize error: {:?}", e);
+                                // 可能需要重置共享内存或执行恢复操作
+                            }
                         }
                     } else {
                         error!("shmem not valid");
