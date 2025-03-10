@@ -154,6 +154,8 @@ fn main() -> eframe::Result {
             configure_text_styles(&cc.egui_ctx);
 
             let (sender, receiver) = mpsc::channel();
+            // 创建通道用于心跳检测
+            let (tx, rx) = mpsc::channel();
             let egui_ctx = cc.egui_ctx.clone();
             thread::spawn(move || {
                 let shmem: Option<Shmem> = {
@@ -163,6 +165,12 @@ fn main() -> eframe::Result {
                         Some(ShmemConf::new().flink(shared_path.clone()).open().unwrap())
                     }
                 };
+                // 设置 panic 钩子
+                let default_hook = std::panic::take_hook();
+                std::panic::set_hook(Box::new(move |panic_info| {
+                    default_hook(panic_info);
+                    // 不需要发送任何消息，线程死亡会导致通道关闭
+                }));
 
                 let mut prev_timestamp = SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -216,7 +224,27 @@ fn main() -> eframe::Result {
                     }
                     last_secs = cur_secs;
                     frame = frame.wrapping_add(1).wrapping_rem(u128::MAX);
+
+                    if tx.send(()).is_err() {
+                        // 如果发送失败，说明接收端已关闭
+                        break;
+                    }
                     thread::sleep(Duration::from_millis(10));
+                }
+            });
+            thread::spawn(move || {
+                // 主线程监控心跳
+                loop {
+                    match rx.recv_timeout(Duration::from_secs(2)) {
+                        Ok(_) => {
+                            // 收到心跳，继续运行
+                        }
+                        Err(_) => {
+                            // 超时或通道关闭，表示线程可能已死亡
+                            error!("sub thread died, killing main thread now");
+                            std::process::exit(1);
+                        }
+                    }
                 }
             });
 
