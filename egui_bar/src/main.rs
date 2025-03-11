@@ -1,16 +1,15 @@
 mod egui_bar;
-use bincode::deserialize;
 use chrono::Local;
 use egui::{FontFamily, FontId, TextStyle};
 use egui::{Margin, Pos2};
 pub use egui_bar::MyEguiApp;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use font_kit::source::SystemSource;
+use log::debug;
 use log::error;
 use log::info;
 use log::warn;
-use shared_memory::{Shmem, ShmemConf};
-use shared_structures::SharedMessage;
+use shared_structures::{SharedMessage, SharedRingBuffer};
 use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::mpsc;
@@ -157,14 +156,23 @@ fn main() -> eframe::Result {
             // 创建通道用于心跳检测
             let (tx, rx) = mpsc::channel();
             let egui_ctx = cc.egui_ctx.clone();
+
             thread::spawn(move || {
-                let shmem: Option<Shmem> = {
+                // 创建或打开无锁环形缓冲区
+                let ring_buffer: Option<SharedRingBuffer> = {
                     if shared_path.is_empty() {
                         None
                     } else {
-                        Some(ShmemConf::new().flink(shared_path.clone()).open().unwrap())
+                        match SharedRingBuffer::open(&shared_path) {
+                            Ok(rb) => Some(rb),
+                            Err(e) => {
+                                error!("无法打开共享环形缓冲区: {}", e);
+                                None
+                            }
+                        }
                     }
                 };
+
                 // 设置 panic 钩子
                 let default_hook = std::panic::take_hook();
                 std::panic::set_hook(Box::new(move |panic_info| {
@@ -181,6 +189,11 @@ fn main() -> eframe::Result {
                     .unwrap()
                     .as_secs();
                 let mut frame: u128 = 0;
+
+                // 用于记录错误日志的计数器，避免日志过多
+                let mut error_count = 0;
+                let max_error_logs = 5;
+
                 loop {
                     let cur_secs = SystemTime::now()
                         .duration_since(UNIX_EPOCH)
@@ -188,40 +201,57 @@ fn main() -> eframe::Result {
                         .as_secs();
 
                     let mut need_request_repaint = false;
-                    if let Some(shmem) = shmem.as_ref() {
-                        let data = shmem.as_ptr();
-                        let serialized = unsafe { std::slice::from_raw_parts(data, shmem.len()) };
-                        match deserialize::<SharedMessage>(serialized) {
-                            Ok(message) => {
+
+                    if let Some(rb) = ring_buffer.as_ref() {
+                        // 尝试从环形缓冲区读取数据
+                        match rb.try_read_latest_message::<SharedMessage>() {
+                            Ok(Some(message)) => {
+                                // 检查时间戳是否更新
                                 if prev_timestamp != message.timestamp {
                                     prev_timestamp = message.timestamp;
                                     info!("send message: {:?}", message);
-                                    if let Ok(_) = sender.send(message) {
+                                    if sender.send(message).is_ok() {
                                         need_request_repaint = true;
+                                        error_count = 0; // 重置错误计数
                                     } else {
                                         error!("Fail to send message");
                                     }
                                 }
                             }
+                            Ok(None) => {
+                                // 没有新数据，正常情况
+                                if frame.wrapping_rem(1000) == 0 {
+                                    debug!("No new message in ring buffer");
+                                }
+                            }
                             Err(e) => {
-                                error!("deserialize error: {:?}", e);
-                                // 可能需要重置共享内存或执行恢复操作
+                                // 限制错误日志数量
+                                if error_count < max_error_logs {
+                                    error!("读取环形缓冲区错误: {}", e);
+                                    error_count += 1;
+                                } else if error_count == max_error_logs {
+                                    error!("读取环形缓冲区持续出错，后续错误将不再记录");
+                                    error_count += 1;
+                                }
                             }
                         }
-                    } else {
-                        error!("shmem not valid");
+                    } else if frame.wrapping_rem(100) == 0 {
+                        error!("环形缓冲区未初始化");
                     }
 
                     if frame.wrapping_rem(100) == 0 {
                         info!("frame {frame}: {last_secs}, {cur_secs}");
                     }
+
                     if cur_secs != last_secs {
                         need_request_repaint = true;
                     }
+
                     if need_request_repaint {
                         warn!("request_repaint");
                         egui_ctx.request_repaint_after(Duration::from_micros(1));
                     }
+
                     last_secs = cur_secs;
                     frame = frame.wrapping_add(1).wrapping_rem(u128::MAX);
 
@@ -229,9 +259,11 @@ fn main() -> eframe::Result {
                         // 如果发送失败，说明接收端已关闭
                         break;
                     }
+
                     thread::sleep(Duration::from_millis(10));
                 }
             });
+
             thread::spawn(move || {
                 // 主线程监控心跳
                 loop {

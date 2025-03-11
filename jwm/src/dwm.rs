@@ -1,14 +1,12 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
-use bincode::serialize;
 use libc::{
     close, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
     SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
 use log::info;
-use shared_memory::{Shmem, ShmemConf};
-use shared_structures::{MonitorInfo, SharedMessage, TagStatus};
+use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::{c_int, CStr, CString};
@@ -579,7 +577,7 @@ pub struct Dwm {
     pub cmap: Colormap,
     pub sender: Sender<u8>,
     pub tags: Vec<&'static str>,
-    pub egui_bar_shmem: HashMap<i32, Shmem>,
+    pub egui_bar_shmem: HashMap<i32, SharedRingBuffer>,
     pub egui_bar_child: HashMap<i32, Child>,
     pub egui_bar_shape: HashMap<i32, BarShape>,
     pub message: SharedMessage,
@@ -1552,12 +1550,21 @@ impl Dwm {
     }
 
     fn write_message(&mut self, num: i32, message: &SharedMessage) -> std::io::Result<()> {
-        let serialized = serialize(message).expect("Serialization failed");
-        if let Some(ref shmem) = self.egui_bar_shmem.get(&num).as_mut() {
-            let data = shmem.as_ptr();
-            let data_slice = unsafe { std::slice::from_raw_parts_mut(data, serialized.len()) };
-            data_slice.copy_from_slice(&serialized);
-            info!("[write_message] {:?}", message);
+        if let Some(ref ring_buffer) = self.egui_bar_shmem.get(&num).as_mut() {
+            // 尝试写入消息
+            match ring_buffer.try_write_message(&message) {
+                Ok(true) => {
+                    info!("[write_message] {:?}", message);
+                }
+                Ok(false) => {
+                    println!("缓冲区已满，等待空间...");
+                    // std::thread::sleep(std::time::Duration::from_millis(50));
+                }
+                Err(e) => {
+                    eprintln!("写入错误: {}", e);
+                    // std::thread::sleep(std::time::Duration::from_millis(1000));
+                }
+            }
         }
         Ok(())
     }
@@ -1568,15 +1575,14 @@ impl Dwm {
             info!("[drawbar] num: {}", num);
             let shared_path = format!("/dev/shm/monitor_{}", num);
             if !self.egui_bar_shmem.contains_key(&num) {
-                self.egui_bar_shmem.insert(
-                    num,
-                    ShmemConf::new()
-                        .size(1024)
-                        .flink(&shared_path)
-                        .force_create_flink()
-                        .create()
-                        .unwrap(),
-                );
+                let ring_buffer = match SharedRingBuffer::open(&shared_path) {
+                    Ok(rb) => rb,
+                    Err(_) => {
+                        println!("创建新的共享环形缓冲区");
+                        SharedRingBuffer::create(&shared_path, None, None).unwrap()
+                    }
+                };
+                self.egui_bar_shmem.insert(num, ring_buffer);
             }
             // info!("[drawbar] message: {:?}", self.message);
             let _ = self.write_message(num, &self.message.clone());
