@@ -73,7 +73,7 @@ impl ImageProcessor {
         }
 
         // 创建垂直滚动区域
-        egui::ScrollArea::vertical()
+        egui::ScrollArea::both()
             .auto_shrink([false; 2])
             .show(ui, |ui| {
                 // 垂直堆叠所有纹理块
