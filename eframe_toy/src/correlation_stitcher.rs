@@ -1,6 +1,8 @@
 use image::{DynamicImage, GenericImageView, ImageBuffer, Rgba};
+use rayon::prelude::*;
 use std::error::Error;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 /// 用于拼接滚动截图的结构体
 pub struct ScrollStitcher {
@@ -22,19 +24,23 @@ impl ScrollStitcher {
         }
     }
 
-    /// 从目录中读取所有图像
+    /// 从目录中读取所有图像 - 并行化读取
     fn read_images(&self, image_paths: Vec<PathBuf>) -> Result<Vec<DynamicImage>, Box<dyn Error>> {
-        let mut images = Vec::new();
-        for path in image_paths {
-            println!("读取图像: {:?}", path);
-            let img = image::open(&path)?;
-            images.push(img);
-        }
+        println!("并行读取 {} 个图像文件...", image_paths.len());
 
-        Ok(images)
+        // 使用 rayon 并行读取图像
+        let images: Result<Vec<_>, _> = image_paths
+            .par_iter()
+            .map(|path| {
+                println!("读取图像: {:?}", path);
+                image::open(path).map_err(|e| Box::new(e) as Box<dyn Error + Send>)
+            })
+            .collect();
+
+        images.map_err(|e| e as Box<dyn Error>)
     }
 
-    /// 计算两个图像区域的相似度（使用均方误差）
+    /// 计算两个图像区域的相似度（使用均方误差）- 优化计算
     fn calculate_similarity(
         &self,
         img1: &DynamicImage,
@@ -57,30 +63,30 @@ impl ScrollStitcher {
         let gray1 = region1.to_luma8();
         let gray2 = region2.to_luma8();
 
-        // 计算均方误差 (MSE)
-        let mut sum_squared_diff = 0.0;
-        let mut pixel_count = 0;
+        // 使用平行迭代器计算均方误差 (MSE)
+        let sum_squared_diff: f64 = gray1
+            .enumerate_pixels()
+            .filter_map(|(x, y, p1)| {
+                gray2.get_pixel_checked(x, y).map(|p2| {
+                    let diff = p1.0[0] as f64 - p2.0[0] as f64;
+                    diff * diff
+                })
+            })
+            .sum();
 
-        for (x, y, p1) in gray1.enumerate_pixels() {
-            if let Some(p2) = gray2.get_pixel_checked(x, y) {
-                let diff = p1.0[0] as f64 - p2.0[0] as f64;
-                sum_squared_diff += diff * diff;
-                pixel_count += 1;
-            }
-        }
-
-        if pixel_count == 0 {
+        let pixel_count = (width * height) as f64;
+        if pixel_count == 0.0 {
             return 0.0;
         }
 
-        let mse = sum_squared_diff / pixel_count as f64;
+        let mse = sum_squared_diff / pixel_count;
 
         // 转换 MSE 为相似度分数 (0-1)，其中 1 表示完全相同
         let max_possible_mse = 255.0 * 255.0; // 灰度值差异的最大可能平方
         1.0 - (mse / max_possible_mse)
     }
 
-    /// 找到两个图像之间的最佳重叠区域
+    /// 找到两个图像之间的最佳重叠区域 - 并行搜索
     fn find_overlap(&self, img1: &DynamicImage, img2: &DynamicImage) -> u32 {
         if self.use_fixed_offset {
             return self.y_offset;
@@ -96,29 +102,30 @@ impl ScrollStitcher {
         // 搜索窗口高度
         let window_height = height1.min(height2) / 4;
 
-        let mut best_offset = self.y_offset;
-        let mut best_similarity = 0.0;
+        // 并行搜索最佳偏移量
+        let results: Vec<(u32, f64)> = (min_offset..=max_offset)
+            .into_par_iter()
+            .filter(|&offset| offset < height1)
+            .map(|offset| {
+                // 计算当前偏移下的重叠区域相似度
+                let similarity = self.calculate_similarity(
+                    img1,
+                    height1 - offset,
+                    img2,
+                    0,
+                    offset.min(window_height),
+                );
+                (offset, similarity)
+            })
+            .collect();
 
-        // 尝试不同的偏移量，找到最佳匹配
-        for offset in min_offset..=max_offset {
-            if offset >= height1 {
-                continue;
-            }
+        // 找出相似度最高的偏移量
+        let best = results
+            .into_iter()
+            .max_by(|a, b| a.1.partial_cmp(&b.1).unwrap())
+            .unwrap_or((self.y_offset, 0.0));
 
-            // 计算当前偏移下的重叠区域相似度
-            let similarity = self.calculate_similarity(
-                img1,
-                height1 - offset,
-                img2,
-                0,
-                offset.min(window_height),
-            );
-
-            if similarity > best_similarity {
-                best_similarity = similarity;
-                best_offset = offset;
-            }
-        }
+        let (best_offset, best_similarity) = best;
 
         println!(
             "检测到最佳重叠: {} 像素 (相似度: {:.2})",
@@ -134,7 +141,7 @@ impl ScrollStitcher {
         best_offset
     }
 
-    /// 拼接图像序列
+    /// 拼接图像序列 - 优化的多线程实现
     fn stitch_images(&self, images: &[DynamicImage]) -> Result<DynamicImage, Box<dyn Error>> {
         if images.is_empty() {
             return Err("没有输入图像".into());
@@ -148,58 +155,70 @@ impl ScrollStitcher {
         let width = images[0].width();
         let mut total_height = images[0].height();
 
-        // 计算每对相邻图像的重叠区域
-        let mut overlaps = Vec::new();
+        println!("计算图像重叠区域...");
 
+        // 并行计算每对相邻图像的重叠区域
+        let overlaps: Vec<u32> = (0..images.len() - 1)
+            .into_par_iter()
+            .map(|i| self.find_overlap(&images[i], &images[i + 1]))
+            .collect();
+
+        // 计算总高度
         for i in 0..images.len() - 1 {
-            let overlap = self.find_overlap(&images[i], &images[i + 1]);
-            overlaps.push(overlap);
-
-            // 累加总高度，考虑重叠区域
             if i == images.len() - 2 {
-                total_height += images[i + 1].height() - overlap;
+                total_height += images[i + 1].height() - overlaps[i];
             } else {
-                total_height += self.y_offset;
+                total_height += images[i + 1].height() - overlaps[i];
             }
         }
 
         println!("创建 {}x{} 的输出图像", width, total_height);
 
         // 创建输出图像
-        let mut output =
-            ImageBuffer::from_fn(width, total_height, |_, _| Rgba([255, 255, 255, 255]));
+        let output = Arc::new(Mutex::new(ImageBuffer::from_fn(
+            width,
+            total_height,
+            |_, _| Rgba([255, 255, 255, 255]),
+        )));
 
-        // 复制第一张图像
-        for y in 0..images[0].height() {
-            for x in 0..width {
-                let pixel = images[0].get_pixel(x, y);
-                output.put_pixel(x, y, pixel);
-            }
+        println!("开始并行拼接图像...");
+
+        // 计算每张图像的起始位置
+        let mut positions = Vec::with_capacity(images.len());
+        let mut current_pos = 0;
+        positions.push(current_pos);
+
+        for i in 0..images.len() - 1 {
+            current_pos += images[i].height() - overlaps[i];
+            positions.push(current_pos);
         }
 
-        // 当前写入位置
-        let mut y_pos = images[0].height();
+        // 并行处理每张图像
+        images.par_iter().enumerate().for_each(|(idx, img)| {
+            let y_pos = positions[idx];
+            let mut output_lock = output.lock().unwrap();
 
-        // 拼接剩余图像
-        for i in 1..images.len() {
-            let overlap = overlaps[i - 1];
-            let img = &images[i];
+            // 复制图像像素
+            for y in 0..img.height() {
+                let output_y = y_pos + y;
+                if output_y >= total_height {
+                    continue;
+                }
 
-            // 跳过重叠区域
-            for y in overlap..img.height() {
                 for x in 0..width {
                     let pixel = img.get_pixel(x, y);
-
-                    if y_pos + y - overlap < total_height {
-                        output.put_pixel(x, y_pos + y - overlap, pixel);
-                    }
+                    output_lock.put_pixel(x, output_y, pixel);
                 }
             }
+        });
 
-            y_pos += img.height() - overlap;
-        }
+        // 解锁并返回结果
+        let final_image = Arc::try_unwrap(output)
+            .expect("引用计数错误")
+            .into_inner()
+            .expect("互斥锁错误");
 
-        Ok(DynamicImage::ImageRgba8(output))
+        Ok(DynamicImage::ImageRgba8(final_image))
     }
 
     /// 处理目录中的所有图像并保存结果
@@ -235,3 +254,4 @@ mod tests {
         Ok(())
     }
 }
+

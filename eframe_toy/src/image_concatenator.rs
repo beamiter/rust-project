@@ -1,6 +1,5 @@
 use arboard::Clipboard;
 use device_query::{DeviceQuery, DeviceState};
-use egui::Widget;
 use enigo::Coordinate::Abs;
 use enigo::{Enigo, Mouse, Settings};
 use image::DynamicImage;
@@ -40,7 +39,7 @@ pub struct ImageProcessor {
     pub image_clipboard: Clipboard,
     pub text: String,
     pub image_output_file: PathBuf,
-    pub texture: Option<egui::TextureHandle>,
+    pub textures: Vec<egui::TextureHandle>,
     pub device_state: DeviceState,
     pub enigo: Enigo,
     pub start_checkbox_pos: (i32, i32),
@@ -61,7 +60,7 @@ impl Default for ImageProcessor {
             image_clipboard: Clipboard::new().unwrap(),
             text: String::new(),
             image_output_file: PathBuf::new(),
-            texture: None,
+            textures: Vec::new(),
             device_state: DeviceState::new(),
             enigo: Enigo::new(&Settings::default()).unwrap(),
             start_checkbox_pos: (0, 0),
@@ -116,7 +115,7 @@ impl ImageProcessor {
         self.image_log.clear();
         self.adding_on_progress = false;
         self.image_output_file.clear();
-        self.texture = None;
+        self.textures.clear();
         self.selection = None;
         self.start_button_text = "selection".to_string();
     }
@@ -330,6 +329,8 @@ impl eframe::App for ImageProcessor {
                             "Save to: {:?}, time cost: {:.3} seconds",
                             self.image_output_file, time_cost
                         );
+                        let image_path = self.image_output_file.as_path().to_path_buf();
+                        let _ = self.load_image_from_path(&image_path, ctx);
                     }
                 }
                 ui.separator();
@@ -362,13 +363,7 @@ impl eframe::App for ImageProcessor {
             });
             ui.label(format!("{}", &self.image_log));
             ui.separator();
-            let image_path = self.image_output_file.as_path().to_path_buf();
-            let _ = self.load_image_from_path(&image_path, ctx);
-            if let Some(texture) = &self.texture {
-                egui::Image::new(texture).shrink_to_fit().ui(ui);
-            } else {
-                ui.label("Failed to load image");
-            }
+            self.scroll_display(ui);
 
             ui.separator();
 

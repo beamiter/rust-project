@@ -12,18 +12,79 @@ impl ImageProcessor {
         path: &std::path::Path,
         ctx: &egui::Context,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // 清除之前的纹理
+        self.textures.clear();
+
+        // 加载图像
         let image = ImageReader::open(path)?.decode()?;
-        let texture = ctx.load_texture(
-            "my_image",
-            egui::ColorImage::from_rgba_unmultiplied(
-                [image.width() as usize, image.height() as usize],
-                image.to_rgba8().as_raw(),
-            ),
-            Default::default(),
-        );
-        self.texture = Some(texture);
+        let width = image.width();
+        let height = image.height();
+
+        // egui 纹理尺寸限制
+        const MAX_TEXTURE_HEIGHT: u32 = 16000;
+
+        if height <= MAX_TEXTURE_HEIGHT {
+            // 图像高度在限制范围内，直接加载为单一纹理
+            let texture = ctx.load_texture(
+                "image_single",
+                egui::ColorImage::from_rgba_unmultiplied(
+                    [width as usize, height as usize],
+                    image.to_rgba8().as_raw(),
+                ),
+                Default::default(),
+            );
+            self.textures.push(texture);
+        } else {
+            // 图像太高，需要分块处理
+            let num_blocks = (height + MAX_TEXTURE_HEIGHT - 1) / MAX_TEXTURE_HEIGHT;
+            println!(
+                "图像高度 {} 超过纹理限制 {}，分割为 {} 个块",
+                height, MAX_TEXTURE_HEIGHT, num_blocks
+            );
+
+            // 处理每个块
+            for i in 0..num_blocks {
+                let start_y = i * MAX_TEXTURE_HEIGHT;
+                let block_height = MAX_TEXTURE_HEIGHT.min(height - start_y);
+
+                // 裁剪当前块
+                let block = image.crop_imm(0, start_y, width, block_height);
+
+                // 加载为纹理
+                let texture = ctx.load_texture(
+                    format!("image_block_{}", i),
+                    egui::ColorImage::from_rgba_unmultiplied(
+                        [width as usize, block_height as usize],
+                        block.to_rgba8().as_raw(),
+                    ),
+                    Default::default(),
+                );
+
+                self.textures.push(texture);
+            }
+        }
+
         Ok(())
     }
+    pub fn scroll_display(&mut self, ui: &mut egui::Ui) {
+        if self.textures.is_empty() {
+            ui.label("no images loaded");
+            return;
+        }
+
+        // 创建垂直滚动区域
+        egui::ScrollArea::vertical()
+            .auto_shrink([false; 2])
+            .show(ui, |ui| {
+                // 垂直堆叠所有纹理块
+                for texture in &self.textures {
+                    ui.image(texture);
+                    // use egui::Widget;
+                    // egui::Image::new(texture).shrink_to_fit().ui(ui);
+                }
+            });
+    }
+
     #[allow(dead_code)]
     fn capture_screen_area(
         x: i32,
