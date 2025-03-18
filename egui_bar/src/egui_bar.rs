@@ -87,6 +87,124 @@ fn get_screen_width() -> f32 {
 }
 
 impl MyEguiApp {
+    fn draw_smooth_gradient_line(&mut self, ui: &mut egui::Ui) {
+        let reset_view = ui.small_button("R").clicked();
+
+        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            let available_width = ui.available_width();
+            let plot_height = ui.available_height().max(MyEguiApp::DESIRED_HEIGHT);
+            let plot_width = (10.0 * plot_height).min(available_width * 0.5);
+            ui.add_space(available_width - plot_width - 2.);
+
+            let mut plot = Plot::new("GradientLineChart")
+                .include_y(0.)
+                .include_y(1.)
+                .allow_zoom(true)
+                .width(plot_width)
+                .height(plot_height);
+
+            if reset_view {
+                plot = plot.reset();
+            }
+
+            plot.show(ui, |plot_ui| {
+                if self.data.len() < 2 {
+                    return; // 至少需要两个点
+                }
+
+                // 定义渐变色映射函数
+                let color_at = |y: f64| -> egui::Color32 {
+                    let y = y.clamp(0.0, 1.0) as f32;
+
+                    // 使用更复杂的渐变色映射
+                    if y < 0.2 {
+                        // 蓝色到青色
+                        let t = y / 0.2;
+                        let r = 0;
+                        let g = (t * 255.0) as u8;
+                        let b = 255;
+                        egui::Color32::from_rgb(r, g, b)
+                    } else if y < 0.4 {
+                        // 青色到绿色
+                        let t = (y - 0.2) / 0.2;
+                        let r = 0;
+                        let g = 255;
+                        let b = ((1.0 - t) * 255.0) as u8;
+                        egui::Color32::from_rgb(r, g, b)
+                    } else if y < 0.6 {
+                        // 绿色到黄色
+                        let t = (y - 0.4) / 0.2;
+                        let r = (t * 255.0) as u8;
+                        let g = 255;
+                        let b = 0;
+                        egui::Color32::from_rgb(r, g, b)
+                    } else if y < 0.8 {
+                        // 黄色到橙色
+                        let t = (y - 0.6) / 0.2;
+                        let r = 255;
+                        let g = (255.0 * (1.0 - t * 0.5)) as u8;
+                        let b = 0;
+                        egui::Color32::from_rgb(r, g, b)
+                    } else {
+                        // 橙色到红色
+                        let t = (y - 0.8) / 0.2;
+                        let r = 255;
+                        let g = (128.0 * (1.0 - t)) as u8;
+                        let b = 0;
+                        egui::Color32::from_rgb(r, g, b)
+                    }
+                };
+
+                // 绘制线段
+                for i in 0..self.data.len() - 1 {
+                    let x1 = i as f64;
+                    let y1 = self.data[i];
+                    let x2 = (i + 1) as f64;
+                    let y2 = self.data[i + 1];
+
+                    // 将每个线段细分为多个小线段以实现平滑渐变
+                    let segments = 10; // 细分数量
+                    for j in 0..segments {
+                        let t1 = j as f64 / segments as f64;
+                        let t2 = (j + 1) as f64 / segments as f64;
+
+                        let segment_x1 = x1 + (x2 - x1) * t1;
+                        let segment_y1 = y1 + (y2 - y1) * t1;
+                        let segment_x2 = x1 + (x2 - x1) * t2;
+                        let segment_y2 = y1 + (y2 - y1) * t2;
+
+                        // 使用细分段中点的颜色
+                        let segment_y_mid = (segment_y1 + segment_y2) / 2.0;
+                        let color = color_at(segment_y_mid);
+
+                        let line = egui_plot::Line::new(PlotPoints::from(vec![
+                            [segment_x1, segment_y1],
+                            [segment_x2, segment_y2],
+                        ]))
+                        .color(color)
+                        .width(3.0);
+
+                        plot_ui.line(line);
+                    }
+                }
+
+                // 添加数据点标记
+                for (i, &y) in self.data.iter().enumerate() {
+                    let x = i as f64;
+                    let color = color_at(y);
+
+                    let point = egui_plot::Points::new(PlotPoints::from(vec![[x, y]]))
+                        .color(color)
+                        .radius(4.0)
+                        .shape(egui_plot::MarkerShape::Circle);
+
+                    plot_ui.points(point);
+                }
+            });
+        });
+    }
+
+    #[allow(dead_code)]
     fn draw_histogram(&mut self, ui: &mut egui::Ui) {
         let reset_view = ui.small_button("R").clicked();
 
@@ -277,7 +395,8 @@ impl eframe::App for MyEguiApp {
                     ui.label(
                         egui::RichText::new(format!("{:.1}", available)).color(MyEguiApp::CYAN),
                     );
-                    self.draw_histogram(ui);
+                    self.draw_smooth_gradient_line(ui);
+                    // self.draw_histogram(ui);
                     // self.draw_cosine_curve(ui);
                 });
             });
