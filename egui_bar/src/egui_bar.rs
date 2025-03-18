@@ -100,6 +100,8 @@ impl MyEguiApp {
                 .include_y(0.)
                 .include_y(1.)
                 .allow_zoom(true)
+                .x_axis_formatter(|_, _| String::new())
+                .y_axis_formatter(|_, _| String::new())
                 .width(plot_width)
                 .height(plot_height);
 
