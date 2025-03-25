@@ -23,6 +23,10 @@ pub struct SSHCommander {
     is_loading_directory: bool,
     #[serde(skip)]
     ssh_connection: Option<Arc<Mutex<SSHConnection>>>,
+    #[serde(skip)]
+    output_command: String,
+    #[serde(skip)]
+    need_execute: bool,
 }
 struct SSHConnection {
     session: Session,
@@ -42,11 +46,13 @@ impl Default for SSHCommander {
             ddp_time: "2.0".into(),
             product: "MNP".into(),
             output: String::new(),
+            output_command: String::new(),
             show_file_dialog: false,
             current_directory: "/opt/maf_planning/backup/bags".into(),
             directory_contents: Vec::new(),
             is_loading_directory: false,
             ssh_connection: None,
+            need_execute: false,
         }
     }
 }
@@ -200,34 +206,16 @@ impl SSHCommander {
         Ok(entries)
     }
 
-    fn execute_command(&self) -> Result<String, Box<dyn std::error::Error>> {
-        let tcp = TcpStream::connect(&self.host)?;
-
-        let mut sess = Session::new()?;
-        sess.set_tcp_stream(tcp);
-
-        sess.handshake()?;
-
-        sess.userauth_password(&self.username, &self.password)?;
-
-        if !sess.authenticated() {
-            return Err("Authentication failed".into());
-        }
-
-        let mut channel = sess.channel_session()?;
-        let output_command = COMMAND_PREFIX.to_owned()
-            + "--ddp-time "
-            + &self.ddp_time
-            + " --product "
-            + &self.product
-            + " "
-            + &self.bag;
-        println!("command: {}", output_command);
-        channel.exec(&output_command)?;
-
+    fn execute_command(&mut self) -> Result<String, Box<dyn std::error::Error>> {
+        // 获取SSH连接
+        let connection = self.ensure_ssh_connection()?;
+        let session = &connection.lock().unwrap().session;
+        // 创建通道并执行命令
+        let mut channel = session.channel_session()?;
+        channel.exec(&self.output_command)?;
+        // 读取输出
         let mut output = String::new();
         channel.read_to_string(&mut output)?;
-
         channel.wait_close()?;
 
         Ok(output)
@@ -307,11 +295,6 @@ impl eframe::App for SSHCommander {
                 ui.label("product: ");
                 ui.add(egui::TextEdit::singleline(&mut self.product).desired_width(100.));
             });
-            // ui.horizontal(|ui| {
-            //     ui.label("bag: ");
-            //     let remaining_width = ui.available_width() - ui.spacing().item_spacing.x;
-            //     ui.add(egui::TextEdit::singleline(&mut self.bag).desired_width(remaining_width));
-            // });
             ui.horizontal(|ui| {
                 ui.label("bag: ");
                 let remaining_width = ui.available_width() - 100.0; // 为按钮保留空间
@@ -379,12 +362,25 @@ impl eframe::App for SSHCommander {
                         });
                     });
             }
-            if ui.button("Execute").clicked() {
+            if self.need_execute {
+                self.need_execute = false;
                 match self.execute_command() {
                     Ok(output) => self.output = output,
                     Err(e) => self.output = format!("Error executing command: {}", e),
                 }
             }
+            if ui.button("Execute").clicked() {
+                self.need_execute = true;
+                self.output_command = COMMAND_PREFIX.to_owned()
+                    + "--ddp-time "
+                    + &self.ddp_time
+                    + " --product "
+                    + &self.product
+                    + " "
+                    + &self.bag;
+                println!("command: {}", self.output_command);
+            }
+            ui.label(&self.output_command);
             ui.separator();
             ui.heading("Output:");
             egui::ScrollArea::vertical().show(ui, |ui| {
@@ -406,6 +402,9 @@ impl eframe::App for SSHCommander {
                 egui::warn_if_debug_build(ui);
             });
         });
+        if self.need_execute {
+            ctx.request_repaint();
+        }
     }
 }
 
