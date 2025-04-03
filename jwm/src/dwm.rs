@@ -3029,6 +3029,10 @@ impl Dwm {
             if sel.is_none() {
                 return;
             }
+            // Don't kill neverfocus.
+            if sel.as_ref().unwrap().borrow_mut().neverfocus {
+                return;
+            }
             info!("[killclient] {}", sel.as_ref().unwrap().borrow_mut());
             if !self.sendevent(
                 &mut sel.as_ref().unwrap().borrow_mut(),

@@ -161,6 +161,34 @@ impl SSHCommander {
 
         Ok(connection)
     }
+
+    fn safely_close_channel(
+        &mut self,
+        channel: &mut ssh2::Channel,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 发送EOF
+        channel.send_eof()?;
+
+        // 等待EOF确认，带超时
+        let start = std::time::Instant::now();
+        let timeout = std::time::Duration::from_secs(5);
+
+        while !channel.eof() {
+            if start.elapsed() > timeout {
+                // 如果超时，不再等待EOF，直接尝试关闭
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+
+        // 获取退出状态（如果可用）
+        let _ = channel.exit_status();
+
+        // 尝试关闭通道，但不使用wait_close
+        // 而是直接关闭，让ssh2库自己处理
+        Ok(())
+    }
+
     fn list_remote_directory(
         &mut self,
         path: &str,
@@ -178,7 +206,10 @@ impl SSHCommander {
         // 读取输出
         let mut output = String::new();
         channel.read_to_string(&mut output)?;
-        channel.wait_close()?;
+        // 使用安全关闭函数
+        self.safely_close_channel(&mut channel)?;
+        // channel.wait_close()?;
+
         // 解析目录内容，跳过前两行(. 和 ..)
         let entries = output
             .lines()
