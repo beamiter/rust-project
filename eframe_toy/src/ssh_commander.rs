@@ -27,6 +27,8 @@ pub struct SSHCommander {
     output_command: String,
     #[serde(skip)]
     need_execute: bool,
+    #[serde(skip)]
+    force_connect: bool,
 }
 struct SSHConnection {
     session: Session,
@@ -53,6 +55,7 @@ impl Default for SSHCommander {
             is_loading_directory: false,
             ssh_connection: None,
             need_execute: false,
+            force_connect: false,
         }
     }
 }
@@ -115,24 +118,26 @@ impl SSHCommander {
     ) -> Result<Arc<Mutex<SSHConnection>>, Box<dyn std::error::Error>> {
         // 如果连接存在且最近有使用，直接返回
 
-        if let Some(conn) = &self.ssh_connection {
-            let mut connection = conn.lock().unwrap();
+        if !self.force_connect {
+            if let Some(conn) = &self.ssh_connection {
+                let mut connection = conn.lock().unwrap();
 
-            // 检查连接是否超过5分钟未使用，如果是则刷新
+                // 检查连接是否超过5分钟未使用，如果是则刷新
 
-            if connection.last_used.elapsed() > Duration::from_secs(300) {
-                // 发送一个空命令保持连接活跃
+                if connection.last_used.elapsed() > Duration::from_secs(300) {
+                    // 发送一个空命令保持连接活跃
 
-                let mut channel = connection.session.channel_session()?;
+                    let mut channel = connection.session.channel_session()?;
 
-                channel.exec("echo")?;
+                    channel.exec("echo")?;
 
-                channel.wait_close()?;
+                    channel.wait_close()?;
+                }
+
+                connection.last_used = Instant::now();
+
+                return Ok(conn.clone());
             }
-
-            connection.last_used = Instant::now();
-
-            return Ok(conn.clone());
         }
 
         // 创建新连接
@@ -158,6 +163,7 @@ impl SSHCommander {
         }));
 
         self.ssh_connection = Some(connection.clone());
+        self.force_connect = false;
 
         Ok(connection)
     }
@@ -299,6 +305,7 @@ impl eframe::App for SSHCommander {
             ui.horizontal(|ui| {
                 ui.label("Host: ");
                 ui.add(egui::TextEdit::singleline(&mut self.host).desired_width(150.));
+                ui.label(format!("Force connect: {}", self.force_connect))
             });
             ui.horizontal(|ui| {
                 ui.label("Username: ");
@@ -332,6 +339,7 @@ impl eframe::App for SSHCommander {
                 ui.add(egui::TextEdit::singleline(&mut self.bag).desired_width(remaining_width));
                 if ui.button("Browse...").clicked() {
                     self.show_file_dialog = true;
+                    self.force_connect = true;
                     self.load_directory_contents(); // 加载目录内容
                 }
             });
