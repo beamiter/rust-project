@@ -2238,6 +2238,10 @@ impl Dwm {
         unsafe {
             if let Arg::Ui(ui) = *arg {
                 let sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+                // Don't tag neverfocus.
+                if sel.as_ref().unwrap().borrow_mut().neverfocus {
+                    return;
+                }
                 let target_tag = ui & Config::tagmask;
                 if let Some(ref sel_opt) = sel {
                     if target_tag > 0 {
@@ -2255,6 +2259,17 @@ impl Dwm {
         unsafe {
             if let Some(ref selmon_opt) = self.selmon {
                 if selmon_opt.borrow_mut().sel.is_none() {
+                    return;
+                }
+                // Don't send neverfocus.
+                if selmon_opt
+                    .borrow_mut()
+                    .sel
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .neverfocus
+                {
                     return;
                 }
             }
@@ -2804,6 +2819,10 @@ impl Dwm {
         unsafe {
             let sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
             if sel.is_none() {
+                return;
+            }
+            // Don't toggletag neverfocus.
+            if sel.as_ref().unwrap().borrow_mut().neverfocus {
                 return;
             }
             if let Arg::Ui(ui) = *arg {
