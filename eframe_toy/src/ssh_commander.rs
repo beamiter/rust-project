@@ -403,6 +403,7 @@ impl eframe::App for SSHCommander {
             }
             if self.need_execute {
                 self.need_execute = false;
+                self.force_connect = true;
                 match self.execute_command() {
                     Ok(output) => self.output = output,
                     Err(e) => self.output = format!("Error executing command: {}", e),
