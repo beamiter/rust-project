@@ -2,6 +2,7 @@ mod egui_bar;
 use chrono::Local;
 use egui::{FontFamily, FontId, TextStyle};
 use egui::{Margin, Pos2};
+use egui_bar::constants::FONT_SIZE;
 pub use egui_bar::MyEguiApp;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use font_kit::source::SystemSource;
@@ -67,25 +68,13 @@ fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::
 fn configure_text_styles(ctx: &egui::Context) {
     ctx.all_styles_mut(move |style| {
         let text_styles: BTreeMap<TextStyle, FontId> = [
-            (
-                TextStyle::Body,
-                FontId::new(MyEguiApp::FONT_SIZE, Monospace),
-            ),
-            (
-                TextStyle::Monospace,
-                FontId::new(MyEguiApp::FONT_SIZE, Monospace),
-            ),
-            (
-                TextStyle::Button,
-                FontId::new(MyEguiApp::FONT_SIZE, Monospace),
-            ),
-            (
-                TextStyle::Small,
-                FontId::new(MyEguiApp::FONT_SIZE / 2., Proportional),
-            ),
+            (TextStyle::Body, FontId::new(FONT_SIZE, Monospace)),
+            (TextStyle::Monospace, FontId::new(FONT_SIZE, Monospace)),
+            (TextStyle::Button, FontId::new(FONT_SIZE, Monospace)),
+            (TextStyle::Small, FontId::new(FONT_SIZE / 2., Proportional)),
             (
                 TextStyle::Heading,
-                FontId::new(MyEguiApp::FONT_SIZE * 2., Proportional),
+                FontId::new(FONT_SIZE * 2., Proportional),
             ),
         ]
         .into();
@@ -136,8 +125,8 @@ fn main() -> eframe::Result {
             .with_transparent(true)
             .with_window_type(egui::X11WindowType::Dock)
             .with_position(Pos2::new(0., 0.))
-            .with_inner_size([800., MyEguiApp::FONT_SIZE]) // Initial height
-            .with_min_inner_size([800., MyEguiApp::FONT_SIZE]) // Minimum size
+            .with_inner_size([800., FONT_SIZE]) // Initial height
+            .with_min_inner_size([800., FONT_SIZE]) // Minimum size
             // .with_max_inner_size([f32::INFINITY, 20.0]) // Set max height to 20.0
             .with_decorations(false), // Hide title bar and decorations
         // .with_always_on_top(), // Keep window always on top
