@@ -40,6 +40,14 @@ fn main() -> eframe::Result {
                 Ok(Box::<toy::Filer>::default())
             }),
         ),
+        3 => eframe::run_native(
+            "image viewer",
+            native_options,
+            Box::new(|cc| {
+                toy::configure_text_styles(&cc.egui_ctx);
+                Ok(Box::<toy::ImageViewerApp>::default())
+            }),
+        ),
         _ => {
             panic!("unsupported instance");
         }

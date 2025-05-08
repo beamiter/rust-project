@@ -34,6 +34,8 @@ imageproc = "0.25.0"
 rustfft = "6.2.0"
 ndarray = "0.16.1"
 flexi_logger = "0.29.8"
+rfd = "0.15.3"
+walkdir = "2.5.0"
 
 # native:
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]

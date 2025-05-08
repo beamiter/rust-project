@@ -18,3 +18,6 @@ pub use filer::Filer;
 mod correlation_stitcher;
 
 mod direct_stitcher;
+
+mod image_viewer;
+pub use image_viewer::ImageViewerApp;
