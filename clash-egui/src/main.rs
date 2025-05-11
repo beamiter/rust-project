@@ -9,7 +9,9 @@ use log::info;
 
 fn main() -> Result<(), eframe::Error> {
     // 初始化日志
-    env_logger::init();
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_secs()
+        .init();
     info!("Starting Clash GUI...");
 
     // 设置应用程序选项

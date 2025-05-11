@@ -1,5 +1,6 @@
 use crate::clash::core::ClashCore;
 use eframe::egui;
+use log::info;
 use std::sync::{Arc, Mutex};
 
 pub struct Dashboard {
@@ -26,11 +27,13 @@ impl Dashboard {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        info!("Dashboard 0");
         ui.heading("Dashboard");
         ui.add_space(20.0);
 
         // 更新流量数据
         self.update_traffic_data();
+        info!("Dashboard 1");
 
         // 显示流量卡片
         ui.horizontal(|ui| {
@@ -50,6 +53,7 @@ impl Dashboard {
         });
 
         ui.add_space(20.0);
+        info!("Dashboard 2");
 
         // 显示连接数
         ui.horizontal(|ui| {
@@ -63,6 +67,7 @@ impl Dashboard {
         // 显示系统代理状态
         let is_system_proxy_enabled = false; // 实际应用中应该从系统获取
         ui.horizontal(|ui| {
+            info!("Dashboard 3");
             ui.heading("    ");
             ui.add_space(10.0);
             let status_text = if is_system_proxy_enabled {
@@ -79,7 +84,7 @@ impl Dashboard {
 
             if ui
                 .button(if is_system_proxy_enabled {
-                    "禁用"
+                    "forbid"
                 } else {
                     "start"
                 })
@@ -90,6 +95,7 @@ impl Dashboard {
             }
         });
 
+        info!("Dashboard 4");
         // 请求每秒更新一次UI
         ctx.request_repaint_after(std::time::Duration::from_secs(1));
     }
@@ -121,9 +127,14 @@ impl Dashboard {
     }
 
     fn update_traffic_data(&mut self) {
+        return;
+        info!("update_traffic_data 0");
         if let Ok(core) = self.core.lock() {
+            info!("update_traffic_data 1");
             if let Ok(api_client) = core.get_api_client().lock() {
+                info!("update_traffic_data 2");
                 if let Ok(traffic) = api_client.get_traffic() {
+                    info!("update_traffic_data 3");
                     let now = std::time::Instant::now();
                     let elapsed = now.duration_since(self.last_update).as_secs_f64();
 
@@ -143,6 +154,7 @@ impl Dashboard {
                 self.connection_count = 0;
             }
         }
+        info!("update_traffic_data 4");
     }
 }
 

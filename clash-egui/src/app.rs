@@ -6,6 +6,7 @@ use crate::ui::{
 };
 use eframe::{CreationContext, egui};
 use font_kit::source::SystemSource;
+use log::info;
 use std::sync::{Arc, Mutex};
 
 /// 应用程序的主要视图
@@ -20,7 +21,7 @@ enum View {
 pub struct ClashApp {
     view: View,
     core: Arc<Mutex<ClashCore>>,
-    dashboard: Dashboard,
+    dashboard: Arc<Mutex<Dashboard>>,
     proxies: Arc<Mutex<Proxies>>,
     // rules: Rules,
     // logs: Logs,
@@ -37,7 +38,7 @@ impl ClashApp {
         let core = Arc::new(Mutex::new(ClashCore::new()));
 
         // 初始化各个视图组件
-        let dashboard = Dashboard::new(Arc::clone(&core));
+        let dashboard = Arc::new(Mutex::new(Dashboard::new(Arc::clone(&core))));
         let proxies = Arc::new(Mutex::new(Proxies::new(Arc::clone(&core))));
 
         // 设置API客户端的应用状态
@@ -138,6 +139,7 @@ impl ClashApp {
 
     fn render_sidebar(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
+            info!("here 0");
             ui.add_space(10.0);
             ui.heading("Clash");
             ui.add_space(20.0);
@@ -166,7 +168,9 @@ impl ClashApp {
                     }))
                     .clicked()
                 {
+                    info!("here 1");
                     self.toggle_clash();
+                    info!("here 2");
                 }
             });
 
@@ -175,11 +179,13 @@ impl ClashApp {
             ui.add_space(10.0);
 
             // 导航菜单
+            info!("here 3");
             self.sidebar_button(ui, "dashboard", View::Dashboard);
             self.sidebar_button(ui, "proxies", View::Proxies);
             self.sidebar_button(ui, "rules", View::Rules);
             self.sidebar_button(ui, "logs", View::Logs);
             self.sidebar_button(ui, "settings", View::Settings);
+            info!("here 4");
 
             // 底部版本信息
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
@@ -205,6 +211,7 @@ impl ClashApp {
     }
 
     fn toggle_clash(&mut self) {
+        info!("toggle_clash start");
         if self.is_running {
             if let Ok(mut core) = self.core.lock() {
                 let _ = core.stop();
@@ -215,6 +222,7 @@ impl ClashApp {
             }
         }
         self.is_running = !self.is_running;
+        info!("toggle_clash end");
     }
 }
 
@@ -230,7 +238,7 @@ impl eframe::App for ClashApp {
 
         // 主内容区域
         egui::CentralPanel::default().show(ctx, |ui| match self.view {
-            View::Dashboard => self.dashboard.ui(ui, ctx),
+            View::Dashboard => self.dashboard.lock().unwrap().ui(ui, ctx),
             View::Proxies => self.proxies.lock().unwrap().ui(ui, ctx),
             _ => {} // View::Rules => self.rules.ui(ui, ctx),
                     // View::Logs => self.logs.ui(ui, ctx),
