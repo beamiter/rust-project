@@ -127,13 +127,13 @@ impl Dashboard {
     }
 
     fn update_traffic_data(&mut self) {
-        info!("update_traffic_data 0");
+        // info!("update_traffic_data 0");
         if let Ok(core) = self.core.lock() {
-            info!("update_traffic_data 1");
+            // info!("update_traffic_data 1");
             if let Ok(api_client) = core.get_api_client().lock() {
-                info!("update_traffic_data 2");
+                // info!("update_traffic_data 2");
                 if let Ok(traffic) = api_client.get_traffic() {
-                    info!("update_traffic_data 3");
+                    info!("update_traffic_data {:?}", traffic);
                     let now = std::time::Instant::now();
                     let elapsed = now.duration_since(self.last_update).as_secs_f64();
 
@@ -148,7 +148,7 @@ impl Dashboard {
                     self.last_update = now;
                 }
 
-                info!("update_traffic_data 4");
+                // info!("update_traffic_data 4");
                 // 获取连接数
                 // 实际应用中应该从API获取
                 self.connection_count = 0;

@@ -215,6 +215,7 @@ impl ApiClient {
     }
     pub fn get_traffic(&self) -> Result<TrafficInfo> {
         let url = format!("{}/traffic", self.base_url);
+        info!("url: {}", url);
 
         // 使用curl命令，限制传输最长时间
         let output = std::process::Command::new("curl")
