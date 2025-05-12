@@ -19,7 +19,7 @@ impl ClashCore {
         let config_dir = directories::ProjectDirs::from("com", "clash-gui", "clash-egui")
             .map(|dirs| dirs.config_dir().to_path_buf())
             .unwrap_or_else(|| PathBuf::from("./config"));
-        // println!("{:?}", config_dir);
+        info!("{:?}", config_dir);
 
         std::fs::create_dir_all(&config_dir).unwrap_or_else(|e| {
             error!("Failed to create config directory: {}", e);
@@ -42,7 +42,6 @@ impl ClashCore {
             &format!("http://127.0.0.1:{}", config.controller.port),
             &config.controller.secret,
         )));
-        // println!("{:?}", config);
 
         Self {
             config,
@@ -85,16 +84,6 @@ impl ClashCore {
         Ok(())
     }
 
-    // pub fn is_running(&self) -> bool {
-    //     if let Some(child) = &self.process {
-    //         match child.try_wait() {
-    //             Ok(None) => true,
-    //             _ => false,
-    //         }
-    //     } else {
-    //         false
-    //     }
-    // }
     pub fn is_running(&mut self) -> bool {
         if let Some(child) = &mut self.process {
             match child.try_wait() {

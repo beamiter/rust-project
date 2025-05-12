@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use log::info;
 use reqwest::blocking::{Client, Response};
 use reqwest::header;
 use serde::{Deserialize, Serialize};
@@ -59,8 +60,6 @@ pub struct ApiClient {
     app_state: Option<Arc<Mutex<crate::ui::proxies::Proxies>>>,
 }
 
-// ... 其他结构体定义保持不变 ...
-
 impl ApiClient {
     pub fn new(base_url: &str, secret: &str) -> Self {
         let mut headers = header::HeaderMap::new();
@@ -73,7 +72,7 @@ impl ApiClient {
 
         let client = Client::builder()
             .default_headers(headers)
-            .timeout(Duration::from_secs(10))
+            .timeout(Duration::from_secs(5))
             .build()
             .unwrap();
 
@@ -206,20 +205,45 @@ impl ApiClient {
 
         Ok(())
     }
-
+    fn test_connection(&self) -> Result<()> {
+        println!("开始测试连接...");
+        let resp = reqwest::blocking::get("http://127.0.0.1:9090/traffic")?;
+        println!("状态码: {}", resp.status());
+        let text = resp.text()?;
+        println!("响应内容: {}", text);
+        Ok(())
+    }
     pub fn get_traffic(&self) -> Result<TrafficInfo> {
         let url = format!("{}/traffic", self.base_url);
-        let response = self.client.get(&url).send()?;
 
-        if !response.status().is_success() {
-            return Err(anyhow::anyhow!(
-                "Failed to get traffic: HTTP {}",
-                response.status()
-            ));
+        // 使用curl命令，限制传输最长时间
+        let output = std::process::Command::new("curl")
+            .args(&[
+                "-s", // 静默模式
+                "-N", // 禁用缓冲，立即输出
+                "-m", "5", // 总超时1秒
+                &url,
+            ])
+            .output()?;
+
+        if output.stdout.is_empty() {
+            return Err(anyhow::anyhow!("未收到任何数据"));
         }
 
-        let traffic = response.json::<TrafficInfo>()?;
-        Ok(traffic)
+        let text = String::from_utf8_lossy(&output.stdout);
+        println!("curl获取到数据: {}", text);
+
+        // 处理获取到的数据行
+        for line in text.lines() {
+            if !line.trim().is_empty() {
+                match serde_json::from_str::<TrafficInfo>(line) {
+                    Ok(traffic) => return Ok(traffic),
+                    Err(_) => continue,
+                }
+            }
+        }
+
+        Err(anyhow::anyhow!("未找到有效的流量数据"))
     }
 
     pub fn get_logs(&self) -> Result<Vec<LogEntry>> {

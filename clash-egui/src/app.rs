@@ -114,23 +114,23 @@ impl ClashApp {
         style.text_styles = [
             (
                 egui::TextStyle::Heading,
-                egui::FontId::new(24.0, egui::FontFamily::Proportional),
+                egui::FontId::new(18.0, egui::FontFamily::Proportional),
             ),
             (
                 egui::TextStyle::Body,
-                egui::FontId::new(16.0, egui::FontFamily::Proportional),
+                egui::FontId::new(14.0, egui::FontFamily::Proportional),
             ),
             (
                 egui::TextStyle::Monospace,
-                egui::FontId::new(14.0, egui::FontFamily::Monospace),
+                egui::FontId::new(12.0, egui::FontFamily::Monospace),
             ),
             (
                 egui::TextStyle::Button,
-                egui::FontId::new(16.0, egui::FontFamily::Proportional),
+                egui::FontId::new(14.0, egui::FontFamily::Proportional),
             ),
             (
                 egui::TextStyle::Small,
-                egui::FontId::new(12.0, egui::FontFamily::Proportional),
+                egui::FontId::new(10.0, egui::FontFamily::Proportional),
             ),
         ]
         .into();
@@ -139,7 +139,7 @@ impl ClashApp {
 
     fn render_sidebar(&mut self, ui: &mut egui::Ui) {
         ui.vertical(|ui| {
-            info!("here 0");
+            // info!("here 0");
             ui.add_space(10.0);
             ui.heading("Clash");
             ui.add_space(20.0);
@@ -168,9 +168,9 @@ impl ClashApp {
                     }))
                     .clicked()
                 {
-                    info!("here 1");
+                    // info!("here 1");
                     self.toggle_clash();
-                    info!("here 2");
+                    // info!("here 2");
                 }
             });
 
@@ -179,13 +179,13 @@ impl ClashApp {
             ui.add_space(10.0);
 
             // 导航菜单
-            info!("here 3");
+            // info!("here 3");
             self.sidebar_button(ui, "dashboard", View::Dashboard);
             self.sidebar_button(ui, "proxies", View::Proxies);
             self.sidebar_button(ui, "rules", View::Rules);
             self.sidebar_button(ui, "logs", View::Logs);
             self.sidebar_button(ui, "settings", View::Settings);
-            info!("here 4");
+            // info!("here 4");
 
             // 底部版本信息
             ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
