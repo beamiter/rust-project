@@ -1,3 +1,7 @@
+// Cargo.toml 添加
+// tokio = { version = "1", features = ["rt-multi-thread"] }
+// once_cell = "1.8"
+
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -7,9 +11,14 @@ use eframe::{App, egui};
 use egui::{Color32, RichText};
 use font_kit::source::SystemSource;
 use humansize::{BINARY, format_size};
+use once_cell::sync::Lazy;
 use serde::Deserialize;
+use tokio::runtime::Runtime;
 
-#[derive(Deserialize, Default)]
+static TOKIO_RUNTIME: Lazy<Runtime> =
+    Lazy::new(|| Runtime::new().expect("Failed to create Tokio runtime"));
+
+#[derive(Deserialize, Default, Debug)]
 struct TrafficInfo {
     up: u64,
     down: u64,
@@ -21,6 +30,7 @@ struct NetworkStats {
     previous_upload: u64,
     previous_download: u64,
     last_update: std::time::Instant,
+    api_connected: bool,
 }
 
 impl Default for NetworkStats {
@@ -31,6 +41,7 @@ impl Default for NetworkStats {
             previous_upload: 0,
             previous_download: 0,
             last_update: std::time::Instant::now(),
+            api_connected: false,
         }
     }
 }
@@ -41,6 +52,7 @@ struct ClashApp {
     clash_path: String,
     is_running: bool,
     stats: Arc<Mutex<NetworkStats>>,
+    api_port: String,
 }
 
 impl ClashApp {
@@ -117,6 +129,7 @@ impl ClashApp {
         .into();
         ctx.set_style(style);
     }
+
     fn new(cc: &eframe::CreationContext<'_>) -> Self {
         Self::configure_fonts_and_style(&cc.egui_ctx);
         let stats = Arc::new(Mutex::new(NetworkStats::default()));
@@ -125,19 +138,24 @@ impl ClashApp {
         let app = Self {
             clash_process: None,
             config_path: "/home/yj/.config/clash-egui/config.yaml".to_string(),
-            clash_path: "clash".to_string(), // 假设clash可执行文件在PATH中
+            clash_path: "clash".to_string(),
             is_running: false,
             stats,
+            api_port: "37381".to_string(),
         };
+
+        let api_port = app.api_port.clone();
 
         // 启动监控线程
         thread::spawn(move || {
             loop {
                 thread::sleep(Duration::from_millis(1000));
 
-                // 通过HTTP API获取流量信息
-                if let Some(traffic) = get_traffic() {
+                // 尝试获取流量数据
+                if let Some(traffic) = get_traffic("127.0.0.1", &api_port) {
+                    println!("traffic: {:?}", traffic);
                     let mut stats = stats_clone.lock().unwrap();
+                    stats.api_connected = true;
                     let elapsed = stats.last_update.elapsed().as_secs() as u64;
                     if elapsed > 0 {
                         stats.upload_speed = (traffic.up - stats.previous_upload) / elapsed;
@@ -146,6 +164,11 @@ impl ClashApp {
                         stats.previous_download = traffic.down;
                         stats.last_update = std::time::Instant::now();
                     }
+                } else {
+                    // API连接失败
+                    println!("failed");
+                    let mut stats = stats_clone.lock().unwrap();
+                    stats.api_connected = false;
                 }
             }
         });
@@ -154,6 +177,7 @@ impl ClashApp {
     }
 
     fn start_clash(&mut self) {
+        // 保持不变...
         if self.is_running {
             return;
         }
@@ -167,14 +191,6 @@ impl ClashApp {
                 self.clash_process = Some(child);
                 self.is_running = true;
                 println!("Clash started");
-
-                // 初始化流量统计
-                if let Some(traffic) = get_traffic() {
-                    let mut stats = self.stats.lock().unwrap();
-                    stats.previous_upload = traffic.up;
-                    stats.previous_download = traffic.down;
-                    stats.last_update = std::time::Instant::now();
-                }
             }
             Err(e) => {
                 eprintln!("Failed to start Clash: {}", e);
@@ -183,6 +199,7 @@ impl ClashApp {
     }
 
     fn stop_clash(&mut self) {
+        // 保持不变...
         if let Some(mut child) = self.clash_process.take() {
             match child.kill() {
                 Ok(_) => {
@@ -204,27 +221,52 @@ impl ClashApp {
     }
 }
 
-// 将获取流量的功能移到外部函数
-fn get_traffic() -> Option<TrafficInfo> {
-    // 通常Clash API在9090端口
-    let client = reqwest::blocking::Client::new();
-    match client
-        .get("http://127.0.0.1:37381/traffic")
-        .header("Content-Type", "application/json")
+async fn get_traffic_async(host: &str, port: &str) -> Option<TrafficInfo> {
+    let base_url = format!("http://{}:{}", host, port);
+    if let Some(traffic) = try_connections_endpoint(&base_url).await {
+        return Some(traffic);
+    }
+    None
+}
+
+async fn try_connections_endpoint(base_url: &str) -> Option<TrafficInfo> {
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(1))
+        .build()
+        .ok()?;
+
+    let response = client
+        .get(&format!("{}/connections", base_url))
         .send()
-    {
-        Ok(response) => match response.json::<TrafficInfo>() {
-            Ok(traffic) => Some(traffic),
-            Err(e) => {
-                eprintln!("Failed to parse traffic info: {}", e);
-                None
-            }
-        },
-        Err(e) => {
-            eprintln!("Failed to get traffic info: {}", e);
-            None
+        .await
+        .ok()?;
+
+    if !response.status().is_success() {
+        return None;
+    }
+
+    let data = response.json::<serde_json::Value>().await.ok()?;
+
+    // 解析连接统计
+    let mut up = 0;
+    let mut down = 0;
+    // println!("{:?}", data);
+
+    // 这里的结构取决于 Clash API 的具体实现
+    if let Some(connections) = data["connections"].as_array() {
+        for conn in connections {
+            up += conn["upload"].as_u64().unwrap_or(0);
+            down += conn["download"].as_u64().unwrap_or(0);
         }
     }
+
+    println!("use connections endpoint");
+    Some(TrafficInfo { up, down })
+}
+
+// 同步包装函数
+fn get_traffic(host: &str, port: &str) -> Option<TrafficInfo> {
+    TOKIO_RUNTIME.block_on(get_traffic_async(host, port))
 }
 
 impl App for ClashApp {
@@ -233,20 +275,27 @@ impl App for ClashApp {
             ui.heading("Clash Client");
             ui.add_space(20.0);
 
-            // 路径设置
-            ui.horizontal(|ui| {
-                ui.label("Clash 路径:");
-                ui.text_edit_singleline(&mut self.clash_path);
+            // 配置部分
+            ui.collapsing("配置设置", |ui| {
+                ui.horizontal(|ui| {
+                    ui.label("Clash 路径:");
+                    ui.text_edit_singleline(&mut self.clash_path);
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("配置文件路径:");
+                    ui.text_edit_singleline(&mut self.config_path);
+                });
+
+                ui.horizontal(|ui| {
+                    ui.label("API 端口:");
+                    ui.text_edit_singleline(&mut self.api_port);
+                });
             });
 
-            ui.horizontal(|ui| {
-                ui.label("配置文件路径:");
-                ui.text_edit_singleline(&mut self.config_path);
-            });
+            ui.add_space(10.0);
 
-            ui.add_space(20.0);
-
-            // 启动/停止按钮
+            // 控制按钮
             if self.is_running {
                 if ui.button("停止 Clash").clicked() {
                     self.stop_clash();
@@ -257,20 +306,30 @@ impl App for ClashApp {
                 }
             }
 
-            ui.add_space(20.0);
-
-            // 状态显示
-            let status_text = if self.is_running {
-                RichText::new("运行中").color(Color32::GREEN)
-            } else {
-                RichText::new("已停止").color(Color32::RED)
-            };
-            ui.label(status_text);
-
             ui.add_space(10.0);
 
-            // 获取当前网速信息并显示
+            // 状态显示
             let stats = self.stats.lock().unwrap();
+
+            ui.horizontal(|ui| {
+                let status_text = if self.is_running {
+                    RichText::new("Clash 运行中").color(Color32::GREEN)
+                } else {
+                    RichText::new("Clash 已停止").color(Color32::RED)
+                };
+                ui.label(status_text);
+
+                ui.separator();
+
+                let api_text = if stats.api_connected {
+                    RichText::new("API 已连接").color(Color32::GREEN)
+                } else {
+                    RichText::new("API 未连接").color(Color32::RED)
+                };
+                ui.label(api_text);
+            });
+
+            ui.add_space(10.0);
 
             // 网速显示
             ui.horizontal(|ui| {
