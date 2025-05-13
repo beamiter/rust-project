@@ -193,8 +193,8 @@ impl ClashApp {
         // 默认配置文件路径和 Clash 可执行文件路径
         // 尝试从常见的用户配置目录获取路径
         let default_config_path = dirs::config_dir()
-            .map(|p| p.join("config.yaml")) // 这是一个常见的路径
-            .unwrap_or_else(|| std::path::PathBuf::from("/home/yj/config.yaml")) // 回退路径
+            .map(|p| p.join("clash/config.yaml")) // 这是一个常见的路径
+            .unwrap_or_else(|| std::path::PathBuf::from("/home/yj/.config/clash/config.yaml")) // 回退路径
             .to_string_lossy()
             .to_string();
 
@@ -360,7 +360,7 @@ async fn get_traffic_async(host: &str, port: &str) -> Option<TrafficInfo> {
 async fn try_traffic_endpoint(base_url: &str) -> Option<TrafficInfo> {
     println!("haha 0");
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5)) // 短超时
+        .timeout(Duration::from_secs(1)) // 短超时
         .build()
         .ok()?;
     println!("haha 1");
@@ -409,7 +409,7 @@ async fn try_traffic_endpoint(base_url: &str) -> Option<TrafficInfo> {
 async fn try_connections_endpoint(base_url: &str) -> Option<TrafficInfo> {
     println!("there 0");
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
+        .timeout(Duration::from_secs(1))
         .build()
         .ok()?;
     println!("there 1");
