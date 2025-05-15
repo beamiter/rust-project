@@ -106,6 +106,7 @@ impl MyEguiApp {
 
         // 初始化音量控制窗口
         let mut volume_window = VolumeControlWindow::default();
+        volume_window.is_muted = Self::is_master_muted();
         volume_window.master_volume = Self::get_current_volume();
         volume_window.available_devices = Self::get_audio_devices();
 
@@ -125,6 +126,44 @@ impl MyEguiApp {
             volume_window,
             need_resize: true,
             current_window_height: DESIRED_HEIGHT,
+        }
+    }
+
+    /// 获取 Master 输出的当前静音状态。
+    /// 此函数执行 `amixer get Master` 并解析其输出。
+    /// 它假设如果 Master 通道被静音，输出将包含 `[off]` 字符串。
+    /// # 返回
+    /// - `true` 如果 Master 输出被静音。
+    /// - `false` 如果 Master 输出未被静音，或者无法确定状态（例如命令执行失败或 `[off]` 未找到）。
+    fn is_master_muted() -> bool {
+        // 尝试使用 amixer 获取 Master 通道的当前状态
+        match Command::new("amixer").args(["get", "Master"]).output() {
+            Ok(output) => {
+                // 检查 amixer 命令是否成功执行
+                if !output.status.success() {
+                    // 如果命令本身失败（例如 amixer 未找到，或执行出错），打印错误并返回默认值
+                    // eprintln!("amixer command failed with status: {}", output.status);
+                    return false; // 默认未静音
+                }
+                let output_str = String::from_utf8_lossy(&output.stdout);
+                // 在 amixer 的输出中，静音的通道通常会显示 `[off]`。
+                // 例如: "Front Left: Playback 0 [0%] [-infdB] [off]"
+                // 我们直接查找是否存在 "[off]" 这个子字符串。
+                // 这是一个相对简单的检查，但对于典型的 ALSA 和 amixer 设置是有效的。
+                // 如果 Master 通道被静音，其状态描述中应包含 "[off]"。
+                // 如果 Master 通道没有静音能力（即没有 pswitch），则不会有 "[on]" 或 "[off]"，
+                // 这种情况下 .contains("[off]") 会返回 false，这也是期望的行为（因为它没有被静音）。
+                if output_str.contains("[off]") {
+                    true // 找到了 "[off]"，表示已静音
+                } else {
+                    false // 未找到 "[off]"，表示未静音 (或者没有静音开关)
+                }
+            }
+            Err(_e) => {
+                // 如果执行 amixer 命令本身失败（例如，进程无法启动）
+                // eprintln!("Failed to execute amixer command: {}", _e);
+                false // 发生错误，默认未静音
+            }
         }
     }
 
@@ -200,9 +239,7 @@ impl MyEguiApp {
     // 打开 alsamixer
     fn open_alsamixer(&self) {
         // 在终端中打开 alsamixer
-        let _ = Command::new("terminator")
-            .args(["-e", "alsamixer"])
-            .spawn();
+        let _ = Command::new("terminator").args(["-e", "alsamixer"]).spawn();
     }
 
     // 绘制音量按钮
@@ -345,7 +382,8 @@ impl MyEguiApp {
                     _ => {
                         // 特定设备控制
                         let device_name = &self.volume_window.available_devices
-                            [self.volume_window.selected_device].clone();
+                            [self.volume_window.selected_device]
+                            .clone();
                         let mut device_volume = 50; // 默认值，实际应用中应该获取当前值
                         if ui
                             .add(egui::Slider::new(&mut device_volume, 0..=100).text(device_name))
@@ -399,13 +437,15 @@ impl MyEguiApp {
     fn adjust_window_size(&mut self, ctx: &egui::Context, scale_factor: f32, monitor_width: f32) {
         // 计算应使用的高度
         let target_height = self.calculate_window_height();
+        let screen_rect = ctx.screen_rect();
+        let desired_width = monitor_width;
+        let desired_size = egui::Vec2::new(desired_width / scale_factor, target_height);
 
         // 如果高度发生变化或被标记为需要调整大小
-        if self.need_resize || (target_height - self.current_window_height).abs() > 1.0 {
-            let screen_rect = ctx.screen_rect();
-            let desired_width = monitor_width;
-            let desired_size = egui::Vec2::new(desired_width / scale_factor, target_height);
-
+        if self.need_resize
+            || (target_height - self.current_window_height).abs() > 1.0
+            || (desired_size.x != screen_rect.size().x)
+        {
             // 调整窗口大小
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::Pos2::ZERO));
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));

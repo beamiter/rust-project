@@ -122,8 +122,6 @@ fn main() -> eframe::Result {
 
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_transparent(true)
-            .with_window_type(egui::X11WindowType::Dock)
             .with_position(Pos2::new(0., 0.))
             .with_inner_size([800., FONT_SIZE]) // Initial height
             .with_min_inner_size([800., FONT_SIZE]) // Minimum size
