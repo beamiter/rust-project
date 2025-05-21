@@ -1,4 +1,5 @@
-use std::fs::{self, File}; // 修改：增加了 fs
+use std::collections::HashMap; // For WsOpts headers, if needed later
+use std::fs::{File, self};
 use std::io::BufReader;
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
@@ -6,7 +7,7 @@ use std::thread;
 use std::time::Duration;
 
 use eframe::{App, egui};
-use egui::{Color32, RichText, ScrollArea}; // 修改：增加了 ScrollArea
+use egui::{Color32, RichText, ScrollArea};
 use font_kit::source::SystemSource;
 use humansize::{BINARY, format_size};
 use once_cell::sync::Lazy;
@@ -16,17 +17,131 @@ use tokio::runtime::Runtime;
 static TOKIO_RUNTIME: Lazy<Runtime> =
     Lazy::new(|| Runtime::new().expect("Failed to create Tokio runtime"));
 
+// --- Data Structures for Clash Configuration ---
+
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
+#[serde(rename_all = "kebab-case")] // Handles fields like mixed-port
+pub struct ClashFullConfig {
+    #[serde(rename = "mixed-port")] // Special case if kebab-case doesn't catch it
+    pub mixed_port: Option<u16>,
+    #[serde(rename = "redir-port")]
+    pub redir_port: Option<u16>,
+    pub allow_lan: Option<bool>,
+    pub mode: Option<String>, // e.g., "Rule", "Global", "Direct"
+    pub log_level: Option<String>, // e.g., "info", "warning"
+    #[serde(rename = "external-controller")]
+    pub external_controller: Option<String>, // e.g., "0.0.0.0:9090" or ":9090"
+    pub secret: Option<String>,
+    #[serde(rename = "external-ui")]
+    pub external_ui: Option<String>, // Path to dashboard
+    pub dns: Option<DnsConfig>,
+    #[serde(default)] // Ensure empty vec if 'proxies' is missing
+    pub proxies: Vec<ProxyConfig>,
+    #[serde(default, rename = "proxy-groups")] // Ensure empty vec if 'proxy-groups' is missing
+    pub proxy_groups: Vec<ProxyGroupConfig>,
+    // Add other top-level fields as needed, e.g., rules, tun, profile etc.
+    // rules: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub struct DnsConfig {
+    pub enable: Option<bool>,
+    pub ipv6: Option<bool>,
+    pub listen: Option<String>,
+    pub enhanced_mode: Option<String>, // "fake-ip" or "redir-host"
+    pub fake_ip_range: Option<String>, // CIDR, e.g., 198.18.0.1/16
+    #[serde(default)]
+    pub fake_ip_filter: Vec<String>,
+    #[serde(default)]
+    pub default_nameserver: Vec<String>,
+    #[serde(default)]
+    pub nameserver: Vec<String>,
+    #[serde(default)]
+    pub fallback: Option<Vec<String>>, // Optional field
+    pub fallback_filter: Option<FallbackFilterConfig>,
+    // Add other DNS fields as needed
+}
+
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub struct FallbackFilterConfig {
+    pub geoip: Option<bool>,
+    pub geoip_code: Option<String>,
+    #[serde(default)]
+    pub ipcidr: Vec<String>,
+    #[serde(default)]
+    pub domain: Option<Vec<String>>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub struct ProxyConfig {
+    pub name: String,
+    #[serde(rename = "type")] // 'type' is a reserved keyword in Rust
+    pub proxy_type: String, // e.g., "trojan", "vmess", "ss"
+    pub server: String,
+    pub port: u16,
+    pub password: Option<String>, // For Trojan, SS, etc.
+    pub udp: Option<bool>,
+    pub sni: Option<String>,
+    #[serde(rename = "skip-cert-verify")]
+    pub skip_cert_verify: Option<bool>,
+    pub network: Option<String>, // e.g., "tcp", "ws", "grpc"
+    pub alpn: Option<Vec<String>>,
+    #[serde(rename = "grpc-opts")]
+    pub grpc_opts: Option<GrpcOpts>,
+    #[serde(rename = "ws-opts")]
+    pub ws_opts: Option<WsOpts>,
+    // VMess specific (examples)
+    pub uuid: Option<String>,
+    #[serde(rename = "alterId")] // Note aLtErId case or use alias
+    pub alter_id: Option<u32>, // Or String if it can be non-numeric
+    pub cipher: Option<String>, // e.g., "auto"
+    // Add other proxy-specific fields as Option<T>
+}
+
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub struct GrpcOpts {
+    pub grpc_service_name: Option<String>,
+}
+
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub struct WsOpts {
+    pub path: Option<String>,
+    pub headers: Option<HashMap<String, String>>, // e.g., {"Host": "example.com"}
+}
+
+#[derive(Deserialize, Serialize, Debug, Default, Clone)]
+#[serde(rename_all = "kebab-case")]
+pub struct ProxyGroupConfig {
+    pub name: String,
+    #[serde(rename = "type")]
+    pub group_type: String, // e.g., "select", "url-test", "fallback"
+    #[serde(default)]
+    pub proxies: Vec<String>, // Names of proxies or other groups
+    pub url: Option<String>, // For url-test, fallback
+    pub interval: Option<u32>, // For url-test, fallback
+                               // Add other group-specific fields
+}
+
+// --- End of Data Structures for Clash Configuration ---
+
+
 #[derive(Deserialize, Default, Debug)]
 struct TrafficInfo {
     up: u64,
     down: u64,
 }
 
-#[derive(Deserialize, Debug)]
-struct ClashConfigYaml {
-    #[serde(rename = "external-controller")]
-    external_controller: Option<String>,
-}
+// No longer needed as ClashFullConfig replaces its purpose for API port extraction
+// #[derive(Deserialize, Debug)]
+// struct ClashConfigYaml {
+//     #[serde(rename = "external-controller")]
+//     external_controller: Option<String>,
+// }
 
 struct NetworkStats {
     upload_speed: u64,
@@ -58,16 +173,37 @@ struct AppState {
     api_port: String,
 }
 
+// Helper function to extract port from "host:port" or ":port"
+fn extract_port_from_controller_string(controller_addr: &str) -> Option<String> {
+    if let Some(port_str) = controller_addr.split(':').last() {
+        if !port_str.is_empty() && port_str.chars().all(char::is_numeric) {
+            return Some(port_str.to_string());
+        } else if port_str.is_empty() && controller_addr.starts_with(':') && controller_addr.len() > 1 {
+            let port_only_str = &controller_addr[1..];
+            if port_only_str.chars().all(char::is_numeric) {
+                return Some(port_only_str.to_string());
+            }
+        }
+    }
+    None
+}
+
+
 impl Default for AppState {
     fn default() -> Self {
         let default_config_path = dirs::config_dir()
             .map(|p| p.join("clash/config.yaml"))
-            .unwrap_or_else(|| std::path::PathBuf::from("config.yaml")) // 简化默认回退
+            .unwrap_or_else(|| std::path::PathBuf::from("config.yaml"))
             .to_string_lossy()
             .to_string();
 
-        let default_api_port =
-            load_api_port_from_config(&default_config_path).unwrap_or_else(|| "9090".to_string());
+        // Try to load full config to get API port, fallback to default "9090"
+        let default_api_port = fs::read_to_string(&default_config_path)
+            .ok()
+            .and_then(|content| try_parse_clash_config_from_string(&content).ok())
+            .and_then(|parsed_config| parsed_config.external_controller)
+            .and_then(|ec_string| extract_port_from_controller_string(&ec_string))
+            .unwrap_or_else(|| "9090".to_string());
 
         Self {
             config_path: default_config_path,
@@ -83,43 +219,16 @@ struct ClashApp {
     is_running: bool,
     stats: Arc<Mutex<NetworkStats>>,
     api_port_for_monitor: Arc<Mutex<String>>,
-    // 新增字段用于配置文件编辑器
     config_content: String,
     config_editor_status: String,
+    parsed_clash_config: Option<ClashFullConfig>, // 新增：存储完整解析的配置
 }
 
-fn load_api_port_from_config(config_path: &str) -> Option<String> {
-    let file = File::open(config_path).ok()?;
-    let reader = BufReader::new(file);
-    let config: ClashConfigYaml = serde_yaml::from_reader(reader).ok()?;
-
-    if let Some(controller_addr) = config.external_controller {
-        if let Some(port_str) = controller_addr.split(':').last() {
-            if !port_str.is_empty() && port_str.chars().all(char::is_numeric) {
-                return Some(port_str.to_string());
-            } else if port_str.is_empty()
-                && controller_addr.starts_with(':')
-                && controller_addr.len() > 1
-            {
-                let port_only_str = &controller_addr[1..];
-                if port_only_str.chars().all(char::is_numeric) {
-                    return Some(port_only_str.to_string());
-                } else {
-                    eprintln!(
-                        "Warning: Parsed port '{}' from external-controller (format ':port') is not numeric in config: {}",
-                        port_only_str, config_path
-                    );
-                }
-            } else {
-                eprintln!(
-                    "Warning: Parsed port '{}' from external-controller is not numeric in config: {}.",
-                    port_str, config_path
-                );
-            }
-        }
-    }
-    None
+// New function to parse the full config string
+fn try_parse_clash_config_from_string(yaml_string: &str) -> Result<ClashFullConfig, serde_yaml::Error> {
+    serde_yaml::from_str(yaml_string)
 }
+
 
 impl ClashApp {
     fn configure_fonts_and_style(ctx: &egui::Context) {
@@ -174,7 +283,7 @@ impl ClashApp {
             ),
             (
                 egui::TextStyle::Monospace,
-                egui::FontId::new(12.0, egui::FontFamily::Monospace), // 用于配置编辑器
+                egui::FontId::new(12.0, egui::FontFamily::Monospace),
             ),
             (
                 egui::TextStyle::Button,
@@ -200,29 +309,51 @@ impl ClashApp {
 
         let mut app_state: AppState = app_state_loaded.clone().unwrap_or_else(|| {
             println!("No saved app state found or failed to load, using defaults.");
-            AppState::default()
+            AppState::default() // AppState::default now tries to parse API port
         });
         if app_state_loaded.is_some() {
             println!("Successfully loaded app state {:?}.", app_state);
         }
 
-        if let Some(port_from_config) = load_api_port_from_config(&app_state.config_path) {
-            if app_state.api_port != port_from_config {
-                println!(
-                    "API port updated from config file ('{}') over loaded/default state ('{}'). Path: '{}'",
-                    port_from_config, app_state.api_port, app_state.config_path
-                );
-                app_state.api_port = port_from_config;
+        // Initial load of config content and attempt to parse it
+        let mut initial_config_content = String::new();
+        let mut initial_parsed_config: Option<ClashFullConfig> = None;
+        let mut initial_config_status = format!("配置文件 '{}' 内容待加载。", app_state.config_path);
+
+        match fs::read_to_string(&app_state.config_path) {
+            Ok(content) => {
+                initial_config_content = content;
+                match try_parse_clash_config_from_string(&initial_config_content) {
+                    Ok(parsed) => {
+                        initial_config_status = format!("配置文件 '{}' 加载并解析成功。", app_state.config_path);
+                        // Override API port from fully parsed config if available
+                        if let Some(ref ec_str) = parsed.external_controller {
+                            if let Some(port_from_parsed_config) = extract_port_from_controller_string(ec_str) {
+                                if app_state.api_port != port_from_parsed_config {
+                                     println!(
+                                        "API port updated from initial full parse ('{}') over loaded/default state ('{}'). Path: '{}'",
+                                        port_from_parsed_config, app_state.api_port, app_state.config_path
+                                    );
+                                    app_state.api_port = port_from_parsed_config;
+                                }
+                            }
+                        }
+                        initial_parsed_config = Some(parsed);
+                    }
+                    Err(e) => {
+                        initial_config_status = format!("配置文件 '{}' 加载成功但解析失败: {}", app_state.config_path, e);
+                        eprintln!("Initial parse failed: {}", e);
+                    }
+                }
             }
-        } else {
-            println!(
-                "No API port found in config file '{}'. Using current API port: '{}' (from loaded state or default).",
-                app_state.config_path, app_state.api_port
-            );
+            Err(e) => {
+                initial_config_status = format!("加载配置文件 '{}' 失败: {}", app_state.config_path, e);
+            }
         }
+
         if app_state.api_port.is_empty() {
-            app_state.api_port = "9090".to_string();
-            println!("Warning: API port was empty, reset to '9090'.");
+            app_state.api_port = "9090".to_string(); // Fallback if still empty
+            println!("Warning: API port was empty after all checks, reset to '9090'.");
         }
 
         let stats = Arc::new(Mutex::new(NetworkStats::default()));
@@ -267,99 +398,114 @@ impl ClashApp {
             }
         });
 
-        let mut new_app = Self {
+        Self {
             clash_process: None,
             app_state,
             is_running: false,
             stats,
             api_port_for_monitor,
-            config_content: String::new(), // 新增：初始化
-            config_editor_status: String::from("配置文件内容未加载"), // 新增：初始化
-        };
-        new_app.load_config_content(); // 新增：应用启动时加载一次配置文件内容
-        new_app
+            config_content: initial_config_content,
+            config_editor_status: initial_config_status,
+            parsed_clash_config: initial_parsed_config,
+        }
     }
 
-    // 新增：加载配置文件内容到编辑器
-    fn load_config_content(&mut self) {
+    // Renamed and refactored: process current config_content string
+    fn process_config_content(&mut self) {
+        match try_parse_clash_config_from_string(&self.config_content) {
+            Ok(parsed_config) => {
+                self.config_editor_status = format!("配置文件内容解析成功。({})", chrono::Local::now().format("%H:%M:%S"));
+                if let Some(ref ec_str) = parsed_config.external_controller {
+                    if let Some(port_from_parsed) = extract_port_from_controller_string(ec_str) {
+                        if self.app_state.api_port != port_from_parsed {
+                            println!(
+                                "API port updated to '{}' from parsed config content. Previous UI/state value was '{}'.",
+                                port_from_parsed, self.app_state.api_port
+                            );
+                            self.app_state.api_port = port_from_parsed.clone();
+                            *self.api_port_for_monitor.lock().unwrap() = port_from_parsed;
+                        }
+                    } else if parsed_config.external_controller.is_some() { // Has key but port invalid
+                         self.config_editor_status = format!("配置解析成功，但 external-controller ('{}') 中的端口无效。", ec_str);
+                    }
+                } else { // No external-controller key
+                    self.config_editor_status = "配置解析成功，但未找到 external-controller 键来更新API端口。".to_string();
+                }
+                self.parsed_clash_config = Some(parsed_config);
+            }
+            Err(e) => {
+                self.config_editor_status = format!("配置文件内容解析失败: {}", e);
+                self.parsed_clash_config = None; // Clear parsed config on error
+                eprintln!("Failed to parse config content: {}", e);
+            }
+        }
+    }
+
+    fn load_config_from_file(&mut self) {
         match fs::read_to_string(&self.app_state.config_path) {
             Ok(content) => {
                 self.config_content = content;
-                self.config_editor_status = format!("已从 '{}' 加载。", self.app_state.config_path);
+                // self.config_editor_status = format!("已从 '{}' 加载。", self.app_state.config_path);
                 println!("Config content loaded from {}", self.app_state.config_path);
+                self.process_config_content(); // Process after loading
             }
             Err(e) => {
-                self.config_content = String::new(); // 清空内容表示加载失败
-                self.config_editor_status =
-                    format!("加载 '{}' 失败: {}", self.app_state.config_path, e);
-                eprintln!(
-                    "Failed to load config content from {}: {}",
-                    self.app_state.config_path, e
-                );
+                self.config_content = String::new();
+                self.config_editor_status = format!("加载 '{}' 失败: {}", self.app_state.config_path, e);
+                self.parsed_clash_config = None;
+                eprintln!("Failed to load config content from {}: {}", self.app_state.config_path, e);
             }
         }
     }
 
-    // 新增：保存编辑器内容到配置文件
-    fn save_config_content(&mut self) {
+    fn save_config_to_file(&mut self) {
+        // Before saving, process the current editor content to update parsed_clash_config and API port
+        self.process_config_content(); // This updates API port based on editor content
+
         match fs::write(&self.app_state.config_path, &self.config_content) {
             Ok(_) => {
-                self.config_editor_status = format!("已保存到 '{}'。", self.app_state.config_path);
+                // Status already updated by process_config_content, can append save status
+                self.config_editor_status = format!("已保存到 '{}'. {}", self.app_state.config_path, self.config_editor_status);
                 println!("Config content saved to {}", self.app_state.config_path);
-                // 保存后，重新解析 API 端口，因为用户可能在编辑器中修改了它
-                if let Some(parsed_port) = load_api_port_from_config(&self.app_state.config_path) {
-                    if self.app_state.api_port != parsed_port {
-                        println!(
-                            "API port updated to '{}' from saved config file '{}'. Previous UI/state value was '{}'.",
-                            parsed_port, self.app_state.config_path, self.app_state.api_port
-                        );
-                        self.app_state.api_port = parsed_port.clone();
-                        *self.api_port_for_monitor.lock().unwrap() = parsed_port;
-                    }
-                } else {
-                    println!(
-                        "Failed to parse API port from saved config file: '{}'. Keeping current API port: '{}'",
-                        self.app_state.config_path, self.app_state.api_port
-                    );
-                }
+                // No need to re-parse here if process_config_content was called before writing
             }
             Err(e) => {
-                self.config_editor_status =
-                    format!("保存 '{}' 失败: {}", self.app_state.config_path, e);
-                eprintln!(
-                    "Failed to save config content to {}: {}",
-                    self.app_state.config_path, e
-                );
+                self.config_editor_status = format!("保存 '{}' 失败: {}", self.app_state.config_path, e);
+                eprintln!("Failed to save config content to {}: {}", self.app_state.config_path, e);
             }
         }
     }
+
 
     fn start_clash(&mut self) {
         if self.is_running {
             return;
         }
 
-        if let Some(parsed_port_from_config) =
-            load_api_port_from_config(&self.app_state.config_path)
-        {
-            if self.app_state.api_port != parsed_port_from_config {
-                println!(
-                    "API port for starting Clash updated to '{}' from config file '{}'. Previous UI/state value was '{}'.",
-                    parsed_port_from_config, self.app_state.config_path, self.app_state.api_port
-                );
-                self.app_state.api_port = parsed_port_from_config.clone();
-                *self.api_port_for_monitor.lock().unwrap() = parsed_port_from_config;
+        // Ensure API port is up-to-date from current config before starting
+        // This could be from parsed_clash_config or app_state.api_port if parsing failed
+        let mut port_to_use = self.app_state.api_port.clone();
+        if let Some(ref parsed_cfg) = self.parsed_clash_config {
+            if let Some(ref ec_str) = parsed_cfg.external_controller {
+                if let Some(p) = extract_port_from_controller_string(ec_str) {
+                    port_to_use = p;
+                }
             }
-        } else {
-            println!(
-                "Could not parse API port from config file '{}' before starting Clash. Will use current API port: '{}'.",
-                self.app_state.config_path, self.app_state.api_port
-            );
         }
-        if self.app_state.api_port.is_empty() {
+
+        if port_to_use != self.app_state.api_port {
+             println!(
+                "API port for starting Clash confirmed/updated to '{}' from parsed config. Config path: '{}'. Previous UI/state value was '{}'.",
+                port_to_use, self.app_state.config_path, self.app_state.api_port
+            );
+            self.app_state.api_port = port_to_use.clone();
+            *self.api_port_for_monitor.lock().unwrap() = port_to_use.clone();
+        }
+
+
+        if self.app_state.api_port.is_empty() { // Check the final app_state.api_port
             eprintln!("Error: API port is empty. Cannot start Clash. Please set a valid API port.");
-            self.config_editor_status =
-                "错误：API端口为空，无法启动Clash。请在上方设置或检查配置文件。".to_string();
+            self.config_editor_status = "错误：API端口为空，无法启动Clash。请在上方设置或检查配置文件。".to_string();
             return;
         }
 
@@ -371,10 +517,10 @@ impl ClashApp {
             Ok(child) => {
                 self.clash_process = Some(child);
                 self.is_running = true;
-                self.config_editor_status = "Clash 已启动。".to_string(); // 更新状态
+                self.config_editor_status = "Clash 已启动。".to_string();
                 println!(
                     "Clash started with config: {}, API port expected by Clash: {}",
-                    self.app_state.config_path, self.app_state.api_port
+                    self.app_state.config_path, self.app_state.api_port // Log the port Clash will use
                 );
             }
             Err(e) => {
@@ -382,7 +528,7 @@ impl ClashApp {
                     "Failed to start Clash (path: '{}', config: '{}'): {}",
                     self.app_state.clash_path, self.app_state.config_path, e
                 );
-                self.config_editor_status = format!("启动 Clash 失败: {}", e); // 更新状态
+                self.config_editor_status = format!("启动 Clash 失败: {}", e);
             }
         }
     }
@@ -397,17 +543,17 @@ impl ClashApp {
                         Err(e) => eprintln!("Error waiting for Clash process to exit: {}", e),
                     }
                     self.is_running = false;
-                    self.config_editor_status = "Clash 已停止。".to_string(); // 更新状态
+                    self.config_editor_status = "Clash 已停止。".to_string();
                 }
                 Err(e) => {
                     eprintln!("Failed to stop Clash: {}", e);
-                    self.config_editor_status = format!("停止 Clash 失败: {}", e); // 更新状态
+                    self.config_editor_status = format!("停止 Clash 失败: {}", e);
                     self.clash_process = Some(child);
                 }
             }
         } else {
             self.is_running = false;
-            self.config_editor_status = "Clash 未运行或进程句柄丢失。".to_string(); // 更新状态
+            self.config_editor_status = "Clash 未运行或进程句柄丢失。".to_string();
         }
     }
 }
@@ -467,9 +613,9 @@ impl App for ClashApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Clash 控制面板");
-            ui.add_space(10.0); // 减少一点间距
+            ui.add_space(10.0);
 
-            ui.collapsing("⚙️ 应用设置", |ui| { // 重命名，使其更通用
+            ui.collapsing("⚙️ 应用设置", |ui| {
                 ui.horizontal(|ui| {
                     ui.label("Clash 可执行文件路径:");
                     ui.text_edit_singleline(&mut self.app_state.clash_path);
@@ -477,58 +623,61 @@ impl App for ClashApp {
 
                 ui.horizontal(|ui| {
                     ui.label("Clash 配置文件路径:");
-                    // 当配置文件路径改变时，尝试重新加载内容和API端口
                     if ui.text_edit_singleline(&mut self.app_state.config_path).changed() {
-                        self.load_config_content(); // 重新加载文件内容到编辑器
-                        if let Some(parsed_port) = load_api_port_from_config(&self.app_state.config_path) {
-                            if self.app_state.api_port != parsed_port {
-                                println!("API port updated to '{}' from config file '{}' due to UI path change.", parsed_port, self.app_state.config_path);
-                                self.app_state.api_port = parsed_port.clone();
-                                *self.api_port_for_monitor.lock().unwrap() = parsed_port;
-                            }
-                        } else {
-                             println!("Failed to parse API port from new config path: '{}'. Keeping current API port: '{}'", self.app_state.config_path, self.app_state.api_port);
-                        }
+                        self.load_config_from_file(); // This will also call process_config_content
                     }
                 });
 
                 ui.horizontal(|ui| {
                     ui.label("Clash API 端口 (监控用):");
+                    // This UI field directly updates app_state.api_port and monitor port
+                    // It might be overridden if config parsing provides a different port
                     if ui.text_edit_singleline(&mut self.app_state.api_port).changed() {
                         if !self.app_state.api_port.is_empty() && self.app_state.api_port.chars().all(char::is_numeric) {
                              *self.api_port_for_monitor.lock().unwrap() = self.app_state.api_port.clone();
                              println!("API port for monitor updated to '{}' due to UI input.", self.app_state.api_port);
+                             self.config_editor_status = format!("API监控端口已由UI更新为 '{}'。", self.app_state.api_port);
                         } else {
                             println!("Warning: Invalid API port entered in UI: '{}'. Monitor port not updated.", self.app_state.api_port);
-                            // 可以考虑在此处更新 config_editor_status 来给用户反馈
                             self.config_editor_status = format!("警告：API端口 '{}' 无效，监控端口未更新。", self.app_state.api_port);
                         }
                     }
                 });
+                 // Display the currently parsed config's external-controller if available
+                if let Some(ref parsed_cfg) = self.parsed_clash_config {
+                    if let Some(ref ec) = parsed_cfg.external_controller {
+                        ui.label(format!("配置文件中的 API 地址: {}", ec));
+                    } else {
+                        ui.label("配置文件中未找到 external-controller。");
+                    }
+                } else {
+                    ui.label("配置文件未解析或解析失败。");
+                }
             });
             ui.add_space(5.0);
 
-            // 新增：配置文件编辑器区域
             ui.collapsing("📄 配置文件内容", |ui| {
                 ui.horizontal(|ui| {
                     if ui.button("🔄 从文件载入").clicked() {
-                        self.load_config_content();
+                        self.load_config_from_file();
                     }
                     if ui.button("💾 保存到文件").clicked() {
-                        self.save_config_content();
+                        self.save_config_to_file();
                     }
                 });
-                ui.label(&self.config_editor_status).on_hover_text("配置文件加载/保存状态");
+                ui.label(&self.config_editor_status).on_hover_text("配置文件加载/保存/解析状态");
                 ui.add_space(5.0);
-                // 使用 ScrollArea 包裹 TextEdit，以便内容过长时可以滚动
-                // 设置一个最小高度，比如10行
+
                 ScrollArea::vertical().min_scrolled_height(ui.text_style_height(&egui::TextStyle::Body) * 10.0).show(ui, |ui| {
-                    ui.add(
+                    // When text edit changes, immediately try to process it
+                    if ui.add(
                         egui::TextEdit::multiline(&mut self.config_content)
-                            .font(egui::TextStyle::Monospace) // 使用等宽字体
-                            .desired_width(f32::INFINITY) // 占据可用宽度
-                            .desired_rows(10), // 建议行数，但ScrollArea会处理实际大小
-                    );
+                            .font(egui::TextStyle::Monospace)
+                            .desired_width(f32::INFINITY)
+                            .desired_rows(15), // Increased rows
+                    ).changed() {
+                        self.process_config_content(); // Process on text change
+                    }
                 });
             });
 
@@ -547,8 +696,8 @@ impl App for ClashApp {
             ui.add_space(10.0);
             let stats_guard = self.stats.lock().unwrap();
             let current_monitor_port_guard = self.api_port_for_monitor.lock().unwrap();
-            let current_monitor_port_str = current_monitor_port_guard.clone(); // 克隆出来用，避免锁占用太久
-            drop(current_monitor_port_guard); // 释放锁
+            let current_monitor_port_str = current_monitor_port_guard.clone();
+            drop(current_monitor_port_guard);
 
             ui.horizontal(|ui| {
                 let status_text = if self.is_running {
@@ -588,8 +737,8 @@ impl App for ClashApp {
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([700.0, 500.0]) // 稍微调大一点窗口
-            .with_min_inner_size([500.0, 400.0]), // 最小尺寸也调整下
+            .with_inner_size([700.0, 550.0]) // Increased height for editor
+            .with_min_inner_size([500.0, 450.0]),
         ..Default::default()
     };
 
@@ -599,3 +748,4 @@ fn main() -> Result<(), eframe::Error> {
         Box::new(|cc| Ok(Box::new(ClashApp::new(cc)))),
     )
 }
+
