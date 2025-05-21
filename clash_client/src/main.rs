@@ -353,8 +353,8 @@ impl ClashApp {
 
         let mut initial_config_content = String::new();
         let mut initial_parsed_config: Option<ClashFullConfig> = None;
-        let mut initial_config_status =
-            format!("配置文件 '{}' 内容待加载。", app_state.config_path);
+        let initial_config_status;
+        // format!("配置文件 '{}' 内容待加载。", app_state.config_path);
 
         match fs::read_to_string(&app_state.config_path) {
             Ok(content) => {
@@ -650,7 +650,6 @@ impl ClashApp {
     }
 
     // Method to test latency
-    // 在 ClashApp impl 块内
     fn test_current_proxy_latency(&self) {
         let mut is_testing_lock = self.is_testing_latency.lock().unwrap();
         if *is_testing_lock {
@@ -817,45 +816,57 @@ impl App for ClashApp {
             ui.add_space(10.0);
 
             // Section for dynamic info: Mode, Current Proxy, Latency
+            // In ClashApp::update method
             ui.collapsing("ℹ️ 当前状态", |ui| {
-                let info_guard = self.dynamic_clash_info.lock().unwrap();
+                let (mode, global_proxy_name, global_proxy_latency, show_test_button_section) = {
+                    let info_guard = self.dynamic_clash_info.lock().unwrap();
+                    (
+                        info_guard.mode.clone(),
+                        info_guard.current_global_proxy_name.clone(),
+                        info_guard.current_global_proxy_latency.clone(),
+                        info_guard.mode == "global", // Determine if we are in a state to show global proxy details
+                    )
+                }; // Lock on dynamic_clash_info released
+
                 ui.horizontal(|ui| {
                     ui.label("Clash 模式:");
-                    ui.label(RichText::new(&info_guard.mode).strong());
+                    ui.label(RichText::new(&mode).strong());
                 });
 
-                if info_guard.mode == "global" {
+                if show_test_button_section {
+                    // Was mode == "global"
                     ui.horizontal(|ui| {
                         ui.label("当前全局代理:");
-                        match &info_guard.current_global_proxy_name {
+                        match &global_proxy_name {
                             Some(name) => {
-                                ui.label(RichText::new(name).strong().color(Color32::LIGHT_BLUE))
+                                ui.label(RichText::new(name).strong().color(Color32::LIGHT_BLUE));
                             }
-                            None => ui.label(RichText::new("未选择").italics()),
-                        };
+                            None => {
+                                ui.label(RichText::new("未选择").italics());
+                            }
+                        }
                     });
                     ui.horizontal(|ui| {
                         ui.label("延迟:");
-                        ui.label(RichText::new(&info_guard.current_global_proxy_latency).strong());
-                        if info_guard.current_global_proxy_name.is_some() {
-                            let is_testing = *self.is_testing_latency.lock().unwrap();
+                        ui.label(RichText::new(&global_proxy_latency).strong());
+
+                        if global_proxy_name.is_some() {
+                            // Only show button if there's a proxy
+                            let is_testing = *self.is_testing_latency.lock().unwrap(); // Lock is_testing_latency briefly
                             if ui
                                 .add_enabled(!is_testing, egui::Button::new("⚡ 测试"))
                                 .clicked()
                             {
+                                // CRITICAL: self.dynamic_clash_info is NOT locked by this thread here.
                                 self.test_current_proxy_latency();
                             }
                         }
                     });
-                } else if !info_guard.mode.is_empty() && info_guard.mode != "未知" {
-                    ui.label(format!(
-                        "当前为 {} 模式，不直接显示全局代理。",
-                        info_guard.mode
-                    ));
+                } else if !mode.is_empty() && mode != "未知" {
+                    ui.label(format!("当前为 {} 模式，不直接显示全局代理。", mode));
                 }
                 ui.separator(); // Separator before traffic stats
             });
-
             // Traffic and API status (existing)
             let stats_guard = self.stats.lock().unwrap();
             let current_monitor_port_guard = self.api_port_for_monitor.lock().unwrap();
