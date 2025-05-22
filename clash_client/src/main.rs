@@ -43,6 +43,13 @@ pub struct ClashFullConfig {
 }
 
 #[derive(Debug, PartialEq, Clone, Copy)]
+enum CentralView {
+    AllProxies,
+    ConfigEditor,
+    // You could add more views here in the future, e.g., Logs, Rules
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
 enum ProxySortBy {
     Name,
     Latency,
@@ -303,6 +310,8 @@ struct ClashApp {
     // Channel to receive latency test results from async tasks
     latency_result_sender: mpsc::Sender<ProxyLatencyResult>,
     latency_result_receiver: Arc<Mutex<mpsc::Receiver<ProxyLatencyResult>>>,
+    // <<<< NEW: Field to control central panel content >>>>
+    current_central_view: CentralView,
 }
 
 fn try_parse_clash_config_from_string(
@@ -585,6 +594,8 @@ impl ClashApp {
             proxy_sort_by: ProxySortBy::Name,
             latency_result_sender: tx,
             latency_result_receiver: Arc::new(Mutex::new(rx)),
+            // <<<< NEW: Initialize the view >>>>
+            current_central_view: CentralView::AllProxies, // Default to showing proxies
         }
     }
 
@@ -1163,354 +1174,249 @@ impl App for ClashApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // <<<< NEW: Process any pending latency results at the start of the frame
         self.process_latency_results();
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.heading("Clash 控制面板");
-            ui.add_space(10.0);
+        // --- Left Side Panel for Navigation and Controls ---
+        egui::SidePanel::left("left_panel")
+            .resizable(true) // Allow user to resize the panel
+            .default_width(280.0) // Adjusted default width for the side panel
+            .width_range(220.0..=450.0) // Min and max width
+            .show(ctx, |ui| {
+                ui.heading("Clash 控制面板");
+                ui.add_space(10.0);
 
-            // Section for dynamic info: Mode, Current Proxy, Latency
-            // In ClashApp::update method
-            ui.collapsing("ℹ️ 当前状态", |ui| {
-                let (mode, global_proxy_name, global_proxy_latency, show_test_button_section) = {
-                    let info_guard = self.dynamic_clash_info.lock().unwrap();
-                    (
-                        info_guard.mode.clone(),
-                        info_guard.current_global_proxy_name.clone(),
-                        info_guard.current_global_proxy_latency.clone(),
-                        info_guard.mode.to_lowercase() == "global", // Determine if we are in a state to show global proxy details
+                // Navigation Buttons for Central View
+                ui.label(RichText::new("导航视图").strong());
+                ui.add_space(5.0);
+                if ui
+                    .selectable_value(
+                        &mut self.current_central_view,
+                        CentralView::AllProxies,
+                        "🚦 所有代理节点",
                     )
-                }; // Lock on dynamic_clash_info released
+                    .clicked()
+                {
+                    // Optional: any action when this view is selected
+                }
+                if ui
+                    .selectable_value(
+                        &mut self.current_central_view,
+                        CentralView::ConfigEditor,
+                        "📄 配置文件内容",
+                    )
+                    .clicked()
+                {
+                    // Optional: any action
+                }
+                ui.separator();
 
-                ui.horizontal(|ui| {
-                    ui.label("Clash 模式:");
-                    ui.label(RichText::new(&mode).strong());
+                // Current Status Section
+                ui.collapsing("ℹ️ 当前状态", |ui| {
+                    let (mode, global_proxy_name, global_proxy_latency, show_test_button_section) = {
+                        let info_guard = self.dynamic_clash_info.lock().unwrap();
+                        (
+                            info_guard.mode.clone(),
+                            info_guard.current_global_proxy_name.clone(),
+                            info_guard.current_global_proxy_latency.clone(),
+                            info_guard.mode.to_lowercase() == "global",
+                        )
+                    };
+
+                    ui.horizontal(|ui| {
+                        ui.label("Clash 模式:");
+                        ui.label(RichText::new(&mode).strong());
+                    });
+
+                    if show_test_button_section {
+                        ui.horizontal(|ui| {
+                            ui.label("当前全局代理:");
+                            match &global_proxy_name {
+                                Some(name) => ui.label(RichText::new(name).strong().color(Color32::LIGHT_BLUE)),
+                                None => ui.label(RichText::new("未选择").italics()),
+                            };
+                        });
+                        ui.horizontal(|ui| {
+                            ui.label("延迟:");
+                            ui.label(RichText::new(&global_proxy_latency).strong());
+                            if global_proxy_name.is_some() {
+                                let is_testing = *self.is_testing_latency.lock().unwrap();
+                                if ui.add_enabled(!is_testing, egui::Button::new("⚡ 测试")).clicked() {
+                                    self.test_current_proxy_latency();
+                                }
+                            }
+                        });
+                    } else if !mode.is_empty() && mode != "未知" {
+                        ui.label(format!("当前为 {} 模式。", mode));
+                    }
                 });
-
-                if show_test_button_section {
-                    ui.horizontal(|ui| {
-                        ui.label("当前全局代理:");
-                        match &global_proxy_name {
-                            Some(name) => {
-                                ui.label(RichText::new(name).strong().color(Color32::LIGHT_BLUE));
-                            }
-                            None => {
-                                ui.label(RichText::new("未选择").italics());
-                            }
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("延迟:");
-                        ui.label(RichText::new(&global_proxy_latency).strong());
-
-                        if global_proxy_name.is_some() {
-                            // Only show button if there's a proxy
-                            let is_testing = *self.is_testing_latency.lock().unwrap(); // Lock is_testing_latency briefly
-                            if ui
-                                .add_enabled(!is_testing, egui::Button::new("⚡ 测试"))
-                                .clicked()
-                            {
-                                // CRITICAL: self.dynamic_clash_info is NOT locked by this thread here.
-                                self.test_current_proxy_latency();
-                            }
-                        }
-                    });
-                } else if !mode.is_empty() && mode != "未知" {
-                    ui.label(format!("当前为 {} 模式，不直接显示全局代理。", mode));
-                }
-                ui.separator(); // Separator before traffic stats
-            });
-            // Traffic and API status (existing)
-            let stats_guard = self.stats.lock().unwrap();
-            let current_monitor_port_guard = self.api_port_for_monitor.lock().unwrap();
-            let current_monitor_port_str = current_monitor_port_guard.clone();
-            drop(current_monitor_port_guard);
-
-            ui.horizontal(|ui| {
-                let status_text = if self.is_running {
-                    RichText::new("🟢 Clash 运行中").color(Color32::GREEN)
-                } else {
-                    RichText::new("🔴 Clash 已停止").color(Color32::RED)
-                };
-                ui.label(status_text);
                 ui.separator();
-                let api_text = if stats_guard.api_connected {
-                    RichText::new(format!("🔗 API 已连接 ({})", current_monitor_port_str))
-                        .color(Color32::GREEN)
-                } else {
-                    RichText::new(format!(
-                        "⚠️ API 未连接 ({})",
-                        if current_monitor_port_str.is_empty() {
-                            "未设置".to_string()
-                        } else {
-                            current_monitor_port_str
-                        }
-                    ))
-                    .color(Color32::RED)
-                };
-                ui.label(api_text);
-            });
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "⬆️ {}",
-                    format_size(stats_guard.upload_speed, BINARY)
-                ));
-                ui.label(format!(
-                    "⬇️ {}",
-                    format_size(stats_guard.download_speed, BINARY)
-                ));
-            });
-            ui.horizontal(|ui| {
-                ui.label(format!(
-                    "总上传: {}",
-                    format_size(stats_guard.previous_upload, BINARY)
-                ));
-                ui.separator();
-                ui.label(format!(
-                    "总下载: {}",
-                    format_size(stats_guard.previous_download, BINARY)
-                ));
-            });
-            drop(stats_guard);
-            ui.add_space(10.0);
 
-            // Start/Stop Buttons
-            if self.is_running {
-                if ui.button("⏹️ 停止 Clash").clicked() {
-                    self.stop_clash();
-                }
-            } else {
-                if ui.button("▶️ 启动 Clash").clicked() {
-                    self.start_clash();
-                }
-            }
-            ui.add_space(10.0);
+                // Traffic and API status
+                let stats_guard = self.stats.lock().unwrap();
+                let current_monitor_port_guard = self.api_port_for_monitor.lock().unwrap();
+                let current_monitor_port_str = current_monitor_port_guard.clone();
+                drop(current_monitor_port_guard);
 
-            // App Settings (collapsible)
-            ui.collapsing("⚙️ 应用设置", |ui| {
                 ui.horizontal(|ui| {
+                    let status_text = if self.is_running { RichText::new("🟢").color(Color32::GREEN) } else { RichText::new("🔴").color(Color32::RED) };
+                    ui.label(status_text);
+                    if self.is_running { ui.label("运行中"); } else { ui.label("已停止"); }
+                });
+                ui.horizontal(|ui| {
+                    let api_text = if stats_guard.api_connected { RichText::new("🔗").color(Color32::GREEN) } else { RichText::new("⚠️").color(Color32::RED) };
+                    ui.label(api_text);
+                    if stats_guard.api_connected { ui.label(format!("API 已连接 ({})", current_monitor_port_str));}
+                    else { ui.label(format!("API 未连接 ({})", if current_monitor_port_str.is_empty() { "N/A".to_string()} else {current_monitor_port_str}));}
+                });
+                ui.horizontal(|ui| { ui.label(format!("⬆️ {}", format_size(stats_guard.upload_speed, BINARY))); ui.label(format!("⬇️ {}", format_size(stats_guard.download_speed, BINARY))); });
+                ui.horizontal(|ui| { ui.label(format!("总上传: {}", format_size(stats_guard.previous_upload, BINARY))); ui.label(format!("总下载: {}", format_size(stats_guard.previous_download, BINARY))); });
+                drop(stats_guard);
+                ui.separator();
+
+                // Start/Stop Buttons
+                if self.is_running {
+                    if ui.button("⏹️ 停止 Clash").clicked() { self.stop_clash(); }
+                } else {
+                    if ui.button("▶️ 启动 Clash").clicked() { self.start_clash(); }
+                }
+                ui.separator();
+                // App Settings (collapsible)
+                ui.collapsing("⚙️ 应用设置", |ui| {
                     ui.label("Clash 可执行文件路径:");
                     ui.text_edit_singleline(&mut self.app_state.clash_path);
-                });
-                ui.horizontal(|ui| {
+                    ui.add_space(5.0);
                     ui.label("Clash 配置文件路径:");
-                    if ui
-                        .text_edit_singleline(&mut self.app_state.config_path)
-                        .changed()
-                    {
+                    if ui.text_edit_singleline(&mut self.app_state.config_path).changed() {
                         self.load_config_from_file();
                     }
-                });
-                ui.horizontal(|ui| {
+
+                    ui.add_space(5.0);
                     ui.label("Clash API 端口 (监控用):");
-                    if ui
-                        .text_edit_singleline(&mut self.app_state.api_port)
-                        .changed()
-                    {
-                        if !self.app_state.api_port.is_empty()
-                            && self.app_state.api_port.chars().all(char::is_numeric)
-                        {
-                            *self.api_port_for_monitor.lock().unwrap() =
-                                self.app_state.api_port.clone();
-                            self.config_editor_status =
-                                format!("API监控端口已由UI更新为 '{}'。", self.app_state.api_port);
+                    if ui.text_edit_singleline(&mut self.app_state.api_port).changed() {
+                        if !self.app_state.api_port.is_empty() && self.app_state.api_port.chars().all(char::is_numeric) {
+                            *self.api_port_for_monitor.lock().unwrap() = self.app_state.api_port.clone();
+                            self.config_editor_status = format!("API监控端口已由UI更新为 '{}'。", self.app_state.api_port);
                         } else {
-                            self.config_editor_status =
-                                format!("警告：API端口 '{}' 无效。", self.app_state.api_port);
+                            self.config_editor_status = format!("警告：API端口 '{}' 无效。", self.app_state.api_port);
                         }
                     }
-                });
-                if let Some(ref parsed_cfg) = self.parsed_clash_config {
-                    if let Some(ref ec) = parsed_cfg.external_controller {
-                        ui.label(format!("配置文件中的 API 地址: {}", ec));
-                    } else {
-                        ui.label("配置文件中未找到 external-controller。");
-                    }
-                } else {
-                    ui.label("配置文件未解析或解析失败。");
-                }
+                    if let Some(ref parsed_cfg) = self.parsed_clash_config {
+                        if let Some(ref ec) = parsed_cfg.external_controller { ui.label(format!("配置API: {}", ec)); }
+                        else { ui.label("配置中无 external-controller"); }
+                    } else { ui.label("配置未解析"); }
 
-                ui.separator();
-                ui.label("延迟测试设置:");
-                ui.horizontal(|ui| {
+                    ui.separator();
+                    ui.label(RichText::new("延迟测试设置:").strong());
                     ui.label("测试URL:");
                     ui.text_edit_singleline(&mut self.app_state.latency_test_url);
-                });
-                ui.horizontal(|ui| {
                     ui.label("超时 (ms):");
                     let mut timeout_str = self.app_state.latency_test_timeout_ms.to_string();
                     if ui.text_edit_singleline(&mut timeout_str).changed() {
-                        if let Ok(val) = timeout_str.parse::<u32>() {
-                            self.app_state.latency_test_timeout_ms = val;
-                        }
+                        if let Ok(val) = timeout_str.parse::<u32>() { self.app_state.latency_test_timeout_ms = val; }
                     }
                 });
-            });
-            ui.add_space(5.0);
+                // Fill remaining vertical space in side panel (optional, for aesthetics)
+                ui.allocate_space(ui.available_size_before_wrap());
+            }); // End of Left Side Panel
 
-            // --- <<<< NEW Section: All Proxies List and Testing >>>> ---
-            ui.collapsing("🚦 所有代理节点", |ui| {
-                ui.horizontal(|ui| {
-                    let is_testing_all = *self.is_testing_all_proxies.lock().unwrap();
-                    if ui
-                        .add_enabled(!is_testing_all, egui::Button::new("🧪 测试全部代理延迟"))
-                        .clicked()
-                    {
-                        self.test_all_proxies();
-                    }
-                    ui.label(&self.all_proxies_test_status);
-                });
-                ui.horizontal(|ui| {
-                    ui.label("排序方式:");
-                    if ui
-                        .selectable_value(&mut self.proxy_sort_by, ProxySortBy::Name, "名称")
-                        .changed()
-                    {
-                        self.sort_proxies_for_ui();
-                    }
-                    if ui
-                        .selectable_value(&mut self.proxy_sort_by, ProxySortBy::Latency, "延迟")
-                        .changed()
-                    {
-                        self.sort_proxies_for_ui();
-                    }
-                });
-                ui.separator();
-                ScrollArea::vertical()
-                    .auto_shrink([false, true])
-                    .show(ui, |ui_scroll| {
-                        let proxies_list_guard = self.all_proxies_for_ui.lock().unwrap();
-                        let current_global_proxy_name_clone; // To hold the cloned name outside the lock
-                        {
-                            let dynamic_info_guard = self.dynamic_clash_info.lock().unwrap();
-                            current_global_proxy_name_clone =
-                                dynamic_info_guard.current_global_proxy_name.clone();
-                        } // dynamic_info_guard lock released
-                        if proxies_list_guard.is_empty() {
-                            ui_scroll.label("没有从配置文件加载到代理节点，或解析失败。");
-                        } else {
-                            for proxy_entry in proxies_list_guard.iter() {
-                                ui_scroll.horizontal(|ui_item| {
-                                    // Highlight if this proxy is the current global proxy
-                                    let label_text = if Some(&proxy_entry.details.name)
-                                        == current_global_proxy_name_clone.as_ref()
-                                    {
-                                        RichText::new(&proxy_entry.details.name)
-                                            .strong()
-                                            .color(Color32::LIGHT_GREEN)
-                                    } else {
-                                        RichText::new(&proxy_entry.details.name).strong()
-                                    };
-                                    ui_item.label(label_text).on_hover_text(format!(
-                                        "类型: {}, 服务器: {}:{}",
-                                        proxy_entry.details.proxy_type,
-                                        proxy_entry.details.server,
-                                        proxy_entry.details.port
-                                    ));
-                                    ui_item.with_layout(
-                                        Layout::right_to_left(Align::Center),
-                                        |ui_status_button| {
-                                            // Latency Status (as before)
-                                            let status_text_rich = if proxy_entry
-                                                .latency_test_status
-                                                == "待测试..."
-                                                || proxy_entry.latency_test_status == "测试中..."
-                                            {
-                                                RichText::new(&proxy_entry.latency_test_status)
-                                                    .italics()
-                                            } else if proxy_entry.latency_ms.is_some() {
-                                                RichText::new(&proxy_entry.latency_test_status)
-                                                    .color(Color32::GREEN)
-                                            } else {
-                                                RichText::new(&proxy_entry.latency_test_status)
-                                                    .color(Color32::RED)
-                                            };
+        // --- Central Panel: Content changes based on current_central_view ---
+        egui::CentralPanel::default().show(ctx, |ui| {
+            match self.current_central_view {
+                CentralView::AllProxies => {
+                    // Code for "All Proxies" view
+                    ui.group(|ui_proxies_group| { // Use a different variable name for the inner ui
+                        ui_proxies_group.label(RichText::new("🚦 所有代理节点").heading().size(16.0));
+                        ui_proxies_group.horizontal(|ui_hz| {
+                            let is_testing_all = *self.is_testing_all_proxies.lock().unwrap();
+                            if ui_hz.add_enabled(!is_testing_all, egui::Button::new("🧪 测试全部代理延迟")).clicked() {
+                                self.test_all_proxies();
+                            }
+                            ui_hz.label(&self.all_proxies_test_status);
+                        });
+                        ui_proxies_group.horizontal(|ui_hz| {
+                            ui_hz.label("排序方式:");
+                            if ui_hz.selectable_value(&mut self.proxy_sort_by, ProxySortBy::Name, "名称").changed() { self.sort_proxies_for_ui(); }
+                            if ui_hz.selectable_value(&mut self.proxy_sort_by, ProxySortBy::Latency, "延迟").changed() { self.sort_proxies_for_ui(); }
+                        });
+                        ui_proxies_group.separator();
+
+                        ScrollArea::vertical().auto_shrink([false, false]).min_scrolled_height(200.0).show(ui_proxies_group, |ui_scroll| {
+                            let proxies_list_guard = self.all_proxies_for_ui.lock().unwrap();
+                            let current_global_proxy_name_clone;
+                            {
+                                let dynamic_info_guard = self.dynamic_clash_info.lock().unwrap();
+                                current_global_proxy_name_clone = dynamic_info_guard.current_global_proxy_name.clone();
+                            }
+
+                            if proxies_list_guard.is_empty() {
+                                ui_scroll.label("没有从配置文件加载到代理节点，或解析失败。");
+                            } else {
+                                for proxy_entry in proxies_list_guard.iter() {
+                                    ui_scroll.horizontal(|ui_item| {
+                                        let label_text = if Some(&proxy_entry.details.name) == current_global_proxy_name_clone.as_ref() {
+                                            RichText::new(&proxy_entry.details.name).strong().color(Color32::LIGHT_GREEN)
+                                        } else { RichText::new(&proxy_entry.details.name).strong() };
+                                        ui_item.label(label_text).on_hover_text(format!("类型: {}, 服务器: {}:{}", proxy_entry.details.proxy_type, proxy_entry.details.server, proxy_entry.details.port));
+                                        ui_item.with_layout(Layout::right_to_left(Align::Center), |ui_status_button| {
+                                            let status_text_rich = if proxy_entry.latency_test_status == "待测试..." || proxy_entry.latency_test_status == "测试中..." {
+                                                RichText::new(&proxy_entry.latency_test_status).italics()
+                                            } else if proxy_entry.latency_ms.is_some() { RichText::new(&proxy_entry.latency_test_status).color(Color32::GREEN) }
+                                            else { RichText::new(&proxy_entry.latency_test_status).color(Color32::RED) };
                                             ui_status_button.label(status_text_rich);
-                                            // <<<< NEW: "Set as Current" Button >>>>
-                                            // We assume the target group is "GLOBAL". This might need to be configurable.
-                                            // Also, only show this button if the current mode is "Global"
-                                            let mode_is_global;
-                                            {
-                                                mode_is_global = self
-                                                    .dynamic_clash_info
-                                                    .lock()
-                                                    .unwrap()
-                                                    .mode
-                                                    .to_lowercase()
-                                                    == "global";
-                                            }
+
+                                            let mode_is_global; { mode_is_global = self.dynamic_clash_info.lock().unwrap().mode.to_lowercase() == "global"; }
                                             if mode_is_global {
-                                                // Disable button if this proxy is already the current one
-                                                let is_already_current =
-                                                    Some(&proxy_entry.details.name)
-                                                        == current_global_proxy_name_clone.as_ref();
-                                                if ui_status_button
-                                                    .add_enabled(
-                                                        !is_already_current,
-                                                        egui::Button::new("🌍 设为全局"),
-                                                    )
-                                                    .clicked()
-                                                {
-                                                    // For now, hardcode "GLOBAL" as the group to change.
-                                                    // In a more advanced version, you'd get this group name from config or UI.
-                                                    self.set_current_proxy(
-                                                        &proxy_entry.details.name,
-                                                        "GLOBAL",
-                                                    );
+                                                let is_already_current = Some(&proxy_entry.details.name) == current_global_proxy_name_clone.as_ref();
+                                                if ui_status_button.add_enabled(!is_already_current, egui::Button::new("🌍")).on_hover_text("设为全局代理").clicked() {
+                                                    self.set_current_proxy(&proxy_entry.details.name, "GLOBAL");
                                                 }
                                             }
-                                        },
-                                    );
-                                });
-
-                                ui_scroll.separator();
+                                        });
+                                    });
+                                    ui_scroll.separator();
+                                }
                             }
-                        }
+                        });
                     });
-            });
-            ui.add_space(10.0); // Add space after the new section
-
-            // Config File Editor (collapsible)
-            ui.collapsing("📄 配置文件内容", |ui| {
-                ui.horizontal(|ui| {
-                    if ui.button("🔄 从文件载入").clicked() {
-                        self.load_config_from_file();
-                    }
-                    if ui.button("💾 保存到文件").clicked() {
-                        self.save_config_to_file();
-                    }
-                });
-                ui.label(&self.config_editor_status)
-                    .on_hover_text("配置文件加载/保存/解析状态");
-                ui.add_space(5.0);
-                ScrollArea::vertical()
-                    .min_scrolled_height(ui.text_style_height(&egui::TextStyle::Body) * 10.0)
-                    .show(ui, |ui_inner| {
-                        if ui_inner
-                            .add(
+                }
+                CentralView::ConfigEditor => {
+                    // Code for "Config Editor" view
+                    ui.group(|ui_config_group| { // Use a different variable name for the inner ui
+                        ui_config_group.label(RichText::new("📄 配置文件内容").heading().size(16.0));
+                        ui_config_group.horizontal(|ui_hz| {
+                            if ui_hz.button("🔄 从文件载入").clicked() { self.load_config_from_file(); }
+                            if ui_hz.button("💾 保存到文件").clicked() { self.save_config_to_file(); }
+                        });
+                        ui_config_group.label(&self.config_editor_status).on_hover_text("配置文件加载/保存/解析状态");
+                        ui_config_group.add_space(5.0);
+                        ScrollArea::vertical().auto_shrink([false, false]).show(ui_config_group, |ui_scroll_editor| {
+                            let text_edit_response = ui_scroll_editor.add_sized(
+                                ui_scroll_editor.available_size(),
                                 egui::TextEdit::multiline(&mut self.config_content)
                                     .font(egui::TextStyle::Monospace)
                                     .desired_width(f32::INFINITY)
-                                    .desired_rows(15),
-                            )
-                            .changed()
-                        {
-                            self.process_config_content();
-                        }
+                                    .code_editor()
+                                    .lock_focus(true), // Optional: keep focus when interacting
+                            );
+                            if text_edit_response.changed() {
+                                self.process_config_content();
+                            }
+                        });
                     });
-            });
+                }
+            }
+        }); // End of Central Panel
 
-            ctx.request_repaint_after(Duration::from_millis(200));
-        });
+        ctx.request_repaint_after(Duration::from_millis(200));
     }
+
 }
 
 fn main() -> Result<(), eframe::Error> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([700.0, 600.0])
-            .with_min_inner_size([500.0, 500.0]),
+            .with_inner_size([900.0, 700.0])
+            .with_min_inner_size([700.0, 500.0]),
         ..Default::default()
     };
     eframe::run_native(
