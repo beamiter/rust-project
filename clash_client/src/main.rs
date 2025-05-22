@@ -1,13 +1,15 @@
+use egui::{Align, Layout};
+use std::cmp::Ordering;
 use std::collections::HashMap;
-use std::fs::{self, File};
-use std::io::BufReader;
+use std::fs::{self};
 use std::process::{Child, Command};
 use std::sync::{Arc, Mutex};
 use std::thread;
 use std::time::Duration;
+use tokio::sync::mpsc;
 
 use eframe::{App, egui};
-use egui::{Color32, RichText, ScrollArea, Ui}; // Added Ui for convenience
+use egui::{Color32, RichText, ScrollArea};
 use font_kit::source::SystemSource;
 use humansize::{BINARY, format_size};
 use once_cell::sync::Lazy;
@@ -35,9 +37,22 @@ pub struct ClashFullConfig {
     pub external_ui: Option<String>,
     pub dns: Option<DnsConfig>,
     #[serde(default)]
-    pub proxies: Vec<ProxyConfig>,
+    pub proxies: Vec<ProxyConfigEntry>,
     #[serde(default, rename = "proxy-groups")]
     pub proxy_groups: Vec<ProxyGroupConfig>,
+}
+
+#[derive(Debug, PartialEq, Clone, Copy)]
+enum ProxySortBy {
+    Name,
+    Latency,
+}
+
+#[derive(Debug)]
+struct ProxyLatencyResult {
+    proxy_name: String,
+    latency_ms: Option<u32>,
+    status_message: String,
 }
 
 #[derive(Deserialize, Serialize, Debug, Default, Clone)]
@@ -72,7 +87,7 @@ pub struct FallbackFilterConfig {
 
 #[derive(Deserialize, Serialize, Debug, Default, Clone)]
 #[serde(rename_all = "kebab-case")]
-pub struct ProxyConfig {
+pub struct ProxyDetail {
     pub name: String,
     #[serde(rename = "type")]
     pub proxy_type: String,
@@ -93,6 +108,26 @@ pub struct ProxyConfig {
     #[serde(rename = "alterId")]
     pub alter_id: Option<u32>,
     pub cipher: Option<String>,
+}
+
+// New struct to hold proxy details along with its latency for UI
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyConfigEntry {
+    #[serde(flatten)] // Flattens ProxyDetail fields into this struct
+    pub details: ProxyDetail,
+    #[serde(skip)] // Don't serialize/deserialize latency, it's runtime data
+    pub latency_ms: Option<u32>,
+    #[serde(skip)]
+    pub latency_test_status: String, // "N/A", "Testing...", "Error: <...>"
+}
+impl Default for ProxyConfigEntry {
+    fn default() -> Self {
+        Self {
+            details: ProxyDetail::default(), // Assuming ProxyDetail implements Default
+            latency_ms: None,
+            latency_test_status: "N/A".to_string(),
+        }
+    }
 }
 
 #[derive(Deserialize, Serialize, Debug, Default, Clone)]
@@ -259,7 +294,15 @@ struct ClashApp {
     parsed_clash_config: Option<ClashFullConfig>,
     // New fields for dynamic info
     dynamic_clash_info: Arc<Mutex<AppDynamicClashInfo>>,
-    is_testing_latency: Arc<Mutex<bool>>, // To disable button during test
+    is_testing_latency: Arc<Mutex<bool>>, // For single proxy test
+    // New fields for "test all proxies" feature
+    all_proxies_for_ui: Arc<Mutex<Vec<ProxyConfigEntry>>>, // Proxies to display and sort
+    is_testing_all_proxies: Arc<Mutex<bool>>,
+    all_proxies_test_status: String, // Overall status for "test all"
+    proxy_sort_by: ProxySortBy,
+    // Channel to receive latency test results from async tasks
+    latency_result_sender: mpsc::Sender<ProxyLatencyResult>,
+    latency_result_receiver: Arc<Mutex<mpsc::Receiver<ProxyLatencyResult>>>,
 }
 
 fn try_parse_clash_config_from_string(
@@ -355,6 +398,7 @@ impl ClashApp {
         let mut initial_parsed_config: Option<ClashFullConfig> = None;
         let initial_config_status;
         // format!("配置文件 '{}' 内容待加载。", app_state.config_path);
+        let mut initial_all_proxies_for_ui: Vec<ProxyConfigEntry> = Vec::new();
 
         match fs::read_to_string(&app_state.config_path) {
             Ok(content) => {
@@ -372,7 +416,8 @@ impl ClashApp {
                                 }
                             }
                         }
-                        initial_parsed_config = Some(parsed);
+                        initial_parsed_config = Some(parsed.clone());
+                        initial_all_proxies_for_ui = parsed.proxies;
                     }
                     Err(e) => {
                         initial_config_status = format!(
@@ -395,6 +440,10 @@ impl ClashApp {
         let stats = Arc::new(Mutex::new(NetworkStats::default()));
         let dynamic_clash_info = Arc::new(Mutex::new(AppDynamicClashInfo::new()));
         let is_testing_latency = Arc::new(Mutex::new(false));
+        let all_proxies_for_ui_arc = Arc::new(Mutex::new(initial_all_proxies_for_ui));
+        let is_testing_all_proxies_arc = Arc::new(Mutex::new(false));
+
+        let (tx, rx) = mpsc::channel(100); // Buffer size 100, adjust as needed
 
         // --- Monitoring Thread ---
         let stats_clone = Arc::clone(&stats);
@@ -457,7 +506,7 @@ impl ClashApp {
                             match response.json::<ClashApiGeneralConfig>() {
                                 Ok(api_configs) => {
                                     new_mode = api_configs.mode.clone();
-                                    if new_mode == "global" {
+                                    if new_mode.to_lowercase() == "global" {
                                         // Fetch /proxies/GLOBAL if mode is Global
                                         match client
                                             .get(format!("{}/proxies/GLOBAL", base_url))
@@ -509,7 +558,9 @@ impl ClashApp {
                 }
                 info_guard.mode = new_mode;
                 info_guard.current_global_proxy_name = new_global_proxy;
-                if info_guard.current_global_proxy_name.is_none() && info_guard.mode == "global" {
+                if info_guard.current_global_proxy_name.is_none()
+                    && info_guard.mode.to_lowercase() == "global"
+                {
                     info_guard.current_global_proxy_latency = "GLOBAL组无选择".to_string();
                 } else if info_guard.current_global_proxy_name.is_none() {
                     info_guard.current_global_proxy_latency = "N/A".to_string();
@@ -528,6 +579,12 @@ impl ClashApp {
             parsed_clash_config: initial_parsed_config,
             dynamic_clash_info,
             is_testing_latency,
+            all_proxies_for_ui: all_proxies_for_ui_arc,
+            is_testing_all_proxies: is_testing_all_proxies_arc,
+            all_proxies_test_status: "未开始".to_string(),
+            proxy_sort_by: ProxySortBy::Name,
+            latency_result_sender: tx,
+            latency_result_receiver: Arc::new(Mutex::new(rx)),
         }
     }
 
@@ -554,11 +611,24 @@ impl ClashApp {
                     self.config_editor_status =
                         "配置解析成功，但未找到 external-controller 键。".to_string();
                 }
-                self.parsed_clash_config = Some(parsed_config);
+                // <<<< NEW: Update all_proxies_for_ui when config is processed
+                {
+                    // Scope for Mutex guard
+                    let mut proxies_ui_guard = self.all_proxies_for_ui.lock().unwrap();
+                    *proxies_ui_guard = parsed_config.proxies.clone(); // Clone the parsed proxies
+                    // Reset latency status for all proxies as config changed
+                    for p_entry in proxies_ui_guard.iter_mut() {
+                        p_entry.latency_ms = None;
+                        p_entry.latency_test_status = "N/A".to_string();
+                    }
+                }
+                self.parsed_clash_config = Some(parsed_config); // Store the fully parsed config
+                self.sort_proxies_for_ui(); // <<<< NEW: Sort after updating
             }
             Err(e) => {
                 self.config_editor_status = format!("配置文件内容解析失败: {}", e);
                 self.parsed_clash_config = None;
+                self.all_proxies_for_ui.lock().unwrap().clear(); // Clear proxies on parse fail
             }
         }
     }
@@ -574,7 +644,234 @@ impl ClashApp {
                 self.config_editor_status =
                     format!("加载 '{}' 失败: {}", self.app_state.config_path, e);
                 self.parsed_clash_config = None;
+                self.all_proxies_for_ui.lock().unwrap().clear(); // <<<< Ensure clear on load fail
             }
+        }
+    }
+
+    // In src/main.rs, inside impl ClashApp { ... }
+    fn test_all_proxies(&mut self) {
+        let mut is_testing_all_guard = self.is_testing_all_proxies.lock().unwrap();
+        if *is_testing_all_guard {
+            self.all_proxies_test_status = "测试已在进行中...".to_string();
+            // Potentially, you might want to request a repaint here if the status string is bound to UI
+            // ctx.request_repaint(); // If you have access to ctx, otherwise handle in update
+            return;
+        }
+        *is_testing_all_guard = true;
+        self.all_proxies_test_status = "开始测试所有代理...".to_string();
+
+        // Clone the details of proxies to test, to release the lock on all_proxies_for_ui sooner
+        let proxies_to_test_details: Vec<ProxyDetail> = self
+            .all_proxies_for_ui
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|entry| entry.details.clone()) // Clone only the ProxyDetail
+            .collect();
+
+        if proxies_to_test_details.is_empty() {
+            self.all_proxies_test_status = "没有可测试的代理。".to_string();
+            *is_testing_all_guard = false; // Reset the flag
+            return;
+        }
+
+        // Reset status for all proxies in the UI list before starting tests
+        {
+            let mut proxies_ui_guard = self.all_proxies_for_ui.lock().unwrap();
+            for p_entry in proxies_ui_guard.iter_mut() {
+                p_entry.latency_ms = None;
+                p_entry.latency_test_status = "待测试...".to_string();
+            }
+        } // Lock on all_proxies_for_ui released
+
+        let api_port_clone = self.app_state.api_port.clone();
+        let test_url_clone = self.app_state.latency_test_url.clone();
+        let timeout_ms_clone = self.app_state.latency_test_timeout_ms;
+        let result_sender_clone = self.latency_result_sender.clone();
+
+        for proxy_detail_item in proxies_to_test_details {
+            // Iterate over cloned details
+            let p_name_clone = proxy_detail_item.name.clone(); // Clone name for the async task
+            let current_api_port_inner = api_port_clone.clone();
+            let current_test_url_inner = test_url_clone.clone();
+            let sender_for_task = result_sender_clone.clone();
+
+            if current_api_port_inner.is_empty() {
+                let res = ProxyLatencyResult {
+                    proxy_name: p_name_clone.clone(),
+                    latency_ms: None,
+                    status_message: "错误: API端口未设置".to_string(),
+                };
+                // Spawn a task just to send this error, or handle differently
+                TOKIO_RUNTIME.spawn(async move {
+                    if let Err(e) = sender_for_task.send(res).await {
+                        eprintln!(
+                            "Failed to send API port error result for {}: {}",
+                            p_name_clone, e
+                        );
+                    }
+                });
+                continue;
+            }
+
+            TOKIO_RUNTIME.spawn(async move {
+                let url_encoded_proxy_name = urlencoding::encode(&p_name_clone);
+                let request_url = format!(
+                    "http://127.0.0.1:{}/proxies/{}/delay?timeout={}&url={}",
+                    current_api_port_inner,
+                    url_encoded_proxy_name,
+                    timeout_ms_clone,
+                    urlencoding::encode(&current_test_url_inner)
+                );
+
+                let client = reqwest::Client::builder()
+                    .timeout(Duration::from_millis(timeout_ms_clone as u64 + 1000))
+                    .build()
+                    .expect("Failed to build reqwest client for delay test");
+
+                let (latency_value, status_message_str) =
+                    match client.get(&request_url).send().await {
+                        Ok(response) => {
+                            let status_code = response.status();
+                            if status_code.is_success() {
+                                match response.json::<ClashApiDelayResponse>().await {
+                                    Ok(delay_info) => {
+                                        if let Some(delay) = delay_info.delay {
+                                            (Some(delay), format!("{} ms", delay))
+                                        } else if let Some(msg) = delay_info.message {
+                                            (None, format!("超时/错误: {}", msg))
+                                        } else {
+                                            (None, "错误: 未知API响应".to_string())
+                                        }
+                                    }
+                                    Err(e) => (None, format!("错误: 解析失败 {}", e)),
+                                }
+                            } else {
+                                let err_text =
+                                    response.text().await.unwrap_or_else(|_| "N/A".to_string());
+                                (None, format!("错误: HTTP {} - {}", status_code, err_text))
+                            }
+                        }
+                        Err(e) => (None, format!("错误: 请求失败 {}", e)),
+                    };
+
+                let result_to_send = ProxyLatencyResult {
+                    proxy_name: p_name_clone.clone(),
+                    latency_ms: latency_value,
+                    status_message: status_message_str,
+                };
+
+                if let Err(e) = sender_for_task.send(result_to_send).await {
+                    eprintln!("Failed to send latency result for {}: {}", p_name_clone, e);
+                }
+            });
+        }
+    }
+
+    fn sort_proxies_for_ui(&mut self) {
+        let mut proxies_guard = self.all_proxies_for_ui.lock().unwrap();
+        match self.proxy_sort_by {
+            ProxySortBy::Name => {
+                proxies_guard.sort_by(|a, b| a.details.name.cmp(&b.details.name));
+            }
+            ProxySortBy::Latency => {
+                proxies_guard.sort_by(|a, b| match (a.latency_ms, b.latency_ms) {
+                    (Some(la), Some(lb)) => la.cmp(&lb),
+                    (Some(_), None) => Ordering::Less,
+                    (None, Some(_)) => Ordering::Greater,
+                    (None, None) => a.details.name.cmp(&b.details.name),
+                });
+            }
+        }
+    }
+
+    // In src/main.rs, inside impl ClashApp { ... }
+    fn process_latency_results(&mut self) {
+        let mut results_processed_this_frame = 0;
+        const MAX_RESULTS_PER_FRAME: usize = 10;
+        let mut should_sort_this_frame = false; // Renamed from all_tests_considered_done_this_frame for clarity
+        {
+            // Scope for receiver_guard
+            let mut receiver_guard = self.latency_result_receiver.lock().unwrap();
+            while results_processed_this_frame < MAX_RESULTS_PER_FRAME {
+                match receiver_guard.try_recv() {
+                    Ok(result) => {
+                        {
+                            let mut proxies_guard = self.all_proxies_for_ui.lock().unwrap();
+                            if let Some(proxy_entry) = proxies_guard
+                                .iter_mut()
+                                .find(|p| p.details.name == result.proxy_name)
+                            {
+                                proxy_entry.latency_ms = result.latency_ms;
+                                proxy_entry.latency_test_status = result.status_message;
+                            }
+                        }
+                        results_processed_this_frame += 1;
+                    }
+                    Err(mpsc::error::TryRecvError::Empty) => {
+                        break;
+                    }
+                    Err(mpsc::error::TryRecvError::Disconnected) => {
+                        eprintln!("Latency result channel disconnected.");
+                        // Acquire lock specifically to modify these fields
+                        let mut is_testing_all_lock = self.is_testing_all_proxies.lock().unwrap();
+                        if *is_testing_all_lock {
+                            self.all_proxies_test_status = "测试通道断开".to_string();
+                            *is_testing_all_lock = false;
+                        }
+                        // No need to drop is_testing_all_lock explicitly, it drops at scope end
+                        break;
+                    }
+                }
+            }
+            // receiver_guard drops here
+        }
+
+        // Check if all tests are done.
+        // We need to read the state of is_testing_all_proxies first.
+        let currently_testing_all: bool;
+        {
+            // Scope for is_testing_all_guard_read
+            let is_testing_all_guard_read = self.is_testing_all_proxies.lock().unwrap();
+            currently_testing_all = *is_testing_all_guard_read;
+        } // is_testing_all_guard_read (and its immutable borrow) is dropped here.
+
+        if currently_testing_all {
+            let all_actually_tested: bool;
+            let num_proxies_in_list: usize;
+            {
+                // Scope for proxies_guard
+                let proxies_guard = self.all_proxies_for_ui.lock().unwrap();
+                num_proxies_in_list = proxies_guard.len();
+                all_actually_tested = proxies_guard.iter().all(|p| {
+                    p.latency_test_status != "待测试..." && p.latency_test_status != "测试中..."
+                });
+            } // proxies_guard is dropped here.
+
+            if all_actually_tested && num_proxies_in_list > 0 {
+                self.all_proxies_test_status = format!(
+                    "所有代理测试完成 ({})",
+                    chrono::Local::now().format("%H:%M:%S")
+                );
+                // Now acquire the lock again to modify it
+                *self.is_testing_all_proxies.lock().unwrap() = false;
+                should_sort_this_frame = true;
+            } else if num_proxies_in_list == 0 {
+                // If the list was/became empty while "testing"
+                self.all_proxies_test_status = "没有代理被测试。".to_string();
+                *self.is_testing_all_proxies.lock().unwrap() = false;
+                // No need to sort an empty list, but setting should_sort_this_frame
+                // to false (its default) is fine. Or explicitly:
+                // should_sort_this_frame = false; // if it was true for some reason
+            }
+            // If not all_actually_tested and num_proxies_in_list > 0,
+            // then is_testing_all_proxies remains true, and status is not changed from "开始测试..."
+        }
+
+        // Perform sort only if tests were considered done in this frame's processing
+        if should_sort_this_frame {
+            self.sort_proxies_for_ui();
         }
     }
 
@@ -811,6 +1108,9 @@ impl App for ClashApp {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        // <<<< NEW: Process any pending latency results at the start of the frame
+        self.process_latency_results();
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.heading("Clash 控制面板");
             ui.add_space(10.0);
@@ -824,7 +1124,7 @@ impl App for ClashApp {
                         info_guard.mode.clone(),
                         info_guard.current_global_proxy_name.clone(),
                         info_guard.current_global_proxy_latency.clone(),
-                        info_guard.mode == "global", // Determine if we are in a state to show global proxy details
+                        info_guard.mode.to_lowercase() == "global", // Determine if we are in a state to show global proxy details
                     )
                 }; // Lock on dynamic_clash_info released
 
@@ -834,7 +1134,6 @@ impl App for ClashApp {
                 });
 
                 if show_test_button_section {
-                    // Was mode == "global"
                     ui.horizontal(|ui| {
                         ui.label("当前全局代理:");
                         match &global_proxy_name {
@@ -995,6 +1294,81 @@ impl App for ClashApp {
             });
             ui.add_space(5.0);
 
+            // --- <<<< NEW Section: All Proxies List and Testing >>>> ---
+            ui.collapsing("🚦 所有代理节点", |ui| {
+                ui.horizontal(|ui| {
+                    let is_testing_all = *self.is_testing_all_proxies.lock().unwrap();
+                    if ui
+                        .add_enabled(!is_testing_all, egui::Button::new("🧪 测试全部代理延迟"))
+                        .clicked()
+                    {
+                        self.test_all_proxies();
+                    }
+                    ui.label(&self.all_proxies_test_status);
+                });
+                ui.horizontal(|ui| {
+                    ui.label("排序方式:");
+                    if ui
+                        .selectable_value(&mut self.proxy_sort_by, ProxySortBy::Name, "名称")
+                        .changed()
+                    {
+                        self.sort_proxies_for_ui();
+                    }
+                    if ui
+                        .selectable_value(&mut self.proxy_sort_by, ProxySortBy::Latency, "延迟")
+                        .changed()
+                    {
+                        self.sort_proxies_for_ui();
+                    }
+                });
+                ui.separator();
+                ScrollArea::vertical()
+                    .auto_shrink([false, true])
+                    .show(ui, |ui_scroll| {
+                        let proxies_list_guard = self.all_proxies_for_ui.lock().unwrap();
+                        if proxies_list_guard.is_empty() {
+                            ui_scroll.label("没有从配置文件加载到代理节点，或解析失败。");
+                        } else {
+                            for proxy_entry in proxies_list_guard.iter() {
+                                ui_scroll.horizontal(|ui_item| {
+                                    ui_item
+                                        .label(RichText::new(&proxy_entry.details.name).strong())
+                                        .on_hover_text(format!(
+                                            "类型: {}, 服务器: {}:{}",
+                                            proxy_entry.details.proxy_type,
+                                            proxy_entry.details.server,
+                                            proxy_entry.details.port
+                                        ));
+                                    ui_item.with_layout(
+                                        Layout::right_to_left(Align::Center),
+                                        |ui_status| {
+                                            let status_text_rich = if proxy_entry
+                                                .latency_test_status
+                                                == "待测试..."
+                                                || proxy_entry.latency_test_status == "测试中..."
+                                            {
+                                                RichText::new(&proxy_entry.latency_test_status)
+                                                    .italics()
+                                            } else if proxy_entry.latency_ms.is_some() {
+                                                // Successfully tested with a value
+                                                RichText::new(&proxy_entry.latency_test_status)
+                                                    .color(Color32::GREEN)
+                                            } else {
+                                                // Error or N/A after a test attempt (e.g. timeout, connection error)
+                                                RichText::new(&proxy_entry.latency_test_status)
+                                                    .color(Color32::RED)
+                                            };
+                                            ui_status.label(status_text_rich);
+                                        },
+                                    );
+                                });
+                                ui_scroll.separator();
+                            }
+                        }
+                    });
+            });
+            ui.add_space(10.0); // Add space after the new section
+
             // Config File Editor (collapsible)
             ui.collapsing("📄 配置文件内容", |ui| {
                 ui.horizontal(|ui| {
@@ -1025,7 +1399,7 @@ impl App for ClashApp {
                     });
             });
 
-            ctx.request_repaint_after(Duration::from_millis(500));
+            ctx.request_repaint_after(Duration::from_millis(200));
         });
     }
 }
