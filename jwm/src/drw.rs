@@ -3,7 +3,7 @@
 // #![allow(unused_mut)]
 
 use log::info;
-use std::{ffi::CString, i32, ptr::null_mut, rc::Rc, u32, usize};
+use std::{ffi::CString, i32, ptr::null_mut, rc::Rc, u32};
 
 // use log::info;
 // use log::warn;
@@ -133,14 +133,12 @@ impl Drw {
         &mut self,
         clrnames: &[&'static str; 3],
         alphas: &[u8; 3],
-        clrcount: usize,
     ) -> Vec<Option<Rc<Clr>>> {
-        // Need at least two colors for a scheme.
-        if clrnames.is_empty() || clrcount < 2 {
+        if clrnames.is_empty() {
             return vec![];
         }
         let mut ret: Vec<Option<Rc<Clr>>> = vec![];
-        for i in 0..clrcount {
+        for i in 0..clrnames.len() {
             let clrname = clrnames[i];
             let alpha = alphas[i];
             let one_ret = self.drw_clr_create(clrname, alpha);

@@ -59,8 +59,7 @@ use x11::xlib::{
 use std::cmp::{max, min};
 
 use crate::config::Config;
-use crate::drw::{Clr, Col, Cur, Drw};
-use crate::icon_gallery::generate_random_tags;
+use crate::drw::{Clr, Cur, Drw};
 use crate::xproto::{
     IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
     X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8,
@@ -395,7 +394,6 @@ pub struct Monitor {
     pub seltags: usize,
     pub sellt: usize,
     pub tagset: [u32; 2],
-    pub showbar0: bool,
     pub topbar0: bool,
     pub clients: Option<Rc<RefCell<Client>>>,
     pub sel: Option<Rc<RefCell<Client>>>,
@@ -424,7 +422,6 @@ impl Monitor {
             seltags: 0,
             sellt: 0,
             tagset: [0; 2],
-            showbar0: false,
             topbar0: false,
             clients: None,
             sel: None,
@@ -450,7 +447,7 @@ impl Monitor {
 }
 impl fmt::Display for Monitor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Monitor {{ ltsymbol: {}, mfact0: {}, nmaster0: {}, num: {}, by: {}, mx: {}, my: {}, mw: {}, mh: {}, wx: {}, wy: {}, ww: {}, wh: {}, seltags: {}, sellt: {}, tagset: [{}, {}], showbar0: {}, topbar0: {},  }}",
+        write!(f, "Monitor {{ ltsymbol: {}, mfact0: {}, nmaster0: {}, num: {}, by: {}, mx: {}, my: {}, mw: {}, mh: {}, wx: {}, wy: {}, ww: {}, wh: {}, seltags: {}, sellt: {}, tagset: [{}, {}], topbar0: {},  }}",
                self.ltsymbol,
                self.mfact0,
                self.nmaster0,
@@ -468,7 +465,6 @@ impl fmt::Display for Monitor {
                self.sellt,
                self.tagset[0],
                self.tagset[1],
-               self.showbar0,
                self.topbar0,
         )
     }
@@ -577,7 +573,6 @@ pub struct Dwm {
     pub depth: i32,
     pub cmap: Colormap,
     pub sender: Sender<u8>,
-    pub tags: Vec<&'static str>,
     pub egui_bar_shmem: HashMap<i32, SharedRingBuffer>,
     pub egui_bar_child: HashMap<i32, Child>,
     pub egui_bar_shape: HashMap<i32, BarShape>,
@@ -630,7 +625,6 @@ impl Dwm {
             depth: 0,
             cmap: 0,
             sender,
-            tags: generate_random_tags(Config::tags_length),
             egui_bar_shmem: HashMap::new(),
             egui_bar_child: HashMap::new(),
             egui_bar_shape: HashMap::new(),
@@ -1340,14 +1334,13 @@ impl Dwm {
         m.tagset[1] = 1;
         m.mfact0 = Config::mfact;
         m.nmaster0 = Config::nmaster;
-        m.showbar0 = Config::showbar;
         m.topbar0 = Config::topbar;
         m.lt[0] = Config::layouts[0].clone();
         m.lt[1] = Config::layouts[1 % Config::layouts.len()].clone();
         m.ltsymbol = Config::layouts[0].symbol.to_string();
         info!(
-            "[createmon]: ltsymbol: {:?}, mfact0: {}, nmaster0: {}, showbar0: {}, topbar0: {}",
-            m.ltsymbol, m.mfact0, m.nmaster0, m.showbar0, m.topbar0
+            "[createmon]: ltsymbol: {:?}, mfact0: {}, nmaster0: {},  topbar0: {}",
+            m.ltsymbol, m.mfact0, m.nmaster0, m.topbar0
         );
         m.pertag = Some(Pertag::new());
         let ref_pertag = m.pertag.as_mut().unwrap();
@@ -1360,8 +1353,6 @@ impl Dwm {
             ref_pertag.ltidxs[i][0] = Some(m.lt[0].clone());
             ref_pertag.ltidxs[i][1] = Some(m.lt[1].clone());
             ref_pertag.sellts[i] = m.sellt;
-
-            ref_pertag.showbars[i] = m.showbar0;
         }
 
         return m;
@@ -1569,32 +1560,30 @@ impl Dwm {
         Ok(())
     }
     pub fn drawbar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
-        if Config::show_egui_bar {
-            self.draw_egui_bar(m);
-            let num = self.message.monitor_info.monitor_num;
-            info!("[drawbar] num: {}", num);
-            let shared_path = format!("/dev/shm/monitor_{}", num);
-            if !self.egui_bar_shmem.contains_key(&num) {
-                let ring_buffer = match SharedRingBuffer::open(&shared_path) {
-                    Ok(rb) => rb,
-                    Err(_) => {
-                        println!("创建新的共享环形缓冲区");
-                        SharedRingBuffer::create(&shared_path, None, None).unwrap()
-                    }
-                };
-                self.egui_bar_shmem.insert(num, ring_buffer);
-            }
-            // info!("[drawbar] message: {:?}", self.message);
-            let _ = self.write_message(num, &self.message.clone());
-            if !self.egui_bar_child.contains_key(&num) {
-                let process_name = format!("{}_{}", Config::egui_bar_name, num);
-                let child = Command::new(Config::egui_bar_name)
-                    .arg0(process_name) // This change the class and instance
-                    .arg(shared_path)
-                    .spawn()
-                    .expect("Failled to start egui app");
-                self.egui_bar_child.insert(num, child);
-            }
+        self.draw_egui_bar(m);
+        let num = self.message.monitor_info.monitor_num;
+        info!("[drawbar] num: {}", num);
+        let shared_path = format!("/dev/shm/monitor_{}", num);
+        if !self.egui_bar_shmem.contains_key(&num) {
+            let ring_buffer = match SharedRingBuffer::open(&shared_path) {
+                Ok(rb) => rb,
+                Err(_) => {
+                    println!("创建新的共享环形缓冲区");
+                    SharedRingBuffer::create(&shared_path, None, None).unwrap()
+                }
+            };
+            self.egui_bar_shmem.insert(num, ring_buffer);
+        }
+        // info!("[drawbar] message: {:?}", self.message);
+        let _ = self.write_message(num, &self.message.clone());
+        if !self.egui_bar_child.contains_key(&num) {
+            let process_name = format!("{}_{}", Config::egui_bar_name, num);
+            let child = Command::new(Config::egui_bar_name)
+                .arg0(process_name) // This change the class and instance
+                .arg(shared_path)
+                .spawn()
+                .expect("Failled to start egui app");
+            self.egui_bar_child.insert(num, child);
         }
     }
 
@@ -2039,12 +2028,8 @@ impl Dwm {
     }
 
     pub fn client_y_offset(&self, m: &mut Monitor) -> i32 {
-        let showbar0 = m.showbar0;
         let num = m.num;
         if let Some(bar_shape) = self.egui_bar_shape.get(&num) {
-            if showbar0 {
-                return bar_shape.height + bar_shape.y;
-            }
             return bar_shape.height + Config::egui_bar_pad + bar_shape.y;
         }
         return 0;
@@ -2132,21 +2117,7 @@ impl Dwm {
             }
         }
     }
-    pub fn togglebar(&mut self, _arg: *const Arg) {
-        info!("[togglebar]");
-        {
-            let mut selmon_clone = self.selmon.clone();
-            let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
-            let curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-            selmon_mut.pertag.as_mut().unwrap().showbars[curtag] = !selmon_mut.showbar0;
-            selmon_mut.showbar0 = selmon_mut.pertag.as_mut().unwrap().showbars[curtag];
-            if !selmon_mut.showbar0 {
-                let _ = self.sender.send(1);
-                self.tags = generate_random_tags(Config::tags_length);
-            }
-        }
-        self.arrange(self.selmon.clone());
-    }
+
     pub fn togglefloating(&mut self, _arg: *const Arg) {
         // info!("[togglefloating]");
         if self.selmon.is_none() {
@@ -2219,7 +2190,6 @@ impl Dwm {
         if sel.is_none() || target_tag <= 0 {
             return;
         }
-        // target_tag = 0.max(curtag);
         // Find egui_bar client.
         while let Some(ref sel_opt) = sel {
             let name = { sel_opt.borrow_mut().name.clone() };
@@ -2698,38 +2668,20 @@ impl Dwm {
             let sel;
             let curtag;
             {
-                let condition;
-                {
-                    let mut selmon_mut = self.selmon.as_mut().unwrap().borrow_mut();
-                    curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
-                    selmon_mut.nmaster0 = selmon_mut.pertag.as_ref().unwrap().nmasters[curtag];
-                    selmon_mut.mfact0 = selmon_mut.pertag.as_ref().unwrap().mfacts[curtag];
-                    selmon_mut.sellt = selmon_mut.pertag.as_ref().unwrap().sellts[curtag];
-                    let sellt = selmon_mut.sellt;
-                    selmon_mut.lt[sellt] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag]
-                        [sellt]
-                        .clone()
-                        .expect("None unwrap");
-                    selmon_mut.lt[sellt ^ 1] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag]
-                        [sellt ^ 1]
-                        .clone()
-                        .expect("None unwrap");
-                    condition =
-                        selmon_mut.showbar0 != selmon_mut.pertag.as_ref().unwrap().showbars[curtag];
-                };
-                if condition {
-                    self.togglebar(null_mut());
-                }
-                sel = self
-                    .selmon
-                    .as_mut()
-                    .unwrap()
-                    .borrow_mut()
-                    .pertag
-                    .as_ref()
-                    .unwrap()
-                    .sel[curtag]
+                let mut selmon_mut = self.selmon.as_mut().unwrap().borrow_mut();
+                curtag = selmon_mut.pertag.as_ref().unwrap().curtag;
+                selmon_mut.nmaster0 = selmon_mut.pertag.as_ref().unwrap().nmasters[curtag];
+                selmon_mut.mfact0 = selmon_mut.pertag.as_ref().unwrap().mfacts[curtag];
+                selmon_mut.sellt = selmon_mut.pertag.as_ref().unwrap().sellts[curtag];
+                let sellt = selmon_mut.sellt;
+                selmon_mut.lt[sellt] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag][sellt]
                     .clone()
+                    .expect("None unwrap");
+                selmon_mut.lt[sellt ^ 1] = selmon_mut.pertag.as_ref().unwrap().ltidxs[curtag]
+                    [sellt ^ 1]
+                    .clone()
+                    .expect("None unwrap");
+                sel = selmon_mut.pertag.as_ref().unwrap().sel[curtag].clone()
             };
             // for egui bar
             self.tag_egui_bar(curtag as u32);
@@ -2792,12 +2744,6 @@ impl Dwm {
                             [curtag][sellt ^ 1]
                             .clone()
                             .expect("None unwrap");
-
-                        if selmon_mut.showbar0
-                            != selmon_mut.pertag.as_ref().unwrap().showbars[curtag]
-                        {
-                            self.togglebar(null_mut());
-                        }
                     }
                     self.focus(None);
                     self.arrange(self.selmon.clone());
@@ -2939,11 +2885,11 @@ impl Dwm {
             // init appearance
             self.scheme = vec![vec![]; Config::colors.len()];
             for i in 0..Config::colors.len() {
-                self.scheme[i] = self.drw.as_mut().unwrap().drw_scm_create(
-                    Config::colors[i],
-                    &Config::alphas[i],
-                    3,
-                );
+                self.scheme[i] = self
+                    .drw
+                    .as_mut()
+                    .unwrap()
+                    .drw_scm_create(Config::colors[i], &Config::alphas[i]);
             }
             // supporting window fot NetWMCheck
             self.wmcheckwin = XCreateSimpleWindow(self.dpy, self.root, 0, 0, 1, 1, 0, 0, 0);
@@ -3740,7 +3686,7 @@ impl Dwm {
                 XSetWindowBorder(
                     self.dpy,
                     c.as_ref().unwrap().borrow_mut().win,
-                    self.scheme[SCHEME::SchemeSel as usize][Col::ColBorder as usize]
+                    self.scheme[SCHEME::SchemeSel as usize][2]
                         .as_ref()
                         .unwrap()
                         .pixel,
@@ -3773,7 +3719,7 @@ impl Dwm {
             XSetWindowBorder(
                 self.dpy,
                 c.as_ref().unwrap().borrow_mut().win,
-                self.scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize]
+                self.scheme[SCHEME::SchemeNorm as usize][2]
                     .as_ref()
                     .unwrap()
                     .pixel,
@@ -3912,7 +3858,7 @@ impl Dwm {
                 XSetWindowBorder(
                     self.dpy,
                     w,
-                    self.scheme[SCHEME::SchemeNorm as usize][Col::ColBorder as usize]
+                    self.scheme[SCHEME::SchemeNorm as usize][2]
                         .as_ref()
                         .unwrap()
                         .pixel,
@@ -4411,7 +4357,6 @@ impl Dwm {
             monitor_info.monitor_width = m_mut.ww;
             monitor_info.monitor_height = m_mut.wh;
             monitor_info.monitor_num = m_mut.num;
-            monitor_info.showbar0 = m_mut.showbar0;
             monitor_info.ltsymbol = m_mut.ltsymbol.clone();
             let mut c = m_mut.clients.clone();
             while let Some(ref c_opt) = c {

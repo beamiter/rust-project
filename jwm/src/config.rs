@@ -27,18 +27,12 @@ impl Config {
     pub const borderpx: u32 = 1;
     // snap pixel
     pub const snap: u32 = 32;
-    pub const showbar: bool = true;
-    pub const show_egui_bar: bool = true;
     pub const egui_bar_name: &str = "egui_bar";
     pub const egui_bar_0: &str = "egui_bar_0";
     pub const egui_bar_1: &str = "egui_bar_1";
     pub const broken: &str = "broken";
     pub const topbar: bool = true;
-    pub const egui_bar_pad: i32 = 8;
-    // pub const fonts: Lazy<Vec<&str>> = Lazy::new(|| vec!["SauceCodeProNerdFontRegular:size=12"]);
-    // pub const font: &str = "Sans Bold 12";
-    // pub const dmenufont: &str = "Sans Bold 11";
-    pub const font: &str = "SauceCodePro Nerd Font Regular 12";
+    pub const egui_bar_pad: i32 = 1;
     pub const dmenufont: &str = "SauceCodePro Nerd Font Regular 11";
     pub const col_gray1: &str = "#222222";
     pub const col_gray2: &str = "#444444";
@@ -119,8 +113,6 @@ impl Config {
 
     // https://symbl.cc/en/
     pub const tags_length: usize = 9;
-    // pub const tags: [&str; tags_length] = ["🍇", "🍵", "🎦", "🎮", "🎵", "🏖", "🐣", "🐶", "🦄"];
-    // pub const tags: [&str; 9] = ["1", "2", "3", "4", "5", "6", "7", "8", "9"];
     pub const tagmask: u32 = (1 << Self::tags_length) - 1;
     pub const layouts: Lazy<Vec<Rc<Layout>>> = Lazy::new(|| {
         vec![
@@ -200,12 +192,6 @@ impl Config {
                 XK_Return.into(),
                 Some(Dwm::spawn),
                 dwm::Arg::V(Self::termcmd.clone()),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_b.into(),
-                Some(Dwm::togglebar),
-                dwm::Arg::I(0),
             ),
             Key::new(
                 Self::MODKEY,
@@ -464,10 +450,3 @@ impl Config {
         ]
     });
 }
-
-// pub static mut tags: Lazy<Vec<&str>> = Lazy::new(|| {
-//     return generate_random_tags(Config::tags_length);
-// });
-// pub static mut tags: Lazy<RwLock<Vec<&str>>> = Lazy::new(|| {
-//     return RwLock::new(generate_random_tags(Config::tags_length));
-// });
