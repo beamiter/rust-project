@@ -739,21 +739,21 @@ impl ClashApp {
                                     Ok(delay_info) => {
                                         if let Some(delay) = delay_info.delay {
                                             (Some(delay), format!("{} ms", delay))
-                                        } else if let Some(msg) = delay_info.message {
-                                            (None, format!("超时/错误: {}", msg))
+                                        } else if let Some(_) = delay_info.message {
+                                            (None, format!("错误: 超时"))
                                         } else {
                                             (None, "错误: 未知API响应".to_string())
                                         }
                                     }
-                                    Err(e) => (None, format!("错误: 解析失败 {}", e)),
+                                    Err(_) => (None, format!("错误: 解析失败")),
                                 }
                             } else {
                                 let err_text =
                                     response.text().await.unwrap_or_else(|_| "N/A".to_string());
-                                (None, format!("错误: HTTP {} - {}", status_code, err_text))
+                                (None, format!("错误: {}", err_text))
                             }
                         }
-                        Err(e) => (None, format!("错误: 请求失败 {}", e)),
+                        Err(_) => (None, format!("错误: 请求失败")),
                     };
 
                 let result_to_send = ProxyLatencyResult {
