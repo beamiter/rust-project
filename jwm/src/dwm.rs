@@ -9,6 +9,7 @@ use log::info;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::ffi::c_char;
 use std::ffi::{c_int, CStr, CString};
 use std::fmt;
 use std::mem::transmute;
@@ -22,6 +23,7 @@ use std::sync::mpsc::Sender;
 use std::time::{SystemTime, UNIX_EPOCH};
 use std::{os::raw::c_long, usize};
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
+use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
 use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
 
 use x11::keysym::XK_Num_Lock;
@@ -554,7 +556,6 @@ pub struct BarShape {
 
 pub struct Dwm {
     pub stext_max_len: usize,
-    pub stext: String,
     pub screen: i32,
     pub sw: i32,
     pub sh: i32,
@@ -608,7 +609,6 @@ impl Dwm {
     pub fn new(sender: Sender<u8>) -> Self {
         Dwm {
             stext_max_len: 512,
-            stext: String::new(),
             screen: 0,
             sw: 0,
             sh: 0,
@@ -1648,7 +1648,9 @@ impl Dwm {
             XSync(self.dpy, False);
             let mut i: u64 = 0;
             while self.running.load(Ordering::SeqCst) && XNextEvent(self.dpy, &mut ev) <= 0 {
-                // info!("running frame: {}, handler type: {}", i, ev.type_);
+                if ev.type_ == PropertyNotify {
+                    info!("running frame: {}, handler type: {}", i, ev.type_);
+                }
                 i = i.wrapping_add(1);
                 self.handler(ev.type_, &mut ev);
             }
@@ -2871,29 +2873,6 @@ impl Dwm {
                 self.depth,
                 self.cmap,
             )));
-            // info!("[setup] drw_fontset_create");
-            if !self
-                .drw
-                .as_mut()
-                .unwrap()
-                .as_mut()
-                .drw_font_create(Config::font)
-            {
-                eprintln!("no fonts could be loaded");
-                exit(0);
-            }
-            {
-                let h = self
-                    .drw
-                    .as_ref()
-                    .unwrap()
-                    .font
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .h as i32;
-                self.drw.as_mut().unwrap().lrpad = h;
-            }
             // info!("[setup] updategeom");
             self.updategeom();
             // init atoms
@@ -3088,6 +3067,67 @@ impl Dwm {
         self.focus(c.clone());
         let mon = { c.as_ref().unwrap().borrow_mut().mon.clone() };
         self.arrange(mon);
+    }
+
+    pub fn gettextprop(&mut self, w: Window, atom: Atom, text: &mut String) -> bool {
+        // info!("[gettextprop]");
+        unsafe {
+            let mut name: XTextProperty = std::mem::zeroed();
+            if XGetTextProperty(self.dpy, w, &mut name, atom) <= 0 || name.nitems <= 0 {
+                return false;
+            }
+            *text = "".to_string();
+            let mut list: *mut *mut c_char = std::ptr::null_mut();
+            let mut n: i32 = 0;
+            if name.encoding == XA_STRING {
+                let c_str = CStr::from_ptr(name.value as *const _);
+                match c_str.to_str() {
+                    Ok(val) => {
+                        let mut tmp = val.to_string();
+                        while tmp.as_bytes().len() > self.stext_max_len {
+                            tmp.pop();
+                        }
+                        *text = tmp;
+                        // info!(
+                        //     "[gettextprop]text from string, len: {}, text: {:?}",
+                        //     text.len(),
+                        //     *text
+                        // );
+                    }
+                    Err(val) => {
+                        info!("[gettextprop]text from string error: {:?}", val);
+                        println!("[gettextprop]text from string error: {:?}", val);
+                        return false;
+                    }
+                }
+            } else if XmbTextPropertyToTextList(self.dpy, &mut name, &mut list, &mut n)
+                >= Success as i32
+                && n > 0
+                && !list.is_null()
+            {
+                let c_str = CStr::from_ptr(*list);
+                match c_str.to_str() {
+                    Ok(val) => {
+                        let mut tmp = val.to_string();
+                        while tmp.as_bytes().len() > self.stext_max_len {
+                            tmp.pop();
+                        }
+                        *text = tmp;
+                        // info!(
+                        //     "[gettextprop]text from string list, len: {},  text: {:?}",
+                        //     text.len(),
+                        //     *text
+                        // );
+                    }
+                    Err(val) => {
+                        info!("[gettextprop]text from string list error: {:?}", val);
+                        println!("[gettextprop]text from string list error: {:?}", val);
+                        return false;
+                    }
+                }
+            }
+        }
+        true
     }
     pub fn propertynotify(&mut self, e: *mut XEvent) {
         // info!("[propertynotify]");
