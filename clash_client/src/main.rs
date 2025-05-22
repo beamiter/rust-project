@@ -588,6 +588,61 @@ impl ClashApp {
         }
     }
 
+    // New method to set the current proxy for a specific group (e.g., "GLOBAL")
+    fn set_current_proxy(&self, proxy_name: &str, group_name: &str) {
+        // We'll use TOKIO_RUNTIME for this async task, similar to latency tests
+        let api_port = self.app_state.api_port.clone();
+        if api_port.is_empty() {
+            eprintln!("Cannot set proxy: API port is not set.");
+            // Optionally, update some status in the UI if you have a place for it
+            // self.some_status_field = "错误: API端口未设置".to_string();
+            return;
+        }
+
+        let proxy_name_owned = proxy_name.to_string();
+        let group_name_owned = group_name.to_string();
+        // For simplicity, not adding an "is_setting_proxy" flag, but you could for complex UI feedback
+
+        TOKIO_RUNTIME.spawn(async move {
+            let client = reqwest::Client::new();
+            let url = format!(
+                "http://127.0.0.1:{}/proxies/{}",
+                api_port,
+                urlencoding::encode(&group_name_owned) // URL encode group name
+            );
+            let mut payload = HashMap::new();
+            payload.insert("name", proxy_name_owned.clone()); // Clone proxy_name_owned for use in payload
+            match client.put(&url).json(&payload).send().await {
+                Ok(response) => {
+                    if response.status().is_success() {
+                        println!(
+                            "Successfully set proxy for group '{}' to '{}'",
+                            group_name_owned, proxy_name_owned
+                        );
+                        // The monitoring thread should pick up the change and update the UI
+                        // No direct UI update here, to keep it simple and rely on polling
+                    } else {
+                        let status = response.status();
+                        let err_text = response
+                            .text()
+                            .await
+                            .unwrap_or_else(|_| "无法读取错误信息".to_string());
+                        eprintln!(
+                            "Failed to set proxy for group '{}' to '{}': HTTP {} - {}",
+                            group_name_owned, proxy_name_owned, status, err_text
+                        );
+                    }
+                }
+                Err(e) => {
+                    eprintln!(
+                        "Error sending request to set proxy for group '{}' to '{}': {}",
+                        group_name_owned, proxy_name_owned, e
+                    );
+                }
+            }
+        });
+    }
+
     fn process_config_content(&mut self) {
         match try_parse_clash_config_from_string(&self.config_content) {
             Ok(parsed_config) => {
@@ -701,7 +756,7 @@ impl ClashApp {
                 let res = ProxyLatencyResult {
                     proxy_name: p_name_clone.clone(),
                     latency_ms: None,
-                    status_message: "错误: API端口未设置".to_string(),
+                    status_message: "API端口未设置".to_string(),
                 };
                 // Spawn a task just to send this error, or handle differently
                 TOKIO_RUNTIME.spawn(async move {
@@ -740,20 +795,20 @@ impl ClashApp {
                                         if let Some(delay) = delay_info.delay {
                                             (Some(delay), format!("{} ms", delay))
                                         } else if let Some(_) = delay_info.message {
-                                            (None, format!("错误: 超时"))
+                                            (None, format!("超时"))
                                         } else {
-                                            (None, "错误: 未知API响应".to_string())
+                                            (None, "未知API响应".to_string())
                                         }
                                     }
-                                    Err(_) => (None, format!("错误: 解析失败")),
+                                    Err(_) => (None, format!("解析失败")),
                                 }
                             } else {
-                                let err_text =
-                                    response.text().await.unwrap_or_else(|_| "N/A".to_string());
-                                (None, format!("错误: {}", err_text))
+                                // let err_text =
+                                //     response.text().await.unwrap_or_else(|_| "N/A".to_string());
+                                (None, format!("N/A"))
                             }
                         }
-                        Err(_) => (None, format!("错误: 请求失败")),
+                        Err(_) => (None, format!("请求失败")),
                     };
 
                 let result_to_send = ProxyLatencyResult {
@@ -908,7 +963,7 @@ impl ClashApp {
             *self.api_port_for_monitor.lock().unwrap() = port_to_use;
         }
         if self.app_state.api_port.is_empty() {
-            self.config_editor_status = "错误：API端口为空，无法启动Clash。".to_string();
+            self.config_editor_status = "API端口为空，无法启动Clash。".to_string();
             return;
         }
         match Command::new(&self.app_state.clash_path)
@@ -981,7 +1036,7 @@ impl ClashApp {
         if let Some(p_name) = proxy_name_to_test {
             if api_port.is_empty() {
                 let mut info_guard = dynamic_info_clone.lock().unwrap();
-                info_guard.current_global_proxy_latency = "错误: API端口未设置".to_string();
+                info_guard.current_global_proxy_latency = "API端口未设置".to_string();
                 *is_testing_latency_clone.lock().unwrap() = false;
                 return;
             }
@@ -1011,13 +1066,13 @@ impl ClashApp {
                                     if let Some(delay) = delay_info.delay {
                                         format!("{} ms", delay)
                                     } else if let Some(msg) = delay_info.message {
-                                        format!("超时/错误: {}", msg) // 更明确的错误信息
+                                        format!("超时: {}", msg) // 更明确的错误信息
                                     } else {
-                                        "错误: 未知API响应".to_string()
+                                        "未知API响应".to_string()
                                     }
                                 }
                                 Err(e) => {
-                                    format!("错误: 解析延迟响应失败 {}", e)
+                                    format!("解析延迟响应失败 {}", e)
                                 }
                             }
                         } else {
@@ -1026,11 +1081,11 @@ impl ClashApp {
                                 .text()
                                 .await
                                 .unwrap_or_else(|_| "无法读取错误信息".to_string());
-                            format!("错误: HTTP {} - {}", status, err_text)
+                            format!("HTTP {} - {}", status, err_text)
                         }
                     }
                     Err(e) => {
-                        format!("错误: 请求失败 {}", e)
+                        format!("请求失败 {}", e)
                     }
                 };
 
@@ -1326,22 +1381,37 @@ impl App for ClashApp {
                     .auto_shrink([false, true])
                     .show(ui, |ui_scroll| {
                         let proxies_list_guard = self.all_proxies_for_ui.lock().unwrap();
+                        let current_global_proxy_name_clone; // To hold the cloned name outside the lock
+                        {
+                            let dynamic_info_guard = self.dynamic_clash_info.lock().unwrap();
+                            current_global_proxy_name_clone =
+                                dynamic_info_guard.current_global_proxy_name.clone();
+                        } // dynamic_info_guard lock released
                         if proxies_list_guard.is_empty() {
                             ui_scroll.label("没有从配置文件加载到代理节点，或解析失败。");
                         } else {
                             for proxy_entry in proxies_list_guard.iter() {
                                 ui_scroll.horizontal(|ui_item| {
-                                    ui_item
-                                        .label(RichText::new(&proxy_entry.details.name).strong())
-                                        .on_hover_text(format!(
-                                            "类型: {}, 服务器: {}:{}",
-                                            proxy_entry.details.proxy_type,
-                                            proxy_entry.details.server,
-                                            proxy_entry.details.port
-                                        ));
+                                    // Highlight if this proxy is the current global proxy
+                                    let label_text = if Some(&proxy_entry.details.name)
+                                        == current_global_proxy_name_clone.as_ref()
+                                    {
+                                        RichText::new(&proxy_entry.details.name)
+                                            .strong()
+                                            .color(Color32::LIGHT_GREEN)
+                                    } else {
+                                        RichText::new(&proxy_entry.details.name).strong()
+                                    };
+                                    ui_item.label(label_text).on_hover_text(format!(
+                                        "类型: {}, 服务器: {}:{}",
+                                        proxy_entry.details.proxy_type,
+                                        proxy_entry.details.server,
+                                        proxy_entry.details.port
+                                    ));
                                     ui_item.with_layout(
                                         Layout::right_to_left(Align::Center),
-                                        |ui_status| {
+                                        |ui_status_button| {
+                                            // Latency Status (as before)
                                             let status_text_rich = if proxy_entry
                                                 .latency_test_status
                                                 == "待测试..."
@@ -1350,18 +1420,50 @@ impl App for ClashApp {
                                                 RichText::new(&proxy_entry.latency_test_status)
                                                     .italics()
                                             } else if proxy_entry.latency_ms.is_some() {
-                                                // Successfully tested with a value
                                                 RichText::new(&proxy_entry.latency_test_status)
                                                     .color(Color32::GREEN)
                                             } else {
-                                                // Error or N/A after a test attempt (e.g. timeout, connection error)
                                                 RichText::new(&proxy_entry.latency_test_status)
                                                     .color(Color32::RED)
                                             };
-                                            ui_status.label(status_text_rich);
+                                            ui_status_button.label(status_text_rich);
+                                            // <<<< NEW: "Set as Current" Button >>>>
+                                            // We assume the target group is "GLOBAL". This might need to be configurable.
+                                            // Also, only show this button if the current mode is "Global"
+                                            let mode_is_global;
+                                            {
+                                                mode_is_global = self
+                                                    .dynamic_clash_info
+                                                    .lock()
+                                                    .unwrap()
+                                                    .mode
+                                                    .to_lowercase()
+                                                    == "global";
+                                            }
+                                            if mode_is_global {
+                                                // Disable button if this proxy is already the current one
+                                                let is_already_current =
+                                                    Some(&proxy_entry.details.name)
+                                                        == current_global_proxy_name_clone.as_ref();
+                                                if ui_status_button
+                                                    .add_enabled(
+                                                        !is_already_current,
+                                                        egui::Button::new("🌍 设为全局"),
+                                                    )
+                                                    .clicked()
+                                                {
+                                                    // For now, hardcode "GLOBAL" as the group to change.
+                                                    // In a more advanced version, you'd get this group name from config or UI.
+                                                    self.set_current_proxy(
+                                                        &proxy_entry.details.name,
+                                                        "GLOBAL",
+                                                    );
+                                                }
+                                            }
                                         },
                                     );
                                 });
+
                                 ui_scroll.separator();
                             }
                         }
