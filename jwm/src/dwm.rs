@@ -3078,50 +3078,39 @@ impl Dwm {
     pub fn propertynotify(&mut self, e: *mut XEvent) {
         // info!("[propertynotify]");
         unsafe {
-            let c: Option<Rc<RefCell<Client>>>;
             let ev = (*e).property;
             let mut trans: Window = 0;
             if ev.window == self.root && ev.atom == XA_WM_NAME {
-                // self.updatestatus();
             } else if ev.state == PropertyDelete {
                 // ignore
                 return;
-            } else if {
-                c = self.wintoclient(ev.window);
-                c.is_some()
-            } {
+            } else if let Some(client_rc) = self.wintoclient(ev.window) {
+                let mut client_borrowd = client_rc.borrow_mut();
                 match ev.atom {
                     XA_WM_TRANSIENT_FOR => {
-                        if !c.as_ref().unwrap().borrow_mut().isfloating
-                            && XGetTransientForHint(
-                                self.dpy,
-                                c.as_ref().unwrap().borrow_mut().win,
-                                &mut trans,
-                            ) > 0
+                        if !client_borrowd.isfloating
+                            && XGetTransientForHint(self.dpy, client_borrowd.win, &mut trans) > 0
                             && {
-                                c.as_ref().unwrap().borrow_mut().isfloating =
-                                    self.wintoclient(trans).is_some();
-                                c.as_ref().unwrap().borrow_mut().isfloating
+                                client_borrowd.isfloating = self.wintoclient(trans).is_some();
+                                client_borrowd.isfloating
                             }
                         {
-                            self.arrange(c.as_ref().unwrap().borrow_mut().mon.clone());
+                            self.arrange(client_borrowd.mon.clone());
                         }
                     }
                     XA_WM_NORMAL_HINTS => {
-                        c.as_ref().unwrap().borrow_mut().hintsvalid = false;
+                        client_borrowd.hintsvalid = false;
                     }
                     XA_WM_HINTS => {
-                        self.updatewmhints(c.as_ref().unwrap());
+                        self.updatewmhints(&client_rc);
                         self.drawbars();
                     }
                     _ => {}
                 }
                 if ev.atom == XA_WM_NAME || ev.atom == self.netatom[NET::NetWMName as usize] {
-                    self.updatetitle(c.as_ref().unwrap());
+                    self.updatetitle(&client_rc);
                     let sel = {
-                        c.as_ref()
-                            .unwrap()
-                            .borrow_mut()
+                        client_borrowd
                             .mon
                             .as_ref()
                             .unwrap()
@@ -3129,13 +3118,15 @@ impl Dwm {
                             .sel
                             .clone()
                     };
-                    if c.is_some() && sel.is_some() && Self::are_equal_rc(&c, &sel) {
-                        let mon = { c.as_ref().unwrap().borrow_mut().mon.clone() };
-                        self.drawbar(mon);
+                    if let Some(sel_opt) = sel {
+                        if Rc::ptr_eq(&sel_opt, &client_rc) {
+                            let mon = { client_borrowd.mon.clone() };
+                            self.drawbar(mon);
+                        }
                     }
                 }
                 if ev.atom == self.netatom[NET::NetWMWindowType as usize] {
-                    self.updatewindowtype(c.as_ref().unwrap());
+                    self.updatewindowtype(&client_rc);
                 }
             }
         }
