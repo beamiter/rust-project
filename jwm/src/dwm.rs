@@ -3089,9 +3089,9 @@ impl Dwm {
                 // ignore
                 return;
             } else if let Some(client_rc) = self.wintoclient(ev.window) {
-                let mut client_borrowd = client_rc.borrow_mut();
                 match ev.atom {
                     XA_WM_TRANSIENT_FOR => {
+                        let mut client_borrowd = client_rc.borrow_mut();
                         if !client_borrowd.isfloating
                             && XGetTransientForHint(self.dpy, client_borrowd.win, &mut trans) > 0
                             && {
@@ -3103,6 +3103,7 @@ impl Dwm {
                         }
                     }
                     XA_WM_NORMAL_HINTS => {
+                        let mut client_borrowd = client_rc.borrow_mut();
                         client_borrowd.hintsvalid = false;
                     }
                     XA_WM_HINTS => {
@@ -3112,9 +3113,10 @@ impl Dwm {
                     _ => {}
                 }
                 if ev.atom == XA_WM_NAME || ev.atom == self.netatom[NET::NetWMName as usize] {
-                    self.updatetitle(&mut client_borrowd);
+                    self.updatetitle(&mut client_rc.borrow_mut());
                     let sel = {
-                        client_borrowd
+                        client_rc
+                            .borrow_mut()
                             .mon
                             .as_ref()
                             .unwrap()
@@ -3124,7 +3126,7 @@ impl Dwm {
                     };
                     if let Some(sel_opt) = sel {
                         if Rc::ptr_eq(&sel_opt, &client_rc) {
-                            let mon = { client_borrowd.mon.clone() };
+                            let mon = { client_rc.borrow_mut().mon.clone() };
                             self.drawbar(mon);
                         }
                     }

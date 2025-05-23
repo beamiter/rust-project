@@ -81,13 +81,13 @@ impl Default for VolumeControlWindow {
 #[allow(unused)]
 pub struct MyEguiApp {
     message: Option<SharedMessage>,
-    receiver: mpsc::Receiver<SharedMessage>,
+    receiver_msg: mpsc::Receiver<SharedMessage>,
+    sender_resize: mpsc::Sender<bool>,
     sys: System,
     point_index: usize,
     points: Vec<[f64; 2]>,
     point_speed: usize,
     toggle_time_style: bool,
-    visible: bool,
     data: Vec<f64>,
     // 添加缓存和状态变量
     color_cache: Vec<Color32>,
@@ -101,7 +101,11 @@ pub struct MyEguiApp {
 }
 
 impl MyEguiApp {
-    pub fn new(_cc: &eframe::CreationContext<'_>, receiver: mpsc::Receiver<SharedMessage>) -> Self {
+    pub fn new(
+        _cc: &eframe::CreationContext<'_>,
+        receiver_msg: mpsc::Receiver<SharedMessage>,
+        sender_resize: mpsc::Sender<bool>,
+    ) -> Self {
         // 预计算余弦点，避免在构造函数中重复计算
         let points = Self::generate_cosine_points();
 
@@ -113,19 +117,19 @@ impl MyEguiApp {
 
         Self {
             message: None,
-            receiver,
+            receiver_msg,
+            sender_resize,
             sys: System::new_all(),
             point_index: 0,
             points,
             point_speed: 2,
             toggle_time_style: false,
-            visible: true,
             data: Vec::with_capacity(16), // 预分配容量
             color_cache: Vec::new(),
             last_update_time: Instant::now(),
             update_interval_ms: 500, // 更新间隔，可调整
             volume_window,
-            need_resize: true,
+            need_resize: false,
             current_window_height: DESIRED_HEIGHT,
         }
     }
@@ -453,7 +457,6 @@ impl MyEguiApp {
 
             // 更新当前高度和调整状态
             self.current_window_height = target_height;
-            self.need_resize = false;
         }
     }
 
@@ -624,30 +627,44 @@ impl MyEguiApp {
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         // 处理消息
-        let mut get_new_message: bool = false;
-        while let Ok(message) = self.receiver.try_recv() {
+        if self.need_resize {
+            let _output = Command::new("xsetroot")
+                .arg("-name")
+                .arg("revoke by egui_bar")
+                .output();
+            info!("try to revoke");
+        }
+        let prev_message = self.message.clone();
+        while let Ok(message) = self.receiver_msg.try_recv() {
             self.message = Some(message);
-            get_new_message = true;
+            self.need_resize = true;
+        }
+        if let Some(prev_message) = prev_message {
+            if let Some(current_message) = &self.message {
+                if (prev_message.timestamp != current_message.timestamp)
+                    && prev_message.monitor_info == current_message.monitor_info
+                {
+                    self.need_resize = false;
+                }
+            }
         }
 
         // 更新系统信息（限制更新频率）
         self.update_system_info();
 
-        let scale_factor = ctx.pixels_per_point();
-
-        // 处理窗口大小调整
-        if let Some(message) = self.message.as_ref() {
-            self.visible = message.monitor_info.showbar0;
-            let monitor_width = message.monitor_info.monitor_width as f32;
-
-            // 调整窗口大小，考虑音量控制窗口的状态
-            self.adjust_window_size(ctx, scale_factor, monitor_width);
-        }
-
         // 绘制音量控制窗口（如果打开）
         // 如果窗口状态改变（例如关闭），标记需要调整大小
         if self.draw_volume_window(ctx) {
             self.need_resize = true;
+        }
+
+        let scale_factor = ctx.pixels_per_point();
+        // 处理窗口大小调整
+        if let Some(message) = self.message.as_ref() {
+            let monitor_width = message.monitor_info.monitor_width as f32;
+
+            // 调整窗口大小，考虑音量控制窗口的状态
+            self.adjust_window_size(ctx, scale_factor, monitor_width);
         }
 
         // 主UI面板
@@ -741,13 +758,8 @@ impl eframe::App for MyEguiApp {
                 });
             });
         });
-
-        if get_new_message {
-            let _output = Command::new("xsetroot")
-                .arg("-name")
-                .arg("revoke by egui_bar")
-                .output();
-            info!("try to revoke");
+        if self.need_resize {
+            ctx.request_repaint_after(std::time::Duration::from_micros(1));
         }
     }
 }

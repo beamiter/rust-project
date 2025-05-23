@@ -139,7 +139,8 @@ fn main() -> eframe::Result {
             let _ = load_system_nerd_font(&cc.egui_ctx);
             configure_text_styles(&cc.egui_ctx);
 
-            let (sender, receiver) = mpsc::channel();
+            let (sender_msg, receiver_msg) = mpsc::channel();
+            let (sender_resize, receiver_resize) = mpsc::channel();
             // 创建通道用于心跳检测
             let (tx, rx) = mpsc::channel();
             let egui_ctx = cc.egui_ctx.clone();
@@ -197,7 +198,7 @@ fn main() -> eframe::Result {
                                 if prev_timestamp != message.timestamp {
                                     prev_timestamp = message.timestamp;
                                     info!("send message: {:?}", message);
-                                    if sender.send(message).is_ok() {
+                                    if sender_msg.send(message).is_ok() {
                                         need_request_repaint = true;
                                         error_count = 0; // 重置错误计数
                                     } else {
@@ -234,6 +235,8 @@ fn main() -> eframe::Result {
                         need_request_repaint = true;
                     }
 
+                    while let Ok(_) = receiver_resize.try_recv() {}
+
                     if need_request_repaint {
                         warn!("request_repaint");
                         egui_ctx.request_repaint_after(Duration::from_micros(1));
@@ -267,7 +270,7 @@ fn main() -> eframe::Result {
                 }
             });
 
-            Ok(Box::new(MyEguiApp::new(cc, receiver)))
+            Ok(Box::new(MyEguiApp::new(cc, receiver_msg, sender_resize)))
         }),
     )
 }

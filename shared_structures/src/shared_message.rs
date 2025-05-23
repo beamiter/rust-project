@@ -1,7 +1,7 @@
 use serde::{Deserialize, Serialize};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct TagStatus {
     pub is_selected: bool,
     pub is_urg: bool,
@@ -19,7 +19,7 @@ impl TagStatus {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default, PartialEq, Eq)]
 pub struct MonitorInfo {
     pub client_name: String,
     pub tag_status_vec: Vec<TagStatus>,
@@ -32,7 +32,7 @@ pub struct MonitorInfo {
     pub ltsymbol: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct SharedMessage {
     pub timestamp: u128,
     pub monitor_info: MonitorInfo,
