@@ -1,11 +1,10 @@
-use bar::StatusBar;
+// use bar::StatusBar;
 use chrono::prelude::*;
 use coredump::register_panic_handler;
 use dwm::Dwm;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use libc::{setlocale, LC_CTYPE};
 use log::info;
-use std::process::Command;
 use std::sync::mpsc;
 use std::{ffi::CString, process::exit, ptr::null_mut};
 use std::{thread, time::Duration};
@@ -41,7 +40,7 @@ fn main() {
     let mut dwm = Dwm::new(tx);
 
     let status_update_thread = thread::spawn(move || {
-        let mut status_bar = StatusBar::new();
+        // let mut status_bar = StatusBar::new();
         loop {
             let mut need_sleep = true;
             match rx.try_recv() {
@@ -56,7 +55,7 @@ fn main() {
                         }
                         1 => {
                             need_sleep = false;
-                            status_bar.update_icon_list();
+                            // status_bar.update_icon_list();
                         }
                         _ => {
                             break;
@@ -65,10 +64,9 @@ fn main() {
                 }
                 Err(_) => {}
             }
-            let status = status_bar.broadcast_string();
-            info!("status string: {}", status);
-            // Update X root window name (status bar), here we will just print to stdout
-            let _output = Command::new("xsetroot").arg("-name").arg(status).output();
+            // let status = status_bar.broadcast_string();
+            // info!("status string: {}", status);
+            // let _output = Command::new("xsetroot").arg("-name").arg(status).output();
             if need_sleep {
                 thread::sleep(Duration::from_millis(500));
             }

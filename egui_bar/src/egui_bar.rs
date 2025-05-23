@@ -1,6 +1,7 @@
 use eframe::egui;
 use egui::{Align, Color32, Layout};
 use egui_plot::{Line, Plot, PlotPoints};
+use log::info;
 use shared_structures::SharedMessage;
 use std::{f64::consts::PI, process::Command, sync::mpsc, time::Instant};
 use sysinfo::System;
@@ -623,8 +624,10 @@ impl MyEguiApp {
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         // 处理消息
+        let mut get_new_message: bool = false;
         while let Ok(message) = self.receiver.try_recv() {
             self.message = Some(message);
+            get_new_message = true;
         }
 
         // 更新系统信息（限制更新频率）
@@ -738,5 +741,13 @@ impl eframe::App for MyEguiApp {
                 });
             });
         });
+
+        if get_new_message {
+            let _output = Command::new("xsetroot")
+                .arg("-name")
+                .arg("revoke by egui_bar")
+                .output();
+            info!("try to revoke");
+        }
     }
 }

@@ -3081,6 +3081,10 @@ impl Dwm {
             let ev = (*e).property;
             let mut trans: Window = 0;
             if ev.window == self.root && ev.atom == XA_WM_NAME {
+                // Hack to use this to react to signal from egui_bar
+                info!("revoke by egui_bar");
+                self.focus(None);
+                self.arrange(None);
             } else if ev.state == PropertyDelete {
                 // ignore
                 return;
@@ -3108,7 +3112,7 @@ impl Dwm {
                     _ => {}
                 }
                 if ev.atom == XA_WM_NAME || ev.atom == self.netatom[NET::NetWMName as usize] {
-                    self.updatetitle(&client_rc);
+                    self.updatetitle(&mut client_borrowd);
                     let sel = {
                         client_borrowd
                             .mon
@@ -3804,9 +3808,9 @@ impl Dwm {
                 c.as_ref().unwrap().borrow_mut().oldh = (*wa).height;
                 c.as_ref().unwrap().borrow_mut().oldbw = (*wa).border_width;
                 c.as_ref().unwrap().borrow_mut().cfact = 1.;
+                self.updatetitle(&mut c.as_ref().unwrap().borrow_mut());
             }
 
-            self.updatetitle(c.as_ref().unwrap());
             if XGetTransientForHint(self.dpy, w, &mut trans) > 0 && {
                 t = self.wintoclient(trans);
                 t.is_some()
@@ -4314,9 +4318,8 @@ impl Dwm {
             }
         }
     }
-    pub fn updatetitle(&mut self, c: &Rc<RefCell<Client>>) {
+    pub fn updatetitle(&mut self, c: &mut Client) {
         // info!("[updatetitle]");
-        let mut c = c.borrow_mut();
         if !self.gettextprop(c.win, self.netatom[NET::NetWMName as usize], &mut c.name) {
             self.gettextprop(c.win, XA_WM_NAME, &mut c.name);
         }
