@@ -11,11 +11,7 @@ use std::{ffi::CString, i32, ptr::null_mut, rc::Rc, u32};
 // If you use Pango however, Unicode will work great and this includes flag emojis.
 use x11::{
     xft::{XftColor, XftColorAllocName},
-    xlib::{
-        self, CapButt, Colormap, Cursor, Drawable, JoinMiter, LineSolid, Visual, Window,
-        XCreateFontCursor, XCreateGC, XCreatePixmap, XFreeCursor, XFreeGC, XFreePixmap,
-        XSetLineAttributes, GC,
-    },
+    xlib::{self, Colormap, Cursor, Visual, XCreateFontCursor, XFreeCursor},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -32,73 +28,24 @@ pub type Clr = XftColor;
 
 #[derive(Debug, Clone)]
 pub struct Drw {
-    pub w: u32,
-    pub h: u32,
     pub dpy: *mut xlib::Display,
-    pub screen: i32,
-    pub root: Window,
     visual: *mut Visual,
-    depth: i32,
     cmap: Colormap,
-    pub drawable: Drawable,
-    pub gc: GC,
 }
 impl Drw {
     pub fn new() -> Self {
         Drw {
-            w: 0,
-            h: 0,
             dpy: null_mut(),
-            screen: 0,
-            root: 0,
             visual: null_mut(),
-            depth: 0,
             cmap: 0,
-            drawable: 0,
-            gc: null_mut(),
         }
     }
-    pub fn drw_create(
-        dpy: *mut xlib::Display,
-        screen: i32,
-        root: Window,
-        w: u32,
-        h: u32,
-        visual: *mut Visual,
-        depth: i32,
-        cmap: Colormap,
-    ) -> Self {
+    pub fn drw_create(dpy: *mut xlib::Display, visual: *mut Visual, cmap: Colormap) -> Self {
         let mut drw = Drw::new();
         drw.dpy = dpy;
-        drw.screen = screen;
-        drw.root = root;
-        drw.w = w;
-        drw.h = h;
-        unsafe {
-            drw.drawable = XCreatePixmap(dpy, root, w, h, depth as u32);
-            drw.gc = XCreateGC(dpy, drw.drawable, 0, null_mut());
-            XSetLineAttributes(dpy, drw.gc, 1, LineSolid, CapButt, JoinMiter);
-            drw.visual = visual;
-            drw.depth = depth;
-            drw.cmap = cmap;
-        }
+        drw.visual = visual;
+        drw.cmap = cmap;
         return drw;
-    }
-    pub fn drw_resize(&mut self, w: u32, h: u32) {
-        unsafe {
-            self.w = w;
-            self.h = h;
-            if self.drawable > 0 {
-                XFreePixmap(self.dpy, self.drawable);
-            }
-            self.drawable = XCreatePixmap(self.dpy, self.root, w, h, self.depth as u32);
-        }
-    }
-    pub fn drw_free(&mut self) {
-        unsafe {
-            XFreePixmap(self.dpy, self.drawable);
-            XFreeGC(self.dpy, self.gc);
-        }
     }
 
     pub fn drw_clr_create(&mut self, clrname: &str, alpha: u8) -> Option<Rc<Clr>> {
