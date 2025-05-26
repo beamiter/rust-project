@@ -10,7 +10,6 @@ use std::{ffi::CString, process::exit, ptr::null_mut};
 use std::{thread, time::Duration};
 use x11::xlib::{XCloseDisplay, XOpenDisplay, XSupportsLocale};
 
-mod bar;
 mod config;
 mod drw;
 mod dwm;

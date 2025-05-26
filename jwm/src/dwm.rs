@@ -10,7 +10,7 @@ use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus}
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::ffi::c_char;
-use std::ffi::{c_int, CStr, CString};
+use std::ffi::{CStr, CString};
 use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
@@ -500,7 +500,6 @@ impl Rule {
     }
 }
 
-static mut xerrorxlib: Option<unsafe extern "C" fn(*mut Display, *mut XErrorEvent) -> c_int> = None;
 pub fn xerrorstart(_: *mut Display, _: *mut XErrorEvent) -> i32 {
     // info!("[xerrorstart]");
     eprintln!("jwm: another window manager is already running");
@@ -512,7 +511,7 @@ pub fn xerrorstart(_: *mut Display, _: *mut XErrorEvent) -> i32 {
 // on UnmapNotify's). Other types of errors call xlibs default error handler, which may call exit.
 pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
     // info!("[xerror]");
-    let hack_request_code: u8 = 139;
+    let X_FixesChangeSaveSet: u8 = 139;
     unsafe {
         if (*ee).error_code == BadWindow
             || ((*ee).request_code == X_SetInputFocus && (*ee).error_code == BadMatch)
@@ -523,7 +522,7 @@ pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
             || ((*ee).request_code == X_GrabButton && (*ee).error_code == BadAccess)
             || ((*ee).request_code == X_GrabKey && (*ee).error_code == BadAccess)
             || ((*ee).request_code == X_CopyArea && (*ee).error_code == BadDrawable)
-            || ((*ee).request_code == hack_request_code && (*ee).error_code == BadLength)
+            || ((*ee).request_code == X_FixesChangeSaveSet && (*ee).error_code == BadLength)
         {
             return 0;
         }
@@ -532,7 +531,6 @@ pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
             (*ee).request_code,
             (*ee).error_code
         );
-        // (TODO): check here, may call exit.
         return -1;
     }
 }
@@ -661,13 +659,13 @@ impl Dwm {
             XGetClassHint(self.dpy, c.win, &mut ch);
             c.class = if !ch.res_class.is_null() {
                 let c_str = CStr::from_ptr(ch.res_class);
-                c_str.to_str().unwrap().to_string()
+                c_str.to_str().unwrap_or(Config::broken).to_string()
             } else {
                 Config::broken.to_string()
             };
             c.instance = if !ch.res_name.is_null() {
                 let c_str = CStr::from_ptr(ch.res_name);
-                c_str.to_str().unwrap().to_string()
+                c_str.to_str().unwrap_or(Config::broken).to_string()
             } else {
                 Config::broken.to_string()
             };
@@ -677,8 +675,10 @@ impl Dwm {
                 c.class, c.instance, c.name
             );
             for r in &*Config::rules {
-                if (!r.name.is_empty() || !r.class.is_empty() || !r.instance.is_empty())
-                    && (r.name.is_empty() || c.name.find(&r.name).is_some())
+                if r.name.is_empty() && r.class.is_empty() && r.instance.is_empty() {
+                    continue;
+                }
+                if (r.name.is_empty() || c.name.find(&r.name).is_some())
                     && (r.class.is_empty() || c.class.find(&r.class).is_some())
                     && (r.instance.is_empty() || c.instance.find(&r.instance).is_some())
                 {
@@ -768,7 +768,7 @@ impl Dwm {
                 c.maxa = 0.;
                 c.mina = 0.;
             }
-            c.isfixed = c.maxw > 0 && c.maxh > 0 && (c.maxw == c.minw) && (c.maxh == c.minh);
+            c.isfixed = (c.maxw > 0) && (c.maxh > 0) && (c.maxw == c.minw) && (c.maxh == c.minh);
             c.hintsvalid = true;
         }
     }
@@ -783,105 +783,137 @@ impl Dwm {
         interact: bool,
     ) -> bool {
         // info!("[applysizehints] {x}, {y}, {w}, {h}");
-        // set minimum possible.
+        // set minimum possible client area size.
         *w = 1.max(*w);
         *h = 1.max(*h);
+
+        // Boundary checks
         if interact {
-            let cc = c.as_ref().borrow_mut();
-            let width = cc.width();
-            let height = cc.height();
+            let cc = c.as_ref().borrow(); // Borrow immutably for reading
+            let client_total_width = *w + 2 * cc.bw; // Use desired w for this check
+            let client_total_height = *h + 2 * cc.bw; // Use desired h for this check
+
             if *x > self.sw {
-                *x = self.sw - width;
+                // Off right edge
+                *x = self.sw - client_total_width;
             }
             if *y > self.sh {
-                *y = self.sh - height;
+                // Off bottom edge
+                *y = self.sh - client_total_height;
             }
-            if *x + *w + 2 * cc.bw < 0 {
+            if *x + client_total_width < 0 {
+                // Off left edge
                 *x = 0;
             }
-            if *y + *h + 2 * cc.bw < 0 {
+            if *y + client_total_height < 0 {
+                // Off top edge
                 *y = 0;
             }
         } else {
-            let cc = c.as_ref().borrow_mut();
-            let wx = cc.mon.as_ref().unwrap().borrow_mut().wx;
-            let wy = cc.mon.as_ref().unwrap().borrow_mut().wy;
-            let ww = cc.mon.as_ref().unwrap().borrow_mut().ww;
-            let wh = cc.mon.as_ref().unwrap().borrow_mut().wh;
-            let width = cc.width();
-            let height = cc.height();
+            let cc = c.as_ref().borrow(); // Borrow immutably for reading
+            let mon_borrow = cc.mon.as_ref().unwrap().borrow();
+            let wx = mon_borrow.wx;
+            let wy = mon_borrow.wy;
+            let ww = mon_borrow.ww;
+            let wh = mon_borrow.wh;
+            let client_total_width = *w + 2 * cc.bw; // Use desired w
+            let client_total_height = *h + 2 * cc.bw; // Use desired h
+
             if *x >= wx + ww {
-                *x = wx + ww - width;
+                // Client's left edge past monitor's right edge
+                *x = wx + ww - client_total_width;
             }
             if *y >= wy + wh {
-                *y = wy + wh - height;
+                // Client's top edge past monitor's bottom edge
+                *y = wy + wh - client_total_height;
             }
-            let bw = cc.bw;
-            if *x + *w + 2 * bw <= wx {
+            if *x + client_total_width <= wx {
+                // Client's right edge before monitor's left edge
                 *x = wx;
             }
-            if *y + *h + 2 * bw <= wy {
+            if *y + client_total_height <= wy {
+                // Client's bottom edge before monitor's top edge
                 *y = wy;
             }
         }
-        let isfloating = { c.as_ref().borrow_mut().isfloating };
-        let layout_type = {
-            let mon = c.as_ref().borrow_mut().mon.clone();
-            let sellt = mon.as_ref().unwrap().borrow_mut().sellt;
-            let x = mon.as_ref().unwrap().borrow_mut().lt[sellt]
-                .layout_type
-                .clone();
-            x
+
+        let (isfloating, layout_type_is_none) = {
+            let cc_borrow = c.as_ref().borrow();
+            let mon_borrow = cc_borrow.mon.as_ref().unwrap().borrow();
+            let sellt = mon_borrow.sellt;
+            (
+                cc_borrow.isfloating,
+                mon_borrow.lt[sellt].layout_type.is_none(),
+            )
         };
-        if Config::resizehints || isfloating || layout_type.is_none() {
-            if !c.as_ref().borrow_mut().hintsvalid {
-                self.updatesizehints(c);
+
+        if Config::resizehints || isfloating || layout_type_is_none {
+            if !c.as_ref().borrow().hintsvalid {
+                // Check immutable borrow first
+                self.updatesizehints(c); // This will mutably borrow internally
             }
-            // see last two sentences in ICCCM 4.1.2.3
-            let cc = c.as_ref().borrow_mut();
-            let baseismin = cc.basew == cc.minw && cc.baseh == cc.minh;
-            if !baseismin {
-                // temporarily remove base dimensions.
-                (*w) -= cc.basew;
-                (*h) -= cc.baseh;
+
+            let cc = c.as_ref().borrow(); // Re-borrow (immutable) after potential updatesizehints
+
+            // Adjust w and h for base dimensions and increments
+            // These are client area dimensions (without border)
+            let mut current_w = *w;
+            let mut current_h = *h;
+
+            // 1. Subtract base size to get the dimensions that increments apply to.
+            current_w -= cc.basew;
+            current_h -= cc.baseh;
+
+            // 2. Apply resize increments.
+            if cc.incw > 0 {
+                current_w -= current_w % cc.incw;
             }
-            // adjust for aspect limits.
-            if cc.mina > 0. && cc.maxa > 0. {
-                if cc.maxa < *w as f32 / *h as f32 {
-                    *w = (*h as f32 * cc.maxa + 0.5) as i32;
-                } else if cc.mina < *h as f32 / *w as f32 {
-                    *h = (*w as f32 * cc.mina + 0.5) as i32;
+            if cc.inch > 0 {
+                current_h -= current_h % cc.inch;
+            }
+
+            // 3. Add base size back before aspect ratio and min/max checks.
+            current_w += cc.basew;
+            current_h += cc.baseh;
+
+            // 4. Apply aspect ratio limits.
+            // cc.mina is min_aspect.y / min_aspect.x (target H/W)
+            // cc.maxa is max_aspect.x / max_aspect.y (target W/H)
+            if cc.mina > 0.0 && cc.maxa > 0.0 {
+                if cc.maxa < current_w as f32 / current_h as f32 {
+                    // Too wide (current W/H > max W/H) -> Adjust W
+                    current_w = (current_h as f32 * cc.maxa + 0.5) as i32;
+                } else if current_h as f32 / current_w as f32 > cc.mina {
+                    // Too tall (current H/W > min H/W) -> Adjust H
+                    current_h = (current_w as f32 * cc.mina + 0.5) as i32;
                 }
             }
-            if baseismin {
-                // increment calcalation requires this.
-                *w -= cc.basew;
-                *h -= cc.baseh;
-            }
-            // adjust for increment value.
-            if (cc).incw > 0 {
-                *w -= *w % (cc).incw;
-            }
-            if (cc).inch > 0 {
-                *h -= *h % (cc).inch;
-            }
-            // restore base dimensions.
-            *w = (*w + cc.basew).max(cc.minw);
-            *h = (*h + cc.baseh).max(cc.minh);
+
+            // 5. Enforce min and max dimensions.
+            // Ensure client area is not smaller than min_width/height.
+            current_w = current_w.max(cc.minw);
+            current_h = current_h.max(cc.minh);
+
+            // Ensure client area is not larger than max_width/height if specified.
             if cc.maxw > 0 {
-                let mut maxw = cc.maxw;
-                *w = *w.min(&mut maxw);
+                current_w = current_w.min(cc.maxw);
             }
             if cc.maxh > 0 {
-                let mut maxh = cc.maxh;
-                *h = *h.min(&mut maxh);
+                current_h = current_h.min(cc.maxh);
             }
+
+            *w = current_w;
+            *h = current_h;
         }
-        {
-            let cc = c.as_ref().borrow_mut();
-            return *x != cc.x || (*y) != cc.y || *w != cc.w || *h != cc.h;
-        }
+
+        // Check if final geometry is different from the client's current geometry
+        let client_now = c.as_ref().borrow();
+        return *x != client_now.x
+            || *y != client_now.y
+            || *w != client_now.w
+            || *h != client_now.h;
     }
+
     pub fn cleanup(&mut self) {
         // info!("[cleanup]");
         // Bitwise or to get max value.
@@ -1914,7 +1946,7 @@ impl Dwm {
     pub fn checkotherwm(&mut self) {
         info!("[checkotherwm]");
         unsafe {
-            xerrorxlib = XSetErrorHandler(Some(transmute(xerrorstart as *const ())));
+            _ = XSetErrorHandler(Some(transmute(xerrorstart as *const ())));
             // this causes an error if some other window manager is running.
             XSelectInput(
                 self.dpy,
