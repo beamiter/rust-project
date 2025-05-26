@@ -1208,23 +1208,25 @@ impl Dwm {
         }
         unsafe {
             let c = c.as_ref().unwrap();
-            let isvisible = { c.borrow_mut().isvisible() };
+            let cc = c.borrow();
+            let isvisible = cc.isvisible();
             if isvisible {
                 // show clients top down.
                 // let name = c.as_ref().unwrap().borrow_mut().name.clone();
                 // info!("[showhide] show clients top down: {name}");
-                let cc = c.borrow();
                 let win = cc.win;
                 let x = cc.x;
                 let y = cc.y;
                 XMoveWindow(self.dpy, win, x, y);
-                let mon = cc.mon.clone().unwrap();
-                let mon = mon.borrow();
-                let isfloating = cc.isfloating;
-                let isfullscreen = cc.isfullscreen;
-                if (mon.lt[mon.sellt].layout_type.is_none() || isfloating) && !isfullscreen {
-                    let (x, y, w, h) = (cc.x, cc.y, cc.w, cc.h);
-                    self.resize(c, x, y, w, h, false);
+                {
+                    let mon = cc.mon.clone().unwrap();
+                    let mon = mon.borrow();
+                    let isfloating = cc.isfloating;
+                    let isfullscreen = cc.isfullscreen;
+                    if (mon.lt[mon.sellt].layout_type.is_none() || isfloating) && !isfullscreen {
+                        let (x, y, w, h) = (cc.x, cc.y, cc.w, cc.h);
+                        self.resize(c, x, y, w, h, false);
+                    }
                 }
                 let snext = cc.snext.clone();
                 self.showhide(snext);
@@ -1232,7 +1234,6 @@ impl Dwm {
                 // hide clients bottom up.
                 // let name = c.as_ref().unwrap().borrow_mut().name.clone();
                 // info!("[showhide] show clients bottom up: {name}");
-                let cc = c.borrow();
                 let snext = cc.snext.clone();
                 self.showhide(snext);
                 let y;
@@ -1241,7 +1242,7 @@ impl Dwm {
                     y = cc.y;
                     win = cc.win;
                 }
-                XMoveWindow(self.dpy, win, c.borrow_mut().width() * -2, y);
+                XMoveWindow(self.dpy, win, cc.width() * -2, y);
             }
         }
     }
