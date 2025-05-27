@@ -1,10 +1,12 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
+use cairo::glib::error;
 use libc::{
     close, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
     SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
+use log::error;
 use log::info;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 use std::cell::RefCell;
@@ -15,6 +17,7 @@ use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
 use std::os::unix::process::CommandExt;
+use std::process::Stdio;
 use std::process::{Child, Command};
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
@@ -362,8 +365,8 @@ impl Client {
     pub fn isvisible(&self) -> bool {
         // info!("[ISVISIBLE]");
         let b = {
-            let seltags = self.mon.as_ref().unwrap().borrow_mut().seltags;
-            self.tags0 & self.mon.as_ref().unwrap().borrow_mut().tagset[seltags]
+            let seltags = self.mon.as_ref().unwrap().borrow().seltags;
+            self.tags0 & self.mon.as_ref().unwrap().borrow().tagset[seltags]
         };
         b > 0
     }
@@ -1626,7 +1629,7 @@ impl Dwm {
         self.drawbar(Some(m.clone()));
 
         unsafe {
-            let m = m.borrow_mut();
+            let m = m.borrow();
             let mut wc: XWindowChanges = zeroed();
             let sel = m.sel.clone();
             if sel.is_none() {
@@ -1644,8 +1647,8 @@ impl Dwm {
                 let mut c = m.stack.clone();
                 while let Some(ref c_opt) = c.clone() {
                     let c_opt = c_opt.borrow_mut();
-                    let isfloating = { c_opt.isfloating };
-                    let isvisible = { c_opt.isvisible() };
+                    let isfloating = c_opt.isfloating;
+                    let isvisible = c_opt.isvisible();
                     if !isfloating && isvisible {
                         let win = c_opt.win;
                         XConfigureWindow(self.dpy, win, (CWSibling | CWStackMode) as u32, &mut wc);
@@ -2004,40 +2007,76 @@ impl Dwm {
         }
     }
 
-    pub fn spawn(&mut self, arg: *const Arg) {
+    pub fn spawn(&mut self, arg_ptr: *const Arg) {
         info!("[spawn]");
-        unsafe {
-            let mut sa: sigaction = zeroed();
 
-            let mut mut_arg: Arg = (*arg).clone();
-            if let Arg::V(ref mut v) = mut_arg {
-                if *v == *Config::dmenucmd {
-                    let tmp = (b'0' + self.selmon.as_ref().unwrap().borrow_mut().num as u8) as char;
-                    let tmp = tmp.to_string();
+        let arg = match unsafe { arg_ptr.as_ref() } {
+            Some(a) => a.clone(),
+            None => {
+                error!("[spawn] Argument pointer was null");
+                return;
+            }
+        };
+
+        if let Arg::V(cmd_vec) = arg {
+            let mut processed_cmd_vec = cmd_vec.clone();
+
+            if processed_cmd_vec == *Config::dmenucmd {
+                if let Some(selmon_rc) = self.selmon.as_ref() {
+                    let monitor_num_str = {
+                        let selmon_borrow = selmon_rc.borrow();
+                        (b'0' + selmon_borrow.num as u8) as char
+                    }
+                    .to_string();
+
                     info!(
-                        "[spawn] dmenumon tmp: {}, num: {}",
-                        tmp,
-                        self.selmon.as_ref().unwrap().borrow_mut().num
+                        "[spawn] dmenumon: {}, num: {}",
+                        monitor_num_str,
+                        selmon_rc.borrow().num
                     );
-                    (*v)[2] = tmp;
-                }
-                if fork() == 0 {
-                    if !self.dpy.is_null() {
-                        close(XConnectionNumber(self.dpy));
+                    if let Some(m_idx) = processed_cmd_vec.iter().position(|s| s == "-m") {
+                        if m_idx + 1 < processed_cmd_vec.len() {
+                            processed_cmd_vec[m_idx + 1] = monitor_num_str;
+                        } else {
+                            error!("[spawn] dmenu command has -m but no subsequent argument.");
+                        }
+                    } else {
+                        error!("[spawn] dmenu command format in Config::dmenucmd does not contain '-m'.");
                     }
-                    setsid();
-
-                    sigemptyset(&mut sa.sa_mask);
-                    sa.sa_flags = 0;
-                    sa.sa_sigaction = SIG_DFL;
-                    sigaction(SIGCHLD, &sa, null_mut());
-
-                    info!("[spawn] arg v: {:?}", v);
-                    if let Err(val) = Command::new(&v[0]).args(&v[1..]).spawn() {
-                        info!("[spawn] Command exited with error {:?}", val);
-                    }
+                } else {
+                    error!("[spawn] No selected monitor for dmenu.");
                 }
             }
+
+            if processed_cmd_vec.is_empty() {
+                error!("[spawn] Command vector is empty.");
+                return;
+            }
+
+            info!("[spawn] Spawning command: {:?}", processed_cmd_vec);
+            match Command::new(&processed_cmd_vec[0])
+                .args(&processed_cmd_vec[1..])
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(child_process) => {
+                    info!(
+                        "[spawn] Command {:?} spawned successfully with PID: {}",
+                        processed_cmd_vec,
+                        child_process.id()
+                    );
+                }
+                Err(e) => {
+                    error!(
+                        "[spawn] Failed to spawn command '{:?}': {}",
+                        processed_cmd_vec, e
+                    );
+                }
+            }
+        } else {
+            error!("[spawn] Argument was not Arg::V type");
         }
     }
 
@@ -2113,83 +2152,160 @@ impl Dwm {
         return 0;
     }
 
-    pub fn tile(&mut self, m: &Rc<RefCell<Monitor>>) {
-        info!("[tile]");
-        let mut n: u32 = 0;
-        let mut mfacts: f32 = 0.;
-        let mut sfacts: f32 = 0.;
-        let m = m.borrow();
-        let mut c = self.nexttiled(m.clients.clone());
-        while let Some(c_opt) = c {
-            if n < m.nmaster0 {
-                mfacts += c_opt.borrow_mut().cfact;
-            } else {
-                sfacts += c_opt.borrow_mut().cfact;
+    pub fn tile(&mut self, m_rc: &Rc<RefCell<Monitor>>) {
+        info!("[tile]"); // 日志记录，进入 tile 布局函数
+
+        // 初始化变量
+        let mut n: u32 = 0; // 可见且平铺的客户端总数
+        let mut mfacts: f32 = 0.0; // 主区域 (master area) 客户端的 cfact 总和
+        let mut sfacts: f32 = 0.0; // 堆叠区域 (stack area) 客户端的 cfact 总和
+
+        // --- 第一遍遍历：计算客户端数量和 cfact 总和 ---
+        {
+            // 创建一个新的作用域来限制 m_borrow 的生命周期
+            let m_borrow = m_rc.borrow(); // 不可变借用 Monitor
+            let mut c = self.nexttiled(m_borrow.clients.clone()); // 获取第一个可见且平铺的客户端
+                                                                  // nexttiled 会跳过浮动和不可见的客户端
+
+            while let Some(c_opt) = c {
+                // 遍历所有可见且平铺的客户端
+                let c_borrow = c_opt.borrow(); // 可变借用 Client 来读取和修改 cfact (虽然这里只读取)
+                if n < m_borrow.nmaster0 {
+                    // 如果当前客户端在主区域
+                    mfacts += c_borrow.cfact; // 累加到主区域的 cfact 总和
+                } else {
+                    // 如果当前客户端在堆叠区域
+                    sfacts += c_borrow.cfact; // 累加到堆叠区域的 cfact 总和
+                }
+                let next_c = self.nexttiled(c_borrow.next.clone()); // 获取下一个可见平铺客户端
+                drop(c_borrow); // 显式 drop 可变借用，以便 nexttiled 中的借用不会冲突
+                c = next_c;
+                n += 1; // 客户端总数加一
             }
-            let next = self.nexttiled(c_opt.borrow_mut().next.clone());
-            c = next;
-            n += 1;
-        }
+        } // m_borrow 在这里被 drop
+
         if n == 0 {
+            // 如果没有可见且平铺的客户端，则直接返回
             return;
         }
 
+        // --- 计算主区域的宽度 (mw) ---
+        let (ww, mfact0_val, nmaster0_val, wx_val, wy_val, wh_val) = {
+            // 再次借用 Monitor 获取其属性
+            let m_borrow = m_rc.borrow();
+            (
+                m_borrow.ww,
+                m_borrow.mfact0,
+                m_borrow.nmaster0,
+                m_borrow.wx,
+                m_borrow.wy,
+                m_borrow.wh,
+            )
+        };
+
         let mw: u32;
-        if n > m.nmaster0 {
-            mw = if m.nmaster0 > 0 {
-                (m.ww as f32 * m.mfact0) as u32
+        if n > nmaster0_val {
+            // 如果客户端总数大于主区域配置的窗口数
+            mw = if nmaster0_val > 0 {
+                // 如果主区域至少有一个窗口
+                (ww as f32 * mfact0_val) as u32 // 主区域宽度 = 显示器工作区宽度 * mfact 比例
             } else {
-                0
+                0 // 否则主区域宽度为 0 (所有窗口都在堆叠区)
             };
         } else {
-            mw = m.ww as u32;
+            // 如果客户端总数小于等于主区域配置的窗口数 (所有窗口都在主区域)
+            mw = ww as u32; // 主区域宽度 =整个显示器工作区宽度
         }
-        let mut my: u32 = 0;
-        let mut ty: u32 = 0;
-        let mut i: u32 = 0;
-        let mut h: u32;
-        c = self.nexttiled(m.clients.clone());
-        let client_y_offset = self.client_y_offset(&m);
-        while let Some(ref c_opt) = c {
-            if i < m.nmaster0 {
-                let cfact = c_opt.borrow_mut().cfact;
-                h = ((m.wh as u32 - my) as f32 * (cfact / mfacts)) as u32;
-                let bw = c_opt.borrow_mut().bw;
+
+        // --- 第二遍遍历：调整客户端大小和位置 ---
+        let mut my: u32 = 0; // 主区域当前窗口的 Y 轴累积高度
+        let mut ty: u32 = 0; // 堆叠区域当前窗口的 Y 轴累积高度
+        let mut i: u32 = 0; // 当前处理到的客户端索引
+        let mut h: u32; // 当前客户端将要设置的高度
+
+        let client_y_offset = {
+            // 获取 Y 轴偏移（考虑状态栏）
+            let m_borrow = m_rc.borrow();
+            self.client_y_offset(&m_borrow)
+        };
+
+        let mut c_iter = {
+            // 重新从头开始获取可见平铺客户端
+            let m_borrow = m_rc.borrow();
+            self.nexttiled(m_borrow.clients.clone())
+        };
+
+        while let Some(ref c_opt) = c_iter {
+            // 遍历所有可见且平铺的客户端
+            let c_borrow = c_opt.borrow();
+            let bw = c_borrow.bw; // 获取客户端边框宽度
+
+            if i < nmaster0_val {
+                // --- 处理主区域的客户端 ---
+                let current_cfact = c_borrow.cfact;
+                // 计算当前客户端高度：剩余高度 * (当前客户端cfact / 剩余主区域cfact总和)
+                // 确保 mfacts 不为0，防止除零错误 (虽然理论上如果 nmaster0 > 0 且有客户端，mfacts > 0)
+                h = if mfacts > 0.001 {
+                    // 使用小的 epsilon 防止浮点数比较问题
+                    ((wh_val as u32 - my) as f32 * (current_cfact / mfacts)) as u32
+                } else if nmaster0_val - i > 0 {
+                    // 如果 mfacts 为0但仍有主区域窗口待分配
+                    (wh_val as u32 - my) / (nmaster0_val - i) // 平均分配剩余高度
+                } else {
+                    wh_val as u32 - my // 分配所有剩余高度
+                };
+
                 self.resize(
-                    &c_opt,
-                    m.wx,
-                    m.wy + my as i32 + client_y_offset,
-                    mw as i32 - (2 * bw),
-                    h as i32 - (2 * bw) - client_y_offset,
-                    false,
+                    c_opt, // 传递 Rc<RefCell<Client>>
+                    wx_val,
+                    wy_val + my as i32 + client_y_offset,
+                    mw as i32 - (2 * bw), // 宽度减去两侧边框
+                    // 高度减去两侧边框和Y轴偏移 (client_y_offset 应该只影响Y坐标和总可用高度，不应减两次)
+                    // 如果 client_y_offset 是指bar的高度，那么 wh_val 应该在开始就减去它
+                    // 假设 wh_val 是已经减去 bar 高度的工作区高度
+                    h as i32 - (2 * bw),
+                    false, // 非交互式调整
                 );
-                let height = c_opt.borrow_mut().height() as u32;
-                if my + height < m.wh as u32 {
-                    my += height;
+
+                let client_actual_height = c_borrow.height() as u32; // 获取调整后的实际总高度
+                if my + client_actual_height < wh_val as u32 {
+                    // 如果累积高度未超出工作区
+                    my += client_actual_height; // 累加高度
                 }
-                mfacts -= cfact;
+                mfacts -= current_cfact; // 从主区域 cfact 总和中减去已处理的 cfact
             } else {
-                let cfact = c_opt.borrow_mut().cfact;
-                h = ((m.wh as u32 - ty) as f32 * (cfact / sfacts)) as u32;
-                let bw = c_opt.borrow_mut().bw;
+                // --- 处理堆叠区域的客户端 ---
+                let current_cfact = c_borrow.cfact;
+                // 计算当前客户端高度：剩余高度 * (当前客户端cfact / 剩余堆叠区域cfact总和)
+                h = if sfacts > 0.001 {
+                    ((wh_val as u32 - ty) as f32 * (current_cfact / sfacts)) as u32
+                } else if n - i > 0 {
+                    // 如果 sfacts 为0但仍有堆叠区域窗口待分配
+                    (wh_val as u32 - ty) / (n - i) // 平均分配剩余高度
+                } else {
+                    wh_val as u32 - ty // 分配所有剩余高度
+                };
+
                 self.resize(
-                    &c_opt,
-                    m.wx + mw as i32,
-                    m.wy + ty as i32 + client_y_offset,
-                    m.ww - mw as i32 - (2 * bw),
-                    h as i32 - (2 * bw) - client_y_offset,
+                    c_opt,
+                    wx_val + mw as i32, // X 坐标在主区域右侧
+                    wy_val + ty as i32 + client_y_offset,
+                    ww as i32 - mw as i32 - (2 * bw), // 宽度是工作区剩余宽度减两侧边框
+                    h as i32 - (2 * bw),
                     false,
                 );
-                let height = c_opt.borrow_mut().height();
-                if ty as i32 + height < m.wh {
-                    ty += height as u32;
+
+                let client_actual_height = c_borrow.height() as u32;
+                if ty + client_actual_height < wh_val as u32 {
+                    ty += client_actual_height;
                 }
-                sfacts -= cfact;
+                sfacts -= current_cfact;
             }
 
-            let next = self.nexttiled(c_opt.borrow_mut().next.clone());
-            c = next;
-            i += 1;
+            let next_c = self.nexttiled(c_borrow.next.clone());
+            drop(c_borrow); // 显式 drop
+            c_iter = next_c;
+            i += 1; // 处理下一个客户端
         }
     }
 
@@ -2206,9 +2322,8 @@ impl Dwm {
                 return;
             }
             {
-                let isfloating = sel_opt.borrow_mut().isfloating;
-                let isfixed = sel_opt.borrow_mut().isfixed;
-                sel_opt.borrow_mut().isfloating = !isfloating || isfixed;
+                let mut sel_borrow = sel_opt.borrow_mut();
+                sel_borrow.isfloating = !sel_borrow.isfloating || sel_borrow.isfixed;
             }
             let isfloating = { sel_opt.borrow_mut().isfloating };
             if isfloating {
@@ -2227,10 +2342,10 @@ impl Dwm {
     pub fn focusin(&mut self, e: *mut XEvent) {
         // info!("[focusin]");
         unsafe {
-            let sel = { self.selmon.as_mut().unwrap().borrow_mut().sel.clone() };
+            let sel = { self.selmon.as_mut().unwrap().borrow().sel.clone() };
             let ev = (*e).focus_change;
             if let Some(sel) = sel.as_ref() {
-                if ev.window != sel.borrow_mut().win {
+                if ev.window != sel.borrow().win {
                     self.setfocus(sel);
                 }
             }
@@ -2274,7 +2389,7 @@ impl Dwm {
             if name == Config::egui_bar_name {
                 sel_opt.borrow_mut().tags0 = target_tag;
                 self.setclienttagprop(&sel_opt);
-                self.focus(None);
+                // self.focus(None); // (TODO): CHECK
                 self.arrange(self.selmon.clone());
                 break;
             }
@@ -2324,11 +2439,15 @@ impl Dwm {
                 {
                     return;
                 }
+            } else {
+                return;
             }
             if let Some(ref mons_opt) = self.mons {
                 if mons_opt.borrow_mut().next.is_none() {
                     return;
                 }
+            } else {
+                return;
             }
             if let Arg::I(i) = *arg {
                 let selmon_clone = self.selmon.clone();
@@ -2445,19 +2564,19 @@ impl Dwm {
             return;
         }
         unsafe {
-            let c = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+            let c = { self.selmon.as_ref().unwrap().borrow().sel.clone() };
             if c.is_none() {
                 return;
             }
             let lt_layout_type = {
-                let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
+                let selmon_mut = self.selmon.as_ref().unwrap().borrow();
                 selmon_mut.lt[selmon_mut.sellt].layout_type.clone()
             };
             if lt_layout_type.is_none() {
                 return;
             }
             if let Arg::F(f0) = *arg {
-                let mut f = f0 + c.as_ref().unwrap().borrow_mut().cfact;
+                let mut f = f0 + c.as_ref().unwrap().borrow().cfact;
                 if f0.abs() < 0.0001 {
                     f = 1.0;
                 } else if f < 0.25 || f > 4.0 {
@@ -2688,12 +2807,12 @@ impl Dwm {
         let sel_c;
         let nexttiled_c;
         {
-            let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
+            let selmon_mut = self.selmon.as_ref().unwrap().borrow();
             c = selmon_mut.sel.clone();
             let sellt = selmon_mut.sellt;
             if selmon_mut.lt[sellt].layout_type.is_none()
                 || c.is_none()
-                || c.as_ref().unwrap().borrow_mut().isfloating
+                || c.as_ref().unwrap().borrow().isfloating
             {
                 return;
             }
@@ -2703,7 +2822,7 @@ impl Dwm {
             nexttiled_c = self.nexttiled(sel_c);
         }
         if Self::are_equal_rc(&c, &nexttiled_c) {
-            let next = self.nexttiled(c.as_ref().unwrap().borrow_mut().next.clone());
+            let next = self.nexttiled(c.as_ref().unwrap().borrow().next.clone());
             c = next;
             if c.is_none() {
                 return;
@@ -3054,15 +3173,15 @@ impl Dwm {
     pub fn killclient(&mut self, _arg: *const Arg) {
         info!("[killclient]");
         unsafe {
-            let sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+            let sel = { self.selmon.as_ref().unwrap().borrow().sel.clone() };
             if sel.is_none() {
                 return;
             }
             // Don't kill neverfocus.
-            if sel.as_ref().unwrap().borrow_mut().neverfocus {
+            if sel.as_ref().unwrap().borrow().neverfocus {
                 return;
             }
-            info!("[killclient] {}", sel.as_ref().unwrap().borrow_mut());
+            info!("[killclient] {}", sel.as_ref().unwrap().borrow());
             if !self.sendevent(
                 &mut sel.as_ref().unwrap().borrow_mut(),
                 self.wmatom[WM::WMDelete as usize],
@@ -3070,7 +3189,7 @@ impl Dwm {
                 XGrabServer(self.dpy);
                 XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
                 XSetCloseDownMode(self.dpy, DestroyAll);
-                XKillClient(self.dpy, sel.as_ref().unwrap().borrow_mut().win);
+                XKillClient(self.dpy, sel.as_ref().unwrap().borrow().win);
                 XSync(self.dpy, False);
                 XSetErrorHandler(Some(transmute(xerror as *const ())));
                 XUngrabServer(self.dpy);
@@ -3081,10 +3200,10 @@ impl Dwm {
     pub fn nexttiled(&mut self, mut c: Option<Rc<RefCell<Client>>>) -> Option<Rc<RefCell<Client>>> {
         // info!("[nexttiled]");
         while let Some(ref c_opt) = c {
-            let isfloating = c_opt.borrow_mut().isfloating;
-            let isvisible = c_opt.borrow_mut().isvisible();
+            let isfloating = c_opt.borrow().isfloating;
+            let isvisible = c_opt.borrow().isvisible();
             if isfloating || !isvisible {
-                let next = c_opt.borrow_mut().next.clone();
+                let next = c_opt.borrow().next.clone();
                 c = next;
             } else {
                 break;
