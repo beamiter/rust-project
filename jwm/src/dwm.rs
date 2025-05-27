@@ -113,7 +113,6 @@ pub enum WM {
 
 #[derive(Debug, Clone, Copy)]
 #[repr(C)]
-#[allow(dead_code)]
 pub enum CLICK {
     ClkTagBar = 0,
     ClkLtSymbol = 1,
@@ -1359,12 +1358,14 @@ impl Dwm {
         let ref_pertag = m.pertag.as_mut().unwrap();
         ref_pertag.curtag = 1;
         ref_pertag.prevtag = 1;
+        let default_layout_0 = m.lt[0].clone();
+        let default_layout_1 = m.lt[1].clone();
         for i in 0..=Config::tags_length {
             ref_pertag.nmasters[i] = m.nmaster0;
             ref_pertag.mfacts[i] = m.mfact0;
 
-            ref_pertag.ltidxs[i][0] = Some(m.lt[0].clone());
-            ref_pertag.ltidxs[i][1] = Some(m.lt[1].clone());
+            ref_pertag.ltidxs[i][0] = Some(default_layout_0.clone());
+            ref_pertag.ltidxs[i][1] = Some(default_layout_1.clone());
             ref_pertag.sellts[i] = m.sellt;
         }
 
@@ -1376,13 +1377,13 @@ impl Dwm {
         unsafe {
             let ev = (*e).destroy_window;
             let c = self.wintoclient(ev.window);
-            if c.is_some() {
-                self.unmanage(c, true);
+            if let Some(c_opt) = c {
+                self.unmanage(Some(c_opt), true);
             }
         }
     }
 
-    pub fn applylayout(&mut self, layout_type: &LayoutType, m: *mut Monitor) {
+    pub fn applylayout(&mut self, layout_type: &LayoutType, m: &Rc<RefCell<Monitor>>) {
         match layout_type {
             LayoutType::TypeTile => {
                 self.tile(m);
@@ -1396,115 +1397,112 @@ impl Dwm {
 
     pub fn arrangemon(&mut self, m: &Rc<RefCell<Monitor>>) {
         info!("[arrangemon]");
-        let sellt;
+        let layout_type;
         {
             let mut mm = m.borrow_mut();
-            sellt = (mm).sellt;
+            let sellt = (mm).sellt;
             mm.ltsymbol = (mm).lt[sellt].symbol.to_string();
             info!("[arrangemon] sellt: {}, ltsymbol: {:?}", sellt, mm.ltsymbol);
+            layout_type = mm.lt[sellt].layout_type.clone();
         }
-        let layout_type = { m.borrow_mut().lt[sellt].layout_type.clone() };
         if let Some(ref layout_type) = layout_type {
-            let m_ptr: *mut Monitor;
-            {
-                m_ptr = &mut *m.borrow_mut();
-            }
-            self.applylayout(layout_type, m_ptr);
+            self.applylayout(layout_type, m);
         }
     }
 
     // This is cool!
+    // 一个更实际的提取方式可能涉及到传递闭包来访问和修改特定的字段：
+    fn detach_node_from_list<FGetHead, FSetHead, FGetNext, FSetNext>(
+        mon: &Rc<RefCell<Monitor>>,
+        node_to_detach: &Option<Rc<RefCell<Client>>>,
+        get_head: FGetHead,
+        set_head: FSetHead,
+        get_next: FGetNext, // Assuming this returns Option<Rc<RefCell<Client>>>
+        set_next: FSetNext,
+    ) where
+        FGetHead: Fn(&mut Monitor) -> &mut Option<Rc<RefCell<Client>>>,
+        FSetHead: Fn(&mut Monitor, Option<Rc<RefCell<Client>>>),
+        FGetNext: Fn(&mut Client) -> Option<Rc<RefCell<Client>>>, // Changed to &mut Client
+        FSetNext: Fn(&mut Client, Option<Rc<RefCell<Client>>>),
+    {
+        if node_to_detach.is_none() {
+            return;
+        }
+
+        let mut mon_borrow_for_head = mon.borrow_mut();
+        let mut current_node_opt = (get_head)(&mut *mon_borrow_for_head).clone();
+        drop(mon_borrow_for_head);
+
+        let mut prev_node_opt: Option<Rc<RefCell<Client>>> = None;
+
+        while let Some(current_rc) = current_node_opt.clone() {
+            // Clone current_rc for this iteration's ownership
+            // current_rc is now an owned Rc<RefCell<Client>> for this iteration
+
+            // Check if current_rc is the one to detach
+            // We need an Option for are_equal_rc, so wrap current_rc
+            if Self::are_equal_rc(&Some(current_rc.clone()), node_to_detach) {
+                // Clone for comparison
+                let next_node_to_link = (get_next)(&mut current_rc.borrow_mut()); // Get next
+
+                if let Some(ref prev_rc_strong) = prev_node_opt {
+                    (set_next)(&mut prev_rc_strong.borrow_mut(), next_node_to_link);
+                } else {
+                    // Detaching the head node
+                    let mut mon_borrow_for_set_head = mon.borrow_mut();
+                    (set_head)(&mut *mon_borrow_for_set_head, next_node_to_link);
+                }
+                break; // Node detached, exit loop
+            }
+
+            // Not the node to detach, advance
+            let next_for_iteration = (get_next)(&mut current_rc.borrow_mut());
+            prev_node_opt = Some(current_rc); // current_rc (owned for this iteration) becomes prev
+            current_node_opt = next_for_iteration; // Update for the next iteration of the while loop
+        }
+    }
+
     pub fn detach(&mut self, c: Option<Rc<RefCell<Client>>>) {
         // info!("[detach]");
-        let mut current = {
-            c.as_ref()
-                .unwrap()
-                .borrow_mut()
-                .mon
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .clients
-                .clone()
+        let c = match c {
+            Some(val) => val,
+            None => return,
         };
-        let mut prev: Option<Rc<RefCell<Client>>> = None;
-        while let Some(ref current_opt) = current {
-            if Self::are_equal_rc(&current, &c) {
-                let next = { current_opt.borrow_mut().next.clone() };
-                if let Some(ref prev_opt) = prev {
-                    prev_opt.borrow_mut().next = next;
-                } else {
-                    c.as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .mon
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .clients = next;
-                }
-                break;
-            }
-            prev = current.clone();
-            let next = current_opt.borrow_mut().next.clone();
-            current = next;
-        }
+        let m = match c.borrow().mon {
+            Some(ref mon_val) => mon_val.clone(),
+            None => return,
+        };
+        Self::detach_node_from_list(
+            &m,
+            &Some(c),
+            |m| &mut m.clients,
+            |m, next| m.clients = next,
+            |cli| cli.next.clone(),
+            |cli, next| cli.next = next,
+        );
     }
 
     pub fn detachstack(&mut self, c: Option<Rc<RefCell<Client>>>) {
         // info!("[detachstack]");
-        let mut current = {
-            c.as_ref()
-                .unwrap()
-                .borrow_mut()
-                .mon
-                .as_ref()
-                .unwrap()
-                .borrow_mut()
-                .stack
-                .clone()
+        let c = match c {
+            Some(val) => val,
+            None => return,
         };
-        let mut prev: Option<Rc<RefCell<Client>>> = None;
-        while let Some(ref current_opt) = current {
-            if Self::are_equal_rc(&current, &c) {
-                let snext = { current_opt.borrow_mut().snext.clone() };
-                if let Some(ref prev_opt) = prev {
-                    prev_opt.borrow_mut().snext = snext;
-                } else {
-                    c.as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .mon
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .stack = snext;
-                }
-                break;
-            }
-            prev = current.clone();
-            let snext = current_opt.borrow_mut().snext.clone();
-            current = snext;
-        }
+        let m = match c.borrow().mon {
+            Some(ref mon_val) => mon_val.clone(),
+            None => return,
+        };
+        Self::detach_node_from_list(
+            &m,
+            &Some(c.clone()),
+            |m| &mut m.stack,
+            |m, next| m.stack = next,
+            |cli| cli.snext.clone(),
+            |cli, next| cli.snext = next,
+        );
 
-        let mut condition = false;
-        if let Some(ref mon_opt) = c.as_ref().unwrap().borrow_mut().mon {
-            if Self::are_equal_rc(&c, &mon_opt.borrow_mut().sel) {
-                condition = true;
-            }
-        }
-        if condition {
-            let mut t = {
-                c.as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .mon
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .stack
-                    .clone()
-            };
+        if Self::are_equal_rc(&Some(c), &m.borrow().sel) {
+            let mut t = { m.borrow().stack.clone() };
             while let Some(ref t_opt) = t {
                 let isvisible = { t_opt.borrow_mut().isvisible() };
                 if isvisible {
@@ -1513,74 +1511,86 @@ impl Dwm {
                 let snext = { t_opt.borrow_mut().snext.clone() };
                 t = snext;
             }
-            {
-                c.as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .mon
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .sel = t.clone()
-            };
+            m.borrow_mut().sel = t.clone();
         }
     }
 
     pub fn dirtomon(&mut self, dir: i32) -> Option<Rc<RefCell<Monitor>>> {
-        // info!("[dirtomon]");
-        let mut m: Option<Rc<RefCell<Monitor>>>;
+        let selected_monitor = self.selmon.as_ref()?; // Return None if selmon is None
+        let monitors_head = self.mons.as_ref()?; // Return None if mons is None
         if dir > 0 {
-            // info!("[dirtomon] dir: {}", dir);
-            m = self.selmon.as_ref().unwrap().borrow_mut().next.clone();
-            if m.is_none() {
-                m = self.mons.clone();
-            }
-        } else if Rc::ptr_eq(self.selmon.as_ref().unwrap(), self.mons.as_ref().unwrap()) {
-            // info!("[dirtomon] selmon equal mons");
-            m = self.mons.clone();
-            while let Some(ref m_opt) = m {
-                let next = m_opt.borrow_mut().next.clone();
-                if next.is_none() {
-                    break;
-                }
-                m = next;
-            }
+            // Next monitor
+            let next_mon = selected_monitor.borrow().next.clone();
+            return next_mon.or_else(|| self.mons.clone()); // If next is None, loop to head
         } else {
-            // info!("[dirtomon] other dir: {}", dir);
-            m = self.mons.clone();
-            while let Some(ref m_opt) = m {
-                let next = m_opt.borrow_mut().next.clone();
-                if Rc::ptr_eq(next.as_ref().unwrap(), self.selmon.as_ref().unwrap()) {
-                    break;
+            // Previous monitor
+            if Rc::ptr_eq(selected_monitor, monitors_head) {
+                // Selected is head, find the tail
+                let mut current = self.mons.clone();
+                let mut tail = self.mons.clone(); // Initialize tail to head in case of single monitor
+                while let Some(current_rc) = current {
+                    tail = Some(current_rc.clone()); // current_rc is the potential tail
+                    current = current_rc.borrow().next.clone();
+                    if current.is_none() {
+                        // Reached the actual tail
+                        break;
+                    }
                 }
-                m = next;
+                return tail;
+            } else {
+                // Selected is not head, find p such that p.next == selected_monitor
+                let mut current = self.mons.clone();
+                let mut prev = None;
+                while let Some(current_rc) = current {
+                    if Rc::ptr_eq(&current_rc, selected_monitor) {
+                        return prev; // Found selected, prev is the one before it
+                    }
+                    prev = Some(current_rc.clone());
+                    current = current_rc.borrow().next.clone();
+                    if current.is_none() && prev.is_some() {
+                        // Should not happen if selected_monitor is in the list and not head,
+                        // unless list structure is broken or selected_monitor is not in mons.
+                        // This indicates an issue if selected_monitor was supposed to be found.
+                        return None; // Or some error, or loop to tail if selmon wasn't found
+                    }
+                }
+                // If loop finishes, selected_monitor was not found in the list after the head
+                // This implies an inconsistent state.
+                return None;
             }
         }
-        m
     }
 
     fn write_message(&mut self, num: i32, message: &SharedMessage) -> std::io::Result<()> {
-        if let Some(ref ring_buffer) = self.egui_bar_shmem.get(&num).as_mut() {
-            // 尝试写入消息
+        if let Some(ring_buffer) = self.egui_bar_shmem.get_mut(&num) {
+            // Assuming get_mut
             match ring_buffer.try_write_message(&message) {
                 Ok(true) => {
                     info!("[write_message] {:?}", message);
+                    Ok(()) // Message written successfully
                 }
                 Ok(false) => {
                     println!("缓冲区已满，等待空间...");
-                    // std::thread::sleep(std::time::Duration::from_millis(50));
+                    // Consider returning a specific error type or just Ok(()) if this is not critical
+                    // For example: Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "Ring buffer full"))
+                    Ok(()) // Or keep as Ok, depending on desired error propagation
                 }
                 Err(e) => {
                     eprintln!("写入错误: {}", e);
-                    // std::thread::sleep(std::time::Duration::from_millis(1000));
+                    Err(e) // Propagate the I/O error
                 }
             }
+        } else {
+            // Ring buffer for this monitor number not found
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("Ring buffer for monitor {} not found", num),
+            ))
         }
-        Ok(())
     }
 
     pub fn drawbar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
-        self.draw_egui_bar(m);
+        self.update_bar_message_for_monitor(m);
         let num = self.message.monitor_info.monitor_num;
         info!("[drawbar] num: {}", num);
         let shared_path = format!("/dev/shm/monitor_{}", num);
@@ -1609,37 +1619,39 @@ impl Dwm {
 
     pub fn restack(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
         info!("[restack]");
-        self.drawbar(m.clone());
+        let m = match m {
+            Some(monitor) => monitor,
+            None => return,
+        };
+        self.drawbar(Some(m.clone()));
 
         unsafe {
+            let m = m.borrow_mut();
             let mut wc: XWindowChanges = zeroed();
-            let sel = m.as_ref().unwrap().borrow_mut().sel.clone();
+            let sel = m.sel.clone();
             if sel.is_none() {
                 return;
             }
             let isfloating = sel.as_ref().unwrap().borrow_mut().isfloating;
-            let sellt = m.as_ref().unwrap().borrow_mut().sellt;
-            let layout_type = {
-                m.as_ref().unwrap().borrow_mut().lt[sellt]
-                    .layout_type
-                    .clone()
-            };
+            let sellt = m.sellt;
+            let layout_type = { m.lt[sellt].layout_type.clone() };
             if isfloating || layout_type.is_none() {
                 let win = sel.as_ref().unwrap().borrow_mut().win;
                 XRaiseWindow(self.dpy, win);
             }
             if layout_type.is_some() {
                 wc.stack_mode = Below;
-                let mut c = m.as_ref().unwrap().borrow_mut().stack.clone();
-                while let Some(ref c_opt) = c {
-                    let isfloating = { c_opt.borrow_mut().isfloating };
-                    let isvisible = { c_opt.borrow_mut().isvisible() };
+                let mut c = m.stack.clone();
+                while let Some(ref c_opt) = c.clone() {
+                    let c_opt = c_opt.borrow_mut();
+                    let isfloating = { c_opt.isfloating };
+                    let isvisible = { c_opt.isvisible() };
                     if !isfloating && isvisible {
-                        let win = c_opt.borrow_mut().win;
+                        let win = c_opt.win;
                         XConfigureWindow(self.dpy, win, (CWSibling | CWStackMode) as u32, &mut wc);
                         wc.sibling = win;
                     }
-                    let next = c_opt.borrow_mut().snext.clone();
+                    let next = c_opt.snext.clone();
                     c = next;
                 }
             }
@@ -1676,28 +1688,29 @@ impl Dwm {
             let mut wa: XWindowAttributes = zeroed();
             if XQueryTree(self.dpy, self.root, &mut d1, &mut d2, &mut wins, &mut num) > 0 {
                 for i in 0..num as usize {
-                    if XGetWindowAttributes(self.dpy, *wins.wrapping_add(i), &mut wa) <= 0
+                    if XGetWindowAttributes(self.dpy, *wins.add(i), &mut wa) <= 0
                         || wa.override_redirect > 0
-                        || XGetTransientForHint(self.dpy, *wins.wrapping_add(i), &mut d1) > 0
+                        || XGetTransientForHint(self.dpy, *wins.add(i), &mut d1) > 0
                     {
                         continue;
                     }
                     if wa.map_state == IsViewable
-                        || self.getstate(*wins.wrapping_add(i)) == IconicState as i64
+                        || self.getstate(*wins.add(i)) == IconicState as i64
                     {
-                        self.manage(*wins.wrapping_add(i), &mut wa);
+                        self.manage(*wins.add(i), &mut wa);
                     }
                 }
                 for i in 0..num as usize {
                     // now the transients
-                    if XGetWindowAttributes(self.dpy, *wins.wrapping_add(i), &mut wa) <= 0 {
+                    // 目的是确保在管理一个瞬态窗口（如对话框）之前，它的主窗口（WM_TRANSIENT_FOR 指向的窗口）已经被窗口管理器处理了
+                    if XGetWindowAttributes(self.dpy, *wins.add(i), &mut wa) <= 0 {
                         continue;
                     }
-                    if XGetTransientForHint(self.dpy, *wins.wrapping_add(i), &mut d1) > 0
+                    if XGetTransientForHint(self.dpy, *wins.add(i), &mut d1) > 0
                         && (wa.map_state == IsViewable
-                            || self.getstate(*wins.wrapping_add(i)) == IconicState as i64)
+                            || self.getstate(*wins.add(i)) == IconicState as i64)
                     {
-                        self.manage(*wins.wrapping_add(i), &mut wa);
+                        self.manage(*wins.add(i), &mut wa);
                     }
                 }
             }
@@ -1707,52 +1720,101 @@ impl Dwm {
         }
     }
 
-    pub fn arrange(&mut self, mut m: Option<Rc<RefCell<Monitor>>>) {
+    pub fn arrange(&mut self, m_target: Option<Rc<RefCell<Monitor>>>) {
         info!("[arrange]");
-        if let Some(ref m_opt) = m {
-            {
-                let stack = { m_opt.borrow_mut().stack.clone() };
-                self.showhide(stack);
+        // Determine which monitors to operate on
+        let monitors_to_process: Vec<Rc<RefCell<Monitor>>> = match m_target {
+            Some(monitor_rc) => vec![monitor_rc], // Operate on a single monitor
+            None => {
+                // Operate on all monitors
+                let mut all_mons = Vec::new();
+                let mut current_mon_opt = self.mons.clone();
+                while let Some(current_mon_rc) = current_mon_opt {
+                    all_mons.push(current_mon_rc.clone());
+                    current_mon_opt = current_mon_rc.borrow().next.clone();
+                }
+                all_mons
             }
-        } else {
-            m = self.mons.clone();
-            while let Some(ref m_opt) = m {
-                let stack = { m_opt.borrow_mut().stack.clone() };
-                self.showhide(stack);
-                let next = { m_opt.borrow_mut().next.clone() };
-                m = next;
-            }
+        };
+
+        // Phase 1: Show/Hide windows for each targeted monitor
+        for mon_rc in &monitors_to_process {
+            let stack = mon_rc.borrow().stack.clone(); // Borrow immutably if stack is just read
+            self.showhide(stack);
         }
-        if let Some(ref m_opt) = m {
-            self.arrangemon(m_opt);
-            self.restack(m);
-        } else {
-            m = self.mons.clone();
-            while let Some(ref m_opt) = m {
-                self.arrangemon(m_opt);
-                let next = { m_opt.borrow_mut().next.clone() };
-                m = next;
-            }
+
+        // Phase 2: Arrange layout and restack for each targeted monitor
+        for mon_rc in monitors_to_process {
+            // Consume Vec or iterate by ref again
+            self.arrangemon(&mon_rc);
+            self.restack(Some(mon_rc)); // Pass Some(mon_rc) to restack
         }
     }
 
-    pub fn attach(&mut self, c: Option<Rc<RefCell<Client>>>) {
-        // info!("[attach]");
-        let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
-        c.as_ref().unwrap().borrow_mut().next = mon.as_ref().unwrap().borrow_mut().clients.clone();
-        mon.as_ref().unwrap().borrow_mut().clients = c.clone();
+    fn attach_to_list_head_internal(
+        client_rc: &Rc<RefCell<Client>>,
+        mon_rc: &Rc<RefCell<Monitor>>,
+        // FnMut because it modifies `cli`
+        mut set_client_next: impl FnMut(&mut Client, Option<Rc<RefCell<Client>>>),
+        // FnMut because it modifies `mon` (by returning a mutable reference to its field)
+        mut access_mon_list_head: impl FnMut(&mut Monitor) -> &mut Option<Rc<RefCell<Client>>>,
+    ) {
+        // Borrow client mutably once
+        let mut client_borrow = client_rc.borrow_mut();
+        // Borrow monitor mutably once
+        let mut mon_borrow = mon_rc.borrow_mut();
+        // Get a mutable reference to the monitor's list head field
+        let list_head_field_ref = (access_mon_list_head)(&mut *mon_borrow);
+        // 1. Client's next should point to the current head (before modification)
+        //    We clone the Option<Rc<...>> from the field reference.
+        let current_head_clone = (*list_head_field_ref).clone();
+        set_client_next(&mut *client_borrow, current_head_clone);
+        // 2. Monitor's list head should now be the new client
+        //    Assign directly to the mutable reference we got.
+        *list_head_field_ref = Some(client_rc.clone());
     }
-    pub fn attachstack(&mut self, c: Option<Rc<RefCell<Client>>>) {
-        // info!("[attachstack]");
-        let mon = c.as_ref().unwrap().borrow_mut().mon.clone();
-        c.as_ref().unwrap().borrow_mut().snext = mon.as_ref().unwrap().borrow_mut().stack.clone();
-        mon.as_ref().unwrap().borrow_mut().stack = c.clone();
+
+    pub fn attach(&mut self, c_opt: Option<Rc<RefCell<Client>>>) {
+        let client_rc = match c_opt {
+            Some(c) => c,
+            None => return,
+        };
+        let mon_rc = match client_rc.borrow().mon.as_ref() {
+            Some(m) => m.clone(),
+            None => return,
+        };
+
+        Self::attach_to_list_head_internal(
+            &client_rc,
+            &mon_rc,
+            |cli, next_node| cli.next = next_node,
+            |mon| &mut mon.clients,
+        );
+    }
+
+    pub fn attachstack(&mut self, c_opt: Option<Rc<RefCell<Client>>>) {
+        let client_rc = match c_opt {
+            Some(c) => c,
+            None => return,
+        };
+        let mon_rc = match client_rc.borrow().mon.as_ref() {
+            Some(m) => m.clone(),
+            None => return,
+        };
+
+        Self::attach_to_list_head_internal(
+            &client_rc,
+            &mon_rc,
+            |cli, next_node| cli.snext = next_node,
+            |mon| &mut mon.stack,
+        );
     }
 
     pub fn getatomprop(&mut self, c: &mut Client, prop: Atom) -> u64 {
         // info!("[getatomprop]");
         let mut di = 0;
-        let mut dl: u64 = 0;
+        let mut dl0: u64 = 0;
+        let mut dl1: u64 = 0;
         let mut da: Atom = 0;
         let mut atom: Atom = 0;
         let mut p: *mut u8 = null_mut();
@@ -1767,13 +1829,13 @@ impl Dwm {
                 XA_ATOM,
                 &mut da,
                 &mut di,
-                &mut dl,
-                &mut dl,
+                &mut dl0,
+                &mut dl1,
                 &mut p,
             ) == Success as i32
                 && !p.is_null()
             {
-                atom = *p as u64;
+                atom = *(p as *const Atom);
                 XFree(p as *mut _);
             }
         }
@@ -1782,13 +1844,13 @@ impl Dwm {
 
     pub fn getrootptr(&mut self, x: &mut i32, y: &mut i32) -> i32 {
         // info!("[getrootptr]");
-        let mut di: i32 = 0;
+        let mut di0: i32 = 0;
+        let mut di1: i32 = 0;
         let mut dui: u32 = 0;
         unsafe {
             let mut dummy: Window = zeroed();
-
             return XQueryPointer(
-                self.dpy, self.root, &mut dummy, &mut dummy, x, y, &mut di, &mut di, &mut dui,
+                self.dpy, self.root, &mut dummy, &mut dummy, x, y, &mut di0, &mut di1, &mut dui,
             );
         }
     }
@@ -1820,7 +1882,7 @@ impl Dwm {
                 return -1;
             }
             if n != 0 {
-                result = *p as i64;
+                result = *(p as *const i32) as i64;
             }
             XFree(p as *mut _);
         }
@@ -1834,12 +1896,12 @@ impl Dwm {
         let mut r = self.selmon.clone();
         let mut m = self.mons.clone();
         while let Some(ref m_opt) = m {
-            let a = m_opt.borrow_mut().intersect(x, y, w, h);
+            let a = m_opt.borrow().intersect(x, y, w, h);
             if a > area {
                 area = a;
                 r = m.clone();
             }
-            let next = m_opt.borrow_mut().next.clone();
+            let next = m_opt.borrow().next.clone();
             m = next;
         }
         return r;
@@ -1849,16 +1911,16 @@ impl Dwm {
         // info!("[wintoclient]");
         let mut m = self.mons.clone();
         while let Some(ref m_opt) = m {
-            let mut c = { m_opt.borrow_mut().clients.clone() };
+            let mut c = { m_opt.borrow().clients.clone() };
             while let Some(ref c_opt) = c {
-                let win = { c_opt.borrow_mut().win };
+                let win = { c_opt.borrow().win };
                 if win == w {
                     return c;
                 }
-                let next = { c_opt.borrow_mut().next.clone() };
+                let next = { c_opt.borrow().next.clone() };
                 c = next;
             }
-            let next = { m_opt.borrow_mut().next.clone() };
+            let next = { m_opt.borrow().next.clone() };
             m = next;
         }
         None
@@ -1873,7 +1935,7 @@ impl Dwm {
         }
         let c = self.wintoclient(w);
         if let Some(ref c_opt) = c {
-            return c_opt.borrow_mut().mon.clone();
+            return c_opt.borrow().mon.clone();
         }
         return self.selmon.clone();
     }
@@ -1906,6 +1968,7 @@ impl Dwm {
                 if click as u32 == Config::buttons[i].click
                     && Config::buttons[i].func.is_some()
                     && Config::buttons[i].button == ev.button
+                    // 清理（移除NumLock, CapsLock等）后的修饰键掩码与事件中的修饰键状态匹配
                     && self.CLEANMASK(Config::buttons[i].mask) == self.CLEANMASK(ev.state)
                 {
                     if let Some(ref func) = Config::buttons[i].func {
@@ -1915,13 +1978,6 @@ impl Dwm {
                             Config::buttons[i].button,
                             Config::buttons[i].mask
                         );
-                        if let Arg::Ui(0) = Config::buttons[i].arg {
-                            if click as u32 == CLICK::ClkTagBar as u32 {
-                                info!("[buttonpress] use fresh arg");
-                                func(self, &arg);
-                                break;
-                            }
-                        }
                         info!("[buttonpress] use button arg");
                         func(self, &Config::buttons[i].arg);
                         break;
@@ -1984,6 +2040,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn xinitvisual(&mut self) {
         unsafe {
             let mut tpl: XVisualInfo = zeroed();
@@ -2016,6 +2073,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn updateclientlist(&mut self) {
         // info!("[updateclientlist]");
         unsafe {
@@ -2047,7 +2105,7 @@ impl Dwm {
         }
     }
 
-    pub fn client_y_offset(&self, m: &mut Monitor) -> i32 {
+    pub fn client_y_offset(&self, m: &Monitor) -> i32 {
         let num = m.num;
         if let Some(bar_shape) = self.egui_bar_shape.get(&num) {
             return bar_shape.height + Config::egui_bar_pad + bar_shape.y;
@@ -2055,86 +2113,83 @@ impl Dwm {
         return 0;
     }
 
-    pub fn tile(&mut self, m: *mut Monitor) {
+    pub fn tile(&mut self, m: &Rc<RefCell<Monitor>>) {
         info!("[tile]");
         let mut n: u32 = 0;
         let mut mfacts: f32 = 0.;
         let mut sfacts: f32 = 0.;
-        unsafe {
-            let mut c = self.nexttiled((*m).clients.clone());
-            while let Some(c_opt) = c {
-                if n < (*m).nmaster0 {
-                    mfacts += c_opt.borrow_mut().cfact;
-                } else {
-                    sfacts += c_opt.borrow_mut().cfact;
-                }
-                let next = self.nexttiled(c_opt.borrow_mut().next.clone());
-                c = next;
-                n += 1;
-            }
-            if n == 0 {
-                return;
-            }
-
-            let mw: u32;
-            if n > (*m).nmaster0 {
-                mw = if (*m).nmaster0 > 0 {
-                    ((*m).ww as f32 * (*m).mfact0) as u32
-                } else {
-                    0
-                };
+        let m = m.borrow();
+        let mut c = self.nexttiled(m.clients.clone());
+        while let Some(c_opt) = c {
+            if n < m.nmaster0 {
+                mfacts += c_opt.borrow_mut().cfact;
             } else {
-                mw = (*m).ww as u32;
+                sfacts += c_opt.borrow_mut().cfact;
             }
-            let mut my: u32 = 0;
-            let mut ty: u32 = 0;
-            let mut i: u32 = 0;
-            let mut h: u32;
-            c = self.nexttiled((*m).clients.clone());
-            let client_y_offset = self.client_y_offset(&mut *m);
-            while let Some(ref c_opt) = c {
-                if i < (*m).nmaster0 {
-                    // h = ((*m).wh as u32 - my) / (n.min((*m).nmaster0) - i);
-                    let cfact = c_opt.borrow_mut().cfact;
-                    h = (((*m).wh as u32 - my) as f32 * (cfact / mfacts)) as u32;
-                    let bw = c_opt.borrow_mut().bw;
-                    self.resize(
-                        &c_opt,
-                        (*m).wx,
-                        (*m).wy + my as i32 + client_y_offset,
-                        mw as i32 - (2 * bw),
-                        h as i32 - (2 * bw) - client_y_offset,
-                        false,
-                    );
-                    let height = c_opt.borrow_mut().height() as u32;
-                    if my + height < (*m).wh as u32 {
-                        my += height;
-                    }
-                    mfacts -= cfact;
-                } else {
-                    // h = ((*m).wh as u32 - ty) / (n - i);
-                    let cfact = c_opt.borrow_mut().cfact;
-                    h = (((*m).wh as u32 - ty) as f32 * (cfact / sfacts)) as u32;
-                    let bw = c_opt.borrow_mut().bw;
-                    self.resize(
-                        &c_opt,
-                        (*m).wx + mw as i32,
-                        (*m).wy + ty as i32 + client_y_offset,
-                        (*m).ww - mw as i32 - (2 * bw),
-                        h as i32 - (2 * bw) - client_y_offset,
-                        false,
-                    );
-                    let height = c_opt.borrow_mut().height();
-                    if ty as i32 + height < (*m).wh {
-                        ty += height as u32;
-                    }
-                    sfacts -= cfact;
-                }
+            let next = self.nexttiled(c_opt.borrow_mut().next.clone());
+            c = next;
+            n += 1;
+        }
+        if n == 0 {
+            return;
+        }
 
-                let next = self.nexttiled(c_opt.borrow_mut().next.clone());
-                c = next;
-                i += 1;
+        let mw: u32;
+        if n > m.nmaster0 {
+            mw = if m.nmaster0 > 0 {
+                (m.ww as f32 * m.mfact0) as u32
+            } else {
+                0
+            };
+        } else {
+            mw = m.ww as u32;
+        }
+        let mut my: u32 = 0;
+        let mut ty: u32 = 0;
+        let mut i: u32 = 0;
+        let mut h: u32;
+        c = self.nexttiled(m.clients.clone());
+        let client_y_offset = self.client_y_offset(&m);
+        while let Some(ref c_opt) = c {
+            if i < m.nmaster0 {
+                let cfact = c_opt.borrow_mut().cfact;
+                h = ((m.wh as u32 - my) as f32 * (cfact / mfacts)) as u32;
+                let bw = c_opt.borrow_mut().bw;
+                self.resize(
+                    &c_opt,
+                    m.wx,
+                    m.wy + my as i32 + client_y_offset,
+                    mw as i32 - (2 * bw),
+                    h as i32 - (2 * bw) - client_y_offset,
+                    false,
+                );
+                let height = c_opt.borrow_mut().height() as u32;
+                if my + height < m.wh as u32 {
+                    my += height;
+                }
+                mfacts -= cfact;
+            } else {
+                let cfact = c_opt.borrow_mut().cfact;
+                h = ((m.wh as u32 - ty) as f32 * (cfact / sfacts)) as u32;
+                let bw = c_opt.borrow_mut().bw;
+                self.resize(
+                    &c_opt,
+                    m.wx + mw as i32,
+                    m.wy + ty as i32 + client_y_offset,
+                    m.ww - mw as i32 - (2 * bw),
+                    h as i32 - (2 * bw) - client_y_offset,
+                    false,
+                );
+                let height = c_opt.borrow_mut().height();
+                if ty as i32 + height < m.wh {
+                    ty += height as u32;
+                }
+                sfacts -= cfact;
             }
+
+            let next = self.nexttiled(c_opt.borrow_mut().next.clone());
+            c = next;
+            i += 1;
         }
     }
 
@@ -2168,6 +2223,7 @@ impl Dwm {
             return;
         }
     }
+
     pub fn focusin(&mut self, e: *mut XEvent) {
         // info!("[focusin]");
         unsafe {
@@ -2180,6 +2236,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn focusmon(&mut self, arg: *const Arg) {
         // info!("[focusmon]");
         unsafe {
@@ -2200,6 +2257,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn tag_egui_bar(&mut self, curtag: u32) {
         let mut sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
         let target_tag = if curtag == 0 {
@@ -2225,6 +2283,7 @@ impl Dwm {
             sel = next;
         }
     }
+
     pub fn tag(&mut self, arg: *const Arg) {
         // info!("[tag]");
         unsafe {
@@ -2246,6 +2305,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn tagmon(&mut self, arg: *const Arg) {
         // info!("[tagmon]");
         unsafe {
@@ -2280,6 +2340,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn focusstack(&mut self, arg: *const Arg) {
         // info!("[focusstack]");
         unsafe {
@@ -2362,6 +2423,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn incnmaster(&mut self, arg: *const Arg) {
         // info!("[incnmaster]");
         unsafe {
@@ -2376,6 +2438,7 @@ impl Dwm {
             self.arrange(self.selmon.clone());
         }
     }
+
     pub fn setcfact(&mut self, arg: *const Arg) {
         // info!("[setcfact]");
         if arg.is_null() {
@@ -2405,6 +2468,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn movestack(&mut self, arg: *const Arg) {
         unsafe {
             let mut c: Option<Rc<RefCell<Client>>> = None;
@@ -2548,6 +2612,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn setmfact(&mut self, arg: *const Arg) {
         // info!("[setmfact]");
         unsafe {
@@ -2575,6 +2640,7 @@ impl Dwm {
             self.arrange(self.selmon.clone());
         }
     }
+
     pub fn setlayout(&mut self, arg: *const Arg) {
         info!("[setlayout]");
         unsafe {
@@ -2615,6 +2681,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn zoom(&mut self, _arg: *const Arg) {
         // info!("[zoom]");
         let mut c;
@@ -2644,6 +2711,7 @@ impl Dwm {
         }
         self.pop(c);
     }
+
     pub fn view(&mut self, arg: *const Arg) {
         // info!("[view]");
         unsafe {
@@ -2709,6 +2777,7 @@ impl Dwm {
             self.arrange(self.selmon.clone());
         }
     }
+
     pub fn toggleview(&mut self, arg: *const Arg) {
         info!("[toggleview]");
         unsafe {
@@ -2771,6 +2840,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn togglefullscr(&mut self, _: *const Arg) {
         info!("[togglefullscr]");
         if let Some(ref selmon_opt) = self.selmon {
@@ -2782,6 +2852,7 @@ impl Dwm {
             self.setfullscreen(sel.as_ref().unwrap(), !isfullscreen);
         }
     }
+
     pub fn toggletag(&mut self, arg: *const Arg) {
         info!("[toggletag]");
         unsafe {
@@ -2804,11 +2875,13 @@ impl Dwm {
             }
         }
     }
+
     pub fn quit(&mut self, _arg: *const Arg) {
         // info!("[quit]");
         self.running.store(false, Ordering::SeqCst);
         let _ = self.sender.send(0);
     }
+
     pub fn setup(&mut self) {
         // info!("[setup]");
         unsafe {
@@ -2977,6 +3050,7 @@ impl Dwm {
             self.focus(None);
         }
     }
+
     pub fn killclient(&mut self, _arg: *const Arg) {
         info!("[killclient]");
         unsafe {
@@ -3003,6 +3077,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn nexttiled(&mut self, mut c: Option<Rc<RefCell<Client>>>) -> Option<Rc<RefCell<Client>>> {
         // info!("[nexttiled]");
         while let Some(ref c_opt) = c {
@@ -3017,6 +3092,7 @@ impl Dwm {
         }
         return c;
     }
+
     pub fn pop(&mut self, c: Option<Rc<RefCell<Client>>>) {
         // info!("[pop]");
         self.detach(c.clone());
@@ -3086,6 +3162,7 @@ impl Dwm {
         }
         true
     }
+
     pub fn propertynotify(&mut self, e: *mut XEvent) {
         // info!("[propertynotify]");
         unsafe {
@@ -3148,6 +3225,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn movemouse(&mut self, _arg: *const Arg) {
         info!("[movemouse]");
         unsafe {
@@ -3275,6 +3353,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn resizemouse(&mut self, _arg: *const Arg) {
         info!("[resizemouse]");
         unsafe {
@@ -3427,6 +3506,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn updatenumlockmask(&mut self) {
         // info!("[updatenumlockmask]");
         unsafe {
@@ -3446,6 +3526,7 @@ impl Dwm {
             XFreeModifiermap(modmap);
         }
     }
+
     pub fn setclienttagprop(&mut self, c: &Rc<RefCell<Client>>) {
         let c_mut = c.borrow_mut();
         let data: [u8; 2] = [
@@ -3465,6 +3546,7 @@ impl Dwm {
             );
         }
     }
+
     pub fn grabbuttons(&mut self, c: Option<Rc<RefCell<Client>>>, focused: bool) {
         // info!("[grabbuttons]");
         self.updatenumlockmask();
@@ -3506,6 +3588,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn grabkeys(&mut self) {
         // info!("[grabkeys]");
         self.updatenumlockmask();
@@ -3542,6 +3625,7 @@ impl Dwm {
             XFree(syms as *mut _);
         }
     }
+
     pub fn sendevent(&mut self, c: &mut Client, proto: Atom) -> bool {
         info!("[sendevent] {}", c);
         if c.name == Config::egui_bar_name
@@ -3645,6 +3729,7 @@ impl Dwm {
             self.focus(c);
         }
     }
+
     pub fn expose(&mut self, e: *mut XEvent) {
         // info!("[expose]");
         unsafe {
@@ -3656,6 +3741,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn focus(&mut self, mut c: Option<Rc<RefCell<Client>>>) {
         info!("[focus]");
         unsafe {
@@ -3717,6 +3803,7 @@ impl Dwm {
             self.drawbars();
         }
     }
+
     pub fn unfocus(&mut self, c: Option<Rc<RefCell<Client>>>, setfocus: bool) {
         // info!("[unfocus]");
         if c.is_none() {
@@ -3742,6 +3829,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn sendmon(&mut self, c: Option<Rc<RefCell<Client>>>, m: Option<Rc<RefCell<Monitor>>>) {
         // info!("[sendmon]");
         if Self::are_equal_rc(&c.as_ref().unwrap().borrow_mut().mon, &m) {
@@ -3765,6 +3853,7 @@ impl Dwm {
         self.focus(None);
         self.arrange(None);
     }
+
     pub fn setclientstate(&mut self, c: &Rc<RefCell<Client>>, mut state: i64) {
         // info!("[setclientstate]");
         unsafe {
@@ -3781,6 +3870,7 @@ impl Dwm {
             );
         }
     }
+
     pub fn keypress(&mut self, e: *mut XEvent) {
         // info!("[keypress]");
         unsafe {
@@ -3802,6 +3892,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn manage(&mut self, w: Window, wa: *mut XWindowAttributes) {
         // info!("[manage]");
         let c: Option<Rc<RefCell<Client>>> = Some(Rc::new(RefCell::new(Client::new())));
@@ -3975,6 +4066,7 @@ impl Dwm {
             self.focus(None);
         }
     }
+
     pub fn mappingnotify(&mut self, e: *mut XEvent) {
         // info!("[mappingnotify]");
         unsafe {
@@ -3985,6 +4077,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn maprequest(&mut self, e: *mut XEvent) {
         // info!("[maprequest]");
         unsafe {
@@ -4000,42 +4093,43 @@ impl Dwm {
             }
         }
     }
-    pub fn monocle(&mut self, m: *mut Monitor) {
+
+    pub fn monocle(&mut self, m: &Rc<RefCell<Monitor>>) {
         info!("[monocle]");
-        unsafe {
-            // This idea is cool!.
-            let mut n: u32 = 0;
-            let mut c = (*m).clients.clone();
-            while let Some(ref c_opt) = c {
-                if c_opt.borrow_mut().isvisible() && !c_opt.borrow_mut().neverfocus {
-                    n += 1;
-                }
-                let next = c_opt.borrow_mut().next.clone();
-                c = next;
+        let mut m = m.borrow_mut();
+        // This idea is cool!.
+        let mut n: u32 = 0;
+        let mut c = m.clients.clone();
+        while let Some(ref c_opt) = c {
+            if c_opt.borrow_mut().isvisible() && !c_opt.borrow_mut().neverfocus {
+                n += 1;
             }
-            if n > 0 {
-                // override layout symbol
-                let formatted_string = format!("[{}]", n);
-                info!("[monocle] formatted_string: {}", formatted_string);
-                (*m).ltsymbol = formatted_string;
-            }
-            c = self.nexttiled((*m).clients.clone());
-            let client_y_offset = self.client_y_offset(&mut *m);
-            while let Some(ref c_opt) = c {
-                let bw = c_opt.borrow_mut().bw;
-                self.resize(
-                    c_opt,
-                    (*m).wx,
-                    (*m).wy + client_y_offset,
-                    (*m).ww - 2 * bw,
-                    (*m).wh - 2 * bw - client_y_offset,
-                    false,
-                );
-                let next = self.nexttiled(c_opt.borrow_mut().next.clone());
-                c = next;
-            }
+            let next = c_opt.borrow_mut().next.clone();
+            c = next;
+        }
+        if n > 0 {
+            // override layout symbol
+            let formatted_string = format!("[{}]", n);
+            info!("[monocle] formatted_string: {}", formatted_string);
+            m.ltsymbol = formatted_string;
+        }
+        c = self.nexttiled((*m).clients.clone());
+        let client_y_offset = self.client_y_offset(&m);
+        while let Some(ref c_opt) = c {
+            let bw = c_opt.borrow_mut().bw;
+            self.resize(
+                c_opt,
+                m.wx,
+                m.wy + client_y_offset,
+                m.ww - 2 * bw,
+                m.wh - 2 * bw - client_y_offset,
+                false,
+            );
+            let next = self.nexttiled(c_opt.borrow_mut().next.clone());
+            c = next;
         }
     }
+
     pub fn motionnotify(&mut self, e: *mut XEvent) {
         // info!("[motionnotify]");
         unsafe {
@@ -4053,6 +4147,7 @@ impl Dwm {
             self.motionmon = m;
         }
     }
+
     pub fn unmanage(&mut self, c: Option<Rc<RefCell<Client>>>, destroyed: bool) {
         // info!("[unmanage]");
         unsafe {
@@ -4110,6 +4205,7 @@ impl Dwm {
             self.arrange(c.as_ref().unwrap().borrow_mut().mon.clone());
         }
     }
+
     pub fn unmapnotify(&mut self, e: *mut XEvent) {
         // info!("[unmapnotify]");
         unsafe {
@@ -4302,6 +4398,7 @@ impl Dwm {
             c.isfloating = true;
         }
     }
+
     pub fn updatewmhints(&mut self, c: &Rc<RefCell<Client>>) {
         // info!("[updatewmhints]");
         unsafe {
@@ -4331,6 +4428,7 @@ impl Dwm {
             }
         }
     }
+
     pub fn updatetitle(&mut self, c: &mut Client) {
         // info!("[updatetitle]");
         if !self.gettextprop(c.win, self.netatom[NET::NetWMName as usize], &mut c.name) {
@@ -4341,11 +4439,11 @@ impl Dwm {
         }
     }
 
-    pub fn draw_egui_bar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
-        info!("[draw_egui_bar]");
+    pub fn update_bar_message_for_monitor(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
+        info!("[update_bar_message_for_monitor]");
         {
             info!(
-                "[draw_egui_bar] {}, timestamp: {}",
+                "[update_bar_message_for_monitor] {}, timestamp: {}",
                 m.as_ref().unwrap().borrow_mut(),
                 SystemTime::now()
                     .duration_since(UNIX_EPOCH)

@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui::{Align, Color32, Layout};
 use egui_plot::{Line, Plot, PlotPoints};
-use log::info;
+// use log::info;
 use shared_structures::SharedMessage;
 use std::{f64::consts::PI, process::Command, sync::mpsc, time::Instant};
 use sysinfo::System;
@@ -632,7 +632,7 @@ impl eframe::App for MyEguiApp {
                 .arg("-name")
                 .arg("revoke by egui_bar")
                 .output();
-            info!("try to revoke");
+            // info!("try to revoke");
         }
         let prev_message = self.message.clone();
         while let Ok(message) = self.receiver_msg.try_recv() {
