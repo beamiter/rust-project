@@ -22,7 +22,6 @@ use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
-use std::time::{SystemTime, UNIX_EPOCH};
 use std::{os::raw::c_long, usize};
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
 use x11::xlib::XFreeStringList;
@@ -4696,23 +4695,15 @@ impl Dwm {
     }
 
     pub fn monocle(&mut self, m_rc: &Rc<RefCell<Monitor>>) {
-        info!("[monocle]"); // 日志
-                            // 获取对 Monitor 的可变借用，因为需要修改 ltsymbol
-        let mut m_borrow = m_rc.borrow_mut();
-
+        info!("[monocle]");
         // --- 1. 计算当前显示器上可见且可聚焦的客户端数量 (n) ---
         let mut n: u32 = 0;
-        let mut c_iter_opt = m_borrow.clients.clone(); // 从客户端链表头开始
+        let mut c_iter_opt = {
+            let m_borrow = m_rc.borrow();
+            m_borrow.clients.clone()
+        }; // 从客户端链表头开始
         while let Some(ref c_rc) = c_iter_opt.clone() {
-            // 遍历所有客户端
-            // c_rc 是 &Rc<RefCell<Client>>
-            // 注意：这里使用了 borrow_mut() 来访问 isvisible 和 neverfocus。
-            // 如果这些操作只是读取，应该用 borrow()。
-            // 假设 isvisible() 可能需要可变借用其 Monitor（虽然不太可能）
-            // 或者 neverfocus 是可变的（也不太可能）。
-            // 为了匹配之前的模式和潜在的内部可变性，暂时保留。
-            // 但理想情况下，应为 borrow()。
-            let c_client_borrow = c_rc.borrow(); // 改为不可变借用
+            let c_client_borrow = c_rc.borrow();
             if c_client_borrow.isvisible() && !c_client_borrow.neverfocus {
                 n += 1; // 如果客户端可见且不是 neverfocus，则计数
             }
@@ -4725,6 +4716,7 @@ impl Dwm {
             // 将布局符号更新为 "[n]"，例如 "[3]" 表示有3个窗口在此布局下
             let formatted_string = format!("[{}]", n);
             info!("[monocle] formatted_string: {}", formatted_string);
+            let mut m_borrow = m_rc.borrow_mut();
             m_borrow.ltsymbol = formatted_string;
         }
         // 如果 n == 0，ltsymbol 保持不变 (或者可以设为默认的 monocle 符号)
@@ -5041,14 +5033,11 @@ impl Dwm {
 
                     // 找到链表尾部的 Monitor (即最后一个要被移除的 Monitor)
                     let mut current_iter = self.mons.clone();
-                    let mut prev_to_last_opt: Option<Rc<RefCell<Monitor>>> = None;
                     while current_iter.as_ref().unwrap().borrow().next.is_some() {
                         let next_mon = current_iter.as_ref().unwrap().borrow().next.clone();
-                        prev_to_last_opt = current_iter;
                         current_iter = next_mon;
                     }
                     // current_iter 现在是最后一个 Monitor (要被移除的)
-                    // prev_to_last_opt 是倒数第二个 (如果存在)
 
                     if let Some(last_mon_rc) = current_iter {
                         // 确认 last_mon_rc 存在
@@ -5226,9 +5215,6 @@ impl Dwm {
             // is_filled_tag 的正确计算方式 (与你之前版本类似，但确保变量名一致和借用正确)
             let is_filled_tag_calculated: bool; // 声明变量
             {
-                // 限制借用范围
-                let m_borrow_for_filled_check = m_rc.borrow(); // 不可变借用当前 monitor (m_rc)
-
                 // 检查当前处理的 monitor (m_rc) 是否是 DWM 全局选中的 monitor (self.selmon)
                 // 并且，如果 DWM 有选中的 monitor，再检查该 monitor 上是否有选中的 client
                 // 最后，检查这个选中的 client 是否占据了当前的 tag_bit
@@ -5246,8 +5232,7 @@ impl Dwm {
                 } else {
                     false // DWM 根本没有全局选中的 monitor
                 };
-            } // m_borrow_for_filled_check 在此 drop
-
+            }
             let m_borrow_for_tagset = m_rc.borrow(); // 再次不可变借用 m_rc 来获取 tagset 信息
             let active_tagset_for_mon = m_borrow_for_tagset.tagset[m_borrow_for_tagset.seltags];
             // drop(m_borrow_for_tagset); // 可选，如果下面不再需要
