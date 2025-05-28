@@ -1,10 +1,9 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
-use cairo::glib::error;
 use libc::{
-    close, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
-    SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
+    exit, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT, SA_RESTART, SIGCHLD,
+    SIG_IGN, WNOHANG,
 };
 use log::error;
 use log::info;
@@ -44,19 +43,19 @@ use x11::xlib::{
     SubstructureNotifyMask, SubstructureRedirectMask, Success, Time, True, TrueColor, UnmapNotify,
     Visual, VisualClassMask, VisualDepthMask, VisualScreenMask, Window, XAllowEvents,
     XChangeProperty, XChangeWindowAttributes, XCheckMaskEvent, XClassHint, XConfigureEvent,
-    XConfigureWindow, XConnectionNumber, XCreateColormap, XCreateSimpleWindow, XDefaultColormap,
-    XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDeleteProperty,
-    XDestroyWindow, XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree,
-    XFreeModifiermap, XGetClassHint, XGetKeyboardMapping, XGetModifierMapping,
-    XGetTransientForHint, XGetVisualInfo, XGetWMHints, XGetWMNormalHints, XGetWMProtocols,
-    XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
-    XInternAtom, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent,
-    XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow,
-    XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetCloseDownMode,
-    XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes, XSetWindowBorder,
-    XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer, XUrgencyHint,
-    XVisualInfo, XWarpPointer, XWindowAttributes, XWindowChanges, CWX, CWY, XA_ATOM, XA_CARDINAL,
-    XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XConfigureWindow, XCreateColormap, XCreateSimpleWindow, XDefaultColormap, XDefaultDepth,
+    XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDeleteProperty, XDestroyWindow,
+    XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap,
+    XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetVisualInfo,
+    XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty,
+    XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XInternAtom, XKeycodeToKeysym,
+    XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow,
+    XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow,
+    XSelectInput, XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints,
+    XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey,
+    XUngrabPointer, XUngrabServer, XUrgencyHint, XVisualInfo, XWarpPointer, XWindowAttributes,
+    XWindowChanges, CWX, CWY, XA_ATOM, XA_CARDINAL, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME,
+    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -123,7 +122,7 @@ pub enum CLICK {
     ClkWinTitle = 3,
     ClkClientWin = 4,
     ClkRootWin = 5,
-    ClkLast = 6,
+    _ClkLast = 6,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -1945,7 +1944,7 @@ impl Dwm {
 
     pub fn buttonpress(&mut self, e: *mut XEvent) {
         // info!("[buttonpress]");
-        let arg: Arg = Arg::Ui(0);
+        let _arg: Arg = Arg::Ui(0);
         unsafe {
             let c: Option<Rc<RefCell<Client>>>;
             let ev = (*e).button;
@@ -2235,77 +2234,73 @@ impl Dwm {
             self.nexttiled(m_borrow.clients.clone())
         };
 
-        while let Some(ref c_opt) = c_iter {
-            // 遍历所有可见且平铺的客户端
-            let c_borrow = c_opt.borrow();
-            let bw = c_borrow.bw; // 获取客户端边框宽度
-
-            if i < nmaster0_val {
-                // --- 处理主区域的客户端 ---
+        while let Some(ref c_opt_rc) = c_iter {
+            let next_client_in_list_opt; // 用于存储下一个迭代的客户端
+            let bw;
+            {
+                // 创建一个新的作用域来限制 c_borrow 的生命周期
+                let c_borrow = c_opt_rc.borrow(); // 不可变借用开始
+                bw = c_borrow.bw;
                 let current_cfact = c_borrow.cfact;
-                // 计算当前客户端高度：剩余高度 * (当前客户端cfact / 剩余主区域cfact总和)
-                // 确保 mfacts 不为0，防止除零错误 (虽然理论上如果 nmaster0 > 0 且有客户端，mfacts > 0)
-                h = if mfacts > 0.001 {
-                    // 使用小的 epsilon 防止浮点数比较问题
-                    ((wh_val as u32 - my) as f32 * (current_cfact / mfacts)) as u32
-                } else if nmaster0_val - i > 0 {
-                    // 如果 mfacts 为0但仍有主区域窗口待分配
-                    (wh_val as u32 - my) / (nmaster0_val - i) // 平均分配剩余高度
-                } else {
-                    wh_val as u32 - my // 分配所有剩余高度
-                };
+                next_client_in_list_opt = c_borrow.next.clone(); // 在释放借用前获取 next
 
+                // 在这个作用域内完成所有对 c_borrow 的只读操作
+                if i < nmaster0_val {
+                    h = if mfacts > 0.001 {
+                        ((wh_val as u32 - my) as f32 * (current_cfact / mfacts)) as u32
+                    } else if nmaster0_val - i > 0 {
+                        (wh_val as u32 - my) / (nmaster0_val - i)
+                    } else {
+                        wh_val as u32 - my
+                    };
+                    // drop(c_borrow) 会在这个作用域结束时自动发生
+                } else {
+                    h = if sfacts > 0.001 {
+                        ((wh_val as u32 - ty) as f32 * (current_cfact / sfacts)) as u32
+                    } else if n - i > 0 {
+                        (wh_val as u32 - ty) / (n - i)
+                    } else {
+                        wh_val as u32 - ty
+                    };
+                    // drop(c_borrow) 会在这个作用域结束时自动发生
+                }
+            } // c_borrow (不可变借用) 在这里被 drop
+
+            // 现在可以安全地调用 resize，它内部可以对 c_opt_rc 进行 borrow_mut()
+            if i < nmaster0_val {
                 self.resize(
-                    c_opt, // 传递 Rc<RefCell<Client>>
+                    c_opt_rc,
                     wx_val,
                     wy_val + my as i32 + client_y_offset,
-                    mw as i32 - (2 * bw), // 宽度减去两侧边框
-                    // 高度减去两侧边框和Y轴偏移 (client_y_offset 应该只影响Y坐标和总可用高度，不应减两次)
-                    // 如果 client_y_offset 是指bar的高度，那么 wh_val 应该在开始就减去它
-                    // 假设 wh_val 是已经减去 bar 高度的工作区高度
-                    h as i32 - (2 * bw),
-                    false, // 非交互式调整
-                );
-
-                let client_actual_height = c_borrow.height() as u32; // 获取调整后的实际总高度
-                if my + client_actual_height < wh_val as u32 {
-                    // 如果累积高度未超出工作区
-                    my += client_actual_height; // 累加高度
-                }
-                mfacts -= current_cfact; // 从主区域 cfact 总和中减去已处理的 cfact
-            } else {
-                // --- 处理堆叠区域的客户端 ---
-                let current_cfact = c_borrow.cfact;
-                // 计算当前客户端高度：剩余高度 * (当前客户端cfact / 剩余堆叠区域cfact总和)
-                h = if sfacts > 0.001 {
-                    ((wh_val as u32 - ty) as f32 * (current_cfact / sfacts)) as u32
-                } else if n - i > 0 {
-                    // 如果 sfacts 为0但仍有堆叠区域窗口待分配
-                    (wh_val as u32 - ty) / (n - i) // 平均分配剩余高度
-                } else {
-                    wh_val as u32 - ty // 分配所有剩余高度
-                };
-
-                self.resize(
-                    c_opt,
-                    wx_val + mw as i32, // X 坐标在主区域右侧
-                    wy_val + ty as i32 + client_y_offset,
-                    ww as i32 - mw as i32 - (2 * bw), // 宽度是工作区剩余宽度减两侧边框
-                    h as i32 - (2 * bw),
+                    mw as i32 - (2 * bw), // bw 之前已获取
+                    h as i32 - (2 * bw) - client_y_offset,
                     false,
                 );
-
-                let client_actual_height = c_borrow.height() as u32;
+                // resize 之后，如果需要读取更新后的 height，需要重新 borrow
+                let client_actual_height = c_opt_rc.borrow().height() as u32;
+                if my + client_actual_height < wh_val as u32 {
+                    my += client_actual_height;
+                }
+                mfacts -= c_opt_rc.borrow().cfact; // 重新 borrow 读取 cfact (如果 cfact 不变，可以提前读取)
+                                                   // 或者确保 cfact 在 resize 中不会改变，则可以使用之前读取的 current_cfact
+            } else {
+                self.resize(
+                    c_opt_rc,
+                    wx_val + mw as i32,
+                    wy_val + ty as i32 + client_y_offset,
+                    ww as i32 - mw as i32 - (2 * bw),
+                    h as i32 - (2 * bw) - client_y_offset,
+                    false,
+                );
+                let client_actual_height = c_opt_rc.borrow().height() as u32;
                 if ty + client_actual_height < wh_val as u32 {
                     ty += client_actual_height;
                 }
-                sfacts -= current_cfact;
+                sfacts -= c_opt_rc.borrow().cfact; // 同上
             }
 
-            let next_c = self.nexttiled(c_borrow.next.clone());
-            drop(c_borrow); // 显式 drop
-            c_iter = next_c;
-            i += 1; // 处理下一个客户端
+            c_iter = self.nexttiled(next_client_in_list_opt); // 使用之前获取的 next
+            i += 1;
         }
     }
 
