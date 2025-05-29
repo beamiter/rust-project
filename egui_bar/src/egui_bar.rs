@@ -592,7 +592,7 @@ impl MyEguiApp {
 
                         let line = Line::new(PlotPoints::from(line_points.clone()))
                             .color(color)
-                            .width(3.0);
+                            .width(1.0);
 
                         plot_ui.line(line);
                     }
@@ -606,7 +606,7 @@ impl MyEguiApp {
 
                     let point = egui_plot::Points::new(PlotPoints::from(vec![[x, y]]))
                         .color(color)
-                        .radius(4.0)
+                        .radius(2.0)
                         .shape(egui_plot::MarkerShape::Circle);
 
                     plot_ui.points(point);
