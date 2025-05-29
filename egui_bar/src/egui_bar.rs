@@ -439,20 +439,31 @@ impl MyEguiApp {
     }
 
     // 调整窗口大小
-    fn adjust_window_size(&mut self, ctx: &egui::Context, scale_factor: f32, monitor_width: f32) {
+    fn adjust_window_size(
+        &mut self,
+        ctx: &egui::Context,
+        scale_factor: f32,
+        message: &SharedMessage,
+    ) {
         // 计算应使用的高度
         let target_height = self.calculate_window_height();
         let screen_rect = ctx.screen_rect();
-        let desired_width = monitor_width;
+        let border_w = message.monitor_info.border_w;
+        let desired_width = (message.monitor_info.monitor_width - 2 * border_w) as f32;
         let desired_size = egui::Vec2::new(desired_width / scale_factor, target_height);
 
         // 如果高度发生变化或被标记为需要调整大小
         if self.need_resize
-            || (target_height - self.current_window_height).abs() > 1.0
-            || (desired_size.x != screen_rect.size().x)
+            || (target_height - self.current_window_height).abs() > 2.0
+            || (desired_size.x - screen_rect.size().x).abs() > 2.0
         {
+            // let outer_pos = egui::pos2(
+            //     border_w as f32 / scale_factor,
+            //     border_w as f32 / scale_factor,
+            // );
+            let outer_pos = egui::Pos2::ZERO;
             // 调整窗口大小
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::Pos2::ZERO));
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(outer_pos));
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));
 
             // 更新当前高度和调整状态
@@ -660,11 +671,9 @@ impl eframe::App for MyEguiApp {
 
         let scale_factor = ctx.pixels_per_point();
         // 处理窗口大小调整
-        if let Some(message) = self.message.as_ref() {
-            let monitor_width = message.monitor_info.monitor_width as f32;
-
+        if let Some(ref message) = self.message.clone() {
             // 调整窗口大小，考虑音量控制窗口的状态
-            self.adjust_window_size(ctx, scale_factor, monitor_width);
+            self.adjust_window_size(ctx, scale_factor, message);
         }
 
         // 主UI面板

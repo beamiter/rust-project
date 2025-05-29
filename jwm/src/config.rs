@@ -24,16 +24,15 @@ use crate::{
 pub struct Config {}
 impl Config {
     // border pixel of windows
-    pub const borderpx: u32 = 4;
+    pub const border_px: u32 = 4;
     // snap pixel
     pub const snap: u32 = 32;
     pub const egui_bar_name: &str = "egui_bar";
     pub const egui_bar_0: &str = "egui_bar_0";
     pub const egui_bar_1: &str = "egui_bar_1";
     pub const broken: &str = "broken";
-    pub const topbar: bool = true;
     pub const egui_bar_pad: i32 = 1;
-    pub const dmenufont: &str = "SauceCodePro Nerd Font Regular 11";
+    pub const dmenu_font: &str = "SauceCodePro Nerd Font Regular 11";
     pub const col_gray1: &str = "#222222";
     pub const col_gray2: &str = "#444444";
     pub const col_gray3: &str = "#bbbbbb";
@@ -46,8 +45,8 @@ impl Config {
     pub const TRANSPARENT: u8 = 0x00u8;
     pub const OPAQUE: u8 = 0xffu8;
     pub const HALF_OPAQUE: u8 = 0xa0u8;
-    pub const baralpha: u8 = 0xd0u8;
-    pub const borderalpha: u8 = Self::OPAQUE;
+    pub const bar_alpha: u8 = 0xd0u8;
+    pub const border_alpha: u8 = Self::OPAQUE;
 
     pub const colors: [&[&'static str; 3]; 10] = [
         // fg | bg | border
@@ -68,22 +67,22 @@ impl Config {
         &[Self::col_white, Self::col_red, Self::col_red],
     ];
     pub const alphas: [&[u8; 3]; 10] = [
-        &[Self::OPAQUE, Self::baralpha, Self::borderalpha],
-        &[Self::OPAQUE, Self::baralpha, Self::borderalpha],
-        &[Self::OPAQUE, Self::TRANSPARENT, Self::borderalpha],
-        &[Self::OPAQUE, Self::baralpha, Self::borderalpha],
-        &[Self::OPAQUE, Self::baralpha, Self::borderalpha],
-        &[Self::OPAQUE, Self::baralpha, Self::borderalpha],
-        &[Self::OPAQUE, Self::baralpha, Self::borderalpha],
-        &[Self::OPAQUE, Self::baralpha, Self::borderalpha],
-        &[Self::OPAQUE, Self::baralpha, Self::borderalpha],
-        &[Self::OPAQUE, Self::baralpha, Self::borderalpha],
+        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
+        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
+        &[Self::OPAQUE, Self::TRANSPARENT, Self::border_alpha],
+        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
+        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
+        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
+        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
+        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
+        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
+        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
     ];
 
-    pub const mfact: f32 = 0.55;
-    pub const nmaster: u32 = 1;
-    pub const resizehints: bool = true;
-    pub const lockfullscreen: bool = true;
+    pub const m_fact: f32 = 0.55;
+    pub const n_master: u32 = 1;
+    pub const resize_hints: bool = true;
+    pub const lock_fullscreen: bool = true;
 
     pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
         vec![
@@ -159,7 +158,7 @@ impl Config {
             "-m".to_string(),
             "0".to_string(),
             "-fn".to_string(),
-            Self::dmenufont.to_string(),
+            Self::dmenu_font.to_string(),
             "-nb".to_string(),
             Self::col_gray1.to_string(),
             "-nf".to_string(),
