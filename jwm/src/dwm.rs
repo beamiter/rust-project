@@ -3366,7 +3366,7 @@ impl Dwm {
             if ev.window == self.root && ev.atom == XA_WM_NAME {
                 // Hack to use this to react to signal from egui_bar
                 info!("revoke by egui_bar");
-                // self.focus(None);
+                self.focus(None);
                 // 虽然可行，但通过修改根窗口 WM_NAME 来触发 DWM 刷新是一种比较隐晦的 IPC 方式。更现代或更健壮的方案可能包括使用 Unix Domain Sockets、DBus，或者更精细化地利用共享内存进行双向通信。
                 self.arrange(None);
             } else if ev.state == PropertyDelete {
