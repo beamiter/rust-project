@@ -246,75 +246,75 @@ pub struct Client {
     pub name: String,
     pub class: String,
     pub instance: String,
-    pub mina: f32,
-    pub maxa: f32,
-    pub cfact: f32,
+    pub min_a: f32,
+    pub max_a: f32,
+    pub client_fact: f32,
     pub x: i32,
     pub y: i32,
     pub w: i32,
     pub h: i32,
-    pub oldx: i32,
-    pub oldy: i32,
-    pub oldw: i32,
-    pub oldh: i32,
-    pub basew: i32,
-    pub baseh: i32,
-    pub incw: i32,
-    pub inch: i32,
-    pub maxw: i32,
-    pub maxh: i32,
-    pub minw: i32,
-    pub minh: i32,
-    pub hintsvalid: bool,
-    pub bw: i32,
-    pub oldbw: i32,
-    pub tags0: u32,
-    pub isfixed: bool,
-    pub isfloating: bool,
-    pub isurgent: bool,
-    pub neverfocus: bool,
-    pub oldstate: bool,
-    pub isfullscreen: bool,
+    pub old_x: i32,
+    pub old_y: i32,
+    pub old_w: i32,
+    pub old_h: i32,
+    pub base_w: i32,
+    pub base_h: i32,
+    pub inc_w: i32,
+    pub inc_h: i32,
+    pub max_w: i32,
+    pub max_h: i32,
+    pub min_w: i32,
+    pub min_h: i32,
+    pub hints_valid: bool,
+    pub border_w: i32,
+    pub old_border_w: i32,
+    pub tags: u32,
+    pub is_fixed: bool,
+    pub is_floating: bool,
+    pub is_urgent: bool,
+    pub never_focus: bool,
+    pub old_state: bool,
+    pub is_fullscreen: bool,
     pub next: Option<Rc<RefCell<Client>>>,
-    pub snext: Option<Rc<RefCell<Client>>>,
+    pub stack_next: Option<Rc<RefCell<Client>>>,
     pub mon: Option<Rc<RefCell<Monitor>>>,
     pub win: Window,
 }
 impl fmt::Display for Client {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Client {{ name: {}, class: {}, instance: {} mina: {}, maxa: {}, cfact: {}, x: {}, y: {}, w: {}, h: {}, oldx: {}, oldy: {}, oldw: {}, oldh: {}, basew: {}, baseh: {}, incw: {}, inch: {}, maxw: {}, maxh: {}, minw: {}, minh: {}, hintsvalid: {}, bw: {}, oldbw: {}, tags0: {}, isfixed: {}, isfloating: {}, isurgent: {}, neverfocus: {}, oldstate: {}, isfullscreen: {}, win: {} }}",
+        write!(f, "Client {{ name: {}, class: {}, instance: {} min_a: {}, max_a: {}, cleint_fact: {}, x: {}, y: {}, w: {}, h: {}, old_x: {}, old_y: {}, old_w: {}, old_h: {}, base_w: {}, base_h: {}, inc_w: {}, inc_h: {}, max_w: {}, max_h: {}, min_w: {}, min_h: {}, hints_valid: {}, border_w: {}, old_border_w: {}, tags: {}, is_fixed: {}, is_floating: {}, is_urgent: {}, never_focus: {}, old_state: {}, is_fullscreen: {}, win: {} }}",
     self.name,
     self.class,
     self.instance,
-    self.mina,
-    self.maxa,
-    self.cfact,
+    self.min_a,
+    self.max_a,
+    self.client_fact,
     self.x,
     self.y,
     self.w,
     self.h,
-    self.oldx,
-    self.oldy,
-    self.oldw,
-    self.oldh,
-    self.basew,
-    self.baseh,
-    self.incw,
-    self.inch,
-    self.maxw,
-    self.maxh,
-    self.minw,
-    self.minh,
-    self.hintsvalid,
-    self.bw,
-    self.oldbw,
-    self.tags0,
-    self.isfixed,
-    self.isfloating,
-    self.isurgent,
-    self.neverfocus,
-    self.oldstate,
-    self.isfullscreen,
+    self.old_x,
+    self.old_y,
+    self.old_w,
+    self.old_h,
+    self.base_w,
+    self.base_h,
+    self.inc_w,
+    self.inc_h,
+    self.max_w,
+    self.max_h,
+    self.min_w,
+    self.min_h,
+    self.hints_valid,
+    self.border_w,
+    self.old_border_w,
+    self.tags,
+    self.is_fixed,
+    self.is_floating,
+    self.is_urgent,
+    self.never_focus,
+    self.old_state,
+    self.is_fullscreen,
     self.win,
         )
     }
@@ -326,54 +326,55 @@ impl Client {
             name: String::new(),
             class: String::new(),
             instance: String::new(),
-            mina: 0.,
-            maxa: 0.,
-            cfact: 0.,
+            min_a: 0.,
+            max_a: 0.,
+            client_fact: 0.,
             x: 0,
             y: 0,
             w: 0,
             h: 0,
-            oldx: 0,
-            oldy: 0,
-            oldw: 0,
-            oldh: 0,
-            basew: 0,
-            baseh: 0,
-            incw: 0,
-            inch: 0,
-            maxw: 0,
-            maxh: 0,
-            minw: 0,
-            minh: 0,
-            hintsvalid: false,
-            bw: 0,
-            oldbw: 0,
-            tags0: 0,
-            isfixed: false,
-            isfloating: false,
-            isurgent: false,
-            neverfocus: false,
-            oldstate: false,
-            isfullscreen: false,
+            old_x: 0,
+            old_y: 0,
+            old_w: 0,
+            old_h: 0,
+            base_w: 0,
+            base_h: 0,
+            inc_w: 0,
+            inc_h: 0,
+            max_w: 0,
+            max_h: 0,
+            min_w: 0,
+            min_h: 0,
+            hints_valid: false,
+            border_w: 0,
+            old_border_w: 0,
+            tags: 0,
+            is_fixed: false,
+            is_floating: false,
+            is_urgent: false,
+            never_focus: false,
+            old_state: false,
+            is_fullscreen: false,
             next: None,
-            snext: None,
+            stack_next: None,
             mon: None,
             win: 0,
         }
     }
     pub fn isvisible(&self) -> bool {
         // info!("[ISVISIBLE]");
-        let b = {
-            let seltags = self.mon.as_ref().unwrap().borrow().seltags;
-            self.tags0 & self.mon.as_ref().unwrap().borrow().tagset[seltags]
+        let mon_rc = match self.mon {
+            Some(ref m) => m,
+            _ => return false,
         };
-        b > 0
+        let mon_borrow = mon_rc.borrow();
+        (self.tags & mon_borrow.tagset[mon_borrow.seltags]) > 0
     }
     pub fn width(&self) -> i32 {
-        self.w + 2 * self.bw
+        self.w + 2 * self.border_w
     }
     pub fn height(&self) -> i32 {
-        self.h + 2 * self.bw
+        self.h + 2 * self.border_w
     }
 }
 
@@ -476,8 +477,8 @@ pub struct Rule {
     pub class: &'static str,
     pub instance: &'static str,
     pub name: &'static str,
-    pub tags0: usize,
-    pub isfloating: bool,
+    pub tags: usize,
+    pub is_floating: bool,
     pub monitor: i32,
 }
 impl Rule {
@@ -486,16 +487,16 @@ impl Rule {
         class: &'static str,
         instance: &'static str,
         name: &'static str,
-        tags0: usize,
-        isfloating: bool,
+        tags: usize,
+        is_floating: bool,
         monitor: i32,
     ) -> Self {
         Rule {
             class,
             instance,
             name,
-            tags0,
-            isfloating,
+            tags,
+            is_floating,
             monitor,
         }
     }
@@ -654,8 +655,8 @@ impl Dwm {
         unsafe {
             // rule matching
             let mut c = c.borrow_mut();
-            c.isfloating = false;
-            c.tags0 = 0;
+            c.is_floating = false;
+            c.tags = 0;
             let mut ch: XClassHint = zeroed();
             XGetClassHint(self.dpy, c.win, &mut ch);
             c.class = if !ch.res_class.is_null() {
@@ -687,8 +688,8 @@ impl Dwm {
                         "[############################### applyrules] class: {}, instance: {}, name: {}",
                         c.class, c.instance, c.name
                     );
-                    c.isfloating = r.isfloating;
-                    c.tags0 |= r.tags0 as u32;
+                    c.is_floating = r.is_floating;
+                    c.tags |= r.tags as u32;
                     let mut m = self.mons.clone();
                     while let Some(ref m_opt) = m {
                         if m_opt.borrow_mut().num == r.monitor {
@@ -708,8 +709,8 @@ impl Dwm {
             if !ch.res_name.is_null() {
                 XFree(ch.res_name as *mut _);
             }
-            let condition = c.tags0 & Config::tagmask;
-            c.tags0 = if condition > 0 {
+            let condition = c.tags & Config::tagmask;
+            c.tags = if condition > 0 {
                 condition
             } else {
                 let seltags = { c.mon.as_ref().unwrap().borrow_mut().seltags };
@@ -729,48 +730,49 @@ impl Dwm {
                 size.flags = PSize;
             }
             if size.flags & PBaseSize > 0 {
-                c.basew = size.base_width;
-                c.baseh = size.base_height;
+                c.base_w = size.base_width;
+                c.base_h = size.base_height;
             } else if size.flags & PMinSize > 0 {
-                c.basew = size.min_width;
-                c.baseh = size.min_height;
+                c.base_w = size.min_width;
+                c.base_h = size.min_height;
             } else {
-                c.basew = 0;
-                c.baseh = 0;
+                c.base_w = 0;
+                c.base_h = 0;
             }
             if size.flags & PResizeInc > 0 {
-                c.incw = size.width_inc;
-                c.inch = size.height_inc;
+                c.inc_w = size.width_inc;
+                c.inc_h = size.height_inc;
             } else {
-                c.incw = 0;
-                c.inch = 0;
+                c.inc_w = 0;
+                c.inc_h = 0;
             }
             if size.flags & PMaxSize > 0 {
-                c.maxw = size.max_width;
-                c.maxh = size.max_height;
+                c.max_w = size.max_width;
+                c.max_h = size.max_height;
             } else {
-                c.maxw = 0;
-                c.maxh = 0;
+                c.max_w = 0;
+                c.max_h = 0;
             }
             if size.flags & PMinSize > 0 {
-                c.minw = size.min_width;
-                c.minh = size.min_height;
+                c.min_w = size.min_width;
+                c.min_h = size.min_height;
             } else if size.flags & PBaseSize > 0 {
-                c.minw = size.base_width;
-                c.minh = size.base_height;
+                c.min_w = size.base_width;
+                c.min_h = size.base_height;
             } else {
-                c.minw = 0;
-                c.minh = 0;
+                c.min_w = 0;
+                c.min_h = 0;
             }
             if size.flags & PAspect > 0 {
-                c.mina = size.min_aspect.y as f32 / size.min_aspect.x as f32;
-                c.maxa = size.max_aspect.x as f32 / size.max_aspect.y as f32;
+                c.min_a = size.min_aspect.y as f32 / size.min_aspect.x as f32;
+                c.max_a = size.max_aspect.x as f32 / size.max_aspect.y as f32;
             } else {
-                c.maxa = 0.;
-                c.mina = 0.;
+                c.max_a = 0.;
+                c.min_a = 0.;
             }
-            c.isfixed = (c.maxw > 0) && (c.maxh > 0) && (c.maxw == c.minw) && (c.maxh == c.minh);
-            c.hintsvalid = true;
+            c.is_fixed =
+                (c.max_w > 0) && (c.max_h > 0) && (c.max_w == c.min_w) && (c.max_h == c.min_h);
+            c.hints_valid = true;
         }
     }
 
@@ -791,8 +793,8 @@ impl Dwm {
         // Boundary checks
         if interact {
             let cc = c.as_ref().borrow(); // Borrow immutably for reading
-            let client_total_width = *w + 2 * cc.bw; // Use desired w for this check
-            let client_total_height = *h + 2 * cc.bw; // Use desired h for this check
+            let client_total_width = *w + 2 * cc.border_w; // Use desired w for this check
+            let client_total_height = *h + 2 * cc.border_w; // Use desired h for this check
 
             if *x > self.sw {
                 // Off right edge
@@ -817,8 +819,8 @@ impl Dwm {
             let wy = mon_borrow.wy;
             let ww = mon_borrow.ww;
             let wh = mon_borrow.wh;
-            let client_total_width = *w + 2 * cc.bw; // Use desired w
-            let client_total_height = *h + 2 * cc.bw; // Use desired h
+            let client_total_width = *w + 2 * cc.border_w; // Use desired w
+            let client_total_height = *h + 2 * cc.border_w; // Use desired h
 
             if *x >= wx + ww {
                 // Client's left edge past monitor's right edge
@@ -838,18 +840,18 @@ impl Dwm {
             }
         }
 
-        let (isfloating, layout_type_is_none) = {
+        let (is_floating, layout_type_is_none) = {
             let cc_borrow = c.as_ref().borrow();
             let mon_borrow = cc_borrow.mon.as_ref().unwrap().borrow();
             let sellt = mon_borrow.sellt;
             (
-                cc_borrow.isfloating,
+                cc_borrow.is_floating,
                 mon_borrow.lt[sellt].layout_type.is_none(),
             )
         };
 
-        if Config::resizehints || isfloating || layout_type_is_none {
-            if !c.as_ref().borrow().hintsvalid {
+        if Config::resizehints || is_floating || layout_type_is_none {
+            if !c.as_ref().borrow().hints_valid {
                 // Check immutable borrow first
                 self.updatesizehints(c); // This will mutably borrow internally
             }
@@ -862,45 +864,45 @@ impl Dwm {
             let mut current_h = *h;
 
             // 1. Subtract base size to get the dimensions that increments apply to.
-            current_w -= cc.basew;
-            current_h -= cc.baseh;
+            current_w -= cc.base_w;
+            current_h -= cc.base_h;
 
             // 2. Apply resize increments.
-            if cc.incw > 0 {
-                current_w -= current_w % cc.incw;
+            if cc.inc_w > 0 {
+                current_w -= current_w % cc.inc_w;
             }
-            if cc.inch > 0 {
-                current_h -= current_h % cc.inch;
+            if cc.inc_h > 0 {
+                current_h -= current_h % cc.inc_h;
             }
 
             // 3. Add base size back before aspect ratio and min/max checks.
-            current_w += cc.basew;
-            current_h += cc.baseh;
+            current_w += cc.base_w;
+            current_h += cc.base_h;
 
             // 4. Apply aspect ratio limits.
             // cc.mina is min_aspect.y / min_aspect.x (target H/W)
             // cc.maxa is max_aspect.x / max_aspect.y (target W/H)
-            if cc.mina > 0.0 && cc.maxa > 0.0 {
-                if cc.maxa < current_w as f32 / current_h as f32 {
+            if cc.min_a > 0.0 && cc.max_a > 0.0 {
+                if cc.max_a < current_w as f32 / current_h as f32 {
                     // Too wide (current W/H > max W/H) -> Adjust W
-                    current_w = (current_h as f32 * cc.maxa + 0.5) as i32;
-                } else if current_h as f32 / current_w as f32 > cc.mina {
+                    current_w = (current_h as f32 * cc.max_a + 0.5) as i32;
+                } else if current_h as f32 / current_w as f32 > cc.min_a {
                     // Too tall (current H/W > min H/W) -> Adjust H
-                    current_h = (current_w as f32 * cc.mina + 0.5) as i32;
+                    current_h = (current_w as f32 * cc.min_a + 0.5) as i32;
                 }
             }
 
             // 5. Enforce min and max dimensions.
             // Ensure client area is not smaller than min_width/height.
-            current_w = current_w.max(cc.minw);
-            current_h = current_h.max(cc.minh);
+            current_w = current_w.max(cc.min_w);
+            current_h = current_h.max(cc.min_h);
 
             // Ensure client area is not larger than max_width/height if specified.
-            if cc.maxw > 0 {
-                current_w = current_w.min(cc.maxw);
+            if cc.max_w > 0 {
+                current_w = current_w.min(cc.max_w);
             }
-            if cc.maxh > 0 {
-                current_h = current_h.min(cc.maxh);
+            if cc.max_h > 0 {
+                current_h = current_h.min(cc.max_h);
             }
 
             *w = current_w;
@@ -1003,15 +1005,15 @@ impl Dwm {
                 {
                     // NET_WM_STATE_ADD
                     // NET_WM_STATE_TOGGLE
-                    let isfullscreen = { c.borrow_mut().isfullscreen };
+                    let isfullscreen = { c.borrow_mut().is_fullscreen };
                     let fullscreen =
                         cme.data.get_long(0) == 1 || (cme.data.get_long(0) == 2 && !isfullscreen);
                     self.setfullscreen(c, fullscreen);
                 }
             } else if cme.message_type == self.netatom[NET::NetActiveWindow as usize] {
-                let isurgent = { c.borrow_mut().isurgent };
+                let is_urgent = { c.borrow_mut().is_urgent };
                 let sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
-                if !Self::are_equal_rc(&Some(c.clone()), &sel) && !isurgent {
+                if !Self::are_equal_rc(&Some(c.clone()), &sel) && !is_urgent {
                     self.seturgent(c, true);
                 }
             }
@@ -1031,7 +1033,7 @@ impl Dwm {
                     while let Some(ref m_opt) = m {
                         let mut c = m_opt.borrow_mut().clients.clone();
                         while c.is_some() {
-                            if c.as_ref().unwrap().borrow_mut().isfullscreen {
+                            if c.as_ref().unwrap().borrow_mut().is_fullscreen {
                                 self.resizeclient(
                                     &mut *c.as_ref().unwrap().borrow_mut(),
                                     m_opt.borrow_mut().mx,
@@ -1066,7 +1068,7 @@ impl Dwm {
             ce.y = c.y;
             ce.width = c.w;
             ce.height = c.h;
-            ce.border_width = c.bw;
+            ce.border_width = c.border_w;
             ce.above = 0;
             ce.override_redirect = 0;
             let mut xe = XEvent { configure: ce };
@@ -1077,7 +1079,7 @@ impl Dwm {
     pub fn setfullscreen(&mut self, c: &Rc<RefCell<Client>>, fullscreen: bool) {
         info!("[setfullscreen]");
         unsafe {
-            let isfullscreen = { c.borrow_mut().isfullscreen };
+            let isfullscreen = { c.borrow_mut().is_fullscreen };
             let win = { c.borrow_mut().win };
             if fullscreen && !isfullscreen {
                 XChangeProperty(
@@ -1092,11 +1094,11 @@ impl Dwm {
                 );
                 {
                     let mut c = c.borrow_mut();
-                    c.isfullscreen = true;
-                    c.oldstate = c.isfloating;
-                    c.oldbw = c.bw;
-                    c.bw = 0;
-                    c.isfloating = true;
+                    c.is_fullscreen = true;
+                    c.old_state = c.is_floating;
+                    c.old_border_w = c.border_w;
+                    c.border_w = 0;
+                    c.is_floating = true;
                 }
                 let (mx, my, mw, mh) = {
                     let c_mon = &c.borrow().mon;
@@ -1119,14 +1121,14 @@ impl Dwm {
                 );
                 {
                     let mut c = c.borrow_mut();
-                    c.isfullscreen = false;
-                    c.isfloating = c.oldstate;
-                    c.bw = c.oldbw;
-                    c.x = c.oldx;
-                    c.y = c.oldy;
+                    c.is_fullscreen = false;
+                    c.is_floating = c.old_state;
+                    c.border_w = c.old_border_w;
+                    c.x = c.old_x;
+                    c.y = c.old_y;
                     // println!("line: {}, {}", line!(), c.y);
-                    c.w = c.oldw;
-                    c.h = c.oldh;
+                    c.w = c.old_w;
+                    c.h = c.old_h;
                 }
                 {
                     let mut c = c.borrow_mut();
@@ -1143,20 +1145,20 @@ impl Dwm {
         // info!("[resizeclient] {x}, {y}, {w}, {h}");
         unsafe {
             let mut wc: XWindowChanges = zeroed();
-            c.oldx = c.x;
+            c.old_x = c.x;
             c.x = x;
             wc.x = x;
-            c.oldy = c.y;
+            c.old_y = c.y;
             c.y = y;
             // println!("line: {}, {}", line!(), c.y);
             wc.y = y;
-            c.oldw = c.w;
+            c.old_w = c.w;
             c.w = w;
             wc.width = w;
-            c.oldh = c.h;
+            c.old_h = c.h;
             c.h = h;
             wc.height = h;
-            wc.border_width = c.bw;
+            wc.border_width = c.border_w;
             XConfigureWindow(
                 self.dpy,
                 c.win,
@@ -1186,7 +1188,7 @@ impl Dwm {
     pub fn seturgent(&mut self, c: &Rc<RefCell<Client>>, urg: bool) {
         // info!("[seturgent]");
         unsafe {
-            c.borrow_mut().isurgent = urg;
+            c.borrow_mut().is_urgent = urg;
             let win = c.borrow_mut().win;
             let wmh = XGetWMHints(self.dpy, win);
             if wmh.is_null() {
@@ -1202,48 +1204,73 @@ impl Dwm {
         }
     }
 
-    pub fn showhide(&mut self, c: Option<Rc<RefCell<Client>>>) {
+    pub fn showhide(&mut self, client_opt: Option<Rc<RefCell<Client>>>) {
         // info!("[showhide]");
-        if c.is_none() {
-            return;
-        }
+        let client_rc = match client_opt {
+            Some(c) => c,
+            None => return,
+        };
         unsafe {
-            let c = c.as_ref().unwrap();
-            let cc = c.borrow();
-            let isvisible = cc.isvisible();
+            let isvisible = {
+                let client_borrow = client_rc.borrow();
+                client_borrow.isvisible()
+            };
             if isvisible {
                 // show clients top down.
-                // let name = c.as_ref().unwrap().borrow_mut().name.clone();
-                // info!("[showhide] show clients top down: {name}");
-                let win = cc.win;
-                let x = cc.x;
-                let y = cc.y;
-                XMoveWindow(self.dpy, win, x, y);
+                let layout_type_is_none;
+                let is_floating;
+                let is_fullscreen;
                 {
-                    let mon = cc.mon.clone().unwrap();
-                    let mon = mon.borrow();
-                    let isfloating = cc.isfloating;
-                    let isfullscreen = cc.isfullscreen;
-                    if (mon.lt[mon.sellt].layout_type.is_none() || isfloating) && !isfullscreen {
-                        let (x, y, w, h) = (cc.x, cc.y, cc.w, cc.h);
-                        self.resize(c, x, y, w, h, false);
+                    let client_borrow = client_rc.borrow();
+                    XMoveWindow(
+                        self.dpy,
+                        client_borrow.win,
+                        client_borrow.x,
+                        client_borrow.y,
+                    );
+                    is_floating = client_borrow.is_floating;
+                    is_fullscreen = client_borrow.is_fullscreen;
+                    layout_type_is_none = match client_borrow.mon {
+                        Some(ref m) => {
+                            let m_borrow = m.borrow();
+                            m_borrow.lt[m_borrow.sellt].layout_type.is_none()
+                        }
+                        _ => true,
                     }
                 }
-                let snext = cc.snext.clone();
+                {
+                    if (layout_type_is_none || is_floating) && !is_fullscreen {
+                        let (x, y, w, h) = {
+                            let client_borrow = client_rc.borrow();
+                            (
+                                client_borrow.x,
+                                client_borrow.y,
+                                client_borrow.w,
+                                client_borrow.h,
+                            )
+                        };
+                        self.resize(&client_rc, x, y, w, h, false);
+                    }
+                }
+                let snext = {
+                    let client_borrow = client_rc.borrow();
+                    client_borrow.stack_next.clone()
+                };
                 self.showhide(snext);
             } else {
                 // hide clients bottom up.
-                // let name = c.as_ref().unwrap().borrow_mut().name.clone();
-                // info!("[showhide] show clients bottom up: {name}");
-                let snext = cc.snext.clone();
+                let snext = {
+                    let client_borrow = client_rc.borrow();
+                    client_borrow.stack_next.clone()
+                };
                 self.showhide(snext);
-                let y;
-                let win;
-                {
-                    y = cc.y;
-                    win = cc.win;
-                }
-                XMoveWindow(self.dpy, win, cc.width() * -2, y);
+                let client_borrow = client_rc.borrow();
+                XMoveWindow(
+                    self.dpy,
+                    client_borrow.win,
+                    client_borrow.width() * -2,
+                    client_borrow.y,
+                );
             }
         }
     }
@@ -1253,17 +1280,17 @@ impl Dwm {
         unsafe {
             let ev = (*e).configure_request;
             let c = self.wintoclient(ev.window);
-            if let Some(ref c_opt) = c {
+            if let Some(ref client_opt) = c {
                 let layout_type = {
                     let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
                     let sellt = selmon_mut.sellt;
                     selmon_mut.lt[sellt].layout_type.clone()
                 };
-                let mut c_mut = c_opt.borrow_mut();
-                let isfloating = c_mut.isfloating;
+                let mut c_mut = client_opt.borrow_mut();
+                let is_floating = c_mut.is_floating;
                 if ev.value_mask & CWBorderWidth as u64 > 0 {
-                    c_mut.bw = ev.border_width;
-                } else if isfloating || layout_type.is_none() {
+                    c_mut.border_w = ev.border_width;
+                } else if is_floating || layout_type.is_none() {
                     let mx;
                     let my;
                     let mw;
@@ -1277,22 +1304,22 @@ impl Dwm {
                     }
                     {
                         if ev.value_mask & CWX as u64 > 0 {
-                            c_mut.oldx = c_mut.x;
+                            c_mut.old_x = c_mut.x;
                             c_mut.x = mx + ev.x;
                         }
                         if ev.value_mask & CWY as u64 > 0 {
-                            c_mut.oldy = c_mut.y;
+                            c_mut.old_y = c_mut.y;
                             c_mut.y = my + ev.y;
                         }
                         if ev.value_mask & CWWidth as u64 > 0 {
-                            c_mut.oldw = c_mut.w;
+                            c_mut.old_w = c_mut.w;
                             c_mut.w = ev.width;
                         }
                         if ev.value_mask & CWHeight as u64 > 0 {
-                            c_mut.oldh = c_mut.h;
+                            c_mut.old_h = c_mut.h;
                             c_mut.h = ev.height;
                         }
-                        if (c_mut.x + c_mut.w) > mx + mw && c_mut.isfloating {
+                        if (c_mut.x + c_mut.w) > mx + mw && c_mut.is_floating {
                             // center in x direction
                             if c_mut.name == Config::egui_bar_name {
                                 println!("[configurerequest] egui bar x: {}", c_mut.x);
@@ -1301,7 +1328,7 @@ impl Dwm {
                                 c_mut.x = mx + (mw / 2 - c_mut.width() / 2);
                             }
                         }
-                        if (c_mut.y + c_mut.h) > my + mh && c_mut.isfloating {
+                        if (c_mut.y + c_mut.h) > my + mh && c_mut.is_floating {
                             // center in y direction
                             c_mut.y = my + (mh / 2 - c_mut.height() / 2);
                         }
@@ -1379,8 +1406,8 @@ impl Dwm {
         unsafe {
             let ev = (*e).destroy_window;
             let c = self.wintoclient(ev.window);
-            if let Some(c_opt) = c {
-                self.unmanage(Some(c_opt), true);
+            if let Some(client_opt) = c {
+                self.unmanage(Some(client_opt), true);
             }
         }
     }
@@ -1499,8 +1526,8 @@ impl Dwm {
             &Some(c.clone()),
             |m| &mut m.stack,
             |m, next| m.stack = next,
-            |cli| cli.snext.clone(),
-            |cli, next| cli.snext = next,
+            |cli| cli.stack_next.clone(),
+            |cli, next| cli.stack_next = next,
         );
 
         if Self::are_equal_rc(&Some(c), &m.borrow().sel) {
@@ -1510,7 +1537,7 @@ impl Dwm {
                 if isvisible {
                     break;
                 }
-                let snext = { t_opt.borrow_mut().snext.clone() };
+                let snext = { t_opt.borrow_mut().stack_next.clone() };
                 t = snext;
             }
             m.borrow_mut().sel = t.clone();
@@ -1634,26 +1661,26 @@ impl Dwm {
             if sel.is_none() {
                 return;
             }
-            let isfloating = sel.as_ref().unwrap().borrow_mut().isfloating;
+            let is_floating = sel.as_ref().unwrap().borrow_mut().is_floating;
             let sellt = m.sellt;
             let layout_type = { m.lt[sellt].layout_type.clone() };
-            if isfloating || layout_type.is_none() {
+            if is_floating || layout_type.is_none() {
                 let win = sel.as_ref().unwrap().borrow_mut().win;
                 XRaiseWindow(self.dpy, win);
             }
             if layout_type.is_some() {
                 wc.stack_mode = Below;
                 let mut c = m.stack.clone();
-                while let Some(ref c_opt) = c.clone() {
-                    let c_opt = c_opt.borrow_mut();
-                    let isfloating = c_opt.isfloating;
-                    let isvisible = c_opt.isvisible();
-                    if !isfloating && isvisible {
-                        let win = c_opt.win;
+                while let Some(ref client_opt) = c.clone() {
+                    let client_opt = client_opt.borrow_mut();
+                    let is_floating = client_opt.is_floating;
+                    let isvisible = client_opt.isvisible();
+                    if !is_floating && isvisible {
+                        let win = client_opt.win;
                         XConfigureWindow(self.dpy, win, (CWSibling | CWStackMode) as u32, &mut wc);
                         wc.sibling = win;
                     }
-                    let next = c_opt.snext.clone();
+                    let next = client_opt.stack_next.clone();
                     c = next;
                 }
             }
@@ -1776,8 +1803,8 @@ impl Dwm {
         *list_head_field_ref = Some(client_rc.clone());
     }
 
-    pub fn attach(&mut self, c_opt: Option<Rc<RefCell<Client>>>) {
-        let client_rc = match c_opt {
+    pub fn attach(&mut self, client_opt: Option<Rc<RefCell<Client>>>) {
+        let client_rc = match client_opt {
             Some(c) => c,
             None => return,
         };
@@ -1794,8 +1821,8 @@ impl Dwm {
         );
     }
 
-    pub fn attachstack(&mut self, c_opt: Option<Rc<RefCell<Client>>>) {
-        let client_rc = match c_opt {
+    pub fn attachstack(&mut self, client_opt: Option<Rc<RefCell<Client>>>) {
+        let client_rc = match client_opt {
             Some(c) => c,
             None => return,
         };
@@ -1807,7 +1834,7 @@ impl Dwm {
         Self::attach_to_list_head_internal(
             &client_rc,
             &mon_rc,
-            |cli, next_node| cli.snext = next_node,
+            |cli, next_node| cli.stack_next = next_node,
             |mon| &mut mon.stack,
         );
     }
@@ -1914,12 +1941,12 @@ impl Dwm {
         let mut m = self.mons.clone();
         while let Some(ref m_opt) = m {
             let mut c = { m_opt.borrow().clients.clone() };
-            while let Some(ref c_opt) = c {
-                let win = { c_opt.borrow().win };
+            while let Some(ref client_opt) = c {
+                let win = { client_opt.borrow().win };
                 if win == w {
                     return c;
                 }
-                let next = { c_opt.borrow().next.clone() };
+                let next = { client_opt.borrow().next.clone() };
                 c = next;
             }
             let next = { m_opt.borrow().next.clone() };
@@ -1936,8 +1963,8 @@ impl Dwm {
             return self.recttomon(x, y, 1, 1);
         }
         let c = self.wintoclient(w);
-        if let Some(ref c_opt) = c {
-            return c_opt.borrow().mon.clone();
+        if let Some(ref client_opt) = c {
+            return client_opt.borrow().mon.clone();
         }
         return self.selmon.clone();
     }
@@ -2123,7 +2150,7 @@ impl Dwm {
             let mut m = self.mons.clone();
             while let Some(ref m_opt) = m {
                 let mut c = m_opt.borrow_mut().clients.clone();
-                while let Some(ref c_opt) = c {
+                while let Some(ref client_opt) = c {
                     XChangeProperty(
                         self.dpy,
                         self.root,
@@ -2131,10 +2158,10 @@ impl Dwm {
                         XA_WINDOW,
                         32,
                         PropModeAppend,
-                        &mut c_opt.borrow_mut().win as *const u64 as *const _,
+                        &mut client_opt.borrow_mut().win as *const u64 as *const _,
                         1,
                     );
-                    let next = c_opt.borrow_mut().next.clone();
+                    let next = client_opt.borrow_mut().next.clone();
                     c = next;
                 }
                 let next = m_opt.borrow_mut().next.clone();
@@ -2166,15 +2193,15 @@ impl Dwm {
             let mut c = self.nexttiled(m_borrow.clients.clone()); // 获取第一个可见且平铺的客户端
                                                                   // nexttiled 会跳过浮动和不可见的客户端
 
-            while let Some(c_opt) = c {
+            while let Some(client_opt) = c {
                 // 遍历所有可见且平铺的客户端
-                let c_borrow = c_opt.borrow(); // 可变借用 Client 来读取和修改 cfact (虽然这里只读取)
+                let c_borrow = client_opt.borrow(); // 可变借用 Client 来读取和修改 cfact (虽然这里只读取)
                 if n < m_borrow.nmaster0 {
                     // 如果当前客户端在主区域
-                    mfacts += c_borrow.cfact; // 累加到主区域的 cfact 总和
+                    mfacts += c_borrow.client_fact; // 累加到主区域的 cfact 总和
                 } else {
                     // 如果当前客户端在堆叠区域
-                    sfacts += c_borrow.cfact; // 累加到堆叠区域的 cfact 总和
+                    sfacts += c_borrow.client_fact; // 累加到堆叠区域的 cfact 总和
                 }
                 let next_c = self.nexttiled(c_borrow.next.clone()); // 获取下一个可见平铺客户端
                 drop(c_borrow); // 显式 drop 可变借用，以便 nexttiled 中的借用不会冲突
@@ -2240,8 +2267,8 @@ impl Dwm {
             {
                 // 创建一个新的作用域来限制 c_borrow 的生命周期
                 let c_borrow = c_opt_rc.borrow(); // 不可变借用开始
-                bw = c_borrow.bw;
-                let current_cfact = c_borrow.cfact;
+                bw = c_borrow.border_w;
+                let current_cfact = c_borrow.client_fact;
                 next_client_in_list_opt = c_borrow.next.clone(); // 在释放借用前获取 next
 
                 // 在这个作用域内完成所有对 c_borrow 的只读操作
@@ -2281,8 +2308,8 @@ impl Dwm {
                 if my + client_actual_height < wh_val as u32 {
                     my += client_actual_height;
                 }
-                mfacts -= c_opt_rc.borrow().cfact; // 重新 borrow 读取 cfact (如果 cfact 不变，可以提前读取)
-                                                   // 或者确保 cfact 在 resize 中不会改变，则可以使用之前读取的 current_cfact
+                mfacts -= c_opt_rc.borrow().client_fact; // 重新 borrow 读取 cfact (如果 cfact 不变，可以提前读取)
+                                                         // 或者确保 cfact 在 resize 中不会改变，则可以使用之前读取的 current_cfact
             } else {
                 self.resize(
                     c_opt_rc,
@@ -2296,7 +2323,7 @@ impl Dwm {
                 if ty + client_actual_height < wh_val as u32 {
                     ty += client_actual_height;
                 }
-                sfacts -= c_opt_rc.borrow().cfact; // 同上
+                sfacts -= c_opt_rc.borrow().client_fact; // 同上
             }
 
             c_iter = self.nexttiled(next_client_in_list_opt); // 使用之前获取的 next
@@ -2312,16 +2339,16 @@ impl Dwm {
         let sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
         if let Some(ref sel_opt) = sel {
             // no support for fullscreen windows.
-            let isfullscreen = { sel_opt.borrow_mut().isfullscreen };
+            let isfullscreen = { sel_opt.borrow_mut().is_fullscreen };
             if isfullscreen {
                 return;
             }
             {
                 let mut sel_borrow = sel_opt.borrow_mut();
-                sel_borrow.isfloating = !sel_borrow.isfloating || sel_borrow.isfixed;
+                sel_borrow.is_floating = !sel_borrow.is_floating || sel_borrow.is_fixed;
             }
-            let isfloating = { sel_opt.borrow_mut().isfloating };
-            if isfloating {
+            let is_floating = { sel_opt.borrow_mut().is_floating };
+            if is_floating {
                 let (x, y, w, h) = {
                     let sel_opt_mut = sel_opt.borrow_mut();
                     (sel_opt_mut.x, sel_opt_mut.y, sel_opt_mut.w, sel_opt_mut.h)
@@ -2382,7 +2409,7 @@ impl Dwm {
         while let Some(ref sel_opt) = sel {
             let name = { sel_opt.borrow_mut().name.clone() };
             if name == Config::egui_bar_name {
-                sel_opt.borrow_mut().tags0 = target_tag;
+                sel_opt.borrow_mut().tags = target_tag;
                 self.setclienttagprop(&sel_opt);
                 // self.focus(None); // (TODO): CHECK
                 self.arrange(self.selmon.clone());
@@ -2400,13 +2427,13 @@ impl Dwm {
             if let Arg::Ui(ui) = *arg {
                 let sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
                 // Don't tag neverfocus.
-                if sel.as_ref().unwrap().borrow_mut().neverfocus {
+                if sel.as_ref().unwrap().borrow_mut().never_focus {
                     return;
                 }
                 let target_tag = ui & Config::tagmask;
                 if let Some(ref sel_opt) = sel {
                     if target_tag > 0 {
-                        sel_opt.borrow_mut().tags0 = target_tag;
+                        sel_opt.borrow_mut().tags = target_tag;
                         self.setclienttagprop(sel_opt);
                         self.focus(None);
                         self.arrange(self.selmon.clone());
@@ -2430,7 +2457,7 @@ impl Dwm {
                     .as_ref()
                     .unwrap()
                     .borrow_mut()
-                    .neverfocus
+                    .never_focus
                 {
                     return;
                 }
@@ -2461,7 +2488,7 @@ impl Dwm {
             {
                 let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
                 if selmon_mut.sel.is_none()
-                    || (selmon_mut.sel.as_ref().unwrap().borrow_mut().isfullscreen
+                    || (selmon_mut.sel.as_ref().unwrap().borrow_mut().is_fullscreen
                         && Config::lockfullscreen)
                 {
                     return;
@@ -2485,11 +2512,11 @@ impl Dwm {
                         .next
                         .clone()
                 };
-                while let Some(ref c_opt) = c {
-                    if !c_opt.borrow_mut().neverfocus && c_opt.borrow_mut().isvisible() {
+                while let Some(ref client_opt) = c {
+                    if !client_opt.borrow_mut().never_focus && client_opt.borrow_mut().isvisible() {
                         break;
                     }
-                    let next = c_opt.borrow_mut().next.clone();
+                    let next = client_opt.borrow_mut().next.clone();
                     c = next;
                 }
                 if c.is_none() {
@@ -2497,11 +2524,13 @@ impl Dwm {
                         let selmon_mut = self.selmon.as_ref().unwrap().borrow_mut();
                         selmon_mut.clients.clone()
                     };
-                    while let Some(ref c_opt) = c {
-                        if !c_opt.borrow_mut().neverfocus && c_opt.borrow_mut().isvisible() {
+                    while let Some(ref client_opt) = c {
+                        if !client_opt.borrow_mut().never_focus
+                            && client_opt.borrow_mut().isvisible()
+                        {
                             break;
                         }
-                        let next = c_opt.borrow_mut().next.clone();
+                        let next = client_opt.borrow_mut().next.clone();
                         c = next;
                     }
                 }
@@ -2513,7 +2542,7 @@ impl Dwm {
                     };
                     while !Self::are_equal_rc(&cl, &sel) {
                         if let Some(ref cl_opt) = cl {
-                            if !cl_opt.borrow_mut().neverfocus && cl_opt.borrow_mut().isvisible() {
+                            if !cl_opt.borrow_mut().never_focus && cl_opt.borrow_mut().isvisible() {
                                 c = cl.clone();
                             }
                             let next = cl_opt.borrow_mut().next.clone();
@@ -2522,7 +2551,7 @@ impl Dwm {
                     }
                     if c.is_none() {
                         while let Some(ref cl_opt) = cl {
-                            if !cl_opt.borrow_mut().neverfocus && cl_opt.borrow_mut().isvisible() {
+                            if !cl_opt.borrow_mut().never_focus && cl_opt.borrow_mut().isvisible() {
                                 c = cl.clone();
                             }
                             let next = cl_opt.borrow_mut().next.clone();
@@ -2571,13 +2600,13 @@ impl Dwm {
                 return;
             }
             if let Arg::F(f0) = *arg {
-                let mut f = f0 + c.as_ref().unwrap().borrow().cfact;
+                let mut f = f0 + c.as_ref().unwrap().borrow().client_fact;
                 if f0.abs() < 0.0001 {
                     f = 1.0;
                 } else if f < 0.25 || f > 4.0 {
                     return;
                 }
-                c.as_ref().unwrap().borrow_mut().cfact = f;
+                c.as_ref().unwrap().borrow_mut().client_fact = f;
                 self.arrange(self.selmon.clone());
             }
         }
@@ -2605,8 +2634,8 @@ impl Dwm {
                         .clone();
                     while c.is_some() {
                         let isvisible = c.as_ref().unwrap().borrow_mut().isvisible();
-                        let isfloating = c.as_ref().unwrap().borrow_mut().isfloating;
-                        let condition = !isvisible || isfloating;
+                        let is_floating = c.as_ref().unwrap().borrow_mut().is_floating;
+                        let condition = !isvisible || is_floating;
                         if !condition {
                             break;
                         }
@@ -2618,8 +2647,8 @@ impl Dwm {
                     }
                     while c.is_some() {
                         let isvisible = c.as_ref().unwrap().borrow_mut().isvisible();
-                        let isfloating = c.as_ref().unwrap().borrow_mut().isfloating;
-                        let condition = !isvisible || isfloating;
+                        let is_floating = c.as_ref().unwrap().borrow_mut().is_floating;
+                        let condition = !isvisible || is_floating;
                         if !condition {
                             break;
                         }
@@ -2632,8 +2661,8 @@ impl Dwm {
                     let sel = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
                     while !Self::are_equal_rc(&i, &sel) {
                         let isvisible = i.as_ref().unwrap().borrow_mut().isvisible();
-                        let isfloating = i.as_ref().unwrap().borrow_mut().isfloating;
-                        if isvisible && !isfloating {
+                        let is_floating = i.as_ref().unwrap().borrow_mut().is_floating;
+                        if isvisible && !is_floating {
                             c = i.clone();
                         }
                         let next = i.as_ref().unwrap().borrow_mut().next.clone();
@@ -2642,8 +2671,8 @@ impl Dwm {
                     if c.is_none() {
                         while i.is_some() {
                             let isvisible = i.as_ref().unwrap().borrow_mut().isvisible();
-                            let isfloating = i.as_ref().unwrap().borrow_mut().isfloating;
-                            if isvisible && !isfloating {
+                            let is_floating = i.as_ref().unwrap().borrow_mut().is_floating;
+                            if isvisible && !is_floating {
                                 c = i.clone();
                             }
                             let next = i.as_ref().unwrap().borrow_mut().next.clone();
@@ -2807,7 +2836,7 @@ impl Dwm {
             let sellt = selmon_mut.sellt;
             if selmon_mut.lt[sellt].layout_type.is_none()
                 || c.is_none()
-                || c.as_ref().unwrap().borrow().isfloating
+                || c.as_ref().unwrap().borrow().is_floating
             {
                 return;
             }
@@ -2962,7 +2991,7 @@ impl Dwm {
             if sel.is_none() {
                 return;
             }
-            let isfullscreen = { sel.as_ref().unwrap().borrow_mut().isfullscreen };
+            let isfullscreen = { sel.as_ref().unwrap().borrow_mut().is_fullscreen };
             self.setfullscreen(sel.as_ref().unwrap(), !isfullscreen);
         }
     }
@@ -2975,13 +3004,13 @@ impl Dwm {
                 return;
             }
             // Don't toggletag neverfocus.
-            if sel.as_ref().unwrap().borrow_mut().neverfocus {
+            if sel.as_ref().unwrap().borrow_mut().never_focus {
                 return;
             }
             if let Arg::Ui(ui) = *arg {
-                let newtags = sel.as_ref().unwrap().borrow_mut().tags0 ^ (ui & Config::tagmask);
+                let newtags = sel.as_ref().unwrap().borrow_mut().tags ^ (ui & Config::tagmask);
                 if newtags > 0 {
-                    sel.as_ref().unwrap().borrow_mut().tags0 = newtags;
+                    sel.as_ref().unwrap().borrow_mut().tags = newtags;
                     self.setclienttagprop(sel.as_ref().unwrap());
                     self.focus(None);
                     self.arrange(self.selmon.clone());
@@ -3173,7 +3202,7 @@ impl Dwm {
                 return;
             }
             // Don't kill neverfocus.
-            if sel.as_ref().unwrap().borrow().neverfocus {
+            if sel.as_ref().unwrap().borrow().never_focus {
                 return;
             }
             info!("[killclient] {}", sel.as_ref().unwrap().borrow());
@@ -3194,11 +3223,11 @@ impl Dwm {
 
     pub fn nexttiled(&mut self, mut c: Option<Rc<RefCell<Client>>>) -> Option<Rc<RefCell<Client>>> {
         // info!("[nexttiled]");
-        while let Some(ref c_opt) = c {
-            let isfloating = c_opt.borrow().isfloating;
-            let isvisible = c_opt.borrow().isvisible();
-            if isfloating || !isvisible {
-                let next = c_opt.borrow().next.clone();
+        while let Some(ref client_opt) = c {
+            let is_floating = client_opt.borrow().is_floating;
+            let isvisible = client_opt.borrow().isvisible();
+            if is_floating || !isvisible {
+                let next = client_opt.borrow().next.clone();
                 c = next;
             } else {
                 break;
@@ -3347,11 +3376,11 @@ impl Dwm {
                 match ev.atom {
                     XA_WM_TRANSIENT_FOR => {
                         let mut client_borrowd = client_rc.borrow_mut();
-                        if !client_borrowd.isfloating
+                        if !client_borrowd.is_floating
                             && XGetTransientForHint(self.dpy, client_borrowd.win, &mut trans) > 0
                             && {
-                                client_borrowd.isfloating = self.wintoclient(trans).is_some();
-                                client_borrowd.isfloating
+                                client_borrowd.is_floating = self.wintoclient(trans).is_some();
+                                client_borrowd.is_floating
                             }
                         {
                             self.arrange(client_borrowd.mon.clone());
@@ -3359,7 +3388,7 @@ impl Dwm {
                     }
                     XA_WM_NORMAL_HINTS => {
                         let mut client_borrowd = client_rc.borrow_mut();
-                        client_borrowd.hintsvalid = false;
+                        client_borrowd.hints_valid = false;
                     }
                     XA_WM_HINTS => {
                         self.updatewmhints(&client_rc);
@@ -3403,17 +3432,17 @@ impl Dwm {
         unsafe {
             // unsafe 块
             // 1. 获取当前选中的客户端 (c)
-            let c_opt = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
-            if c_opt.is_none() {
+            let client_opt = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+            if client_opt.is_none() {
                 return;
             } // 没有选中客户端则返回
-            let c_rc = c_opt.as_ref().unwrap(); // c_rc 是 &Rc<RefCell<Client>>
+            let c_rc = client_opt.as_ref().unwrap(); // c_rc 是 &Rc<RefCell<Client>>
 
             // 2. 日志记录和全屏检查
             {
                 info!("[movemouse] {}", c_rc.borrow().name);
             } // 记录要移动的窗口名
-            if c_rc.borrow().isfullscreen {
+            if c_rc.borrow().is_fullscreen {
                 // 如果窗口是全屏状态
                 // no support moving fullscreen windows by mouse
                 return; // 通常不允许通过鼠标移动全屏窗口
@@ -3548,7 +3577,7 @@ impl Dwm {
                         // e. 如果窗口是非浮动的，并且移动距离超过了吸附阈值，则将其切换为浮动状态
                         let (is_floating, client_current_x, client_current_y) = {
                             let c_borrow = c_rc.borrow();
-                            (c_borrow.isfloating, c_borrow.x, c_borrow.y)
+                            (c_borrow.is_floating, c_borrow.x, c_borrow.y)
                         };
                         let current_layout_is_tile = {
                             let selmon_borrow = self.selmon.as_ref().unwrap().borrow();
@@ -3568,8 +3597,8 @@ impl Dwm {
                             let c_borrow = c_rc.borrow();
                             (c_borrow.w, c_borrow.h)
                         };
-                        if !current_layout_is_tile || c_rc.borrow().isfloating {
-                            // 重新检查 isfloating 因为 togglefloating 可能改变它
+                        if !current_layout_is_tile || c_rc.borrow().is_floating {
+                            // 重新检查 is_floating 因为 togglefloating 可能改变它
                             self.resize(c_rc, new_window_x, new_window_y, window_w, window_h, true);
                             // true 表示交互式调整
                         }
@@ -3612,14 +3641,14 @@ impl Dwm {
         info!("[resizemouse]");
         unsafe {
             // 1. 获取当前选中的客户端 (c)
-            let c_opt = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
-            if c_opt.is_none() {
+            let client_opt = { self.selmon.as_ref().unwrap().borrow_mut().sel.clone() };
+            if client_opt.is_none() {
                 return; // 没有选中客户端则返回
             }
-            let c_rc = c_opt.as_ref().unwrap(); // c_rc 是 &Rc<RefCell<Client>>
+            let c_rc = client_opt.as_ref().unwrap(); // c_rc 是 &Rc<RefCell<Client>>
 
             // 2. 全屏检查
-            if c_rc.borrow().isfullscreen {
+            if c_rc.borrow().is_fullscreen {
                 // no support resizing fullscreen windows by mouse
                 return; // 不允许通过鼠标调整全屏窗口大小
             }
@@ -3631,7 +3660,7 @@ impl Dwm {
             // 和边框宽度 (用于从鼠标坐标计算内容区尺寸)
             let (original_client_x, original_client_y, border_width, client_window_id) = {
                 let c_borrow = c_rc.borrow();
-                (c_borrow.x, c_borrow.y, c_borrow.bw, c_borrow.win)
+                (c_borrow.x, c_borrow.y, c_borrow.border_w, c_borrow.win)
             };
 
             // 4. 抓取鼠标指针 (XGrabPointer)
@@ -3754,7 +3783,7 @@ impl Dwm {
                         // e. 如果窗口是非浮动的，并且尺寸变化超过了吸附阈值，则将其切换为浮动状态
                         let (is_floating, current_client_w, current_client_h) = {
                             let c_borrow = c_rc.borrow();
-                            (c_borrow.isfloating, c_borrow.w, c_borrow.h)
+                            (c_borrow.is_floating, c_borrow.w, c_borrow.h)
                         };
                         let current_layout_is_tile = {
                             let selmon_borrow = self.selmon.as_ref().unwrap().borrow();
@@ -3771,8 +3800,8 @@ impl Dwm {
 
                         // f. 如果窗口是浮动的或者当前布局是浮动布局，则实际调整窗口大小
                         //    注意：传递给 resize 的是窗口的原始 X, Y 坐标，以及新的宽度和高度。
-                        if !current_layout_is_tile || c_rc.borrow().isfloating {
-                            // 重新检查 isfloating
+                        if !current_layout_is_tile || c_rc.borrow().is_floating {
+                            // 重新检查 is_floating
                             self.resize(
                                 c_rc,
                                 original_client_x,
@@ -3795,7 +3824,7 @@ impl Dwm {
             // 8. 再次将鼠标指针定位到窗口右下角 (可选，为了视觉一致性)
             let (final_client_w, final_client_h, final_border_width, final_client_win) = {
                 let c_borrow = c_rc.borrow();
-                (c_borrow.w, c_borrow.h, c_borrow.bw, c_borrow.win)
+                (c_borrow.w, c_borrow.h, c_borrow.border_w, c_borrow.win)
             };
             XWarpPointer(
                 self.dpy,
@@ -3915,7 +3944,7 @@ impl Dwm {
 
     pub fn setclienttagprop(&mut self, c: &Rc<RefCell<Client>>) {
         let c_mut = c.borrow();
-        let data: [u32; 2] = [c_mut.tags0, c_mut.mon.as_ref().unwrap().borrow().num as u32];
+        let data: [u32; 2] = [c_mut.tags, c_mut.mon.as_ref().unwrap().borrow().num as u32];
         unsafe {
             XChangeProperty(
                 self.dpy,
@@ -3930,12 +3959,12 @@ impl Dwm {
         }
     }
 
-    pub fn grabbuttons(&mut self, c_opt: Option<Rc<RefCell<Client>>>, focused: bool) {
+    pub fn grabbuttons(&mut self, client_opt: Option<Rc<RefCell<Client>>>, focused: bool) {
         self.updatenumlockmask();
-        let client_win_id = match c_opt.as_ref() {
+        let client_win_id = match client_opt.as_ref() {
             // 获取窗口 ID，只需不可变借用
             Some(c_rc) => c_rc.borrow().win,
-            None => return, // 如果 c_opt 是 None，则直接返回
+            None => return, // 如果 client_opt 是 None，则直接返回
         };
 
         unsafe {
@@ -4065,7 +4094,7 @@ impl Dwm {
             && ((c.class == Config::egui_bar_0 && c.instance == Config::egui_bar_0)
                 || (c.class == Config::egui_bar_1 && c.instance == Config::egui_bar_1))
         {
-            c.neverfocus = true;
+            c.never_focus = true;
             if let Some(mon) = &c.mon {
                 let num = mon.borrow_mut().num;
                 let bar_shape = BarShape {
@@ -4112,7 +4141,7 @@ impl Dwm {
         info!("[setfocus]");
         unsafe {
             let mut c = c.borrow_mut();
-            if !c.neverfocus {
+            if !c.never_focus {
                 XSetInputFocus(self.dpy, c.win, RevertToPointerRoot, CurrentTime);
                 XChangeProperty(
                     self.dpy,
@@ -4230,7 +4259,7 @@ impl Dwm {
                         if c.as_ref().unwrap().borrow_mut().isvisible() {
                             break;
                         }
-                        let next = { c.as_ref().unwrap().borrow_mut().snext.clone() };
+                        let next = { c.as_ref().unwrap().borrow_mut().stack_next.clone() };
                         c = next;
                     }
                 }
@@ -4246,7 +4275,7 @@ impl Dwm {
                 ) {
                     self.selmon = c.as_ref().unwrap().borrow_mut().mon.clone();
                 }
-                if c.as_ref().unwrap().borrow_mut().isurgent {
+                if c.as_ref().unwrap().borrow_mut().is_urgent {
                     self.seturgent(c.as_ref().unwrap(), false);
                 }
                 self.detachstack(c.clone());
@@ -4319,7 +4348,7 @@ impl Dwm {
         // assign tags of target monitor.
         let seltags = { m.as_ref().unwrap().borrow().seltags };
         {
-            c.as_ref().unwrap().borrow_mut().tags0 = m.as_ref().unwrap().borrow().tagset[seltags]
+            c.as_ref().unwrap().borrow_mut().tags = m.as_ref().unwrap().borrow().tagset[seltags]
         };
         self.attach(c.clone());
         self.attachstack(c.clone());
@@ -4392,15 +4421,15 @@ impl Dwm {
                 client_mut_borrow.win = w; // 设置窗口 ID
                                            // 从传入的 XWindowAttributes 中获取初始的几何信息和边框宽度
                 client_mut_borrow.x = window_attributes.x;
-                client_mut_borrow.oldx = window_attributes.x;
+                client_mut_borrow.old_x = window_attributes.x;
                 client_mut_borrow.y = window_attributes.y;
-                client_mut_borrow.oldy = window_attributes.y;
+                client_mut_borrow.old_y = window_attributes.y;
                 client_mut_borrow.w = window_attributes.width;
-                client_mut_borrow.oldw = window_attributes.width;
+                client_mut_borrow.old_w = window_attributes.width;
                 client_mut_borrow.h = window_attributes.height;
-                client_mut_borrow.oldh = window_attributes.height;
-                client_mut_borrow.oldbw = window_attributes.border_width;
-                client_mut_borrow.cfact = 1.0; // 将客户端因子初始化为 1.0 (重要!)
+                client_mut_borrow.old_h = window_attributes.height;
+                client_mut_borrow.old_border_w = window_attributes.border_width;
+                client_mut_borrow.client_fact = 1.0; // 将客户端因子初始化为 1.0 (重要!)
 
                 // 获取并设置窗口标题
                 self.updatetitle(&mut client_mut_borrow);
@@ -4412,18 +4441,18 @@ impl Dwm {
             if XGetTransientForHint(self.dpy, w, &mut transient_for_win) > 0 {
                 temp_transient_client_opt = self.wintoclient(transient_for_win);
                 if temp_transient_client_opt.is_some() {
-                    // 如果是瞬态窗口，则它应该继承其主窗口的显示器 (mon) 和标签 (tags0)
+                    // 如果是瞬态窗口，则它应该继承其主窗口的显示器 (mon) 和标签 (tags)
                     let mut client_mut_borrow = client_rc.borrow_mut();
                     let transient_main_client_borrow =
                         temp_transient_client_opt.as_ref().unwrap().borrow();
 
                     client_mut_borrow.mon = transient_main_client_borrow.mon.clone();
-                    client_mut_borrow.tags0 = transient_main_client_borrow.tags0;
+                    client_mut_borrow.tags = transient_main_client_borrow.tags;
                 } else {
                     // 如果不是瞬态窗口，或者其主窗口未被管理
                     // 则将其分配给当前选中的显示器 (self.selmon)
                     client_rc.borrow_mut().mon = self.selmon.clone();
-                    // 并应用 config.rs 中定义的规则 (applyrules 会设置 tags0, isfloating 等)
+                    // 并应用 config.rs 中定义的规则 (applyrules 会设置 tags, is_floating 等)
                     self.applyrules(client_rc);
                 }
             } else {
@@ -4472,8 +4501,8 @@ impl Dwm {
                     client_mut_borrow.y = client_mut_borrow.y.max(mon_wy);
 
                     // --- 5. 设置窗口边框 ---
-                    client_mut_borrow.bw = Config::borderpx as i32; // 从配置中获取边框宽度
-                    window_changes.border_width = client_mut_borrow.bw;
+                    client_mut_borrow.border_w = Config::borderpx as i32; // 从配置中获取边框宽度
+                    window_changes.border_width = client_mut_borrow.border_w;
                     // 应用边框宽度到实际窗口
                     XConfigureWindow(self.dpy, w, CWBorderWidth as u32, &mut window_changes);
                     // 设置边框颜色为“正常”状态的颜色
@@ -4534,7 +4563,7 @@ impl Dwm {
                     // 假设 prop_return 指向一个 [u32; 2] 或类似结构
                     let data_ptr = prop_return as *const u32; // 将其视为 u32 指针
                     let mut client_mut_borrow = client_rc.borrow_mut();
-                    client_mut_borrow.tags0 = *data_ptr.add(0); // 第一个元素是 tags0
+                    client_mut_borrow.tags = *data_ptr.add(0); // 第一个元素是 tags
 
                     let saved_monitor_num = *data_ptr.add(1) as i32; // 第二个元素是 monitor_num
                                                                      // 遍历当前 DWM 的 Monitor 列表，找到匹配的 monitor_num
@@ -4572,16 +4601,17 @@ impl Dwm {
             {
                 // 限制 client_mut_borrow 的作用域
                 let mut client_mut_borrow = client_rc.borrow_mut();
-                if !client_mut_borrow.isfloating {
+                if !client_mut_borrow.is_floating {
                     // 如果根据规则或瞬态提示，窗口不是浮动的
                     // oldstate 用于记录在变为全屏等特殊状态前的浮动状态
-                    // isfixed 表示窗口大小是否固定 (min_size == max_size)
+                    // is_fixed 表示窗口大小是否固定 (min_size == max_size)
                     // trans != 0 表示它是一个瞬态窗口
-                    client_mut_borrow.oldstate =
-                        transient_for_win != 0 || client_mut_borrow.isfixed;
-                    client_mut_borrow.isfloating = client_mut_borrow.oldstate; // 如果是瞬态或固定大小，则初始设为浮动
+                    client_mut_borrow.old_state =
+                        transient_for_win != 0 || client_mut_borrow.is_fixed;
+                    client_mut_borrow.is_floating = client_mut_borrow.old_state;
+                    // 如果是瞬态或固定大小，则初始设为浮动
                 }
-                if client_mut_borrow.isfloating {
+                if client_mut_borrow.is_floating {
                     // 如果最终确定为浮动窗口
                     XRaiseWindow(self.dpy, client_mut_borrow.win); // 将其置于堆叠顺序的顶部
                 }
@@ -4704,7 +4734,7 @@ impl Dwm {
         }; // 从客户端链表头开始
         while let Some(ref c_rc) = c_iter_opt.clone() {
             let c_client_borrow = c_rc.borrow();
-            if c_client_borrow.isvisible() && !c_client_borrow.neverfocus {
+            if c_client_borrow.isvisible() && !c_client_borrow.never_focus {
                 n += 1; // 如果客户端可见且不是 neverfocus，则计数
             }
             c_iter_opt = c_client_borrow.next.clone(); // 移动到下一个客户端
@@ -4757,7 +4787,7 @@ impl Dwm {
         let mut c_resize_iter_opt = self.nexttiled(clients_head_opt_for_resize); // 获取第一个可见平铺客户端
         while let Some(ref c_rc_to_resize) = c_resize_iter_opt.clone() {
             // c_rc_to_resize 是 &Rc<RefCell<Client>>
-            let border_width = c_rc_to_resize.borrow().bw; // 不可变借用获取边框宽度
+            let border_width = c_rc_to_resize.borrow().border_w; // 不可变借用获取边框宽度
 
             // 将客户端调整为占据整个显示器工作区的大小（减去边框和Y轴偏移）
             self.resize(
@@ -4832,7 +4862,7 @@ impl Dwm {
             self.detach(c.clone());
             self.detachstack(c.clone());
             if !destroyed {
-                let oldbw = c.as_ref().unwrap().borrow_mut().oldbw;
+                let oldbw = c.as_ref().unwrap().borrow_mut().old_border_w;
                 let win = c.as_ref().unwrap().borrow_mut().win;
                 wc.border_width = oldbw;
                 // avoid race conditions.
@@ -5052,10 +5082,10 @@ impl Dwm {
                                 if let Some(ref first_mon_rc) = self.mons {
                                     // 确保第一个 monitor 存在
                                     let first_mon_borrow = first_mon_rc.borrow();
-                                    client_mut_borrow.tags0 =
+                                    client_mut_borrow.tags =
                                         first_mon_borrow.tagset[first_mon_borrow.seltags];
                                 } else {
-                                    client_mut_borrow.tags0 = 1; // 回退到默认标签
+                                    client_mut_borrow.tags = 1; // 回退到默认标签
                                 }
                             }
                             // 将客户端附加到第一个 Monitor 的管理列表
@@ -5129,7 +5159,7 @@ impl Dwm {
         }
         if wtype == self.netatom[NET::NetWMWindowTypeDialog as usize] {
             let c = &mut *c.borrow_mut();
-            c.isfloating = true;
+            c.is_floating = true;
         }
     }
 
@@ -5147,16 +5177,16 @@ impl Dwm {
                     (*wmh).flags &= !XUrgencyHint;
                     XSetWMHints(self.dpy, cc.win, wmh);
                 } else {
-                    cc.isurgent = if (*wmh).flags & XUrgencyHint > 0 {
+                    cc.is_urgent = if (*wmh).flags & XUrgencyHint > 0 {
                         true
                     } else {
                         false
                     };
                 }
                 if (*wmh).flags & InputHint > 0 {
-                    cc.neverfocus = (*wmh).input <= 0;
+                    cc.never_focus = (*wmh).input <= 0;
                 } else {
-                    cc.neverfocus = false;
+                    cc.never_focus = false;
                 }
                 XFree(wmh as *mut _);
             }
@@ -5201,9 +5231,9 @@ impl Dwm {
             let mut c_iter_opt = m_borrow.clients.clone();
             while let Some(ref client_rc_iter) = c_iter_opt.clone() {
                 let client_borrow_iter = client_rc_iter.borrow();
-                occupied_tags_mask |= client_borrow_iter.tags0;
-                if client_borrow_iter.isurgent {
-                    urgent_tags_mask |= client_borrow_iter.tags0;
+                occupied_tags_mask |= client_borrow_iter.tags;
+                if client_borrow_iter.is_urgent {
+                    urgent_tags_mask |= client_borrow_iter.tags;
                 }
                 c_iter_opt = client_borrow_iter.next.clone();
             }
@@ -5222,7 +5252,7 @@ impl Dwm {
                     if Rc::ptr_eq(m_rc, global_selmon_rc) {
                         // 当前 monitor 是全局选中的 monitor
                         if let Some(ref selected_client_on_selmon) = global_selmon_rc.borrow().sel {
-                            (selected_client_on_selmon.borrow().tags0 & tag_bit) != 0
+                            (selected_client_on_selmon.borrow().tags & tag_bit) != 0
                         } else {
                             false // 全局选中的 monitor 上没有选中的 client
                         }
