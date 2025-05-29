@@ -396,7 +396,6 @@ pub struct Monitor {
     pub seltags: usize,
     pub sellt: usize,
     pub tagset: [u32; 2],
-    pub topbar0: bool,
     pub clients: Option<Rc<RefCell<Client>>>,
     pub sel: Option<Rc<RefCell<Client>>>,
     pub stack: Option<Rc<RefCell<Client>>>,
@@ -424,7 +423,6 @@ impl Monitor {
             seltags: 0,
             sellt: 0,
             tagset: [0; 2],
-            topbar0: false,
             clients: None,
             sel: None,
             stack: None,
@@ -449,7 +447,7 @@ impl Monitor {
 }
 impl fmt::Display for Monitor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Monitor {{ ltsymbol: {}, mfact0: {}, nmaster0: {}, num: {}, by: {}, mx: {}, my: {}, mw: {}, mh: {}, wx: {}, wy: {}, ww: {}, wh: {}, seltags: {}, sellt: {}, tagset: [{}, {}], topbar0: {},  }}",
+        write!(f, "Monitor {{ ltsymbol: {}, mfact0: {}, nmaster0: {}, num: {}, by: {}, mx: {}, my: {}, mw: {}, mh: {}, wx: {}, wy: {}, ww: {}, wh: {}, seltags: {}, sellt: {}, tagset: [{}, {}], }}",
                self.ltsymbol,
                self.mfact0,
                self.nmaster0,
@@ -467,7 +465,6 @@ impl fmt::Display for Monitor {
                self.sellt,
                self.tagset[0],
                self.tagset[1],
-               self.topbar0,
         )
     }
 }
@@ -1375,13 +1372,12 @@ impl Dwm {
         m.tagset[1] = 1;
         m.mfact0 = Config::mfact;
         m.nmaster0 = Config::nmaster;
-        m.topbar0 = Config::topbar;
         m.lt[0] = Config::layouts[0].clone();
         m.lt[1] = Config::layouts[1 % Config::layouts.len()].clone();
         m.ltsymbol = Config::layouts[0].symbol.to_string();
         info!(
-            "[createmon]: ltsymbol: {:?}, mfact0: {}, nmaster0: {},  topbar0: {}",
-            m.ltsymbol, m.mfact0, m.nmaster0, m.topbar0
+            "[createmon]: ltsymbol: {:?}, mfact0: {}, nmaster0: {}",
+            m.ltsymbol, m.mfact0, m.nmaster0
         );
         m.pertag = Some(Pertag::new());
         let ref_pertag = m.pertag.as_mut().unwrap();
