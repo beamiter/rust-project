@@ -98,11 +98,12 @@ pub struct MyEguiApp {
     // 窗口大小调整状态
     need_resize: bool,
     current_window_height: f32,
+    scale_factor: f32,
 }
 
 impl MyEguiApp {
     pub fn new(
-        _cc: &eframe::CreationContext<'_>,
+        _: &eframe::CreationContext<'_>,
         receiver_msg: mpsc::Receiver<SharedMessage>,
         sender_resize: mpsc::Sender<bool>,
     ) -> Self {
@@ -131,6 +132,7 @@ impl MyEguiApp {
             volume_window,
             need_resize: false,
             current_window_height: DESIRED_HEIGHT,
+            scale_factor: 0.0,
         }
     }
 
@@ -439,28 +441,19 @@ impl MyEguiApp {
     }
 
     // 调整窗口大小
-    fn adjust_window_size(
-        &mut self,
-        ctx: &egui::Context,
-        scale_factor: f32,
-        message: &SharedMessage,
-    ) {
+    fn adjust_window_size(&mut self, ctx: &egui::Context, message: &SharedMessage) {
         // 计算应使用的高度
         let target_height = self.calculate_window_height();
         let screen_rect = ctx.screen_rect();
         let border_w = message.monitor_info.border_w;
         let desired_width = (message.monitor_info.monitor_width - 2 * border_w) as f32;
-        let desired_size = egui::Vec2::new(desired_width / scale_factor, target_height);
+        let desired_size = egui::Vec2::new(desired_width / self.scale_factor, target_height);
 
         // 如果高度发生变化或被标记为需要调整大小
         if self.need_resize
             || (target_height - self.current_window_height).abs() > 2.0
             || (desired_size.x - screen_rect.size().x).abs() > 2.0
         {
-            // let outer_pos = egui::pos2(
-            //     border_w as f32 / scale_factor,
-            //     border_w as f32 / scale_factor,
-            // );
             let outer_pos = egui::Pos2::ZERO;
             // 调整窗口大小
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(outer_pos));
@@ -592,7 +585,7 @@ impl MyEguiApp {
 
                         let line = Line::new(PlotPoints::from(line_points.clone()))
                             .color(color)
-                            .width(1.0);
+                            .width(1.0 / self.scale_factor);
 
                         plot_ui.line(line);
                     }
@@ -606,7 +599,7 @@ impl MyEguiApp {
 
                     let point = egui_plot::Points::new(PlotPoints::from(vec![[x, y]]))
                         .color(color)
-                        .radius(2.0)
+                        .radius(2.0 / self.scale_factor)
                         .shape(egui_plot::MarkerShape::Circle);
 
                     plot_ui.points(point);
@@ -637,6 +630,7 @@ impl MyEguiApp {
 
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
+        self.scale_factor = ctx.pixels_per_point();
         // 处理消息
         if self.need_resize {
             let _output = Command::new("xsetroot")
@@ -669,11 +663,10 @@ impl eframe::App for MyEguiApp {
             self.need_resize = true;
         }
 
-        let scale_factor = ctx.pixels_per_point();
         // 处理窗口大小调整
         if let Some(ref message) = self.message.clone() {
             // 调整窗口大小，考虑音量控制窗口的状态
-            self.adjust_window_size(ctx, scale_factor, message);
+            self.adjust_window_size(ctx, message);
         }
 
         // 主UI面板
@@ -737,7 +730,10 @@ impl eframe::App for MyEguiApp {
                     }
 
                     // 截图按钮
-                    if ui.small_button(format!("ⓢ {:.2}", scale_factor)).clicked() {
+                    if ui
+                        .small_button(format!("ⓢ {:.2}", self.scale_factor))
+                        .clicked()
+                    {
                         let _ = Command::new("flameshot").arg("gui").spawn();
                     }
 

@@ -918,9 +918,9 @@ impl Dwm {
         unsafe {
             self.view(&mut a);
             {
-                let mut selmon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-                let idx = selmon_mut.sel_lt;
-                selmon_mut.lt[idx] = Rc::new(foo);
+                let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
+                let idx = sel_mon_mut.sel_lt;
+                sel_mon_mut.lt[idx] = Rc::new(foo);
             }
             let mut m = self.mons.clone();
             while let Some(ref m_opt) = m {
@@ -1177,11 +1177,11 @@ impl Dwm {
         }
     }
 
-    pub fn seturgent(&mut self, c: &Rc<RefCell<Client>>, urg: bool) {
+    pub fn seturgent(&mut self, c_rc: &Rc<RefCell<Client>>, urg: bool) {
         // info!("[seturgent]");
         unsafe {
-            c.borrow_mut().is_urgent = urg;
-            let win = c.borrow_mut().win;
+            c_rc.borrow_mut().is_urgent = urg;
+            let win = c_rc.borrow().win;
             let wmh = XGetWMHints(self.dpy, win);
             if wmh.is_null() {
                 return;
@@ -1274,9 +1274,9 @@ impl Dwm {
             let c = self.wintoclient(ev.window);
             if let Some(ref client_opt) = c {
                 let layout_type = {
-                    let selmon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                    let sellt = selmon_mut.sel_lt;
-                    selmon_mut.lt[sellt].layout_type.clone()
+                    let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                    let sellt = sel_mon_mut.sel_lt;
+                    sel_mon_mut.lt[sellt].layout_type.clone()
                 };
                 let mut c_mut = client_opt.borrow_mut();
                 let is_floating = c_mut.is_floating;
@@ -1692,9 +1692,9 @@ impl Dwm {
             XSync(self.dpy, False);
             let mut i: u64 = 0;
             while self.running.load(Ordering::SeqCst) && XNextEvent(self.dpy, &mut ev) <= 0 {
-                if ev.type_ == PropertyNotify {
-                    info!("running frame: {}, handler type: {}", i, ev.type_);
-                }
+                // if ev.type_ == PropertyNotify {
+                //     info!("running frame: {}, handler type: {}", i, ev.type_);
+                // }
                 i = i.wrapping_add(1);
                 self.handler(ev.type_, &mut ev);
             }
@@ -2166,7 +2166,10 @@ impl Dwm {
     pub fn client_y_offset(&self, m: &Monitor) -> i32 {
         let num = m.num;
         if let Some(bar_shape) = self.egui_bar_shape.get(&num) {
-            return bar_shape.height + Config::egui_bar_pad + bar_shape.y;
+            return bar_shape.height
+                + Config::egui_bar_pad
+                + bar_shape.y
+                + Config::border_px as i32;
         }
         return 0;
     }
@@ -2244,8 +2247,7 @@ impl Dwm {
 
         let client_y_offset = {
             // 获取 Y 轴偏移（考虑状态栏）
-            let m_borrow = m_rc.borrow();
-            self.client_y_offset(&m_borrow)
+            self.client_y_offset(&m_rc.borrow())
         };
 
         let mut c_iter = {
@@ -2404,7 +2406,6 @@ impl Dwm {
             if name == Config::egui_bar_name {
                 sel_opt.borrow_mut().tags = target_tag;
                 self.setclienttagprop(&sel_opt);
-                // self.focus(None); // (TODO): CHECK
                 self.arrange(self.sel_mon.clone());
                 break;
             }
@@ -2479,9 +2480,9 @@ impl Dwm {
         // info!("[focusstack]");
         unsafe {
             {
-                let selmon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                if selmon_mut.sel.is_none()
-                    || (selmon_mut.sel.as_ref().unwrap().borrow_mut().is_fullscreen
+                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                if sel_mon_mut.sel.is_none()
+                    || (sel_mon_mut.sel.as_ref().unwrap().borrow_mut().is_fullscreen
                         && Config::lock_fullscreen)
                 {
                     return;
@@ -2514,8 +2515,8 @@ impl Dwm {
                 }
                 if c.is_none() {
                     c = {
-                        let selmon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                        selmon_mut.clients.clone()
+                        let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                        sel_mon_mut.clients.clone()
                     };
                     while let Some(ref client_opt) = c {
                         if !client_opt.borrow_mut().never_focus
@@ -2530,8 +2531,8 @@ impl Dwm {
             } else {
                 if let Some(ref selmon_opt) = self.sel_mon {
                     let (mut cl, sel) = {
-                        let selmon_mut = selmon_opt.borrow_mut();
-                        (selmon_mut.clients.clone(), selmon_mut.sel.clone())
+                        let sel_mon_mut = selmon_opt.borrow_mut();
+                        (sel_mon_mut.clients.clone(), sel_mon_mut.sel.clone())
                     };
                     while !Self::are_equal_rc(&cl, &sel) {
                         if let Some(ref cl_opt) = cl {
@@ -2564,12 +2565,12 @@ impl Dwm {
         // info!("[incnmaster]");
         unsafe {
             if let Arg::I(i) = *arg {
-                let mut selmon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-                let curtag = selmon_mut.pertag.as_ref().unwrap().cur_tag;
-                selmon_mut.pertag.as_mut().unwrap().n_masters[curtag] =
-                    0.max(selmon_mut.n_master as i32 + i) as u32;
+                let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
+                let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                sel_mon_mut.pertag.as_mut().unwrap().n_masters[curtag] =
+                    0.max(sel_mon_mut.n_master as i32 + i) as u32;
 
-                selmon_mut.n_master = selmon_mut.pertag.as_ref().unwrap().n_masters[curtag];
+                sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[curtag];
             }
             self.arrange(self.sel_mon.clone());
         }
@@ -2586,8 +2587,8 @@ impl Dwm {
                 return;
             }
             let lt_layout_type = {
-                let selmon_mut = self.sel_mon.as_ref().unwrap().borrow();
-                selmon_mut.lt[selmon_mut.sel_lt].layout_type.clone()
+                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
+                sel_mon_mut.lt[sel_mon_mut.sel_lt].layout_type.clone()
             };
             if lt_layout_type.is_none() {
                 return;
@@ -2753,25 +2754,25 @@ impl Dwm {
         // info!("[setmfact]");
         unsafe {
             let lt_layout_type = {
-                let selmon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                selmon_mut.lt[selmon_mut.sel_lt].layout_type.clone()
+                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                sel_mon_mut.lt[sel_mon_mut.sel_lt].layout_type.clone()
             };
             if arg.is_null() || lt_layout_type.is_none() {
                 return;
             }
             if let Arg::F(f) = *arg {
-                let mut selmon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
+                let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
                 let f = if f < 1.0 {
-                    f + selmon_mut.m_fact
+                    f + sel_mon_mut.m_fact
                 } else {
                     f - 1.0
                 };
                 if f < 0.05 || f > 0.95 {
                     return;
                 }
-                let curtag = selmon_mut.pertag.as_ref().unwrap().cur_tag;
-                selmon_mut.pertag.as_mut().unwrap().m_facts[curtag] = f;
-                selmon_mut.m_fact = selmon_mut.pertag.as_mut().unwrap().m_facts[curtag];
+                let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                sel_mon_mut.pertag.as_mut().unwrap().m_facts[curtag] = f;
+                sel_mon_mut.m_fact = sel_mon_mut.pertag.as_mut().unwrap().m_facts[curtag];
             }
             self.arrange(self.sel_mon.clone());
         }
@@ -2782,33 +2783,33 @@ impl Dwm {
         unsafe {
             let sel;
             {
-                let mut selmon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                let sellt = selmon_mut.sel_lt;
+                let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                let sellt = sel_mon_mut.sel_lt;
                 if arg.is_null()
                     || !if let Arg::Lt(ref lt) = *arg {
-                        Rc::ptr_eq(lt, &selmon_mut.lt[sellt])
+                        Rc::ptr_eq(lt, &sel_mon_mut.lt[sellt])
                     } else {
                         false
                     }
                 {
-                    let curtag = selmon_mut.pertag.as_ref().unwrap().cur_tag;
-                    selmon_mut.pertag.as_mut().unwrap().sel_lts[curtag] ^= 1;
-                    selmon_mut.sel_lt = selmon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
+                    let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                    sel_mon_mut.pertag.as_mut().unwrap().sel_lts[curtag] ^= 1;
+                    sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
                 }
                 if !arg.is_null() {
                     if let Arg::Lt(ref lt) = *arg {
-                        let sellt = selmon_mut.sel_lt;
-                        let curtag = selmon_mut.pertag.as_ref().unwrap().cur_tag;
-                        selmon_mut.pertag.as_mut().unwrap().lt_idxs[curtag][sellt] =
+                        let sellt = sel_mon_mut.sel_lt;
+                        let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                        sel_mon_mut.pertag.as_mut().unwrap().lt_idxs[curtag][sellt] =
                             Some(lt.clone());
-                        selmon_mut.lt[sellt] = selmon_mut.pertag.as_mut().unwrap().lt_idxs[curtag]
-                            [sellt]
+                        sel_mon_mut.lt[sellt] = sel_mon_mut.pertag.as_mut().unwrap().lt_idxs
+                            [curtag][sellt]
                             .clone()
                             .expect("None unwrap");
                     }
                 }
-                selmon_mut.lt_symbol = selmon_mut.lt[selmon_mut.sel_lt].symbol.to_string();
-                sel = selmon_mut.sel.clone();
+                sel_mon_mut.lt_symbol = sel_mon_mut.lt[sel_mon_mut.sel_lt].symbol.to_string();
+                sel = sel_mon_mut.sel.clone();
             }
             if sel.is_some() {
                 self.arrange(self.sel_mon.clone());
@@ -2824,16 +2825,16 @@ impl Dwm {
         let sel_c;
         let nexttiled_c;
         {
-            let selmon_mut = self.sel_mon.as_ref().unwrap().borrow();
-            c = selmon_mut.sel.clone();
-            let sellt = selmon_mut.sel_lt;
-            if selmon_mut.lt[sellt].layout_type.is_none()
+            let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
+            c = sel_mon_mut.sel.clone();
+            let sellt = sel_mon_mut.sel_lt;
+            if sel_mon_mut.lt[sellt].layout_type.is_none()
                 || c.is_none()
                 || c.as_ref().unwrap().borrow().is_floating
             {
                 return;
             }
-            sel_c = selmon_mut.clients.clone();
+            sel_c = sel_mon_mut.clients.clone();
         }
         {
             nexttiled_c = self.nexttiled(sel_c);
@@ -2851,65 +2852,71 @@ impl Dwm {
     pub fn view(&mut self, arg: *const Arg) {
         // info!("[view]");
         unsafe {
-            if let Arg::Ui(ui) = *arg {
-                let target_tag = ui & Config::tagmask;
-                let mut selmon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                info!("[view] ui: {ui}, {target_tag}, {:?}", selmon_mut.tag_set);
-                if target_tag == selmon_mut.tag_set[selmon_mut.sel_tags] {
+            let ui = if let Arg::Ui(val) = *arg {
+                val
+            } else {
+                return;
+            };
+            let target_tag = ui & Config::tagmask;
+            let curtag;
+            {
+                let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                info!("[view] ui: {ui}, {target_tag}, {:?}", sel_mon_mut.tag_set);
+                if target_tag == sel_mon_mut.tag_set[sel_mon_mut.sel_tags] {
                     return;
                 }
                 // toggle sel tagset.
-                info!("[view] seltags: {}", selmon_mut.sel_tags);
-                selmon_mut.sel_tags ^= 1;
-                info!("[view] seltags: {}", selmon_mut.sel_tags);
+                info!("[view] seltags: {}", sel_mon_mut.sel_tags);
+                sel_mon_mut.sel_tags ^= 1;
+                info!("[view] seltags: {}", sel_mon_mut.sel_tags);
                 if target_tag > 0 {
-                    let seltags = selmon_mut.sel_tags;
-                    selmon_mut.tag_set[seltags] = target_tag;
-                    if let Some(pertag) = selmon_mut.pertag.as_mut() {
+                    let seltags = sel_mon_mut.sel_tags;
+                    sel_mon_mut.tag_set[seltags] = target_tag;
+                    if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
                         pertag.prev_tag = pertag.cur_tag;
                     }
                     if ui == !0 {
-                        selmon_mut.pertag.as_mut().unwrap().cur_tag = 0;
+                        sel_mon_mut.pertag.as_mut().unwrap().cur_tag = 0;
                     } else {
                         // cool
                         let i = ui.trailing_zeros() as usize;
-                        selmon_mut.pertag.as_mut().unwrap().cur_tag = i + 1;
+                        sel_mon_mut.pertag.as_mut().unwrap().cur_tag = i + 1;
                     }
                 } else {
-                    if let Some(pertag) = selmon_mut.pertag.as_mut() {
+                    if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
                         std::mem::swap(&mut pertag.prev_tag, &mut pertag.cur_tag);
                     }
                 }
-                if let Some(pertag) = selmon_mut.pertag.as_mut() {
+                if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
                     info!(
                         "[view] prevtag: {}, curtag: {}",
                         pertag.prev_tag, pertag.cur_tag
                     );
                 }
-            } else {
-                return;
+                curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
             }
-            let sel;
-            let curtag;
+            let sel_opt;
             {
-                let mut selmon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-                curtag = selmon_mut.pertag.as_ref().unwrap().cur_tag;
-                selmon_mut.n_master = selmon_mut.pertag.as_ref().unwrap().n_masters[curtag];
-                selmon_mut.m_fact = selmon_mut.pertag.as_ref().unwrap().m_facts[curtag];
-                selmon_mut.sel_lt = selmon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
-                let sellt = selmon_mut.sel_lt;
-                selmon_mut.lt[sellt] = selmon_mut.pertag.as_ref().unwrap().lt_idxs[curtag][sellt]
+                let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
+                sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[curtag];
+                sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[curtag];
+                sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
+                let sellt = sel_mon_mut.sel_lt;
+                sel_mon_mut.lt[sellt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[curtag][sellt]
                     .clone()
                     .expect("None unwrap");
-                selmon_mut.lt[sellt ^ 1] = selmon_mut.pertag.as_ref().unwrap().lt_idxs[curtag]
+                sel_mon_mut.lt[sellt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[curtag]
                     [sellt ^ 1]
                     .clone()
                     .expect("None unwrap");
-                sel = selmon_mut.pertag.as_ref().unwrap().sel[curtag].clone()
+                sel_opt = sel_mon_mut.pertag.as_ref().unwrap().sel[curtag].clone();
+                if sel_opt.is_some() {
+                    info!("[view] sel_opt: {}", sel_opt.as_ref().unwrap().borrow());
+                }
             };
             // for egui bar
             self.tag_egui_bar(curtag as u32);
-            self.focus(sel);
+            self.focus(sel_opt);
             self.arrange(self.sel_mon.clone());
         }
     }
@@ -2924,26 +2931,26 @@ impl Dwm {
                 let seltags;
                 let newtagset;
                 {
-                    let selmon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                    seltags = selmon_mut.sel_tags;
-                    newtagset = selmon_mut.tag_set[seltags] ^ (ui & Config::tagmask);
+                    let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                    seltags = sel_mon_mut.sel_tags;
+                    newtagset = sel_mon_mut.tag_set[seltags] ^ (ui & Config::tagmask);
                 }
                 if newtagset > 0 {
                     {
                         let mut selmon_clone = self.sel_mon.clone();
-                        let mut selmon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
-                        selmon_mut.tag_set[seltags] = newtagset;
+                        let mut sel_mon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
+                        sel_mon_mut.tag_set[seltags] = newtagset;
 
                         if newtagset == !0 {
-                            selmon_mut.pertag.as_mut().unwrap().prev_tag =
-                                selmon_mut.pertag.as_ref().unwrap().cur_tag;
-                            selmon_mut.pertag.as_mut().unwrap().cur_tag = 0;
+                            sel_mon_mut.pertag.as_mut().unwrap().prev_tag =
+                                sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                            sel_mon_mut.pertag.as_mut().unwrap().cur_tag = 0;
                         }
 
                         // test if the user did not select the same tag
-                        let curtag = selmon_mut.pertag.as_ref().unwrap().cur_tag;
+                        let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
                         if newtagset & 1 << (curtag - 1) <= 0 {
-                            selmon_mut.pertag.as_mut().unwrap().prev_tag = curtag;
+                            sel_mon_mut.pertag.as_mut().unwrap().prev_tag = curtag;
                             let mut i = 0;
                             loop {
                                 let condition = newtagset & 1 << i;
@@ -2952,20 +2959,21 @@ impl Dwm {
                                 }
                                 i += 1;
                             }
-                            selmon_mut.pertag.as_mut().unwrap().cur_tag = i + 1;
+                            sel_mon_mut.pertag.as_mut().unwrap().cur_tag = i + 1;
                         }
 
                         // apply settings for this view
-                        let curtag = selmon_mut.pertag.as_ref().unwrap().cur_tag;
-                        selmon_mut.n_master = selmon_mut.pertag.as_ref().unwrap().n_masters[curtag];
-                        selmon_mut.m_fact = selmon_mut.pertag.as_ref().unwrap().m_facts[curtag];
-                        selmon_mut.sel_lt = selmon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
-                        let sellt = selmon_mut.sel_lt;
-                        selmon_mut.lt[sellt] = selmon_mut.pertag.as_ref().unwrap().lt_idxs[curtag]
-                            [sellt]
+                        let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                        sel_mon_mut.n_master =
+                            sel_mon_mut.pertag.as_ref().unwrap().n_masters[curtag];
+                        sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[curtag];
+                        sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
+                        let sellt = sel_mon_mut.sel_lt;
+                        sel_mon_mut.lt[sellt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs
+                            [curtag][sellt]
                             .clone()
                             .expect("None unwrap");
-                        selmon_mut.lt[sellt ^ 1] = selmon_mut.pertag.as_ref().unwrap().lt_idxs
+                        sel_mon_mut.lt[sellt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs
                             [curtag][sellt ^ 1]
                             .clone()
                             .expect("None unwrap");
@@ -4246,50 +4254,53 @@ impl Dwm {
         }
     }
 
-    pub fn focus(&mut self, mut c: Option<Rc<RefCell<Client>>>) {
+    pub fn focus(&mut self, mut c_opt: Option<Rc<RefCell<Client>>>) {
         info!("[focus]");
         unsafe {
             {
-                let isvisible = { c.is_some() && c.as_ref().unwrap().borrow_mut().isvisible() };
+                let (isvisible, _) = match c_opt.clone() {
+                    Some(c_rc) => (c_rc.borrow().isvisible(), c_rc.borrow().never_focus),
+                    _ => (false, false),
+                };
                 if !isvisible {
                     if let Some(ref sel_mon_opt) = self.sel_mon {
-                        c = sel_mon_opt.borrow_mut().stack.clone();
+                        c_opt = sel_mon_opt.borrow_mut().stack.clone();
                     }
-                    while c.is_some() {
-                        if c.as_ref().unwrap().borrow_mut().isvisible() {
+                    while let Some(c_rc) = c_opt.clone() {
+                        let next = c_rc.borrow().stack_next.clone();
+                        if c_rc.borrow().isvisible() {
                             break;
                         }
-                        let next = { c.as_ref().unwrap().borrow_mut().stack_next.clone() };
-                        c = next;
+                        c_opt = next;
                     }
                 }
                 let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-                if sel.is_some() && !Self::are_equal_rc(&sel, &c) {
+                if sel.is_some() && !Self::are_equal_rc(&sel, &c_opt) {
                     self.unfocus(sel.clone(), false);
                 }
             }
-            if c.is_some() {
+            if let Some(c_rc) = c_opt.clone() {
                 if !Rc::ptr_eq(
-                    c.as_ref().unwrap().borrow_mut().mon.as_ref().unwrap(),
+                    c_rc.borrow().mon.as_ref().unwrap(),
                     self.sel_mon.as_ref().unwrap(),
                 ) {
-                    self.sel_mon = c.as_ref().unwrap().borrow_mut().mon.clone();
+                    self.sel_mon = c_rc.borrow().mon.clone();
                 }
-                if c.as_ref().unwrap().borrow_mut().is_urgent {
-                    self.seturgent(c.as_ref().unwrap(), false);
+                if c_rc.borrow().is_urgent {
+                    self.seturgent(&c_rc, false);
                 }
-                self.detachstack(c.clone());
-                self.attachstack(c.clone());
-                self.grabbuttons(c.clone(), true);
+                self.detachstack(Some(c_rc.clone()));
+                self.attachstack(Some(c_rc.clone()));
+                self.grabbuttons(Some(c_rc.clone()), true);
                 XSetWindowBorder(
                     self.dpy,
-                    c.as_ref().unwrap().borrow_mut().win,
+                    c_rc.borrow().win,
                     self.scheme[SCHEME::SchemeSel as usize][2]
                         .as_ref()
                         .unwrap()
                         .pixel,
                 );
-                self.setfocus(c.as_ref().unwrap());
+                self.setfocus(&c_rc);
             } else {
                 XSetInputFocus(self.dpy, self.root, RevertToPointerRoot, CurrentTime);
                 XDeleteProperty(
@@ -4299,10 +4310,10 @@ impl Dwm {
                 );
             }
             {
-                let mut selmon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-                selmon_mut.sel = c.clone();
-                let curtag = selmon_mut.pertag.as_ref().unwrap().cur_tag;
-                selmon_mut.pertag.as_mut().unwrap().sel[curtag] = c.clone();
+                let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
+                sel_mon_mut.sel = c_opt.clone();
+                let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                sel_mon_mut.pertag.as_mut().unwrap().sel[curtag] = c_opt.clone();
             }
             self.drawbars();
         }
@@ -4752,23 +4763,6 @@ impl Dwm {
         // 如果 n == 0，ltsymbol 保持不变 (或者可以设为默认的 monocle 符号)
 
         // --- 3. 将所有可见且非浮动的客户端调整为占据整个工作区大小 ---
-        // 获取 Y 轴偏移量 (考虑状态栏)
-        // 注意：client_y_offset 需要一个 &Monitor，而不是 &mut Monitor。
-        //       如果 m_borrow 还是可变借用，这里会出问题。
-        //       所以，在获取 client_y_offset 前，应该先 drop(m_borrow) 或重新不可变借用。
-        //       或者，client_y_offset 签名改为接收 &Rc<RefCell<Monitor>> 然后内部借用。
-        //       我们先假设 m_borrow 的可变借用在获取 client_y_offset 前已结束。
-        //       实际上，因为 m_borrow 的生命周期覆盖了整个函数，这里会是问题。
-        //       需要调整：
-        //       drop(m_borrow); // 结束之前的可变借用
-        //       let m_read_borrow = m_rc.borrow(); // 重新不可变借用
-        //       let client_y_offset = self.client_y_offset(&m_read_borrow);
-        //       let wx = m_read_borrow.wx; ...
-        //       drop(m_read_borrow);
-        //       ...然后重新可变借用 m_rc.borrow_mut() 如果需要修改 m。
-        //       或者将 m_borrow 的可变借用推迟到确实需要修改 ltsymbol 的时候。
-
-        // 更正后的借用管理：
         let (wx, wy, ww, wh, clients_head_opt_for_resize) = {
             let m_read_borrow = m_rc.borrow(); // 先进行只读操作
             (
@@ -4781,12 +4775,8 @@ impl Dwm {
         };
         let client_y_offset = self.client_y_offset(&m_rc.borrow()); // client_y_offset 应该只需要 &Monitor
 
-        // 再次获取可变借用以修改 ltsymbol (如果在上面步骤2之后做)
-        // m_borrow.ltsymbol = ... (如果 ltsymbol 的修改在这里)
-
         let mut c_resize_iter_opt = self.nexttiled(clients_head_opt_for_resize); // 获取第一个可见平铺客户端
         while let Some(ref c_rc_to_resize) = c_resize_iter_opt.clone() {
-            // c_rc_to_resize 是 &Rc<RefCell<Client>>
             let border_width = c_rc_to_resize.borrow().border_w; // 不可变借用获取边框宽度
 
             // 将客户端调整为占据整个显示器工作区的大小（减去边框和Y轴偏移）
@@ -4795,16 +4785,12 @@ impl Dwm {
                 wx,
                 wy + client_y_offset,
                 ww - 2 * border_width,
-                wh - 2 * border_width - client_y_offset, // 同样，client_y_offset 是否应从 h 中减去取决于 wh 的定义
-                false,                                   // 非交互式调整
+                wh - 2 * border_width - client_y_offset,
+                false,
             );
-            // 如果 wh 已经是减去 bar 后的高度，则不应再减 client_y_offset
-            // 假设 wh 是可用客户端区域高度，则 client_y_offset 只影响 y 坐标。
 
             c_resize_iter_opt = self.nexttiled(c_rc_to_resize.borrow().next.clone());
-            // 获取下一个
         }
-        // m_borrow (如果之前是可变借用且未drop) 在函数结束时被 drop
     }
 
     pub fn motionnotify(&mut self, e: *mut XEvent) {
@@ -5024,10 +5010,6 @@ impl Dwm {
                         mon_mut_borrow.w_w = xinerama_screen.width as i32;
                         mon_mut_borrow.m_h = xinerama_screen.height as i32;
                         mon_mut_borrow.w_h = xinerama_screen.height as i32;
-                        // updatebarpos(m) 在 dwm.c 中会在这里调用，用于计算状态栏位置和调整 ww, wh
-                        // 在你的 Rust 版本中，这部分逻辑可能在 arrange 或 drawbar 中处理，
-                        // 或者依赖 egui_bar 自己定位。
-                        // 你有 client_y_offset 函数，它动态获取 bar 的影响。
                     }
                     m_iter = mon_rc.borrow().next.clone(); // 移动到下一个 Monitor
                 }
@@ -5173,10 +5155,10 @@ impl Dwm {
         unsafe {
             let mut cc = c.borrow_mut();
             let wmh = XGetWMHints(self.dpy, cc.win);
-            let selmon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+            let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
             if !wmh.is_null() {
-                if selmon_mut.sel.is_some()
-                    && Rc::ptr_eq(c, selmon_mut.sel.as_ref().unwrap())
+                if sel_mon_mut.sel.is_some()
+                    && Rc::ptr_eq(c, sel_mon_mut.sel.as_ref().unwrap())
                     && ((*wmh).flags & XUrgencyHint) > 0
                 {
                     (*wmh).flags &= !XUrgencyHint;

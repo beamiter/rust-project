@@ -31,7 +31,7 @@ impl Config {
     pub const egui_bar_0: &str = "egui_bar_0";
     pub const egui_bar_1: &str = "egui_bar_1";
     pub const broken: &str = "broken";
-    pub const egui_bar_pad: i32 = 1;
+    pub const egui_bar_pad: i32 = 2;
     pub const dmenu_font: &str = "SauceCodePro Nerd Font Regular 11";
     pub const col_gray1: &str = "#222222";
     pub const col_gray2: &str = "#444444";
