@@ -16,14 +16,14 @@ fn main() {
     println!("cargo:rustc-link-lib=Xft");
     println!("cargo:rustc-link-lib=Xrender");
     // Use pkg_config to find and link the Pango library.
-    match pkg_config::find_library("pango") {
-        Ok(_) => {}
-        Err(e) => panic!("Couldn't find pango library: {:?}", e),
-    }
-    match pkg_config::find_library("pangoxft") {
-        Ok(_) => {}
-        Err(e) => panic!("Couldn't find pango library: {:?}", e),
-    }
+    // match pkg_config::find_library("pango") {
+    //     Ok(_) => {}
+    //     Err(e) => panic!("Couldn't find pango library: {:?}", e),
+    // }
+    // match pkg_config::find_library("pangoxft") {
+    //     Ok(_) => {}
+    //     Err(e) => panic!("Couldn't find pango library: {:?}", e),
+    // }
     return;
 
     // For dynamic linking with shared libraries, you can add "=dylib":
