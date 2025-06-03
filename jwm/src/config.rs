@@ -93,7 +93,7 @@ impl Config {
                 Config::egui_bar_0,
                 Config::egui_bar_0,
                 Config::egui_bar_name,
-                0,
+                Self::tagmask as usize, // 设置为全标签掩码
                 true,
                 0,
             ),
@@ -101,7 +101,7 @@ impl Config {
                 Config::egui_bar_1,
                 Config::egui_bar_1,
                 Config::egui_bar_name,
-                0,
+                Self::tagmask as usize, // 设置为全标签掩码
                 true,
                 1,
             ),

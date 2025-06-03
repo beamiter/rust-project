@@ -454,7 +454,7 @@ impl Monitor {
 }
 impl fmt::Display for Monitor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Monitor {{ ltsymbol: {}, mfact0: {}, nmaster0: {}, num: {}, mx: {}, my: {}, mw: {}, mh: {}, wx: {}, wy: {}, ww: {}, wh: {}, seltags: {}, sellt: {}, tagset: [{}, {}], }}",
+        write!(f, "Monitor {{ ltsymbol: {}, m_fact: {}, n_master: {}, num: {}, m_x: {}, m_y: {}, m_w: {}, m_h: {}, wx: {}, w_y: {}, w_w: {}, w_h: {}, sel_tags: {}, sel_lt: {}, tag_set: [{}, {}], }}",
                self.lt_symbol,
                self.m_fact,
                self.n_master,
@@ -657,7 +657,6 @@ impl Dwm {
             // rule matching
             let mut c = c.borrow_mut();
             c.is_floating = false;
-            c.tags = 0;
             let mut ch: XClassHint = zeroed();
             XGetClassHint(self.dpy, c.win, &mut ch);
             c.class = if !ch.res_class.is_null() {
@@ -673,10 +672,6 @@ impl Dwm {
                 Config::broken.to_string()
             };
 
-            info!(
-                "[applyrules] class: {}, instance: {}, name: {}",
-                c.class, c.instance, c.name
-            );
             for r in &*Config::rules {
                 if r.name.is_empty() && r.class.is_empty() && r.instance.is_empty() {
                     continue;
@@ -714,9 +709,13 @@ impl Dwm {
             c.tags = if condition > 0 {
                 condition
             } else {
-                let seltags = { c.mon.as_ref().unwrap().borrow_mut().sel_tags };
-                c.mon.as_ref().unwrap().borrow_mut().tag_set[seltags]
-            }
+                let sel_tags = c.mon.as_ref().unwrap().borrow().sel_tags;
+                c.mon.as_ref().unwrap().borrow().tag_set[sel_tags]
+            };
+            info!(
+                "[applyrules] class: {}, instance: {}, name: {}, tags: {}",
+                c.class, c.instance, c.name, c.tags
+            );
         }
     }
 
@@ -1379,10 +1378,6 @@ impl Dwm {
         m.lt[0] = Config::layouts[0].clone();
         m.lt[1] = Config::layouts[1 % Config::layouts.len()].clone();
         m.lt_symbol = Config::layouts[0].symbol.to_string();
-        info!(
-            "[createmon]: ltsymbol: {:?}, mfact0: {}, nmaster0: {}",
-            m.lt_symbol, m.m_fact, m.n_master
-        );
         m.pertag = Some(Pertag::new());
         let ref_pertag = m.pertag.as_mut().unwrap();
         ref_pertag.cur_tag = 1;
@@ -1397,7 +1392,7 @@ impl Dwm {
             ref_pertag.lt_idxs[i][1] = Some(default_layout_1.clone());
             ref_pertag.sel_lts[i] = m.sel_lt;
         }
-
+        info!("[createmon]: {}", m);
         return m;
     }
 
@@ -2399,31 +2394,6 @@ impl Dwm {
         }
     }
 
-    pub fn tag_egui_bar(&mut self, curtag: u32) {
-        let mut sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-        let target_tag = if curtag == 0 {
-            !curtag
-        } else {
-            1 << (curtag - 1)
-        } & Config::tagmask;
-        if sel.is_none() || target_tag <= 0 {
-            return;
-        }
-        // Find egui_bar client.
-        while let Some(ref sel_opt) = sel {
-            let name = { sel_opt.borrow_mut().name.clone() };
-            if name == Config::egui_bar_name {
-                sel_opt.borrow_mut().tags = target_tag;
-                self.setclienttagprop(&sel_opt);
-                self.arrange(self.sel_mon.clone());
-                break;
-            }
-
-            let next = sel_opt.borrow_mut().next.clone();
-            sel = next;
-        }
-    }
-
     pub fn tag(&mut self, arg: *const Arg) {
         // info!("[tag]");
         unsafe {
@@ -2923,8 +2893,6 @@ impl Dwm {
                     info!("[view] sel_opt: {}", sel_opt.as_ref().unwrap().borrow());
                 }
             };
-            // for egui bar
-            self.tag_egui_bar(curtag as u32);
             self.focus(sel_opt);
             self.arrange(self.sel_mon.clone());
         }
@@ -5217,7 +5185,7 @@ impl Dwm {
 
         {
             let m_borrow = m_rc.borrow();
-            // ... (填充 monitor_info_for_message 的基本信息和计算 occupied_tags_mask, urgent_tags_mask 不变) ...
+            info!("[update_bar_message_for_monitor], {}", m_borrow);
             monitor_info_for_message.monitor_x = m_borrow.w_x;
             monitor_info_for_message.monitor_y = m_borrow.w_y;
             monitor_info_for_message.monitor_width = m_borrow.w_w;
@@ -5229,7 +5197,9 @@ impl Dwm {
             let mut c_iter_opt = m_borrow.clients.clone();
             while let Some(ref client_rc_iter) = c_iter_opt.clone() {
                 let client_borrow_iter = client_rc_iter.borrow();
-                occupied_tags_mask |= client_borrow_iter.tags;
+                if !client_borrow_iter.is_egui_bar() {
+                    occupied_tags_mask |= client_borrow_iter.tags;
+                }
                 if client_borrow_iter.is_urgent {
                     urgent_tags_mask |= client_borrow_iter.tags;
                 }
@@ -5243,14 +5213,12 @@ impl Dwm {
             // is_filled_tag 的正确计算方式 (与你之前版本类似，但确保变量名一致和借用正确)
             let is_filled_tag_calculated: bool; // 声明变量
             {
-                // 检查当前处理的 monitor (m_rc) 是否是 DWM 全局选中的 monitor (self.selmon)
-                // 并且，如果 DWM 有选中的 monitor，再检查该 monitor 上是否有选中的 client
-                // 最后，检查这个选中的 client 是否占据了当前的 tag_bit
                 is_filled_tag_calculated = if let Some(ref global_selmon_rc) = self.sel_mon {
                     if Rc::ptr_eq(m_rc, global_selmon_rc) {
                         // 当前 monitor 是全局选中的 monitor
                         if let Some(ref selected_client_on_selmon) = global_selmon_rc.borrow().sel {
-                            (selected_client_on_selmon.borrow().tags & tag_bit) != 0
+                            !selected_client_on_selmon.borrow().is_egui_bar()
+                                && (selected_client_on_selmon.borrow().tags & tag_bit) != 0
                         } else {
                             false // 全局选中的 monitor 上没有选中的 client
                         }
@@ -5272,7 +5240,7 @@ impl Dwm {
             let tag_status = TagStatus::new(
                 is_selected_tag,
                 is_urgent_tag,
-                is_filled_tag_calculated, // <--- 使用这里计算好的值
+                is_filled_tag_calculated,
                 is_occupied_tag,
             );
             monitor_info_for_message.tag_status_vec.push(tag_status);
