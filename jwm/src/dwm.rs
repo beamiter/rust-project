@@ -361,6 +361,7 @@ impl Client {
             win: 0,
         }
     }
+
     pub fn isvisible(&self) -> bool {
         // info!("[ISVISIBLE]");
         let mon_rc = match self.mon {
@@ -370,11 +371,19 @@ impl Client {
         let mon_borrow = mon_rc.borrow();
         (self.tags & mon_borrow.tag_set[mon_borrow.sel_tags]) > 0
     }
+
     pub fn width(&self) -> i32 {
         self.w + 2 * self.border_w
     }
+
     pub fn height(&self) -> i32 {
         self.h + 2 * self.border_w
+    }
+
+    pub fn is_egui_bar(&self) -> bool {
+        return self.name == Config::egui_bar_name
+            && ((self.class == Config::egui_bar_0 && self.instance == Config::egui_bar_0)
+                || (self.class == Config::egui_bar_1 && self.instance == Config::egui_bar_1));
     }
 }
 
@@ -2507,10 +2516,10 @@ impl Dwm {
                         .clone()
                 };
                 while let Some(ref client_opt) = c {
-                    if !client_opt.borrow_mut().never_focus && client_opt.borrow_mut().isvisible() {
+                    if !client_opt.borrow().never_focus && client_opt.borrow().isvisible() {
                         break;
                     }
-                    let next = client_opt.borrow_mut().next.clone();
+                    let next = client_opt.borrow().next.clone();
                     c = next;
                 }
                 if c.is_none() {
@@ -3229,19 +3238,23 @@ impl Dwm {
         }
     }
 
-    pub fn nexttiled(&mut self, mut c: Option<Rc<RefCell<Client>>>) -> Option<Rc<RefCell<Client>>> {
+    pub fn nexttiled(
+        &mut self,
+        mut client_rc_opt: Option<Rc<RefCell<Client>>>,
+    ) -> Option<Rc<RefCell<Client>>> {
         // info!("[nexttiled]");
-        while let Some(ref client_opt) = c {
-            let is_floating = client_opt.borrow().is_floating;
-            let isvisible = client_opt.borrow().isvisible();
+        while let Some(ref client_rc) = client_rc_opt.clone() {
+            let client_borrow = client_rc.borrow();
+            let is_floating = client_borrow.is_floating;
+            let isvisible = client_borrow.isvisible();
             if is_floating || !isvisible {
-                let next = client_opt.borrow().next.clone();
-                c = next;
+                let next = client_borrow.next.clone();
+                client_rc_opt = next;
             } else {
                 break;
             }
         }
-        return c;
+        return client_rc_opt;
     }
 
     pub fn pop(&mut self, c: Option<Rc<RefCell<Client>>>) {
@@ -4098,13 +4111,7 @@ impl Dwm {
 
     pub fn sendevent(&mut self, client_mut: &mut Client, proto: Atom) -> bool {
         info!("[sendevent] {}", client_mut);
-        if client_mut.name == Config::egui_bar_name
-            && ((client_mut.class == Config::egui_bar_0
-                && client_mut.instance == Config::egui_bar_0)
-                || (client_mut.class == Config::egui_bar_1
-                    && client_mut.instance == Config::egui_bar_1))
-        {
-            client_mut.never_focus = true;
+        if client_mut.is_egui_bar() {
             if let Some(mon) = &client_mut.mon {
                 let num = mon.borrow().num;
                 let bar_shape = BarShape {
@@ -4261,7 +4268,7 @@ impl Dwm {
         unsafe {
             {
                 let (isvisible, _) = match c_opt.clone() {
-                    Some(c_rc) => (c_rc.borrow().isvisible(), c_rc.borrow().never_focus),
+                    Some(c_rc) => (c_rc.borrow().isvisible(), c_rc.borrow().is_egui_bar()),
                     _ => (false, false),
                 };
                 if !isvisible {
@@ -4269,10 +4276,11 @@ impl Dwm {
                         c_opt = sel_mon_opt.borrow_mut().stack.clone();
                     }
                     while let Some(c_rc) = c_opt.clone() {
-                        let next = c_rc.borrow().stack_next.clone();
-                        if c_rc.borrow().isvisible() {
+                        let c_borrow = c_rc.borrow();
+                        if c_borrow.isvisible() {
                             break;
                         }
+                        let next = c_rc.borrow().stack_next.clone();
                         c_opt = next;
                     }
                 }
@@ -4472,6 +4480,13 @@ impl Dwm {
                 // 如果没有 WM_TRANSIENT_FOR 提示，同样分配给当前选中显示器并应用规则
                 client_rc.borrow_mut().mon = self.sel_mon.clone();
                 self.applyrules(client_rc);
+            }
+            // 在应用规则之后，立即检查并设置 never_focus
+            {
+                let mut client_mut = client_rc.borrow_mut();
+                if client_mut.is_egui_bar() {
+                    client_mut.never_focus = true;
+                }
             }
 
             // --- 4. 调整窗口初始位置，确保其在所属显示器的工作区内 ---
