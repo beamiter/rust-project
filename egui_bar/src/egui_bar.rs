@@ -1,7 +1,7 @@
 use eframe::egui;
 use egui::{Align, Color32, Layout};
 use egui_plot::{Line, Plot, PlotPoints};
-// use log::info;
+use log::info;
 use shared_structures::SharedMessage;
 use std::{f64::consts::PI, process::Command, sync::mpsc, time::Instant};
 use sysinfo::System;
@@ -446,6 +446,7 @@ impl MyEguiApp {
         let target_height = self.calculate_window_height();
         let screen_rect = ctx.screen_rect();
         let border_w = message.monitor_info.border_w;
+        let border_w = 0;
         let desired_width = (message.monitor_info.monitor_width - 2 * border_w) as f32;
         let desired_size = egui::Vec2::new(desired_width / self.scale_factor, target_height);
 
@@ -454,6 +455,15 @@ impl MyEguiApp {
             || (target_height - self.current_window_height).abs() > 2.0
             || (desired_size.x - screen_rect.size().x).abs() > 2.0
         {
+            info!(
+                "target_height: {}, current_window_height: {}",
+                target_height, self.current_window_height
+            );
+            info!(
+                "desired_size.x: {}, screen_rect.size().x: {}",
+                desired_size.x,
+                screen_rect.size().x
+            );
             let outer_pos = egui::Pos2::ZERO;
             // 调整窗口大小
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(outer_pos));
@@ -637,7 +647,7 @@ impl eframe::App for MyEguiApp {
                 .arg("-name")
                 .arg("revoke by egui_bar")
                 .output();
-            // info!("try to revoke");
+            info!("try to revoke");
         }
         let prev_message = self.message.clone();
         while let Ok(message) = self.receiver_msg.try_recv() {
