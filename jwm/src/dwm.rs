@@ -24,6 +24,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::{os::raw::c_long, usize};
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
+use x11::xlib::XConfigureRequestEvent;
 use x11::xlib::XFreeStringList;
 use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
 use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
@@ -579,6 +580,10 @@ pub struct Dwm {
     pub egui_bar_child: HashMap<i32, Child>,
     pub egui_bar_shape: HashMap<i32, BarShape>,
     pub message: SharedMessage,
+
+    // 状态栏专用管理
+    pub statusbar_clients: HashMap<i32, Rc<RefCell<Client>>>, // monitor_id -> statusbar_client
+    pub statusbar_windows: HashMap<Window, i32>,              // window_id -> monitor_id (快速查找)
 }
 
 impl Dwm {
@@ -630,6 +635,8 @@ impl Dwm {
             egui_bar_child: HashMap::new(),
             egui_bar_shape: HashMap::new(),
             message: SharedMessage::default(),
+            statusbar_clients: HashMap::new(),
+            statusbar_windows: HashMap::new(),
         }
     }
 
@@ -920,6 +927,12 @@ impl Dwm {
     pub fn cleanup(&mut self) {
         // info!("[cleanup]");
         // Bitwise or to get max value.
+        // 清理状态栏
+        let statusbar_monitor_ids: Vec<i32> = self.statusbar_clients.keys().cloned().collect();
+        for monitor_id in statusbar_monitor_ids {
+            self.unmanage_statusbar(monitor_id, false);
+        }
+        // 常规清理逻辑
         drop(self.sender.clone());
         let mut a: Arg = Arg::Ui(!0);
         let foo: Layout = Layout::new("", None);
@@ -1055,7 +1068,7 @@ impl Dwm {
         }
     }
 
-    pub fn configure(&mut self, c: &mut Client) {
+    pub fn configure(&self, c: &mut Client) {
         // info!("[configure]");
         unsafe {
             let mut ce: XConfigureEvent = zeroed();
@@ -1276,87 +1289,23 @@ impl Dwm {
     }
 
     pub fn configurerequest(&mut self, e: *mut XEvent) {
-        // info!("[configurerequest]");
         unsafe {
             let ev = (*e).configure_request;
             let c = self.wintoclient(ev.window);
-            if let Some(ref client_opt) = c {
-                let layout_type = {
-                    let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                    let sellt = sel_mon_mut.sel_lt;
-                    sel_mon_mut.lt[sellt].layout_type.clone()
-                };
-                let mut c_mut = client_opt.borrow_mut();
-                let is_floating = c_mut.is_floating;
-                if ev.value_mask & CWBorderWidth as u64 > 0 {
-                    c_mut.border_w = ev.border_width;
-                } else if is_floating || layout_type.is_none() {
-                    let mx;
-                    let my;
-                    let mw;
-                    let mh;
-                    {
-                        let m = c_mut.mon.as_ref().unwrap().borrow_mut();
-                        mx = m.m_x;
-                        my = m.m_y;
-                        mw = m.m_w;
-                        mh = m.m_h;
-                    }
-                    {
-                        if ev.value_mask & CWX as u64 > 0 {
-                            c_mut.old_x = c_mut.x;
-                            c_mut.x = mx + ev.x;
-                        }
-                        if ev.value_mask & CWY as u64 > 0 {
-                            c_mut.old_y = c_mut.y;
-                            c_mut.y = my + ev.y;
-                        }
-                        if ev.value_mask & CWWidth as u64 > 0 {
-                            c_mut.old_w = c_mut.w;
-                            c_mut.w = ev.width;
-                        }
-                        if ev.value_mask & CWHeight as u64 > 0 {
-                            c_mut.old_h = c_mut.h;
-                            c_mut.h = ev.height;
-                        }
-                        if (c_mut.x + c_mut.w) > mx + mw && c_mut.is_floating {
-                            // center in x direction
-                            if c_mut.name == Config::egui_bar_name {
-                                println!("[configurerequest] egui bar x: {}", c_mut.x);
-                                // c_mut.x = 0;
-                            } else {
-                                c_mut.x = mx + (mw / 2 - c_mut.width() / 2);
-                            }
-                        }
-                        if (c_mut.y + c_mut.h) > my + mh && c_mut.is_floating {
-                            // center in y direction
-                            c_mut.y = my + (mh / 2 - c_mut.height() / 2);
-                        }
-                    }
-                    if (ev.value_mask & (CWX | CWY) as u64) > 0
-                        && (ev.value_mask & (CWWidth | CWHeight) as u64) <= 0
-                    {
-                        self.configure(&mut c_mut);
-                    }
-                    let isvisible = c_mut.isvisible();
-                    if isvisible {
-                        XMoveResizeWindow(
-                            self.dpy,
-                            c_mut.win,
-                            c_mut.x,
-                            c_mut.y,
-                            c_mut.w as u32,
-                            c_mut.h as u32,
-                        );
-                    }
+
+            if let Some(ref client_rc) = c {
+                // 检查是否是状态栏
+                if let Some(&monitor_id) = self.statusbar_windows.get(&ev.window) {
+                    self.handle_statusbar_configure_request(monitor_id, &ev);
                 } else {
-                    self.configure(&mut c_mut);
+                    // 常规客户端的配置请求处理
+                    self.handle_regular_configure_request(&client_rc, &ev);
                 }
             } else {
-                let mut wc: XWindowChanges = zeroed();
+                // 未管理的窗口
+                let mut wc: XWindowChanges = std::mem::zeroed();
                 wc.x = ev.x;
                 wc.y = ev.y;
-                // println!("line: {}, {}", line!(), wc.y);
                 wc.width = ev.width;
                 wc.height = ev.height;
                 wc.border_width = ev.border_width;
@@ -1365,6 +1314,124 @@ impl Dwm {
                 XConfigureWindow(self.dpy, ev.window, ev.value_mask as u32, &mut wc);
             }
             XSync(self.dpy, False);
+        }
+    }
+
+    fn handle_statusbar_configure_request(&mut self, monitor_id: i32, ev: &XConfigureRequestEvent) {
+        // 首先获取所需的数据，避免长时间借用
+        let (old_height, new_height, needs_workarea_update) = {
+            if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
+                let mut statusbar_mut = statusbar.borrow_mut();
+
+                let old_height = statusbar_mut.h;
+                let mut new_height = old_height;
+                let mut needs_update = false;
+
+                // 状态栏只允许改变高度，位置和宽度由 DWM 控制
+                if ev.value_mask & CWHeight as u64 > 0 {
+                    new_height = ev.height;
+                    statusbar_mut.h = new_height;
+                    needs_update = old_height != new_height;
+                }
+
+                // 发送配置通知
+                self.configure(&mut statusbar_mut);
+
+                (old_height, new_height, needs_update)
+            } else {
+                return; // 状态栏不存在
+            }
+        }; // statusbar_mut 在这里被释放
+
+        // 现在可以安全地调用其他需要 &mut self 的方法
+        if needs_workarea_update {
+            self.update_monitor_workarea(monitor_id);
+            if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+                self.arrange(Some(monitor));
+            }
+        }
+
+        // 更新状态栏形状信息
+        if let Some(shape) = self.egui_bar_shape.get_mut(&monitor_id) {
+            shape.height = new_height;
+        }
+
+        info!(
+            "[handle_statusbar_configure_request] Updated statusbar height from {} to {}",
+            old_height, new_height
+        );
+    }
+
+    fn handle_regular_configure_request(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+        ev: &XConfigureRequestEvent,
+    ) {
+        unsafe {
+            let layout_type = {
+                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
+                let sellt = sel_mon_mut.sel_lt;
+                sel_mon_mut.lt[sellt].layout_type.clone()
+            };
+
+            let mut client_mut = client_rc.borrow_mut();
+            let is_floating = client_mut.is_floating;
+
+            if ev.value_mask & CWBorderWidth as u64 > 0 {
+                client_mut.border_w = ev.border_width;
+            } else if is_floating || layout_type.is_none() {
+                // 浮动窗口或无布局时，允许自由调整
+                let (mx, my, mw, mh) = {
+                    let m = client_mut.mon.as_ref().unwrap().borrow();
+                    (m.m_x, m.m_y, m.m_w, m.m_h)
+                };
+
+                if ev.value_mask & CWX as u64 > 0 {
+                    client_mut.old_x = client_mut.x;
+                    client_mut.x = mx + ev.x;
+                }
+                if ev.value_mask & CWY as u64 > 0 {
+                    client_mut.old_y = client_mut.y;
+                    client_mut.y = my + ev.y;
+                }
+                if ev.value_mask & CWWidth as u64 > 0 {
+                    client_mut.old_w = client_mut.w;
+                    client_mut.w = ev.width;
+                }
+                if ev.value_mask & CWHeight as u64 > 0 {
+                    client_mut.old_h = client_mut.h;
+                    client_mut.h = ev.height;
+                }
+
+                // 确保窗口不超出显示器边界
+                if (client_mut.x + client_mut.w) > mx + mw && client_mut.is_floating {
+                    client_mut.x = mx + (mw / 2 - client_mut.width() / 2);
+                }
+                if (client_mut.y + client_mut.h) > my + mh && client_mut.is_floating {
+                    client_mut.y = my + (mh / 2 - client_mut.height() / 2);
+                }
+
+                if (ev.value_mask & (CWX | CWY) as u64) > 0
+                    && (ev.value_mask & (CWWidth | CWHeight) as u64) <= 0
+                {
+                    self.configure(&mut client_mut);
+                }
+
+                let isvisible = client_mut.isvisible();
+                if isvisible {
+                    XMoveResizeWindow(
+                        self.dpy,
+                        client_mut.win,
+                        client_mut.x,
+                        client_mut.y,
+                        client_mut.w as u32,
+                        client_mut.h as u32,
+                    );
+                }
+            } else {
+                // 平铺布局中的窗口，只允许有限的配置更改
+                self.configure(&mut client_mut);
+            }
         }
     }
 
@@ -1935,7 +2002,12 @@ impl Dwm {
     }
 
     pub fn wintoclient(&mut self, w: Window) -> Option<Rc<RefCell<Client>>> {
-        // info!("[wintoclient]");
+        // 首先检查是否是状态栏窗口
+        if let Some(&monitor_id) = self.statusbar_windows.get(&w) {
+            return self.statusbar_clients.get(&monitor_id).cloned();
+        }
+
+        // 然后检查常规客户端
         let mut m = self.mons.clone();
         while let Some(ref m_opt) = m {
             let mut c = { m_opt.borrow().clients.clone() };
@@ -2136,46 +2208,15 @@ impl Dwm {
         }
     }
 
-    pub fn updateclientlist(&mut self) {
-        // info!("[updateclientlist]");
-        unsafe {
-            XDeleteProperty(
-                self.dpy,
-                self.root,
-                self.net_atom[NET::NetClientList as usize],
-            );
-            let mut m = self.mons.clone();
-            while let Some(ref m_opt) = m {
-                let mut c = m_opt.borrow_mut().clients.clone();
-                while let Some(ref client_opt) = c {
-                    XChangeProperty(
-                        self.dpy,
-                        self.root,
-                        self.net_atom[NET::NetClientList as usize],
-                        XA_WINDOW,
-                        32,
-                        PropModeAppend,
-                        &mut client_opt.borrow_mut().win as *const u64 as *const _,
-                        1,
-                    );
-                    let next = client_opt.borrow_mut().next.clone();
-                    c = next;
-                }
-                let next = m_opt.borrow_mut().next.clone();
-                m = next;
-            }
-        }
-    }
-
     pub fn client_y_offset(&self, m: &Monitor) -> i32 {
-        let num = m.num;
-        if let Some(bar_shape) = self.egui_bar_shape.get(&num) {
-            return bar_shape.height
-                + Config::egui_bar_pad
-                + bar_shape.y
-                + Config::border_px as i32;
+        let monitor_id = m.num;
+        // 直接从状态栏客户端获取高度信息
+        if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
+            let statusbar_borrow = statusbar.borrow();
+            return statusbar_borrow.h + Config::egui_bar_pad;
         }
-        return 0;
+        // 如果没有状态栏，返回 0
+        0
     }
 
     pub fn tile(&mut self, m_rc: &Rc<RefCell<Monitor>>) {
@@ -3932,12 +3973,15 @@ impl Dwm {
     }
 
     pub fn setclienttagprop(&mut self, c: &Rc<RefCell<Client>>) {
-        let c_mut = c.borrow();
-        let data: [u32; 2] = [c_mut.tags, c_mut.mon.as_ref().unwrap().borrow().num as u32];
+        let client_mut = c.borrow();
+        let data: [u32; 2] = [
+            client_mut.tags,
+            client_mut.mon.as_ref().unwrap().borrow().num as u32,
+        ];
         unsafe {
             XChangeProperty(
                 self.dpy,
-                c_mut.win,
+                client_mut.win,
                 self.net_atom[NET::NetClientInfo as usize],
                 XA_CARDINAL,
                 32,
@@ -4163,6 +4207,21 @@ impl Dwm {
                 return;
             }
 
+            // 检查是否进入状态栏
+            if let Some(&monitor_id) = self.statusbar_windows.get(&ev.window) {
+                // 状态栏不改变焦点，但可能需要切换显示器
+                if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+                    if !Rc::ptr_eq(&monitor, self.sel_mon.as_ref().unwrap()) {
+                        let sel = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
+                        self.unfocus(sel, true);
+                        self.sel_mon = Some(monitor);
+                        self.focus(None);
+                    }
+                }
+                return;
+            }
+            // 常规的 enternotify 处理
+
             // 2. 确定事件相关的客户端 (c) 和显示器 (m)
             let client_rc_opt = self.wintoclient(ev.window); // 尝试将事件窗口 ID 转换为 DWM 管理的 Client
             let monitor_rc_opt = if let Some(ref c_rc) = client_rc_opt {
@@ -4205,17 +4264,9 @@ impl Dwm {
             if !is_on_selected_monitor // 如果切换了显示器
            || client_rc_opt.is_none() // 或者鼠标进入了根窗口 (没有具体客户端)
            || !Self::are_equal_rc(&client_rc_opt, &self.sel_mon.as_ref().unwrap().borrow().sel)
-            // 或者进入的客户端与当前选中不同
             {
-                // 如果进入了新的显示器，或者进入了根窗口（此时 client_rc_opt 为 None），
-                // 或者进入了当前显示器上一个非选中的客户端，
-                // 则调用 self.focus(client_rc_opt) 来设置焦点。
-                // - 如果 client_rc_opt 是 Some(c)，则焦点设为 c。
-                // - 如果 client_rc_opt 是 None (进入根窗口)，self.focus(None) 会让 DWM
-                //   在该显示器上选择一个默认的窗口来聚焦（或无焦点）。
                 self.focus(client_rc_opt);
             }
-            // 如果鼠标进入的是当前显示器上已选中的客户端，则此函数不执行焦点更改。
         }
     }
 
@@ -4235,6 +4286,13 @@ impl Dwm {
         info!("[focus]");
         unsafe {
             {
+                // 如果传入的是状态栏客户端，忽略并寻找合适的替代
+                if let Some(ref c) = c_opt {
+                    if self.statusbar_windows.contains_key(&c.borrow().win) {
+                        c_opt = None; // 忽略状态栏
+                    }
+                }
+
                 let (isvisible, _) = match c_opt.clone() {
                     Some(c_rc) => (c_rc.borrow().isvisible(), c_rc.borrow().is_egui_bar()),
                     _ => (false, false),
@@ -4393,297 +4451,449 @@ impl Dwm {
         // 使用 Rc<RefCell<Client>> 来包装 Client，以便在 DWM 的各个部分共享和修改它。
         let client_rc_opt: Option<Rc<RefCell<Client>>> = Some(Rc::new(RefCell::new(Client::new())));
         let client_rc = client_rc_opt.as_ref().unwrap(); // &Rc<RefCell<Client>>
-                                                         // .unwrap() 在这里是安全的，因为我们刚创建了 Some
-
-        let mut transient_for_win: Window = 0; // 用于存储 WM_TRANSIENT_FOR 指向的窗口 ID
-        let temp_transient_client_opt: Option<Rc<RefCell<Client>>>; // 用于临时存储瞬态主窗口的 Client 对象
-
         unsafe {
             // unsafe 块，因为操作裸指针 wa_ptr 和大量 Xlib 调用
             let window_attributes = &*wa_ptr; // 将裸指针转换为引用，方便访问
-            let mut window_changes: XWindowChanges = zeroed(); // 用于 XConfigureWindow
-
-            // --- 2. 初始化 Client 结构体的基本属性 ---
+                                              // --- 2. 初始化 Client 结构体的基本属性 ---
             {
-                // 限制 client_mut_borrow 的作用域
-                let mut client_mut_borrow = client_rc.borrow_mut(); // 可变借用新创建的 Client
-                client_mut_borrow.win = w; // 设置窗口 ID
-                                           // 从传入的 XWindowAttributes 中获取初始的几何信息和边框宽度
-                client_mut_borrow.x = window_attributes.x;
-                client_mut_borrow.old_x = window_attributes.x;
-                client_mut_borrow.y = window_attributes.y;
-                client_mut_borrow.old_y = window_attributes.y;
-                client_mut_borrow.w = window_attributes.width;
-                client_mut_borrow.old_w = window_attributes.width;
-                client_mut_borrow.h = window_attributes.height;
-                client_mut_borrow.old_h = window_attributes.height;
-                client_mut_borrow.old_border_w = window_attributes.border_width;
-                client_mut_borrow.client_fact = 1.0; // 将客户端因子初始化为 1.0 (重要!)
+                // 限制 client_mut 的作用域
+                let mut client_mut = client_rc.borrow_mut(); // 可变借用新创建的 Client
+                client_mut.win = w; // 设置窗口 ID
+                                    // 从传入的 XWindowAttributes 中获取初始的几何信息和边框宽度
+                client_mut.x = window_attributes.x;
+                client_mut.old_x = window_attributes.x;
+                client_mut.y = window_attributes.y;
+                client_mut.old_y = window_attributes.y;
+                client_mut.w = window_attributes.width;
+                client_mut.old_w = window_attributes.width;
+                client_mut.h = window_attributes.height;
+                client_mut.old_h = window_attributes.height;
+                client_mut.old_border_w = window_attributes.border_width;
+                client_mut.client_fact = 1.0; // 将客户端因子初始化为 1.0 (重要!)
 
                 // 获取并设置窗口标题
-                self.updatetitle(&mut client_mut_borrow);
-            } // client_mut_borrow 在这里被 drop
+                self.updatetitle(&mut client_mut);
+                self.update_class_info(&mut client_mut);
 
-            // --- 3. 处理 WM_TRANSIENT_FOR 提示 (用于对话框等瞬态窗口) ---
-            // 如果窗口 w 是另一个窗口 (transient_for_win) 的瞬态窗口 (例如对话框)，
-            // 并且那个主窗口 (transient_for_win) 也是一个被 DWM 管理的客户端 (temp_transient_client_opt)
-            if XGetTransientForHint(self.dpy, w, &mut transient_for_win) > 0 {
-                temp_transient_client_opt = self.wintoclient(transient_for_win);
-                if temp_transient_client_opt.is_some() {
-                    // 如果是瞬态窗口，则它应该继承其主窗口的显示器 (mon) 和标签 (tags)
-                    let mut client_mut_borrow = client_rc.borrow_mut();
-                    let transient_main_client_borrow =
-                        temp_transient_client_opt.as_ref().unwrap().borrow();
-
-                    client_mut_borrow.mon = transient_main_client_borrow.mon.clone();
-                    client_mut_borrow.tags = transient_main_client_borrow.tags;
-                } else {
-                    // 如果不是瞬态窗口，或者其主窗口未被管理
-                    // 则将其分配给当前选中的显示器 (self.selmon)
-                    client_rc.borrow_mut().mon = self.sel_mon.clone();
-                    // 并应用 config.rs 中定义的规则 (applyrules 会设置 tags, is_floating 等)
-                    self.applyrules(client_rc);
+                if client_mut.is_egui_bar() {
+                    info!("[manage] Detected egui_bar, managing as statusbar");
+                    self.manage_statusbar(client_rc, wa_ptr);
+                    return; // 直接返回，不执行常规管理流程
                 }
-            } else {
-                // 如果没有 WM_TRANSIENT_FOR 提示，同样分配给当前选中显示器并应用规则
-                client_rc.borrow_mut().mon = self.sel_mon.clone();
-                self.applyrules(client_rc);
             }
-            // 在应用规则之后，立即检查并设置 never_focus
+
+            // 常规客户端管理流程
+            self.manage_regular_client(client_rc, wa_ptr);
+        }
+    }
+
+    fn setup_client_window(&mut self, client_rc: &Rc<RefCell<Client>>) {
+        unsafe {
+            let mut window_changes: XWindowChanges = std::mem::zeroed();
+            let win = client_rc.borrow().win;
+
+            // 设置边框
             {
                 let mut client_mut = client_rc.borrow_mut();
-                if client_mut.is_egui_bar() {
-                    client_mut.never_focus = true;
-                }
+                client_mut.border_w = Config::border_px as i32;
+                window_changes.border_width = client_mut.border_w;
             }
 
-            // --- 4. 调整窗口初始位置，确保其在所属显示器的工作区内 ---
-            let (client_total_width, client_mon_rc_opt) = {
-                // 获取窗口总宽度和其所属 Monitor
-                let client_borrow = client_rc.borrow();
-                (client_borrow.width(), client_borrow.mon.clone())
-            };
+            // 应用边框宽度到实际窗口
+            XConfigureWindow(self.dpy, win, CWBorderWidth as u32, &mut window_changes);
 
-            if let Some(ref client_mon_rc) = client_mon_rc_opt {
-                // 确保客户端已分配给一个 Monitor
-                let (mon_wx, mon_wy, mon_ww, mon_wh) = {
-                    // 获取该 Monitor 的工作区属性
-                    let client_mon_borrow = client_mon_rc.borrow();
-                    (
-                        client_mon_borrow.w_x,
-                        client_mon_borrow.w_y,
-                        client_mon_borrow.w_w,
-                        client_mon_borrow.w_h,
-                    )
-                };
-
-                {
-                    // 限制 client_mut_borrow 的作用域
-                    let mut client_mut_borrow = client_rc.borrow_mut();
-                    // 确保窗口的右边界不超过显示器工作区的右边界
-                    if client_mut_borrow.x + client_total_width > mon_wx + mon_ww {
-                        client_mut_borrow.x = mon_wx + mon_ww - client_total_width;
-                    }
-                    // 确保窗口的下边界不超过显示器工作区的下边界
-                    let client_total_height = client_mut_borrow.height(); // Client 的方法
-                    if client_mut_borrow.y + client_total_height > mon_wy + mon_wh {
-                        client_mut_borrow.y = mon_wy + mon_wh - client_total_height;
-                    }
-                    // 确保窗口的左边界不小于显示器工作区的左边界
-                    client_mut_borrow.x = client_mut_borrow.x.max(mon_wx);
-                    // 确保窗口的上边界不小于显示器工作区的上边界
-                    client_mut_borrow.y = client_mut_borrow.y.max(mon_wy);
-
-                    // --- 5. 设置窗口边框 ---
-                    client_mut_borrow.border_w = Config::border_px as i32; // 从配置中获取边框宽度
-                    window_changes.border_width = client_mut_borrow.border_w;
-                    // 应用边框宽度到实际窗口
-                    XConfigureWindow(self.dpy, w, CWBorderWidth as u32, &mut window_changes);
-                    // 设置边框颜色为“正常”状态的颜色
-                    XSetWindowBorder(
-                        self.dpy,
-                        w,
-                        self.scheme[SCHEME::SchemeNorm as usize][2] // scheme[SchemeNorm][ColBorder]
-                            .as_ref()
-                            .unwrap()
-                            .pixel, // .unwrap() 可能 panic
-                    );
-
-                    // --- 6. 发送 ConfigureNotify 事件给客户端 ---
-                    // 告知客户端其新的配置 (位置、大小、边框等)
-                    self.configure(&mut client_mut_borrow);
-                } // client_mut_borrow 在这里被 drop
-            } else {
-                // 如果客户端没有分配到 Monitor (理论上不应发生，因为前面已分配)
-                error!("[manage] Client {} has no monitor assigned!", w);
-                // 可能需要一些错误处理或默认行为
-            }
-
-            // --- 7. 更新窗口的各种 X11 提示信息 ---
-            self.updatewindowtype(client_rc); // 处理 _NET_WM_WINDOW_TYPE
-            self.updatesizehints(client_rc); // 处理 WM_NORMAL_HINTS
-            self.updatewmhints(client_rc); // 处理 WM_HINTS (如紧急状态)
-
-            // --- 8. (可选) 尝试从 _NET_CLIENT_INFO 恢复标签和显示器信息 ---
-            // 这部分逻辑用于在 DWM 重启时，尝试恢复之前由 DWM 自己设置的客户端状态。
-            // 对于新窗口，这个属性通常不存在。
-            {
-                // 限制作用域
-                let mut format_return: i32 = 0;
-                let mut nitems_return: u64 = 0;
-                let mut bytes_after_return: u64 = 0;
-                let mut actual_type_return: Atom = 0;
-                let mut prop_return: *mut u8 = null_mut(); // 指向属性数据的指针
-
-                if XGetWindowProperty(
+            // 设置边框颜色为"正常"状态的颜色
+            XSetWindowBorder(
                 self.dpy,
-                client_rc.borrow().win, // 要查询的窗口
-                self.net_atom[NET::NetClientInfo as usize], // 自定义的属性 Atom
-                0, // offset
-                2, // length (期望读取两个 32位整数，即 2 * 4 bytes = 8 bytes，或者 2 longs)
-                   // 如果是两个 u32，长度应为 2 * (32/8) = 8 bytes，但 XGetWindowProperty 的 length 是以 32-bit words 计（如果type是CARDINAL）
-                   // 这里传 2 表示读取两个 32-bit (format=32) 的元素。
-                False, // delete property after reading?
-                XA_CARDINAL, // expected_type
-                &mut actual_type_return,
-                &mut format_return,
-                &mut nitems_return,
-                &mut bytes_after_return,
-                &mut prop_return,
-            ) == Success as i32 // 如果成功获取属性
-                && nitems_return == 2
-                // 并且确实返回了两个元素
-                {
-                    // 假设 prop_return 指向一个 [u32; 2] 或类似结构
-                    let data_ptr = prop_return as *const u32; // 将其视为 u32 指针
-                    let mut client_mut_borrow = client_rc.borrow_mut();
-                    client_mut_borrow.tags = *data_ptr.add(0); // 第一个元素是 tags
-
-                    let saved_monitor_num = *data_ptr.add(1) as i32; // 第二个元素是 monitor_num
-                                                                     // 遍历当前 DWM 的 Monitor 列表，找到匹配的 monitor_num
-                    let mut m_iter = self.mons.clone();
-                    while let Some(ref m_rc) = m_iter.clone() {
-                        if m_rc.borrow().num == saved_monitor_num {
-                            client_mut_borrow.mon = Some(m_rc.clone()); // 找到了，更新客户端的 mon
-                            break;
-                        }
-                        m_iter = m_rc.borrow().next.clone();
-                    }
-                }
-                if !prop_return.is_null() {
-                    // 释放 XGetWindowProperty 分配的内存
-                    XFree(prop_return as *mut _);
-                }
-                // 无论是否从属性中恢复，都调用 setclienttagprop 来确保 X server 上的属性是最新的
-                self.setclienttagprop(client_rc);
-            }
-
-            // --- 9. 为窗口选择要监听的事件 ---
-            XSelectInput(
-                self.dpy,
-                w, // 客户端窗口
-                EnterWindowMask        // 鼠标进入
-            | FocusChangeMask      // 焦点变化
-            | PropertyChangeMask   // 属性变化
-            | StructureNotifyMask, // 窗口结构变化 (如被销毁)
+                win,
+                self.scheme[SCHEME::SchemeNorm as usize][2]
+                    .as_ref()
+                    .unwrap()
+                    .pixel,
             );
 
-            // --- 10. 为窗口抓取鼠标按钮事件 ---
-            self.grabbuttons(client_rc_opt.clone(), false); // false 表示窗口初始不是焦点
-
-            // --- 11. 设置初始的浮动状态 ---
+            // 发送 ConfigureNotify 事件给客户端
             {
-                // 限制 client_mut_borrow 的作用域
-                let mut client_mut_borrow = client_rc.borrow_mut();
-                if !client_mut_borrow.is_floating {
-                    // 如果根据规则或瞬态提示，窗口不是浮动的
-                    // oldstate 用于记录在变为全屏等特殊状态前的浮动状态
-                    // is_fixed 表示窗口大小是否固定 (min_size == max_size)
-                    // trans != 0 表示它是一个瞬态窗口
-                    client_mut_borrow.old_state =
-                        transient_for_win != 0 || client_mut_borrow.is_fixed;
-                    client_mut_borrow.is_floating = client_mut_borrow.old_state;
-                    // 如果是瞬态或固定大小，则初始设为浮动
-                }
-                if client_mut_borrow.is_floating {
-                    // 如果最终确定为浮动窗口
-                    XRaiseWindow(self.dpy, client_mut_borrow.win); // 将其置于堆叠顺序的顶部
-                }
+                let mut client_mut = client_rc.borrow_mut();
+                self.configure(&mut client_mut);
             }
 
-            // --- 12. 将客户端添加到 DWM 的管理链表中 ---
-            self.attach(client_rc_opt.clone()); // 添加到 clients 链表 (影响布局顺序)
-            self.attachstack(client_rc_opt.clone()); // 添加到 stack 链表 (影响视觉堆叠顺序)
-
-            // --- 13. 更新 EWMH _NET_CLIENT_LIST ---
-            // (将新窗口添加到根窗口的客户端列表属性中)
+            // 设置窗口在屏幕外的临时位置（避免闪烁）
             {
-                // 限制借用作用域
-                let client_borrow = client_rc.borrow(); // 不可变借用
-                XChangeProperty(
-                    self.dpy,
-                    self.root,
-                    self.net_atom[NET::NetClientList as usize],
-                    XA_WINDOW,
-                    32,
-                    PropModeAppend, // 追加到列表末尾
-                    // &mut client_borrow.win as *const u64 as *const _, // 这里用 borrow()，不需要 mut
-                    // 并且 Window 类型通常是 u64 (或其别名)，直接传递其地址
-                    &client_borrow.win as *const Window as *const _,
-                    1,
-                );
-
-                // 将窗口暂时移到屏幕外 (例如，当前屏幕宽度的两倍之外)
-                // 这是一种常见的技巧，用于在窗口最终定位和映射前避免闪烁或显示不完整的状态。
-                // 窗口的最终位置和大小会在后续的 arrange 调用中确定。
+                let client_borrow = client_rc.borrow();
                 XMoveResizeWindow(
                     self.dpy,
-                    client_borrow.win,
-                    client_borrow.x + 2 * self.s_w, // X 坐标设为屏幕外
+                    win,
+                    client_borrow.x + 2 * self.s_w, // 移到屏幕外
                     client_borrow.y,
                     client_borrow.w as u32,
                     client_borrow.h as u32,
                 );
             }
 
-            // --- 14. 设置客户端的 WM_STATE 为 NormalState ---
+            // 设置客户端的 WM_STATE 为 NormalState
             self.setclientstate(client_rc, NormalState as i64);
 
-            // --- 15. 处理焦点 ---
-            let current_client_monitor_is_selected_monitor;
+            info!("[setup_client_window] Window setup completed for {}", win);
+        }
+    }
+
+    fn register_client_events(&mut self, client_rc: &Rc<RefCell<Client>>) {
+        unsafe {
+            let win = client_rc.borrow().win;
+
+            // 为窗口选择要监听的事件
+            XSelectInput(
+                self.dpy,
+                win,
+                EnterWindowMask |        // 鼠标进入窗口
+                FocusChangeMask |        // 焦点变化
+                PropertyChangeMask |     // 窗口属性变化
+                StructureNotifyMask, // 窗口结构变化（如被销毁、调整大小等）
+            );
+
+            // 为窗口抓取鼠标按钮事件（用于窗口管理操作）
+            self.grabbuttons(Some(client_rc.clone()), false); // false 表示窗口初始不是焦点
+
+            // 更新 EWMH _NET_CLIENT_LIST 属性
+            XChangeProperty(
+                self.dpy,
+                self.root,
+                self.net_atom[NET::NetClientList as usize],
+                XA_WINDOW,
+                32,
+                PropModeAppend, // 追加到现有列表
+                &client_rc.borrow().win as *const Window as *const _,
+                1,
+            );
+
+            info!(
+                "[register_client_events] Events registered for window {}",
+                win
+            );
+        }
+    }
+
+    // 更新完整的客户端列表（在需要时调用）
+    fn update_net_client_list(&mut self) {
+        unsafe {
+            // 清空现有列表
+            XDeleteProperty(
+                self.dpy,
+                self.root,
+                self.net_atom[NET::NetClientList as usize],
+            );
+
+            // 重新构建列表
+            let mut m = self.mons.clone();
+            while let Some(ref m_opt) = m {
+                let mut c = m_opt.borrow().clients.clone();
+                while let Some(ref client_opt) = c {
+                    XChangeProperty(
+                        self.dpy,
+                        self.root,
+                        self.net_atom[NET::NetClientList as usize],
+                        XA_WINDOW,
+                        32,
+                        PropModeAppend,
+                        &client_opt.borrow().win as *const Window as *const _,
+                        1,
+                    );
+                    let next = client_opt.borrow().next.clone();
+                    c = next;
+                }
+                let next = m_opt.borrow().next.clone();
+                m = next;
+            }
+
+            info!("[update_net_client_list] Updated _NET_CLIENT_LIST");
+        }
+    }
+
+    fn handle_new_client_focus(&mut self, client_rc: &Rc<RefCell<Client>>) {
+        // 检查新窗口所在的显示器是否是当前选中的显示器
+        let current_client_monitor_is_selected_monitor = {
+            let client_borrow = client_rc.borrow();
+            match &client_borrow.mon {
+                Some(client_mon) => match &self.sel_mon {
+                    Some(sel_mon) => Rc::ptr_eq(client_mon, sel_mon),
+                    None => false,
+                },
+                None => false,
+            }
+        };
+
+        if current_client_monitor_is_selected_monitor {
+            // 如果新窗口在当前选中的显示器上
+
+            // 取消当前选中窗口的焦点
+            let prev_sel_opt = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
+            if prev_sel_opt.is_some() {
+                self.unfocus(prev_sel_opt, false); // false: 不立即设置根窗口焦点
+                info!("[handle_new_client_focus] Unfocused previous client");
+            }
+
+            // 将新窗口设为其所在显示器的选中窗口
             {
-                // 限制借用作用域
-                let client_borrow = client_rc.borrow();
-                current_client_monitor_is_selected_monitor = Rc::ptr_eq(
-                    client_borrow.mon.as_ref().unwrap(), // 假设 mon 此时必定 Some
-                    self.sel_mon.as_ref().unwrap(),      // 假设 selmon 此时必定 Some
+                let client_monitor_rc = client_rc.borrow().mon.clone().unwrap();
+                client_monitor_rc.borrow_mut().sel = Some(client_rc.clone());
+            }
+
+            // 重新排列该显示器的窗口
+            let client_monitor_rc = client_rc.borrow().mon.clone().unwrap();
+            self.arrange(Some(client_monitor_rc));
+
+            // 设置焦点到新窗口（如果它不是 never_focus）
+            if !client_rc.borrow().never_focus {
+                self.focus(Some(client_rc.clone()));
+                info!(
+                    "[handle_new_client_focus] Focused new client: {}",
+                    client_rc.borrow().name
+                );
+            } else {
+                // 如果新窗口是 never_focus，重新评估焦点
+                self.focus(None);
+                info!("[handle_new_client_focus] New client is never_focus, re-evaluated focus");
+            }
+        } else {
+            // 如果新窗口不在当前选中的显示器上
+
+            // 将新窗口设为其所在显示器的选中窗口
+            {
+                let client_monitor_rc = client_rc.borrow().mon.clone().unwrap();
+                client_monitor_rc.borrow_mut().sel = Some(client_rc.clone());
+            }
+
+            // 只重新排列该显示器，不改变全局焦点
+            let client_monitor_rc = client_rc.borrow().mon.clone().unwrap();
+            self.arrange(Some(client_monitor_rc));
+
+            info!("[handle_new_client_focus] New client on non-selected monitor, arranged only");
+        }
+
+        // 根据配置决定是否自动切换到新窗口的显示器
+        if Config::focus_follows_new_window {
+            let client_monitor = client_rc.borrow().mon.clone();
+            if let Some(new_mon) = client_monitor {
+                if !Rc::ptr_eq(&new_mon, self.sel_mon.as_ref().unwrap()) {
+                    // 切换到新窗口的显示器
+                    let old_sel = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
+                    self.unfocus(old_sel, true);
+                    self.sel_mon = Some(new_mon);
+                    self.focus(Some(client_rc.clone()));
+                    info!("[handle_new_client_focus] Switched to new window's monitor");
+                }
+            }
+        }
+    }
+
+    // 分离出来的常规客户端管理
+    fn manage_regular_client(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+        _: *mut XWindowAttributes,
+    ) {
+        // 处理 WM_TRANSIENT_FOR
+        let mut transient_for_win: Window = 0;
+        unsafe {
+            if XGetTransientForHint(self.dpy, client_rc.borrow().win, &mut transient_for_win) > 0 {
+                if let Some(temp_transient_client) = self.wintoclient(transient_for_win) {
+                    let mut client_mut = client_rc.borrow_mut();
+                    let transient_main_client = temp_transient_client.borrow();
+                    client_mut.mon = transient_main_client.mon.clone();
+                    client_mut.tags = transient_main_client.tags;
+                } else {
+                    client_rc.borrow_mut().mon = self.sel_mon.clone();
+                    self.applyrules(&client_rc);
+                }
+            } else {
+                client_rc.borrow_mut().mon = self.sel_mon.clone();
+                self.applyrules(&client_rc);
+            }
+        }
+        // 调整窗口位置
+        self.adjust_client_position(&client_rc);
+        // 设置窗口属性
+        self.setup_client_window(&client_rc);
+        // 更新各种提示
+        self.updatewindowtype(&client_rc);
+        self.updatesizehints(&client_rc);
+        self.updatewmhints(&client_rc);
+        // 添加到管理链表
+        self.attach(Some(client_rc.clone()));
+        self.attachstack(Some(client_rc.clone()));
+        // 注册事件和抓取按钮
+        self.register_client_events(&client_rc);
+        // 更新客户端列表
+        self.update_net_client_list();
+        // 映射窗口
+        unsafe {
+            XMapWindow(self.dpy, client_rc.borrow().win);
+        }
+        // 处理焦点
+        self.handle_new_client_focus(&client_rc);
+    }
+
+    // 管理状态栏客户端
+    fn manage_statusbar(&mut self, client_rc: &Rc<RefCell<Client>>, _: *mut XWindowAttributes) {
+        unsafe {
+            // 确定状态栏所属的显示器
+            let monitor_id = self.determine_statusbar_monitor(&client_rc);
+            // 配置状态栏客户端
+            {
+                let mut client_mut = client_rc.borrow_mut();
+                client_mut.mon = self.get_monitor_by_id(monitor_id);
+                client_mut.never_focus = true;
+                client_mut.is_floating = true;
+                client_mut.tags = Config::tagmask; // 在所有标签可见
+                client_mut.border_w = 0; // 状态栏通常不需要边框
+                info!(
+                    "[manage_statusbar] Configured statusbar for monitor {}",
+                    monitor_id
                 );
             }
-
-            if current_client_monitor_is_selected_monitor {
-                // 如果新窗口所在的显示器是当前选中的显示器
-                // 则取消当前该显示器上已选中窗口的焦点 (如果存在的话)
-                // false 表示不立即将 X 焦点设回根窗口，因为我们马上要设置新焦点或重新评估
-                let prev_sel_opt = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
-                self.unfocus(prev_sel_opt, false);
-            }
-
-            // --- 16. 更新显示器的选中客户端并重新布局 ---
-            {
-                // 限制借用作用域
-                let client_monitor_rc = client_rc.borrow().mon.clone().unwrap(); // 假设 mon 此时必定 Some
-                client_monitor_rc.borrow_mut().sel = Some(client_rc.clone()); // 将新窗口设为它所在显示器的选中窗口
-                self.arrange(Some(client_monitor_rc)); // 只重新排列该显示器
-            }
-
-            // --- 17. 实际映射 (显示) 窗口 ---
+            // 调整状态栏位置（通常在顶部）
+            self.position_statusbar(&client_rc, monitor_id);
+            // 设置状态栏特有的窗口属性
+            self.setup_statusbar_window(&client_rc);
+            // 注册状态栏到管理映射中
+            self.statusbar_clients.insert(monitor_id, client_rc.clone());
+            self.statusbar_windows
+                .insert(client_rc.borrow().win, monitor_id);
+            // 映射状态栏窗口
             XMapWindow(self.dpy, client_rc.borrow().win);
+            // 更新显示器的工作区域（减去状态栏占用的空间）
+            self.update_monitor_workarea(monitor_id);
+            // 重新排列该显示器的其他客户端
+            if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+                self.arrange(Some(monitor));
+            }
+            info!(
+                "[manage_statusbar] Successfully managed statusbar on monitor {}",
+                monitor_id
+            );
+        }
+    }
 
-            // --- 18. 最后重新评估全局焦点 ---
-            // 这会确保 DWM 内部的焦点状态与 X server 的状态一致，
-            // 并可能将焦点实际设置到这个新管理的窗口（如果它是可见且合适的）。
-            self.focus(None);
-        } // unsafe 块结束
+    // 确定状态栏应该在哪个显示器
+    fn determine_statusbar_monitor(&self, client: &Rc<RefCell<Client>>) -> i32 {
+        // 从窗口名称中提取显示器编号
+        let client_borrow = client.borrow();
+        if let Some(suffix) = client_borrow
+            .name
+            .strip_prefix(&format!("{}_", Config::egui_bar_name))
+        {
+            if let Ok(monitor_id) = suffix.parse::<i32>() {
+                return monitor_id;
+            }
+        }
+        // 如果无法从名称确定，使用当前选中的显示器
+        self.sel_mon.as_ref().map(|m| m.borrow().num).unwrap_or(0)
+    }
+
+    // 定位状态栏
+    fn position_statusbar(&mut self, client: &Rc<RefCell<Client>>, monitor_id: i32) {
+        if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+            let mut client_mut = client.borrow_mut();
+            let monitor_borrow = monitor.borrow();
+
+            // 将状态栏放在显示器顶部
+            client_mut.x = monitor_borrow.m_x;
+            client_mut.y = monitor_borrow.m_y;
+            client_mut.w = monitor_borrow.m_w;
+            // 高度由 egui_bar 自己决定，或使用默认值
+            if client_mut.h <= 0 {
+                client_mut.h = Config::bar_height.unwrap_or(30);
+            }
+            info!(
+                "[position_statusbar] Positioned at ({}, {}) {}x{}",
+                client_mut.x, client_mut.y, client_mut.w, client_mut.h
+            );
+        }
+    }
+
+    // 设置状态栏窗口属性
+    fn setup_statusbar_window(&mut self, client: &Rc<RefCell<Client>>) {
+        unsafe {
+            let win = client.borrow().win;
+
+            // 状态栏只需要监听结构变化和属性变化
+            XSelectInput(
+                self.dpy,
+                win,
+                StructureNotifyMask | PropertyChangeMask | EnterWindowMask,
+            );
+
+            // 不需要抓取按钮事件（让状态栏处理自己的鼠标事件）
+            // 不设置边框
+
+            // 发送配置通知
+            let mut client_mut = client.borrow_mut();
+            self.configure(&mut client_mut);
+        }
+    }
+
+    // 更新显示器工作区域
+    fn update_monitor_workarea(&mut self, monitor_id: i32) {
+        if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+            if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
+                let mut monitor_mut = monitor.borrow_mut();
+                let statusbar_borrow = statusbar.borrow();
+
+                // 工作区域从状态栏下方开始
+                monitor_mut.w_y = statusbar_borrow.y + statusbar_borrow.h + Config::egui_bar_pad;
+                monitor_mut.w_h = monitor_mut.m_h - (monitor_mut.w_y - monitor_mut.m_y);
+
+                info!(
+                    "[update_monitor_workarea] Updated workarea for monitor {}: y={}, h={}",
+                    monitor_id, monitor_mut.w_y, monitor_mut.w_h
+                );
+            }
+        }
+    }
+
+    // 辅助函数：根据ID获取显示器
+    fn get_monitor_by_id(&self, monitor_id: i32) -> Option<Rc<RefCell<Monitor>>> {
+        let mut m_iter = self.mons.clone();
+        while let Some(ref m_rc) = m_iter.clone() {
+            if m_rc.borrow().num == monitor_id {
+                return Some(m_rc.clone());
+            }
+            m_iter = m_rc.borrow().next.clone();
+        }
+        None
+    }
+
+    // 更新窗口类信息
+    fn update_class_info(&mut self, client: &mut Client) {
+        unsafe {
+            let mut ch: XClassHint = std::mem::zeroed();
+            if XGetClassHint(self.dpy, client.win, &mut ch) > 0 {
+                client.class = if !ch.res_class.is_null() {
+                    CStr::from_ptr(ch.res_class)
+                        .to_str()
+                        .unwrap_or("")
+                        .to_string()
+                } else {
+                    String::new()
+                };
+                client.instance = if !ch.res_name.is_null() {
+                    CStr::from_ptr(ch.res_name)
+                        .to_str()
+                        .unwrap_or("")
+                        .to_string()
+                } else {
+                    String::new()
+                };
+
+                if !ch.res_class.is_null() {
+                    XFree(ch.res_class as *mut _);
+                }
+                if !ch.res_name.is_null() {
+                    XFree(ch.res_name as *mut _);
+                }
+            }
+        }
     }
 
     pub fn mappingnotify(&mut self, e: *mut XEvent) {
@@ -4788,29 +4998,147 @@ impl Dwm {
             self.motion_mon = m;
         }
     }
-
     pub fn unmanage(&mut self, c: Option<Rc<RefCell<Client>>>, destroyed: bool) {
+        let client_rc = match c {
+            Some(c) => c,
+            None => return,
+        };
+        let win = client_rc.borrow().win;
+        // 检查是否是状态栏
+        if let Some(&monitor_id) = self.statusbar_windows.get(&win) {
+            self.unmanage_statusbar(monitor_id, destroyed);
+            return;
+        }
+        // 常规客户端的 unmanage 逻辑
+        self.unmanage_regular_client(&client_rc, destroyed);
+    }
+
+    fn unmanage_statusbar(&mut self, monitor_id: i32, destroyed: bool) {
+        info!(
+            "[unmanage_statusbar] Removing statusbar for monitor {}",
+            monitor_id
+        );
+        if let Some(statusbar) = self.statusbar_clients.remove(&monitor_id) {
+            let win = statusbar.borrow().win;
+            self.statusbar_windows.remove(&win);
+            if !destroyed {
+                unsafe {
+                    // 恢复窗口属性
+                    XSelectInput(self.dpy, win, NoEventMask);
+                    // 不需要恢复边框，因为状态栏本来就没有边框
+                }
+            }
+            // 恢复显示器工作区域
+            if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+                let mut monitor_mut = monitor.borrow_mut();
+                monitor_mut.w_y = monitor_mut.m_y;
+                monitor_mut.w_h = monitor_mut.m_h;
+            }
+            // 重新排列该显示器的客户端
+            if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+                self.arrange(Some(monitor));
+            }
+            // 清理相关的进程和共享内存
+            self.egui_bar_child.remove(&monitor_id);
+            self.egui_bar_shmem.remove(&monitor_id);
+            self.egui_bar_shape.remove(&monitor_id);
+        }
+    }
+
+    fn adjust_client_position(&mut self, client_rc: &Rc<RefCell<Client>>) {
+        let (client_total_width, client_mon_rc_opt) = {
+            let client_borrow = client_rc.borrow();
+            (client_borrow.width(), client_borrow.mon.clone())
+        };
+
+        if let Some(ref client_mon_rc) = client_mon_rc_opt {
+            let (mon_wx, mon_wy, mon_ww, mon_wh) = {
+                let client_mon_borrow = client_mon_rc.borrow();
+                (
+                    client_mon_borrow.w_x,
+                    client_mon_borrow.w_y,
+                    client_mon_borrow.w_w,
+                    client_mon_borrow.w_h,
+                )
+            };
+
+            let mut client_mut = client_rc.borrow_mut();
+
+            // 确保窗口的右边界不超过显示器工作区的右边界
+            if client_mut.x + client_total_width > mon_wx + mon_ww {
+                client_mut.x = mon_wx + mon_ww - client_total_width;
+                info!(
+                    "[adjust_client_position] Adjusted X to prevent overflow: {}",
+                    client_mut.x
+                );
+            }
+
+            // 确保窗口的下边界不超过显示器工作区的下边界
+            let client_total_height = client_mut.height();
+            if client_mut.y + client_total_height > mon_wy + mon_wh {
+                client_mut.y = mon_wy + mon_wh - client_total_height;
+                info!(
+                    "[adjust_client_position] Adjusted Y to prevent overflow: {}",
+                    client_mut.y
+                );
+            }
+
+            // 确保窗口的左边界不小于显示器工作区的左边界
+            if client_mut.x < mon_wx {
+                client_mut.x = mon_wx;
+                info!(
+                    "[adjust_client_position] Adjusted X to workarea left: {}",
+                    client_mut.x
+                );
+            }
+
+            // 确保窗口的上边界不小于显示器工作区的上边界
+            if client_mut.y < mon_wy {
+                client_mut.y = mon_wy;
+                info!(
+                    "[adjust_client_position] Adjusted Y to workarea top: {}",
+                    client_mut.y
+                );
+            }
+
+            // 对于小窗口，居中显示
+            if client_mut.w < mon_ww / 3 && client_mut.h < mon_wh / 3 {
+                client_mut.x = mon_wx + (mon_ww - client_total_width) / 2;
+                client_mut.y = mon_wy + (mon_wh - client_total_height) / 2;
+                info!(
+                    "[adjust_client_position] Centered small window at ({}, {})",
+                    client_mut.x, client_mut.y
+                );
+            }
+
+            info!(
+                "[adjust_client_position] Final position: ({}, {}) {}x{}",
+                client_mut.x, client_mut.y, client_mut.w, client_mut.h
+            );
+        } else {
+            error!("[adjust_client_position] Client has no monitor assigned!");
+        }
+    }
+
+    pub fn unmanage_regular_client(&mut self, client_rc: &Rc<RefCell<Client>>, destroyed: bool) {
         // info!("[unmanage]");
         unsafe {
             let mut wc: XWindowChanges = zeroed();
 
             for i in 0..=Config::tags_length {
-                let cel_i = c
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
+                let sel_i = client_rc
+                    .borrow()
                     .mon
                     .as_ref()
                     .unwrap()
-                    .borrow_mut()
+                    .borrow()
                     .pertag
                     .as_ref()
                     .unwrap()
                     .sel[i]
                     .clone();
-                if Self::are_equal_rc(&cel_i, &c) {
-                    c.as_ref()
-                        .unwrap()
+                if Self::are_equal_rc(&sel_i, &Some(client_rc.clone())) {
+                    client_rc
                         .borrow_mut()
                         .mon
                         .as_mut()
@@ -4823,11 +5151,11 @@ impl Dwm {
                 }
             }
 
-            self.detach(c.clone());
-            self.detachstack(c.clone());
+            self.detach(Some(client_rc.clone()));
+            self.detachstack(Some(client_rc.clone()));
             if !destroyed {
-                let oldbw = c.as_ref().unwrap().borrow_mut().old_border_w;
-                let win = c.as_ref().unwrap().borrow_mut().win;
+                let oldbw = client_rc.borrow().old_border_w;
+                let win = client_rc.borrow().win;
                 wc.border_width = oldbw;
                 // avoid race conditions.
                 XGrabServer(self.dpy);
@@ -4836,14 +5164,14 @@ impl Dwm {
                 // restore border.
                 XConfigureWindow(self.dpy, win, CWBorderWidth as u32, &mut wc);
                 XUngrabButton(self.dpy, AnyButton as u32, AnyModifier, win);
-                self.setclientstate(c.as_ref().unwrap(), WithdrawnState as i64);
+                self.setclientstate(client_rc, WithdrawnState as i64);
                 XSync(self.dpy, False);
                 XSetErrorHandler(Some(transmute(xerror as *const ())));
                 XUngrabServer(self.dpy);
             }
             self.focus(None);
-            self.updateclientlist();
-            self.arrange(c.as_ref().unwrap().borrow_mut().mon.clone());
+            self.update_net_client_list();
+            self.arrange(client_rc.borrow().mon.clone());
         }
     }
 
@@ -5019,10 +5347,6 @@ impl Dwm {
                         if Rc::ptr_eq(&mon_to_remove, self.sel_mon.as_ref().unwrap()) {
                             self.sel_mon = None; // 没有可选的 monitor 了
                         }
-                        // mon_to_remove 会在作用域结束时被 drop，其内部资源应由 Drop trait 处理
-                        // self.cleanupmon 应该在这里被调用（如果它只是从链表移除，而不是完全销毁）
-                        // 但由于我们是 take()，所以 mon_to_remove 已经从 self.mons 移除了。
-                        // self.cleanupmon(Some(mon_to_remove)); // 如果 cleanupmon 期望一个 Option<Rc<...>>
                         break; // 已经处理完所有多余的 monitor (因为只有一个或没有了)
                     }
 
@@ -5042,15 +5366,15 @@ impl Dwm {
                             let next_client_opt = client_rc.borrow_mut().next.take(); // 从旧链表断开
                                                                                       // 更新客户端的 mon 和 tags
                             {
-                                let mut client_mut_borrow = client_rc.borrow_mut();
-                                client_mut_borrow.mon = self.mons.clone(); // 指向第一个 monitor
+                                let mut client_mut = client_rc.borrow_mut();
+                                client_mut.mon = self.mons.clone(); // 指向第一个 monitor
                                 if let Some(ref first_mon_rc) = self.mons {
                                     // 确保第一个 monitor 存在
                                     let first_mon_borrow = first_mon_rc.borrow();
-                                    client_mut_borrow.tags =
+                                    client_mut.tags =
                                         first_mon_borrow.tag_set[first_mon_borrow.sel_tags];
                                 } else {
-                                    client_mut_borrow.tags = 1; // 回退到默认标签
+                                    client_mut.tags = 1; // 回退到默认标签
                                 }
                             }
                             // 将客户端附加到第一个 Monitor 的管理列表

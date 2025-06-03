@@ -31,7 +31,6 @@ impl Config {
     pub const egui_bar_0: &str = "egui_bar_0";
     pub const egui_bar_1: &str = "egui_bar_1";
     pub const broken: &str = "broken";
-    pub const egui_bar_pad: i32 = 2;
     pub const dmenu_font: &str = "SauceCodePro Nerd Font Regular 11";
     pub const col_gray1: &str = "#222222";
     pub const col_gray2: &str = "#444444";
@@ -47,6 +46,11 @@ impl Config {
     pub const HALF_OPAQUE: u8 = 0xa0u8;
     pub const bar_alpha: u8 = 0xd0u8;
     pub const border_alpha: u8 = Self::OPAQUE;
+    pub const bar_height: Option<i32> = Some(30); // 默认状态栏高度
+    pub const egui_bar_pad: i32 = 5; // 状态栏下方的间距
+    pub const focus_follows_new_window: bool = false;
+    pub const center_small_windows: bool = true;
+    pub const small_window_threshold: (i32, i32) = (400, 300); // (width, height)
 
     pub const colors: [&[&'static str; 3]; 10] = [
         // fg | bg | border
