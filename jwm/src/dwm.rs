@@ -4096,20 +4096,22 @@ impl Dwm {
         }
     }
 
-    pub fn sendevent(&mut self, c: &mut Client, proto: Atom) -> bool {
-        info!("[sendevent] {}", c);
-        if c.name == Config::egui_bar_name
-            && ((c.class == Config::egui_bar_0 && c.instance == Config::egui_bar_0)
-                || (c.class == Config::egui_bar_1 && c.instance == Config::egui_bar_1))
+    pub fn sendevent(&mut self, client_mut: &mut Client, proto: Atom) -> bool {
+        info!("[sendevent] {}", client_mut);
+        if client_mut.name == Config::egui_bar_name
+            && ((client_mut.class == Config::egui_bar_0
+                && client_mut.instance == Config::egui_bar_0)
+                || (client_mut.class == Config::egui_bar_1
+                    && client_mut.instance == Config::egui_bar_1))
         {
-            c.never_focus = true;
-            if let Some(mon) = &c.mon {
-                let num = mon.borrow_mut().num;
+            client_mut.never_focus = true;
+            if let Some(mon) = &client_mut.mon {
+                let num = mon.borrow().num;
                 let bar_shape = BarShape {
-                    x: c.x,
-                    y: c.y,
-                    width: c.w,
-                    height: c.h,
+                    x: client_mut.x,
+                    y: client_mut.y,
+                    width: client_mut.w,
+                    height: client_mut.h,
                 };
                 info!("[sendevent] num: {}, bar_shape: {:?}", num, bar_shape);
                 self.egui_bar_shape.insert(num, bar_shape);
@@ -4120,7 +4122,7 @@ impl Dwm {
         let mut exists: bool = false;
         unsafe {
             let mut ev: XEvent = zeroed();
-            if XGetWMProtocols(self.dpy, c.win, &mut protocols, &mut n) > 0 {
+            if XGetWMProtocols(self.dpy, client_mut.win, &mut protocols, &mut n) > 0 {
                 while !exists && {
                     n -= 1;
                     n
@@ -4134,12 +4136,12 @@ impl Dwm {
             }
             if exists {
                 ev.type_ = ClientMessage;
-                ev.client_message.window = c.win;
+                ev.client_message.window = client_mut.win;
                 ev.client_message.message_type = self.wm_atom[WM::WMProtocols as usize];
                 ev.client_message.format = 32;
                 ev.client_message.data.as_longs_mut()[0] = proto as i64;
                 ev.client_message.data.as_longs_mut()[1] = CurrentTime as i64;
-                XSendEvent(self.dpy, c.win, False, NoEventMask, &mut ev);
+                XSendEvent(self.dpy, client_mut.win, False, NoEventMask, &mut ev);
             }
         }
         return exists;
@@ -4478,8 +4480,6 @@ impl Dwm {
                 let client_borrow = client_rc.borrow();
                 (client_borrow.width(), client_borrow.mon.clone())
             };
-            // .width() 是 Client 的方法，返回 w + 2*bw
-            // .mon.clone() 是克隆 Option<Rc<RefCell<Monitor>>>
 
             if let Some(ref client_mon_rc) = client_mon_rc_opt {
                 // 确保客户端已分配给一个 Monitor
@@ -4634,11 +4634,6 @@ impl Dwm {
 
             // --- 13. 更新 EWMH _NET_CLIENT_LIST ---
             // (将新窗口添加到根窗口的客户端列表属性中)
-            // 注意：原始 dwm.c 在这里会将新窗口移到屏幕外一个不可见的位置，
-            // 然后在 arrange 中再移回来。这是一种避免窗口内容在调整大小和位置
-            // 过程中闪烁的技巧。你的代码中也有类似操作：
-            // XMoveResizeWindow(self.dpy, win, x + 2 * self.sw, y, w as u32, h as u32);
-            // 这里的 x + 2 * self.sw 很可能就是将其移出屏幕。
             {
                 // 限制借用作用域
                 let client_borrow = client_rc.borrow(); // 不可变借用
@@ -5150,30 +5145,30 @@ impl Dwm {
         }
     }
 
-    pub fn updatewmhints(&mut self, c: &Rc<RefCell<Client>>) {
+    pub fn updatewmhints(&mut self, client_rc: &Rc<RefCell<Client>>) {
         // info!("[updatewmhints]");
         unsafe {
-            let mut cc = c.borrow_mut();
-            let wmh = XGetWMHints(self.dpy, cc.win);
-            let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+            let mut client_mut = client_rc.borrow_mut();
+            let wmh = XGetWMHints(self.dpy, client_mut.win);
             if !wmh.is_null() {
-                if sel_mon_mut.sel.is_some()
-                    && Rc::ptr_eq(c, sel_mon_mut.sel.as_ref().unwrap())
+                let sel_mon_borrow = self.sel_mon.as_ref().unwrap().borrow();
+                if sel_mon_borrow.sel.is_some()
+                    && Rc::ptr_eq(client_rc, sel_mon_borrow.sel.as_ref().unwrap())
                     && ((*wmh).flags & XUrgencyHint) > 0
                 {
                     (*wmh).flags &= !XUrgencyHint;
-                    XSetWMHints(self.dpy, cc.win, wmh);
+                    XSetWMHints(self.dpy, client_mut.win, wmh);
                 } else {
-                    cc.is_urgent = if (*wmh).flags & XUrgencyHint > 0 {
+                    client_mut.is_urgent = if (*wmh).flags & XUrgencyHint > 0 {
                         true
                     } else {
                         false
                     };
                 }
                 if (*wmh).flags & InputHint > 0 {
-                    cc.never_focus = (*wmh).input <= 0;
+                    client_mut.never_focus = (*wmh).input <= 0;
                 } else {
-                    cc.never_focus = false;
+                    client_mut.never_focus = false;
                 }
                 XFree(wmh as *mut _);
             }
