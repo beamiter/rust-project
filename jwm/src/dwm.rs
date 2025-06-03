@@ -4476,6 +4476,7 @@ impl Dwm {
                 self.update_class_info(&mut client_mut);
 
                 if client_mut.is_egui_bar() {
+                    drop(client_mut);
                     info!("[manage] Detected egui_bar, managing as statusbar");
                     self.manage_statusbar(client_rc, wa_ptr);
                     return; // 直接返回，不执行常规管理流程
@@ -4738,10 +4739,11 @@ impl Dwm {
     fn manage_statusbar(&mut self, client_rc: &Rc<RefCell<Client>>, _: *mut XWindowAttributes) {
         unsafe {
             // 确定状态栏所属的显示器
-            let monitor_id = self.determine_statusbar_monitor(&client_rc);
+            let monitor_id;
             // 配置状态栏客户端
             {
                 let mut client_mut = client_rc.borrow_mut();
+                monitor_id = self.determine_statusbar_monitor(&mut client_mut);
                 client_mut.mon = self.get_monitor_by_id(monitor_id);
                 client_mut.never_focus = true;
                 client_mut.is_floating = true;
@@ -4751,11 +4753,11 @@ impl Dwm {
                     "[manage_statusbar] Configured statusbar for monitor {}",
                     monitor_id
                 );
+                // 调整状态栏位置（通常在顶部）
+                self.position_statusbar(&mut client_mut, monitor_id);
+                // 设置状态栏特有的窗口属性
+                self.setup_statusbar_window(&mut client_mut);
             }
-            // 调整状态栏位置（通常在顶部）
-            self.position_statusbar(&client_rc, monitor_id);
-            // 设置状态栏特有的窗口属性
-            self.setup_statusbar_window(&client_rc);
             // 注册状态栏到管理映射中
             self.statusbar_clients.insert(monitor_id, client_rc.clone());
             self.statusbar_windows
@@ -4776,10 +4778,9 @@ impl Dwm {
     }
 
     // 确定状态栏应该在哪个显示器
-    fn determine_statusbar_monitor(&self, client: &Rc<RefCell<Client>>) -> i32 {
+    fn determine_statusbar_monitor(&self, client: &Client) -> i32 {
         // 从窗口名称中提取显示器编号
-        let client_borrow = client.borrow();
-        if let Some(suffix) = client_borrow
+        if let Some(suffix) = client
             .name
             .strip_prefix(&format!("{}_", Config::egui_bar_name))
         {
@@ -4792,9 +4793,8 @@ impl Dwm {
     }
 
     // 定位状态栏
-    fn position_statusbar(&mut self, client: &Rc<RefCell<Client>>, monitor_id: i32) {
+    fn position_statusbar(&mut self, client_mut: &mut Client, monitor_id: i32) {
         if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-            let mut client_mut = client.borrow_mut();
             let monitor_borrow = monitor.borrow();
 
             // 将状态栏放在显示器顶部
@@ -4813,9 +4813,9 @@ impl Dwm {
     }
 
     // 设置状态栏窗口属性
-    fn setup_statusbar_window(&mut self, client: &Rc<RefCell<Client>>) {
+    fn setup_statusbar_window(&mut self, client_mut: &mut Client) {
         unsafe {
-            let win = client.borrow().win;
+            let win = client_mut.win;
 
             // 状态栏只需要监听结构变化和属性变化
             XSelectInput(
@@ -4828,8 +4828,7 @@ impl Dwm {
             // 不设置边框
 
             // 发送配置通知
-            let mut client_mut = client.borrow_mut();
-            self.configure(&mut client_mut);
+            self.configure(client_mut);
         }
     }
 
@@ -4865,11 +4864,11 @@ impl Dwm {
     }
 
     // 更新窗口类信息
-    fn update_class_info(&mut self, client: &mut Client) {
+    fn update_class_info(&mut self, client_mut: &mut Client) {
         unsafe {
             let mut ch: XClassHint = std::mem::zeroed();
-            if XGetClassHint(self.dpy, client.win, &mut ch) > 0 {
-                client.class = if !ch.res_class.is_null() {
+            if XGetClassHint(self.dpy, client_mut.win, &mut ch) > 0 {
+                client_mut.class = if !ch.res_class.is_null() {
                     CStr::from_ptr(ch.res_class)
                         .to_str()
                         .unwrap_or("")
@@ -4877,7 +4876,7 @@ impl Dwm {
                 } else {
                     String::new()
                 };
-                client.instance = if !ch.res_name.is_null() {
+                client_mut.instance = if !ch.res_name.is_null() {
                     CStr::from_ptr(ch.res_name)
                         .to_str()
                         .unwrap_or("")
