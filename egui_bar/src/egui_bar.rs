@@ -132,7 +132,7 @@ impl MyEguiApp {
             volume_window,
             need_resize: false,
             current_window_height: DESIRED_HEIGHT,
-            scale_factor: 0.0,
+            scale_factor: 1.0,
         }
     }
 
@@ -445,9 +445,10 @@ impl MyEguiApp {
         // 计算应使用的高度
         let target_height = self.calculate_window_height();
         let screen_rect = ctx.screen_rect();
-        let border_w = message.monitor_info.border_w;
+        // let border_w = message.monitor_info.border_w;
         let border_w = 0;
         let desired_width = (message.monitor_info.monitor_width - 2 * border_w) as f32;
+        info!("scale_factor: {}", self.scale_factor);
         let desired_size = egui::Vec2::new(desired_width / self.scale_factor, target_height);
 
         // 如果高度发生变化或被标记为需要调整大小
@@ -775,6 +776,7 @@ impl eframe::App for MyEguiApp {
         });
         if self.need_resize {
             ctx.request_repaint_after(std::time::Duration::from_micros(1));
+            self.need_resize = false;
         }
     }
 }

@@ -123,8 +123,8 @@ fn main() -> eframe::Result {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_position(Pos2::new(0., 0.))
-            .with_inner_size([800., FONT_SIZE]) // Initial height
-            .with_min_inner_size([800., FONT_SIZE]) // Minimum size
+            .with_inner_size([800., FONT_SIZE * 2.]) // Initial height
+            .with_min_inner_size([480., FONT_SIZE]) // Minimum size
             // .with_max_inner_size([f32::INFINITY, 20.0]) // Set max height to 20.0
             .with_decorations(false), // Hide title bar and decorations
         // .with_always_on_top(), // Keep window always on top
