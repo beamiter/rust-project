@@ -3391,10 +3391,6 @@ impl Dwm {
         unsafe {
             let ev = (*e).property;
             if ev.window == self.root && ev.atom == XA_WM_NAME {
-                // Hack to use this to react to signal from egui_bar
-                info!("revoke by egui_bar");
-                // self.focus(None);
-                // self.arrange(None);
             } else if ev.state == PropertyDelete {
                 // ignore
                 return;
@@ -4730,7 +4726,7 @@ impl Dwm {
                 client_mut.never_focus = true;
                 client_mut.is_floating = true;
                 client_mut.tags = Config::tagmask; // 在所有标签可见
-                client_mut.border_w = 0; // 状态栏通常不需要边框
+                client_mut.border_w = Config::border_px as i32;
 
                 // 调整状态栏位置（通常在顶部）
                 self.position_statusbar(&mut client_mut, monitor_id);

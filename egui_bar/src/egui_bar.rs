@@ -445,11 +445,12 @@ impl MyEguiApp {
         // 计算应使用的高度
         let target_height = self.calculate_window_height();
         let screen_rect = ctx.screen_rect();
-        // let border_w = message.monitor_info.border_w;
-        let border_w = 0;
-        let desired_width = (message.monitor_info.monitor_width - 2 * border_w) as f32;
-        info!("scale_factor: {}", self.scale_factor);
-        let desired_size = egui::Vec2::new(desired_width / self.scale_factor, target_height);
+        let border_w = message.monitor_info.border_w as f32;
+        let desired_width = message.monitor_info.monitor_width as f32 - 2. * border_w;
+        let desired_size = egui::Vec2::new(
+            desired_width / self.scale_factor,
+            target_height / self.scale_factor,
+        );
 
         // 如果高度发生变化或被标记为需要调整大小
         if self.need_resize
@@ -465,7 +466,9 @@ impl MyEguiApp {
                 desired_size.x,
                 screen_rect.size().x
             );
-            let outer_pos = egui::Pos2::ZERO;
+            // let outer_pos = egui::Pos2::ZERO;
+            let outer_pos =
+                egui::Pos2::new(border_w / self.scale_factor, border_w / self.scale_factor);
             // 调整窗口大小
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(outer_pos));
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));
@@ -642,27 +645,9 @@ impl MyEguiApp {
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         self.scale_factor = ctx.pixels_per_point();
-        // 处理消息
-        if self.need_resize {
-            let _output = Command::new("xsetroot")
-                .arg("-name")
-                .arg("revoke by egui_bar")
-                .output();
-            info!("try to revoke");
-        }
-        let prev_message = self.message.clone();
         while let Ok(message) = self.receiver_msg.try_recv() {
             self.message = Some(message);
             self.need_resize = true;
-        }
-        if let Some(prev_message) = prev_message {
-            if let Some(current_message) = &self.message {
-                if (prev_message.timestamp != current_message.timestamp)
-                    && prev_message.monitor_info == current_message.monitor_info
-                {
-                    self.need_resize = false;
-                }
-            }
         }
 
         // 更新系统信息（限制更新频率）
