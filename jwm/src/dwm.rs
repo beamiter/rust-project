@@ -2484,10 +2484,6 @@ impl Dwm {
         unsafe {
             if let Arg::Ui(ui) = *arg {
                 let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-                // Don't tag neverfocus.
-                if sel.as_ref().unwrap().borrow_mut().never_focus {
-                    return;
-                }
                 let target_tag = ui & Config::tagmask;
                 if let Some(ref sel_opt) = sel {
                     if target_tag > 0 {
@@ -2506,17 +2502,6 @@ impl Dwm {
         unsafe {
             if let Some(ref selmon_opt) = self.sel_mon {
                 if selmon_opt.borrow_mut().sel.is_none() {
-                    return;
-                }
-                // Don't send neverfocus.
-                if selmon_opt
-                    .borrow_mut()
-                    .sel
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .never_focus
-                {
                     return;
                 }
             } else {
@@ -2571,7 +2556,7 @@ impl Dwm {
                         .clone()
                 };
                 while let Some(ref client_opt) = c {
-                    if !client_opt.borrow().never_focus && client_opt.borrow().isvisible() {
+                    if client_opt.borrow().isvisible() {
                         break;
                     }
                     let next = client_opt.borrow().next.clone();
@@ -2583,9 +2568,7 @@ impl Dwm {
                         sel_mon_mut.clients.clone()
                     };
                     while let Some(ref client_opt) = c {
-                        if !client_opt.borrow_mut().never_focus
-                            && client_opt.borrow_mut().isvisible()
-                        {
+                        if client_opt.borrow_mut().isvisible() {
                             break;
                         }
                         let next = client_opt.borrow_mut().next.clone();
@@ -2600,7 +2583,7 @@ impl Dwm {
                     };
                     while !Self::are_equal_rc(&cl, &sel) {
                         if let Some(ref cl_opt) = cl {
-                            if !cl_opt.borrow_mut().never_focus && cl_opt.borrow_mut().isvisible() {
+                            if cl_opt.borrow_mut().isvisible() {
                                 c = cl.clone();
                             }
                             let next = cl_opt.borrow_mut().next.clone();
@@ -2609,7 +2592,7 @@ impl Dwm {
                     }
                     if c.is_none() {
                         while let Some(ref cl_opt) = cl {
-                            if !cl_opt.borrow_mut().never_focus && cl_opt.borrow_mut().isvisible() {
+                            if cl_opt.borrow_mut().isvisible() {
                                 c = cl.clone();
                             }
                             let next = cl_opt.borrow_mut().next.clone();
@@ -3066,10 +3049,6 @@ impl Dwm {
             if sel.is_none() {
                 return;
             }
-            // Don't toggletag neverfocus.
-            if sel.as_ref().unwrap().borrow_mut().never_focus {
-                return;
-            }
             if let Arg::Ui(ui) = *arg {
                 let newtags = sel.as_ref().unwrap().borrow_mut().tags ^ (ui & Config::tagmask);
                 if newtags > 0 {
@@ -3269,10 +3248,6 @@ impl Dwm {
         unsafe {
             let sel = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
             if sel.is_none() {
-                return;
-            }
-            // Don't kill neverfocus.
-            if sel.as_ref().unwrap().borrow().never_focus {
                 return;
             }
             info!("[killclient] {}", sel.as_ref().unwrap().borrow());
@@ -5065,8 +5040,8 @@ impl Dwm {
         }; // 从客户端链表头开始
         while let Some(ref c_rc) = c_iter_opt.clone() {
             let c_client_borrow = c_rc.borrow();
-            if c_client_borrow.isvisible() && !c_client_borrow.never_focus {
-                n += 1; // 如果客户端可见且不是 neverfocus，则计数
+            if c_client_borrow.isvisible() {
+                n += 1;
             }
             c_iter_opt = c_client_borrow.next.clone(); // 移动到下一个客户端
         }
