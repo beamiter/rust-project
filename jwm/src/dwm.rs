@@ -545,15 +545,6 @@ pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
     0
 }
 
-#[allow(dead_code)]
-#[derive(Debug, Default)]
-pub struct BarShape {
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-}
-
 pub struct Dwm {
     pub stext_max_len: usize,
     pub screen: i32,
@@ -578,7 +569,6 @@ pub struct Dwm {
     pub sender: Sender<u8>,
     pub egui_bar_shmem: HashMap<i32, SharedRingBuffer>,
     pub egui_bar_child: HashMap<i32, Child>,
-    pub egui_bar_shape: HashMap<i32, BarShape>,
     pub message: SharedMessage,
 
     // 状态栏专用管理
@@ -633,7 +623,6 @@ impl Dwm {
             sender,
             egui_bar_shmem: HashMap::new(),
             egui_bar_child: HashMap::new(),
-            egui_bar_shape: HashMap::new(),
             message: SharedMessage::default(),
             statusbar_clients: HashMap::new(),
             statusbar_windows: HashMap::new(),
@@ -1330,6 +1319,7 @@ impl Dwm {
         }
     }
 
+    #[allow(dead_code)]
     fn handle_statusbar_configure_request(&mut self, monitor_id: i32, ev: &XConfigureRequestEvent) {
         info!(
             "[handle_statusbar_configure_request] Processing request for monitor {}, mask: {:b}",
@@ -1379,21 +1369,10 @@ impl Dwm {
             // 立即发送配置通知
             self.configure(&mut statusbar_mut);
 
-            // 更新状态栏形状信息
-            let bar_shape = BarShape {
-                x: statusbar_mut.x,
-                y: statusbar_mut.y,
-                width: statusbar_mut.w,
-                height: statusbar_mut.h,
-            };
-
-            drop(statusbar_mut); // 释放借用
             info!(
-            "[handle_statusbar_configure_request] Updated statusbar geometry: old={:?}, new={:?}",
-            old_geo,
-            (bar_shape.x, bar_shape.y, bar_shape.width, bar_shape.height));
-
-            self.egui_bar_shape.insert(monitor_id, bar_shape);
+                "[handle_statusbar_configure_request] Updated statusbar geometry: old={:?}, new={}",
+                old_geo, statusbar_mut
+            );
 
             // 确保状态栏保持在最上层
             unsafe {
@@ -4141,19 +4120,6 @@ impl Dwm {
 
     pub fn sendevent(&mut self, client_mut: &mut Client, proto: Atom) -> bool {
         info!("[sendevent] {}", client_mut);
-        if client_mut.is_egui_bar() {
-            if let Some(mon) = &client_mut.mon {
-                let num = mon.borrow().num;
-                let bar_shape = BarShape {
-                    x: client_mut.x,
-                    y: client_mut.y,
-                    width: client_mut.w,
-                    height: client_mut.h,
-                };
-                info!("[sendevent] num: {}, bar_shape: {:?}", num, bar_shape);
-                self.egui_bar_shape.insert(num, bar_shape);
-            }
-        }
         let mut protocols: *mut Atom = null_mut();
         let mut n: i32 = 0;
         let mut exists: bool = false;
@@ -4783,15 +4749,6 @@ impl Dwm {
             // 确保状态栏位于最上层
             XRaiseWindow(self.dpy, client_rc.borrow().win);
 
-            // 存储状态栏形状信息（但不更新工作区）
-            let bar_shape = BarShape {
-                x: client_rc.borrow().x,
-                y: client_rc.borrow().y,
-                width: client_rc.borrow().w,
-                height: client_rc.borrow().h,
-            };
-            self.egui_bar_shape.insert(monitor_id, bar_shape);
-
             info!(
                 "[manage_statusbar] Successfully managed statusbar on monitor {}",
                 monitor_id
@@ -4850,6 +4807,7 @@ impl Dwm {
     }
 
     // 更新显示器工作区域
+    #[allow(dead_code)]
     fn update_monitor_workarea(&mut self, monitor_id: i32) {
         if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
             let mut monitor_mut = monitor.borrow_mut();
@@ -4936,18 +4894,9 @@ impl Dwm {
                     changed = true;
                 }
                 if changed {
-                    // 应用修正
                     self.configure(&mut statusbar_mut);
-                    // 更新形状信息
-                    let bar_shape = BarShape {
-                        x: statusbar_mut.x,
-                        y: statusbar_mut.y,
-                        width: statusbar_mut.w,
-                        height: statusbar_mut.h,
-                    };
                     drop(statusbar_mut);
                     drop(monitor_borrow);
-                    self.egui_bar_shape.insert(monitor_id, bar_shape);
                     info!(
                         "[validate_statusbar_geometry] Applied corrections for monitor {}",
                         monitor_id
@@ -5148,7 +5097,6 @@ impl Dwm {
             // 清理相关的进程和共享内存
             self.egui_bar_child.remove(&monitor_id);
             self.egui_bar_shmem.remove(&monitor_id);
-            self.egui_bar_shape.remove(&monitor_id);
         }
     }
 
