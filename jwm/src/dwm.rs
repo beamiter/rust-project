@@ -646,6 +646,7 @@ impl Dwm {
                 | x11::xlib::Mod4Mask
                 | x11::xlib::Mod5Mask)
     }
+
     // function declarations and implementations.
     pub fn applyrules(&mut self, c: &Rc<RefCell<Client>>) {
         // info!("[applyrules]");
@@ -1523,8 +1524,6 @@ impl Dwm {
         }
     }
 
-    // This is cool!
-    // 一个更实际的提取方式可能涉及到传递闭包来访问和修改特定的字段：
     fn detach_node_from_list<FGetHead, FSetHead, FGetNext, FSetNext>(
         mon: &Rc<RefCell<Monitor>>,
         node_to_detach: &Option<Rc<RefCell<Client>>>,
@@ -3440,7 +3439,7 @@ impl Dwm {
                         }
                     };
                     if is_selected_on_mon {
-                        self.drawbar(mon_opt); // 则重绘该显示器的状态栏 (因为状态栏通常会显示选中窗口的标题)
+                        self.drawbar(mon_opt);
                     }
                 }
                 if ev.atom == self.net_atom[NET::NetWMWindowType as usize] {
@@ -4428,18 +4427,16 @@ impl Dwm {
         // info!("[manage]"); // 日志
 
         // --- 1. 创建新的 Client 对象 ---
-        // 使用 Rc<RefCell<Client>> 来包装 Client，以便在 DWM 的各个部分共享和修改它。
         let client_rc_opt: Option<Rc<RefCell<Client>>> = Some(Rc::new(RefCell::new(Client::new())));
-        let client_rc = client_rc_opt.as_ref().unwrap(); // &Rc<RefCell<Client>>
+        let client_rc = client_rc_opt.as_ref().unwrap();
         unsafe {
-            // unsafe 块，因为操作裸指针 wa_ptr 和大量 Xlib 调用
-            let window_attributes = &*wa_ptr; // 将裸指针转换为引用，方便访问
-                                              // --- 2. 初始化 Client 结构体的基本属性 ---
+            let window_attributes = &*wa_ptr;
+            // --- 2. 初始化 Client 结构体的基本属性 ---
             {
-                // 限制 client_mut 的作用域
-                let mut client_mut = client_rc.borrow_mut(); // 可变借用新创建的 Client
-                client_mut.win = w; // 设置窗口 ID
-                                    // 从传入的 XWindowAttributes 中获取初始的几何信息和边框宽度
+                let mut client_mut = client_rc.borrow_mut();
+                // 设置窗口 ID
+                client_mut.win = w;
+                // 从传入的 XWindowAttributes 中获取初始的几何信息和边框宽度
                 client_mut.x = window_attributes.x;
                 client_mut.old_x = window_attributes.x;
                 client_mut.y = window_attributes.y;
@@ -4449,7 +4446,7 @@ impl Dwm {
                 client_mut.h = window_attributes.height;
                 client_mut.old_h = window_attributes.height;
                 client_mut.old_border_w = window_attributes.border_width;
-                client_mut.client_fact = 1.0; // 将客户端因子初始化为 1.0 (重要!)
+                client_mut.client_fact = 1.0;
 
                 // 获取并设置窗口标题
                 self.updatetitle(&mut client_mut);
@@ -5570,9 +5567,7 @@ impl Dwm {
             let mut c_iter_opt = m_borrow.clients.clone();
             while let Some(ref client_rc_iter) = c_iter_opt.clone() {
                 let client_borrow_iter = client_rc_iter.borrow();
-                if !client_borrow_iter.is_egui_bar() {
-                    occupied_tags_mask |= client_borrow_iter.tags;
-                }
+                occupied_tags_mask |= client_borrow_iter.tags;
                 if client_borrow_iter.is_urgent {
                     urgent_tags_mask |= client_borrow_iter.tags;
                 }
@@ -5590,8 +5585,7 @@ impl Dwm {
                     if Rc::ptr_eq(m_rc, global_selmon_rc) {
                         // 当前 monitor 是全局选中的 monitor
                         if let Some(ref selected_client_on_selmon) = global_selmon_rc.borrow().sel {
-                            !selected_client_on_selmon.borrow().is_egui_bar()
-                                && (selected_client_on_selmon.borrow().tags & tag_bit) != 0
+                            (selected_client_on_selmon.borrow().tags & tag_bit) != 0
                         } else {
                             false // 全局选中的 monitor 上没有选中的 client
                         }
