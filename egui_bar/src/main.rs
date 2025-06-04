@@ -1,4 +1,5 @@
 mod egui_bar;
+mod audio_manager;
 use chrono::Local;
 use egui::{FontFamily, FontId, TextStyle};
 use egui::{Margin, Pos2};

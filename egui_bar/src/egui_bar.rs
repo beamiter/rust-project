@@ -3,7 +3,11 @@ use egui::{Align, Color32, Layout};
 use egui_plot::{Line, Plot, PlotPoints};
 use log::info;
 use shared_structures::SharedMessage;
-use std::{f64::consts::PI, process::Command, sync::mpsc, time::Instant};
+use std::{
+    process::Command,
+    sync::mpsc,
+    time::{Duration, Instant},
+};
 use sysinfo::System;
 
 // 将颜色常量移到单独的模块中，提高代码组织性
@@ -49,56 +53,48 @@ use constants::{
     colors, DESIRED_HEIGHT, FONT_SIZE, NUM_EMOJI_VEC, TAG_ICONS, VOLUME_WINDOW_HEIGHT,
 };
 
+use crate::audio_manager::AudioManager;
+
 // 音量控制窗口的状态
 struct VolumeControlWindow {
     open: bool,
-    master_volume: i32,
-    headphone_volume: i32,
-    speaker_volume: i32,
-    microphone_volume: i32,
-    is_muted: bool,
     selected_device: usize,
-    available_devices: Vec<String>,
-    position: Option<egui::Pos2>, // 存储窗口位置
+    position: Option<egui::Pos2>,
+    last_volume_change: Instant,
+    volume_change_debounce: Duration,
 }
 
 impl Default for VolumeControlWindow {
     fn default() -> Self {
         Self {
             open: false,
-            master_volume: 50,
-            headphone_volume: 50,
-            speaker_volume: 50,
-            microphone_volume: 50,
-            is_muted: false,
             selected_device: 0,
-            available_devices: vec!["Default".to_string()],
             position: None,
+            last_volume_change: Instant::now(),
+            volume_change_debounce: Duration::from_millis(50), // 防抖间隔
         }
     }
 }
 
-#[allow(unused)]
+#[allow(dead_code)]
 pub struct MyEguiApp {
+    // 保留原有字段...
     message: Option<SharedMessage>,
     receiver_msg: mpsc::Receiver<SharedMessage>,
     sender_resize: mpsc::Sender<bool>,
     sys: System,
-    point_index: usize,
-    points: Vec<[f64; 2]>,
-    point_speed: usize,
     toggle_time_style: bool,
     data: Vec<f64>,
-    // 添加缓存和状态变量
     color_cache: Vec<Color32>,
     last_update_time: Instant,
     update_interval_ms: u64,
-    // 音量控制窗口
     volume_window: VolumeControlWindow,
-    // 窗口大小调整状态
     need_resize: bool,
     current_window_height: f32,
     scale_factor: f32,
+
+    // 添加音频管理器
+    audio_manager: AudioManager,
 }
 
 impl MyEguiApp {
@@ -107,167 +103,101 @@ impl MyEguiApp {
         receiver_msg: mpsc::Receiver<SharedMessage>,
         sender_resize: mpsc::Sender<bool>,
     ) -> Self {
-        // 预计算余弦点，避免在构造函数中重复计算
-        let points = Self::generate_cosine_points();
-
-        // 初始化音量控制窗口
-        let mut volume_window = VolumeControlWindow::default();
-        volume_window.is_muted = Self::is_master_muted();
-        volume_window.master_volume = Self::get_current_volume();
-        volume_window.available_devices = Self::get_audio_devices();
+        // 初始化音频管理器
+        let audio_manager = AudioManager::new();
 
         Self {
             message: None,
             receiver_msg,
             sender_resize,
             sys: System::new_all(),
-            point_index: 0,
-            points,
-            point_speed: 2,
             toggle_time_style: false,
-            data: Vec::with_capacity(16), // 预分配容量
+            data: Vec::with_capacity(16),
             color_cache: Vec::new(),
             last_update_time: Instant::now(),
-            update_interval_ms: 500, // 更新间隔，可调整
-            volume_window,
+            update_interval_ms: 500,
+            volume_window: VolumeControlWindow::default(),
             need_resize: false,
             current_window_height: DESIRED_HEIGHT,
             scale_factor: 1.0,
+            audio_manager,
         }
-    }
-
-    /// 获取 Master 输出的当前静音状态。
-    /// 此函数执行 `amixer get Master` 并解析其输出。
-    /// 它假设如果 Master 通道被静音，输出将包含 `[off]` 字符串。
-    /// # 返回
-    /// - `true` 如果 Master 输出被静音。
-    /// - `false` 如果 Master 输出未被静音，或者无法确定状态（例如命令执行失败或 `[off]` 未找到）。
-    fn is_master_muted() -> bool {
-        // 尝试使用 amixer 获取 Master 通道的当前状态
-        match Command::new("amixer").args(["get", "Master"]).output() {
-            Ok(output) => {
-                // 检查 amixer 命令是否成功执行
-                if !output.status.success() {
-                    // 如果命令本身失败（例如 amixer 未找到，或执行出错），打印错误并返回默认值
-                    // eprintln!("amixer command failed with status: {}", output.status);
-                    return false; // 默认未静音
-                }
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                // 在 amixer 的输出中，静音的通道通常会显示 `[off]`。
-                // 例如: "Front Left: Playback 0 [0%] [-infdB] [off]"
-                // 我们直接查找是否存在 "[off]" 这个子字符串。
-                // 这是一个相对简单的检查，但对于典型的 ALSA 和 amixer 设置是有效的。
-                // 如果 Master 通道被静音，其状态描述中应包含 "[off]"。
-                // 如果 Master 通道没有静音能力（即没有 pswitch），则不会有 "[on]" 或 "[off]"，
-                // 这种情况下 .contains("[off]") 会返回 false，这也是期望的行为（因为它没有被静音）。
-                if output_str.contains("[off]") {
-                    true // 找到了 "[off]"，表示已静音
-                } else {
-                    false // 未找到 "[off]"，表示未静音 (或者没有静音开关)
-                }
-            }
-            Err(_e) => {
-                // 如果执行 amixer 命令本身失败（例如，进程无法启动）
-                // eprintln!("Failed to execute amixer command: {}", _e);
-                false // 发生错误，默认未静音
-            }
-        }
-    }
-
-    // 获取当前系统音量
-    fn get_current_volume() -> i32 {
-        // 尝试使用 amixer 获取当前音量
-        match Command::new("amixer").args(["get", "Master"]).output() {
-            Ok(output) => {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                // 解析输出以获取音量百分比
-                if let Some(percent_pos) = output_str.find('%') {
-                    if let Some(start_pos) = output_str[..percent_pos].rfind('[') {
-                        if let Ok(volume) = output_str[start_pos + 1..percent_pos].parse::<i32>() {
-                            return volume;
-                        }
-                    }
-                }
-                50 // 默认值
-            }
-            Err(_) => 50, // 如果失败，则返回默认值
-        }
-    }
-
-    // 获取可用的音频设备
-    fn get_audio_devices() -> Vec<String> {
-        let mut devices = vec!["Master".to_string()];
-
-        // 尝试获取音频设备列表
-        match Command::new("aplay").arg("-l").output() {
-            Ok(output) => {
-                let output_str = String::from_utf8_lossy(&output.stdout);
-                for line in output_str.lines() {
-                    if line.starts_with("card ") {
-                        if let Some(device_name) = line.split(':').nth(1) {
-                            devices.push(device_name.trim().to_string());
-                        }
-                    }
-                }
-            }
-            Err(_) => {}
-        }
-
-        // 添加一些常见的控制项
-        devices.push("Headphone".to_string());
-        devices.push("Speaker".to_string());
-        devices.push("Microphone".to_string());
-
-        devices
-    }
-
-    // 设置系统音量
-    fn set_volume(&mut self, device: &str, volume: i32, mute: bool) {
-        // 使用 amixer 设置音量
-        let _ = Command::new("amixer")
-            .args([
-                "set",
-                device,
-                &format!("{}%", volume),
-                if mute { "mute" } else { "unmute" },
-            ])
-            .spawn();
-
-        // 更新对应的音量设置
-        match device {
-            "Master" => self.volume_window.master_volume = volume,
-            "Headphone" => self.volume_window.headphone_volume = volume,
-            "Speaker" => self.volume_window.speaker_volume = volume,
-            "Microphone" => self.volume_window.microphone_volume = volume,
-            _ => {}
-        }
-    }
-
-    // 打开 alsamixer
-    fn open_alsamixer(&self) {
-        // 在终端中打开 alsamixer
-        let _ = Command::new("terminator").args(["-e", "alsamixer"]).spawn();
     }
 
     // 绘制音量按钮
     fn draw_volume_button(&mut self, ui: &mut egui::Ui) {
-        let volume_icon = if self.volume_window.is_muted || self.volume_window.master_volume == 0 {
+        // 获取主音量设备状态
+        let (volume, is_muted) = if let Some(device) = self.audio_manager.get_master_device() {
+            (device.volume, device.is_muted)
+        } else {
+            (50, false) // 默认值
+        };
+
+        // 根据音量和静音状态选择图标
+        let volume_icon = if is_muted || volume == 0 {
             "🔇" // 静音
-        } else if self.volume_window.master_volume < 30 {
+        } else if volume < 30 {
             "🔈" // 低音量
-        } else if self.volume_window.master_volume < 70 {
+        } else if volume < 70 {
             "🔉" // 中音量
         } else {
             "🔊" // 高音量
         };
 
-        if ui.button(volume_icon).clicked() {
-            // 切换音量窗口状态
+        // 点击按钮打开/关闭音量控制窗口
+        let response = ui.button(volume_icon);
+        if response.clicked() {
             self.volume_window.open = !self.volume_window.open;
-
-            // 标记需要调整窗口大小
             self.need_resize = true;
+            self.audio_manager.refresh_devices().ok();
         }
+
+        // 正确的悬停文本用法
+        if let Some(device) = self.audio_manager.get_master_device() {
+            response.on_hover_text(format!(
+                "{}：{}%{}",
+                device.description,
+                device.volume,
+                if device.is_muted { " (已静音)" } else { "" }
+            ));
+        }
+    }
+
+    #[allow(dead_code)]
+    fn set_volume(&mut self, device: &str, volume: i32, mute: bool) {
+        if let Err(e) = self.audio_manager.set_volume(device, volume, mute) {
+            eprintln!("Failed to set volume: {}", e);
+        }
+    }
+
+    #[allow(dead_code)]
+    fn is_master_muted(&self) -> bool {
+        self.audio_manager
+            .get_master_device()
+            .map(|device| device.is_muted)
+            .unwrap_or(false)
+    }
+
+    #[allow(dead_code)]
+    fn get_current_volume(&self) -> i32 {
+        self.audio_manager
+            .get_master_device()
+            .map(|device| device.volume)
+            .unwrap_or(50)
+    }
+
+    #[allow(dead_code)]
+    fn get_audio_devices(&self) -> Vec<String> {
+        self.audio_manager
+            .get_devices()
+            .iter()
+            .map(|device| device.name.clone())
+            .collect()
+    }
+
+    // 打开 alsamixer 功能保持不变
+    fn open_alsamixer(&self) {
+        let _ = Command::new("terminator").args(["-e", "alsamixer"]).spawn();
     }
 
     // 绘制音量控制窗口
@@ -276,7 +206,9 @@ impl MyEguiApp {
             return false;
         }
 
-        // 不再使用 open 参数，而是在窗口内部跟踪关闭操作
+        // 在每一帧更新音频设备状态
+        self.audio_manager.update_if_needed();
+
         let mut window_closed = false;
 
         egui::Window::new("音量控制")
@@ -284,126 +216,152 @@ impl MyEguiApp {
             .resizable(false)
             .default_width(300.0)
             .default_pos(self.volume_window.position.unwrap_or_else(|| {
-                // 如果没有保存位置，设置为屏幕中央
                 let screen_rect = ctx.screen_rect();
                 egui::pos2(
                     screen_rect.center().x - 150.0,
                     screen_rect.center().y - 150.0,
                 )
             }))
-            // 移除 .open() 调用
             .show(ctx, |ui| {
                 // 保存窗口位置
                 if let Some(response) = ui.ctx().memory(|mem| mem.area_rect(ui.id())) {
                     self.volume_window.position = Some(response.left_top());
                 }
 
+                // 获取所有可用设备
+                let devices = self.audio_manager.get_devices();
+
+                if devices.is_empty() {
+                    ui.label("没有找到可控制的音频设备");
+                    return;
+                }
+
                 // 设备选择下拉菜单
-                egui::ComboBox::from_label("设备")
-                    .selected_text(
-                        &self.volume_window.available_devices[self.volume_window.selected_device],
-                    )
-                    .show_ui(ui, |ui| {
-                        for (idx, device) in self.volume_window.available_devices.iter().enumerate()
-                        {
-                            ui.selectable_value(
-                                &mut self.volume_window.selected_device,
-                                idx,
-                                device,
-                            );
-                        }
+                let device_names: Vec<(usize, String)> = devices
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, d)| d.has_volume_control || d.has_switch_control)
+                    .map(|(i, d)| (i, d.description.clone()))
+                    .collect();
+
+                if !device_names.is_empty() {
+                    // 确保选中的设备索引有效
+                    if self.volume_window.selected_device >= device_names.len() {
+                        self.volume_window.selected_device = 0;
+                    }
+
+                    ui.horizontal(|ui| {
+                        ui.label("设备：");
+                        egui::ComboBox::from_id_salt("audio_device_selector")
+                            .selected_text(&device_names[self.volume_window.selected_device].1)
+                            .width(200.0)
+                            .show_ui(ui, |ui| {
+                                for (idx, (_dev_idx, name)) in device_names.iter().enumerate() {
+                                    if ui
+                                        .selectable_label(
+                                            self.volume_window.selected_device == idx,
+                                            name,
+                                        )
+                                        .clicked()
+                                    {
+                                        self.volume_window.selected_device = idx;
+                                    }
+                                }
+                            });
                     });
 
-                ui.add_space(10.0);
+                    ui.add_space(10.0);
 
-                // 主音量控制
-                ui.horizontal(|ui| {
-                    ui.label("主音量:");
-                    if ui
-                        .button(if self.volume_window.is_muted {
-                            "🔇"
-                        } else {
-                            "🔊"
-                        })
-                        .clicked()
+                    // 获取选中的设备索引
+                    if let Some(&(device_idx, _)) =
+                        device_names.get(self.volume_window.selected_device)
                     {
-                        self.volume_window.is_muted = !self.volume_window.is_muted;
-                        self.set_volume(
-                            "Master",
-                            self.volume_window.master_volume,
-                            self.volume_window.is_muted,
-                        );
-                    }
-                });
+                        let device_data =
+                            { self.audio_manager.get_device_by_index(device_idx).clone() };
+                        if let Some(device_data_from_manager) = device_data {
+                            let device_name_clone = device_data_from_manager.name.clone(); // String, so clone
+                            let mut current_volume_copy = device_data_from_manager.volume; // Assuming Copy type (e.g., i64, f32)
+                            let is_muted_copy = device_data_from_manager.is_muted;
+                            let has_switch_control_copy =
+                                device_data_from_manager.has_switch_control;
+                            // 绘制音量控制器
+                            if device_data_from_manager.has_volume_control {
+                                ui.horizontal(|ui| {
+                                    ui.label("音量：");
 
-                let mut master_volume = self.volume_window.master_volume;
-                if ui
-                    .add(egui::Slider::new(&mut master_volume, 0..=100).text("音量"))
-                    .changed()
-                {
-                    self.volume_window.master_volume = master_volume;
-                    self.set_volume("Master", master_volume, self.volume_window.is_muted);
-                }
+                                    // 静音按钮
+                                    if has_switch_control_copy {
+                                        let mute_btn =
+                                            ui.button(if is_muted_copy { "🔇" } else { "🔊" });
+                                        if mute_btn.clicked() {
+                                            if let Err(e) =
+                                                self.audio_manager.toggle_mute(&device_name_clone)
+                                            {
+                                                eprintln!("Failed to toggle mute: {}", e);
+                                            }
+                                        }
+                                        mute_btn.on_hover_text(if is_muted_copy {
+                                            "取消静音"
+                                        } else {
+                                            "静音"
+                                        });
+                                    }
 
-                ui.add_space(10.0);
+                                    // 显示当前音量百分比
+                                    ui.label(format!("{}%", current_volume_copy));
+                                });
 
-                // 根据选择的设备显示不同的控制选项
-                match self.volume_window.selected_device {
-                    0 => {
-                        // 主设备 - 显示所有控制
-                        ui.collapsing("高级控制", |ui| {
-                            // 耳机音量
-                            let mut headphone_volume = self.volume_window.headphone_volume;
-                            if ui
-                                .add(egui::Slider::new(&mut headphone_volume, 0..=100).text("耳机"))
-                                .changed()
-                            {
-                                self.volume_window.headphone_volume = headphone_volume;
-                                self.set_volume("Headphone", headphone_volume, false);
+                                // 音量滑块
+                                if ui
+                                    .add(
+                                        egui::Slider::new(&mut current_volume_copy, 0..=100)
+                                            .show_value(false)
+                                            .text(""),
+                                    )
+                                    .changed()
+                                {
+                                    // 防抖动
+                                    let now = Instant::now();
+                                    if now.duration_since(self.volume_window.last_volume_change)
+                                        > self.volume_window.volume_change_debounce
+                                    {
+                                        self.volume_window.last_volume_change = now;
+                                        if let Err(e) = self.audio_manager.set_volume(
+                                            &device_name_clone,
+                                            current_volume_copy,
+                                            is_muted_copy,
+                                        ) {
+                                            eprintln!("Failed to set volume: {}", e);
+                                        }
+                                    }
+                                }
+                            } else if device_data_from_manager.has_switch_control {
+                                // 只有开关控制的设备
+                                ui.horizontal(|ui| {
+                                    let btn = ui.button(if is_muted_copy {
+                                        "◉ 已禁用"
+                                    } else {
+                                        "◎ 已启用"
+                                    });
+
+                                    if btn.clicked() {
+                                        if let Err(e) =
+                                            self.audio_manager.toggle_mute(&device_name_clone)
+                                        {
+                                            eprintln!("Failed to toggle switch: {}", e);
+                                        }
+                                    }
+                                });
+                            } else {
+                                ui.label("此设备没有可用的控制选项");
                             }
-
-                            // 扬声器音量
-                            let mut speaker_volume = self.volume_window.speaker_volume;
-                            if ui
-                                .add(egui::Slider::new(&mut speaker_volume, 0..=100).text("扬声器"))
-                                .changed()
-                            {
-                                self.volume_window.speaker_volume = speaker_volume;
-                                self.set_volume("Speaker", speaker_volume, false);
-                            }
-
-                            // 麦克风音量
-                            let mut microphone_volume = self.volume_window.microphone_volume;
-                            if ui
-                                .add(
-                                    egui::Slider::new(&mut microphone_volume, 0..=100)
-                                        .text("麦克风"),
-                                )
-                                .changed()
-                            {
-                                self.volume_window.microphone_volume = microphone_volume;
-                                self.set_volume("Capture", microphone_volume, false);
-                            }
-                        });
-                    }
-                    _ => {
-                        // 特定设备控制
-                        let device_name = &self.volume_window.available_devices
-                            [self.volume_window.selected_device]
-                            .clone();
-                        let mut device_volume = 50; // 默认值，实际应用中应该获取当前值
-                        if ui
-                            .add(egui::Slider::new(&mut device_volume, 0..=100).text(device_name))
-                            .changed()
-                        {
-                            self.set_volume(device_name, device_volume, false);
                         }
                     }
                 }
 
                 ui.add_space(10.0);
 
-                // 按钮区域
+                // 添加按钮区域
                 ui.horizontal(|ui| {
                     if ui.button("高级混音器").clicked() {
                         self.open_alsamixer();
@@ -411,7 +369,6 @@ impl MyEguiApp {
 
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::RIGHT), |ui| {
                         if ui.button("关闭").clicked() {
-                            // 不再直接修改 window_open，而是设置我们自己的标志
                             window_closed = true;
                         }
                     });
@@ -419,14 +376,13 @@ impl MyEguiApp {
             });
 
         // 检查窗口是否应该关闭
-        // 如果用户点击了关闭按钮或者窗口被系统关闭
         if window_closed || ctx.input(|i| i.viewport().close_requested()) {
             self.volume_window.open = false;
             self.need_resize = true;
             return true; // 窗口状态已改变
         }
 
-        false // 窗口状态未改变
+        false
     }
 
     // 计算当前应使用的窗口高度
@@ -476,18 +432,6 @@ impl MyEguiApp {
             // 更新当前高度和调整状态
             self.current_window_height = target_height;
         }
-    }
-
-    // 将点生成提取为单独函数
-    fn generate_cosine_points() -> Vec<[f64; 2]> {
-        let step_num = 60;
-        let step: f64 = PI / step_num as f64;
-        (-step_num..=step_num)
-            .map(|x| {
-                let tmp_x = x as f64 * step;
-                [tmp_x, tmp_x.cos()]
-            })
-            .collect()
     }
 
     // 颜色映射函数
