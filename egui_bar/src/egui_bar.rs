@@ -1,14 +1,21 @@
 use eframe::egui;
+use egui::Margin;
 use egui::{Align, Color32, Layout};
+use egui::{FontFamily, FontId, TextStyle};
 use egui_plot::{Line, Plot, PlotPoints};
 use log::info;
 use shared_structures::SharedMessage;
+use std::collections::BTreeMap;
+use std::sync::Once;
 use std::{
     process::Command,
     sync::mpsc,
     time::{Duration, Instant},
 };
 use sysinfo::System;
+use FontFamily::Monospace;
+use FontFamily::Proportional;
+static INIT: Once = Once::new();
 
 // 将颜色常量移到单独的模块中，提高代码组织性
 pub mod constants {
@@ -118,6 +125,37 @@ impl MyEguiApp {
             scale_factor: 1.0,
             audio_manager,
         }
+    }
+
+    pub fn configure_text_styles(ctx: &egui::Context, font_scale_factor: f32) {
+        ctx.all_styles_mut(move |style| {
+            let scaled_font_size = FONT_SIZE / font_scale_factor;
+            info!(
+                "[configure_text_styles] scaled_font_size: {}",
+                scaled_font_size
+            );
+            let text_styles: BTreeMap<TextStyle, FontId> = [
+                (TextStyle::Body, FontId::new(scaled_font_size, Monospace)),
+                (
+                    TextStyle::Monospace,
+                    FontId::new(scaled_font_size, Monospace),
+                ),
+                (TextStyle::Button, FontId::new(scaled_font_size, Monospace)),
+                (
+                    TextStyle::Small,
+                    FontId::new(scaled_font_size / 2., Proportional),
+                ),
+                (
+                    TextStyle::Heading,
+                    FontId::new(scaled_font_size * 2., Proportional),
+                ),
+            ]
+            .into();
+            style.text_styles = text_styles;
+            style.spacing.window_margin = Margin::same(0.0);
+            style.spacing.menu_spacing = 0.0;
+            style.spacing.menu_margin = Margin::same(0.0);
+        });
     }
 
     // 绘制音量按钮
@@ -402,7 +440,11 @@ impl MyEguiApp {
         let monitor_x = message.monitor_info.monitor_x as f32;
         let monitor_y = message.monitor_info.monitor_y as f32;
         let target_width_raw = message.monitor_info.monitor_width as f32 - 2. * border_w;
-        let target_size = egui::Vec2::new(target_width_raw / self.scale_factor, target_height_raw);
+        let target_size = egui::Vec2::new(
+            target_width_raw / self.scale_factor,
+            target_height_raw / self.scale_factor,
+        );
+        let height_offset = (target_height_raw - target_size.y - border_w).max(0.0) * 0.5;
 
         // 如果高度发生变化或被标记为需要调整大小
         if self.need_resize
@@ -411,7 +453,7 @@ impl MyEguiApp {
         {
             let outer_pos = egui::Pos2::new(
                 (monitor_x + border_w) / self.scale_factor,
-                (monitor_y + border_w) / self.scale_factor,
+                (monitor_y + border_w * 0.5) / self.scale_factor + height_offset,
             );
             // 调整窗口大小
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(outer_pos));
@@ -581,6 +623,10 @@ impl MyEguiApp {
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         self.scale_factor = ctx.pixels_per_point();
+        INIT.call_once(|| {
+            info!("call_once, {}", self.scale_factor);
+            MyEguiApp::configure_text_styles(ctx, self.scale_factor);
+        });
         while let Ok(message) = self.receiver_msg.try_recv() {
             self.message = Some(message);
             self.need_resize = true;
@@ -616,8 +662,7 @@ impl eframe::App for MyEguiApp {
                 for i in 0..TAG_ICONS.len() {
                     let tag_icon = TAG_ICONS[i];
                     let tag_color = colors::TAG_COLORS[i];
-                    let mut rich_text =
-                        egui::RichText::new(tag_icon).font(egui::FontId::monospace(FONT_SIZE));
+                    let mut rich_text = egui::RichText::new(tag_icon).monospace();
 
                     if let Some(ref tag_status) = tag_status_vec.get(i) {
                         if tag_status.is_selected {

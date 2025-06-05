@@ -1,8 +1,7 @@
 mod audio_manager;
 mod egui_bar;
 use chrono::Local;
-use egui::{FontFamily, FontId, TextStyle};
-use egui::{Margin, Pos2};
+use egui::Pos2;
 use egui_bar::constants::FONT_SIZE;
 pub use egui_bar::MyEguiApp;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
@@ -12,15 +11,13 @@ use log::error;
 use log::info;
 use log::warn;
 use shared_structures::{SharedMessage, SharedRingBuffer};
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::mpsc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use std::{env, thread, u128};
-use FontFamily::Monospace;
-use FontFamily::Proportional;
 
 fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::Error>> {
+    info!("[load_system_nerd_font]");
     let mut fonts = egui::FontDefinitions::default();
     let system_source = SystemSource::new();
     // println!("all fonts: {:?}", system_source.all_fonts());
@@ -64,29 +61,6 @@ fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::
     info!("{:?}", fonts.families);
     ctx.set_fonts(fonts);
     Ok(())
-}
-
-fn configure_text_styles(ctx: &egui::Context) {
-    ctx.all_styles_mut(move |style| {
-        let text_styles: BTreeMap<TextStyle, FontId> = [
-            (TextStyle::Body, FontId::new(FONT_SIZE, Monospace)),
-            (TextStyle::Monospace, FontId::new(FONT_SIZE, Monospace)),
-            (TextStyle::Button, FontId::new(FONT_SIZE, Monospace)),
-            (TextStyle::Small, FontId::new(FONT_SIZE / 2., Proportional)),
-            (
-                TextStyle::Heading,
-                FontId::new(FONT_SIZE * 2., Proportional),
-            ),
-        ]
-        .into();
-        style.text_styles = text_styles;
-        // style.spacing.item_spacing = egui::vec2(8.0, 0.0);
-        // style.spacing.window_margin = Margin::symmetric(0., 0.);
-        // style.spacing.window_margin = Margin::ZERO;
-        style.spacing.window_margin = Margin::same(0.0);
-        style.spacing.menu_spacing = 0.0;
-        style.spacing.menu_margin = Margin::same(0.0);
-    });
 }
 
 fn main() -> eframe::Result {
@@ -138,7 +112,7 @@ fn main() -> eframe::Result {
         native_options,
         Box::new(|cc| {
             let _ = load_system_nerd_font(&cc.egui_ctx);
-            configure_text_styles(&cc.egui_ctx);
+            MyEguiApp::configure_text_styles(&cc.egui_ctx, 1.0);
 
             let (sender_msg, receiver_msg) = mpsc::channel();
             let (sender_resize, receiver_resize) = mpsc::channel();
