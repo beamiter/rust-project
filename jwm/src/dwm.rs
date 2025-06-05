@@ -1235,8 +1235,8 @@ impl Dwm {
                     is_fullscreen = client_borrow.is_fullscreen;
                     layout_type_is_none = match client_borrow.mon {
                         Some(ref m) => {
-                            let m_borrow = m.borrow();
-                            m_borrow.lt[m_borrow.sel_lt].layout_type.is_none()
+                            let mon_borrow = m.borrow();
+                            mon_borrow.lt[mon_borrow.sel_lt].layout_type.is_none()
                         }
                         _ => true,
                     }
@@ -1678,6 +1678,10 @@ impl Dwm {
             // Assuming get_mut
             match ring_buffer.try_write_message(&message) {
                 Ok(true) => {
+                    // (TODO).
+                    if let Some(statusbar) = self.statusbar_clients.get(&num) {
+                        info!("statusbar: {}", statusbar.borrow());
+                    }
                     info!("[write_message] {:?}", message);
                     Ok(()) // Message written successfully
                 }
@@ -1720,6 +1724,10 @@ impl Dwm {
         let _ = self.write_message(num, &self.message.clone());
         if !self.egui_bar_child.contains_key(&num) {
             let process_name = format!("{}_{}", Config::egui_bar_name, num);
+            info!(
+                "[drawbar] process_name: {}, shared_path: {}",
+                process_name, shared_path
+            );
             let child = Command::new(Config::egui_bar_name)
                 .arg0(process_name) // This change the class and instance
                 .arg(shared_path)
@@ -2241,7 +2249,7 @@ impl Dwm {
         0
     }
 
-    pub fn tile(&mut self, m_rc: &Rc<RefCell<Monitor>>) {
+    pub fn tile(&mut self, mon_rc: &Rc<RefCell<Monitor>>) {
         info!("[tile]"); // 日志记录，进入 tile 布局函数
 
         // 初始化变量
@@ -2251,15 +2259,15 @@ impl Dwm {
 
         // --- 第一遍遍历：计算客户端数量和 cfact 总和 ---
         {
-            // 创建一个新的作用域来限制 m_borrow 的生命周期
-            let m_borrow = m_rc.borrow(); // 不可变借用 Monitor
-            let mut c = self.nexttiled(m_borrow.clients.clone()); // 获取第一个可见且平铺的客户端
-                                                                  // nexttiled 会跳过浮动和不可见的客户端
+            // 创建一个新的作用域来限制 mon_borrow 的生命周期
+            let mon_borrow = mon_rc.borrow(); // 不可变借用 Monitor
+            let mut c = self.nexttiled(mon_borrow.clients.clone()); // 获取第一个可见且平铺的客户端
+                                                                    // nexttiled 会跳过浮动和不可见的客户端
 
             while let Some(client_opt) = c {
                 // 遍历所有可见且平铺的客户端
                 let c_borrow = client_opt.borrow(); // 可变借用 Client 来读取和修改 cfact (虽然这里只读取)
-                if n < m_borrow.n_master {
+                if n < mon_borrow.n_master {
                     // 如果当前客户端在主区域
                     mfacts += c_borrow.client_fact; // 累加到主区域的 cfact 总和
                 } else {
@@ -2271,7 +2279,8 @@ impl Dwm {
                 c = next_c;
                 n += 1; // 客户端总数加一
             }
-        } // m_borrow 在这里被 drop
+            info!("[tile] monitor_num: {}", mon_borrow.num);
+        } // mon_borrow 在这里被 drop
 
         if n == 0 {
             // 如果没有可见且平铺的客户端，则直接返回
@@ -2281,14 +2290,14 @@ impl Dwm {
         // --- 计算主区域的宽度 (mw) ---
         let (ww, mfact0_val, nmaster0_val, wx_val, wy_val, wh_val) = {
             // 再次借用 Monitor 获取其属性
-            let m_borrow = m_rc.borrow();
+            let mon_borrow = mon_rc.borrow();
             (
-                m_borrow.w_w,
-                m_borrow.m_fact,
-                m_borrow.n_master,
-                m_borrow.w_x,
-                m_borrow.w_y,
-                m_borrow.w_h,
+                mon_borrow.w_w,
+                mon_borrow.m_fact,
+                mon_borrow.n_master,
+                mon_borrow.w_x,
+                mon_borrow.w_y,
+                mon_borrow.w_h,
             )
         };
 
@@ -2314,13 +2323,14 @@ impl Dwm {
 
         let client_y_offset = {
             // 获取 Y 轴偏移（考虑状态栏）
-            self.client_y_offset(&m_rc.borrow())
+            self.client_y_offset(&mon_rc.borrow())
         };
+        info!("[tile] client_y_offset: {}", client_y_offset);
 
         let mut c_iter = {
             // 重新从头开始获取可见平铺客户端
-            let m_borrow = m_rc.borrow();
-            self.nexttiled(m_borrow.clients.clone())
+            let mon_borrow = mon_rc.borrow();
+            self.nexttiled(mon_borrow.clients.clone())
         };
 
         while let Some(ref c_opt_rc) = c_iter {
@@ -4602,8 +4612,6 @@ impl Dwm {
         };
 
         if current_client_monitor_is_selected_monitor {
-            // 如果新窗口在当前选中的显示器上
-
             // 取消当前选中窗口的焦点
             let prev_sel_opt = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
             if prev_sel_opt.is_some() {
@@ -4719,6 +4727,7 @@ impl Dwm {
             {
                 let mut client_mut = client_rc.borrow_mut();
                 monitor_id = self.determine_statusbar_monitor(&mut client_mut);
+                info!("[manage_statusbar] monitor_id: {}", monitor_id);
                 client_mut.mon = self.get_monitor_by_id(monitor_id);
                 client_mut.never_focus = true;
                 client_mut.is_floating = true;
@@ -4751,7 +4760,7 @@ impl Dwm {
 
     // 确定状态栏应该在哪个显示器
     fn determine_statusbar_monitor(&self, client: &Client) -> i32 {
-        // 从窗口名称中提取显示器编号
+        info!("[determine_statusbar_monitor]: {}", client);
         if let Some(suffix) = client
             .name
             .strip_prefix(&format!("{}_", Config::egui_bar_name))
@@ -4760,7 +4769,22 @@ impl Dwm {
                 return monitor_id;
             }
         }
-        // 如果无法从名称确定，使用当前选中的显示器
+        if let Some(suffix) = client
+            .class
+            .strip_prefix(&format!("{}_", Config::egui_bar_name))
+        {
+            if let Ok(monitor_id) = suffix.parse::<i32>() {
+                return monitor_id;
+            }
+        }
+        if let Some(suffix) = client
+            .instance
+            .strip_prefix(&format!("{}_", Config::egui_bar_name))
+        {
+            if let Ok(monitor_id) = suffix.parse::<i32>() {
+                return monitor_id;
+            }
+        }
         self.sel_mon.as_ref().map(|m| m.borrow().num).unwrap_or(0)
     }
 
@@ -4904,11 +4928,11 @@ impl Dwm {
     // 辅助函数：根据ID获取显示器
     fn get_monitor_by_id(&self, monitor_id: i32) -> Option<Rc<RefCell<Monitor>>> {
         let mut m_iter = self.mons.clone();
-        while let Some(ref m_rc) = m_iter.clone() {
-            if m_rc.borrow().num == monitor_id {
-                return Some(m_rc.clone());
+        while let Some(ref mon_rc) = m_iter.clone() {
+            if mon_rc.borrow().num == monitor_id {
+                return Some(mon_rc.clone());
             }
-            m_iter = m_rc.borrow().next.clone();
+            m_iter = mon_rc.borrow().next.clone();
         }
         None
     }
@@ -4972,13 +4996,13 @@ impl Dwm {
         }
     }
 
-    pub fn monocle(&mut self, m_rc: &Rc<RefCell<Monitor>>) {
+    pub fn monocle(&mut self, mon_rc: &Rc<RefCell<Monitor>>) {
         info!("[monocle]");
         // --- 1. 计算当前显示器上可见且可聚焦的客户端数量 (n) ---
         let mut n: u32 = 0;
         let mut c_iter_opt = {
-            let m_borrow = m_rc.borrow();
-            m_borrow.clients.clone()
+            let mon_borrow = mon_rc.borrow();
+            mon_borrow.clients.clone()
         }; // 从客户端链表头开始
         while let Some(ref c_rc) = c_iter_opt.clone() {
             let c_client_borrow = c_rc.borrow();
@@ -4993,15 +5017,18 @@ impl Dwm {
             // 如果有可见的客户端
             // 将布局符号更新为 "[n]"，例如 "[3]" 表示有3个窗口在此布局下
             let formatted_string = format!("[{}]", n);
-            info!("[monocle] formatted_string: {}", formatted_string);
-            let mut m_borrow = m_rc.borrow_mut();
-            m_borrow.lt_symbol = formatted_string;
+            let mut mon_borrow = mon_rc.borrow_mut();
+            info!(
+                "[monocle] formatted_string: {}, monitor_num: {}",
+                formatted_string, mon_borrow.num
+            );
+            mon_borrow.lt_symbol = formatted_string;
         }
         // 如果 n == 0，ltsymbol 保持不变 (或者可以设为默认的 monocle 符号)
 
         // --- 3. 将所有可见且非浮动的客户端调整为占据整个工作区大小 ---
         let (wx, wy, ww, wh, clients_head_opt_for_resize) = {
-            let m_read_borrow = m_rc.borrow(); // 先进行只读操作
+            let m_read_borrow = mon_rc.borrow(); // 先进行只读操作
             (
                 m_read_borrow.w_x,
                 m_read_borrow.w_y,
@@ -5010,7 +5037,8 @@ impl Dwm {
                 m_read_borrow.clients.clone(),
             )
         };
-        let client_y_offset = self.client_y_offset(&m_rc.borrow()); // client_y_offset 应该只需要 &Monitor
+        let client_y_offset = self.client_y_offset(&mon_rc.borrow());
+        info!("[monocle] client_y_offset: {}", client_y_offset);
 
         let mut c_resize_iter_opt = self.nexttiled(clients_head_opt_for_resize); // 获取第一个可见平铺客户端
         while let Some(ref c_rc_to_resize) = c_resize_iter_opt.clone() {
@@ -5461,7 +5489,6 @@ impl Dwm {
                         mon_mut_borrow.w_w = self.s_w;
                         mon_mut_borrow.m_h = self.s_h;
                         mon_mut_borrow.w_h = self.s_h;
-                        // updatebarpos(m)
                     }
                 }
             }
@@ -5547,24 +5574,24 @@ impl Dwm {
             error!("[update_bar_message_for_monitor] Monitor option is None, cannot update bar message.");
             return;
         }
-        let m_rc = m_opt.as_ref().unwrap(); // &Rc<RefCell<Monitor>>
+        let mon_rc = m_opt.as_ref().unwrap(); // &Rc<RefCell<Monitor>>
 
         self.message = SharedMessage::default();
         let mut monitor_info_for_message = MonitorInfo::default();
         let mut occupied_tags_mask: u32 = 0;
         let mut urgent_tags_mask: u32 = 0;
         {
-            let m_borrow = m_rc.borrow();
-            info!("[update_bar_message_for_monitor], {}", m_borrow);
-            monitor_info_for_message.monitor_x = m_borrow.w_x;
-            monitor_info_for_message.monitor_y = m_borrow.w_y;
-            monitor_info_for_message.monitor_width = m_borrow.w_w;
-            monitor_info_for_message.monitor_height = m_borrow.w_h;
-            monitor_info_for_message.monitor_num = m_borrow.num;
-            monitor_info_for_message.ltsymbol = m_borrow.lt_symbol.clone();
+            let mon_borrow = mon_rc.borrow();
+            info!("[update_bar_message_for_monitor], {}", mon_borrow);
+            monitor_info_for_message.monitor_x = mon_borrow.w_x;
+            monitor_info_for_message.monitor_y = mon_borrow.w_y;
+            monitor_info_for_message.monitor_width = mon_borrow.w_w;
+            monitor_info_for_message.monitor_height = mon_borrow.w_h;
+            monitor_info_for_message.monitor_num = mon_borrow.num;
+            monitor_info_for_message.ltsymbol = mon_borrow.lt_symbol.clone();
             monitor_info_for_message.border_w = Config::border_px as i32;
 
-            let mut c_iter_opt = m_borrow.clients.clone();
+            let mut c_iter_opt = mon_borrow.clients.clone();
             while let Some(ref client_rc_iter) = c_iter_opt.clone() {
                 let client_borrow_iter = client_rc_iter.borrow();
                 occupied_tags_mask |= client_borrow_iter.tags;
@@ -5582,7 +5609,7 @@ impl Dwm {
             let is_filled_tag_calculated: bool; // 声明变量
             {
                 is_filled_tag_calculated = if let Some(ref global_selmon_rc) = self.sel_mon {
-                    if Rc::ptr_eq(m_rc, global_selmon_rc) {
+                    if Rc::ptr_eq(mon_rc, global_selmon_rc) {
                         // 当前 monitor 是全局选中的 monitor
                         if let Some(ref selected_client_on_selmon) = global_selmon_rc.borrow().sel {
                             (selected_client_on_selmon.borrow().tags & tag_bit) != 0
@@ -5596,7 +5623,7 @@ impl Dwm {
                     false // DWM 根本没有全局选中的 monitor
                 };
             }
-            let m_borrow_for_tagset = m_rc.borrow(); // 再次不可变借用 m_rc 来获取 tagset 信息
+            let m_borrow_for_tagset = mon_rc.borrow(); // 再次不可变借用 m_rc 来获取 tagset 信息
             let active_tagset_for_mon = m_borrow_for_tagset.tag_set[m_borrow_for_tagset.sel_tags];
             // drop(m_borrow_for_tagset); // 可选，如果下面不再需要
 
@@ -5614,7 +5641,7 @@ impl Dwm {
         }
 
         let mut selected_client_name_for_bar = String::new();
-        if let Some(ref selected_client_rc) = m_rc.borrow().sel {
+        if let Some(ref selected_client_rc) = mon_rc.borrow().sel {
             selected_client_name_for_bar = selected_client_rc.borrow().name.clone();
         }
         monitor_info_for_message.client_name = selected_client_name_for_bar;

@@ -15,8 +15,6 @@ pub mod constants {
     use egui::Color32;
 
     pub const FONT_SIZE: f32 = 16.0;
-    pub const DESIRED_HEIGHT: f32 = FONT_SIZE + 18.0;
-    pub const VOLUME_WINDOW_HEIGHT: f32 = 300.0; // 音量控制窗口的高度
 
     pub mod colors {
         use super::Color32;
@@ -49,9 +47,7 @@ pub mod constants {
     pub const NUM_EMOJI_VEC: [&str; 2] = ["⓪", "①"];
 }
 
-use constants::{
-    colors, DESIRED_HEIGHT, FONT_SIZE, NUM_EMOJI_VEC, TAG_ICONS, VOLUME_WINDOW_HEIGHT,
-};
+use constants::{colors, FONT_SIZE, NUM_EMOJI_VEC, TAG_ICONS};
 
 use crate::audio_manager::AudioManager;
 
@@ -118,7 +114,7 @@ impl MyEguiApp {
             update_interval_ms: 500,
             volume_window: VolumeControlWindow::default(),
             need_resize: false,
-            current_window_height: DESIRED_HEIGHT,
+            current_window_height: FONT_SIZE * 2.0,
             scale_factor: 1.0,
             audio_manager,
         }
@@ -386,51 +382,47 @@ impl MyEguiApp {
     }
 
     // 计算当前应使用的窗口高度
-    fn calculate_window_height(&self) -> f32 {
+    fn calculate_window_height(&self, monitor_height: i32) -> f32 {
         if self.volume_window.open {
             // 当音量控制窗口打开时使用更大高度
-            VOLUME_WINDOW_HEIGHT
+            monitor_height as f32 * 0.3
         } else {
             // 否则使用默认紧凑高度
-            DESIRED_HEIGHT
+            monitor_height as f32 * 0.03
         }
     }
 
     // 调整窗口大小
     fn adjust_window_size(&mut self, ctx: &egui::Context, message: &SharedMessage) {
         // 计算应使用的高度
-        let target_height = self.calculate_window_height();
+        let monitor_height = message.monitor_info.monitor_height;
+        let target_height_raw = self.calculate_window_height(monitor_height);
         let screen_rect = ctx.screen_rect();
         let border_w = message.monitor_info.border_w as f32;
-        let desired_width = message.monitor_info.monitor_width as f32 - 2. * border_w;
-        let desired_size = egui::Vec2::new(
-            desired_width / self.scale_factor,
-            target_height / self.scale_factor,
-        );
+        let monitor_x = message.monitor_info.monitor_x as f32;
+        let monitor_y = message.monitor_info.monitor_y as f32;
+        let target_width_raw = message.monitor_info.monitor_width as f32 - 2. * border_w;
+        let target_size = egui::Vec2::new(target_width_raw / self.scale_factor, target_height_raw);
 
         // 如果高度发生变化或被标记为需要调整大小
         if self.need_resize
-            || (target_height - self.current_window_height).abs() > 2.0
-            || (desired_size.x - screen_rect.size().x).abs() > 2.0
+            || (target_size.y - self.current_window_height).abs() > 2.0
+            || (target_size.x - screen_rect.size().x).abs() > 2.0
         {
-            info!(
-                "target_height: {}, current_window_height: {}",
-                target_height, self.current_window_height
+            let outer_pos = egui::Pos2::new(
+                (monitor_x + border_w) / self.scale_factor,
+                (monitor_y + border_w) / self.scale_factor,
             );
-            info!(
-                "desired_size.x: {}, screen_rect.size().x: {}",
-                desired_size.x,
-                screen_rect.size().x
-            );
-            // let outer_pos = egui::Pos2::ZERO;
-            let outer_pos =
-                egui::Pos2::new(border_w / self.scale_factor, border_w / self.scale_factor);
             // 调整窗口大小
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(outer_pos));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(desired_size));
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(target_size));
+            info!("outer_pos: {}", outer_pos);
+            info!("target_size: {}", target_size);
+            info!("screen_rect: {}", screen_rect);
+            info!("scale_factor: {}", self.scale_factor);
 
             // 更新当前高度和调整状态
-            self.current_window_height = target_height;
+            self.current_window_height = target_size.y;
         }
     }
 
@@ -480,15 +472,15 @@ impl MyEguiApp {
         }
     }
 
-    fn draw_smooth_gradient_line(&mut self, ui: &mut egui::Ui) {
+    fn draw_smooth_gradient_line(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
         // 确保颜色缓存已初始化
         self.ensure_color_cache();
-
         let reset_view = ui.small_button("R").clicked();
 
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             let available_width = ui.available_width();
-            let plot_height = ui.available_height().max(DESIRED_HEIGHT);
+            let screen_rect = ctx.screen_rect();
+            let plot_height = ui.available_height().max(screen_rect.height());
             let plot_width = (10.0 * plot_height).min(available_width * 0.5);
             ui.add_space(available_width - plot_width - 2.);
 
@@ -699,7 +691,7 @@ impl eframe::App for MyEguiApp {
                     ui.label(egui::RichText::new(format!("{:.1}", available)).color(colors::CYAN));
 
                     // 绘制图表
-                    self.draw_smooth_gradient_line(ui);
+                    self.draw_smooth_gradient_line(ui, ctx);
                 });
             });
         });
