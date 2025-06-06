@@ -53,6 +53,35 @@ impl From<ssh2::Error> for SshError {
     }
 }
 
+// --- Loop Mode Enum ---
+#[derive(Debug, Clone, Copy, PartialEq, serde::Deserialize, serde::Serialize)]
+pub enum LoopMode {
+    OpenLoop,
+    CloseLoop,
+}
+
+impl LoopMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            LoopMode::OpenLoop => "--open-loop",
+            LoopMode::CloseLoop => "--close-loop",
+        }
+    }
+
+    pub fn display_name(&self) -> &'static str {
+        match self {
+            LoopMode::OpenLoop => "Open Loop",
+            LoopMode::CloseLoop => "Close Loop",
+        }
+    }
+}
+
+impl Default for LoopMode {
+    fn default() -> Self {
+        LoopMode::OpenLoop
+    }
+}
+
 // --- SSH Connection Struct (for main thread cache) ---
 struct SSHConnection {
     session: Session,
@@ -70,6 +99,7 @@ pub struct SSHCommander {
     ddp_time: String,
     product: String,
     bag: String,
+    loop_mode: LoopMode, // 新增的循环模式选项
 
     #[serde(skip)]
     output: String,
@@ -115,6 +145,7 @@ impl Default for SSHCommander {
             bag: "/opt/maf_planning/backup/bags".into(),
             ddp_time: "2.0".into(),
             product: "MNP".into(),
+            loop_mode: LoopMode::default(), // 添加默认值
             output: String::new(),
             output_command: String::new(),
             show_file_dialog: false,
@@ -337,9 +368,14 @@ impl SSHCommander {
         let (sender, receiver) = std::sync::mpsc::channel();
         self.cmd_exec_receiver = Some(receiver);
 
+        // 修改命令构建，包含循环模式选项
         self.output_command = format!(
-            "{} --ddp-time {} --product {} {}",
-            COMMAND_PREFIX, self.ddp_time, self.product, self.bag
+            "{} --ddp-time {} --product {} {} {}",
+            COMMAND_PREFIX,
+            self.ddp_time,
+            self.product,
+            self.loop_mode.as_str(), // 添加循环模式参数
+            self.bag
         );
         println!("Executing command: {}", self.output_command);
 
@@ -496,6 +532,29 @@ impl eframe::App for SSHCommander {
                 ui.label("product: ");
                 ui.add(egui::TextEdit::singleline(&mut self.product).desired_width(100.));
             });
+
+            // 新增的循环模式选择器
+            ui.horizontal(|ui| {
+                ui.label("Loop Mode: ");
+                egui::ComboBox::from_label("")
+                    .selected_text(self.loop_mode.display_name())
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.loop_mode,
+                            LoopMode::OpenLoop,
+                            LoopMode::OpenLoop.display_name(),
+                        );
+                        ui.selectable_value(
+                            &mut self.loop_mode,
+                            LoopMode::CloseLoop,
+                            LoopMode::CloseLoop.display_name(),
+                        );
+                    });
+
+                // 可选：添加一个简单的提示或说明
+                ui.label(format!("({})", self.loop_mode.as_str()));
+            });
+
             ui.horizontal(|ui| {
                 ui.label("bag: ");
                 let remaining_width = ui.available_width() - ui.spacing().interact_size.x * 1.5; // Approx button width
