@@ -453,7 +453,7 @@ impl MyEguiApp {
         {
             let outer_pos = egui::Pos2::new(
                 (monitor_x + border_w) / self.scale_factor,
-                (monitor_y + border_w) / self.scale_factor + height_offset,
+                (monitor_y + border_w * 0.5) / self.scale_factor + height_offset,
             );
             // 调整窗口大小
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(outer_pos));
