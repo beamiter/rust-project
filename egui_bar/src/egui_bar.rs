@@ -444,7 +444,7 @@ impl MyEguiApp {
             target_width_raw / self.scale_factor,
             target_height_raw / self.scale_factor,
         );
-        let height_offset = (target_height_raw - target_size.y - border_w).max(0.0) * 0.5;
+        let height_offset = ((target_height_raw - target_size.y) * 0.5).max(0.0);
 
         // 如果高度发生变化或被标记为需要调整大小
         if self.need_resize
@@ -453,7 +453,7 @@ impl MyEguiApp {
         {
             let outer_pos = egui::Pos2::new(
                 (monitor_x + border_w) / self.scale_factor,
-                (monitor_y + border_w * 0.618) / self.scale_factor + height_offset,
+                (monitor_y + border_w) / self.scale_factor + height_offset,
             );
             // 调整窗口大小
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(outer_pos));
@@ -623,10 +623,19 @@ impl MyEguiApp {
 impl eframe::App for MyEguiApp {
     fn update(&mut self, ctx: &egui::Context, _: &mut eframe::Frame) {
         self.scale_factor = ctx.pixels_per_point();
-        INIT.call_once(|| {
-            info!("call_once, {}", self.scale_factor);
+        let new_scale_factor = self.scale_factor.min(1.1).max(1.0);
+        if self.scale_factor != new_scale_factor {
+            self.scale_factor = new_scale_factor;
+            ctx.set_pixels_per_point(self.scale_factor);
             MyEguiApp::configure_text_styles(ctx, self.scale_factor);
-        });
+            self.need_resize = true;
+        } else {
+            INIT.call_once(|| {
+                info!("call_once, {}", self.scale_factor);
+                self.need_resize = true;
+                MyEguiApp::configure_text_styles(ctx, self.scale_factor);
+            });
+        }
         while let Ok(message) = self.receiver_msg.try_recv() {
             self.message = Some(message);
             self.need_resize = true;

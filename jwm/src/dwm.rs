@@ -1286,20 +1286,14 @@ impl Dwm {
             if let Some(ref client_rc) = c {
                 // 检查是否是状态栏
                 if let Some(&monitor_id) = self.statusbar_windows.get(&ev.window) {
-                    // 状态栏窗口 - 不处理其配置请求
-                    // self.handle_statusbar_configure_request(monitor_id, &ev);
-                    // 只记录请求但不处理
-                    info!(
-                        "Ignoring configure request for statusbar on monitor {}",
-                        monitor_id
-                    );
-                    // 可选：简单地允许请求而不干预
-                    let mut wc: XWindowChanges = std::mem::zeroed();
-                    wc.x = ev.x;
-                    wc.y = ev.y;
-                    wc.width = ev.width;
-                    wc.height = ev.height;
-                    XConfigureWindow(self.dpy, ev.window, ev.value_mask as u32, &mut wc);
+                    info!("[configurerequest] statusbar on monitor {}", monitor_id);
+                    self.handle_statusbar_configure_request(monitor_id, &ev);
+                    // let mut wc: XWindowChanges = std::mem::zeroed();
+                    // wc.x = ev.x;
+                    // wc.y = ev.y;
+                    // wc.width = ev.width;
+                    // wc.height = ev.height;
+                    // XConfigureWindow(self.dpy, ev.window, ev.value_mask as u32, &mut wc);
                 } else {
                     // 常规客户端的配置请求处理
                     self.handle_regular_configure_request(&client_rc, &ev);
@@ -1320,64 +1314,95 @@ impl Dwm {
         }
     }
 
-    #[allow(dead_code)]
     fn handle_statusbar_configure_request(&mut self, monitor_id: i32, ev: &XConfigureRequestEvent) {
         info!(
-            "[handle_statusbar_configure_request] Processing request for monitor {}, mask: {:b}",
-            monitor_id, ev.value_mask
-        );
-
-        // 检查是否有几何变化请求
-        let has_geometry_change = (ev.value_mask & (CWX | CWY | CWWidth | CWHeight) as u64) > 0;
-        if !has_geometry_change {
-            info!("[handle_statusbar_configure_request] No geometry change requested, ignoring");
-            return;
-        }
+        "[handle_statusbar_configure_request] StatusBar resize request for monitor {}: {}x{}+{}+{} (mask: {:b})",
+        monitor_id, ev.width, ev.height, ev.x, ev.y, ev.value_mask
+    );
 
         if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
             let mut statusbar_mut = statusbar.borrow_mut();
-            let old_geo = (
+            let old_geometry = (
                 statusbar_mut.x,
                 statusbar_mut.y,
                 statusbar_mut.w,
                 statusbar_mut.h,
             );
+            let mut geometry_changed = false;
+            let mut needs_workarea_update = false;
 
-            // 处理位置变化
+            // 被动接受 egui_bar 的大小变化请求，不做任何限制或修正
             if ev.value_mask & CWX as u64 > 0 {
                 statusbar_mut.x = ev.x;
+                geometry_changed = true;
             }
             if ev.value_mask & CWY as u64 > 0 {
                 statusbar_mut.y = ev.y;
+                geometry_changed = true;
+                needs_workarea_update = true; // Y 位置变化影响工作区
             }
-            // 处理宽度变化
             if ev.value_mask & CWWidth as u64 > 0 {
                 statusbar_mut.w = ev.width;
+                geometry_changed = true;
             }
-            // 处理高度变化
             if ev.value_mask & CWHeight as u64 > 0 {
                 statusbar_mut.h = ev.height;
+                geometry_changed = true;
+                needs_workarea_update = true; // 高度变化是最主要的关注点
             }
 
-            // 确保状态栏宽度与显示器宽度匹配
-            if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-                let monitor_width = monitor.borrow().m_w;
-                if statusbar_mut.w != monitor_width {
-                    statusbar_mut.w = monitor_width;
-                }
-            }
-
-            // 立即发送配置通知
-            self.configure(&mut statusbar_mut);
-
-            info!(
-                "[handle_statusbar_configure_request] Updated statusbar geometry: old={:?}, new={}",
-                old_geo, statusbar_mut
+            if geometry_changed {
+                info!(
+                "[handle_statusbar_configure_request] StatusBar geometry updated: {:?} -> ({}, {}, {}, {})",
+                old_geometry, statusbar_mut.x, statusbar_mut.y, statusbar_mut.w, statusbar_mut.h
             );
 
-            // 确保状态栏保持在最上层
+                // 只是同意 egui_bar 的请求，允许它按照请求的大小进行配置
+                unsafe {
+                    let mut wc: XWindowChanges = std::mem::zeroed();
+                    wc.x = statusbar_mut.x;
+                    wc.y = statusbar_mut.y;
+                    wc.width = statusbar_mut.w;
+                    wc.height = statusbar_mut.h;
+
+                    // 应用 egui_bar 请求的配置
+                    XConfigureWindow(self.dpy, ev.window, ev.value_mask as u32, &mut wc);
+
+                    // 确保状态栏始终在最上层
+                    XRaiseWindow(self.dpy, statusbar_mut.win);
+                }
+
+                // 发送确认配置事件给 egui_bar
+                self.configure(&mut statusbar_mut);
+            }
+
+            drop(statusbar_mut); // 释放借用
+
+            // 重要：当状态栏大小变化时，需要更新工作区域并重新排列其他窗口
+            if needs_workarea_update {
+                info!("[handle_statusbar_configure_request] Updating workarea due to statusbar geometry change");
+                // (TODO): Fix bug here.
+                // self.update_monitor_workarea(monitor_id);
+                //
+                // // 重新排列该显示器上的其他客户端
+                // if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+                //     self.arrange(Some(monitor));
+                // }
+            }
+        } else {
+            error!(
+                "[handle_statusbar_configure_request] StatusBar not found for monitor {}",
+                monitor_id
+            );
+
+            // 作为后备，直接应用配置请求
             unsafe {
-                XRaiseWindow(self.dpy, statusbar.borrow().win);
+                let mut wc: XWindowChanges = std::mem::zeroed();
+                wc.x = ev.x;
+                wc.y = ev.y;
+                wc.width = ev.width;
+                wc.height = ev.height;
+                XConfigureWindow(self.dpy, ev.window, ev.value_mask as u32, &mut wc);
             }
         }
     }
@@ -2238,17 +2263,6 @@ impl Dwm {
         }
     }
 
-    pub fn client_y_offset(&self, m: &Monitor) -> i32 {
-        let monitor_id = m.num;
-        // 直接从状态栏客户端获取高度信息
-        if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
-            let statusbar_borrow = statusbar.borrow();
-            return statusbar_borrow.h + Config::egui_bar_pad;
-        }
-        // 如果没有状态栏，返回 0
-        0
-    }
-
     pub fn tile(&mut self, mon_rc: &Rc<RefCell<Monitor>>) {
         info!("[tile]"); // 日志记录，进入 tile 布局函数
 
@@ -2371,7 +2385,7 @@ impl Dwm {
                     c_opt_rc,
                     wx_val,
                     wy_val + my as i32 + client_y_offset,
-                    mw as i32 - (2 * bw), // bw 之前已获取
+                    mw as i32 - (2 * bw),
                     h as i32 - (2 * bw) - client_y_offset,
                     false,
                 );
@@ -4830,41 +4844,120 @@ impl Dwm {
             let mut monitor_mut = monitor.borrow_mut();
             if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
                 let statusbar_borrow = statusbar.borrow();
-                // 根据状态栏的实际位置和大小调整工作区
+                // 根据状态栏的实际位置和大小重新计算工作区域
                 let statusbar_bottom = statusbar_borrow.y + statusbar_borrow.h;
-                let new_work_y = statusbar_bottom + Config::egui_bar_pad;
-                let new_work_h = monitor_mut.m_h - (new_work_y - monitor_mut.m_y);
-                // 确保工作区不会变成负数
-                if new_work_h > 0 {
-                    monitor_mut.w_y = new_work_y;
-                    monitor_mut.w_h = new_work_h;
-                } else {
-                    // 如果状态栏太高，至少保留一些工作空间
-                    monitor_mut.w_y = statusbar_bottom;
-                    monitor_mut.w_h =
-                        std::cmp::max(50, monitor_mut.m_h - (statusbar_bottom - monitor_mut.m_y));
+                let available_height = monitor_mut.m_h - (statusbar_bottom - monitor_mut.m_y);
+                // 更新工作区域
+                let old_workarea = (
+                    monitor_mut.w_x,
+                    monitor_mut.w_y,
+                    monitor_mut.w_w,
+                    monitor_mut.w_h,
+                );
+                monitor_mut.w_x = monitor_mut.m_x;
+                monitor_mut.w_y = statusbar_bottom + Config::egui_bar_pad;
+                monitor_mut.w_w = monitor_mut.m_w;
+                monitor_mut.w_h = available_height - Config::egui_bar_pad;
+                // 确保工作区域不会变成负数或过小
+                if monitor_mut.w_h < 50 {
+                    monitor_mut.w_h = 50;
+                    info!("[update_monitor_workarea] Limited minimum workarea height to 50px");
                 }
-                // 工作区的 X 和宽度通常与显示器保持一致，但也可以根据状态栏调整
-                monitor_mut.w_x = monitor_mut.m_x; // 或者 statusbar_borrow.x
-                monitor_mut.w_w = monitor_mut.m_w; // 或者 statusbar_borrow.w
                 info!(
-                "[update_monitor_workarea] Updated workarea for monitor {}: x={}, y={}, w={}, h={} (statusbar: {}x{}+{}+{})",
-                monitor_id,
-                monitor_mut.w_x, monitor_mut.w_y, monitor_mut.w_w, monitor_mut.w_h,
-                statusbar_borrow.w, statusbar_borrow.h, statusbar_borrow.x, statusbar_borrow.y
-            );
+                    "[update_monitor_workarea] Monitor {} workarea: {:?} -> ({}, {}, {}, {}) (statusbar: {}x{}+{}+{})",
+                    monitor_id, old_workarea,
+                    monitor_mut.w_x, monitor_mut.w_y, monitor_mut.w_w, monitor_mut.w_h,
+                    statusbar_borrow.w, statusbar_borrow.h, statusbar_borrow.x, statusbar_borrow.y
+                );
             } else {
-                // 没有状态栏时，工作区等于显示器区域
+                // 没有状态栏时，工作区域等于显示器区域
                 monitor_mut.w_x = monitor_mut.m_x;
                 monitor_mut.w_y = monitor_mut.m_y;
                 monitor_mut.w_w = monitor_mut.m_w;
                 monitor_mut.w_h = monitor_mut.m_h;
-                info!(
-                "[update_monitor_workarea] No statusbar for monitor {}, workarea = monitor area: {}x{}+{}+{}",
-                monitor_id, monitor_mut.w_w, monitor_mut.w_h, monitor_mut.w_x, monitor_mut.w_y
-            );
+                info!("[update_monitor_workarea] No statusbar for monitor {}, workarea = monitor area", monitor_id);
             }
         }
+    }
+
+    // 实时同步状态栏几何信息
+    #[allow(dead_code)]
+    pub fn sync_statusbar_geometry(&mut self, monitor_id: i32) -> bool {
+        if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
+            unsafe {
+                let win = statusbar.borrow().win;
+                let mut wa: XWindowAttributes = std::mem::zeroed();
+
+                // 从 X11 获取实际的窗口几何信息
+                if XGetWindowAttributes(self.dpy, win, &mut wa) > 0 {
+                    let mut statusbar_mut = statusbar.borrow_mut();
+                    let mut changed = false;
+
+                    // 比较并更新几何信息
+                    if statusbar_mut.x != wa.x {
+                        info!(
+                            "[sync_statusbar_geometry] X: {} -> {}",
+                            statusbar_mut.x, wa.x
+                        );
+                        statusbar_mut.x = wa.x;
+                        changed = true;
+                    }
+                    if statusbar_mut.y != wa.y {
+                        info!(
+                            "[sync_statusbar_geometry] Y: {} -> {}",
+                            statusbar_mut.y, wa.y
+                        );
+                        statusbar_mut.y = wa.y;
+                        changed = true;
+                    }
+                    if statusbar_mut.w != wa.width {
+                        info!(
+                            "[sync_statusbar_geometry] W: {} -> {}",
+                            statusbar_mut.w, wa.width
+                        );
+                        statusbar_mut.w = wa.width;
+                        changed = true;
+                    }
+                    if statusbar_mut.h != wa.height {
+                        info!(
+                            "[sync_statusbar_geometry] H: {} -> {}",
+                            statusbar_mut.h, wa.height
+                        );
+                        statusbar_mut.h = wa.height;
+                        changed = true;
+                    }
+
+                    return changed;
+                }
+            }
+        }
+        false
+    }
+
+    pub fn client_y_offset(&self, m: &Monitor) -> i32 {
+        let monitor_id = m.num;
+        // 同步状态栏几何信息
+        // if self.sync_statusbar_geometry(monitor_id) {
+        //     info!(
+        //         "[client_y_offset] Synced statusbar geometry for monitor {}",
+        //         monitor_id
+        //     );
+        // }
+
+        if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
+            let statusbar_borrow = statusbar.borrow();
+            let offset = statusbar_borrow.h + Config::egui_bar_pad;
+            info!(
+                "[client_y_offset] Monitor {}: offset = {} (statusbar_h: {} + pad: {})",
+                monitor_id,
+                offset,
+                statusbar_borrow.h,
+                Config::egui_bar_pad
+            );
+            return offset;
+        }
+
+        0
     }
 
     // 验证并修正状态栏几何配置
