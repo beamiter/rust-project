@@ -19,6 +19,7 @@ use x11::{
 use crate::{
     dwm::{self, Button, Dwm, Key, Layout, LayoutType, Rule, CLICK},
     icon_gallery::{generate_random_tags, ICON_GALLERY},
+    terminal_prober::ADVANCED_TERMINAL_PROBER,
 };
 
 pub struct Config {}
@@ -173,8 +174,14 @@ impl Config {
             Self::col_gray4.to_string(),
         ]
     });
-    // pub const termcmd: Lazy<Vec<String>> = Lazy::new(|| vec!["warp-terminal".to_string()]);
-    pub const termcmd: Lazy<Vec<String>> = Lazy::new(|| vec!["terminator".to_string()]);
+    // pub const termcmd: Lazy<Vec<String>> = Lazy::new(|| vec!["terminator".to_string()]);
+    // 兼容原有接口
+    pub const termcmd: Lazy<Vec<String>> = Lazy::new(|| {
+        ADVANCED_TERMINAL_PROBER
+            .get_available_terminal()
+            .map(|config| vec![config.command.clone()])
+            .unwrap_or_else(|| vec!["x-terminal-emulator".to_string()])
+    });
 
     pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
         let mut m = vec![

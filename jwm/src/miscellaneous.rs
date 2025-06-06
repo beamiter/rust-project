@@ -2,6 +2,8 @@ use dirs_next::home_dir;
 use log::info;
 use std::{ffi::CString, process::Command};
 
+use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
+
 pub fn for_test() {
     let tt: &str = "中国";
     println!("len: {}", tt.len());
@@ -48,6 +50,30 @@ pub fn for_test() {
     match CString::new(filtered_text) {
         Ok(c_str) => println!("CString created successfully: {:?}", c_str),
         Err(e) => println!("Failed to create CString: {:?}", e),
+    }
+
+    // 基础使用
+    // println!("Available terminal: {:?}", termcmd.as_slice());
+
+    // 高级使用
+    let prober = &*ADVANCED_TERMINAL_PROBER;
+
+    // 获取可用终端
+    if let Some(terminal) = prober.get_available_terminal() {
+        println!("Found terminal: {}", terminal.command);
+
+        // // 构建启动命令
+        // if let Some(cmd) = prober.build_command("bash", Some("My Terminal"), Some("~/")) {
+        //     println!("Launch command: {:?}", cmd);
+        //
+        //     // 执行终端
+        //     std::process::Command::new(&cmd[0])
+        //         .args(&cmd[1..])
+        //         .spawn()
+        //         .expect("Failed to launch terminal");
+        // }
+    } else {
+        println!("No terminal found!");
     }
 }
 

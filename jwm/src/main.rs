@@ -16,6 +16,7 @@ mod dwm;
 mod icon_gallery;
 mod miscellaneous;
 mod xproto;
+mod terminal_prober;
 
 // Xnest and Xephyr is all you need!
 // Xnest:
