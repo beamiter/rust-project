@@ -7,6 +7,9 @@ use libc::{
 };
 use log::error;
 use log::info;
+use log::warn;
+use nix::sys::signal::{self, Signal};
+use nix::unistd::Pid;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -22,6 +25,7 @@ use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
+use std::time::{Duration, Instant};
 use std::{os::raw::c_long, usize};
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
 use x11::xlib::XConfigureRequestEvent;
@@ -5188,29 +5192,164 @@ impl Dwm {
             "[unmanage_statusbar] Removing statusbar for monitor {}",
             monitor_id
         );
+
         if let Some(statusbar) = self.statusbar_clients.remove(&monitor_id) {
             let win = statusbar.borrow().win;
             self.statusbar_windows.remove(&win);
+
             if !destroyed {
                 unsafe {
-                    // 恢复窗口属性
                     XSelectInput(self.dpy, win, NoEventMask);
-                    // 不需要恢复边框，因为状态栏本来就没有边框
                 }
             }
+
             // 恢复显示器工作区域
             if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
                 let mut monitor_mut = monitor.borrow_mut();
                 monitor_mut.w_y = monitor_mut.m_y;
                 monitor_mut.w_h = monitor_mut.m_h;
             }
-            // 重新排列该显示器的客户端
+
+            // 🚀 优化的资源清理顺序
+
+            // 1. 首先终止子进程
+            if let Err(e) = self.terminate_egui_bar_process_safe(monitor_id) {
+                error!(
+                    "[unmanage_statusbar] Failed to terminate process for monitor {}: {}",
+                    monitor_id, e
+                );
+            }
+
+            // 2. 然后清理共享内存
+            if let Err(e) = self.cleanup_shared_memory_safe(monitor_id) {
+                error!(
+                    "[unmanage_statusbar] Failed to cleanup shared memory for monitor {}: {}",
+                    monitor_id, e
+                );
+            }
+
+            // 3. 最后重新排列客户端
             if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
                 self.arrange(Some(monitor));
             }
-            // 清理相关的进程和共享内存
-            self.egui_bar_child.remove(&monitor_id);
-            self.egui_bar_shmem.remove(&monitor_id);
+        }
+    }
+
+    /// 安全的进程终止方法
+    fn terminate_egui_bar_process_safe(&mut self, monitor_id: i32) -> Result<(), String> {
+        if let Some(mut child) = self.egui_bar_child.remove(&monitor_id) {
+            info!(
+                "[terminate_egui_bar_process_safe] Terminating process for monitor {}",
+                monitor_id
+            );
+
+            // 获取进程 ID
+            let pid = child.id();
+
+            let nix_pid = Pid::from_raw(pid as i32);
+
+            // 检查进程是否存在
+            match signal::kill(nix_pid, None) {
+                Err(_) => {
+                    // 进程已经不存在
+                    info!("[terminate_egui_bar_process_safe] Process already terminated for monitor {}", monitor_id);
+                    return Ok(());
+                }
+                Ok(_) => {} // 进程存在，继续终止流程
+            }
+
+            // 尝试优雅终止
+            if let Ok(_) = signal::kill(nix_pid, Signal::SIGTERM) {
+                let timeout = Duration::from_secs(3);
+                let start = Instant::now();
+
+                // 等待进程退出
+                while start.elapsed() < timeout {
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            info!(
+                                "[terminate_egui_bar_process_safe] Process exited gracefully: {:?}",
+                                status
+                            );
+                            return Ok(());
+                        }
+                        Ok(None) => {
+                            std::thread::sleep(Duration::from_millis(100));
+                        }
+                        Err(e) => {
+                            return Err(format!("Error waiting for process: {}", e));
+                        }
+                    }
+                }
+
+                // 超时后强制终止
+                warn!(
+                    "[terminate_egui_bar_process_safe] Graceful termination timeout, forcing kill"
+                );
+            }
+
+            // 强制终止
+            match signal::kill(nix_pid, Signal::SIGKILL) {
+                Ok(_) => match child.wait() {
+                    Ok(status) => {
+                        info!(
+                            "[terminate_egui_bar_process_safe] Process force killed: {:?}",
+                            status
+                        );
+                        Ok(())
+                    }
+                    Err(e) => Err(format!("Failed to wait for killed process: {}", e)),
+                },
+                Err(e) => Err(format!("Failed to send SIGKILL: {}", e)),
+            }
+        } else {
+            info!(
+                "[terminate_egui_bar_process_safe] No process found for monitor {}",
+                monitor_id
+            );
+            Ok(())
+        }
+    }
+
+    /// 安全的共享内存清理方法
+    fn cleanup_shared_memory_safe(&mut self, monitor_id: i32) -> Result<(), String> {
+        if let Some(shmem) = self.egui_bar_shmem.remove(&monitor_id) {
+            info!(
+                "[cleanup_shared_memory_safe] Cleaning up shared memory for monitor {}",
+                monitor_id
+            );
+
+            // 释放共享内存对象
+            drop(shmem);
+
+            // 如果需要手动删除系统共享内存对象
+            #[cfg(unix)]
+            {
+                let shmem_name = format!("egui_bar_{}", monitor_id);
+                if let Ok(c_name) = std::ffi::CString::new(shmem_name) {
+                    unsafe {
+                        let result = libc::shm_unlink(c_name.as_ptr());
+                        if result != 0 {
+                            let errno = *libc::__errno_location();
+                            if errno != libc::ENOENT {
+                                return Err(format!("shm_unlink failed with errno: {}", errno));
+                            }
+                        }
+                    }
+                }
+            }
+
+            info!(
+                "[cleanup_shared_memory_safe] Shared memory cleaned successfully for monitor {}",
+                monitor_id
+            );
+            Ok(())
+        } else {
+            info!(
+                "[cleanup_shared_memory_safe] No shared memory found for monitor {}",
+                monitor_id
+            );
+            Ok(())
         }
     }
 
