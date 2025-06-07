@@ -64,7 +64,7 @@ impl LoopMode {
     pub fn as_str(&self) -> &'static str {
         match self {
             LoopMode::OpenLoop => "--open-loop",
-            LoopMode::CloseLoop => "--close-loop",
+            LoopMode::CloseLoop => "",
         }
     }
 
