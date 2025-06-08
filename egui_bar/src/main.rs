@@ -1,251 +1,254 @@
-mod audio_manager;
-mod egui_bar;
+//! egui_bar - A modern system status bar application
+//!
+//! This application provides a customizable system status bar with features including:
+//! - Audio volume control
+//! - System resource monitoring  
+//! - Workspace/tag information display
+//! - Configurable themes and layouts
+
 use chrono::Local;
-use egui::Pos2;
-use egui_bar::constants::FONT_SIZE;
-pub use egui_bar::MyEguiApp;
+use egui_bar::{app::EguiBarApp, config::AppConfig, utils::AppError};
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-use font_kit::source::SystemSource;
-use log::debug;
-use log::error;
-use log::info;
-use log::warn;
+use log::{error, info, warn};
 use shared_structures::{SharedMessage, SharedRingBuffer};
 use std::path::Path;
 use std::sync::mpsc;
+use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::{env, thread, u128};
+use std::{env, u128};
 
-fn load_system_nerd_font(ctx: &egui::Context) -> Result<(), Box<dyn std::error::Error>> {
-    info!("[load_system_nerd_font]");
-    let mut fonts = egui::FontDefinitions::default();
-    let system_source = SystemSource::new();
-    // println!("all fonts: {:?}", system_source.all_fonts());
-    for font_name in [
-        "Noto Sans CJK SC".to_string(),
-        "Noto Sans CJK TC".to_string(),
-        "SauceCodeProNerdFont".to_string(),
-        "DejaVuSansMonoNerdFont".to_string(),
-        "JetBrainsMonoNerdFont".to_string(),
-    ] {
-        let font_handle = system_source.select_best_match(
-            &[font_kit::family_name::FamilyName::Title(font_name.clone())],
-            &font_kit::properties::Properties::new(),
-        );
-        if font_handle.is_err() {
-            continue;
-        }
-        let font = font_handle.unwrap().load();
-        if font.is_err() {
-            continue;
-        }
-        let font_data = font.unwrap().copy_font_data();
-        if font_data.is_none() {
-            continue;
-        }
-        fonts.font_data.insert(
-            font_name.clone(),
-            egui::FontData::from_owned(font_data.unwrap().to_vec()).into(),
-        );
-        // fonts
-        //     .families
-        //     .get_mut(&egui::FontFamily::Proportional)
-        //     .unwrap()
-        //     .insert(0, "nerd-font".to_owned());
-        fonts
-            .families
-            .get_mut(&egui::FontFamily::Monospace)
-            .unwrap()
-            .insert(0, font_name);
-    }
-    info!("{:?}", fonts.families);
-    ctx.set_fonts(fonts);
-    Ok(())
-}
-
-fn main() -> eframe::Result {
+/// Application entry point
+fn main() -> eframe::Result<()> {
+    // 修改返回类型
+    // Parse command line arguments
     let args: Vec<String> = env::args().collect();
-    let shared_path = args.get(1).cloned().unwrap_or_else(|| "".to_string());
-    let now = Local::now();
-    let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
-    let file_name = Path::new(&shared_path)
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("");
-    let log_filename = format!("egui_bar_{file_name}_{timestamp}");
-    info!("{log_filename}");
-    Logger::try_with_str("info")
-        .unwrap()
-        .format(flexi_logger::colored_opt_format)
-        .log_to_file(
-            FileSpec::default()
-                .directory("/tmp")
-                .basename(format!("{log_filename}"))
-                .suffix("log"),
-        )
-        .duplicate_to_stdout(Duplicate::Info)
-        // .log_to_stdout()
-        // .buffer_capacity(1024)
-        // .use_background_worker(true)
-        .rotate(
-            Criterion::Size(10_000_000),
-            Naming::Numbers,
-            Cleanup::KeepLogFiles(5),
-        )
-        .start()
-        .unwrap();
+    let shared_path = args.get(1).cloned().unwrap_or_default();
 
+    // Initialize logging
+    if let Err(e) = initialize_logging(&shared_path) {
+        eprintln!("Failed to initialize logging: {}", e);
+        std::process::exit(1);
+    }
+
+    info!("Starting egui_bar v{}", egui_bar::VERSION);
+
+    // Load configuration
+    let config = match AppConfig::load() {
+        Ok(mut config) => {
+            config.validate().unwrap_or_else(|e| {
+                warn!("Configuration validation failed: {}", e);
+            });
+            config
+        }
+        Err(e) => {
+            error!("Failed to load configuration: {}", e);
+            AppConfig::default()
+        }
+    };
+
+    // Create communication channels
+    let (message_sender, message_receiver) = mpsc::channel();
+    let (resize_sender, resize_receiver) = mpsc::channel();
+    let (heartbeat_sender, heartbeat_receiver) = mpsc::channel();
+
+    // Start background thread for shared memory monitoring
+    let shared_path_clone = shared_path.clone();
+    thread::spawn(move || {
+        background_worker(
+            shared_path_clone,
+            message_sender,
+            resize_receiver,
+            heartbeat_sender,
+        )
+    });
+
+    // Start heartbeat monitor
+    thread::spawn(move || heartbeat_monitor(heartbeat_receiver));
+
+    // Configure eframe options
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_position(Pos2::new(0., 0.))
-            .with_inner_size([800., FONT_SIZE * 2.]) // Initial height
-            .with_min_inner_size([480., FONT_SIZE]) // Minimum size
-            // .with_max_inner_size([f32::INFINITY, 20.0]) // Set max height to 20.0
-            .with_decorations(false), // Hide title bar and decorations
-        // .with_always_on_top(), // Keep window always on top
+            .with_position(egui::Pos2::new(0.0, 0.0))
+            .with_inner_size([800.0, config.ui.font_size * 2.0])
+            .with_min_inner_size([480.0, config.ui.font_size])
+            .with_decorations(false)
+            .with_transparent(config.ui.window_opacity < 1.0),
         vsync: true,
         ..Default::default()
     };
 
+    // Run the application
     eframe::run_native(
         "egui_bar",
         native_options,
-        Box::new(|cc| {
-            let _ = load_system_nerd_font(&cc.egui_ctx);
-            MyEguiApp::configure_text_styles(&cc.egui_ctx, 1.0);
-
-            let (sender_msg, receiver_msg) = mpsc::channel();
-            let (sender_resize, receiver_resize) = mpsc::channel();
-            // 创建通道用于心跳检测
-            let (tx, rx) = mpsc::channel();
-            let egui_ctx = cc.egui_ctx.clone();
-
-            thread::spawn(move || {
-                // 创建或打开无锁环形缓冲区
-                let ring_buffer: Option<SharedRingBuffer> = {
-                    if shared_path.is_empty() {
-                        None
-                    } else {
-                        match SharedRingBuffer::open(&shared_path) {
-                            Ok(rb) => Some(rb),
-                            Err(e) => {
-                                error!("无法打开共享环形缓冲区: {}", e);
-                                None
-                            }
-                        }
-                    }
-                };
-
-                // 设置 panic 钩子
-                let default_hook = std::panic::take_hook();
-                std::panic::set_hook(Box::new(move |panic_info| {
-                    default_hook(panic_info);
-                    // 不需要发送任何消息，线程死亡会导致通道关闭
-                }));
-
-                let mut prev_timestamp = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_millis();
-                let mut last_secs = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .unwrap()
-                    .as_secs();
-                let mut frame: u128 = 0;
-
-                // 用于记录错误日志的计数器，避免日志过多
-                let mut error_count = 0;
-                let max_error_logs = 5;
-
-                loop {
-                    let cur_secs = SystemTime::now()
-                        .duration_since(UNIX_EPOCH)
-                        .unwrap()
-                        .as_secs();
-
-                    let mut need_request_repaint = false;
-
-                    if let Some(rb) = ring_buffer.as_ref() {
-                        // 尝试从环形缓冲区读取数据
-                        match rb.try_read_latest_message::<SharedMessage>() {
-                            Ok(Some(message)) => {
-                                // 检查时间戳是否更新
-                                if prev_timestamp != message.timestamp {
-                                    prev_timestamp = message.timestamp;
-                                    info!("send message: {:?}", message);
-                                    if sender_msg.send(message).is_ok() {
-                                        need_request_repaint = true;
-                                        error_count = 0; // 重置错误计数
-                                    } else {
-                                        error!("Fail to send message");
-                                    }
-                                }
-                            }
-                            Ok(None) => {
-                                // 没有新数据，正常情况
-                                if frame.wrapping_rem(1000) == 0 {
-                                    debug!("No new message in ring buffer");
-                                }
-                            }
-                            Err(e) => {
-                                // 限制错误日志数量
-                                if error_count < max_error_logs {
-                                    error!("读取环形缓冲区错误: {}", e);
-                                    error_count += 1;
-                                } else if error_count == max_error_logs {
-                                    error!("读取环形缓冲区持续出错，后续错误将不再记录");
-                                    error_count += 1;
-                                }
-                            }
-                        }
-                    } else if frame.wrapping_rem(100) == 0 {
-                        error!("环形缓冲区未初始化");
-                    }
-
-                    if frame.wrapping_rem(100) == 0 {
-                        info!("frame {frame}: {last_secs}, {cur_secs}");
-                    }
-
-                    if cur_secs != last_secs {
-                        need_request_repaint = true;
-                    }
-
-                    while let Ok(_) = receiver_resize.try_recv() {}
-
-                    if need_request_repaint {
-                        warn!("request_repaint");
-                        egui_ctx.request_repaint_after(Duration::from_micros(1));
-                    }
-
-                    last_secs = cur_secs;
-                    frame = frame.wrapping_add(1).wrapping_rem(u128::MAX);
-
-                    if tx.send(()).is_err() {
-                        // 如果发送失败，说明接收端已关闭
-                        break;
-                    }
-
-                    thread::sleep(Duration::from_millis(10));
+        Box::new(move |cc| {
+            // 修复：直接处理错误而不是使用 Custom 变体
+            match EguiBarApp::new(cc, message_receiver, resize_sender) {
+                Ok(app) => {
+                    info!("Application created successfully");
+                    Ok(Box::new(app))
                 }
-            });
-
-            thread::spawn(move || {
-                // 主线程监控心跳
-                loop {
-                    match rx.recv_timeout(Duration::from_secs(2)) {
-                        Ok(_) => {
-                            // 收到心跳，继续运行
-                        }
-                        Err(_) => {
-                            // 超时或通道关闭，表示线程可能已死亡
-                            error!("sub thread died, killing main thread now");
-                            std::process::exit(1);
-                        }
-                    }
+                Err(e) => {
+                    error!("Failed to create application: {}", e);
+                    // 直接退出程序而不是返回自定义错误
+                    std::process::exit(1);
                 }
-            });
-
-            Ok(Box::new(MyEguiApp::new(cc, receiver_msg, sender_resize)))
+            }
         }),
     )
+}
+
+/// Initialize logging system
+fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
+    let now = Local::now();
+    let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
+
+    let file_name = if shared_path.is_empty() {
+        "egui_bar".to_string()
+    } else {
+        Path::new(shared_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| format!("egui_bar_{}", name))
+            .unwrap_or_else(|| "egui_bar".to_string())
+    };
+
+    let log_filename = format!("{}_{}", file_name, timestamp);
+
+    Logger::try_with_str("info")
+        .map_err(|e| AppError::config(format!("Failed to create logger: {}", e)))?
+        .format(flexi_logger::colored_opt_format)
+        .log_to_file(
+            FileSpec::default()
+                .directory("/tmp")
+                .basename(log_filename)
+                .suffix("log"),
+        )
+        .duplicate_to_stdout(Duplicate::Info)
+        .rotate(
+            Criterion::Size(10_000_000), // 10MB
+            Naming::Numbers,
+            Cleanup::KeepLogFiles(5),
+        )
+        .start()
+        .map_err(|e| AppError::config(format!("Failed to start logger: {}", e)))?;
+
+    Ok(())
+}
+
+/// Background worker thread for shared memory monitoring
+fn background_worker(
+    shared_path: String,
+    message_sender: mpsc::Sender<SharedMessage>,
+    resize_receiver: mpsc::Receiver<bool>,
+    heartbeat_sender: mpsc::Sender<()>,
+) {
+    info!("Starting background worker thread");
+
+    // Initialize shared ring buffer
+    let ring_buffer: Option<SharedRingBuffer> = if shared_path.is_empty() {
+        warn!("No shared path provided, running without shared memory");
+        None
+    } else {
+        match SharedRingBuffer::open(&shared_path) {
+            Ok(rb) => {
+                info!("Successfully opened shared ring buffer: {}", shared_path);
+                Some(rb)
+            }
+            Err(e) => {
+                error!("Failed to open shared ring buffer '{}': {}", shared_path, e);
+                None
+            }
+        }
+    };
+
+    // Set panic hook
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |panic_info| {
+        error!("Background thread panicked: {}", panic_info);
+        default_hook(panic_info);
+    }));
+
+    let mut prev_timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+
+    let mut frame_count: u128 = 0;
+    let mut error_count = 0;
+    const MAX_ERROR_LOGS: usize = 10;
+
+    loop {
+        // Handle ring buffer messages
+        if let Some(ref rb) = ring_buffer {
+            match rb.try_read_latest_message::<SharedMessage>() {
+                Ok(Some(message)) => {
+                    if prev_timestamp != message.timestamp {
+                        prev_timestamp = message.timestamp;
+
+                        if let Err(e) = message_sender.send(message) {
+                            error!("Failed to send message to UI thread: {}", e);
+                            break; // UI thread probably died
+                        }
+
+                        error_count = 0; // Reset error count on success
+                    }
+                }
+                Ok(None) => {
+                    // No new messages - this is normal
+                    if frame_count % 1000 == 0 {
+                        info!("No new messages (frame {})", frame_count);
+                    }
+                }
+                Err(e) => {
+                    if error_count < MAX_ERROR_LOGS {
+                        error!("Ring buffer read error: {}", e);
+                        error_count += 1;
+                    } else if error_count == MAX_ERROR_LOGS {
+                        error!("Ring buffer error limit reached, suppressing further errors");
+                        error_count += 1;
+                    }
+                }
+            }
+        }
+
+        // Handle resize requests
+        while resize_receiver.try_recv().is_ok() {
+            // Just consume resize requests - the actual resizing is handled in the UI thread
+        }
+
+        // Send heartbeat
+        if heartbeat_sender.send(()).is_err() {
+            warn!("Heartbeat receiver disconnected, exiting background thread");
+            break;
+        }
+
+        frame_count = frame_count.wrapping_add(1);
+
+        // Sleep to control update rate (100 FPS)
+        thread::sleep(Duration::from_millis(10));
+    }
+
+    info!("Background worker thread exiting");
+}
+
+/// Monitor heartbeat from background thread
+fn heartbeat_monitor(heartbeat_receiver: mpsc::Receiver<()>) {
+    info!("Starting heartbeat monitor");
+
+    loop {
+        match heartbeat_receiver.recv_timeout(Duration::from_secs(5)) {
+            Ok(_) => {
+                // Heartbeat received, continue
+            }
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                error!("Background thread heartbeat timeout - thread may have died");
+                std::process::exit(1);
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => {
+                error!("Background thread heartbeat disconnected - thread died");
+                std::process::exit(1);
+            }
+        }
+    }
 }
