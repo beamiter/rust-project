@@ -48,7 +48,7 @@ impl WorkspacePanel {
                     rich_text = rich_text.background_color(colors::WHEAT);
                 }
             }
-            info!("[draw] {:?}", rich_text);
+            // info!("[draw] {:?}", rich_text);
 
             let response = ui.label(rich_text);
 

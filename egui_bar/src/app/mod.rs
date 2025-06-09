@@ -264,7 +264,7 @@ impl EguiBarApp {
 
     /// Adjust window size and position
     fn adjust_window(&mut self, ctx: &egui::Context) {
-        if self.state.ui_state.need_resize {
+        if self.state.ui_state.need_resize || true {
             let (width, height, pos) = self.calculate_window_dimensions();
 
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
@@ -274,7 +274,7 @@ impl EguiBarApp {
 
             self.state.ui_state.current_window_height = height;
 
-            debug!("Window adjusted: {}x{} at {:?}", width, height, pos);
+            info!("Window adjusted: {}x{} at {:?}", width, height, pos);
         }
     }
 
@@ -473,7 +473,8 @@ impl eframe::App for EguiBarApp {
         self.draw_debug_window(ctx);
 
         // Request repaint if needed
-        ctx.request_repaint_after(Duration::from_millis(1));
+        info!("[update] need_resize: {}", self.state.ui_state.need_resize);
+        // ctx.request_repaint_after(Duration::from_millis(1));
         if self.state.ui_state.need_resize {
             self.state.ui_state.need_resize = false;
             ctx.request_repaint_after(Duration::from_millis(1));
