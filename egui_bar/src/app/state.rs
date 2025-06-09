@@ -189,7 +189,7 @@ impl UiState {
             need_resize: true,
             current_window_height: crate::constants::ui::DEFAULT_FONT_SIZE * 2.0,
             show_seconds: false,
-            show_debug_window: false,
+            show_debug_window: true,
             show_settings_window: false,
             last_ui_update: Instant::now(),
         }

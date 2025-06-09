@@ -2,7 +2,7 @@
 //!
 //! This application provides a customizable system status bar with features including:
 //! - Audio volume control
-//! - System resource monitoring  
+//! - System resource monitoring
 //! - Workspace/tag information display
 //! - Configurable themes and layouts
 
@@ -81,20 +81,18 @@ fn main() -> eframe::Result<()> {
     eframe::run_native(
         "egui_bar",
         native_options,
-        Box::new(move |cc| {
-            // 修复：直接处理错误而不是使用 Custom 变体
-            match EguiBarApp::new(cc, message_receiver, resize_sender) {
+        Box::new(
+            move |cc| match EguiBarApp::new(cc, message_receiver, resize_sender) {
                 Ok(app) => {
                     info!("Application created successfully");
                     Ok(Box::new(app))
                 }
                 Err(e) => {
                     error!("Failed to create application: {}", e);
-                    // 直接退出程序而不是返回自定义错误
                     std::process::exit(1);
                 }
-            }
-        }),
+            },
+        ),
     )
 }
 
@@ -186,6 +184,7 @@ fn background_worker(
                     if prev_timestamp != message.timestamp {
                         prev_timestamp = message.timestamp;
 
+                        info!("Send message: {:?}", message);
                         if let Err(e) = message_sender.send(message) {
                             error!("Failed to send message to UI thread: {}", e);
                             break; // UI thread probably died

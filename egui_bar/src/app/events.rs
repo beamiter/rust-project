@@ -1,5 +1,7 @@
 //! Event handling system for the application
 
+use log::info;
+
 use crate::audio::AudioDevice;
 use crate::system::SystemSnapshot;
 use std::sync::mpsc;
@@ -9,53 +11,47 @@ use std::sync::mpsc;
 pub enum AppEvent {
     /// System information updated
     SystemUpdated(SystemSnapshot),
-    
+
     /// Audio device state changed
     AudioDeviceChanged {
         device_name: String,
         volume: i32,
         is_muted: bool,
     },
-    
+
     /// Volume adjustment requested
-    VolumeAdjust {
-        device_name: String,
-        delta: i32,
-    },
-    
+    VolumeAdjust { device_name: String, delta: i32 },
+
     /// Mute toggle requested
     ToggleMute(String),
-    
+
     /// Audio device list refreshed
     AudioDevicesRefreshed(Vec<AudioDevice>),
-    
+
     /// Window resize requested
-    WindowResize {
-        width: f32,
-        height: f32,
-    },
-    
+    WindowResize { width: f32, height: f32 },
+
     /// Scale factor changed
     ScaleFactorChanged(f32),
-    
+
     /// Theme change requested
     ThemeChanged(String),
-    
+
     /// Time format toggle
     TimeFormatToggle,
-    
+
     /// Screenshot requested
     ScreenshotRequested,
-    
+
     /// Settings window toggle
     SettingsToggle,
-    
+
     /// Debug window toggle
     DebugToggle,
-    
+
     /// Configuration save requested
     SaveConfig,
-    
+
     /// Application shutdown requested
     Shutdown,
 }
@@ -79,11 +75,12 @@ impl EventBus {
     }
 
     /// Process all pending events
-    pub fn process_events<F>(&self, mut handler: F) 
+    pub fn process_events<F>(&self, mut handler: F)
     where
         F: FnMut(AppEvent),
     {
         while let Ok(event) = self.receiver.try_recv() {
+            info!("[process_events]");
             handler(event);
         }
     }

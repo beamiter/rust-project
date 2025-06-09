@@ -1,5 +1,7 @@
 //! Workspace information display component
 
+use log::info;
+
 use crate::app::{events::AppEvent, AppState};
 use crate::constants::{colors, icons};
 use std::sync::mpsc;
@@ -46,9 +48,10 @@ impl WorkspacePanel {
                     rich_text = rich_text.background_color(colors::WHEAT);
                 }
             }
+            info!("[draw] {:?}", rich_text);
 
             let response = ui.label(rich_text);
-            
+
             // Add tooltip with tag information
             if let Some(tag_status) = tag_status_vec.get(i) {
                 let mut tooltip = format!("标签 {}", i + 1);

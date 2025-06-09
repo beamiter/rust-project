@@ -31,7 +31,7 @@ pub struct EguiBarApp {
     message_receiver: mpsc::Receiver<SharedMessage>,
 
     /// Resize request sender
-    resize_sender: mpsc::Sender<bool>,
+    _resize_sender: mpsc::Sender<bool>,
 
     /// UI components
     volume_window: VolumeControlWindow,
@@ -47,7 +47,7 @@ impl EguiBarApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         message_receiver: mpsc::Receiver<SharedMessage>,
-        resize_sender: mpsc::Sender<bool>,
+        _resize_sender: mpsc::Sender<bool>,
     ) -> Result<Self> {
         // Load configuration
         let mut config = AppConfig::load()?;
@@ -72,7 +72,7 @@ impl EguiBarApp {
             state,
             event_bus,
             message_receiver,
-            resize_sender,
+            _resize_sender,
             volume_window: VolumeControlWindow::new(),
             system_info_panel: SystemInfoPanel::new(),
             workspace_panel: WorkspacePanel::new(),
@@ -80,7 +80,7 @@ impl EguiBarApp {
         })
     }
 
-    /// Setup system fonts (简化版本)
+    /// Setup system fonts
     fn setup_fonts(ctx: &egui::Context) -> Result<()> {
         use font_kit::family_name::FamilyName;
         use font_kit::properties::Properties;
@@ -164,6 +164,7 @@ impl EguiBarApp {
     /// Handle incoming messages
     fn handle_messages(&mut self) {
         while let Ok(message) = self.message_receiver.try_recv() {
+            info!("[handle_messages]");
             self.state.current_message = Some(message);
             self.state.ui_state.need_resize = true;
         }
@@ -171,7 +172,8 @@ impl EguiBarApp {
 
     /// Handle application events
     fn handle_events(&mut self) {
-        let event_sender = self.event_bus.sender();
+        info!("[handle_events]");
+        let _event_sender = self.event_bus.sender();
 
         self.event_bus.process_events(|event| match event {
             AppEvent::VolumeAdjust { device_name, delta } => {
@@ -271,7 +273,6 @@ impl EguiBarApp {
             )));
 
             self.state.ui_state.current_window_height = height;
-            self.state.ui_state.need_resize = false;
 
             debug!("Window adjusted: {}x{} at {:?}", width, height, pos);
         }
@@ -472,7 +473,9 @@ impl eframe::App for EguiBarApp {
         self.draw_debug_window(ctx);
 
         // Request repaint if needed
+        ctx.request_repaint_after(Duration::from_millis(1));
         if self.state.ui_state.need_resize {
+            self.state.ui_state.need_resize = false;
             ctx.request_repaint_after(Duration::from_millis(1));
         }
     }
