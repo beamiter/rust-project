@@ -189,7 +189,7 @@ impl UiState {
             need_resize: true,
             current_window_height: crate::constants::ui::DEFAULT_FONT_SIZE * 2.0,
             show_seconds: false,
-            show_debug_window: true,
+            show_debug_window: false,
             show_settings_window: false,
             last_ui_update: Instant::now(),
         }
@@ -199,6 +199,12 @@ impl UiState {
     pub fn toggle_volume_window(&mut self) {
         self.volume_window.open = !self.volume_window.open;
         self.need_resize = true;
+    }
+
+    /// Toggle debug window - 新增方法
+    pub fn toggle_debug_window(&mut self) {
+        self.show_debug_window = !self.show_debug_window;
+        self.need_resize = true; // 可能需要调整窗口大小
     }
 
     /// Toggle time format
