@@ -1,6 +1,6 @@
 //! System information display component
 
-use crate::app::AppState;
+use crate::app::state::AppState;
 use crate::constants::{colors, icons};
 use crate::utils::RollingAverage;
 use egui::{Align, Color32, Layout};
@@ -31,12 +31,6 @@ impl SystemInfoPanel {
 
             // CPU chart
             self.draw_cpu_chart(ui, app_state);
-
-            // Reset button
-            if ui.small_button("🔄").clicked() {
-                // Reset chart view - this would need to be handled differently
-                // since we can't easily reset the plot view from here
-            }
         });
     }
 
@@ -62,70 +56,8 @@ impl SystemInfoPanel {
     }
 
     fn draw_cpu_chart(&mut self, ui: &mut egui::Ui, app_state: &AppState) {
-        let cpu_data = app_state.get_cpu_chart_data();
-
-        if cpu_data.is_empty() {
-            return;
-        }
-
-        let available_width = ui.available_width();
-        let chart_width = (available_width * 0.3).min(200.0);
-        let chart_height = ui.available_height().max(20.0);
-
-        let plot = Plot::new("cpu_usage_chart")
-            .include_y(0.0)
-            .include_y(1.0)
-            .allow_zoom(false)
-            .allow_scroll(false)
-            .show_axes([false, false])
-            .show_background(false)
-            .width(chart_width)
-            .height(chart_height);
-
-        plot.show(ui, |plot_ui| {
-            // Create plot points for all CPU cores
-            let plot_points: Vec<[f64; 2]> = cpu_data
-                .iter()
-                .enumerate()
-                .map(|(i, &usage)| [i as f64, usage])
-                .collect();
-
-            if !plot_points.is_empty() {
-                // 修复：使用正确的 Line::new API
-                let line = Line::new("CPU Usage", PlotPoints::from(plot_points))
-                    .color(self.get_average_cpu_color(&cpu_data))
-                    .width(2.0);
-
-                plot_ui.line(line);
-
-                // Draw individual CPU core points with different colors
-                for (core_idx, &usage) in cpu_data.iter().enumerate() {
-                    let color = self.get_cpu_color(usage);
-                    let points = vec![[core_idx as f64, usage]];
-
-                    let core_line =
-                        Line::new(format!("Core {}", core_idx), PlotPoints::from(points))
-                            .color(color)
-                            .width(1.5);
-
-                    plot_ui.line(core_line);
-                }
-
-                // Draw average line if we have multiple cores
-                if cpu_data.len() > 1 {
-                    let avg_usage = cpu_data.iter().sum::<f64>() / cpu_data.len() as f64;
-                    let avg_points: Vec<[f64; 2]> =
-                        (0..cpu_data.len()).map(|i| [i as f64, avg_usage]).collect();
-
-                    let avg_line = Line::new("Average", PlotPoints::from(avg_points))
-                        .color(Color32::WHITE)
-                        .width(1.0)
-                        .style(egui_plot::LineStyle::Dashed { length: 5.0 });
-
-                    plot_ui.line(avg_line);
-                }
-            }
-        });
+        // Reset button
+        let reset_view = ui.small_button("🔄").clicked();
 
         // CPU usage indicator
         if let Some(snapshot) = app_state.system_monitor.get_snapshot() {
@@ -139,6 +71,78 @@ impl SystemInfoPanel {
                 ui.label(egui::RichText::new("🔥").color(colors::WARNING));
             }
         }
+
+        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+            let cpu_data = app_state.get_cpu_chart_data();
+
+            if cpu_data.is_empty() {
+                return;
+            }
+
+            let available_width = ui.available_width();
+            let chart_height = ui.available_height();
+            let chart_width = (available_width * 0.5).min(10.0 * chart_height);
+            ui.add_space(available_width - chart_width - 2.);
+
+            let mut plot = Plot::new("cpu_usage_chart")
+                .include_y(0.0)
+                .include_y(1.0)
+                .x_axis_formatter(|_, _| String::new())
+                .y_axis_formatter(|_, _| String::new())
+                .show_axes([false, false])
+                .show_background(false)
+                .width(chart_width)
+                .height(chart_height);
+            if reset_view {
+                plot = plot.reset();
+            }
+
+            plot.show(ui, |plot_ui| {
+                // Create plot points for all CPU cores
+                let plot_points: Vec<[f64; 2]> = cpu_data
+                    .iter()
+                    .enumerate()
+                    .map(|(i, &usage)| [i as f64, usage])
+                    .collect();
+
+                if !plot_points.is_empty() {
+                    let line = Line::new("CPU Usage", PlotPoints::from(plot_points))
+                        .color(self.get_average_cpu_color(&cpu_data))
+                        .width(1.0);
+                    plot_ui.line(line);
+
+                    // Draw individual CPU core points with different colors
+                    for (core_idx, &usage) in cpu_data.iter().enumerate() {
+                        let color = self.get_cpu_color(usage);
+                        let points = vec![[core_idx as f64, usage]];
+
+                        let core_point = egui_plot::Points::new(
+                            format!("Core {}", core_idx),
+                            PlotPoints::from(points),
+                        )
+                        .color(color)
+                        .radius(2.0)
+                        .shape(egui_plot::MarkerShape::Circle);
+
+                        plot_ui.points(core_point);
+                    }
+
+                    // Draw average line if we have multiple cores
+                    if cpu_data.len() > 1 {
+                        let avg_usage = cpu_data.iter().sum::<f64>() / cpu_data.len() as f64;
+                        let avg_points: Vec<[f64; 2]> =
+                            (0..cpu_data.len()).map(|i| [i as f64, avg_usage]).collect();
+
+                        let avg_line = Line::new("Average", PlotPoints::from(avg_points))
+                            .color(Color32::WHITE)
+                            .width(1.0)
+                            .style(egui_plot::LineStyle::Dashed { length: 5.0 });
+
+                        plot_ui.line(avg_line);
+                    }
+                }
+            });
+        });
     }
 
     fn get_cpu_color(&self, usage: f64) -> Color32 {

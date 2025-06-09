@@ -26,7 +26,7 @@ impl RollingAverage {
                 self.sum -= old_value;
             }
         }
-        
+
         self.values.push_back(value);
         self.sum += value;
     }

@@ -12,26 +12,43 @@ use egui::{Align, Color32, FontFamily, FontId, Layout, Margin, TextStyle};
 use events::{AppEvent, EventBus};
 use log::{debug, error, info, warn};
 use shared_structures::SharedMessage;
+use state::AppState;
 use std::collections::BTreeMap;
 use std::process::Command;
-use std::sync::mpsc;
+use std::sync::{mpsc, Arc, Mutex};
+use std::thread;
 use std::time::{Duration, Instant};
 
-pub use state::{AppState, UiState, VolumeWindowState};
+pub use state::{UiState, VolumeWindowState};
+
+/// 线程间共享的应用状态
+#[derive(Debug)]
+pub struct SharedAppState {
+    pub current_message: Option<SharedMessage>,
+    pub last_update: Instant,
+    pub need_repaint: bool,
+}
+
+impl SharedAppState {
+    fn new() -> Self {
+        Self {
+            current_message: None,
+            last_update: Instant::now(),
+            need_repaint: false,
+        }
+    }
+}
 
 /// Main egui application
 pub struct EguiBarApp {
     /// Application state
     state: AppState,
 
+    /// 线程间共享状态
+    shared_state: Arc<Mutex<SharedAppState>>,
+
     /// Event bus
     event_bus: EventBus,
-
-    /// Message receiver from background thread
-    message_receiver: mpsc::Receiver<SharedMessage>,
-
-    /// Resize request sender
-    _resize_sender: mpsc::Sender<bool>,
 
     /// UI components
     volume_window: VolumeControlWindow,
@@ -40,6 +57,9 @@ pub struct EguiBarApp {
 
     /// Initialization flag
     initialized: bool,
+
+    /// egui context for requesting repaints
+    egui_ctx: egui::Context,
 }
 
 impl EguiBarApp {
@@ -47,7 +67,7 @@ impl EguiBarApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         message_receiver: mpsc::Receiver<SharedMessage>,
-        _resize_sender: mpsc::Sender<bool>,
+        resize_sender: mpsc::Sender<bool>,
     ) -> Result<Self> {
         // Load configuration
         let mut config = AppConfig::load()?;
@@ -59,6 +79,9 @@ impl EguiBarApp {
         // Initialize event bus
         let event_bus = EventBus::new();
 
+        // 创建共享状态
+        let shared_state = Arc::new(Mutex::new(SharedAppState::new()));
+
         // Setup fonts
         Self::setup_fonts(&cc.egui_ctx)?;
 
@@ -68,16 +91,104 @@ impl EguiBarApp {
         // Configure text styles
         Self::configure_text_styles(&cc.egui_ctx, state.ui_state.scale_factor);
 
+        // 启动消息处理线程
+        let shared_state_clone = Arc::clone(&shared_state);
+        let egui_ctx_clone = cc.egui_ctx.clone();
+        thread::spawn(move || {
+            Self::message_handler_thread(message_receiver, shared_state_clone, egui_ctx_clone);
+        });
+
+        // 启动定时更新线程
+        let shared_state_clone = Arc::clone(&shared_state);
+        let egui_ctx_clone = cc.egui_ctx.clone();
+        thread::spawn(move || {
+            Self::periodic_update_thread(shared_state_clone, egui_ctx_clone);
+        });
+
         Ok(Self {
             state,
+            shared_state,
             event_bus,
-            message_receiver,
-            _resize_sender,
             volume_window: VolumeControlWindow::new(),
             system_info_panel: SystemInfoPanel::new(),
             workspace_panel: WorkspacePanel::new(),
             initialized: false,
+            egui_ctx: cc.egui_ctx.clone(),
         })
+    }
+
+    /// 消息处理线程
+    fn message_handler_thread(
+        message_receiver: mpsc::Receiver<SharedMessage>,
+        shared_state: Arc<Mutex<SharedAppState>>,
+        egui_ctx: egui::Context,
+    ) {
+        info!("Starting message handler thread");
+
+        // 设置 panic 钩子
+        let default_hook = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |panic_info| {
+            error!("Message handler thread panicked: {}", panic_info);
+            default_hook(panic_info);
+        }));
+
+        loop {
+            match message_receiver.recv() {
+                Ok(message) => {
+                    debug!("Received message: timestamp={}", message.timestamp);
+
+                    // 更新共享状态
+                    if let Ok(mut state) = shared_state.lock() {
+                        let need_update = state
+                            .current_message
+                            .as_ref()
+                            .map(|m| m.timestamp != message.timestamp)
+                            .unwrap_or(true);
+
+                        if need_update {
+                            state.current_message = Some(message);
+                            state.last_update = Instant::now();
+                            state.need_repaint = true;
+
+                            egui_ctx.request_repaint_after(Duration::from_millis(1));
+                        }
+                    } else {
+                        warn!("Failed to lock shared state for message update");
+                    }
+                }
+                Err(e) => {
+                    error!("Message receiver error: {}", e);
+                    break;
+                }
+            }
+        }
+
+        info!("Message handler thread exiting");
+    }
+
+    /// 定时更新线程（每秒更新时间显示等）
+    fn periodic_update_thread(shared_state: Arc<Mutex<SharedAppState>>, egui_ctx: egui::Context) {
+        info!("Starting periodic update thread");
+
+        let mut last_second = chrono::Local::now().timestamp();
+
+        loop {
+            thread::sleep(Duration::from_millis(500)); // 每500ms检查一次
+
+            let current_second = chrono::Local::now().timestamp();
+
+            // 每秒更新一次
+            if current_second != last_second {
+                last_second = current_second;
+
+                if let Ok(mut state) = shared_state.lock() {
+                    state.need_repaint = true;
+                    egui_ctx.request_repaint_after(Duration::from_millis(1));
+                } else {
+                    warn!("Failed to lock shared state for periodic update");
+                }
+            }
+        }
     }
 
     /// Setup system fonts
@@ -99,7 +210,6 @@ impl EguiBarApp {
                     match font_handle.load() {
                         Ok(font) => {
                             if let Some(font_data) = font.copy_font_data() {
-                                // 使用 .into() 自动转换为 Arc<FontData>
                                 fonts.font_data.insert(
                                     font_name.to_string(),
                                     egui::FontData::from_owned(font_data.to_vec()).into(),
@@ -161,20 +271,28 @@ impl EguiBarApp {
         });
     }
 
-    /// Handle incoming messages
-    fn handle_messages(&mut self) {
-        while let Ok(message) = self.message_receiver.try_recv() {
-            info!("[handle_messages]");
-            self.state.current_message = Some(message);
-            self.state.ui_state.need_resize = true;
-        }
+    /// 从共享状态获取当前消息
+    fn get_current_message(&self) -> Option<SharedMessage> {
+        self.shared_state
+            .lock()
+            .ok()
+            .and_then(|state| state.current_message.clone())
+    }
+
+    /// 检查是否需要重绘
+    fn should_repaint(&self) -> bool {
+        self.shared_state
+            .lock()
+            .map(|mut state| {
+                let should_repaint = state.need_repaint;
+                state.need_repaint = false; // 重置标志
+                should_repaint
+            })
+            .unwrap_or(false)
     }
 
     /// Handle application events
     fn handle_events(&mut self) {
-        info!("[handle_events]");
-        let _event_sender = self.event_bus.sender();
-
         self.event_bus.process_events(|event| match event {
             AppEvent::VolumeAdjust { device_name, delta } => {
                 if let Err(e) = self.state.audio_manager.adjust_volume(&device_name, delta) {
@@ -237,7 +355,7 @@ impl EguiBarApp {
 
     /// Calculate window dimensions
     fn calculate_window_dimensions(&self) -> (f32, f32, egui::Pos2) {
-        if let Some(ref message) = self.state.current_message {
+        if let Some(message) = self.get_current_message() {
             let monitor_info = &message.monitor_info;
             let base_height = if self.state.ui_state.volume_window.open {
                 monitor_info.monitor_height as f32 * 0.3
@@ -264,7 +382,7 @@ impl EguiBarApp {
 
     /// Adjust window size and position
     fn adjust_window(&mut self, ctx: &egui::Context) {
-        if self.state.ui_state.need_resize || true {
+        if self.state.ui_state.need_resize {
             let (width, height, pos) = self.calculate_window_dimensions();
 
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
@@ -273,6 +391,7 @@ impl EguiBarApp {
             )));
 
             self.state.ui_state.current_window_height = height;
+            self.state.ui_state.need_resize = false;
 
             info!("Window adjusted: {}x{} at {:?}", width, height, pos);
         }
@@ -280,6 +399,11 @@ impl EguiBarApp {
 
     /// Draw main UI
     fn draw_main_ui(&mut self, ctx: &egui::Context) {
+        // 更新当前消息到状态中
+        if let Some(message) = self.get_current_message() {
+            self.state.current_message = Some(message);
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
             ui.horizontal_centered(|ui| {
                 // Left: Workspace information
@@ -422,6 +546,15 @@ impl EguiBarApp {
                     ));
                     ui.label(format!("Muted: {}", stats.muted_devices));
 
+                    ui.separator();
+
+                    ui.heading("Threads");
+                    ui.label("Message Handler: Running");
+                    ui.label("Periodic Update: Running");
+                    if let Ok(state) = self.shared_state.lock() {
+                        ui.label(format!("Last Update: {:?}", state.last_update.elapsed()));
+                    }
+
                     if ui.button("Close").clicked() {
                         self.state.ui_state.show_debug_window = false;
                     }
@@ -432,6 +565,7 @@ impl EguiBarApp {
 
 impl eframe::App for EguiBarApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        info!("EguiBarApp update");
         // Initialize on first frame
         if !self.initialized {
             self.state.theme_manager.apply_to_context(ctx);
@@ -447,11 +581,10 @@ impl eframe::App for EguiBarApp {
             self.state.ui_state.request_resize();
         }
 
-        // Handle messages and events
-        self.handle_messages();
+        // Handle events
         self.handle_events();
 
-        // Update application state
+        // Update application state (system monitoring, audio, etc.)
         self.state.update();
 
         // Adjust window if needed
@@ -471,13 +604,5 @@ impl eframe::App for EguiBarApp {
 
         // Draw debug window
         self.draw_debug_window(ctx);
-
-        // Request repaint if needed
-        info!("[update] need_resize: {}", self.state.ui_state.need_resize);
-        // ctx.request_repaint_after(Duration::from_millis(1));
-        if self.state.ui_state.need_resize {
-            self.state.ui_state.need_resize = false;
-            ctx.request_repaint_after(Duration::from_millis(1));
-        }
     }
 }

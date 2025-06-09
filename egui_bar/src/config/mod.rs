@@ -72,7 +72,7 @@ impl Default for UiConfig {
             scale_factor: ui::DEFAULT_SCALE_FACTOR,
             show_seconds: false,
             theme: "dark".to_string(),
-            window_opacity: 0.95,
+            window_opacity: 0.80,
             auto_hide: false,
             update_interval_ms: intervals::UI_REFRESH,
         }

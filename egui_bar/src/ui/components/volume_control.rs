@@ -1,6 +1,7 @@
 //! Volume control window component
 
-use crate::app::{events::AppEvent, AppState};
+use crate::app::events::AppEvent;
+use crate::app::state::AppState;
 use crate::constants::{colors, icons};
 use egui::{Align, Layout};
 use log::error;

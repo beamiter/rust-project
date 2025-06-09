@@ -1,10 +1,4 @@
 //! egui_bar - A modern system status bar application
-//!
-//! This application provides a customizable system status bar with features including:
-//! - Audio volume control
-//! - System resource monitoring
-//! - Workspace/tag information display
-//! - Configurable themes and layouts
 
 use chrono::Local;
 use egui_bar::{app::EguiBarApp, config::AppConfig, utils::AppError};
@@ -19,7 +13,6 @@ use std::{env, u128};
 
 /// Application entry point
 fn main() -> eframe::Result<()> {
-    // 修改返回类型
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
@@ -48,18 +41,13 @@ fn main() -> eframe::Result<()> {
 
     // Create communication channels
     let (message_sender, message_receiver) = mpsc::channel();
-    let (resize_sender, resize_receiver) = mpsc::channel();
+    let (resize_sender, _resize_receiver) = mpsc::channel(); // 不再需要 resize_receiver
     let (heartbeat_sender, heartbeat_receiver) = mpsc::channel();
 
-    // Start background thread for shared memory monitoring
+    // Start shared memory monitoring thread (简化版本)
     let shared_path_clone = shared_path.clone();
     thread::spawn(move || {
-        background_worker(
-            shared_path_clone,
-            message_sender,
-            resize_receiver,
-            heartbeat_sender,
-        )
+        shared_memory_worker(shared_path_clone, message_sender, heartbeat_sender)
     });
 
     // Start heartbeat monitor
@@ -94,6 +82,76 @@ fn main() -> eframe::Result<()> {
             },
         ),
     )
+}
+
+/// 简化的共享内存工作线程
+fn shared_memory_worker(
+    shared_path: String,
+    message_sender: mpsc::Sender<SharedMessage>,
+    heartbeat_sender: mpsc::Sender<()>,
+) {
+    info!("Starting shared memory worker thread");
+
+    // Initialize shared ring buffer
+    let ring_buffer: Option<SharedRingBuffer> = if shared_path.is_empty() {
+        warn!("No shared path provided, running without shared memory");
+        None
+    } else {
+        match SharedRingBuffer::open(&shared_path) {
+            Ok(rb) => {
+                info!("Successfully opened shared ring buffer: {}", shared_path);
+                Some(rb)
+            }
+            Err(e) => {
+                error!("Failed to open shared ring buffer '{}': {}", shared_path, e);
+                None
+            }
+        }
+    };
+
+    let mut prev_timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+
+    let mut frame_count: u128 = 0;
+
+    loop {
+        // Handle ring buffer messages
+        if let Some(ref rb) = ring_buffer {
+            match rb.try_read_latest_message::<SharedMessage>() {
+                Ok(Some(message)) => {
+                    if prev_timestamp != message.timestamp {
+                        prev_timestamp = message.timestamp;
+
+                        if let Err(e) = message_sender.send(message) {
+                            error!("Failed to send message: {}", e);
+                            break;
+                        }
+                    }
+                }
+                Ok(None) => {
+                    // No new messages - normal
+                }
+                Err(e) => {
+                    if frame_count % 1000 == 0 {
+                        error!("Ring buffer read error: {}", e);
+                    }
+                }
+            }
+        }
+
+        // Send heartbeat
+        if heartbeat_sender.send(()).is_err() {
+            warn!("Heartbeat receiver disconnected");
+            break;
+        }
+
+        frame_count = frame_count.wrapping_add(1);
+        thread::sleep(Duration::from_millis(50)); // 20 FPS for shared memory polling
+    }
+
+    info!("Shared memory worker thread exiting");
 }
 
 /// Initialize logging system
@@ -134,103 +192,6 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-/// Background worker thread for shared memory monitoring
-fn background_worker(
-    shared_path: String,
-    message_sender: mpsc::Sender<SharedMessage>,
-    resize_receiver: mpsc::Receiver<bool>,
-    heartbeat_sender: mpsc::Sender<()>,
-) {
-    info!("Starting background worker thread");
-
-    // Initialize shared ring buffer
-    let ring_buffer: Option<SharedRingBuffer> = if shared_path.is_empty() {
-        warn!("No shared path provided, running without shared memory");
-        None
-    } else {
-        match SharedRingBuffer::open(&shared_path) {
-            Ok(rb) => {
-                info!("Successfully opened shared ring buffer: {}", shared_path);
-                Some(rb)
-            }
-            Err(e) => {
-                error!("Failed to open shared ring buffer '{}': {}", shared_path, e);
-                None
-            }
-        }
-    };
-
-    // Set panic hook
-    let default_hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(move |panic_info| {
-        error!("Background thread panicked: {}", panic_info);
-        default_hook(panic_info);
-    }));
-
-    let mut prev_timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-
-    let mut frame_count: u128 = 0;
-    let mut error_count = 0;
-    const MAX_ERROR_LOGS: usize = 10;
-
-    loop {
-        // Handle ring buffer messages
-        if let Some(ref rb) = ring_buffer {
-            match rb.try_read_latest_message::<SharedMessage>() {
-                Ok(Some(message)) => {
-                    if prev_timestamp != message.timestamp {
-                        prev_timestamp = message.timestamp;
-
-                        info!("Send message: {:?}", message);
-                        if let Err(e) = message_sender.send(message) {
-                            error!("Failed to send message to UI thread: {}", e);
-                            break; // UI thread probably died
-                        }
-
-                        error_count = 0; // Reset error count on success
-                    }
-                }
-                Ok(None) => {
-                    // No new messages - this is normal
-                    if frame_count % 1000 == 0 {
-                        info!("No new messages (frame {})", frame_count);
-                    }
-                }
-                Err(e) => {
-                    if error_count < MAX_ERROR_LOGS {
-                        error!("Ring buffer read error: {}", e);
-                        error_count += 1;
-                    } else if error_count == MAX_ERROR_LOGS {
-                        error!("Ring buffer error limit reached, suppressing further errors");
-                        error_count += 1;
-                    }
-                }
-            }
-        }
-
-        // Handle resize requests
-        while resize_receiver.try_recv().is_ok() {
-            // Just consume resize requests - the actual resizing is handled in the UI thread
-        }
-
-        // Send heartbeat
-        if heartbeat_sender.send(()).is_err() {
-            warn!("Heartbeat receiver disconnected, exiting background thread");
-            break;
-        }
-
-        frame_count = frame_count.wrapping_add(1);
-
-        // Sleep to control update rate (100 FPS)
-        thread::sleep(Duration::from_millis(10));
-    }
-
-    info!("Background worker thread exiting");
-}
-
 /// Monitor heartbeat from background thread
 fn heartbeat_monitor(heartbeat_receiver: mpsc::Receiver<()>) {
     info!("Starting heartbeat monitor");
@@ -241,11 +202,11 @@ fn heartbeat_monitor(heartbeat_receiver: mpsc::Receiver<()>) {
                 // Heartbeat received, continue
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                error!("Background thread heartbeat timeout - thread may have died");
+                error!("Shared memory thread heartbeat timeout");
                 std::process::exit(1);
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                error!("Background thread heartbeat disconnected - thread died");
+                error!("Shared memory thread disconnected");
                 std::process::exit(1);
             }
         }

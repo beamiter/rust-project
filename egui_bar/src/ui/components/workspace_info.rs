@@ -2,7 +2,8 @@
 
 use log::info;
 
-use crate::app::{events::AppEvent, AppState};
+use crate::app::events::AppEvent;
+use crate::app::state::AppState;
 use crate::constants::{colors, icons};
 use std::sync::mpsc;
 
