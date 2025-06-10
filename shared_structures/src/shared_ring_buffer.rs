@@ -1,27 +1,24 @@
+use crate::shared_message::{Command, CommandType};
 use serde::{Deserialize, Serialize};
 use shared_memory::{Shmem, ShmemConf};
 use std::io::{Error, ErrorKind, Result};
 use std::mem::size_of;
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
-
 /// 环形缓冲区头部结构
 #[repr(C)]
 struct RingBufferHeader {
-    // 魔数，用于验证共享内存格式
+    // 现有字段...
     magic: AtomicU64,
-    // 版本号
     version: AtomicU64,
-    // 写入索引
     write_idx: AtomicUsize,
-    // 读取索引（每个读取者维护自己的）
     read_idx: AtomicUsize,
-    // 缓冲区大小（消息数量）
     buffer_size: AtomicUsize,
-    // 最大消息大小
     max_message_size: AtomicUsize,
-    // 最后更新时间戳
     last_timestamp: AtomicU64,
+    // 新增命令通道字段
+    cmd_write_idx: AtomicUsize, // egui_bar 写入命令的索引
+    cmd_read_idx: AtomicUsize,  // jwm 读取命令的索引
 }
 
 /// 消息头部结构
@@ -37,14 +34,22 @@ struct MessageHeader {
     checksum: u32,
 }
 
-// 魔数常量
+/// 命令槽结构，直接在共享内存中保存命令
+#[repr(C)]
+struct CommandSlot {
+    cmd_type: u32,
+    parameter: u32,
+    monitor_id: i32,
+    timestamp: u64,
+    reserved: u32, // 保留字段，保证结构体字节对齐
+}
+
+// 常量定义
 const RING_BUFFER_MAGIC: u64 = 0x52494E47_42554646; // "RINGBUFF" in hex
-                                                    // 当前版本
-const RING_BUFFER_VERSION: u64 = 1;
-// 默认缓冲区大小（消息数量）
+const RING_BUFFER_VERSION: u64 = 2; // 版本升级到2
 const DEFAULT_BUFFER_SIZE: usize = 16;
-// 默认最大消息大小
 const DEFAULT_MAX_MESSAGE_SIZE: usize = 4096;
+const CMD_BUFFER_SIZE: usize = 16; // 命令缓冲区大小
 
 /// 共享环形缓冲区
 #[allow(unused)]
@@ -52,6 +57,7 @@ pub struct SharedRingBuffer {
     shmem: Shmem,
     header: *mut RingBufferHeader,
     buffer_start: *mut u8,
+    cmd_buffer_start: *mut CommandSlot,
 }
 
 // 实现 Send 和 Sync 特性，允许在线程间安全传递
@@ -67,13 +73,13 @@ impl SharedRingBuffer {
     ) -> Result<Self> {
         let buffer_size = buffer_size.unwrap_or(DEFAULT_BUFFER_SIZE);
         let max_message_size = max_message_size.unwrap_or(DEFAULT_MAX_MESSAGE_SIZE);
-
-        // 计算总大小
+        // 计算总大小，包括命令缓冲区
         let header_size = size_of::<RingBufferHeader>();
         let message_slot_size = size_of::<MessageHeader>() + max_message_size;
-        let total_size = header_size + buffer_size * message_slot_size;
-
+        let cmd_buffer_size = CMD_BUFFER_SIZE * size_of::<CommandSlot>();
+        let total_size = header_size + buffer_size * message_slot_size + cmd_buffer_size;
         // 创建共享内存
+
         let shmem = ShmemConf::new()
             .size(total_size)
             .flink(path)
@@ -84,7 +90,11 @@ impl SharedRingBuffer {
         // 初始化头部
         let header = shmem.as_ptr() as *mut RingBufferHeader;
         let buffer_start = unsafe { shmem.as_ptr().add(header_size) };
-
+        let cmd_buffer_start = unsafe {
+            shmem
+                .as_ptr()
+                .add(header_size + buffer_size * message_slot_size) as *mut CommandSlot
+        };
         unsafe {
             (*header).magic.store(RING_BUFFER_MAGIC, Ordering::Release);
             (*header)
@@ -97,12 +107,15 @@ impl SharedRingBuffer {
                 .max_message_size
                 .store(max_message_size, Ordering::Release);
             (*header).last_timestamp.store(0, Ordering::Release);
+            // 初始化命令缓冲区索引
+            (*header).cmd_write_idx.store(0, Ordering::Release);
+            (*header).cmd_read_idx.store(0, Ordering::Release);
         }
-
         Ok(SharedRingBuffer {
             shmem,
             header,
             buffer_start,
+            cmd_buffer_start,
         })
     }
 
@@ -113,7 +126,6 @@ impl SharedRingBuffer {
             .flink(path)
             .open()
             .map_err(|e| Error::new(ErrorKind::Other, format!("打开共享内存失败: {}", e)))?;
-
         // 获取头部
         let header = shmem.as_ptr() as *mut RingBufferHeader;
 
@@ -126,24 +138,40 @@ impl SharedRingBuffer {
                     format!("无效的魔数: 0x{:X}, 期望: 0x{:X}", magic, RING_BUFFER_MAGIC),
                 ));
             }
-
             let version = (*header).version.load(Ordering::Acquire);
-            if version != RING_BUFFER_VERSION {
+            if version != RING_BUFFER_VERSION && version != 1 {
                 return Err(Error::new(
                     ErrorKind::InvalidData,
                     format!("不兼容的版本: {}, 期望: {}", version, RING_BUFFER_VERSION),
                 ));
+            }
+            // 如果是旧版本，升级到新版本
+            if version == 1 {
+                (*header)
+                    .version
+                    .store(RING_BUFFER_VERSION, Ordering::Release);
+                (*header).cmd_write_idx.store(0, Ordering::Release);
+                (*header).cmd_read_idx.store(0, Ordering::Release);
             }
         }
 
         // 计算缓冲区起始位置
         let header_size = size_of::<RingBufferHeader>();
         let buffer_start = unsafe { shmem.as_ptr().add(header_size) };
-
+        // 计算命令缓冲区起始位置
+        let buffer_size = unsafe { (*header).buffer_size.load(Ordering::Relaxed) };
+        let max_message_size = unsafe { (*header).max_message_size.load(Ordering::Relaxed) };
+        let message_slot_size = size_of::<MessageHeader>() + max_message_size;
+        let cmd_buffer_start = unsafe {
+            shmem
+                .as_ptr()
+                .add(header_size + buffer_size * message_slot_size) as *mut CommandSlot
+        };
         Ok(SharedRingBuffer {
             shmem,
             header,
             buffer_start,
+            cmd_buffer_start,
         })
     }
 
@@ -331,6 +359,89 @@ impl SharedRingBuffer {
             (*self.header).read_idx.store(write_idx, Ordering::Release);
         }
     }
+
+    /// 发送命令（通常由 egui_bar 调用）
+    pub fn send_command(&self, command: Command) -> Result<bool> {
+        unsafe {
+            // 读取当前索引
+            let write_idx = (*self.header).cmd_write_idx.load(Ordering::Relaxed);
+            let read_idx = (*self.header).cmd_read_idx.load(Ordering::Acquire);
+            // 检查缓冲区是否已满
+            if ((write_idx + 1) % CMD_BUFFER_SIZE) == read_idx {
+                return Ok(false); // 缓冲区已满
+            }
+            // 获取命令槽并填充数据
+            let cmd_slot = &mut *self.cmd_buffer_start.add(write_idx % CMD_BUFFER_SIZE);
+            cmd_slot.cmd_type = command.cmd_type as u32;
+            cmd_slot.parameter = command.parameter;
+            cmd_slot.monitor_id = command.monitor_id;
+            cmd_slot.timestamp = command.timestamp;
+            // 更新写索引（内存屏障确保所有数据写入完成后才更新索引）
+            (*self.header)
+                .cmd_write_idx
+                .store((write_idx + 1) % CMD_BUFFER_SIZE, Ordering::Release);
+            Ok(true)
+        }
+    }
+
+    /// 接收命令（通常由 jwm 调用）
+    pub fn receive_command(&self) -> Option<Command> {
+        unsafe {
+            // 读取当前索引
+            let read_idx = (*self.header).cmd_read_idx.load(Ordering::Relaxed);
+            let write_idx = (*self.header).cmd_write_idx.load(Ordering::Acquire);
+            // 检查是否有新命令
+            if read_idx == write_idx {
+                return None; // 没有新命令
+            }
+            // 获取命令数据
+            let cmd_slot = &*self.cmd_buffer_start.add(read_idx % CMD_BUFFER_SIZE);
+            let command = Command {
+                cmd_type: match cmd_slot.cmd_type {
+                    1 => CommandType::ViewTag,
+                    2 => CommandType::ToggleTag,
+                    3 => CommandType::SetLayout,
+                    _ => CommandType::None,
+                },
+                parameter: cmd_slot.parameter,
+                monitor_id: cmd_slot.monitor_id,
+                timestamp: cmd_slot.timestamp,
+            };
+
+            // 更新读索引
+            (*self.header)
+                .cmd_read_idx
+                .store((read_idx + 1) % CMD_BUFFER_SIZE, Ordering::Release);
+            Some(command)
+        }
+    }
+
+    /// 检查是否有可用命令
+    pub fn has_command(&self) -> bool {
+        unsafe {
+            let read_idx = (*self.header).cmd_read_idx.load(Ordering::Relaxed);
+            let write_idx = (*self.header).cmd_write_idx.load(Ordering::Acquire);
+            read_idx != write_idx
+        }
+    }
+
+    /// 获取可用命令数量
+    pub fn available_commands(&self) -> usize {
+        unsafe {
+            let read_idx = (*self.header).cmd_read_idx.load(Ordering::Relaxed);
+            let write_idx = (*self.header).cmd_write_idx.load(Ordering::Acquire);
+            if write_idx >= read_idx {
+                write_idx - read_idx
+            } else {
+                CMD_BUFFER_SIZE - read_idx + write_idx
+            }
+        }
+    }
+
+    /// 获取指针（用于直接访问，慎用）
+    pub fn get_ptr(&self) -> *mut u8 {
+        self.shmem.as_ptr()
+    }
 }
 
 /// 计算简单的校验和
@@ -343,17 +454,13 @@ fn calculate_checksum(data: &[u8]) -> u32 {
 }
 
 #[test]
-fn it_work() {
-    use crate::shared_message::SharedMessage;
-    use log::debug;
-    use log::error;
-    use log::info;
-    use log::warn;
+fn test_bidirectional_communication() {
+    use crate::shared_message::{Command, CommandType, SharedMessage};
     use std::thread;
     use std::time::Duration;
 
     // 创建共享环形缓冲区
-    let shared_path = "/tmp/my_shared_ring_buffer";
+    let shared_path = "/tmp/test_bidirectional_buffer";
     let ring_buffer = match SharedRingBuffer::open(shared_path) {
         Ok(rb) => rb,
         Err(_) => {
@@ -362,114 +469,55 @@ fn it_work() {
         }
     };
 
-    thread::spawn(move || {
-        // 创建或打开无锁环形缓冲区
-        let ring_buffer: Option<SharedRingBuffer> = {
-            if shared_path.is_empty() {
-                None
-            } else {
-                match SharedRingBuffer::open(&shared_path) {
-                    Ok(rb) => Some(rb),
-                    Err(e) => {
-                        error!("无法打开共享环形缓冲区: {}", e);
-                        None
+    // 启动模拟 egui_bar 的线程
+    let egui_thread = thread::spawn(move || {
+        // 打开相同的共享缓冲区
+        let egui_buffer = SharedRingBuffer::open(shared_path).unwrap();
+        for i in 1..=5 {
+            // 读取 jwm 发来的状态
+            match egui_buffer.try_read_latest_message::<SharedMessage>() {
+                Ok(Some(message)) => {
+                    println!("[egui] 收到状态更新: {:?}", message.monitor_info);
+                    // 发送命令回 jwm
+                    let command = Command::view_tag(1 << (i % 9), 0);
+                    if let Err(e) = egui_buffer.send_command(command) {
+                        eprintln!("[egui] 发送命令失败: {}", e);
+                    } else {
+                        println!("[egui] 发送查看标签 {} 命令", i % 9 + 1);
                     }
                 }
+                Ok(None) => println!("[egui] 没有新的状态更新"),
+                Err(e) => eprintln!("[egui] 读取错误: {}", e),
             }
-        };
-
-        // 设置 panic 钩子
-        let default_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |panic_info| {
-            default_hook(panic_info);
-            // 不需要发送任何消息，线程死亡会导致通道关闭
-        }));
-
-        let mut last_secs = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-        let mut frame: u128 = 0;
-
-        // 用于记录错误日志的计数器，避免日志过多
-        let mut error_count = 0;
-        let max_error_logs = 5;
-
-        loop {
-            let cur_secs = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_secs();
-
-            let mut need_request_repaint = false;
-
-            if let Some(rb) = ring_buffer.as_ref() {
-                // 尝试从环形缓冲区读取数据
-                match rb.try_read_latest_message::<SharedMessage>() {
-                    Ok(Some(message)) => {
-                        println!("get message: {:?}", message);
-                    }
-                    Ok(None) => {
-                        // 没有新数据，正常情况
-                        if frame.wrapping_rem(1000) == 0 {
-                            debug!("No new message in ring buffer");
-                        }
-                    }
-                    Err(e) => {
-                        // 限制错误日志数量
-                        if error_count < max_error_logs {
-                            error!("读取环形缓冲区错误: {}", e);
-                            error_count += 1;
-                        } else if error_count == max_error_logs {
-                            error!("读取环形缓冲区持续出错，后续错误将不再记录");
-                            error_count += 1;
-                        }
-                    }
-                }
-            } else if frame.wrapping_rem(100) == 0 {
-                error!("环形缓冲区未初始化");
-            }
-
-            if frame.wrapping_rem(100) == 0 {
-                info!("frame {frame}: {last_secs}, {cur_secs}");
-            }
-
-            if cur_secs != last_secs {
-                need_request_repaint = true;
-            }
-
-            if need_request_repaint {
-                warn!("request_repaint");
-            }
-
-            last_secs = cur_secs;
-            frame = frame.wrapping_add(1).wrapping_rem(u128::MAX);
-
-            thread::sleep(Duration::from_millis(10));
+            thread::sleep(Duration::from_millis(150));
         }
     });
 
-    // 定期写入消息
-    loop {
-        // 创建消息
-        let message = SharedMessage::default();
-        // 尝试写入消息
-        match ring_buffer.try_write_message(&message) {
-            Ok(true) => {
-                println!("消息已写入: {:?}", message);
-            }
-            Ok(false) => {
-                println!("缓冲区已满，等待空间...");
-                std::thread::sleep(std::time::Duration::from_millis(50));
-                continue;
-            }
-            Err(e) => {
-                eprintln!("写入错误: {}", e);
-                std::thread::sleep(std::time::Duration::from_millis(1000));
-                continue;
+    // 模拟 jwm 的主线程
+    for i in 0..10 {
+        // 发送状态更新到 egui_bar
+        let mut message = SharedMessage::default();
+        message.monitor_info.monitor_num = 0;
+        message.monitor_info.client_name = format!("窗口 {}", i);
+        if let Err(e) = ring_buffer.try_write_message(&message) {
+            eprintln!("[jwm] 写入状态失败: {}", e);
+        } else {
+            println!("[jwm] 发送状态更新: 窗口 {}", i);
+        }
+        // 检查来自 egui_bar 的命令
+        while let Some(cmd) = ring_buffer.receive_command() {
+            println!(
+                "[jwm] 收到命令: {:?}, 参数: {}",
+                cmd.cmd_type, cmd.parameter
+            );
+            // 模拟处理命令
+            if let CommandType::ViewTag = cmd.cmd_type {
+                println!("[jwm] 切换到标签 {}", cmd.parameter.trailing_zeros() + 1);
             }
         }
-
-        std::thread::sleep(std::time::Duration::from_millis(100));
+        thread::sleep(Duration::from_millis(100));
     }
+
+    // 等待 egui 线程结束
+    egui_thread.join().unwrap();
 }

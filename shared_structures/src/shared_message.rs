@@ -61,3 +61,53 @@ mod tests {
         assert!(message.timestamp > 0);
     }
 }
+
+// 新增命令相关定义
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum CommandType {
+    None = 0,
+    ViewTag = 1,
+    ToggleTag = 2,
+    SetLayout = 3,
+    // 可以添加更多命令类型...
+}
+
+impl Default for CommandType {
+    fn default() -> Self {
+        CommandType::None
+    }
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
+pub struct Command {
+    pub cmd_type: CommandType,
+    pub parameter: u32,
+    pub monitor_id: i32,
+    pub timestamp: u64,
+}
+
+impl Command {
+    pub fn new(cmd_type: CommandType, parameter: u32, monitor_id: i32) -> Self {
+        Self {
+            cmd_type,
+            parameter,
+            monitor_id,
+            timestamp: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_millis() as u64,
+        }
+    }
+
+    pub fn view_tag(tag_bit: u32, monitor_id: i32) -> Self {
+        Self::new(CommandType::ViewTag, tag_bit, monitor_id)
+    }
+
+    pub fn toggle_tag(tag_bit: u32, monitor_id: i32) -> Self {
+        Self::new(CommandType::ToggleTag, tag_bit, monitor_id)
+    }
+
+    pub fn set_layout(layout_idx: u32, monitor_id: i32) -> Self {
+        Self::new(CommandType::SetLayout, layout_idx, monitor_id)
+    }
+}
