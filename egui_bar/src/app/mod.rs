@@ -358,8 +358,34 @@ impl EguiBarApp {
         });
     }
 
+    fn get_default_button_height(ui: &egui::Ui) -> f32 {
+        let style = ui.style();
+        // 按钮相关的样式属性
+        let button_padding = style.spacing.button_padding; // Vec2
+        let item_spacing = style.spacing.item_spacing; // Vec2
+        let window_margin = style.spacing.window_margin; // Margin
+        info!(
+            "button_padding: {button_padding}, item_spacing: {item_spacing}, window_margin: {:?}",
+            window_margin
+        );
+
+        // 字体相关
+        let font_id = &style.text_styles[&egui::TextStyle::Button];
+        let text_height = ui.fonts(|fonts| fonts.row_height(font_id));
+
+        // 颜色和视觉效果
+        // let button_fill = style.visuals.widgets.inactive.bg_fill;
+        // let button_stroke = style.visuals.widgets.inactive.bg_stroke;
+
+        let button_padding = style.spacing.button_padding;
+
+        let button_height = text_height + button_padding.x * 4.0;
+
+        button_height
+    }
+
     /// Calculate window dimensions
-    fn calculate_window_dimensions(&self) -> Option<(f32, f32, egui::Pos2)> {
+    fn calculate_window_dimensions(&self, ui: &egui::Ui) -> Option<(f32, f32, egui::Pos2)> {
         if let Some(message) = self.get_current_message() {
             let monitor_info = &message.monitor_info;
 
@@ -376,8 +402,9 @@ impl EguiBarApp {
 
             let width = (monitor_info.monitor_width as f32 - 2.0 * monitor_info.border_w as f32)
                 / self.state.ui_state.scale_factor;
-            let height =
-                (base_height / self.state.ui_state.scale_factor).max(DEFAULT_FONT_SIZE * 2.0);
+            let button_height = Self::get_default_button_height(ui);
+            info!("button_height: {button_height}");
+            let height = (base_height / self.state.ui_state.scale_factor).max(button_height);
 
             let pos = egui::Pos2::new(
                 (monitor_info.monitor_x as f32 + monitor_info.border_w as f32)
@@ -393,10 +420,10 @@ impl EguiBarApp {
     }
 
     /// Adjust window size and position
-    fn adjust_window(&mut self, ctx: &egui::Context) {
+    fn adjust_window(&mut self, ctx: &egui::Context, ui: &egui::Ui) {
         if self.state.ui_state.need_resize {
             // Try to adjust window unless get window dimensions.
-            if let Some((width, height, pos)) = self.calculate_window_dimensions() {
+            if let Some((width, height, pos)) = self.calculate_window_dimensions(ui) {
                 ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2::new(
                     width, height,
@@ -410,26 +437,24 @@ impl EguiBarApp {
     }
 
     /// Draw main UI
-    fn draw_main_ui(&mut self, ctx: &egui::Context) {
+    fn draw_main_ui(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
         // 更新当前消息到状态中
         if let Some(message) = self.get_current_message() {
             self.state.current_message = Some(message);
         }
 
-        egui::CentralPanel::default().show(ctx, |ui| {
-            ui.horizontal_centered(|ui| {
-                // Left: Workspace information
-                self.workspace_panel
-                    .draw(ui, &self.state, &self.command_sender);
+        ui.horizontal_centered(|ui| {
+            // Left: Workspace information
+            self.workspace_panel
+                .draw(ui, &self.state, &self.command_sender);
 
-                // Center: System information
-                ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    // Right side controls
-                    self.draw_controls(ui, ctx);
+            // Center: System information
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                // Right side controls
+                self.draw_controls(ui, ctx);
 
-                    // System info
-                    self.system_info_panel.draw(ui, &self.state);
-                });
+                // System info
+                self.system_info_panel.draw(ui, &self.state);
             });
         });
     }
@@ -728,19 +753,20 @@ impl eframe::App for EguiBarApp {
         self.state.update();
 
         // Draw main UI
-        self.draw_main_ui(ctx);
+        egui::CentralPanel::default().show(ctx, |ui| {
+            self.draw_main_ui(ctx, ui);
+            // Draw volume control window
+            let volume_closed =
+                self.volume_window
+                    .draw(ctx, &mut self.state, &self.event_bus.sender());
+            if volume_closed {
+                self.state.ui_state.volume_window.open = false;
+                self.state.ui_state.request_resize();
+            }
 
-        // Draw volume control window
-        let volume_closed = self
-            .volume_window
-            .draw(ctx, &mut self.state, &self.event_bus.sender());
-        if volume_closed {
-            self.state.ui_state.volume_window.open = false;
-            self.state.ui_state.request_resize();
-        }
-
-        // Adjust window if needed
-        self.adjust_window(ctx);
+            // Adjust window if needed
+            self.adjust_window(ctx, ui);
+        });
 
         if self.state.ui_state.need_resize {
             info!("request for resize");
