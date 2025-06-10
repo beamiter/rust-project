@@ -79,14 +79,14 @@ impl Default for CommandType {
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, Default, PartialEq, Eq)]
-pub struct Command {
+pub struct SharedCommand {
     pub cmd_type: CommandType,
     pub parameter: u32,
     pub monitor_id: i32,
     pub timestamp: u64,
 }
 
-impl Command {
+impl SharedCommand {
     pub fn new(cmd_type: CommandType, parameter: u32, monitor_id: i32) -> Self {
         Self {
             cmd_type,

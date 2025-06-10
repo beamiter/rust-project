@@ -2,9 +2,10 @@
 
 use chrono::Local;
 use egui_bar::{app::EguiBarApp, config::AppConfig, utils::AppError};
+use egui_plot::MarkerShape;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use log::{error, info, warn};
-use shared_structures::{SharedMessage, SharedRingBuffer};
+use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::path::Path;
 use std::sync::mpsc;
 use std::thread;
@@ -40,14 +41,19 @@ fn main() -> eframe::Result<()> {
     };
 
     // Create communication channels
-    let (message_sender, message_receiver) = mpsc::channel();
-    let (resize_sender, _resize_receiver) = mpsc::channel(); // 不再需要 resize_receiver
+    let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
+    let (command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
     let (heartbeat_sender, heartbeat_receiver) = mpsc::channel();
 
     // Start shared memory monitoring thread (简化版本)
     let shared_path_clone = shared_path.clone();
     thread::spawn(move || {
-        shared_memory_worker(shared_path_clone, message_sender, heartbeat_sender)
+        shared_memory_worker(
+            shared_path_clone,
+            message_sender,
+            heartbeat_sender,
+            command_receiver,
+        )
     });
 
     // Start heartbeat monitor
@@ -70,7 +76,7 @@ fn main() -> eframe::Result<()> {
         "egui_bar",
         native_options,
         Box::new(
-            move |cc| match EguiBarApp::new(cc, message_receiver, resize_sender) {
+            move |cc| match EguiBarApp::new(cc, message_receiver, command_sender) {
                 Ok(app) => {
                     info!("Application created successfully");
                     Ok(Box::new(app))
@@ -89,6 +95,7 @@ fn shared_memory_worker(
     shared_path: String,
     message_sender: mpsc::Sender<SharedMessage>,
     heartbeat_sender: mpsc::Sender<()>,
+    command_receiver: mpsc::Receiver<SharedCommand>,
 ) {
     info!("Starting shared memory worker thread");
 

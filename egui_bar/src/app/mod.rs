@@ -12,7 +12,7 @@ use eframe::egui;
 use egui::{Align, Color32, FontFamily, FontId, Layout, Margin, TextStyle};
 use events::{AppEvent, EventBus};
 use log::{debug, error, info, warn};
-use shared_structures::SharedMessage;
+use shared_structures::{SharedCommand, SharedMessage};
 use state::AppState;
 use std::collections::BTreeMap;
 use std::process::Command;
@@ -68,7 +68,7 @@ impl EguiBarApp {
     pub fn new(
         cc: &eframe::CreationContext<'_>,
         message_receiver: mpsc::Receiver<SharedMessage>,
-        resize_sender: mpsc::Sender<bool>,
+        command_sender: mpsc::Sender<SharedCommand>,
     ) -> Result<Self> {
         // Load configuration
         let mut config = AppConfig::load()?;
@@ -373,7 +373,8 @@ impl EguiBarApp {
 
             let width = (monitor_info.monitor_width as f32 - 2.0 * monitor_info.border_w as f32)
                 / self.state.ui_state.scale_factor;
-            let height = (base_height / self.state.ui_state.scale_factor).max(DEFAULT_FONT_SIZE * 2.0);
+            let height =
+                (base_height / self.state.ui_state.scale_factor).max(DEFAULT_FONT_SIZE * 2.0);
 
             let pos = egui::Pos2::new(
                 (monitor_info.monitor_x as f32 + monitor_info.border_w as f32)

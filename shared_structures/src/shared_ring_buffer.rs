@@ -1,4 +1,4 @@
-use crate::shared_message::{Command, CommandType};
+use crate::shared_message::{CommandType, SharedCommand};
 use serde::{Deserialize, Serialize};
 use shared_memory::{Shmem, ShmemConf};
 use std::io::{Error, ErrorKind, Result};
@@ -361,7 +361,7 @@ impl SharedRingBuffer {
     }
 
     /// 发送命令（通常由 egui_bar 调用）
-    pub fn send_command(&self, command: Command) -> Result<bool> {
+    pub fn send_command(&self, command: SharedCommand) -> Result<bool> {
         unsafe {
             // 读取当前索引
             let write_idx = (*self.header).cmd_write_idx.load(Ordering::Relaxed);
@@ -385,7 +385,7 @@ impl SharedRingBuffer {
     }
 
     /// 接收命令（通常由 jwm 调用）
-    pub fn receive_command(&self) -> Option<Command> {
+    pub fn receive_command(&self) -> Option<SharedCommand> {
         unsafe {
             // 读取当前索引
             let read_idx = (*self.header).cmd_read_idx.load(Ordering::Relaxed);
@@ -396,7 +396,7 @@ impl SharedRingBuffer {
             }
             // 获取命令数据
             let cmd_slot = &*self.cmd_buffer_start.add(read_idx % CMD_BUFFER_SIZE);
-            let command = Command {
+            let command = SharedCommand {
                 cmd_type: match cmd_slot.cmd_type {
                     1 => CommandType::ViewTag,
                     2 => CommandType::ToggleTag,
@@ -455,7 +455,7 @@ fn calculate_checksum(data: &[u8]) -> u32 {
 
 #[test]
 fn test_bidirectional_communication() {
-    use crate::shared_message::{Command, CommandType, SharedMessage};
+    use crate::shared_message::{CommandType, SharedCommand, SharedMessage};
     use std::thread;
     use std::time::Duration;
 
@@ -479,7 +479,7 @@ fn test_bidirectional_communication() {
                 Ok(Some(message)) => {
                     println!("[egui] 收到状态更新: {:?}", message.monitor_info);
                     // 发送命令回 jwm
-                    let command = Command::view_tag(1 << (i % 9), 0);
+                    let command = SharedCommand::view_tag(1 << (i % 9), 0);
                     if let Err(e) = egui_buffer.send_command(command) {
                         eprintln!("[egui] 发送命令失败: {}", e);
                     } else {
