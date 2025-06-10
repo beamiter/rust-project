@@ -204,7 +204,7 @@ impl UiState {
     /// Toggle debug window - 新增方法
     pub fn toggle_debug_window(&mut self) {
         self.show_debug_window = !self.show_debug_window;
-        self.need_resize = true; // 可能需要调整窗口大小
+        self.need_resize = true;
     }
 
     /// Toggle time format

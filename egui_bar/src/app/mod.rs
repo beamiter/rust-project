@@ -139,7 +139,7 @@ impl EguiBarApp {
         loop {
             match message_receiver.recv() {
                 Ok(message) => {
-                    debug!("Received message: timestamp={}", message.timestamp);
+                    info!("Received message: {:?}", message);
 
                     // 更新共享状态
                     if let Ok(mut state) = shared_state.lock() {
@@ -359,7 +359,7 @@ impl EguiBarApp {
     }
 
     /// Calculate window dimensions
-    fn calculate_window_dimensions(&self) -> (f32, f32, egui::Pos2) {
+    fn calculate_window_dimensions(&self) -> Option<(f32, f32, egui::Pos2)> {
         if let Some(message) = self.get_current_message() {
             let monitor_info = &message.monitor_info;
 
@@ -386,26 +386,26 @@ impl EguiBarApp {
                     / self.state.ui_state.scale_factor,
             );
 
-            (width, height, pos)
+            Some((width, height, pos))
         } else {
-            (800.0, ui::DEFAULT_FONT_SIZE * 2.0, egui::Pos2::ZERO)
+            None
         }
     }
 
     /// Adjust window size and position
     fn adjust_window(&mut self, ctx: &egui::Context) {
         if self.state.ui_state.need_resize {
-            let (width, height, pos) = self.calculate_window_dimensions();
+            // Try to adjust window unless get window dimensions.
+            if let Some((width, height, pos)) = self.calculate_window_dimensions() {
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2::new(
+                    width, height,
+                )));
 
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
-            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2::new(
-                width, height,
-            )));
-
-            self.state.ui_state.current_window_height = height;
-            self.state.ui_state.need_resize = false;
-
-            info!("Window adjusted: {}x{} at {:?}", width, height, pos);
+                self.state.ui_state.current_window_height = height;
+                self.state.ui_state.need_resize = false;
+                info!("Window adjusted: {}x{} at {:?}", width, height, pos);
+            }
         }
     }
 
@@ -727,9 +727,6 @@ impl eframe::App for EguiBarApp {
         // Update application state (system monitoring, audio, etc.)
         self.state.update();
 
-        // Adjust window if needed
-        self.adjust_window(ctx);
-
         // Draw main UI
         self.draw_main_ui(ctx);
 
@@ -740,6 +737,14 @@ impl eframe::App for EguiBarApp {
         if volume_closed {
             self.state.ui_state.volume_window.open = false;
             self.state.ui_state.request_resize();
+        }
+
+        // Adjust window if needed
+        self.adjust_window(ctx);
+
+        if self.state.ui_state.need_resize {
+            info!("request for resize");
+            ctx.request_repaint_after(Duration::from_millis(3));
         }
     }
 }

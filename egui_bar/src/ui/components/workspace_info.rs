@@ -54,13 +54,13 @@ impl WorkspacePanel {
 
             // 创建一个按钮而不是标签
             let button = ui.add(
-                egui::Button::new(rich_text)
-                    .small() // 可选，使按钮更紧凑
-                    .frame(false), // 可选，使按钮看起来更像标签
+                egui::Button::new(rich_text).small(), // 可选，使按钮更紧凑
+                                                      // .frame(false), // 可选，使按钮看起来更像标签
             );
 
             // 处理点击事件 - 发送 ViewTag 命令
             if button.clicked() {
+                info!("{} clicked", tag_bit);
                 if let Some(ref message) = app_state.current_message {
                     let monitor_id = message.monitor_info.monitor_num;
                     let command = SharedCommand::view_tag(tag_bit, monitor_id);
@@ -76,6 +76,7 @@ impl WorkspacePanel {
 
             // 处理右键点击 - 发送 ToggleTag 命令
             if button.secondary_clicked() {
+                info!("{} secondary_clicked", tag_bit);
                 if let Some(ref message) = app_state.current_message {
                     let monitor_id = message.monitor_info.monitor_num;
                     let command = SharedCommand::toggle_tag(tag_bit, monitor_id);
@@ -107,13 +108,12 @@ impl WorkspacePanel {
 
         // 布局符号也改为按钮
         let layout_button = ui.add(
-            egui::Button::new(egui::RichText::new(layout_symbol).color(colors::ERROR))
-                .small()
-                .frame(false),
+            egui::Button::new(egui::RichText::new(layout_symbol).color(colors::ERROR)).small(), // .frame(false),
         );
 
         // 处理布局按钮点击
         if layout_button.clicked() {
+            info!("layout_button clicked");
             if let Some(ref message) = app_state.current_message {
                 let monitor_id = message.monitor_info.monitor_num;
                 // 假设我们有一个切换布局的命令类型

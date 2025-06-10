@@ -4,7 +4,7 @@ use chrono::Local;
 use egui_bar::{app::EguiBarApp, config::AppConfig, utils::AppError};
 use egui_plot::MarkerShape;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::path::Path;
 use std::sync::mpsc;
@@ -45,7 +45,6 @@ fn main() -> eframe::Result<()> {
     let (command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
     let (heartbeat_sender, heartbeat_receiver) = mpsc::channel();
 
-    // Start shared memory monitoring thread (简化版本)
     let shared_path_clone = shared_path.clone();
     thread::spawn(move || {
         shared_memory_worker(
@@ -63,7 +62,7 @@ fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_position(egui::Pos2::new(0.0, 0.0))
-            .with_inner_size([800.0, config.ui.font_size * 2.0])
+            .with_inner_size([1080.0, config.ui.font_size * 2.5])
             .with_min_inner_size([480.0, config.ui.font_size])
             .with_decorations(false)
             .with_transparent(config.ui.window_opacity < 1.0),
@@ -90,7 +89,6 @@ fn main() -> eframe::Result<()> {
     )
 }
 
-/// 简化的共享内存工作线程
 fn shared_memory_worker(
     shared_path: String,
     message_sender: mpsc::Sender<SharedMessage>,
@@ -99,7 +97,7 @@ fn shared_memory_worker(
 ) {
     info!("Starting shared memory worker thread");
 
-    // Initialize shared ring buffer
+    // 尝试打开或创建共享环形缓冲区
     let ring_buffer: Option<SharedRingBuffer> = if shared_path.is_empty() {
         warn!("No shared path provided, running without shared memory");
         None
@@ -110,8 +108,20 @@ fn shared_memory_worker(
                 Some(rb)
             }
             Err(e) => {
-                error!("Failed to open shared ring buffer '{}': {}", shared_path, e);
-                None
+                warn!(
+                    "Failed to open shared ring buffer: {}, attempting to create new one",
+                    e
+                );
+                match SharedRingBuffer::create(&shared_path, None, None) {
+                    Ok(rb) => {
+                        info!("Created new shared ring buffer: {}", shared_path);
+                        Some(rb)
+                    }
+                    Err(create_err) => {
+                        error!("Failed to create shared ring buffer: {}", create_err);
+                        None
+                    }
+                }
             }
         }
     };
@@ -122,15 +132,42 @@ fn shared_memory_worker(
         .as_millis();
 
     let mut frame_count: u128 = 0;
+    let mut consecutive_errors = 0;
 
     loop {
-        // Handle ring buffer messages
+        // 发送心跳信号
+        if heartbeat_sender.send(()).is_err() {
+            warn!("Heartbeat receiver disconnected");
+            break;
+        }
+
+        // 处理发送到共享内存的命令
+        while let Ok(cmd) = command_receiver.try_recv() {
+            if let Some(ref rb) = ring_buffer {
+                match rb.send_command(cmd) {
+                    Ok(true) => {
+                        debug!(
+                            "Sent command: {:?}, parameter: {}",
+                            cmd.cmd_type, cmd.parameter
+                        );
+                    }
+                    Ok(false) => {
+                        warn!("Command buffer full, command dropped");
+                    }
+                    Err(e) => {
+                        error!("Failed to send command: {}", e);
+                    }
+                }
+            }
+        }
+
+        // 处理共享内存消息
         if let Some(ref rb) = ring_buffer {
             match rb.try_read_latest_message::<SharedMessage>() {
                 Ok(Some(message)) => {
+                    consecutive_errors = 0; // 成功读取，重置错误计数
                     if prev_timestamp != message.timestamp {
                         prev_timestamp = message.timestamp;
-
                         if let Err(e) = message_sender.send(message) {
                             error!("Failed to send message: {}", e);
                             break;
@@ -138,24 +175,32 @@ fn shared_memory_worker(
                     }
                 }
                 Ok(None) => {
-                    // No new messages - normal
+                    // 没有新消息，这是正常的
+                    consecutive_errors = 0;
                 }
                 Err(e) => {
-                    if frame_count % 1000 == 0 {
-                        error!("Ring buffer read error: {}", e);
+                    consecutive_errors += 1;
+                    if frame_count % 1000 == 0 || consecutive_errors == 1 {
+                        error!(
+                            "Ring buffer read error: {}. Buffer state: available={}, last_timestamp={}",
+                            e,
+                            rb.available_messages(),
+                            rb.get_last_timestamp()
+                        );
+                    }
+
+                    // 如果连续错误过多，尝试重置读取位置
+                    if consecutive_errors > 10 {
+                        warn!("Too many consecutive errors, resetting read index");
+                        rb.reset_read_index();
+                        consecutive_errors = 0;
                     }
                 }
             }
         }
 
-        // Send heartbeat
-        if heartbeat_sender.send(()).is_err() {
-            warn!("Heartbeat receiver disconnected");
-            break;
-        }
-
         frame_count = frame_count.wrapping_add(1);
-        thread::sleep(Duration::from_millis(50)); // 20 FPS for shared memory polling
+        thread::sleep(Duration::from_millis(10));
     }
 
     info!("Shared memory worker thread exiting");
