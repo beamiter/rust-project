@@ -61,6 +61,8 @@ pub struct EguiBarApp {
 
     /// egui context for requesting repaints
     egui_ctx: egui::Context,
+
+    command_sender: mpsc::Sender<SharedCommand>,
 }
 
 impl EguiBarApp {
@@ -115,6 +117,7 @@ impl EguiBarApp {
             workspace_panel: WorkspacePanel::new(),
             initialized: false,
             egui_ctx: cc.egui_ctx.clone(),
+            command_sender,
         })
     }
 
@@ -417,7 +420,7 @@ impl EguiBarApp {
             ui.horizontal_centered(|ui| {
                 // Left: Workspace information
                 self.workspace_panel
-                    .draw(ui, &self.state, &self.event_bus.sender());
+                    .draw(ui, &self.state, &self.command_sender);
 
                 // Center: System information
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

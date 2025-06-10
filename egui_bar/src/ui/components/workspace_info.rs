@@ -1,6 +1,7 @@
 //! Workspace information display component
 
 use log::info;
+use shared_structures::{CommandType, SharedCommand};
 
 use crate::app::events::AppEvent;
 use crate::app::state::AppState;
@@ -20,7 +21,7 @@ impl WorkspacePanel {
         &self,
         ui: &mut egui::Ui,
         app_state: &AppState,
-        _event_sender: &mpsc::Sender<AppEvent>,
+        command_sender: &mpsc::Sender<SharedCommand>,
     ) {
         let mut tag_status_vec = Vec::new();
         let mut layout_symbol = String::from(" ? ");
@@ -30,10 +31,11 @@ impl WorkspacePanel {
             layout_symbol = message.monitor_info.ltsymbol.clone();
         }
 
-        // Draw tag icons
+        // Draw tag icons as buttons
         for (i, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {
             let tag_color = colors::TAG_COLORS[i];
             let mut rich_text = egui::RichText::new(tag_icon).monospace();
+            let tag_bit = 1 << i; // 计算标签位
 
             if let Some(tag_status) = tag_status_vec.get(i) {
                 if tag_status.is_selected {
@@ -49,11 +51,45 @@ impl WorkspacePanel {
                     rich_text = rich_text.background_color(colors::WHEAT);
                 }
             }
-            // info!("[draw] {:?}", rich_text);
 
-            let response = ui.label(rich_text);
+            // 创建一个按钮而不是标签
+            let button = ui.add(
+                egui::Button::new(rich_text)
+                    .small() // 可选，使按钮更紧凑
+                    .frame(false), // 可选，使按钮看起来更像标签
+            );
 
-            // Add tooltip with tag information
+            // 处理点击事件 - 发送 ViewTag 命令
+            if button.clicked() {
+                if let Some(ref message) = app_state.current_message {
+                    let monitor_id = message.monitor_info.monitor_num;
+                    let command = SharedCommand::view_tag(tag_bit, monitor_id);
+
+                    // 发送命令到JWM
+                    if let Err(e) = command_sender.send(command) {
+                        log::error!("Failed to send ViewTag command: {}", e);
+                    } else {
+                        log::info!("Sent ViewTag command for tag {}", i + 1);
+                    }
+                }
+            }
+
+            // 处理右键点击 - 发送 ToggleTag 命令
+            if button.secondary_clicked() {
+                if let Some(ref message) = app_state.current_message {
+                    let monitor_id = message.monitor_info.monitor_num;
+                    let command = SharedCommand::toggle_tag(tag_bit, monitor_id);
+
+                    // 发送命令到JWM
+                    if let Err(e) = command_sender.send(command) {
+                        log::error!("Failed to send ToggleTag command: {}", e);
+                    } else {
+                        log::info!("Sent ToggleTag command for tag {}", i + 1);
+                    }
+                }
+            }
+
+            // 保留工具提示功能
             if let Some(tag_status) = tag_status_vec.get(i) {
                 let mut tooltip = format!("标签 {}", i + 1);
                 if tag_status.is_selected {
@@ -65,12 +101,34 @@ impl WorkspacePanel {
                 if tag_status.is_urg {
                     tooltip.push_str(" (紧急)");
                 }
-                response.on_hover_text(tooltip);
+                button.on_hover_text(tooltip);
             }
         }
 
-        // Layout symbol
-        ui.label(egui::RichText::new(layout_symbol).color(colors::ERROR));
+        // 布局符号也改为按钮
+        let layout_button = ui.add(
+            egui::Button::new(egui::RichText::new(layout_symbol).color(colors::ERROR))
+                .small()
+                .frame(false),
+        );
+
+        // 处理布局按钮点击
+        if layout_button.clicked() {
+            if let Some(ref message) = app_state.current_message {
+                let monitor_id = message.monitor_info.monitor_num;
+                // 假设我们有一个切换布局的命令类型
+                let command = SharedCommand::new(CommandType::SetLayout, 0, monitor_id); // 0表示循环到下一个布局
+
+                if let Err(e) = command_sender.send(command) {
+                    log::error!("Failed to send SetLayout command: {}", e);
+                } else {
+                    log::info!("Sent SetLayout command");
+                }
+            }
+        }
+
+        // 布局按钮的工具提示
+        layout_button.on_hover_text("点击切换布局");
     }
 }
 

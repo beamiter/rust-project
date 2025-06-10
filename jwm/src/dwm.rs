@@ -10,6 +10,8 @@ use log::info;
 use log::warn;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
+use shared_structures::CommandType;
+use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -1826,7 +1828,62 @@ impl Dwm {
                 //     info!("running frame: {}, handler type: {}", i, ev.type_);
                 // }
                 i = i.wrapping_add(1);
+
+                // 每次事件循环都检查命令
+                // self.process_commands_from_egui_bar();
+
                 self.handler(ev.type_, &mut ev);
+            }
+        }
+    }
+
+    // 新增处理命令的方法
+    fn process_commands_from_egui_bar(&mut self) {
+        // 创建一个临时向量来收集所有命令
+        let mut commands_to_process: Vec<(i32, SharedCommand)> = Vec::new();
+
+        // 第一步：遍历共享内存缓冲区并收集命令
+        for (&monitor_id, buffer) in &self.egui_bar_shmem {
+            while let Some(cmd) = buffer.receive_command() {
+                // 确保命令是给当前显示器的
+                if cmd.monitor_id == monitor_id {
+                    commands_to_process.push((monitor_id, cmd));
+                }
+            }
+        }
+
+        // 第二步：处理收集到的命令
+        for (_monitor_id, cmd) in commands_to_process {
+            match cmd.cmd_type {
+                CommandType::ViewTag => {
+                    // 切换到指定标签
+                    info!(
+                        "[process_commands] ViewTag command received: {}",
+                        cmd.parameter
+                    );
+                    let arg = Arg::Ui(cmd.parameter);
+                    self.view(&arg);
+                }
+                CommandType::ToggleTag => {
+                    // 切换标签
+                    info!(
+                        "[process_commands] ToggleTag command received: {}",
+                        cmd.parameter
+                    );
+                    let arg = Arg::Ui(cmd.parameter);
+                    self.toggletag(&arg);
+                }
+                CommandType::SetLayout => {
+                    // 设置布局
+                    info!(
+                        "[process_commands] SetLayout command received: {}",
+                        cmd.parameter
+                    );
+                    // 这里需要根据您的具体实现来调用相应的函数
+                    let arg = Arg::Ui(cmd.parameter);
+                    self.setlayout(&arg);
+                }
+                CommandType::None => {}
             }
         }
     }
