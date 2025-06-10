@@ -4,6 +4,7 @@ pub mod events;
 pub mod state;
 
 use crate::config::AppConfig;
+use crate::constants::ui::DEFAULT_FONT_SIZE;
 use crate::constants::{colors, icons, ui};
 use crate::ui::components::{SystemInfoPanel, VolumeControlWindow, WorkspacePanel};
 use crate::utils::{AppError, PerformanceMetrics, Result};
@@ -372,7 +373,7 @@ impl EguiBarApp {
 
             let width = (monitor_info.monitor_width as f32 - 2.0 * monitor_info.border_w as f32)
                 / self.state.ui_state.scale_factor;
-            let height = base_height / self.state.ui_state.scale_factor;
+            let height = (base_height / self.state.ui_state.scale_factor).max(DEFAULT_FONT_SIZE * 2.0);
 
             let pos = egui::Pos2::new(
                 (monitor_info.monitor_x as f32 + monitor_info.border_w as f32)
