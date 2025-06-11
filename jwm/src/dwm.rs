@@ -1830,7 +1830,7 @@ impl Dwm {
                 while XPending(self.dpy) > 0 {
                     XNextEvent(self.dpy, &mut ev);
                     i = i.wrapping_add(1);
-                    info!("running frame: {}, handler type: {}", i, ev.type_);
+                    // info!("running frame: {}, handler type: {}", i, ev.type_);
                     self.handler(ev.type_, &mut ev);
                 }
 

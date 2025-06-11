@@ -19,7 +19,7 @@ impl WorkspacePanel {
     pub fn draw(
         &self,
         ui: &mut egui::Ui,
-        app_state: &AppState,
+        app_state: &mut AppState,
         command_sender: &mpsc::Sender<SharedCommand>,
     ) {
         let mut tag_status_vec = Vec::new();
@@ -105,29 +105,100 @@ impl WorkspacePanel {
             }
         }
 
-        // 布局符号也改为按钮
-        let layout_button = ui.add(
-            egui::Button::new(egui::RichText::new(layout_symbol).color(colors::ERROR)).small(), // .frame(false),
+        // // 布局符号也改为按钮
+        // let layout_button = ui.add(
+        //     egui::Button::new(egui::RichText::new(layout_symbol).color(colors::ERROR)).small(), // .frame(false),
+        // );
+        //
+        // // 处理布局按钮点击
+        // if layout_button.clicked() {
+        //     info!("layout_button clicked");
+        //     if let Some(ref message) = app_state.current_message {
+        //         let monitor_id = message.monitor_info.monitor_num;
+        //         // 假设我们有一个切换布局的命令类型
+        //         let command = SharedCommand::new(CommandType::SetLayout, 0, monitor_id); // 0表示循环到下一个布局
+        //
+        //         if let Err(e) = command_sender.send(command) {
+        //             log::error!("Failed to send SetLayout command: {}", e);
+        //         } else {
+        //             log::info!("Sent SetLayout command");
+        //         }
+        //     }
+        // }
+        //
+        // // 布局按钮的工具提示
+        // layout_button.on_hover_text("点击切换布局");
+        self.render_layout_section(ui, app_state, command_sender, &layout_symbol);
+    }
+
+    fn render_layout_section(
+        &self,
+        ui: &mut egui::Ui,
+        app_state: &mut AppState,
+        command_sender: &mpsc::Sender<SharedCommand>,
+        layout_symbol: &str,
+    ) {
+        // 主布局按钮
+        let main_layout_button = ui.add(
+            egui::Button::new(egui::RichText::new(layout_symbol).color(
+                if app_state.layout_selector_open {
+                    colors::SUCCESS
+                } else {
+                    colors::ERROR
+                },
+            ))
+            .small(),
         );
 
-        // 处理布局按钮点击
-        if layout_button.clicked() {
-            info!("layout_button clicked");
-            if let Some(ref message) = app_state.current_message {
-                let monitor_id = message.monitor_info.monitor_num;
-                // 假设我们有一个切换布局的命令类型
-                let command = SharedCommand::new(CommandType::SetLayout, 0, monitor_id); // 0表示循环到下一个布局
-
-                if let Err(e) = command_sender.send(command) {
-                    log::error!("Failed to send SetLayout command: {}", e);
-                } else {
-                    log::info!("Sent SetLayout command");
-                }
-            }
+        // 处理主布局按钮点击
+        if main_layout_button.clicked() {
+            info!("Layout button clicked, toggling selector");
+            app_state.layout_selector_open = !app_state.layout_selector_open;
         }
 
-        // 布局按钮的工具提示
-        layout_button.on_hover_text("点击切换布局");
+        // 如果选择器是展开的，显示布局选项
+        if app_state.layout_selector_open {
+            ui.separator();
+
+            // 水平显示所有布局选项
+            for layout in &app_state.available_layouts {
+                let is_current = layout.symbol == layout_symbol;
+
+                let layout_option_button = ui.add(
+                    egui::Button::new(egui::RichText::new(&layout.symbol).color(if is_current {
+                        colors::SUCCESS
+                    } else {
+                        colors::ROYALBLUE
+                    }))
+                    .small()
+                    .selected(is_current),
+                );
+
+                // 处理布局选项点击
+                if layout_option_button.clicked() && !is_current {
+                    info!("Layout option clicked: {} ({})", layout.name, layout.symbol);
+
+                    if let Some(ref message) = app_state.current_message {
+                        let monitor_id = message.monitor_info.monitor_num;
+                        let command =
+                            SharedCommand::new(CommandType::SetLayout, layout.index, monitor_id);
+
+                        if let Err(e) = command_sender.send(command) {
+                            log::error!("Failed to send SetLayout command: {}", e);
+                        } else {
+                            log::info!("Sent SetLayout command: layout_index={}", layout.index);
+                        }
+                    }
+
+                    // 选择后关闭选择器
+                    app_state.layout_selector_open = false;
+                }
+
+                // 添加工具提示
+                let hover_text = format!("点击切换布局: {}", layout.name);
+                layout_option_button.on_hover_text(hover_text);
+            }
+        }
     }
 }
 

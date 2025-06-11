@@ -34,6 +34,16 @@ pub struct AppState {
 
     /// Application start time
     pub start_time: Instant,
+
+    pub layout_selector_open: bool,
+    pub available_layouts: Vec<LayoutInfo>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LayoutInfo {
+    pub symbol: String,
+    pub name: String,
+    pub index: u32,
 }
 
 /// UI-specific state
@@ -87,6 +97,23 @@ impl AppState {
     /// Create new application state
     pub fn new(config: AppConfig) -> Self {
         let theme_type = config.ui.theme.parse().unwrap_or_default();
+        let available_layouts = vec![
+            LayoutInfo {
+                symbol: "[]=".to_string(),
+                name: "Tiled".to_string(),
+                index: 0,
+            },
+            LayoutInfo {
+                symbol: "><>".to_string(),
+                name: "Floating".to_string(),
+                index: 1,
+            },
+            LayoutInfo {
+                symbol: "[M]".to_string(),
+                name: "Monocle".to_string(),
+                index: 2,
+            },
+        ];
 
         Self {
             audio_manager: AudioManager::new(),
@@ -97,6 +124,8 @@ impl AppState {
             config,
             current_message: None,
             start_time: Instant::now(),
+            layout_selector_open: false,
+            available_layouts,
         }
     }
 

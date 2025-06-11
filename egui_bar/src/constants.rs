@@ -33,12 +33,12 @@ pub mod colors {
     pub const INDIGO: Color32 = Color32::from_rgb(75, 0, 130);
     pub const VIOLET: Color32 = Color32::from_rgb(138, 43, 226);
     pub const BROWN: Color32 = Color32::from_rgb(165, 42, 42);
-    // pub const GOLD: Color32 = Color32::from_rgb(255, 215, 0);
-    // pub const MAGENTA: Color32 = Color32::from_rgb(255, 0, 255);
+    pub const GOLD: Color32 = Color32::from_rgb(255, 215, 0);
+    pub const MAGENTA: Color32 = Color32::from_rgb(255, 0, 255);
     pub const CYAN: Color32 = Color32::from_rgb(0, 206, 209);
     pub const SILVER: Color32 = Color32::from_rgb(192, 192, 192);
-    // pub const OLIVE_GREEN: Color32 = Color32::from_rgb(128, 128, 0);
-    // pub const ROYALBLUE: Color32 = Color32::from_rgb(65, 105, 225);
+    pub const OLIVE_GREEN: Color32 = Color32::from_rgb(128, 128, 0);
+    pub const ROYALBLUE: Color32 = Color32::from_rgb(65, 105, 225);
     pub const WHEAT: Color32 = Color32::from_rgb(245, 222, 179);
 
     // System status colors
@@ -52,7 +52,7 @@ pub mod colors {
 
     // Tag colors for workspace indicators
     pub const TAG_COLORS: [Color32; 9] = [
-        RED, ORANGE, YELLOW, GREEN, BLUE, INDIGO, VIOLET, CYAN, SILVER,
+        RED, ORANGE, YELLOW, GREEN, BLUE, INDIGO, VIOLET, CYAN, OLIVE_GREEN,
     ];
 
     // UI accent colors

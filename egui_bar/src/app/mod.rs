@@ -426,7 +426,7 @@ impl EguiBarApp {
         ui.horizontal_centered(|ui| {
             // Left: Workspace information
             self.workspace_panel
-                .draw(ui, &self.state, &self.command_sender);
+                .draw(ui, &mut self.state, &self.command_sender);
 
             // Center: System information
             ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
