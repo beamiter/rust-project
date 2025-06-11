@@ -5,6 +5,7 @@ use libc::{
     exit, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT, SA_RESTART, SIGCHLD,
     SIG_IGN, WNOHANG,
 };
+use libc::{fd_set, select, timeval, FD_ISSET, FD_SET, FD_ZERO};
 use log::error;
 use log::info;
 use log::warn;
@@ -32,6 +33,7 @@ use std::{os::raw::c_long, usize};
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
 use x11::xlib::XConfigureRequestEvent;
 use x11::xlib::XFreeStringList;
+use x11::xlib::{XConnectionNumber, XPending};
 use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
 use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
 
@@ -1817,22 +1819,59 @@ impl Dwm {
     }
 
     pub fn run(&mut self) {
-        // info!("[run]");
-        // main event loop
         unsafe {
             let mut ev: XEvent = zeroed();
             XSync(self.dpy, False);
+            let x11_fd = XConnectionNumber(self.dpy);
             let mut i: u64 = 0;
-            while self.running.load(Ordering::SeqCst) && XNextEvent(self.dpy, &mut ev) <= 0 {
-                // if ev.type_ == PropertyNotify {
-                //     info!("running frame: {}, handler type: {}", i, ev.type_);
-                // }
-                i = i.wrapping_add(1);
+            info!("Starting event loop with X11 fd: {}", x11_fd);
+            while self.running.load(Ordering::SeqCst) {
+                // 处理所有挂起的X11事件
+                while XPending(self.dpy) > 0 {
+                    XNextEvent(self.dpy, &mut ev);
+                    i = i.wrapping_add(1);
+                    info!("running frame: {}, handler type: {}", i, ev.type_);
+                    self.handler(ev.type_, &mut ev);
+                }
 
-                // 每次事件循环都检查命令
+                // 处理来自egui_bar的命令
                 self.process_commands_from_egui_bar();
 
-                self.handler(ev.type_, &mut ev);
+                // 设置select参数
+                let mut read_fds: fd_set = std::mem::zeroed();
+                FD_ZERO(&mut read_fds);
+                FD_SET(x11_fd, &mut read_fds);
+
+                let mut timeout = timeval {
+                    tv_sec: 0,
+                    tv_usec: 10000, // 10.000ms for ~100 FPS
+                };
+
+                // 等待X11事件或超时
+                let result = select(
+                    x11_fd + 1,
+                    &mut read_fds,
+                    std::ptr::null_mut(),
+                    std::ptr::null_mut(),
+                    &mut timeout,
+                );
+
+                match result {
+                    -1 => {
+                        error!("select() error");
+                        break;
+                    }
+                    0 => {
+                        // 超时，继续循环处理命令
+                        continue;
+                    }
+                    _ => {
+                        // 有X11事件可读，在下次循环中处理
+                        if FD_ISSET(x11_fd, &read_fds) {
+                            // X11事件就绪，下次循环会处理
+                        }
+                    }
+                }
             }
         }
     }
