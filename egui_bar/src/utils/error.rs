@@ -1,7 +1,5 @@
 //! Error handling for the egui_bar application
 
-use std::fmt;
-
 /// Application error types
 #[derive(Debug, thiserror::Error)]
 pub enum AppError {

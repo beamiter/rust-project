@@ -1830,7 +1830,7 @@ impl Dwm {
                 i = i.wrapping_add(1);
 
                 // 每次事件循环都检查命令
-                // self.process_commands_from_egui_bar();
+                self.process_commands_from_egui_bar();
 
                 self.handler(ev.type_, &mut ev);
             }

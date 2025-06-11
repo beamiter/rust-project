@@ -3,7 +3,6 @@
 use log::info;
 use shared_structures::{CommandType, SharedCommand};
 
-use crate::app::events::AppEvent;
 use crate::app::state::AppState;
 use crate::constants::{colors, icons};
 use std::sync::mpsc;
@@ -69,7 +68,7 @@ impl WorkspacePanel {
                     if let Err(e) = command_sender.send(command) {
                         log::error!("Failed to send ViewTag command: {}", e);
                     } else {
-                        log::info!("Sent ViewTag command for tag {}", i + 1);
+                        log::info!("Sent ViewTag command for tag {} in channel", i + 1);
                     }
                 }
             }
@@ -85,7 +84,7 @@ impl WorkspacePanel {
                     if let Err(e) = command_sender.send(command) {
                         log::error!("Failed to send ToggleTag command: {}", e);
                     } else {
-                        log::info!("Sent ToggleTag command for tag {}", i + 1);
+                        log::info!("Sent ToggleTag command for tag {} in channel", i + 1);
                     }
                 }
             }

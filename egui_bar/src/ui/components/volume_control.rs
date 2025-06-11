@@ -9,6 +9,7 @@ use std::sync::mpsc;
 use std::time::Instant;
 
 /// Volume control window component
+#[allow(dead_code)]
 pub struct VolumeControlWindow {
     last_render_time: Instant,
 }

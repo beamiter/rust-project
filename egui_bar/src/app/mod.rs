@@ -4,12 +4,11 @@ pub mod events;
 pub mod state;
 
 use crate::config::AppConfig;
-use crate::constants::ui::DEFAULT_FONT_SIZE;
 use crate::constants::{colors, icons, ui};
 use crate::ui::components::{SystemInfoPanel, VolumeControlWindow, WorkspacePanel};
-use crate::utils::{AppError, PerformanceMetrics, Result};
+use crate::utils::Result;
 use eframe::egui;
-use egui::{Align, Color32, FontFamily, FontId, Layout, Margin, TextStyle};
+use egui::{Align, FontFamily, FontId, Layout, Margin, TextStyle};
 use events::{AppEvent, EventBus};
 use log::{debug, error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage};
@@ -27,7 +26,6 @@ pub use state::{UiState, VolumeWindowState};
 pub struct SharedAppState {
     pub current_message: Option<SharedMessage>,
     pub last_update: Instant,
-    pub need_repaint: bool,
 }
 
 impl SharedAppState {
@@ -35,12 +33,12 @@ impl SharedAppState {
         Self {
             current_message: None,
             last_update: Instant::now(),
-            need_repaint: false,
         }
     }
 }
 
 /// Main egui application
+#[allow(dead_code)]
 pub struct EguiBarApp {
     /// Application state
     state: AppState,
@@ -152,7 +150,6 @@ impl EguiBarApp {
                         if need_update {
                             state.current_message = Some(message);
                             state.last_update = Instant::now();
-                            state.need_repaint = true;
 
                             egui_ctx.request_repaint_after(Duration::from_millis(1));
                         }
@@ -171,7 +168,7 @@ impl EguiBarApp {
     }
 
     /// 定时更新线程（每秒更新时间显示等）
-    fn periodic_update_thread(shared_state: Arc<Mutex<SharedAppState>>, egui_ctx: egui::Context) {
+    fn periodic_update_thread(_shared_state: Arc<Mutex<SharedAppState>>, egui_ctx: egui::Context) {
         info!("Starting periodic update thread");
 
         let mut last_second = chrono::Local::now().timestamp();
@@ -185,12 +182,7 @@ impl EguiBarApp {
             if current_second != last_second {
                 last_second = current_second;
 
-                if let Ok(mut state) = shared_state.lock() {
-                    state.need_repaint = true;
-                    egui_ctx.request_repaint_after(Duration::from_millis(1));
-                } else {
-                    warn!("Failed to lock shared state for periodic update");
-                }
+                egui_ctx.request_repaint_after(Duration::from_millis(1));
             }
         }
     }
@@ -281,18 +273,6 @@ impl EguiBarApp {
             .lock()
             .ok()
             .and_then(|state| state.current_message.clone())
-    }
-
-    /// 检查是否需要重绘
-    fn should_repaint(&self) -> bool {
-        self.shared_state
-            .lock()
-            .map(|mut state| {
-                let should_repaint = state.need_repaint;
-                state.need_repaint = false; // 重置标志
-                should_repaint
-            })
-            .unwrap_or(false)
     }
 
     /// Handle application events

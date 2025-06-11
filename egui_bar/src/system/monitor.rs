@@ -1,7 +1,7 @@
 //! System monitoring with caching and efficient updates
 
 use crate::constants::intervals;
-use crate::utils::{AppError, Result, RollingAverage};
+use crate::utils::RollingAverage;
 use std::time::{Duration, Instant};
 use sysinfo::System;
 
@@ -53,7 +53,6 @@ pub struct SystemMonitor {
     update_interval: Duration,
     cpu_history: RollingAverage,
     memory_history: RollingAverage,
-    history_length: usize,
     last_snapshot: Option<SystemSnapshot>,
 }
 
@@ -69,7 +68,6 @@ impl SystemMonitor {
             update_interval: Duration::from_millis(intervals::SYSTEM_UPDATE),
             cpu_history: RollingAverage::new(history_length),
             memory_history: RollingAverage::new(history_length),
-            history_length,
             last_snapshot: None,
         }
     }

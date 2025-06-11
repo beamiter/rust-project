@@ -2,9 +2,8 @@
 
 use chrono::Local;
 use egui_bar::{app::EguiBarApp, config::AppConfig, utils::AppError};
-use egui_plot::MarkerShape;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::path::Path;
 use std::sync::mpsc;
@@ -98,14 +97,14 @@ fn shared_memory_worker(
     info!("Starting shared memory worker thread");
 
     // 尝试打开或创建共享环形缓冲区
-    let ring_buffer: Option<SharedRingBuffer> = if shared_path.is_empty() {
+    let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
         warn!("No shared path provided, running without shared memory");
         None
     } else {
         match SharedRingBuffer::open(&shared_path) {
-            Ok(rb) => {
+            Ok(shared_buffer) => {
                 info!("Successfully opened shared ring buffer: {}", shared_path);
-                Some(rb)
+                Some(shared_buffer)
             }
             Err(e) => {
                 warn!(
@@ -113,9 +112,9 @@ fn shared_memory_worker(
                     e
                 );
                 match SharedRingBuffer::create(&shared_path, None, None) {
-                    Ok(rb) => {
+                    Ok(shared_buffer) => {
                         info!("Created new shared ring buffer: {}", shared_path);
-                        Some(rb)
+                        Some(shared_buffer)
                     }
                     Err(create_err) => {
                         error!("Failed to create shared ring buffer: {}", create_err);
@@ -143,13 +142,11 @@ fn shared_memory_worker(
 
         // 处理发送到共享内存的命令
         while let Ok(cmd) = command_receiver.try_recv() {
-            if let Some(ref rb) = ring_buffer {
-                match rb.send_command(cmd) {
+            info!("Receive command: {:?} in channel", cmd);
+            if let Some(ref shared_buffer) = shared_buffer_opt {
+                match shared_buffer.send_command(cmd) {
                     Ok(true) => {
-                        debug!(
-                            "Sent command: {:?}, parameter: {}",
-                            cmd.cmd_type, cmd.parameter
-                        );
+                        info!("Sent command: {:?} by shared_buffer", cmd);
                     }
                     Ok(false) => {
                         warn!("Command buffer full, command dropped");
@@ -162,8 +159,8 @@ fn shared_memory_worker(
         }
 
         // 处理共享内存消息
-        if let Some(ref rb) = ring_buffer {
-            match rb.try_read_latest_message::<SharedMessage>() {
+        if let Some(ref shared_buffer) = shared_buffer_opt {
+            match shared_buffer.try_read_latest_message::<SharedMessage>() {
                 Ok(Some(message)) => {
                     consecutive_errors = 0; // 成功读取，重置错误计数
                     if prev_timestamp != message.timestamp {
@@ -184,15 +181,15 @@ fn shared_memory_worker(
                         error!(
                             "Ring buffer read error: {}. Buffer state: available={}, last_timestamp={}",
                             e,
-                            rb.available_messages(),
-                            rb.get_last_timestamp()
+                            shared_buffer.available_messages(),
+                            shared_buffer.get_last_timestamp()
                         );
                     }
 
                     // 如果连续错误过多，尝试重置读取位置
                     if consecutive_errors > 10 {
                         warn!("Too many consecutive errors, resetting read index");
-                        rb.reset_read_index();
+                        shared_buffer.reset_read_index();
                         consecutive_errors = 0;
                     }
                 }
@@ -232,7 +229,7 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
                 .basename(log_filename)
                 .suffix("log"),
         )
-        .duplicate_to_stdout(Duplicate::Info)
+        .duplicate_to_stdout(Duplicate::Debug)
         .rotate(
             Criterion::Size(10_000_000), // 10MB
             Naming::Numbers,

@@ -1,12 +1,13 @@
 //! System information display component
 
 use crate::app::state::AppState;
-use crate::constants::{colors, icons};
+use crate::constants::colors;
 use crate::utils::RollingAverage;
 use egui::{Align, Color32, Layout};
 use egui_plot::{Line, Plot, PlotPoints};
 
 /// System information panel component
+#[allow(dead_code)]
 pub struct SystemInfoPanel {
     color_cache: Vec<Color32>,
     chart_data: RollingAverage,
