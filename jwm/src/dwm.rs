@@ -26,6 +26,7 @@ use std::process::Stdio;
 use std::process::{Child, Command};
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
+use std::str::FromStr; // 用于从字符串解析 // 用于格式化输出，如 Display trait
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
@@ -228,24 +229,142 @@ impl Pertag {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum LayoutType {
-    TypeTile,
-    TypeFloat,
-    TypeMonocle,
+// 定义默认符号，当从 u8 或类型字符串创建 Layout 时会用到这些符号
+pub const DEFAULT_TILE_SYMBOL: &'static str = "[]";
+pub const DEFAULT_FLOAT_SYMBOL: &'static str = "><>";
+pub const DEFAULT_MONOCLE_SYMBOL: &'static str = "[M]";
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)] // 添加了 Copy 和 Eq
+                                             // Debug: 允许使用 {:?} 格式化打印
+                                             // Clone: 允许创建副本
+                                             // Copy: 允许按值复制（因为 &'static str 是 Copy 的）
+                                             // PartialEq: 允许使用 == 和 != 进行比较
+                                             // Eq: PartialEq 的一个子集，要求比较是等价关系 (reflexive, symmetric, transitive)
+pub enum Layout {
+    Tile(&'static str),    // 平铺式布局，关联一个静态字符串作为其符号
+    Float(&'static str),   // 浮动式布局
+    Monocle(&'static str), // 单窗口最大化布局
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub struct Layout {
-    pub symbol: &'static str,
-    pub layout_type: Option<LayoutType>,
-}
 impl Layout {
-    #[allow(unused)]
-    pub fn new(symbol: &'static str, layout_type: Option<LayoutType>) -> Self {
-        Self {
-            symbol,
-            layout_type,
+    // 获取布局实例的符号
+    pub fn symbol(&self) -> &'static str {
+        match self {
+            Layout::Tile(symbol) |     // 使用模式匹配的 "or" ( | ) 来合并分支
+            Layout::Float(symbol) |
+            Layout::Monocle(symbol) => symbol, // 返回关联的 symbol
+        }
+    }
+
+    // 获取布局的类型名称（小写字符串）
+    pub fn layout_type(&self) -> &str {
+        match self {
+            Layout::Tile(_) => "tile",
+            Layout::Float(_) => "float",
+            Layout::Monocle(_) => "monocle",
+        }
+    }
+
+    pub fn is_tile(&self) -> bool {
+        if let Layout::Float(_) = self {
+            false
+        } else {
+            true
+        }
+    }
+}
+
+// --- 转换 Trait 的实现 ---
+
+// 1. 为可能失败的转换定义错误类型
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LayoutConversionError {
+    InvalidU8(u8),      // 表示提供的 u8 值无法转换为 Layout
+    InvalidStr(String), // 表示提供的字符串无法转换为 Layout
+}
+
+// 实现 Display trait，使得错误可以被友好地打印出来
+impl fmt::Display for LayoutConversionError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LayoutConversionError::InvalidU8(val) => write!(f, "无效的u8值用于Layout转换: {}", val),
+            LayoutConversionError::InvalidStr(s) => {
+                write!(f, "无效的字符串值用于Layout转换: '{}'", s)
+            }
+        }
+    }
+}
+
+// 实现 std::error::Error trait，使得这个错误类型可以与其他标准错误处理机制集成
+impl std::error::Error for LayoutConversionError {}
+
+// 2. Layout -> u8 (将 Layout 转换为 u8)
+// 由于 Layout 是 Copy 的，From<Layout> 使用起来很方便。
+impl From<Layout> for u8 {
+    fn from(layout: Layout) -> Self {
+        match layout {
+            Layout::Tile(_) => 0,    // Tile 对应 0
+            Layout::Float(_) => 1,   // Float 对应 1
+            Layout::Monocle(_) => 2, // Monocle 对应 2
+        }
+    }
+}
+
+// 为了方便，如果你有一个对 Layout 的引用 &Layout：
+impl From<&Layout> for u8 {
+    fn from(layout: &Layout) -> Self {
+        // 因为 Layout 是 Copy 的，所以先解引用再调用已有的 From<Layout> 实现
+        (*layout).into()
+    }
+}
+
+// 3. u8 -> Layout (将 u8 转换为 Layout，可能失败)
+impl TryFrom<u8> for Layout {
+    type Error = LayoutConversionError; // 定义转换失败时的错误类型
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(Layout::Tile(DEFAULT_TILE_SYMBOL)), // 0 转换为 Tile，使用默认符号
+            1 => Ok(Layout::Float(DEFAULT_FLOAT_SYMBOL)), // 1 转换为 Float，使用默认符号
+            2 => Ok(Layout::Monocle(DEFAULT_MONOCLE_SYMBOL)), // 2 转换为 Monocle，使用默认符号
+            _ => Err(LayoutConversionError::InvalidU8(value)), // 其他 u8 值则返回错误
+        }
+    }
+}
+
+// 4. Layout -> String (通过 Display trait，通常表示布局的类型名称)
+impl fmt::Display for Layout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // 调用 layout_type() 方法获取类型名称并写入格式化器
+        write!(f, "{}", self.layout_type())
+    }
+}
+
+// 5. &str -> Layout (将字符串切片转换为 Layout，可能失败，使用 FromStr trait)
+// 这个实现会尝试从布局类型名称（如 "tile"）或默认符号（如 "[T]"）进行解析
+impl FromStr for Layout {
+    type Err = LayoutConversionError; // 定义解析失败时的错误类型
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        // 首先，尝试匹配已知的布局类型名称（不区分大小写）
+        match s.to_lowercase().as_str() {
+            // 将输入字符串转为小写进行比较
+            "tile" => return Ok(Layout::Tile(DEFAULT_TILE_SYMBOL)),
+            "float" => return Ok(Layout::Float(DEFAULT_FLOAT_SYMBOL)),
+            "monocle" => return Ok(Layout::Monocle(DEFAULT_MONOCLE_SYMBOL)),
+            _ => {} // 如果不是已知的类型名称，则继续检查符号
+        }
+
+        // 接下来，尝试匹配已知的默认符号（区分大小写）
+        if s == DEFAULT_TILE_SYMBOL {
+            Ok(Layout::Tile(DEFAULT_TILE_SYMBOL))
+        } else if s == DEFAULT_FLOAT_SYMBOL {
+            Ok(Layout::Float(DEFAULT_FLOAT_SYMBOL))
+        } else if s == DEFAULT_MONOCLE_SYMBOL {
+            Ok(Layout::Monocle(DEFAULT_MONOCLE_SYMBOL))
+        } else {
+            // 如果所有尝试都失败，则返回错误
+            Err(LayoutConversionError::InvalidStr(s.to_string()))
         }
     }
 }
@@ -444,14 +563,8 @@ impl Monitor {
             stack: None,
             next: None,
             lt: [
-                Rc::new(Layout {
-                    symbol: "",
-                    layout_type: None,
-                }),
-                Rc::new(Layout {
-                    symbol: "",
-                    layout_type: None,
-                }),
+                Rc::new(Layout::try_from(0).unwrap()),
+                Rc::new(Layout::try_from(0).unwrap()),
             ],
             pertag: None,
         }
@@ -845,17 +958,9 @@ impl Dwm {
             }
         }
 
-        let (is_floating, layout_type_is_none) = {
-            let cc_borrow = c.as_ref().borrow();
-            let mon_borrow = cc_borrow.mon.as_ref().unwrap().borrow();
-            let sellt = mon_borrow.sel_lt;
-            (
-                cc_borrow.is_floating,
-                mon_borrow.lt[sellt].layout_type.is_none(),
-            )
-        };
+        let is_floating = { c.as_ref().borrow().is_floating };
 
-        if Config::resize_hints || is_floating || layout_type_is_none {
+        if Config::resize_hints || is_floating {
             if !c.as_ref().borrow().hints_valid {
                 // Check immutable borrow first
                 self.updatesizehints(c); // This will mutably borrow internally
@@ -933,14 +1038,8 @@ impl Dwm {
         // 常规清理逻辑
         drop(self.sender.clone());
         let mut a: Arg = Arg::Ui(!0);
-        let foo: Layout = Layout::new("", None);
         unsafe {
             self.view(&mut a);
-            {
-                let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-                let idx = sel_mon_mut.sel_lt;
-                sel_mon_mut.lt[idx] = Rc::new(foo);
-            }
             let mut m = self.mons.clone();
             while let Some(ref m_opt) = m {
                 let mut stack_iter: Option<Rc<RefCell<Client>>>;
@@ -1228,7 +1327,6 @@ impl Dwm {
             };
             if isvisible {
                 // show clients top down.
-                let layout_type_is_none;
                 let is_floating;
                 let is_fullscreen;
                 {
@@ -1241,16 +1339,9 @@ impl Dwm {
                     );
                     is_floating = client_borrow.is_floating;
                     is_fullscreen = client_borrow.is_fullscreen;
-                    layout_type_is_none = match client_borrow.mon {
-                        Some(ref m) => {
-                            let mon_borrow = m.borrow();
-                            mon_borrow.lt[mon_borrow.sel_lt].layout_type.is_none()
-                        }
-                        _ => true,
-                    }
                 }
                 {
-                    if (layout_type_is_none || is_floating) && !is_fullscreen {
+                    if is_floating && !is_fullscreen {
                         let (x, y, w, h) = {
                             let client_borrow = client_rc.borrow();
                             (
@@ -1421,18 +1512,12 @@ impl Dwm {
         ev: &XConfigureRequestEvent,
     ) {
         unsafe {
-            let layout_type = {
-                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
-                let sellt = sel_mon_mut.sel_lt;
-                sel_mon_mut.lt[sellt].layout_type.clone()
-            };
-
             let mut client_mut = client_rc.borrow_mut();
             let is_floating = client_mut.is_floating;
 
             if ev.value_mask & CWBorderWidth as u64 > 0 {
                 client_mut.border_w = ev.border_width;
-            } else if is_floating || layout_type.is_none() {
+            } else if is_floating {
                 // 浮动窗口或无布局时，允许自由调整
                 let (mx, my, mw, mh) = {
                     let m = client_mut.mon.as_ref().unwrap().borrow();
@@ -1495,9 +1580,9 @@ impl Dwm {
         m.tag_set[1] = 1;
         m.m_fact = Config::m_fact;
         m.n_master = Config::n_master;
-        m.lt[0] = Config::layouts[0].clone();
-        m.lt[1] = Config::layouts[1 % Config::layouts.len()].clone();
-        m.lt_symbol = Config::layouts[0].symbol.to_string();
+        m.lt[0] = Rc::new(Layout::try_from(0).unwrap()).clone();
+        m.lt[1] = Rc::new(Layout::try_from(1).unwrap()).clone();
+        m.lt_symbol = m.lt[0].symbol().to_string();
         m.pertag = Some(Pertag::new());
         let ref_pertag = m.pertag.as_mut().unwrap();
         ref_pertag.cur_tag = 1;
@@ -1527,34 +1612,32 @@ impl Dwm {
         }
     }
 
-    pub fn applylayout(&mut self, layout_type: &LayoutType, m: &Rc<RefCell<Monitor>>) {
-        match layout_type {
-            LayoutType::TypeTile => {
-                self.tile(m);
+    pub fn applylayout(&mut self, layout: &Layout, mon_rc: &Rc<RefCell<Monitor>>) {
+        match layout {
+            Layout::Tile(_) => {
+                self.tile(mon_rc);
             }
-            LayoutType::TypeFloat => {}
-            LayoutType::TypeMonocle => {
-                self.monocle(m);
+            Layout::Float(_) => {}
+            Layout::Monocle(_) => {
+                self.monocle(mon_rc);
             }
         }
     }
 
     pub fn arrangemon(&mut self, m: &Rc<RefCell<Monitor>>) {
         info!("[arrangemon]");
-        let layout_type;
+        let layout;
         {
             let mut mm = m.borrow_mut();
             let sellt = (mm).sel_lt;
-            mm.lt_symbol = (mm).lt[sellt].symbol.to_string();
+            mm.lt_symbol = (mm).lt[sellt].symbol().to_string();
             info!(
                 "[arrangemon] sellt: {}, ltsymbol: {:?}",
                 sellt, mm.lt_symbol
             );
-            layout_type = mm.lt[sellt].layout_type.clone();
+            layout = mm.lt[sellt].clone();
         }
-        if let Some(ref layout_type) = layout_type {
-            self.applylayout(layout_type, m);
-        }
+        self.applylayout(&layout, m);
     }
 
     fn detach_node_from_list<FGetHead, FSetHead, FGetNext, FSetNext>(
@@ -1786,8 +1869,7 @@ impl Dwm {
                 return;
             }
             let is_floating = sel.as_ref().unwrap().borrow_mut().is_floating;
-            let layout_type_is_none = mon_borrow.lt[mon_borrow.sel_lt].layout_type.is_none();
-            if is_floating || layout_type_is_none {
+            if is_floating {
                 let win = sel.as_ref().unwrap().borrow_mut().win;
                 XRaiseWindow(self.dpy, win);
             }
@@ -1796,21 +1878,19 @@ impl Dwm {
             if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
                 XRaiseWindow(self.dpy, statusbar.borrow().win);
             }
-            if !layout_type_is_none {
-                wc.stack_mode = Below;
-                let mut client_rc_opt = mon_borrow.stack.clone();
-                while let Some(ref client_rc) = client_rc_opt.clone() {
-                    let client_borrow = client_rc.borrow();
-                    let is_floating = client_borrow.is_floating;
-                    let isvisible = client_borrow.isvisible();
-                    if !is_floating && isvisible {
-                        let win = client_borrow.win;
-                        XConfigureWindow(self.dpy, win, (CWSibling | CWStackMode) as u32, &mut wc);
-                        wc.sibling = win;
-                    }
-                    let next = client_borrow.stack_next.clone();
-                    client_rc_opt = next;
+            wc.stack_mode = Below;
+            let mut client_rc_opt = mon_borrow.stack.clone();
+            while let Some(ref client_rc) = client_rc_opt.clone() {
+                let client_borrow = client_rc.borrow();
+                let is_floating = client_borrow.is_floating;
+                let isvisible = client_borrow.isvisible();
+                if !is_floating && isvisible {
+                    let win = client_borrow.win;
+                    XConfigureWindow(self.dpy, win, (CWSibling | CWStackMode) as u32, &mut wc);
+                    wc.sibling = win;
                 }
+                let next = client_borrow.stack_next.clone();
+                client_rc_opt = next;
             }
             XSync(self.dpy, 0);
             let mut ev: XEvent = zeroed();
@@ -1918,8 +1998,7 @@ impl Dwm {
                         "[process_commands] SetLayout command received: {}",
                         cmd.parameter
                     );
-                    // 这里需要根据您的具体实现来调用相应的函数
-                    let arg = Arg::Ui(cmd.parameter);
+                    let arg = Arg::Lt(Rc::new(Layout::try_from(cmd.parameter as u8).unwrap()));
                     self.setlayout(&arg);
                 }
                 CommandType::None => {}
@@ -2735,13 +2814,6 @@ impl Dwm {
             if c.is_none() {
                 return;
             }
-            let lt_layout_type = {
-                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
-                sel_mon_mut.lt[sel_mon_mut.sel_lt].layout_type.clone()
-            };
-            if lt_layout_type.is_none() {
-                return;
-            }
             if let Arg::F(f0) = *arg {
                 let mut f = f0 + c.as_ref().unwrap().borrow().client_fact;
                 if f0.abs() < 0.0001 {
@@ -2902,11 +2974,7 @@ impl Dwm {
     pub fn setmfact(&mut self, arg: *const Arg) {
         // info!("[setmfact]");
         unsafe {
-            let lt_layout_type = {
-                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                sel_mon_mut.lt[sel_mon_mut.sel_lt].layout_type.clone()
-            };
-            if arg.is_null() || lt_layout_type.is_none() {
+            if arg.is_null() {
                 return;
             }
             if let Arg::F(f) = *arg {
@@ -2957,7 +3025,7 @@ impl Dwm {
                             .expect("None unwrap");
                     }
                 }
-                sel_mon_mut.lt_symbol = sel_mon_mut.lt[sel_mon_mut.sel_lt].symbol.to_string();
+                sel_mon_mut.lt_symbol = sel_mon_mut.lt[sel_mon_mut.sel_lt].symbol().to_string();
                 sel = sel_mon_mut.sel.clone();
             }
             if sel.is_some() {
@@ -2976,11 +3044,7 @@ impl Dwm {
         {
             let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
             c = sel_mon_mut.sel.clone();
-            let sellt = sel_mon_mut.sel_lt;
-            if sel_mon_mut.lt[sellt].layout_type.is_none()
-                || c.is_none()
-                || c.as_ref().unwrap().borrow().is_floating
-            {
+            if c.is_none() || c.as_ref().unwrap().borrow().is_floating {
                 return;
             }
             sel_c = sel_mon_mut.clients.clone();
@@ -3727,7 +3791,7 @@ impl Dwm {
                         };
                         let current_layout_is_tile = {
                             let selmon_borrow = self.sel_mon.as_ref().unwrap().borrow();
-                            selmon_borrow.lt[selmon_borrow.sel_lt].layout_type.is_some()
+                            selmon_borrow.lt[selmon_borrow.sel_lt].is_tile()
                         };
 
                         if !is_floating && current_layout_is_tile // 如果当前是平铺布局中的非浮动窗口
@@ -3933,7 +3997,7 @@ impl Dwm {
                         };
                         let current_layout_is_tile = {
                             let selmon_borrow = self.sel_mon.as_ref().unwrap().borrow();
-                            selmon_borrow.lt[selmon_borrow.sel_lt].layout_type.is_some()
+                            selmon_borrow.lt[selmon_borrow.sel_lt].is_tile()
                         };
 
                         if !is_floating

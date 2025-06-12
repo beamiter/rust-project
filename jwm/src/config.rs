@@ -17,7 +17,7 @@ use x11::{
 };
 
 use crate::{
-    dwm::{self, Button, Dwm, Key, Layout, LayoutType, Rule, CLICK},
+    dwm::{self, Button, Dwm, Key, Layout, Rule, CLICK},
     icon_gallery::{generate_random_tags, ICON_GALLERY},
     terminal_prober::ADVANCED_TERMINAL_PROBER,
 };
@@ -118,13 +118,6 @@ impl Config {
     // https://symbl.cc/en/
     pub const tags_length: usize = 9;
     pub const tagmask: u32 = (1 << Self::tags_length) - 1;
-    pub const layouts: Lazy<Vec<Rc<Layout>>> = Lazy::new(|| {
-        vec![
-            Rc::new(Layout::new("[]=", Some(LayoutType::TypeTile))),
-            Rc::new(Layout::new("><>", Some(LayoutType::TypeFloat))),
-            Rc::new(Layout::new("[M]", Some(LayoutType::TypeMonocle))),
-        ]
-    });
 
     fn TAGKEYS(KEY: u32, TAG: i32) -> Vec<Key> {
         vec![
@@ -292,25 +285,26 @@ impl Config {
                 Self::MODKEY,
                 XK_t.into(),
                 Some(Dwm::setlayout),
-                dwm::Arg::Lt(Self::layouts[0].clone()),
+                dwm::Arg::Lt(Rc::new(Layout::try_from(0).unwrap())),
             ),
             Key::new(
                 Self::MODKEY,
                 XK_f.into(),
                 Some(Dwm::setlayout),
-                dwm::Arg::Lt(Self::layouts[1].clone()),
+                dwm::Arg::Lt(Rc::new(Layout::try_from(1).unwrap())),
             ),
             Key::new(
                 Self::MODKEY,
                 XK_m.into(),
                 Some(Dwm::setlayout),
-                dwm::Arg::Lt(Self::layouts[2].clone()),
+                dwm::Arg::Lt(Rc::new(Layout::try_from(2).unwrap())),
             ),
+            // For toggle layout.
             Key::new(
                 Self::MODKEY,
                 XK_space.into(),
                 Some(Dwm::setlayout),
-                dwm::Arg::I(0),
+                dwm::Arg::Ui(0),
             ),
             Key::new(
                 Self::MODKEY | ShiftMask,
@@ -386,14 +380,14 @@ impl Config {
                 0,
                 Button1,
                 Some(Dwm::setlayout),
-                dwm::Arg::I(0),
+                dwm::Arg::Ui(0),
             ),
             Button::new(
                 CLICK::ClkLtSymbol as u32,
                 0,
                 Button3,
                 Some(Dwm::setlayout),
-                dwm::Arg::Lt(Self::layouts[2].clone()),
+                dwm::Arg::Lt(Rc::new(Layout::try_from(2).unwrap())),
             ),
             Button::new(
                 CLICK::ClkWinTitle as u32,
