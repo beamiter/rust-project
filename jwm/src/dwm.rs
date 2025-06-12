@@ -230,7 +230,7 @@ impl Pertag {
 }
 
 // 定义默认符号，当从 u8 或类型字符串创建 Layout 时会用到这些符号
-pub const DEFAULT_TILE_SYMBOL: &'static str = "[]";
+pub const DEFAULT_TILE_SYMBOL: &'static str = "[]=";
 pub const DEFAULT_FLOAT_SYMBOL: &'static str = "><>";
 pub const DEFAULT_MONOCLE_SYMBOL: &'static str = "[M]";
 

@@ -25,7 +25,7 @@ use crate::{
 pub struct Config {}
 impl Config {
     // border pixel of windows
-    pub const border_px: u32 = 4;
+    pub const border_px: u32 = 5;
     // snap pixel
     pub const snap: u32 = 32;
     pub const egui_bar_name: &str = "egui_bar";
