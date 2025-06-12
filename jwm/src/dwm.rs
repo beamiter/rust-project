@@ -1629,13 +1629,13 @@ impl Dwm {
         let layout;
         {
             let mut mm = m.borrow_mut();
-            let sellt = (mm).sel_lt;
-            mm.lt_symbol = (mm).lt[sellt].symbol().to_string();
+            let sel_lt = (mm).sel_lt;
+            mm.lt_symbol = (mm).lt[sel_lt].symbol().to_string();
             info!(
-                "[arrangemon] sellt: {}, ltsymbol: {:?}",
-                sellt, mm.lt_symbol
+                "[arrangemon] sel_lt: {}, ltsymbol: {:?}",
+                sel_lt, mm.lt_symbol
             );
-            layout = mm.lt[sellt].clone();
+            layout = mm.lt[sel_lt].clone();
         }
         self.applylayout(&layout, m);
     }
@@ -2997,38 +2997,44 @@ impl Dwm {
 
     pub fn setlayout(&mut self, arg: *const Arg) {
         info!("[setlayout]");
+        if arg.is_null() {
+            return;
+        }
         unsafe {
-            let sel;
-            {
-                let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                let sellt = sel_mon_mut.sel_lt;
-                if arg.is_null()
-                    || !if let Arg::Lt(ref lt) = *arg {
-                        Rc::ptr_eq(lt, &sel_mon_mut.lt[sellt])
+            let sel_is_some;
+            match *arg {
+                Arg::Lt(ref lt) => {
+                    let sel_mon_layout_type = {
+                        let sel_mon = self.sel_mon.as_ref().unwrap().borrow();
+                        sel_mon.lt[sel_mon.sel_lt].layout_type().to_string()
+                    };
+                    if lt.layout_type() == sel_mon_layout_type {
+                        let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                        let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                        sel_mon_mut.pertag.as_mut().unwrap().sel_lts[curtag] ^= 1;
+                        sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
                     } else {
-                        false
+                        let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                        let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                        let sel_lt = sel_mon_mut.sel_lt;
+                        sel_mon_mut.pertag.as_mut().unwrap().lt_idxs[curtag][sel_lt] =
+                            Some(lt.clone());
+                        sel_mon_mut.lt[sel_lt] = lt.clone();
                     }
-                {
+                }
+                _ => {
+                    let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
                     let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
                     sel_mon_mut.pertag.as_mut().unwrap().sel_lts[curtag] ^= 1;
                     sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
                 }
-                if !arg.is_null() {
-                    if let Arg::Lt(ref lt) = *arg {
-                        let sellt = sel_mon_mut.sel_lt;
-                        let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                        sel_mon_mut.pertag.as_mut().unwrap().lt_idxs[curtag][sellt] =
-                            Some(lt.clone());
-                        sel_mon_mut.lt[sellt] = sel_mon_mut.pertag.as_mut().unwrap().lt_idxs
-                            [curtag][sellt]
-                            .clone()
-                            .expect("None unwrap");
-                    }
-                }
-                sel_mon_mut.lt_symbol = sel_mon_mut.lt[sel_mon_mut.sel_lt].symbol().to_string();
-                sel = sel_mon_mut.sel.clone();
             }
-            if sel.is_some() {
+            {
+                let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                sel_mon_mut.lt_symbol = sel_mon_mut.lt[sel_mon_mut.sel_lt].symbol().to_string();
+                sel_is_some = sel_mon_mut.sel.is_some();
+            }
+            if sel_is_some {
                 self.arrange(self.sel_mon.clone());
             } else {
                 self.drawbar(self.sel_mon.clone());
@@ -3114,12 +3120,13 @@ impl Dwm {
                 sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[curtag];
                 sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[curtag];
                 sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
-                let sellt = sel_mon_mut.sel_lt;
-                sel_mon_mut.lt[sellt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[curtag][sellt]
+                let sel_lt = sel_mon_mut.sel_lt;
+                sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[curtag]
+                    [sel_lt]
                     .clone()
                     .expect("None unwrap");
-                sel_mon_mut.lt[sellt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[curtag]
-                    [sellt ^ 1]
+                sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[curtag]
+                    [sel_lt ^ 1]
                     .clone()
                     .expect("None unwrap");
                 sel_opt = sel_mon_mut.pertag.as_ref().unwrap().sel[curtag].clone();
@@ -3179,13 +3186,13 @@ impl Dwm {
                             sel_mon_mut.pertag.as_ref().unwrap().n_masters[curtag];
                         sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[curtag];
                         sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
-                        let sellt = sel_mon_mut.sel_lt;
-                        sel_mon_mut.lt[sellt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs
-                            [curtag][sellt]
+                        let sel_lt = sel_mon_mut.sel_lt;
+                        sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs
+                            [curtag][sel_lt]
                             .clone()
                             .expect("None unwrap");
-                        sel_mon_mut.lt[sellt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs
-                            [curtag][sellt ^ 1]
+                        sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs
+                            [curtag][sel_lt ^ 1]
                             .clone()
                             .expect("None unwrap");
                     }
