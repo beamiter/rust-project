@@ -35,6 +35,7 @@ egui_plot = "0.32.1"
 eframe = { version = "0.31.1", features = ["persistence"] }
 thiserror = "2.0.12"
 tempfile = "3.20.0"
+battery = "0.7.8"
 
 [dev-dependencies]
 tokio-test = "0.4"

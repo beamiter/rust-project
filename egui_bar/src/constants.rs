@@ -52,7 +52,15 @@ pub mod colors {
 
     // Tag colors for workspace indicators
     pub const TAG_COLORS: [Color32; 9] = [
-        RED, ORANGE, YELLOW, GREEN, BLUE, INDIGO, VIOLET, CYAN, OLIVE_GREEN,
+        RED,
+        ORANGE,
+        YELLOW,
+        GREEN,
+        BLUE,
+        INDIGO,
+        VIOLET,
+        CYAN,
+        OLIVE_GREEN,
     ];
 
     // UI accent colors
@@ -61,6 +69,13 @@ pub mod colors {
     pub const WARNING: Color32 = ORANGE;
     pub const ERROR: Color32 = RED;
     pub const SUCCESS: Color32 = GREEN;
+
+    // 新增电池相关颜色
+    pub const BATTERY_HIGH: Color32 = Color32::from_rgb(76, 175, 80); // 绿色
+    pub const BATTERY_MEDIUM: Color32 = Color32::from_rgb(255, 193, 7); // 黄色
+    pub const BATTERY_LOW: Color32 = Color32::from_rgb(244, 67, 54); // 红色
+    pub const CHARGING: Color32 = Color32::from_rgb(33, 150, 243); // 蓝色
+    pub const UNAVAILABLE: Color32 = Color32::from_rgb(158, 158, 158); // 灰色
 }
 
 /// Icons and symbols

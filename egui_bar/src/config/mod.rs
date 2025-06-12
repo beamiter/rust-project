@@ -42,6 +42,7 @@ pub struct SystemConfig {
     pub cpu_history_length: usize,
     pub memory_warning_threshold: f32,
     pub cpu_warning_threshold: f32,
+    pub battery_warning_threshold: f32, // 新增：电池低电量警告阈值 (0.0-1.0)
 }
 
 /// Logging configuration
@@ -97,6 +98,7 @@ impl Default for SystemConfig {
             cpu_history_length: 60,
             memory_warning_threshold: 0.8,
             cpu_warning_threshold: 0.8,
+            battery_warning_threshold: 0.2, // 20% 以下显示警告
         }
     }
 }

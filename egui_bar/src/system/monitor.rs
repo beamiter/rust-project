@@ -2,6 +2,7 @@
 
 use crate::constants::intervals;
 use crate::utils::RollingAverage;
+use battery::Manager;
 use std::time::{Duration, Instant};
 use sysinfo::System;
 
@@ -17,6 +18,10 @@ pub struct SystemSnapshot {
     pub uptime: u64,
     pub load_average: LoadAverage,
     pub timestamp: Instant,
+
+    // 新增电池相关字段
+    pub battery_percent: f32,
+    pub is_charging: bool,
 }
 
 /// System load averages
@@ -54,6 +59,7 @@ pub struct SystemMonitor {
     cpu_history: RollingAverage,
     memory_history: RollingAverage,
     last_snapshot: Option<SystemSnapshot>,
+    battery_manager: Option<Manager>,
 }
 
 impl SystemMonitor {
@@ -61,6 +67,7 @@ impl SystemMonitor {
     pub fn new(history_length: usize) -> Self {
         let mut system = System::new_all();
         system.refresh_all();
+        let battery_manager = Manager::new().ok();
 
         Self {
             system,
@@ -69,7 +76,31 @@ impl SystemMonitor {
             cpu_history: RollingAverage::new(history_length),
             memory_history: RollingAverage::new(history_length),
             last_snapshot: None,
+            battery_manager,
         }
+    }
+
+    // 获取电池信息的方法
+    fn get_battery_info(&self) -> (f32, bool) {
+        if let Some(ref manager) = self.battery_manager {
+            match manager.batteries() {
+                Ok(batteries) => {
+                    for battery_result in batteries {
+                        if let Ok(battery) = battery_result {
+                            let percentage = battery
+                                .state_of_charge()
+                                .get::<battery::units::ratio::percent>();
+                            let is_charging = matches!(battery.state(), battery::State::Charging);
+                            return (percentage, is_charging);
+                        }
+                    }
+                }
+                Err(_) => {}
+            }
+        }
+
+        // 默认值：无电池或获取失败
+        (100.0, false)
     }
 
     /// Update system information if needed
@@ -127,6 +158,9 @@ impl SystemMonitor {
 
         let load_average = self.get_load_average();
 
+        // 获取电池信息
+        let (battery_percent, is_charging) = self.get_battery_info();
+
         SystemSnapshot {
             cpu_usage,
             cpu_average,
@@ -137,6 +171,9 @@ impl SystemMonitor {
             uptime: sysinfo::System::uptime(),
             load_average,
             timestamp: Instant::now(),
+            // 新增字段
+            battery_percent,
+            is_charging,
         }
     }
 

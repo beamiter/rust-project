@@ -198,6 +198,7 @@ impl EguiBarApp {
         let system_source = SystemSource::new();
 
         for &font_name in crate::constants::FONT_FAMILIES {
+            info!("font_name: {}", font_name);
             match system_source.select_best_match(
                 &[FamilyName::Title(font_name.to_string())],
                 &Properties::new(),
@@ -218,13 +219,13 @@ impl EguiBarApp {
                                     .insert(0, font_name.to_string());
 
                                 info!("Loaded font: {}", font_name);
-                                break; // Use first available font
+                                // break; // Use first available font
                             }
                         }
-                        Err(e) => debug!("Failed to load font {}: {}", font_name, e),
+                        Err(e) => info!("Failed to load font {}: {}", font_name, e),
                     }
                 }
-                Err(e) => debug!("Font {} not found: {}", font_name, e),
+                Err(e) => info!("Font {} not found: {}", font_name, e),
             }
         }
 
@@ -252,11 +253,11 @@ impl EguiBarApp {
                 ),
                 (
                     TextStyle::Small,
-                    FontId::new(base_font_size * 0.8, FontFamily::Proportional),
+                    FontId::new(base_font_size * 0.8, FontFamily::Monospace),
                 ),
                 (
                     TextStyle::Heading,
-                    FontId::new(base_font_size * 1.5, FontFamily::Proportional),
+                    FontId::new(base_font_size * 1.5, FontFamily::Monospace),
                 ),
             ]
             .into();
@@ -439,13 +440,64 @@ impl EguiBarApp {
         });
     }
 
+    fn draw_battery_info(&self, ui: &mut egui::Ui) {
+        if let Some(snapshot) = self.state.system_monitor.get_snapshot() {
+            // 获取电池电量百分比
+            let battery_percent = snapshot.battery_percent;
+            let is_charging = snapshot.is_charging;
+
+            // 根据电量选择颜色
+            let battery_color = match battery_percent {
+                p if p > 50.0 => colors::BATTERY_HIGH,   // 高电量 - 绿色
+                p if p > 20.0 => colors::BATTERY_MEDIUM, // 中电量 - 黄色
+                _ => colors::BATTERY_LOW,                // 低电量 - 红色
+            };
+
+            // 显示电池图标和电量
+            let battery_icon = if is_charging {
+                "🔌" // 充电图标
+            } else {
+                match battery_percent {
+                    p if p > 75.0 => "🔋", // 满电池
+                    p if p > 50.0 => "🔋", // 高电量
+                    p if p > 25.0 => "🪫", // 中电量
+                    _ => "🪫",             // 低电量
+                }
+            };
+
+            // 显示电池图标
+            ui.label(egui::RichText::new(battery_icon).color(battery_color));
+
+            // 显示电量百分比
+            ui.label(egui::RichText::new(format!("{:.0}%", battery_percent)).color(battery_color));
+
+            // 低电量警告
+            if battery_percent < self.state.config.system.battery_warning_threshold * 100.0
+                && !is_charging
+            {
+                ui.label(egui::RichText::new("⚠️").color(colors::WARNING));
+            }
+
+            // 充电指示
+            if is_charging {
+                ui.label(egui::RichText::new("⚡").color(colors::CHARGING));
+            }
+        } else {
+            // 无法获取电池信息时显示
+            ui.label(egui::RichText::new("❓").color(colors::UNAVAILABLE));
+        }
+    }
+
     /// Draw control buttons (time, volume, debug, etc.)
     fn draw_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
-        // Debug button
-        self.draw_debug_button(ui);
+        // Battery info
+        self.draw_battery_info(ui);
 
         // Volume button
         self.draw_volume_button(ui);
+
+        // Debug button
+        self.draw_debug_button(ui);
 
         // Time display
         self.draw_time_display(ui);

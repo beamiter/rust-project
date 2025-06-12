@@ -87,7 +87,7 @@ impl SystemInfoPanel {
 
             let mut plot = Plot::new("cpu_usage_chart")
                 .include_y(0.0)
-                .include_y(1.0)
+                .include_y(1.2)
                 .x_axis_formatter(|_, _| String::new())
                 .y_axis_formatter(|_, _| String::new())
                 .show_axes([false, false])
