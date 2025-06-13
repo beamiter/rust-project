@@ -76,6 +76,8 @@ fn main() -> eframe::Result<()> {
         Box::new(
             move |cc| match EguiBarApp::new(cc, message_receiver, command_sender) {
                 Ok(app) => {
+                    // don't do this every frame - only when the app is created!
+                    egui_extras::install_image_loaders(&cc.egui_ctx);
                     info!("Application created successfully");
                     Ok(Box::new(app))
                 }

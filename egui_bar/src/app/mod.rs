@@ -9,6 +9,7 @@ use crate::ui::components::{SystemInfoPanel, VolumeControlWindow, WorkspacePanel
 use crate::utils::Result;
 use eframe::egui;
 use egui::{Align, FontFamily, FontId, Layout, Margin, TextStyle};
+use egui_twemoji::EmojiLabel;
 use events::{AppEvent, EventBus};
 use log::{debug, error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage};
@@ -187,55 +188,116 @@ impl EguiBarApp {
         }
     }
 
-    /// Setup system fonts
     fn setup_custom_fonts(ctx: &egui::Context) -> Result<()> {
         use font_kit::family_name::FamilyName;
         use font_kit::properties::Properties;
         use font_kit::source::SystemSource;
+        use std::collections::HashSet;
 
         info!("Loading system fonts...");
         let mut fonts = egui::FontDefinitions::default();
         let system_source = SystemSource::new();
 
+        // 保存原始字体族
+        let original_proportional = fonts
+            .families
+            .get(&FontFamily::Proportional)
+            .cloned()
+            .unwrap_or_default();
+        let original_monospace = fonts
+            .families
+            .get(&FontFamily::Monospace)
+            .cloned()
+            .unwrap_or_default();
+        let mut loaded_fonts = Vec::new();
+        let mut seen_fonts = HashSet::new(); // 避免重复加载相同字体
         for &font_name in crate::constants::FONT_FAMILIES {
-            info!("font_name: {}", font_name);
-            match system_source.select_best_match(
-                &[FamilyName::Title(font_name.to_string())],
-                &Properties::new(),
-            ) {
-                Ok(font_handle) => {
-                    match font_handle.load() {
-                        Ok(font) => {
-                            if let Some(font_data) = font.copy_font_data() {
-                                fonts.font_data.insert(
-                                    font_name.to_string(),
-                                    egui::FontData::from_owned(font_data.to_vec()).into(),
-                                );
-
-                                fonts
-                                    .families
-                                    .get_mut(&FontFamily::Monospace)
-                                    .unwrap()
-                                    .insert(0, font_name.to_string());
-                                fonts
-                                    .families
-                                    .entry(egui::FontFamily::Proportional)
-                                    .or_default()
-                                    .insert(0, font_name.to_string());
-
-                                info!("Loaded font: {}", font_name);
-                                // break; // Use first available font
-                            }
-                        }
-                        Err(e) => info!("Failed to load font {}: {}", font_name, e),
-                    }
-                }
-                Err(e) => info!("Font {} not found: {}", font_name, e),
+            // 跳过已经存在的字体
+            if fonts.font_data.contains_key(font_name) || seen_fonts.contains(font_name) {
+                info!("Font {} already loaded, skipping", font_name);
+                continue;
             }
+            info!("Attempting to load font: {}", font_name);
+            // 分步处理，避免错误类型不匹配
+            let font_result = system_source
+                .select_best_match(
+                    &[FamilyName::Title(font_name.to_string())],
+                    &Properties::new(),
+                )
+                .and_then(|handle| {
+                    // 将 FontLoadingError 转换为 SelectionError
+                    handle
+                        .load()
+                        .map_err(|_| font_kit::error::SelectionError::NotFound)
+                })
+                .and_then(|font| {
+                    font.copy_font_data()
+                        .ok_or(font_kit::error::SelectionError::NotFound)
+                });
+            match font_result {
+                Ok(font_data) => {
+                    let font_key = font_name.to_string();
+
+                    fonts.font_data.insert(
+                        font_key.clone(),
+                        egui::FontData::from_owned(font_data.to_vec()).into(),
+                    );
+
+                    loaded_fonts.push(font_key);
+                    seen_fonts.insert(font_name);
+                    info!("Successfully loaded font: {}", font_name);
+                }
+                Err(e) => {
+                    info!("Failed to load font {}: {}", font_name, e);
+                }
+            }
+        }
+
+        // 只有成功加载字体时才更新字体族配置
+        if !loaded_fonts.is_empty() {
+            Self::update_font_families(
+                &mut fonts,
+                loaded_fonts,
+                original_proportional,
+                original_monospace,
+            );
+            info!(
+                "Font setup completed with {} custom fonts",
+                fonts.font_data.len() - 2
+            ); // 减去egui默认的2个字体
+        } else {
+            info!("No custom fonts loaded, using default configuration");
         }
 
         ctx.set_fonts(fonts);
         Ok(())
+    }
+
+    fn update_font_families(
+        fonts: &mut egui::FontDefinitions,
+        loaded_fonts: Vec<String>,
+        original_proportional: Vec<String>,
+        original_monospace: Vec<String>,
+    ) {
+        // 构建新的字体族列表：自定义字体 + 原始字体
+        let new_proportional = [loaded_fonts.clone(), original_proportional].concat();
+        let new_monospace = [loaded_fonts.clone(), original_monospace].concat();
+
+        fonts
+            .families
+            .insert(FontFamily::Proportional, new_proportional);
+        fonts.families.insert(FontFamily::Monospace, new_monospace);
+
+        // 调试信息
+        info!("Updated font families:");
+        info!(
+            "  Proportional: {:?}",
+            fonts.families.get(&FontFamily::Proportional)
+        );
+        info!(
+            "  Monospace: {:?}",
+            fonts.families.get(&FontFamily::Monospace)
+        );
     }
 
     /// Configure text styles
@@ -471,7 +533,7 @@ impl EguiBarApp {
             };
 
             // 显示电池图标
-            ui.label(egui::RichText::new(battery_icon).color(battery_color));
+            EmojiLabel::new(egui::RichText::new(battery_icon).color(battery_color)).show(ui);
 
             // 显示电量百分比
             ui.label(egui::RichText::new(format!("{:.0}%", battery_percent)).color(battery_color));
@@ -480,16 +542,16 @@ impl EguiBarApp {
             if battery_percent < self.state.config.system.battery_warning_threshold * 100.0
                 && !is_charging
             {
-                ui.label(egui::RichText::new("⚠️").color(colors::WARNING));
+                EmojiLabel::new(egui::RichText::new("⚠️").color(colors::WARNING)).show(ui);
             }
 
             // 充电指示
             if is_charging {
-                ui.label(egui::RichText::new("⚡").color(colors::CHARGING));
+                EmojiLabel::new(egui::RichText::new("⚡").color(colors::CHARGING)).show(ui);
             }
         } else {
             // 无法获取电池信息时显示
-            ui.label(egui::RichText::new("❓").color(colors::UNAVAILABLE));
+            EmojiLabel::new(egui::RichText::new("❓").color(colors::UNAVAILABLE)).show(ui);
         }
     }
 
@@ -522,9 +584,10 @@ impl EguiBarApp {
         // Monitor number
         if let Some(ref message) = self.state.current_message {
             let monitor_num = (message.monitor_info.monitor_num as usize).min(1);
-            ui.label(
+            EmojiLabel::new(
                 egui::RichText::new(format!("[{}]", icons::MONITOR_NUMBERS[monitor_num])).strong(),
-            );
+            )
+            .show(ui);
         }
 
         // 在这里绘制调试窗口（如果打开的话）
@@ -635,7 +698,7 @@ impl EguiBarApp {
                 .default_height(300.0)
                 .open(&mut window_open)
                 .show(ctx, |ui| {
-                    ui.heading("📊 性能指标");
+                    EmojiLabel::new("📊 性能指标").show(ui);
                     ui.horizontal(|ui| {
                         ui.label("FPS:");
                         ui.label(
@@ -663,7 +726,7 @@ impl EguiBarApp {
 
                     ui.separator();
 
-                    ui.heading("💻 系统状态");
+                    EmojiLabel::new("💻 系统状态").show(ui);
                     if let Some(snapshot) = self.state.system_monitor.get_snapshot() {
                         ui.horizontal(|ui| {
                             ui.label("CPU:");
@@ -704,7 +767,7 @@ impl EguiBarApp {
 
                     ui.separator();
 
-                    ui.heading("🔊 音频系统");
+                    EmojiLabel::new("🔊 音频系统").show(ui);
                     let stats = self.state.audio_manager.get_stats();
                     ui.horizontal(|ui| {
                         ui.label("设备数量:");
@@ -721,7 +784,7 @@ impl EguiBarApp {
 
                     ui.separator();
 
-                    ui.heading("🧵 线程状态");
+                    EmojiLabel::new("🧵 线程状态").show(ui);
                     ui.horizontal(|ui| {
                         ui.label("消息处理:");
                         ui.label(egui::RichText::new("运行中").color(colors::SUCCESS));

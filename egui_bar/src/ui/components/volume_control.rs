@@ -4,6 +4,7 @@ use crate::app::events::AppEvent;
 use crate::app::state::AppState;
 use crate::constants::{colors, icons};
 use egui::{Align, Layout};
+use egui_twemoji::EmojiLabel;
 use log::error;
 use std::sync::mpsc;
 use std::time::Instant;
@@ -94,7 +95,7 @@ impl VolumeControlWindow {
             app_state.audio_manager.get_devices().to_vec();
 
         if devices.is_empty() {
-            ui.label("❌ 没有找到可控制的音频设备");
+            EmojiLabel::new("❌ 没有找到可控制的音频设备").show(ui);
             return;
         }
 
@@ -106,7 +107,7 @@ impl VolumeControlWindow {
             .collect();
 
         if controllable_devices.is_empty() {
-            ui.label("❌ 没有找到可控制的音频设备");
+            EmojiLabel::new("❌ 没有找到可控制的音频设备").show(ui);
             return;
         }
 
@@ -130,7 +131,7 @@ impl VolumeControlWindow {
         controllable_devices: &[(usize, crate::audio::AudioDevice)],
     ) {
         ui.horizontal(|ui| {
-            ui.label("🎵 设备：");
+            EmojiLabel::new("🎵 设备：").show(ui);
 
             // Ensure selected device index is valid
             if app_state.ui_state.volume_window.selected_device >= controllable_devices.len() {
@@ -173,7 +174,7 @@ impl VolumeControlWindow {
         // Volume control
         if device.has_volume_control {
             ui.horizontal(|ui| {
-                ui.label("🔊 音量：");
+                EmojiLabel::new("🔊 音量：").show(ui);
 
                 // Mute button
                 if device.has_switch_control {
@@ -243,14 +244,14 @@ impl VolumeControlWindow {
                 }
             });
         } else {
-            ui.label("❌ 此设备没有可用的控制选项");
+            EmojiLabel::new("❌ 此设备没有可用的控制选项").show(ui);
         }
 
         // Device info
         ui.separator();
         ui.horizontal(|ui| {
-            ui.label(format!("📋 类型: {:?}", device.device_type));
-            ui.label(format!(
+            EmojiLabel::new(format!("📋 类型: {:?}", device.device_type)).show(ui);
+            EmojiLabel::new(format!(
                 "🎛️ 控制: {}",
                 if device.has_volume_control && device.has_switch_control {
                     "音量+开关"
@@ -261,7 +262,7 @@ impl VolumeControlWindow {
                 } else {
                     "无"
                 }
-            ));
+            )).show(ui);
         });
     }
 }
