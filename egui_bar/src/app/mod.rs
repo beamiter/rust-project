@@ -557,17 +557,22 @@ impl EguiBarApp {
 
     /// Draw control buttons (time, volume, debug, etc.)
     fn draw_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+        let padding = 2.5;
         // Battery info
         self.draw_battery_info(ui);
+        ui.add_space(padding);
 
         // Volume button
         self.draw_volume_button(ui);
+        ui.add_space(padding);
 
         // Debug button
         self.draw_debug_button(ui);
+        ui.add_space(padding);
 
         // Time display
         self.draw_time_display(ui);
+        ui.add_space(padding);
 
         // Screenshot button
         if ui
@@ -580,6 +585,7 @@ impl EguiBarApp {
         {
             self.event_bus.send(AppEvent::ScreenshotRequested).ok();
         }
+        ui.add_space(padding);
 
         // Monitor number
         if let Some(ref message) = self.state.current_message {
@@ -589,6 +595,7 @@ impl EguiBarApp {
             )
             .show(ui);
         }
+        ui.add_space(padding);
 
         // 在这里绘制调试窗口（如果打开的话）
         self.draw_debug_window(ctx);
