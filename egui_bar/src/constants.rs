@@ -104,11 +104,10 @@ pub const FONT_FAMILIES: &[&str] = &[
     "Noto Sans CJK SC",
     "Noto Sans CJK TC",
     // "Noto Color Emoji",
+    "Noto Emoji",
     "SauceCodeProNerdFont",
     "DejaVuSansMonoNerdFont",
     "JetBrainsMonoNerdFont",
-    "FiraCode Nerd Font",
-    "Hack Nerd Font",
 ];
 
 /// Application metadata
