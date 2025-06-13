@@ -103,6 +103,7 @@ pub mod icons {
 pub const FONT_FAMILIES: &[&str] = &[
     "Noto Sans CJK SC",
     "Noto Sans CJK TC",
+    // "Noto Color Emoji",
     "SauceCodeProNerdFont",
     "DejaVuSansMonoNerdFont",
     "JetBrainsMonoNerdFont",

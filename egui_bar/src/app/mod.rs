@@ -84,7 +84,7 @@ impl EguiBarApp {
         let shared_state = Arc::new(Mutex::new(SharedAppState::new()));
 
         // Setup fonts
-        Self::setup_fonts(&cc.egui_ctx)?;
+        Self::setup_custom_fonts(&cc.egui_ctx)?;
 
         // Apply theme
         state.theme_manager.apply_to_context(&cc.egui_ctx);
@@ -188,7 +188,7 @@ impl EguiBarApp {
     }
 
     /// Setup system fonts
-    fn setup_fonts(ctx: &egui::Context) -> Result<()> {
+    fn setup_custom_fonts(ctx: &egui::Context) -> Result<()> {
         use font_kit::family_name::FamilyName;
         use font_kit::properties::Properties;
         use font_kit::source::SystemSource;
@@ -216,6 +216,11 @@ impl EguiBarApp {
                                     .families
                                     .get_mut(&FontFamily::Monospace)
                                     .unwrap()
+                                    .insert(0, font_name.to_string());
+                                fonts
+                                    .families
+                                    .entry(egui::FontFamily::Proportional)
+                                    .or_default()
                                     .insert(0, font_name.to_string());
 
                                 info!("Loaded font: {}", font_name);

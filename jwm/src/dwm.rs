@@ -2794,11 +2794,11 @@ impl Dwm {
         unsafe {
             if let Arg::I(i) = *arg {
                 let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-                let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                sel_mon_mut.pertag.as_mut().unwrap().n_masters[curtag] =
+                let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                sel_mon_mut.pertag.as_mut().unwrap().n_masters[cur_tag] =
                     0.max(sel_mon_mut.n_master as i32 + i) as u32;
 
-                sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[curtag];
+                sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
             }
             self.arrange(self.sel_mon.clone());
         }
@@ -2987,9 +2987,9 @@ impl Dwm {
                 if f < 0.05 || f > 0.95 {
                     return;
                 }
-                let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                sel_mon_mut.pertag.as_mut().unwrap().m_facts[curtag] = f;
-                sel_mon_mut.m_fact = sel_mon_mut.pertag.as_mut().unwrap().m_facts[curtag];
+                let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                sel_mon_mut.pertag.as_mut().unwrap().m_facts[cur_tag] = f;
+                sel_mon_mut.m_fact = sel_mon_mut.pertag.as_mut().unwrap().m_facts[cur_tag];
             }
             self.arrange(self.sel_mon.clone());
         }
@@ -3010,23 +3010,23 @@ impl Dwm {
                     };
                     if lt.layout_type() == sel_mon_layout_type {
                         let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                        let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                        sel_mon_mut.pertag.as_mut().unwrap().sel_lts[curtag] ^= 1;
-                        sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
+                        let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                        sel_mon_mut.pertag.as_mut().unwrap().sel_lts[cur_tag] ^= 1;
+                        sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
                     } else {
                         let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                        let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                        let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
                         let sel_lt = sel_mon_mut.sel_lt;
-                        sel_mon_mut.pertag.as_mut().unwrap().lt_idxs[curtag][sel_lt] =
+                        sel_mon_mut.pertag.as_mut().unwrap().lt_idxs[cur_tag][sel_lt] =
                             Some(lt.clone());
                         sel_mon_mut.lt[sel_lt] = lt.clone();
                     }
                 }
                 _ => {
                     let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                    let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                    sel_mon_mut.pertag.as_mut().unwrap().sel_lts[curtag] ^= 1;
-                    sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
+                    let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                    sel_mon_mut.pertag.as_mut().unwrap().sel_lts[cur_tag] ^= 1;
+                    sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
                 }
             }
             {
@@ -3068,6 +3068,107 @@ impl Dwm {
         self.pop(c);
     }
 
+    pub fn loopview(&mut self, arg: *const Arg) {
+        // info!("[loopview]");
+        unsafe {
+            let direction = if let Arg::I(val) = *arg {
+                val
+            } else {
+                return;
+            };
+            if direction == 0 {
+                return;
+            }
+            let next_tag;
+            let current_tag;
+            let cur_tag;
+            {
+                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
+                current_tag = sel_mon_mut.tag_set[sel_mon_mut.sel_tags];
+                // 找到当前tag的位置
+                let current_tag_index = if current_tag == 0 {
+                    0 // 如果当前没有选中的tag，从第一个开始
+                } else {
+                    current_tag.trailing_zeros() as usize
+                };
+                // 计算下一个tag的索引（假设支持9个tag，即1-9）
+                let max_tags = 9;
+                let next_tag_index = if direction > 0 {
+                    // 向前循环：1>2>3>...>9>1
+                    (current_tag_index + 1) % max_tags
+                } else {
+                    // 向后循环：1>9>8>...>2>1
+                    if current_tag_index == 0 {
+                        max_tags - 1
+                    } else {
+                        current_tag_index - 1
+                    }
+                };
+                // 将索引转换为tag位掩码
+                next_tag = 1 << next_tag_index;
+                info!(
+                    "[loopview] current_tag: {}, next_tag: {}, direction: {}",
+                    current_tag, next_tag, direction
+                );
+            }
+            // 如果下一个tag和当前tag相同，不需要切换
+            {
+                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
+                if next_tag == sel_mon_mut.tag_set[sel_mon_mut.sel_tags] {
+                    return;
+                }
+            }
+            {
+                let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                // 切换sel tagset
+                info!("[loopview] sel_tags: {}", sel_mon_mut.sel_tags);
+                sel_mon_mut.sel_tags ^= 1;
+                info!("[loopview] sel_tags: {}", sel_mon_mut.sel_tags);
+                // 设置新的tag
+                let sel_tags = sel_mon_mut.sel_tags;
+                sel_mon_mut.tag_set[sel_tags] = next_tag;
+                // 更新pertag信息
+                if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
+                    pertag.prev_tag = pertag.cur_tag;
+                    // 计算新的当前tag索引
+                    let i = next_tag.trailing_zeros() as usize;
+                    pertag.cur_tag = i + 1;
+                }
+                if let Some(pertag) = sel_mon_mut.pertag.as_ref() {
+                    info!(
+                        "[loopview] prevtag: {}, cur_tag: {}",
+                        pertag.prev_tag, pertag.cur_tag
+                    );
+                }
+                cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+            }
+            // 应用pertag设置
+            let sel_opt;
+            {
+                let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
+                sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
+                sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
+                sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
+                let sel_lt = sel_mon_mut.sel_lt;
+                sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
+                    [sel_lt]
+                    .clone()
+                    .expect("None unwrap");
+                sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
+                    [sel_lt ^ 1]
+                    .clone()
+                    .expect("None unwrap");
+                sel_opt = sel_mon_mut.pertag.as_ref().unwrap().sel[cur_tag].clone();
+                if sel_opt.is_some() {
+                    info!("[loopview] sel_opt: {}", sel_opt.as_ref().unwrap().borrow());
+                }
+            };
+
+            self.focus(sel_opt);
+            self.arrange(self.sel_mon.clone());
+        }
+    }
+
     pub fn view(&mut self, arg: *const Arg) {
         // info!("[view]");
         unsafe {
@@ -3077,7 +3178,7 @@ impl Dwm {
                 return;
             };
             let target_tag = ui & Config::tagmask;
-            let curtag;
+            let cur_tag;
             {
                 let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
                 info!("[view] ui: {ui}, {target_tag}, {:?}", sel_mon_mut.tag_set);
@@ -3085,19 +3186,20 @@ impl Dwm {
                     return;
                 }
                 // toggle sel tagset.
-                info!("[view] seltags: {}", sel_mon_mut.sel_tags);
+                info!("[view] sel_tags: {}", sel_mon_mut.sel_tags);
                 sel_mon_mut.sel_tags ^= 1;
-                info!("[view] seltags: {}", sel_mon_mut.sel_tags);
+                info!("[view] sel_tags: {}", sel_mon_mut.sel_tags);
                 if target_tag > 0 {
-                    let seltags = sel_mon_mut.sel_tags;
-                    sel_mon_mut.tag_set[seltags] = target_tag;
+                    let sel_tags = sel_mon_mut.sel_tags;
+                    sel_mon_mut.tag_set[sel_tags] = target_tag;
                     if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
                         pertag.prev_tag = pertag.cur_tag;
                     }
                     if ui == !0 {
+                        // 会将tag_set设置为包含所有tag的值
+                        // 使用 curtag = 0 对应的配置
                         sel_mon_mut.pertag.as_mut().unwrap().cur_tag = 0;
                     } else {
-                        // cool
                         let i = ui.trailing_zeros() as usize;
                         sel_mon_mut.pertag.as_mut().unwrap().cur_tag = i + 1;
                     }
@@ -3106,30 +3208,30 @@ impl Dwm {
                         std::mem::swap(&mut pertag.prev_tag, &mut pertag.cur_tag);
                     }
                 }
-                if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
+                if let Some(pertag) = &sel_mon_mut.pertag {
                     info!(
-                        "[view] prevtag: {}, curtag: {}",
+                        "[view] prevtag: {}, cur_tag: {}",
                         pertag.prev_tag, pertag.cur_tag
                     );
                 }
-                curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
             }
             let sel_opt;
             {
                 let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-                sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[curtag];
-                sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[curtag];
-                sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
+                sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
+                sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
+                sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
                 let sel_lt = sel_mon_mut.sel_lt;
-                sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[curtag]
+                sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
                     [sel_lt]
                     .clone()
                     .expect("None unwrap");
-                sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[curtag]
+                sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
                     [sel_lt ^ 1]
                     .clone()
                     .expect("None unwrap");
-                sel_opt = sel_mon_mut.pertag.as_ref().unwrap().sel[curtag].clone();
+                sel_opt = sel_mon_mut.pertag.as_ref().unwrap().sel[cur_tag].clone();
                 if sel_opt.is_some() {
                     info!("[view] sel_opt: {}", sel_opt.as_ref().unwrap().borrow());
                 }
@@ -3146,18 +3248,18 @@ impl Dwm {
                 if self.sel_mon.is_none() {
                     return;
                 }
-                let seltags;
+                let sel_tags;
                 let newtagset;
                 {
                     let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                    seltags = sel_mon_mut.sel_tags;
-                    newtagset = sel_mon_mut.tag_set[seltags] ^ (ui & Config::tagmask);
+                    sel_tags = sel_mon_mut.sel_tags;
+                    newtagset = sel_mon_mut.tag_set[sel_tags] ^ (ui & Config::tagmask);
                 }
                 if newtagset > 0 {
                     {
                         let mut selmon_clone = self.sel_mon.clone();
                         let mut sel_mon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
-                        sel_mon_mut.tag_set[seltags] = newtagset;
+                        sel_mon_mut.tag_set[sel_tags] = newtagset;
 
                         if newtagset == !0 {
                             sel_mon_mut.pertag.as_mut().unwrap().prev_tag =
@@ -3166,9 +3268,9 @@ impl Dwm {
                         }
 
                         // test if the user did not select the same tag
-                        let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                        if newtagset & 1 << (curtag - 1) <= 0 {
-                            sel_mon_mut.pertag.as_mut().unwrap().prev_tag = curtag;
+                        let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                        if newtagset & 1 << (cur_tag - 1) <= 0 {
+                            sel_mon_mut.pertag.as_mut().unwrap().prev_tag = cur_tag;
                             let mut i = 0;
                             loop {
                                 let condition = newtagset & 1 << i;
@@ -3181,18 +3283,18 @@ impl Dwm {
                         }
 
                         // apply settings for this view
-                        let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                        let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
                         sel_mon_mut.n_master =
-                            sel_mon_mut.pertag.as_ref().unwrap().n_masters[curtag];
-                        sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[curtag];
-                        sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[curtag];
+                            sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
+                        sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
+                        sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
                         let sel_lt = sel_mon_mut.sel_lt;
                         sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs
-                            [curtag][sel_lt]
+                            [cur_tag][sel_lt]
                             .clone()
                             .expect("None unwrap");
                         sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs
-                            [curtag][sel_lt ^ 1]
+                            [cur_tag][sel_lt ^ 1]
                             .clone()
                             .expect("None unwrap");
                     }
@@ -4522,8 +4624,8 @@ impl Dwm {
             {
                 let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
                 sel_mon_mut.sel = c_opt.clone();
-                let curtag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                sel_mon_mut.pertag.as_mut().unwrap().sel[curtag] = c_opt.clone();
+                let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                sel_mon_mut.pertag.as_mut().unwrap().sel[cur_tag] = c_opt.clone();
             }
             self.drawbars();
         }
@@ -4567,9 +4669,9 @@ impl Dwm {
             c.as_ref().unwrap().borrow_mut().mon = m.clone()
         };
         // assign tags of target monitor.
-        let seltags = { m.as_ref().unwrap().borrow().sel_tags };
+        let sel_tags = { m.as_ref().unwrap().borrow().sel_tags };
         {
-            c.as_ref().unwrap().borrow_mut().tags = m.as_ref().unwrap().borrow().tag_set[seltags]
+            c.as_ref().unwrap().borrow_mut().tags = m.as_ref().unwrap().borrow().tag_set[sel_tags]
         };
         self.attach(c.clone());
         self.attachstack(c.clone());
