@@ -105,29 +105,6 @@ impl WorkspacePanel {
             }
         }
 
-        // // 布局符号也改为按钮
-        // let layout_button = ui.add(
-        //     egui::Button::new(egui::RichText::new(layout_symbol).color(colors::ERROR)).small(), // .frame(false),
-        // );
-        //
-        // // 处理布局按钮点击
-        // if layout_button.clicked() {
-        //     info!("layout_button clicked");
-        //     if let Some(ref message) = app_state.current_message {
-        //         let monitor_id = message.monitor_info.monitor_num;
-        //         // 假设我们有一个切换布局的命令类型
-        //         let command = SharedCommand::new(CommandType::SetLayout, 0, monitor_id); // 0表示循环到下一个布局
-        //
-        //         if let Err(e) = command_sender.send(command) {
-        //             log::error!("Failed to send SetLayout command: {}", e);
-        //         } else {
-        //             log::info!("Sent SetLayout command");
-        //         }
-        //     }
-        // }
-        //
-        // // 布局按钮的工具提示
-        // layout_button.on_hover_text("点击切换布局");
         self.render_layout_section(ui, app_state, command_sender, &layout_symbol);
     }
 

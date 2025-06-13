@@ -8,7 +8,7 @@ use crate::constants::{colors, icons, ui};
 use crate::ui::components::{SystemInfoPanel, VolumeControlWindow, WorkspacePanel};
 use crate::utils::Result;
 use eframe::egui;
-use egui::{Align, FontFamily, FontId, Layout, Margin, TextStyle};
+use egui::{Align, FontFamily, FontId, Layout, TextStyle};
 use egui_twemoji::EmojiLabel;
 use events::{AppEvent, EventBus};
 use log::{debug, error, info, warn};
@@ -330,8 +330,8 @@ impl EguiBarApp {
             .into();
 
             style.text_styles = text_styles;
-            style.spacing.window_margin = Margin::same(0);
-            style.spacing.menu_margin = Margin::same(0);
+            // style.spacing.window_margin = Margin::same(0);
+            // style.spacing.menu_margin = Margin::same(0);
         });
     }
 
@@ -602,7 +602,7 @@ impl EguiBarApp {
             ("🔍", "打开调试窗口") // 默认状态的图标和提示
         };
 
-        let response = ui.button(debug_icon);
+        let response = ui.small_button(debug_icon);
 
         if response.clicked() {
             // 使用新的 toggle_debug_window 方法
@@ -659,7 +659,7 @@ impl EguiBarApp {
             (icons::VOLUME_MUTED, "无音频设备".to_string())
         };
 
-        let response = ui.button(volume_icon);
+        let response = ui.small_button(volume_icon);
 
         if response.clicked() {
             self.state.ui_state.toggle_volume_window();
@@ -804,18 +804,18 @@ impl EguiBarApp {
 
                     // 操作按钮
                     ui.horizontal(|ui| {
-                        if ui.button("💾 保存配置").clicked() {
+                        if ui.small_button("💾 保存配置").clicked() {
                             self.event_bus.send(AppEvent::SaveConfig).ok();
                         }
 
-                        if ui.button("🔄 刷新音频").clicked() {
+                        if ui.small_button("🔄 刷新音频").clicked() {
                             if let Err(e) = self.state.audio_manager.refresh_devices() {
                                 error!("Failed to refresh audio devices: {}", e);
                             }
                         }
 
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.button("❌ 关闭").clicked() {
+                            if ui.small_button("❌ 关闭").clicked() {
                                 self.state.ui_state.toggle_debug_window();
                             }
                         });
