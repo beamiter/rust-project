@@ -26,13 +26,11 @@ impl SystemInfoPanel {
         // Ensure color cache is initialized
         self.ensure_color_cache();
 
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            // Memory information
-            self.draw_memory_info(ui, app_state);
+        // Memory information
+        self.draw_memory_info(ui, app_state);
 
-            // CPU chart
-            self.draw_cpu_chart(ui, app_state);
-        });
+        // CPU chart
+        self.draw_cpu_chart(ui, app_state);
     }
 
     fn draw_memory_info(&self, ui: &mut egui::Ui, app_state: &AppState) {
@@ -79,15 +77,13 @@ impl SystemInfoPanel {
 
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
             let cpu_data = app_state.get_cpu_chart_data();
-
             if cpu_data.is_empty() {
                 return;
             }
 
             let available_width = ui.available_width();
             let chart_height = ui.available_height();
-            let chart_width = (available_width * 0.5).min(10.0 * chart_height);
-            ui.add_space(available_width - chart_width - 2.);
+            let chart_width = available_width.min(10.0 * chart_height);
 
             let mut plot = Plot::new("cpu_usage_chart")
                 .include_y(0.0)

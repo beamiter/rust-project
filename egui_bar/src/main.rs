@@ -61,7 +61,7 @@ fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_position(egui::Pos2::new(0.0, 0.0))
-            .with_inner_size([1080.0, config.ui.font_size * 2.5])
+            .with_inner_size([1080.0, 540.])
             .with_min_inner_size([480.0, config.ui.font_size])
             .with_decorations(false)
             .with_transparent(config.ui.window_opacity < 1.0),

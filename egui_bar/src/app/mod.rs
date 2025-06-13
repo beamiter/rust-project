@@ -492,17 +492,25 @@ impl EguiBarApp {
         }
 
         ui.horizontal_centered(|ui| {
-            // Left: Workspace information
-            self.workspace_panel
-                .draw(ui, &mut self.state, &self.command_sender);
+            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                self.workspace_panel
+                    .draw(ui, &mut self.state, &self.command_sender);
+            });
 
-            // Center: System information
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                // Right side controls
-                self.draw_controls(ui, ctx);
+            ui.columns(2, |columns_outer| {
+                columns_outer[0].with_layout(Layout::left_to_right(Align::Center), |_ui| {});
 
-                // System info
-                self.system_info_panel.draw(ui, &self.state);
+                columns_outer[1].with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    ui.columns(2, |columns| {
+                        columns[1].with_layout(Layout::left_to_right(Align::Center), |ui| {
+                            self.system_info_panel.draw(ui, &self.state);
+                        });
+
+                        columns[0].with_layout(Layout::right_to_left(Align::Center), |ui| {
+                            self.draw_controls(ui, ctx);
+                        });
+                    });
+                });
             });
         });
     }
