@@ -82,7 +82,7 @@ impl SystemInfoPanel {
 
         let available_width = ui.available_width();
         let chart_height = ui.available_height();
-        let chart_width = available_width.min(10.0 * chart_height);
+        let chart_width = available_width;
 
         let mut plot = Plot::new("cpu_usage_chart")
             .include_y(0.0)
