@@ -75,74 +75,72 @@ impl SystemInfoPanel {
             }
         }
 
-        ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-            let cpu_data = app_state.get_cpu_chart_data();
-            if cpu_data.is_empty() {
-                return;
-            }
+        let cpu_data = app_state.get_cpu_chart_data();
+        if cpu_data.is_empty() {
+            return;
+        }
 
-            let available_width = ui.available_width();
-            let chart_height = ui.available_height();
-            let chart_width = available_width.min(10.0 * chart_height);
+        let available_width = ui.available_width();
+        let chart_height = ui.available_height();
+        let chart_width = available_width.min(10.0 * chart_height);
 
-            let mut plot = Plot::new("cpu_usage_chart")
-                .include_y(0.0)
-                .include_y(1.2)
-                .x_axis_formatter(|_, _| String::new())
-                .y_axis_formatter(|_, _| String::new())
-                .show_axes([false, false])
-                .show_background(false)
-                .width(chart_width)
-                .height(chart_height);
-            if reset_view {
-                plot = plot.reset();
-            }
+        let mut plot = Plot::new("cpu_usage_chart")
+            .include_y(0.0)
+            .include_y(1.2)
+            .x_axis_formatter(|_, _| String::new())
+            .y_axis_formatter(|_, _| String::new())
+            .show_axes([false, false])
+            .show_background(false)
+            .width(chart_width)
+            .height(chart_height);
+        if reset_view {
+            plot = plot.reset();
+        }
 
-            plot.show(ui, |plot_ui| {
-                // Create plot points for all CPU cores
-                let plot_points: Vec<[f64; 2]> = cpu_data
-                    .iter()
-                    .enumerate()
-                    .map(|(i, &usage)| [i as f64, usage])
-                    .collect();
+        plot.show(ui, |plot_ui| {
+            // Create plot points for all CPU cores
+            let plot_points: Vec<[f64; 2]> = cpu_data
+                .iter()
+                .enumerate()
+                .map(|(i, &usage)| [i as f64, usage])
+                .collect();
 
-                if !plot_points.is_empty() {
-                    let line = Line::new("CPU Usage", PlotPoints::from(plot_points))
-                        .color(self.get_average_cpu_color(&cpu_data))
-                        .width(1.0);
-                    plot_ui.line(line);
+            if !plot_points.is_empty() {
+                let line = Line::new("CPU Usage", PlotPoints::from(plot_points))
+                    .color(self.get_average_cpu_color(&cpu_data))
+                    .width(1.0);
+                plot_ui.line(line);
 
-                    // Draw individual CPU core points with different colors
-                    for (core_idx, &usage) in cpu_data.iter().enumerate() {
-                        let color = self.get_cpu_color(usage);
-                        let points = vec![[core_idx as f64, usage]];
+                // Draw individual CPU core points with different colors
+                for (core_idx, &usage) in cpu_data.iter().enumerate() {
+                    let color = self.get_cpu_color(usage);
+                    let points = vec![[core_idx as f64, usage]];
 
-                        let core_point = egui_plot::Points::new(
-                            format!("Core {}", core_idx),
-                            PlotPoints::from(points),
-                        )
-                        .color(color)
-                        .radius(2.0)
-                        .shape(egui_plot::MarkerShape::Circle);
+                    let core_point = egui_plot::Points::new(
+                        format!("Core {}", core_idx),
+                        PlotPoints::from(points),
+                    )
+                    .color(color)
+                    .radius(2.0)
+                    .shape(egui_plot::MarkerShape::Circle);
 
-                        plot_ui.points(core_point);
-                    }
-
-                    // Draw average line if we have multiple cores
-                    if cpu_data.len() > 1 {
-                        let avg_usage = cpu_data.iter().sum::<f64>() / cpu_data.len() as f64;
-                        let avg_points: Vec<[f64; 2]> =
-                            (0..cpu_data.len()).map(|i| [i as f64, avg_usage]).collect();
-
-                        let avg_line = Line::new("Average", PlotPoints::from(avg_points))
-                            .color(Color32::WHITE)
-                            .width(1.0)
-                            .style(egui_plot::LineStyle::Dashed { length: 5.0 });
-
-                        plot_ui.line(avg_line);
-                    }
+                    plot_ui.points(core_point);
                 }
-            });
+
+                // Draw average line if we have multiple cores
+                if cpu_data.len() > 1 {
+                    let avg_usage = cpu_data.iter().sum::<f64>() / cpu_data.len() as f64;
+                    let avg_points: Vec<[f64; 2]> =
+                        (0..cpu_data.len()).map(|i| [i as f64, avg_usage]).collect();
+
+                    let avg_line = Line::new("Average", PlotPoints::from(avg_points))
+                        .color(Color32::WHITE)
+                        .width(1.0)
+                        .style(egui_plot::LineStyle::Dashed { length: 5.0 });
+
+                    plot_ui.line(avg_line);
+                }
+            }
         });
     }
 

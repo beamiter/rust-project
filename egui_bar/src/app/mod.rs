@@ -500,16 +500,14 @@ impl EguiBarApp {
             ui.columns(2, |columns_outer| {
                 columns_outer[0].with_layout(Layout::left_to_right(Align::Center), |_ui| {});
 
-                columns_outer[1].with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.columns(2, |columns| {
-                        columns[1].with_layout(Layout::left_to_right(Align::Center), |ui| {
-                            self.system_info_panel.draw(ui, &self.state);
-                        });
-
-                        columns[0].with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            self.draw_controls(ui, ctx);
-                        });
-                    });
+                columns_outer[1].with_layout(Layout::right_to_left(Align::Center), |ui| {
+                    self.draw_controls(ui, ctx);
+                    self.system_info_panel.draw(ui, &self.state);
+                    // ui.columns(2, |columns| {
+                    //     columns[0].with_layout(Layout::left_to_right(Align::Center), |ui| {});
+                    //
+                    //     columns[1].with_layout(Layout::left_to_right(Align::Center), |ui| {});
+                    // });
                 });
             });
         });
@@ -694,7 +692,12 @@ impl EguiBarApp {
         let current_time = chrono::Local::now().format(format_str).to_string();
 
         if ui
-            .selectable_label(true, egui::RichText::new(current_time).color(colors::GREEN))
+            .selectable_label(
+                true,
+                egui::RichText::new(current_time)
+                    .color(colors::GREEN)
+                    .small(),
+            )
             .clicked()
         {
             self.event_bus.send(AppEvent::TimeFormatToggle).ok();
