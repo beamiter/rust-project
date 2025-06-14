@@ -3,7 +3,7 @@
 use crate::app::state::AppState;
 use crate::constants::colors;
 use crate::utils::RollingAverage;
-use egui::{Align, Color32, Layout};
+use egui::Color32;
 use egui_plot::{Line, Plot, PlotPoints};
 
 /// System information panel component
