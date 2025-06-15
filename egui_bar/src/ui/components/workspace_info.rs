@@ -1,5 +1,7 @@
 //! Workspace information display component
 
+use egui::{Color32, Sense, Stroke, StrokeKind};
+use egui_twemoji::EmojiLabel;
 use log::info;
 use shared_structures::{CommandType, SharedCommand};
 
@@ -33,79 +35,151 @@ impl WorkspacePanel {
         // Draw tag icons as buttons
         for (i, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {
             let tag_color = colors::TAG_COLORS[i];
+            let tag_bit = 1 << i;
+
+            // 构建基础文本样式
             let mut rich_text = egui::RichText::new(tag_icon).monospace();
-            let tag_bit = 1 << i; // 计算标签位
 
+            // 设置工具提示文本
+            let mut tooltip = format!("标签 {}", i + 1);
+
+            // 根据状态设置样式
             if let Some(tag_status) = tag_status_vec.get(i) {
-                if tag_status.is_selected {
-                    rich_text = rich_text.underline();
-                }
+                // is_filled: 斜体
                 if tag_status.is_filled {
-                    rich_text = rich_text.strong().italics();
+                    rich_text = rich_text.italics();
+                    tooltip.push_str(" (有窗口)");
                 }
-                if tag_status.is_occ {
-                    rich_text = rich_text.color(tag_color);
-                }
-                if tag_status.is_urg {
-                    rich_text = rich_text.background_color(colors::WHEAT);
-                }
-            }
 
-            // 创建一个按钮而不是标签
-            let button = ui.add(
-                egui::Button::new(rich_text).small(), // 可选，使按钮更紧凑
-                                                      // .frame(false), // 可选，使按钮看起来更像标签
-            );
-
-            // 处理点击事件 - 发送 ViewTag 命令
-            if button.clicked() {
-                info!("{} clicked", tag_bit);
-                if let Some(ref message) = app_state.current_message {
-                    let monitor_id = message.monitor_info.monitor_num;
-                    let command = SharedCommand::view_tag(tag_bit, monitor_id);
-
-                    // 发送命令到JWM
-                    if let Err(e) = command_sender.send(command) {
-                        log::error!("Failed to send ViewTag command: {}", e);
-                    } else {
-                        log::info!("Sent ViewTag command for tag {} in channel", i + 1);
-                    }
-                }
-            }
-
-            // 处理右键点击 - 发送 ToggleTag 命令
-            if button.secondary_clicked() {
-                info!("{} secondary_clicked", tag_bit);
-                if let Some(ref message) = app_state.current_message {
-                    let monitor_id = message.monitor_info.monitor_num;
-                    let command = SharedCommand::toggle_tag(tag_bit, monitor_id);
-
-                    // 发送命令到JWM
-                    if let Err(e) = command_sender.send(command) {
-                        log::error!("Failed to send ToggleTag command: {}", e);
-                    } else {
-                        log::info!("Sent ToggleTag command for tag {} in channel", i + 1);
-                    }
-                }
-            }
-
-            // 保留工具提示功能
-            if let Some(tag_status) = tag_status_vec.get(i) {
-                let mut tooltip = format!("标签 {}", i + 1);
+                // is_selected: 当前标签标记
                 if tag_status.is_selected {
                     tooltip.push_str(" (当前)");
                 }
-                if tag_status.is_filled {
-                    tooltip.push_str(" (有窗口)");
-                }
+
+                // is_urg: 紧急状态标记
                 if tag_status.is_urg {
                     tooltip.push_str(" (紧急)");
                 }
-                button.on_hover_text(tooltip);
+            }
+
+            // 创建可点击标签
+            let label_response = EmojiLabel::new(rich_text).sense(Sense::click()).show(ui);
+
+            // 绘制各种装饰效果
+            if let Some(tag_status) = tag_status_vec.get(i) {
+                let rect = label_response.rect;
+
+                // is_selected: 绘制白色下划线
+                if tag_status.is_selected {
+                    let underline_color = if tag_status.is_occ {
+                        tag_color
+                    } else {
+                        Color32::WHITE
+                    };
+                    let underline_y = rect.bottom() + 1.0;
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(rect.left(), underline_y),
+                            egui::pos2(rect.right(), underline_y),
+                        ],
+                        Stroke::new(2.0, underline_color),
+                    );
+                }
+                // is_occ 但不是 selected: 绘制对应颜色下划线
+                else if tag_status.is_occ {
+                    let underline_y = rect.bottom() + 1.0;
+                    ui.painter().line_segment(
+                        [
+                            egui::pos2(rect.left(), underline_y),
+                            egui::pos2(rect.right(), underline_y),
+                        ],
+                        Stroke::new(2.0, tag_color),
+                    );
+                }
+
+                // is_urg: 绘制wheat色边框
+                if tag_status.is_urg {
+                    ui.painter().rect_stroke(
+                        rect.expand(2.0),
+                        0.0, // 不要圆角
+                        Stroke::new(2.0, colors::WHEAT),
+                        StrokeKind::Inside,
+                    );
+                }
+            }
+
+            // 处理交互事件
+            self.handle_tag_interactions(&label_response, tag_bit, i, app_state, command_sender);
+
+            // 悬停效果和工具提示
+            if label_response.hovered() {
+                ui.painter().rect_stroke(
+                    label_response.rect.expand(1.0),
+                    1.0,
+                    Stroke::new(2.0, Color32::RED),
+                    StrokeKind::Inside,
+                );
+                label_response.on_hover_text(tooltip);
             }
         }
 
         self.render_layout_section(ui, app_state, command_sender, &layout_symbol);
+    }
+    // 提取交互处理逻辑到单独函数
+    fn handle_tag_interactions(
+        &self,
+        label_response: &egui::Response,
+        tag_bit: u32,
+        tag_index: usize,
+        app_state: &AppState,
+        command_sender: &mpsc::Sender<SharedCommand>,
+    ) {
+        // 左键点击 - ViewTag 命令
+        if label_response.clicked() {
+            info!("{} clicked", tag_bit);
+            self.send_tag_command(app_state, command_sender, tag_bit, tag_index, true);
+        }
+
+        // 右键点击 - ToggleTag 命令
+        if label_response.secondary_clicked() {
+            info!("{} secondary_clicked", tag_bit);
+            self.send_tag_command(app_state, command_sender, tag_bit, tag_index, false);
+        }
+    }
+
+    // 提取命令发送逻辑
+    fn send_tag_command(
+        &self,
+        app_state: &AppState,
+        command_sender: &mpsc::Sender<SharedCommand>,
+        tag_bit: u32,
+        tag_index: usize,
+        is_view: bool,
+    ) {
+        if let Some(ref message) = app_state.current_message {
+            let monitor_id = message.monitor_info.monitor_num;
+
+            let command = if is_view {
+                SharedCommand::view_tag(tag_bit, monitor_id)
+            } else {
+                SharedCommand::toggle_tag(tag_bit, monitor_id)
+            };
+
+            match command_sender.send(command) {
+                Ok(_) => {
+                    let action = if is_view { "ViewTag" } else { "ToggleTag" };
+                    log::info!(
+                        "Sent {} command for tag {} in channel",
+                        action,
+                        tag_index + 1
+                    );
+                }
+                Err(e) => {
+                    let action = if is_view { "ViewTag" } else { "ToggleTag" };
+                    log::error!("Failed to send {} command: {}", action, e);
+                }
+            }
+        }
     }
 
     fn render_layout_section(
