@@ -4,14 +4,14 @@ pub mod events;
 pub mod state;
 
 use crate::config::AppConfig;
-use crate::constants::{colors, icons, ui};
+use crate::constants::ui;
+use crate::ui::components::controller_info::ControllerInfoPanel;
 use crate::ui::components::{
     DebugDisplayWindow, SystemInfoPanel, VolumeControlWindow, WorkspacePanel,
 };
 use crate::utils::Result;
 use eframe::egui;
-use egui::{Align, FontFamily, FontId, Layout, Sense, TextStyle};
-use egui_twemoji::EmojiLabel;
+use egui::{Align, FontFamily, FontId, Layout, TextStyle};
 use events::{AppEvent, EventBus};
 use log::{debug, error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage};
@@ -57,6 +57,7 @@ pub struct EguiBarApp {
     debug_window: DebugDisplayWindow,
 
     system_info_panel: SystemInfoPanel,
+    controller_info_panel: ControllerInfoPanel,
     workspace_panel: WorkspacePanel,
 
     /// Initialization flag
@@ -118,6 +119,7 @@ impl EguiBarApp {
             volume_window: VolumeControlWindow::new(),
             debug_window: DebugDisplayWindow::new(),
             system_info_panel: SystemInfoPanel::new(),
+            controller_info_panel: ControllerInfoPanel::new(),
             workspace_panel: WorkspacePanel::new(),
             initialized: false,
             egui_ctx: cc.egui_ctx.clone(),
@@ -490,7 +492,7 @@ impl EguiBarApp {
     }
 
     /// Draw main UI
-    fn draw_main_ui(&mut self, ctx: &egui::Context, ui: &mut egui::Ui) {
+    fn draw_main_ui(&mut self, ui: &mut egui::Ui, event_sender: &mpsc::Sender<AppEvent>) {
         // 更新当前消息到状态中
         if let Some(message) = self.get_current_message() {
             self.state.current_message = Some(message);
@@ -506,215 +508,15 @@ impl EguiBarApp {
                 columns_outer[0].with_layout(Layout::left_to_right(Align::Center), |_ui| {});
 
                 columns_outer[1].with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    self.draw_controls(ui, ctx);
+                    self.controller_info_panel
+                        .draw(ui, &mut self.state, event_sender);
+
                     ui.separator();
+
                     self.system_info_panel.draw(ui, &self.state);
-                    // ui.columns(2, |columns| {
-                    //     columns[0].with_layout(Layout::left_to_right(Align::Center), |ui| {});
-                    //
-                    //     columns[1].with_layout(Layout::left_to_right(Align::Center), |ui| {});
-                    // });
                 });
             });
         });
-    }
-
-    fn draw_battery_info(&self, ui: &mut egui::Ui) {
-        if let Some(snapshot) = self.state.system_monitor.get_snapshot() {
-            // 获取电池电量百分比
-            let battery_percent = snapshot.battery_percent;
-            let is_charging = snapshot.is_charging;
-
-            // 根据电量选择颜色
-            let battery_color = match battery_percent {
-                p if p > 50.0 => colors::BATTERY_HIGH,   // 高电量 - 绿色
-                p if p > 20.0 => colors::BATTERY_MEDIUM, // 中电量 - 黄色
-                _ => colors::BATTERY_LOW,                // 低电量 - 红色
-            };
-
-            // 显示电池图标和电量
-            let battery_icon = if is_charging {
-                "🔌" // 充电图标
-            } else {
-                match battery_percent {
-                    p if p > 75.0 => "🔋", // 满电池
-                    p if p > 50.0 => "🔋", // 高电量
-                    p if p > 25.0 => "🪫", // 中电量
-                    _ => "🪫",             // 低电量
-                }
-            };
-
-            // 显示电池图标
-            EmojiLabel::new(egui::RichText::new(battery_icon).color(battery_color)).show(ui);
-
-            // 显示电量百分比
-            ui.label(egui::RichText::new(format!("{:.0}%", battery_percent)).color(battery_color));
-
-            // 低电量警告
-            if battery_percent < self.state.config.system.battery_warning_threshold * 100.0
-                && !is_charging
-            {
-                EmojiLabel::new(egui::RichText::new("⚠️").color(colors::WARNING)).show(ui);
-            }
-
-            // 充电指示
-            if is_charging {
-                EmojiLabel::new(egui::RichText::new("⚡").color(colors::CHARGING)).show(ui);
-            }
-        } else {
-            // 无法获取电池信息时显示
-            EmojiLabel::new(egui::RichText::new("❓").color(colors::UNAVAILABLE)).show(ui);
-        }
-    }
-
-    /// Draw control buttons (time, volume, debug, etc.)
-    fn draw_controls(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
-        let padding = 2.5;
-        // Battery info
-        self.draw_battery_info(ui);
-        ui.add_space(padding);
-        ui.separator();
-
-        // Volume button
-        self.draw_volume_button(ui);
-        ui.add_space(padding);
-        ui.separator();
-
-        // Debug button
-        self.draw_debug_button(ui);
-        ui.add_space(padding);
-        ui.separator();
-
-        // Time display
-        self.draw_time_display(ui);
-        ui.add_space(padding);
-        ui.separator();
-
-        // Screenshot button
-        self.draw_screenshot_button(ui);
-        ui.add_space(padding);
-        ui.separator();
-
-        // Monitor number
-        self.draw_monitor_number(ui);
-        ui.add_space(padding);
-        ui.separator();
-    }
-
-    fn draw_monitor_number(&mut self, ui: &mut egui::Ui) {
-        if let Some(ref message) = self.state.current_message {
-            let monitor_num = (message.monitor_info.monitor_num as usize).min(1);
-            EmojiLabel::new(
-                egui::RichText::new(format!("{}", icons::MONITOR_NUMBERS[monitor_num])).strong(),
-            )
-            .show(ui);
-        }
-    }
-
-    fn draw_screenshot_button(&mut self, ui: &mut egui::Ui) {
-        let label_response = EmojiLabel::new(format!(
-            "{} {:.2}",
-            icons::SCREENSHOT_ICON,
-            self.state.ui_state.scale_factor
-        ))
-        .sense(Sense::click())
-        .show(ui);
-
-        if label_response.clicked() {
-            self.event_bus.send(AppEvent::ScreenshotRequested).ok();
-        }
-    }
-
-    /// Draw debug control button
-    fn draw_debug_button(&mut self, ui: &mut egui::Ui) {
-        let (debug_icon, tooltip) = if self.state.ui_state.show_debug_window {
-            ("🐛", "关闭调试窗口") // 激活状态的图标和提示
-        } else {
-            ("🔍", "打开调试窗口") // 默认状态的图标和提示
-        };
-
-        let label_response = EmojiLabel::new(debug_icon).sense(Sense::click()).show(ui);
-
-        if label_response.clicked() {
-            self.state.ui_state.toggle_debug_window();
-        }
-
-        // 添加详细的悬停提示信息
-        let detailed_tooltip = format!(
-            "{}\n📊 性能: {:.1} FPS\n🧵 线程: {} 个活跃\n💾 内存: {:.1}%\n🖥️ CPU: {:.1}%",
-            tooltip,
-            self.state.performance_metrics.average_fps(),
-            2, // 消息处理线程 + 定时更新线程
-            self.state
-                .system_monitor
-                .get_snapshot()
-                .map(|s| s.memory_usage_percent)
-                .unwrap_or(0.0),
-            self.state
-                .system_monitor
-                .get_snapshot()
-                .map(|s| s.cpu_average)
-                .unwrap_or(0.0)
-        );
-
-        label_response.on_hover_text(detailed_tooltip);
-    }
-
-    /// Draw volume control button
-    fn draw_volume_button(&mut self, ui: &mut egui::Ui) {
-        let (volume_icon, tooltip) = if let Some(device) = self.state.get_master_audio_device() {
-            let icon = if device.is_muted || device.volume == 0 {
-                icons::VOLUME_MUTED
-            } else if device.volume < 30 {
-                icons::VOLUME_LOW
-            } else if device.volume < 70 {
-                icons::VOLUME_MEDIUM
-            } else {
-                icons::VOLUME_HIGH
-            };
-
-            let tooltip = format!(
-                "{}：{}%{}",
-                device.description,
-                device.volume,
-                if device.is_muted { " (已静音)" } else { "" }
-            );
-
-            (icon, tooltip)
-        } else {
-            (icons::VOLUME_MUTED, "无音频设备".to_string())
-        };
-
-        let label_response = EmojiLabel::new(volume_icon).sense(Sense::click()).show(ui);
-
-        if label_response.clicked() {
-            self.state.ui_state.toggle_volume_window();
-        }
-
-        label_response.on_hover_text(tooltip);
-    }
-
-    /// Draw time display
-    fn draw_time_display(&mut self, ui: &mut egui::Ui) {
-        let format_str = if self.state.ui_state.show_seconds {
-            "%Y-%m-%d %H:%M:%S"
-        } else {
-            "%Y-%m-%d %H:%M"
-        };
-
-        let current_time = chrono::Local::now().format(format_str).to_string();
-
-        if ui
-            .selectable_label(
-                true,
-                egui::RichText::new(current_time)
-                    .color(colors::GREEN)
-                    .small(),
-            )
-            .clicked()
-        {
-            self.event_bus.send(AppEvent::TimeFormatToggle).ok();
-        }
     }
 }
 
@@ -743,11 +545,13 @@ impl eframe::App for EguiBarApp {
 
         // Draw main UI
         egui::CentralPanel::default().show(ctx, |ui| {
-            self.draw_main_ui(ctx, ui);
+            self.draw_main_ui(ui, &self.event_bus.sender());
+
             // Draw volume control window
             self.volume_window
                 .draw(ctx, &mut self.state, &self.event_bus.sender());
 
+            // Draw debug display window
             self.debug_window
                 .draw(ctx, &mut self.state, &self.event_bus.sender());
 
