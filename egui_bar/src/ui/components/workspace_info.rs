@@ -1,6 +1,6 @@
 //! Workspace information display component
 
-use egui::{Color32, Sense, Stroke, StrokeKind};
+use egui::{Color32, Rect, Sense, Stroke, StrokeKind};
 use egui_twemoji::EmojiLabel;
 use log::info;
 use shared_structures::{CommandType, SharedCommand};
@@ -10,44 +10,45 @@ use crate::constants::{colors, icons};
 use std::sync::mpsc;
 
 /// Workspace panel component
-pub struct WorkspacePanel;
+pub struct WorkspacePanel {}
 
 impl WorkspacePanel {
     pub fn new() -> Self {
-        Self
+        Self {}
     }
 
     /// Draw workspace information
     pub fn draw(
-        &self,
+        &mut self,
         ui: &mut egui::Ui,
         app_state: &mut AppState,
         command_sender: &mpsc::Sender<SharedCommand>,
     ) {
         let mut tag_status_vec = Vec::new();
         let mut layout_symbol = String::from(" ? ");
+        let spacing = 3.0;
 
         if let Some(ref message) = app_state.current_message {
             tag_status_vec = message.monitor_info.tag_status_vec.clone();
             layout_symbol = message.monitor_info.ltsymbol.clone();
         }
 
+        let mut previous_rect: Option<Rect> = None;
         // Draw tag icons as buttons
         for (i, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {
+            ui.add_space(spacing);
             let tag_color = colors::TAG_COLORS[i];
             let tag_bit = 1 << i;
 
             // 构建基础文本样式
-            let mut rich_text = egui::RichText::new(tag_icon).monospace();
+            let rich_text = egui::RichText::new(tag_icon).monospace();
 
             // 设置工具提示文本
             let mut tooltip = format!("标签 {}", i + 1);
 
             // 根据状态设置样式
             if let Some(tag_status) = tag_status_vec.get(i) {
-                // is_filled: 斜体
                 if tag_status.is_filled {
-                    rich_text = rich_text.italics();
                     tooltip.push_str(" (有窗口)");
                 }
 
@@ -66,9 +67,27 @@ impl WorkspacePanel {
             let label_response = EmojiLabel::new(rich_text).sense(Sense::click()).show(ui);
 
             // 绘制各种装饰效果
+            let rect = label_response.rect;
+            let new_rect = if let Some(previous_rect) = previous_rect {
+                Rect::from_min_max(
+                    egui::Pos2 {
+                        x: (previous_rect.max.x + 2.0 * spacing),
+                        y: (previous_rect.min.y),
+                    },
+                    rect.max,
+                )
+                .expand(1.0)
+            } else {
+                Rect::from_min_max(
+                    egui::Pos2 {
+                        x: (rect.min.x + spacing),
+                        y: (rect.min.y),
+                    },
+                    rect.max,
+                )
+                .expand(1.0)
+            };
             if let Some(tag_status) = tag_status_vec.get(i) {
-                let rect = label_response.rect;
-
                 // is_selected: 绘制白色下划线
                 if tag_status.is_selected {
                     let underline_color = if tag_status.is_occ {
@@ -76,32 +95,24 @@ impl WorkspacePanel {
                     } else {
                         Color32::WHITE
                     };
-                    let underline_y = rect.bottom() + 1.0;
                     ui.painter().line_segment(
-                        [
-                            egui::pos2(rect.left(), underline_y),
-                            egui::pos2(rect.right(), underline_y),
-                        ],
+                        [new_rect.left_bottom(), new_rect.right_bottom()],
                         Stroke::new(2.0, underline_color),
                     );
                 }
                 // is_occ 但不是 selected: 绘制对应颜色下划线
                 else if tag_status.is_occ {
-                    let underline_y = rect.bottom() + 1.0;
                     ui.painter().line_segment(
-                        [
-                            egui::pos2(rect.left(), underline_y),
-                            egui::pos2(rect.right(), underline_y),
-                        ],
-                        Stroke::new(2.0, tag_color),
+                        [new_rect.left_bottom(), new_rect.right_bottom()],
+                        Stroke::new(0.5, tag_color),
                     );
                 }
 
                 // is_urg: 绘制wheat色边框
                 if tag_status.is_urg {
                     ui.painter().rect_stroke(
-                        rect.expand(2.0),
-                        0.0, // 不要圆角
+                        new_rect,
+                        0.0,
                         Stroke::new(2.0, colors::WHEAT),
                         StrokeKind::Inside,
                     );
@@ -114,13 +125,15 @@ impl WorkspacePanel {
             // 悬停效果和工具提示
             if label_response.hovered() {
                 ui.painter().rect_stroke(
-                    label_response.rect.expand(1.0),
+                    new_rect,
                     1.0,
-                    Stroke::new(2.0, Color32::RED),
+                    Stroke::new(2.0, Color32::KHAKI),
                     StrokeKind::Inside,
                 );
                 label_response.on_hover_text(tooltip);
             }
+            previous_rect = Some(rect);
+            ui.add_space(spacing);
         }
 
         self.render_layout_section(ui, app_state, command_sender, &layout_symbol);
