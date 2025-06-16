@@ -226,7 +226,6 @@ impl ControllerInfoPanel {
         // Monitor number
         self.draw_monitor_number(ui, app_state);
         ui.add_space(padding);
-        ui.separator();
     }
 }
 

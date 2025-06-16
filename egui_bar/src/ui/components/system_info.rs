@@ -57,6 +57,7 @@ impl SystemInfoPanel {
                 ui.add_space(padding);
             }
         }
+        ui.separator();
     }
 
     fn draw_cpu_chart(&mut self, ui: &mut egui::Ui, app_state: &AppState) {

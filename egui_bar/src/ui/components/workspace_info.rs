@@ -28,7 +28,7 @@ impl WorkspacePanel {
         let mut layout_symbol = String::from(" ? ");
         let spacing = 3.0;
         let bold_thickness = 2.5;
-        let light_thickness = 0.5;
+        let light_thickness = 1.0;
 
         if let Some(ref message) = app_state.current_message {
             tag_status_vec = message.monitor_info.tag_status_vec.clone();
@@ -202,6 +202,7 @@ impl WorkspacePanel {
         command_sender: &mpsc::Sender<SharedCommand>,
         layout_symbol: &str,
     ) {
+        ui.separator();
         // 主布局按钮
         let main_layout_button = ui.add(
             egui::Button::new(egui::RichText::new(layout_symbol).color(
