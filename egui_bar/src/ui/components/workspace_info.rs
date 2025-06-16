@@ -27,6 +27,8 @@ impl WorkspacePanel {
         let mut tag_status_vec = Vec::new();
         let mut layout_symbol = String::from(" ? ");
         let spacing = 3.0;
+        let bold_thickness = 2.5;
+        let light_thickness = 0.5;
 
         if let Some(ref message) = app_state.current_message {
             tag_status_vec = message.monitor_info.tag_status_vec.clone();
@@ -88,7 +90,6 @@ impl WorkspacePanel {
                 .expand(1.0)
             };
             if let Some(tag_status) = tag_status_vec.get(i) {
-                // is_selected: 绘制白色下划线
                 if tag_status.is_selected {
                     let underline_color = if tag_status.is_occ {
                         tag_color
@@ -97,14 +98,13 @@ impl WorkspacePanel {
                     };
                     ui.painter().line_segment(
                         [new_rect.left_bottom(), new_rect.right_bottom()],
-                        Stroke::new(2.0, underline_color),
+                        Stroke::new(bold_thickness, underline_color),
                     );
                 }
-                // is_occ 但不是 selected: 绘制对应颜色下划线
                 else if tag_status.is_occ {
                     ui.painter().line_segment(
                         [new_rect.left_bottom(), new_rect.right_bottom()],
-                        Stroke::new(0.5, tag_color),
+                        Stroke::new(light_thickness, tag_color),
                     );
                 }
 
@@ -113,7 +113,7 @@ impl WorkspacePanel {
                     ui.painter().rect_stroke(
                         new_rect,
                         0.0,
-                        Stroke::new(2.0, colors::WHEAT),
+                        Stroke::new(bold_thickness, colors::WHEAT),
                         StrokeKind::Inside,
                     );
                 }
@@ -127,7 +127,7 @@ impl WorkspacePanel {
                 ui.painter().rect_stroke(
                     new_rect,
                     1.0,
-                    Stroke::new(2.0, Color32::KHAKI),
+                    Stroke::new(bold_thickness, Color32::KHAKI),
                     StrokeKind::Inside,
                 );
                 label_response.on_hover_text(tooltip);

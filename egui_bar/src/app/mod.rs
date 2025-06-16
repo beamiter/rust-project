@@ -5,10 +5,12 @@ pub mod state;
 
 use crate::config::AppConfig;
 use crate::constants::{colors, icons, ui};
-use crate::ui::components::{SystemInfoPanel, VolumeControlWindow, WorkspacePanel};
+use crate::ui::components::{
+    DebugDisplayWindow, SystemInfoPanel, VolumeControlWindow, WorkspacePanel,
+};
 use crate::utils::Result;
 use eframe::egui;
-use egui::{Align, FontFamily, FontId, Layout, TextStyle};
+use egui::{Align, FontFamily, FontId, Layout, Sense, TextStyle};
 use egui_twemoji::EmojiLabel;
 use events::{AppEvent, EventBus};
 use log::{debug, error, info, warn};
@@ -52,6 +54,8 @@ pub struct EguiBarApp {
 
     /// UI components
     volume_window: VolumeControlWindow,
+    debug_window: DebugDisplayWindow,
+
     system_info_panel: SystemInfoPanel,
     workspace_panel: WorkspacePanel,
 
@@ -112,6 +116,7 @@ impl EguiBarApp {
             shared_state,
             event_bus,
             volume_window: VolumeControlWindow::new(),
+            debug_window: DebugDisplayWindow::new(),
             system_info_panel: SystemInfoPanel::new(),
             workspace_panel: WorkspacePanel::new(),
             initialized: false,
@@ -502,6 +507,7 @@ impl EguiBarApp {
 
                 columns_outer[1].with_layout(Layout::right_to_left(Align::Center), |ui| {
                     self.draw_controls(ui, ctx);
+                    ui.separator();
                     self.system_info_panel.draw(ui, &self.state);
                     // ui.columns(2, |columns| {
                     //     columns[0].with_layout(Layout::left_to_right(Align::Center), |ui| {});
@@ -562,52 +568,64 @@ impl EguiBarApp {
     }
 
     /// Draw control buttons (time, volume, debug, etc.)
-    fn draw_controls(&mut self, ui: &mut egui::Ui, ctx: &egui::Context) {
+    fn draw_controls(&mut self, ui: &mut egui::Ui, _ctx: &egui::Context) {
         let padding = 2.5;
         // Battery info
         self.draw_battery_info(ui);
         ui.add_space(padding);
+        ui.separator();
 
         // Volume button
         self.draw_volume_button(ui);
         ui.add_space(padding);
+        ui.separator();
 
         // Debug button
         self.draw_debug_button(ui);
         ui.add_space(padding);
+        ui.separator();
 
         // Time display
         self.draw_time_display(ui);
         ui.add_space(padding);
+        ui.separator();
 
         // Screenshot button
-        if ui
-            .small_button(format!(
-                "{} {:.2}",
-                icons::SCREENSHOT_ICON,
-                self.state.ui_state.scale_factor
-            ))
-            .clicked()
-        {
-            self.event_bus.send(AppEvent::ScreenshotRequested).ok();
-        }
+        self.draw_screenshot_button(ui);
         ui.add_space(padding);
+        ui.separator();
 
         // Monitor number
+        self.draw_monitor_number(ui);
+        ui.add_space(padding);
+        ui.separator();
+    }
+
+    fn draw_monitor_number(&mut self, ui: &mut egui::Ui) {
         if let Some(ref message) = self.state.current_message {
             let monitor_num = (message.monitor_info.monitor_num as usize).min(1);
             EmojiLabel::new(
-                egui::RichText::new(format!("[{}]", icons::MONITOR_NUMBERS[monitor_num])).strong(),
+                egui::RichText::new(format!("{}", icons::MONITOR_NUMBERS[monitor_num])).strong(),
             )
             .show(ui);
         }
-        ui.add_space(padding);
-
-        // 在这里绘制调试窗口（如果打开的话）
-        self.draw_debug_window(ctx);
     }
 
-    /// Draw debug control button (类似 draw_volume_button 的逻辑)
+    fn draw_screenshot_button(&mut self, ui: &mut egui::Ui) {
+        let label_response = EmojiLabel::new(format!(
+            "{} {:.2}",
+            icons::SCREENSHOT_ICON,
+            self.state.ui_state.scale_factor
+        ))
+        .sense(Sense::click())
+        .show(ui);
+
+        if label_response.clicked() {
+            self.event_bus.send(AppEvent::ScreenshotRequested).ok();
+        }
+    }
+
+    /// Draw debug control button
     fn draw_debug_button(&mut self, ui: &mut egui::Ui) {
         let (debug_icon, tooltip) = if self.state.ui_state.show_debug_window {
             ("🐛", "关闭调试窗口") // 激活状态的图标和提示
@@ -615,15 +633,10 @@ impl EguiBarApp {
             ("🔍", "打开调试窗口") // 默认状态的图标和提示
         };
 
-        let response = ui.small_button(debug_icon);
+        let label_response = EmojiLabel::new(debug_icon).sense(Sense::click()).show(ui);
 
-        if response.clicked() {
-            // 使用新的 toggle_debug_window 方法
+        if label_response.clicked() {
             self.state.ui_state.toggle_debug_window();
-            info!(
-                "Debug window toggled: {}",
-                self.state.ui_state.show_debug_window
-            );
         }
 
         // 添加详细的悬停提示信息
@@ -644,7 +657,7 @@ impl EguiBarApp {
                 .unwrap_or(0.0)
         );
 
-        response.on_hover_text(detailed_tooltip);
+        label_response.on_hover_text(detailed_tooltip);
     }
 
     /// Draw volume control button
@@ -672,13 +685,13 @@ impl EguiBarApp {
             (icons::VOLUME_MUTED, "无音频设备".to_string())
         };
 
-        let response = ui.small_button(volume_icon);
+        let label_response = EmojiLabel::new(volume_icon).sense(Sense::click()).show(ui);
 
-        if response.clicked() {
+        if label_response.clicked() {
             self.state.ui_state.toggle_volume_window();
         }
 
-        response.on_hover_text(tooltip);
+        label_response.on_hover_text(tooltip);
     }
 
     /// Draw time display
@@ -701,148 +714,6 @@ impl EguiBarApp {
             .clicked()
         {
             self.event_bus.send(AppEvent::TimeFormatToggle).ok();
-        }
-    }
-
-    /// Draw debug window (现在作为弹出窗口显示)
-    fn draw_debug_window(&mut self, ctx: &egui::Context) {
-        if self.state.ui_state.show_debug_window {
-            let mut window_open = true; // 用于检测窗口是否被关闭
-                                        //
-            egui::Window::new("🐛 调试信息")
-                .collapsible(false)
-                .resizable(true)
-                .default_width(400.0)
-                .default_height(300.0)
-                .open(&mut window_open)
-                .show(ctx, |ui| {
-                    EmojiLabel::new("📊 性能指标").show(ui);
-                    ui.horizontal(|ui| {
-                        ui.label("FPS:");
-                        ui.label(
-                            egui::RichText::new(format!(
-                                "{:.1}",
-                                self.state.performance_metrics.average_fps()
-                            ))
-                            .color(colors::GREEN),
-                        );
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("帧时间:");
-                        ui.label(format!(
-                            "{:.2}ms",
-                            self.state.performance_metrics.average_frame_time_ms()
-                        ));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("渲染时间:");
-                        ui.label(format!(
-                            "{:.2}ms",
-                            self.state.performance_metrics.average_render_time_ms()
-                        ));
-                    });
-
-                    ui.separator();
-
-                    EmojiLabel::new("💻 系统状态").show(ui);
-                    if let Some(snapshot) = self.state.system_monitor.get_snapshot() {
-                        ui.horizontal(|ui| {
-                            ui.label("CPU:");
-                            let cpu_color = if snapshot.cpu_average > 80.0 {
-                                colors::ERROR
-                            } else if snapshot.cpu_average > 60.0 {
-                                colors::WARNING
-                            } else {
-                                colors::SUCCESS
-                            };
-                            ui.label(
-                                egui::RichText::new(format!("{:.1}%", snapshot.cpu_average))
-                                    .color(cpu_color),
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("内存:");
-                            let mem_color = if snapshot.memory_usage_percent > 80.0 {
-                                colors::ERROR
-                            } else if snapshot.memory_usage_percent > 60.0 {
-                                colors::WARNING
-                            } else {
-                                colors::SUCCESS
-                            };
-                            ui.label(
-                                egui::RichText::new(format!(
-                                    "{:.1}%",
-                                    snapshot.memory_usage_percent
-                                ))
-                                .color(mem_color),
-                            );
-                        });
-                        ui.horizontal(|ui| {
-                            ui.label("运行时间:");
-                            ui.label(self.state.system_monitor.get_uptime_string());
-                        });
-                    }
-
-                    ui.separator();
-
-                    EmojiLabel::new("🔊 音频系统").show(ui);
-                    let stats = self.state.audio_manager.get_stats();
-                    ui.horizontal(|ui| {
-                        ui.label("设备数量:");
-                        ui.label(format!("{}", stats.total_devices));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("可控音量:");
-                        ui.label(format!("{}", stats.devices_with_volume));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("已静音:");
-                        ui.label(format!("{}", stats.muted_devices));
-                    });
-
-                    ui.separator();
-
-                    EmojiLabel::new("🧵 线程状态").show(ui);
-                    ui.horizontal(|ui| {
-                        ui.label("消息处理:");
-                        ui.label(egui::RichText::new("运行中").color(colors::SUCCESS));
-                    });
-                    ui.horizontal(|ui| {
-                        ui.label("定时更新:");
-                        ui.label(egui::RichText::new("运行中").color(colors::SUCCESS));
-                    });
-                    if let Ok(state) = self.shared_state.lock() {
-                        ui.horizontal(|ui| {
-                            ui.label("最后更新:");
-                            ui.label(format!("{:?} 前", state.last_update.elapsed()));
-                        });
-                    }
-
-                    ui.separator();
-
-                    // 操作按钮
-                    ui.horizontal(|ui| {
-                        if ui.small_button("💾 保存配置").clicked() {
-                            self.event_bus.send(AppEvent::SaveConfig).ok();
-                        }
-
-                        if ui.small_button("🔄 刷新音频").clicked() {
-                            if let Err(e) = self.state.audio_manager.refresh_devices() {
-                                error!("Failed to refresh audio devices: {}", e);
-                            }
-                        }
-
-                        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                            if ui.small_button("❌ 关闭").clicked() {
-                                self.state.ui_state.toggle_debug_window();
-                            }
-                        });
-                    });
-                });
-            // 检查窗口是否通过 X 按钮被关闭
-            if !window_open && self.state.ui_state.show_debug_window {
-                self.state.ui_state.toggle_debug_window();
-            }
         }
     }
 }
@@ -874,13 +745,11 @@ impl eframe::App for EguiBarApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             self.draw_main_ui(ctx, ui);
             // Draw volume control window
-            let volume_closed =
-                self.volume_window
-                    .draw(ctx, &mut self.state, &self.event_bus.sender());
-            if volume_closed {
-                self.state.ui_state.volume_window.open = false;
-                self.state.ui_state.request_resize();
-            }
+            self.volume_window
+                .draw(ctx, &mut self.state, &self.event_bus.sender());
+
+            self.debug_window
+                .draw(ctx, &mut self.state, &self.event_bus.sender());
 
             // Adjust window if needed
             self.adjust_window(ctx, ui);

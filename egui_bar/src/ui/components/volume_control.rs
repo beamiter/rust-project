@@ -28,12 +28,12 @@ impl VolumeControlWindow {
         ctx: &egui::Context,
         app_state: &mut AppState,
         event_sender: &mpsc::Sender<AppEvent>,
-    ) -> bool {
+    ) {
         if !app_state.ui_state.volume_window.open {
-            return false;
+            return;
         }
 
-        let mut window_closed = false;
+        let mut window_open = true;
 
         egui::Window::new("🔊 音量控制")
             .collapsible(false)
@@ -52,6 +52,7 @@ impl VolumeControlWindow {
                         )
                     }),
             )
+            .open(&mut window_open)
             .show(ctx, |ui| {
                 // Save window position
                 if let Some(rect) = ctx.memory(|mem| mem.area_rect(ui.id())) {
@@ -70,17 +71,14 @@ impl VolumeControlWindow {
 
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         if ui.button("✖ 关闭").clicked() {
-                            window_closed = true;
+                            app_state.ui_state.toggle_volume_window();
                         }
                     });
                 });
             });
 
-        // Check if window should close
-        if window_closed || ctx.input(|i| i.viewport().close_requested()) {
-            true
-        } else {
-            false
+        if !window_open || ctx.input(|i| i.viewport().close_requested()) {
+            app_state.ui_state.toggle_volume_window();
         }
     }
 
@@ -252,7 +250,7 @@ impl VolumeControlWindow {
         ui.horizontal(|ui| {
             EmojiLabel::new(format!("📋 类型: {:?}", device.device_type)).show(ui);
             EmojiLabel::new(format!(
-                "🎛️ 控制: {}",
+                "📹 控制: {}",
                 if device.has_volume_control && device.has_switch_control {
                     "音量+开关"
                 } else if device.has_volume_control {
@@ -262,7 +260,8 @@ impl VolumeControlWindow {
                 } else {
                     "无"
                 }
-            )).show(ui);
+            ))
+            .show(ui);
         });
     }
 }

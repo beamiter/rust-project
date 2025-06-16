@@ -96,7 +96,7 @@ pub mod icons {
     pub const SETTINGS_ICON: &str = "⚙️";
 
     // Monitor numbers
-    pub const MONITOR_NUMBERS: [&str; 2] = ["⓪", "①"];
+    pub const MONITOR_NUMBERS: [&str; 2] = ["🥇", "🥈"];
 }
 
 /// Font families to try loading
