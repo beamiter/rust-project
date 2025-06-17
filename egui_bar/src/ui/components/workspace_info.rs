@@ -129,7 +129,7 @@ impl WorkspacePanel {
                 ui.painter().rect_stroke(
                     new_rect,
                     1.0,
-                    Stroke::new(bold_thickness, Color32::KHAKI),
+                    Stroke::new(bold_thickness, tag_color),
                     StrokeKind::Inside,
                 );
                 label_response.on_hover_text(tooltip);
