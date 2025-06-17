@@ -35,6 +35,9 @@ impl WorkspacePanel {
             layout_symbol = message.monitor_info.ltsymbol.clone();
         }
 
+        let style = ui.style();
+        let window_margin = style.spacing.window_margin; // Margin
+
         let mut previous_rect: Option<Rect> = None;
         // Draw tag icons as buttons
         for (i, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {
@@ -82,7 +85,7 @@ impl WorkspacePanel {
             } else {
                 Rect::from_min_max(
                     egui::Pos2 {
-                        x: (rect.min.x + spacing),
+                        x: (rect.min.x + spacing + window_margin.leftf()),
                         y: (rect.min.y),
                     },
                     rect.max,
@@ -100,8 +103,7 @@ impl WorkspacePanel {
                         [new_rect.left_bottom(), new_rect.right_bottom()],
                         Stroke::new(bold_thickness, underline_color),
                     );
-                }
-                else if tag_status.is_occ {
+                } else if tag_status.is_occ {
                     ui.painter().line_segment(
                         [new_rect.left_bottom(), new_rect.right_bottom()],
                         Stroke::new(light_thickness, tag_color),
