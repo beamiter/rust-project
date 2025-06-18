@@ -4,6 +4,12 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+chrono = "0.4.41"
+flexi_logger = "0.31.0"
 iced = { version = "0.13.1", features = ["advanced", "canvas", "debug"] }
 iced_aw = "0.12.2"
 iced_fonts = { version = "0.2.1", features = ["full"] }
+log = "0.4.27"
+thiserror = "2.0.12"
+toml = "0.8.23"
+shared_structures = { path = "../shared_structures" }
