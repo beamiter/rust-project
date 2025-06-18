@@ -1,0 +1,9 @@
+[package]
+name = "iced_bar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+iced = { version = "0.13.1", features = ["advanced", "canvas", "debug"] }
+iced_aw = "0.12.2"
+iced_fonts = { version = "0.2.1", features = ["full"] }
