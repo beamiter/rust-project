@@ -1,7 +1,10 @@
 use ::iced_fonts::NERD_FONT_BYTES;
 use iced::{
-    Element, Length,
-    widget::{Column, text},
+    Element, Length, color,
+    widget::{
+        Column, button, container, rich_text, span,
+        text::{self},
+    },
 };
 use iced_aw::{TabBar, TabLabel};
 
@@ -14,6 +17,8 @@ fn main() -> iced::Result {
 #[derive(Debug, Clone)]
 enum Message {
     TabSelected(usize),
+    ButtonPressed,
+    Others,
 }
 
 #[derive(Debug)]
@@ -51,22 +56,27 @@ impl TabBarExample {
                 println!("Tab selected: {}", index);
                 self.active_tab = index
             }
+            Message::ButtonPressed => {
+                println!("ButtonPressed");
+            }
+            _ => {
+                println!("others");
+            }
         }
     }
 
     fn view(&self) -> Element<Message> {
+        let rich_label = rich_text([span("🌴111111111😻")]);
+        let tab_button = button(container(rich_label).padding(1)).on_press(Message::ButtonPressed);
         Column::new()
             .push(
                 self.tabs
                     .iter()
                     .fold(TabBar::new(Message::TabSelected), |tab_bar, tab_label| {
-                        // manually create a new index for the new tab
-                        // starting from 0, when there is no tab created yet
                         let idx = tab_bar.size();
                         tab_bar.push(idx, TabLabel::Text(tab_label.to_owned()))
                     })
                     .set_active_tab(&self.active_tab)
-                    // .on_close(Message::TabClosed)
                     .tab_width(Length::Shrink)
                     .spacing(3.0)
                     .padding(1.0)
@@ -74,7 +84,7 @@ impl TabBarExample {
             )
             .push(
                 // Draw underline here
-                text("1"),
+                tab_button,
             )
             .into()
     }
