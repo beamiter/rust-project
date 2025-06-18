@@ -113,7 +113,7 @@ impl ControllerInfoPanel {
         }
 
         // 添加详细的悬停提示信息
-        let detailed_tooltip = format!(
+        let _detailed_tooltip = format!(
             "{}\n📊 性能: {:.1} FPS\n🧵 线程: {} 个活跃\n💾 内存: {:.1}%\n🖥️ CPU: {:.1}%",
             tooltip,
             app_state.performance_metrics.average_fps(),
@@ -130,7 +130,7 @@ impl ControllerInfoPanel {
                 .unwrap_or(0.0)
         );
 
-        label_response.on_hover_text(detailed_tooltip);
+        // label_response.on_hover_text(detailed_tooltip);
     }
 
     /// Draw time display
