@@ -1,7 +1,8 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+use iced::time::{self};
 use iced::{
-    Background, Border, Color, Element, Length, Padding, Theme, color,
+    Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, color,
     widget::{Column, Row, container, text},
 };
 mod error;
@@ -111,17 +112,19 @@ fn shared_memory_worker(
         if let Some(ref shared_buffer) = shared_buffer_opt {
             match shared_buffer.try_read_latest_message::<SharedMessage>() {
                 Ok(Some(message)) => {
-                    consecutive_errors = 0; // 成功读取，重置错误计数
+                    // info!("shared_buffer {:?}", message);
+                    consecutive_errors = 0;
                     if prev_timestamp != message.timestamp {
                         prev_timestamp = message.timestamp;
                         if let Err(e) = message_sender.send(message) {
                             error!("Failed to send message: {}", e);
                             break;
+                        } else {
+                            info!("send message ok");
                         }
                     }
                 }
                 Ok(None) => {
-                    // 没有新消息，这是正常的
                     consecutive_errors = 0;
                 }
                 Err(e) => {
@@ -135,7 +138,6 @@ fn shared_memory_worker(
                         );
                     }
 
-                    // 如果连续错误过多，尝试重置读取位置
                     if consecutive_errors > 10 {
                         warn!("Too many consecutive errors, resetting read index");
                         shared_buffer.reset_read_index();
@@ -197,7 +199,7 @@ fn main() -> iced::Result {
 
     // Initialize logging
     if let Err(e) = initialize_logging(&shared_path) {
-        eprintln!("Failed to initialize logging: {}", e);
+        error!("Failed to initialize logging: {}", e);
         std::process::exit(1);
     }
 
@@ -233,8 +235,8 @@ fn main() -> iced::Result {
 #[derive(Debug, Clone)]
 enum Message {
     TabSelected(usize),
-    ButtonPressed,
-    Others,
+    CheckSharedMessages,
+    SharedMessageReceived(SharedMessage),
 }
 
 #[derive(Debug)]
@@ -245,6 +247,9 @@ struct TabBarExample {
     // 添加通信通道
     message_receiver: Option<mpsc::Receiver<SharedMessage>>,
     command_sender: Option<mpsc::Sender<SharedCommand>>,
+    // 新增：用于显示共享消息的状态
+    last_shared_message: Option<SharedMessage>,
+    message_count: u32,
 }
 
 impl Default for TabBarExample {
@@ -260,6 +265,8 @@ impl TabBarExample {
     const UNDERLINE_WIDTH: f32 = 30.0;
 
     fn new() -> Self {
+        // 启动时立即检查一次消息
+        let _task = Task::perform(async {}, |_| Message::CheckSharedMessages);
         Self {
             active_tab: 0,
             tabs: vec![
@@ -286,6 +293,8 @@ impl TabBarExample {
             ],
             message_receiver: None,
             command_sender: None,
+            last_shared_message: None,
+            message_count: 0,
         }
     }
 
@@ -300,19 +309,74 @@ impl TabBarExample {
         self
     }
 
-    fn update(&mut self, message: Message) {
+    fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TabSelected(index) => {
-                println!("Tab selected: {}", index);
-                self.active_tab = index
+                info!("Tab selected: {}", index);
+                self.active_tab = index;
+
+                // 发送命令到共享内存
+                if let Some(ref _sender) = self.command_sender {
+                    // let cmd = SharedCommand::TabChanged(index); // 假设有这个命令
+                    // if let Err(e) = sender.send(cmd) {
+                    //     error!("Failed to send command: {}", e);
+                    // }
+                }
+
+                Task::none()
             }
-            Message::ButtonPressed => {
-                println!("ButtonPressed");
+
+            Message::CheckSharedMessages => {
+                info!("CheckSharedMessages");
+                // 检查并处理所有待处理的消息
+                let mut tasks = Vec::new();
+
+                if let Some(ref receiver) = self.message_receiver {
+                    // 非阻塞地读取所有可用消息
+                    while let Ok(shared_msg) = receiver.try_recv() {
+                        info!("recieve shared_msg: {:?}", shared_msg);
+                        tasks.push(Task::perform(
+                            async move { shared_msg },
+                            Message::SharedMessageReceived,
+                        ));
+                    }
+                }
+
+                // 安排下一次检查
+                tasks.push(Task::perform(
+                    async {
+                        tokio::time::sleep(Duration::from_millis(50)).await;
+                    },
+                    |_| Message::CheckSharedMessages,
+                ));
+
+                Task::batch(tasks)
             }
-            _ => {
-                println!("others");
+
+            Message::SharedMessageReceived(shared_msg) => {
+                info!("Received shared message: {:?}", shared_msg);
+
+                // 更新应用状态
+                self.last_shared_message = Some(shared_msg.clone());
+                self.message_count += 1;
+
+                // 根据消息内容更新UI状态
+                // 例如：根据消息改变active_tab
+                // if let Some(tab_index) = self.extract_tab_from_message(&shared_msg) {
+                //     if tab_index < self.tabs.len() {
+                //         self.active_tab = tab_index;
+                //     }
+                // }
+
+                Task::none()
             }
         }
+    }
+
+    // 使用 Subscription 进行更优雅的消息监听
+    fn subscription(&self) -> Subscription<Message> {
+        // 定时检查消息的订阅
+        time::every(Duration::from_millis(50)).map(|_| Message::CheckSharedMessages)
     }
 
     fn view(&self) -> Element<Message> {
