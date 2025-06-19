@@ -165,11 +165,12 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
         Path::new(shared_path)
             .file_name()
             .and_then(|name| name.to_str())
-            .map(|name| format!("egui_bar_{}", name))
+            .map(|name| format!("iced_bar_{}", name))
             .unwrap_or_else(|| "iced_bar".to_string())
     };
 
     let log_filename = format!("{}_{}", file_name, timestamp);
+    info!("log_filename: {}", log_filename);
 
     Logger::try_with_str("info")
         .map_err(|e| AppError::config(format!("Failed to create logger: {}", e)))?
@@ -229,6 +230,8 @@ fn main() -> iced::Result {
     // 使用 iced::application 的 Builder 模式
     iced::application("iced_bar", TabBarExample::update, TabBarExample::view)
         .font(NERD_FONT_BYTES)
+        .subscription(TabBarExample::subscription)
+        .theme(TabBarExample::theme)
         .run_with(|| (app, iced::Task::none()))
 }
 
@@ -250,6 +253,8 @@ struct TabBarExample {
     // 新增：用于显示共享消息的状态
     last_shared_message: Option<SharedMessage>,
     message_count: u32,
+
+    now: chrono::DateTime<chrono::Local>,
 }
 
 impl Default for TabBarExample {
@@ -265,8 +270,6 @@ impl TabBarExample {
     const UNDERLINE_WIDTH: f32 = 30.0;
 
     fn new() -> Self {
-        // 启动时立即检查一次消息
-        let _task = Task::perform(async {}, |_| Message::CheckSharedMessages);
         Self {
             active_tab: 0,
             tabs: vec![
@@ -295,6 +298,8 @@ impl TabBarExample {
             command_sender: None,
             last_shared_message: None,
             message_count: 0,
+
+            now: chrono::offset::Local::now(),
         }
     }
 
@@ -328,13 +333,19 @@ impl TabBarExample {
 
             Message::CheckSharedMessages => {
                 info!("CheckSharedMessages");
+                let now = Local::now();
+                if now != self.now {
+                    self.now = now;
+                    // let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
+                    // info!("timestamp: {}", timestamp);
+                }
                 // 检查并处理所有待处理的消息
                 let mut tasks = Vec::new();
 
                 if let Some(ref receiver) = self.message_receiver {
                     // 非阻塞地读取所有可用消息
                     while let Ok(shared_msg) = receiver.try_recv() {
-                        info!("recieve shared_msg: {:?}", shared_msg);
+                        // info!("recieve shared_msg: {:?}", shared_msg);
                         tasks.push(Task::perform(
                             async move { shared_msg },
                             Message::SharedMessageReceived,
@@ -342,19 +353,19 @@ impl TabBarExample {
                     }
                 }
 
-                // 安排下一次检查
-                tasks.push(Task::perform(
-                    async {
-                        tokio::time::sleep(Duration::from_millis(50)).await;
-                    },
-                    |_| Message::CheckSharedMessages,
-                ));
+                // tasks.push(Task::perform(
+                //     async {
+                //         tokio::time::sleep(Duration::from_millis(50)).await;
+                //     },
+                //     |_| Message::CheckSharedMessages,
+                // ));
 
                 Task::batch(tasks)
             }
 
             Message::SharedMessageReceived(shared_msg) => {
-                info!("Received shared message: {:?}", shared_msg);
+                info!("SharedMessageReceived");
+                info!("recieve shared_msg: {:?}", shared_msg);
 
                 // 更新应用状态
                 self.last_shared_message = Some(shared_msg.clone());
@@ -373,10 +384,12 @@ impl TabBarExample {
         }
     }
 
-    // 使用 Subscription 进行更优雅的消息监听
     fn subscription(&self) -> Subscription<Message> {
-        // 定时检查消息的订阅
         time::every(Duration::from_millis(50)).map(|_| Message::CheckSharedMessages)
+    }
+
+    fn theme(&self) -> Theme {
+        Theme::ALL[(self.now.timestamp() as usize / 10) % Theme::ALL.len()].clone()
     }
 
     fn view(&self) -> Element<Message> {
