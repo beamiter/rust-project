@@ -1,7 +1,7 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::time::{self};
-use iced::widget::{Space, button};
+use iced::widget::{Space, button, rich_text};
 use iced::{
     Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, color,
     widget::{Column, Row, container, text},
@@ -239,6 +239,7 @@ fn main() -> iced::Result {
 #[derive(Debug, Clone)]
 enum Message {
     TabSelected(usize),
+    LayoutClicked,
     CheckSharedMessages,
     SharedMessageReceived(SharedMessage),
 }
@@ -254,6 +255,7 @@ struct TabBarExample {
     // 新增：用于显示共享消息的状态
     last_shared_message: Option<SharedMessage>,
     message_count: u32,
+    layout_symbol: String,
 
     now: chrono::DateTime<chrono::Local>,
 }
@@ -300,6 +302,7 @@ impl TabBarExample {
             command_sender: None,
             last_shared_message: None,
             message_count: 0,
+            layout_symbol: String::new(),
 
             now: chrono::offset::Local::now(),
         }
@@ -333,6 +336,8 @@ impl TabBarExample {
                 Task::none()
             }
 
+            Message::LayoutClicked => Task::none(),
+
             Message::CheckSharedMessages => {
                 // info!("CheckSharedMessages");
                 let now = Local::now();
@@ -355,31 +360,17 @@ impl TabBarExample {
                     }
                 }
 
-                // tasks.push(Task::perform(
-                //     async {
-                //         tokio::time::sleep(Duration::from_millis(50)).await;
-                //     },
-                //     |_| Message::CheckSharedMessages,
-                // ));
-
                 Task::batch(tasks)
             }
 
             Message::SharedMessageReceived(shared_msg) => {
                 info!("SharedMessageReceived");
                 info!("recieve shared_msg: {:?}", shared_msg);
-
                 // 更新应用状态
                 self.last_shared_message = Some(shared_msg.clone());
                 self.message_count += 1;
-
-                // 根据消息内容更新UI状态
-                // 例如：根据消息改变active_tab
-                // if let Some(tab_index) = self.extract_tab_from_message(&shared_msg) {
-                //     if tab_index < self.tabs.len() {
-                //         self.active_tab = tab_index;
-                //     }
-                // }
+                self.layout_symbol =
+                    format!("{}_{}", shared_msg.monitor_info.ltsymbol, self.active_tab);
 
                 Task::none()
             }
@@ -409,10 +400,14 @@ impl TabBarExample {
             .spacing(Self::TAB_SPACING)
             .padding(1.0)
             .text_size(10.0);
-        // let right_button = button("Right Button").on_press(Message::CheckSharedMessages);
+        info!("layout_symbol: {}", self.layout_symbol);
+        let layout_button = button("click me")
+            .on_press(Message::LayoutClicked).width(Length::Fixed(Self::TAB_WIDTH * 3.))
+            .height(Length::Fixed(Self::TAB_HEIGHT));
         let work_space_row = Row::new()
             .push(tab_bar)
-            .push(Space::with_width(Length::Fill));
+            .push(layout_button);
+            // .push(Space::with_width(Length::Fill));
         // .push(right_button);
         work_space_row.into()
     }
@@ -420,10 +415,8 @@ impl TabBarExample {
     fn view_under_line(&self) -> Element<Message> {
         // 创建下划线行
         let mut tag_status_vec = Vec::new();
-        let mut layout_symbol = String::from(" ? ");
         if let Some(ref shared_msg) = self.last_shared_message {
             tag_status_vec = shared_msg.monitor_info.tag_status_vec.clone();
-            layout_symbol = shared_msg.monitor_info.ltsymbol.clone();
         }
 
         let mut underline_row = Row::new().spacing(Self::TAB_SPACING);
@@ -555,14 +548,6 @@ impl TabBarExample {
         Column::new()
             .push(work_space_row)
             .push(under_line_row)
-            .push(
-                container(text(format!("chosen: Tab {}", self.active_tab)).size(18)).padding(
-                    Padding {
-                        top: 1.0,
-                        ..Default::default()
-                    },
-                ),
-            )
             .spacing(2)
             .padding(2)
             .into()
