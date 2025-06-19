@@ -2,6 +2,7 @@ use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::time::{self};
 use iced::widget::{Space, button, rich_text};
+use iced::window::Id;
 use iced::{
     Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, color,
     widget::{Column, Row, container, text},
@@ -244,10 +245,10 @@ enum Message {
     LayoutClicked,
     CheckSharedMessages,
     SharedMessageReceived(SharedMessage),
-    ResizeWindow(f32, f32),
-    ToggleFullscreen,
-    MinimizeWindow,
-    MaximizeWindow,
+    GetWindowId,
+    WindowIdReceived(Option<Id>),
+    ResizeWindow,
+    ResizeWithId(Option<Id>),
 }
 
 #[derive(Debug)]
@@ -264,6 +265,7 @@ struct TabBarExample {
     layout_symbol: String,
 
     now: chrono::DateTime<chrono::Local>,
+    current_window_id: Option<Id>,
 }
 
 impl Default for TabBarExample {
@@ -312,6 +314,7 @@ impl TabBarExample {
             layout_symbol: String::from(" ? "),
 
             now: chrono::offset::Local::now(),
+            current_window_id: None,
         }
     }
 
@@ -345,25 +348,34 @@ impl TabBarExample {
 
             Message::LayoutClicked => Task::none(),
 
-            // Message::ResizeWindow(width, height) => {
-            //     // 动态调整窗口大小
-            //     // window::resize(window::Id::MAIN, Size::new(width, height))
-            // }
-            //
-            // Message::ToggleFullscreen => {
-            //     // 切换全屏
-            //     // window::toggle_maximize(window::Id::MAIN)
-            // }
-            //
-            // Message::MinimizeWindow => {
-            //     // 最小化窗口
-            //     // window::minimize(window::Id::MAIN, true)
-            // }
-            //
-            // Message::MaximizeWindow => {
-            //     // 最大化窗口
-            //     // window::maximize(window::Id::MAIN, true)
-            // }
+            Message::GetWindowId => {
+                // 获取最新窗口的 ID
+                window::get_latest().map(Message::WindowIdReceived)
+            }
+
+            Message::WindowIdReceived(window_id) => {
+                // 保存窗口 ID 并用于后续操作
+                self.current_window_id = window_id;
+                Task::none()
+            }
+
+            Message::ResizeWindow => {
+                if let Some(id) = self.current_window_id {
+                    window::resize(id, Size::new(800.0, 600.0))
+                } else {
+                    window::get_latest().map(|id| Message::ResizeWithId(id))
+                }
+            }
+
+            Message::ResizeWithId(window_id) => {
+                self.current_window_id = window_id;
+                if let Some(id) = self.current_window_id {
+                    window::resize(id, Size::new(800.0, 600.0))
+                } else {
+                    Task::none()
+                }
+            }
+
             Message::CheckSharedMessages => {
                 // info!("CheckSharedMessages");
                 let now = Local::now();
@@ -399,8 +411,6 @@ impl TabBarExample {
 
                 Task::none()
             }
-
-            _ => Task::none(),
         }
     }
 
