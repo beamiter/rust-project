@@ -1,6 +1,8 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+use iced::advanced::graphics::text::cosmic_text::ttf_parser::Width;
 use iced::time::{self};
+use iced::widget::{Space, button};
 use iced::{
     Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, color,
     widget::{Column, Row, container, text},
@@ -265,9 +267,10 @@ impl Default for TabBarExample {
 
 impl TabBarExample {
     const DEFAULT_COLOR: Color = color!(0x666666);
-    const TAB_WIDTH: f32 = 40.0;
-    const TAB_SPACING: f32 = 3.0;
-    const UNDERLINE_WIDTH: f32 = 30.0;
+    const TAB_WIDTH: f32 = 24.0;
+    const TAB_HEIGHT: f32 = 24.0;
+    const TAB_SPACING: f32 = 1.0;
+    const UNDERLINE_WIDTH: f32 = 18.0;
 
     fn new() -> Self {
         Self {
@@ -332,7 +335,7 @@ impl TabBarExample {
             }
 
             Message::CheckSharedMessages => {
-                info!("CheckSharedMessages");
+                // info!("CheckSharedMessages");
                 let now = Local::now();
                 if now != self.now {
                     self.now = now;
@@ -403,9 +406,10 @@ impl TabBarExample {
             })
             .set_active_tab(&self.active_tab)
             .tab_width(Length::Fixed(Self::TAB_WIDTH))
+            .height(Length::Fixed(Self::TAB_HEIGHT))
             .spacing(Self::TAB_SPACING)
             .padding(1.0)
-            .text_size(16.0);
+            .text_size(10.0);
 
         // 创建下划线行 - 修正版
         let mut underline_row = Row::new().spacing(Self::TAB_SPACING);
@@ -439,18 +443,23 @@ impl TabBarExample {
         }
 
         let padding = Padding {
-            top: 10.0,
+            top: 1.0,
             ..Default::default()
         };
-        Column::new()
+        // let right_button = button("Right Button").on_press(Message::CheckSharedMessages);
+        let first_row = Row::new()
             .push(tab_bar)
+            .push(Space::with_width(Length::Fill));
+            // .push(right_button);
+        Column::new()
+            .push(first_row)
             .push(underline_row)
             .push(
                 container(text(format!("chosen: Tab {}", self.active_tab)).size(18))
                     .padding(padding),
             )
-            .spacing(1)
-            .padding(10)
+            .spacing(2)
+            .padding(2)
             .into()
     }
 }
