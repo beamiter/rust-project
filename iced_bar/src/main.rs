@@ -1,6 +1,5 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-use iced::advanced::graphics::text::cosmic_text::ttf_parser::Width;
 use iced::time::{self};
 use iced::widget::{Space, button};
 use iced::{
@@ -395,7 +394,7 @@ impl TabBarExample {
         Theme::ALL[(self.now.timestamp() as usize / 10) % Theme::ALL.len()].clone()
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view_work_space(&self) -> Element<Message> {
         // 使用固定宽度的TabBar
         let tab_bar = self
             .tabs
@@ -410,10 +409,17 @@ impl TabBarExample {
             .spacing(Self::TAB_SPACING)
             .padding(1.0)
             .text_size(10.0);
+        // let right_button = button("Right Button").on_press(Message::CheckSharedMessages);
+        let work_space_row = Row::new()
+            .push(tab_bar)
+            .push(Space::with_width(Length::Fill));
+        // .push(right_button);
+        work_space_row.into()
+    }
 
-        // 创建下划线行 - 修正版
+    fn view_under_line(&self) -> Element<Message> {
+        // 创建下划线行
         let mut underline_row = Row::new().spacing(Self::TAB_SPACING);
-
         for (index, _) in self.tabs.iter().enumerate() {
             let is_active = index == self.active_tab;
             let tab_color = self.tab_colors.get(index).unwrap_or(&Self::DEFAULT_COLOR);
@@ -441,22 +447,23 @@ impl TabBarExample {
 
             underline_row = underline_row.push(underline);
         }
+        underline_row.into()
+    }
 
-        let padding = Padding {
-            top: 1.0,
-            ..Default::default()
-        };
-        // let right_button = button("Right Button").on_press(Message::CheckSharedMessages);
-        let first_row = Row::new()
-            .push(tab_bar)
-            .push(Space::with_width(Length::Fill));
-            // .push(right_button);
+    fn view(&self) -> Element<Message> {
+        let work_space_row = self.view_work_space();
+
+        let under_line_row = self.view_under_line();
+
         Column::new()
-            .push(first_row)
-            .push(underline_row)
+            .push(work_space_row)
+            .push(under_line_row)
             .push(
                 container(text(format!("chosen: Tab {}", self.active_tab)).size(18))
-                    .padding(padding),
+                    .padding(Padding {
+            top: 1.0,
+            ..Default::default()
+        }),
             )
             .spacing(2)
             .padding(2)
