@@ -419,33 +419,130 @@ impl TabBarExample {
 
     fn view_under_line(&self) -> Element<Message> {
         // 创建下划线行
+        let mut tag_status_vec = Vec::new();
+        let mut layout_symbol = String::from(" ? ");
+        if let Some(ref shared_msg) = self.last_shared_message {
+            tag_status_vec = shared_msg.monitor_info.tag_status_vec.clone();
+            layout_symbol = shared_msg.monitor_info.ltsymbol.clone();
+        }
+
         let mut underline_row = Row::new().spacing(Self::TAB_SPACING);
         for (index, _) in self.tabs.iter().enumerate() {
-            let is_active = index == self.active_tab;
+            // 创建下划线
             let tab_color = self.tab_colors.get(index).unwrap_or(&Self::DEFAULT_COLOR);
 
-            // 创建下划线
-            let underline = if is_active {
-                // 激活状态：显示彩色下划线
-                container(
-                    container(text(" ")) // 使用空格而不是空字符串
-                        .width(Length::Fixed(Self::UNDERLINE_WIDTH))
-                        .height(Length::Fixed(3.0))
-                        .style(move |_theme: &Theme| container::Style {
-                            background: Some(Background::Color(*tab_color)),
-                            border: Border::default(),
-                            ..Default::default()
-                        }),
-                )
-                .center_x(Length::Fixed(Self::TAB_WIDTH))
+            // 根据状态设置样式
+            if let Some(tag_status) = tag_status_vec.get(index) {
+                if !(tag_status.is_selected
+                    || tag_status.is_occ
+                    || tag_status.is_filled
+                    || tag_status.is_urg)
+                {
+                    let underline = container(text(" "))
+                        .width(Length::Fixed(Self::TAB_WIDTH))
+                        .height(Length::Fixed(3.0));
+                    underline_row = underline_row.push(underline);
+                    continue;
+                }
+                if tag_status.is_urg {
+                    let underline = container(
+                        container(text(" "))
+                            .width(Length::Fixed(Self::UNDERLINE_WIDTH))
+                            .height(Length::Fixed(4.0))
+                            .style(move |_theme: &Theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgb(1., 0., 0.))),
+                                border: Border::default(),
+                                ..Default::default()
+                            }),
+                    )
+                    .center_x(Length::Fixed(Self::TAB_WIDTH));
+                    underline_row = underline_row.push(underline);
+                    continue;
+                }
+                if tag_status.is_filled {
+                    let underline = container(
+                        container(text(" "))
+                            .width(Length::Fixed(Self::UNDERLINE_WIDTH))
+                            .height(Length::Fixed(4.0))
+                            .style(move |_theme: &Theme| container::Style {
+                                background: Some(Background::Color(Color::from_rgb(0., 1., 0.))),
+                                border: Border::default(),
+                                ..Default::default()
+                            }),
+                    )
+                    .center_x(Length::Fixed(Self::TAB_WIDTH));
+                    underline_row = underline_row.push(underline);
+                    continue;
+                }
+                if tag_status.is_selected && !tag_status.is_occ {
+                    let underline = container(
+                        container(text(" "))
+                            .width(Length::Fixed(Self::UNDERLINE_WIDTH))
+                            .height(Length::Fixed(3.0))
+                            .style(move |_theme: &Theme| container::Style {
+                                background: Some(Background::Color(Self::DEFAULT_COLOR)),
+                                border: Border::default(),
+                                ..Default::default()
+                            }),
+                    )
+                    .center_x(Length::Fixed(Self::TAB_WIDTH));
+                    underline_row = underline_row.push(underline);
+                    continue;
+                }
+                if !tag_status.is_selected && tag_status.is_occ {
+                    let underline = container(
+                        container(text(" "))
+                            .width(Length::Fixed(Self::UNDERLINE_WIDTH))
+                            .height(Length::Fixed(1.0))
+                            .style(move |_theme: &Theme| container::Style {
+                                background: Some(Background::Color(*tab_color)),
+                                border: Border::default(),
+                                ..Default::default()
+                            }),
+                    )
+                    .center_x(Length::Fixed(Self::TAB_WIDTH));
+                    underline_row = underline_row.push(underline);
+                    continue;
+                }
+                if tag_status.is_selected && tag_status.is_occ {
+                    let underline = container(
+                        container(text(" "))
+                            .width(Length::Fixed(Self::UNDERLINE_WIDTH))
+                            .height(Length::Fixed(3.0))
+                            .style(move |_theme: &Theme| container::Style {
+                                background: Some(Background::Color(*tab_color)),
+                                border: Border::default(),
+                                ..Default::default()
+                            }),
+                    )
+                    .center_x(Length::Fixed(Self::TAB_WIDTH));
+                    underline_row = underline_row.push(underline);
+                    continue;
+                }
             } else {
-                // 非激活状态：透明占位符
-                container(text(" "))
-                    .width(Length::Fixed(Self::TAB_WIDTH))
-                    .height(Length::Fixed(3.0))
-            };
-
-            underline_row = underline_row.push(underline);
+                // Use default logic.
+                let is_active = index == self.active_tab;
+                let underline = if is_active {
+                    // 激活状态：显示彩色下划线
+                    container(
+                        container(text(" "))
+                            .width(Length::Fixed(Self::UNDERLINE_WIDTH))
+                            .height(Length::Fixed(3.0))
+                            .style(move |_theme: &Theme| container::Style {
+                                background: Some(Background::Color(*tab_color)),
+                                border: Border::default(),
+                                ..Default::default()
+                            }),
+                    )
+                    .center_x(Length::Fixed(Self::TAB_WIDTH))
+                } else {
+                    // 非激活状态：透明占位符
+                    container(text(" "))
+                        .width(Length::Fixed(Self::TAB_WIDTH))
+                        .height(Length::Fixed(3.0))
+                };
+                underline_row = underline_row.push(underline);
+            }
         }
         underline_row.into()
     }
@@ -459,11 +556,12 @@ impl TabBarExample {
             .push(work_space_row)
             .push(under_line_row)
             .push(
-                container(text(format!("chosen: Tab {}", self.active_tab)).size(18))
-                    .padding(Padding {
-            top: 1.0,
-            ..Default::default()
-        }),
+                container(text(format!("chosen: Tab {}", self.active_tab)).size(18)).padding(
+                    Padding {
+                        top: 1.0,
+                        ..Default::default()
+                    },
+                ),
             )
             .spacing(2)
             .padding(2)
