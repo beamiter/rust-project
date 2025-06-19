@@ -6,6 +6,7 @@ use iced::{
     Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, color,
     widget::{Column, Row, container, text},
 };
+use iced::{Size, window};
 mod error;
 pub use error::AppError;
 use iced_aw::{TabBar, TabLabel};
@@ -231,6 +232,7 @@ fn main() -> iced::Result {
     // 使用 iced::application 的 Builder 模式
     iced::application("iced_bar", TabBarExample::update, TabBarExample::view)
         .font(NERD_FONT_BYTES)
+        .window_size(Size::from([800., 40.]))
         .subscription(TabBarExample::subscription)
         .theme(TabBarExample::theme)
         .run_with(|| (app, iced::Task::none()))
@@ -242,6 +244,10 @@ enum Message {
     LayoutClicked,
     CheckSharedMessages,
     SharedMessageReceived(SharedMessage),
+    ResizeWindow(f32, f32),
+    ToggleFullscreen,
+    MinimizeWindow,
+    MaximizeWindow,
 }
 
 #[derive(Debug)]
@@ -268,10 +274,11 @@ impl Default for TabBarExample {
 
 impl TabBarExample {
     const DEFAULT_COLOR: Color = color!(0x666666);
-    const TAB_WIDTH: f32 = 24.0;
-    const TAB_HEIGHT: f32 = 24.0;
+    const TAB_WIDTH: f32 = 32.0;
+    const TAB_HEIGHT: f32 = 32.0;
     const TAB_SPACING: f32 = 1.0;
-    const UNDERLINE_WIDTH: f32 = 18.0;
+    const UNDERLINE_WIDTH: f32 = 28.0;
+    const TEXT_SIZE: f32 = 18.0;
 
     fn new() -> Self {
         Self {
@@ -302,7 +309,7 @@ impl TabBarExample {
             command_sender: None,
             last_shared_message: None,
             message_count: 0,
-            layout_symbol: String::new(),
+            layout_symbol: String::from(" ? "),
 
             now: chrono::offset::Local::now(),
         }
@@ -338,6 +345,25 @@ impl TabBarExample {
 
             Message::LayoutClicked => Task::none(),
 
+            // Message::ResizeWindow(width, height) => {
+            //     // 动态调整窗口大小
+            //     // window::resize(window::Id::MAIN, Size::new(width, height))
+            // }
+            //
+            // Message::ToggleFullscreen => {
+            //     // 切换全屏
+            //     // window::toggle_maximize(window::Id::MAIN)
+            // }
+            //
+            // Message::MinimizeWindow => {
+            //     // 最小化窗口
+            //     // window::minimize(window::Id::MAIN, true)
+            // }
+            //
+            // Message::MaximizeWindow => {
+            //     // 最大化窗口
+            //     // window::maximize(window::Id::MAIN, true)
+            // }
             Message::CheckSharedMessages => {
                 // info!("CheckSharedMessages");
                 let now = Local::now();
@@ -369,11 +395,12 @@ impl TabBarExample {
                 // 更新应用状态
                 self.last_shared_message = Some(shared_msg.clone());
                 self.message_count += 1;
-                self.layout_symbol =
-                    format!("{}_{}", shared_msg.monitor_info.ltsymbol, self.active_tab);
+                self.layout_symbol = shared_msg.monitor_info.ltsymbol;
 
                 Task::none()
             }
+
+            _ => Task::none(),
         }
     }
 
@@ -386,7 +413,6 @@ impl TabBarExample {
     }
 
     fn view_work_space(&self) -> Element<Message> {
-        // 使用固定宽度的TabBar
         let tab_bar = self
             .tabs
             .iter()
@@ -399,16 +425,18 @@ impl TabBarExample {
             .height(Length::Fixed(Self::TAB_HEIGHT))
             .spacing(Self::TAB_SPACING)
             .padding(1.0)
-            .text_size(10.0);
-        info!("layout_symbol: {}", self.layout_symbol);
-        let layout_button = button("click me")
-            .on_press(Message::LayoutClicked).width(Length::Fixed(Self::TAB_WIDTH * 3.))
-            .height(Length::Fixed(Self::TAB_HEIGHT));
+            .width(Length::Shrink)
+            .text_size(Self::TEXT_SIZE);
+
+        let layout_text = container(text(self.layout_symbol.as_str()).size(Self::TEXT_SIZE))
+            .center_x(Length::Shrink);
+
         let work_space_row = Row::new()
             .push(tab_bar)
-            .push(layout_button);
-            // .push(Space::with_width(Length::Fill));
-        // .push(right_button);
+            .push(layout_text)
+            .push(Space::with_width(Length::Fill))
+            .align_y(iced::Alignment::Center);
+
         work_space_row.into()
     }
 
@@ -541,6 +569,7 @@ impl TabBarExample {
     }
 
     fn view(&self) -> Element<Message> {
+        // let work_space_row = self.view_work_space().explain(Color::from_rgb(1., 0., 1.));
         let work_space_row = self.view_work_space();
 
         let under_line_row = self.view_under_line();
@@ -550,6 +579,7 @@ impl TabBarExample {
             .push(under_line_row)
             .spacing(2)
             .padding(2)
+            .height(Length::Fixed(50.))
             .into()
     }
 }
