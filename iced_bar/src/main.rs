@@ -239,6 +239,7 @@ fn main() -> iced::Result {
         .run_with(|| (app, iced::Task::none()))
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum Message {
     TabSelected(usize),
@@ -246,6 +247,7 @@ enum Message {
     CheckSharedMessages,
     SharedMessageReceived(SharedMessage),
     GetWindowId,
+    GetWindowSize(Size),
     WindowIdReceived(Option<Id>),
     ResizeWindow,
     ResizeWithId(Option<Id>),
@@ -349,30 +351,46 @@ impl TabBarExample {
             Message::LayoutClicked => Task::none(),
 
             Message::GetWindowId => {
+                info!("GetWindowId");
                 // 获取最新窗口的 ID
                 window::get_latest().map(Message::WindowIdReceived)
             }
 
-            Message::WindowIdReceived(window_id) => {
-                // 保存窗口 ID 并用于后续操作
-                self.current_window_id = window_id;
+            Message::GetWindowSize(window_size) => {
+                info!("window_size: {:?}", window_size);
                 Task::none()
             }
 
+            Message::WindowIdReceived(window_id) => {
+                info!("WindowIdReceived");
+                // 保存窗口 ID 并用于后续操作
+                self.current_window_id = window_id;
+                info!("current_window_id: {:?}", self.current_window_id);
+                window::get_size(window_id.unwrap()).map(Message::GetWindowSize)
+            }
+
             Message::ResizeWindow => {
+                info!("ResizeWindow");
                 if let Some(id) = self.current_window_id {
-                    window::resize(id, Size::new(800.0, 600.0))
+                    let mut tasks = Vec::new();
+                    tasks.push(window::move_to(id, iced::Point::new(100., 50.)));
+                    tasks.push(window::resize(id, Size::new(800.0, 600.0)));
+                    Task::batch(tasks)
                 } else {
                     window::get_latest().map(|id| Message::ResizeWithId(id))
                 }
             }
 
             Message::ResizeWithId(window_id) => {
+                info!("ResizeWithId");
                 self.current_window_id = window_id;
                 if let Some(id) = self.current_window_id {
-                    window::resize(id, Size::new(800.0, 600.0))
+                    let mut tasks = Vec::new();
+                    tasks.push(window::move_to(id, iced::Point::new(100., 50.)));
+                    tasks.push(window::resize(id, Size::new(1920.0, 600.0)));
+                    Task::batch(tasks)
                 } else {
-                    Task::none()
+                    window::get_latest().map(|id| Message::ResizeWithId(id))
                 }
             }
 
@@ -395,6 +413,9 @@ impl TabBarExample {
                             async move { shared_msg },
                             Message::SharedMessageReceived,
                         ));
+                        if self.current_window_id.is_none() {
+                            tasks.push(Task::perform(async {}, |_| Message::GetWindowId));
+                        }
                     }
                 }
 
@@ -408,8 +429,8 @@ impl TabBarExample {
                 self.last_shared_message = Some(shared_msg.clone());
                 self.message_count += 1;
                 self.layout_symbol = shared_msg.monitor_info.ltsymbol;
-
-                Task::none()
+                let current_window_id = self.current_window_id;
+                Task::perform(async move { current_window_id }, Message::ResizeWithId)
             }
         }
     }
