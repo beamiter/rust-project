@@ -1,13 +1,13 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::time::{self};
-use iced::widget::{Space, button, rich_text};
+use iced::widget::Space;
 use iced::window::Id;
 use iced::{
-    Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, color,
+    Background, Border, Color, Element, Length, Subscription, Task, Theme, color,
     widget::{Column, Row, container, text},
 };
-use iced::{Settings, Size, window};
+use iced::{Point, Size, window};
 mod error;
 pub use error::AppError;
 use iced_aw::{TabBar, TabLabel};
@@ -270,6 +270,8 @@ struct TabBarExample {
 
     now: chrono::DateTime<chrono::Local>,
     current_window_id: Option<Id>,
+
+    is_resized: bool,
 }
 
 impl Default for TabBarExample {
@@ -319,6 +321,8 @@ impl TabBarExample {
 
             now: chrono::offset::Local::now(),
             current_window_id: None,
+
+            is_resized: false,
         }
     }
 
@@ -382,10 +386,7 @@ impl TabBarExample {
             Message::ResizeWindow => {
                 info!("ResizeWindow");
                 if let Some(id) = self.current_window_id {
-                    let mut tasks = Vec::new();
-                    tasks.push(window::move_to(id, iced::Point::new(0., 0.)));
-                    tasks.push(window::resize(id, Size::new(800.0, 40.0)));
-                    Task::batch(tasks)
+                    Task::perform(async move { Some(id) }, Message::ResizeWithId)
                 } else {
                     window::get_latest().map(|id| Message::ResizeWithId(id))
                 }
@@ -396,8 +397,22 @@ impl TabBarExample {
                 self.current_window_id = window_id;
                 if let Some(id) = self.current_window_id {
                     let mut tasks = Vec::new();
-                    tasks.push(window::move_to(id, iced::Point::new(0., 0.)));
-                    tasks.push(window::resize(id, Size::new(1000., 40.0)));
+                    if let Some(ref shared_msg) = self.last_shared_message {
+                        let monitor_info = &shared_msg.monitor_info;
+                        let width = monitor_info.monitor_width as f32;
+                        let height = 40.0;
+                        let window_pos = Point::new(
+                            monitor_info.monitor_x as f32,
+                            monitor_info.monitor_y as f32,
+                        );
+                        let window_size = Size::new(width, height);
+                        tasks.push(window::move_to(id, window_pos));
+                        tasks.push(window::resize(id, window_size));
+                    } else {
+                        tasks.push(window::move_to(id, iced::Point::new(0., 0.)));
+                        tasks.push(window::resize(id, Size::new(1000., 40.0)));
+                    }
+                    self.is_resized = true;
                     Task::batch(tasks)
                 } else {
                     window::get_latest().map(|id| Message::ResizeWithId(id))
@@ -449,7 +464,11 @@ impl TabBarExample {
                 self.message_count += 1;
                 self.layout_symbol = shared_msg.monitor_info.ltsymbol;
                 let current_window_id = self.current_window_id;
-                Task::perform(async move { current_window_id }, Message::ResizeWithId)
+                if !self.is_resized {
+                    Task::perform(async move { current_window_id }, Message::ResizeWithId)
+                } else {
+                    Task::none()
+                }
             }
         }
     }
