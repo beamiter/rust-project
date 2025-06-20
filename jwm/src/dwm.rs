@@ -21,6 +21,7 @@ use std::ffi::{CStr, CString};
 use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
+use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::process::{Child, Command};
 use std::ptr::{addr_of_mut, null, null_mut};
@@ -1820,6 +1821,14 @@ impl Dwm {
         }
     }
 
+    fn monitor_to_bar_name(num: i32) -> String {
+        match num {
+            0 => Config::iced_bar_0.to_string(),
+            1 => Config::iced_bar_1.to_string(),
+            _ => Config::broken.to_string(),
+        }
+    }
+
     pub fn drawbar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
         self.update_bar_message_for_monitor(m);
         let num = self.message.monitor_info.monitor_num;
@@ -1839,6 +1848,7 @@ impl Dwm {
         let _ = self.write_message(num, &self.message.clone());
         if !self.iced_bar_child.contains_key(&num) {
             let child = Command::new(Config::iced_bar_name)
+                .arg0(Self::monitor_to_bar_name(num))
                 .arg(shared_path)
                 .spawn()
                 .expect("Failled to start iced_bar");
@@ -4740,20 +4750,6 @@ impl Dwm {
 
                 // 获取并设置窗口标题
                 self.updatetitle(&mut client_mut);
-                if client_mut.name == Config::iced_bar_name {
-                    let monitor_nums = { self.iced_bar_child.keys().cloned() };
-                    let mut class_instance = String::new();
-                    for monitor_num in monitor_nums {
-                        if !self.statusbar_clients.contains_key(&monitor_num) {
-                            class_instance = format!("{}_{}", Config::iced_bar_name, monitor_num);
-                            break;
-                        }
-                    }
-                    if !class_instance.is_empty() {
-                        self.set_class_info(&mut client_mut, &class_instance, &class_instance)
-                            .unwrap();
-                    }
-                }
                 self.update_class_info(&mut client_mut);
                 info!("[manage] {}", client_mut);
 
@@ -5311,57 +5307,44 @@ impl Dwm {
         None
     }
 
+    #[allow(dead_code)]
     fn set_class_info(
         &mut self,
         client_mut: &mut Client,
         res_class: &str,
         res_name: &str,
     ) -> Result<(), String> {
-        use std::ffi::CString;
-
-        // 参数验证
         if res_class.is_empty() && res_name.is_empty() {
             return Err("Both class and name cannot be empty".to_string());
         }
-
         unsafe {
-            // 创建 C 字符串
             let class_cstring = CString::new(res_class)
                 .map_err(|e| format!("Invalid class string '{}': {}", res_class, e))?;
-
             let name_cstring = CString::new(res_name)
                 .map_err(|e| format!("Invalid name string '{}': {}", res_name, e))?;
-
             // 检查窗口是否有效
             let mut window_attrs: XWindowAttributes = std::mem::zeroed();
             if XGetWindowAttributes(self.dpy, client_mut.win, &mut window_attrs) == 0 {
                 return Err(format!("Window 0x{:x} is not valid", client_mut.win));
             }
-
             // 创建 XClassHint 结构
             let mut ch: XClassHint = std::mem::zeroed();
             ch.res_class = class_cstring.as_ptr() as *mut _;
             ch.res_name = name_cstring.as_ptr() as *mut _;
-
             // 设置窗口的 class hint
             let result = XSetClassHint(self.dpy, client_mut.win, &mut ch);
-
             if result != 0 {
                 info!(
                 "[set_class_info] Successfully set class: '{}', instance: '{}' for window 0x{:x}",
                 res_class, res_name, client_mut.win
             );
-
                 // 更新客户端的本地记录
                 client_mut.class = res_class.to_string();
                 client_mut.instance = res_name.to_string();
-
                 // 刷新X服务器
                 XFlush(self.dpy);
-
-                // 验证设置是否成功（可选）
+                // 验证设置是否成功
                 self.verify_class_info_set(client_mut, res_class, res_name);
-
                 Ok(())
             } else {
                 Err(format!(
@@ -5373,6 +5356,7 @@ impl Dwm {
     }
 
     // 验证设置是否成功的辅助函数
+    #[allow(dead_code)]
     fn verify_class_info_set(
         &mut self,
         client: &Client,
@@ -5387,13 +5371,11 @@ impl Dwm {
                 } else {
                     ""
                 };
-
                 let actual_name = if !ch.res_name.is_null() {
                     CStr::from_ptr(ch.res_name).to_str().unwrap_or("")
                 } else {
                     ""
                 };
-
                 if actual_class == expected_class && actual_name == expected_name {
                     info!("[verify_class_info_set] Verification successful");
                 } else {
@@ -5402,7 +5384,6 @@ impl Dwm {
                     expected_class, expected_name, actual_class, actual_name
                 );
                 }
-
                 // 清理内存
                 if !ch.res_class.is_null() {
                     XFree(ch.res_class as *mut _);
@@ -5625,7 +5606,6 @@ impl Dwm {
         }
     }
 
-    /// 安全的进程终止方法
     fn terminate_iced_bar_process_safe(&mut self, monitor_id: i32) -> Result<(), String> {
         if let Some(mut child) = self.iced_bar_child.remove(&monitor_id) {
             info!(

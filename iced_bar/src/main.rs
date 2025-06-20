@@ -199,6 +199,7 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 fn main() -> iced::Result {
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
+    let class_instance = args.get(0).cloned().unwrap_or_default();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
     // Initialize logging
@@ -232,6 +233,13 @@ fn main() -> iced::Result {
 
     // 使用 iced::application 的 Builder 模式
     iced::application("iced_bar", TabBarExample::update, TabBarExample::view)
+        .window(window::Settings {
+            platform_specific: window::settings::PlatformSpecific {
+                application_id: class_instance,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
         .font(NERD_FONT_BYTES)
         .window_size(Size::from([800., 40.]))
         .subscription(TabBarExample::subscription)
