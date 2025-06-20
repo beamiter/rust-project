@@ -234,7 +234,6 @@ fn main() -> iced::Result {
     iced::application("iced_bar", TabBarExample::update, TabBarExample::view)
         .font(NERD_FONT_BYTES)
         .window_size(Size::from([800., 40.]))
-        .scale_factor(TabBarExample::scale_factor)
         .subscription(TabBarExample::subscription)
         .theme(TabBarExample::theme)
         .run_with(|| (app, iced::Task::none()))
@@ -267,11 +266,10 @@ struct TabBarExample {
     last_shared_message: Option<SharedMessage>,
     message_count: u32,
     layout_symbol: String,
-
     now: chrono::DateTime<chrono::Local>,
     current_window_id: Option<Id>,
-
     is_resized: bool,
+    scale_factor: f32,
 }
 
 impl Default for TabBarExample {
@@ -318,11 +316,10 @@ impl TabBarExample {
             last_shared_message: None,
             message_count: 0,
             layout_symbol: String::from(" ? "),
-
             now: chrono::offset::Local::now(),
             current_window_id: None,
-
             is_resized: false,
+            scale_factor: 1.0,
         }
     }
 
@@ -369,6 +366,7 @@ impl TabBarExample {
 
             Message::GetScaleFactor(scale_factor) => {
                 info!("scale_factor: {}", scale_factor);
+                self.scale_factor = scale_factor;
                 Task::none()
             }
 
@@ -399,20 +397,23 @@ impl TabBarExample {
                     let mut tasks = Vec::new();
                     if let Some(ref shared_msg) = self.last_shared_message {
                         let monitor_info = &shared_msg.monitor_info;
-                        let width = monitor_info.monitor_width as f32;
+                        let width = (monitor_info.monitor_width as f32
+                            - 2.0 * monitor_info.border_w as f32)
+                            / self.scale_factor;
                         let height = 40.0;
                         let window_pos = Point::new(
-                            monitor_info.monitor_x as f32,
-                            monitor_info.monitor_y as f32,
+                            (monitor_info.monitor_x as f32 + monitor_info.border_w as f32)
+                                / self.scale_factor,
+                            (monitor_info.monitor_y as f32 + monitor_info.border_w as f32 * 0.5)
+                                / self.scale_factor,
                         );
                         let window_size = Size::new(width, height);
+                        info!("window_pos: {:?}", window_pos);
+                        info!("window_size: {:?}", window_size);
                         tasks.push(window::move_to(id, window_pos));
                         tasks.push(window::resize(id, window_size));
-                    } else {
-                        tasks.push(window::move_to(id, iced::Point::new(0., 0.)));
-                        tasks.push(window::resize(id, Size::new(1000., 40.0)));
+                        // self.is_resized = true;
                     }
-                    self.is_resized = true;
                     Task::batch(tasks)
                 } else {
                     window::get_latest().map(|id| Message::ResizeWithId(id))
@@ -477,12 +478,9 @@ impl TabBarExample {
         time::every(Duration::from_millis(50)).map(|_| Message::CheckSharedMessages)
     }
 
-    fn scale_factor(&self) -> f64 {
-        1.0
-    }
-
     fn theme(&self) -> Theme {
-        Theme::ALL[(self.now.timestamp() as usize / 10) % Theme::ALL.len()].clone()
+        Theme::Dracula
+        // Theme::ALL[(self.now.timestamp() as usize / 10) % Theme::ALL.len()].clone()
     }
 
     fn view_work_space(&self) -> Element<Message> {
@@ -508,6 +506,7 @@ impl TabBarExample {
             .push(tab_bar)
             .push(layout_text)
             .push(Space::with_width(Length::Fill))
+            .push(text(self.scale_factor))
             .align_y(iced::Alignment::Center);
 
         work_space_row.into()
