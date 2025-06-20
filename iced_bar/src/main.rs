@@ -7,7 +7,7 @@ use iced::{
     Background, Border, Color, Element, Length, Padding, Subscription, Task, Theme, color,
     widget::{Column, Row, container, text},
 };
-use iced::{Size, window};
+use iced::{Settings, Size, window};
 mod error;
 pub use error::AppError;
 use iced_aw::{TabBar, TabLabel};
@@ -234,6 +234,7 @@ fn main() -> iced::Result {
     iced::application("iced_bar", TabBarExample::update, TabBarExample::view)
         .font(NERD_FONT_BYTES)
         .window_size(Size::from([800., 40.]))
+        .scale_factor(TabBarExample::scale_factor)
         .subscription(TabBarExample::subscription)
         .theme(TabBarExample::theme)
         .run_with(|| (app, iced::Task::none()))
@@ -248,6 +249,7 @@ enum Message {
     SharedMessageReceived(SharedMessage),
     GetWindowId,
     GetWindowSize(Size),
+    GetScaleFactor(f32),
     WindowIdReceived(Option<Id>),
     ResizeWindow,
     ResizeWithId(Option<Id>),
@@ -361,20 +363,28 @@ impl TabBarExample {
                 Task::none()
             }
 
+            Message::GetScaleFactor(scale_factor) => {
+                info!("scale_factor: {}", scale_factor);
+                Task::none()
+            }
+
             Message::WindowIdReceived(window_id) => {
                 info!("WindowIdReceived");
                 // 保存窗口 ID 并用于后续操作
                 self.current_window_id = window_id;
                 info!("current_window_id: {:?}", self.current_window_id);
-                window::get_size(window_id.unwrap()).map(Message::GetWindowSize)
+                Task::batch([
+                    window::get_size(window_id.unwrap()).map(Message::GetWindowSize),
+                    window::get_scale_factor(window_id.unwrap()).map(Message::GetScaleFactor),
+                ])
             }
 
             Message::ResizeWindow => {
                 info!("ResizeWindow");
                 if let Some(id) = self.current_window_id {
                     let mut tasks = Vec::new();
-                    tasks.push(window::move_to(id, iced::Point::new(100., 50.)));
-                    tasks.push(window::resize(id, Size::new(800.0, 600.0)));
+                    tasks.push(window::move_to(id, iced::Point::new(0., 0.)));
+                    tasks.push(window::resize(id, Size::new(800.0, 40.0)));
                     Task::batch(tasks)
                 } else {
                     window::get_latest().map(|id| Message::ResizeWithId(id))
@@ -386,8 +396,8 @@ impl TabBarExample {
                 self.current_window_id = window_id;
                 if let Some(id) = self.current_window_id {
                     let mut tasks = Vec::new();
-                    tasks.push(window::move_to(id, iced::Point::new(100., 50.)));
-                    tasks.push(window::resize(id, Size::new(1920.0, 600.0)));
+                    tasks.push(window::move_to(id, iced::Point::new(0., 0.)));
+                    tasks.push(window::resize(id, Size::new(1000., 40.0)));
                     Task::batch(tasks)
                 } else {
                     window::get_latest().map(|id| Message::ResizeWithId(id))
@@ -413,12 +423,21 @@ impl TabBarExample {
                             async move { shared_msg },
                             Message::SharedMessageReceived,
                         ));
-                        if self.current_window_id.is_none() {
-                            tasks.push(Task::perform(async {}, |_| Message::GetWindowId));
-                        }
                     }
                 }
 
+                if self.current_window_id.is_none() {
+                    tasks.push(Task::perform(async {}, |_| Message::GetWindowId));
+                } else {
+                    // let current_window_id = self.current_window_id;
+                    // tasks.push(
+                    //     window::get_size(current_window_id.unwrap()).map(Message::GetWindowSize),
+                    // );
+                    // tasks.push(
+                    //     window::get_scale_factor(current_window_id.unwrap())
+                    //         .map(Message::GetScaleFactor),
+                    // );
+                }
                 Task::batch(tasks)
             }
 
@@ -437,6 +456,10 @@ impl TabBarExample {
 
     fn subscription(&self) -> Subscription<Message> {
         time::every(Duration::from_millis(50)).map(|_| Message::CheckSharedMessages)
+    }
+
+    fn scale_factor(&self) -> f64 {
+        1.0
     }
 
     fn theme(&self) -> Theme {

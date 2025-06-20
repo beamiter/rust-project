@@ -21,7 +21,6 @@ use std::ffi::{CStr, CString};
 use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
-use std::os::unix::process::CommandExt;
 use std::process::Stdio;
 use std::process::{Child, Command};
 use std::ptr::{addr_of_mut, null, null_mut};
@@ -32,9 +31,9 @@ use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 use std::{os::raw::c_long, usize};
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
-use x11::xlib::XConfigureRequestEvent;
-use x11::xlib::XFreeStringList;
+use x11::xlib::{XConfigureRequestEvent, XFlush};
 use x11::xlib::{XConnectionNumber, XPending};
+use x11::xlib::{XFreeStringList, XSetClassHint};
 use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
 use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
 
@@ -508,10 +507,10 @@ impl Client {
         self.h + 2 * self.border_w
     }
 
-    pub fn is_egui_bar(&self) -> bool {
-        return self.name == Config::egui_bar_name
-            && ((self.class == Config::egui_bar_0 && self.instance == Config::egui_bar_0)
-                || (self.class == Config::egui_bar_1 && self.instance == Config::egui_bar_1));
+    pub fn is_iced_bar(&self) -> bool {
+        return self.name == Config::iced_bar_name
+            && ((self.class == Config::iced_bar_0 && self.instance == Config::iced_bar_0)
+                || (self.class == Config::iced_bar_1 && self.instance == Config::iced_bar_1));
     }
 }
 
@@ -688,8 +687,8 @@ pub struct Dwm {
     pub depth: i32,
     pub color_map: Colormap,
     pub sender: Sender<u8>,
-    pub egui_bar_shmem: HashMap<i32, SharedRingBuffer>,
-    pub egui_bar_child: HashMap<i32, Child>,
+    pub iced_bar_shmem: HashMap<i32, SharedRingBuffer>,
+    pub iced_bar_child: HashMap<i32, Child>,
     pub message: SharedMessage,
 
     // 状态栏专用管理
@@ -742,8 +741,8 @@ impl Dwm {
             depth: 0,
             color_map: 0,
             sender,
-            egui_bar_shmem: HashMap::new(),
-            egui_bar_child: HashMap::new(),
+            iced_bar_shmem: HashMap::new(),
+            iced_bar_child: HashMap::new(),
             message: SharedMessage::default(),
             statusbar_clients: HashMap::new(),
             statusbar_windows: HashMap::new(),
@@ -1430,7 +1429,7 @@ impl Dwm {
             let mut geometry_changed = false;
             let mut needs_workarea_update = false;
 
-            // 被动接受 egui_bar 的大小变化请求，不做任何限制或修正
+            // 被动接受 iced_bar 的大小变化请求，不做任何限制或修正
             if ev.value_mask & CWX as u64 > 0 {
                 statusbar_mut.x = ev.x;
                 geometry_changed = true;
@@ -1456,7 +1455,7 @@ impl Dwm {
                 old_geometry, statusbar_mut.x, statusbar_mut.y, statusbar_mut.w, statusbar_mut.h
             );
 
-                // 只是同意 egui_bar 的请求，允许它按照请求的大小进行配置
+                // 只是同意 iced_bar 的请求，允许它按照请求的大小进行配置
                 unsafe {
                     let mut wc: XWindowChanges = std::mem::zeroed();
                     wc.x = statusbar_mut.x;
@@ -1464,14 +1463,14 @@ impl Dwm {
                     wc.width = statusbar_mut.w;
                     wc.height = statusbar_mut.h;
 
-                    // 应用 egui_bar 请求的配置
+                    // 应用 iced_bar 请求的配置
                     XConfigureWindow(self.dpy, ev.window, ev.value_mask as u32, &mut wc);
 
                     // 确保状态栏始终在最上层
                     XRaiseWindow(self.dpy, statusbar_mut.win);
                 }
 
-                // 发送确认配置事件给 egui_bar
+                // 发送确认配置事件给 iced_bar
                 self.configure(&mut statusbar_mut);
             }
 
@@ -1790,7 +1789,7 @@ impl Dwm {
     }
 
     fn write_message(&mut self, num: i32, message: &SharedMessage) -> std::io::Result<()> {
-        if let Some(ring_buffer) = self.egui_bar_shmem.get_mut(&num) {
+        if let Some(ring_buffer) = self.iced_bar_shmem.get_mut(&num) {
             // Assuming get_mut
             match ring_buffer.try_write_message(&message) {
                 Ok(true) => {
@@ -1826,7 +1825,7 @@ impl Dwm {
         let num = self.message.monitor_info.monitor_num;
         info!("[drawbar] num: {}", num);
         let shared_path = format!("/dev/shm/monitor_{}", num);
-        if !self.egui_bar_shmem.contains_key(&num) {
+        if !self.iced_bar_shmem.contains_key(&num) {
             let ring_buffer = match SharedRingBuffer::open(&shared_path) {
                 Ok(rb) => rb,
                 Err(_) => {
@@ -1834,22 +1833,16 @@ impl Dwm {
                     SharedRingBuffer::create(&shared_path, None, None).unwrap()
                 }
             };
-            self.egui_bar_shmem.insert(num, ring_buffer);
+            self.iced_bar_shmem.insert(num, ring_buffer);
         }
         // info!("[drawbar] message: {:?}", self.message);
         let _ = self.write_message(num, &self.message.clone());
-        if !self.egui_bar_child.contains_key(&num) {
-            let process_name = format!("{}_{}", Config::egui_bar_name, num);
-            info!(
-                "[drawbar] process_name: {}, shared_path: {}",
-                process_name, shared_path
-            );
-            let child = Command::new(Config::egui_bar_name)
-                .arg0(process_name) // This change the class and instance
+        if !self.iced_bar_child.contains_key(&num) {
+            let child = Command::new(Config::iced_bar_name)
                 .arg(shared_path)
                 .spawn()
-                .expect("Failled to start egui app");
-            self.egui_bar_child.insert(num, child);
+                .expect("Failled to start iced_bar");
+            self.iced_bar_child.insert(num, child);
         }
     }
 
@@ -1914,8 +1907,8 @@ impl Dwm {
                     self.handler(ev.type_, &mut ev);
                 }
 
-                // 处理来自egui_bar的命令
-                self.process_commands_from_egui_bar();
+                // 处理来自iced_bar的命令
+                self.process_commands_from_iced_bar();
 
                 // 设置select参数
                 let mut read_fds: fd_set = std::mem::zeroed();
@@ -1957,12 +1950,12 @@ impl Dwm {
     }
 
     // 新增处理命令的方法
-    fn process_commands_from_egui_bar(&mut self) {
+    fn process_commands_from_iced_bar(&mut self) {
         // 创建一个临时向量来收集所有命令
         let mut commands_to_process: Vec<(i32, SharedCommand)> = Vec::new();
 
         // 第一步：遍历共享内存缓冲区并收集命令
-        for (&monitor_id, buffer) in &self.egui_bar_shmem {
+        for (&monitor_id, buffer) in &self.iced_bar_shmem {
             while let Some(cmd) = buffer.receive_command() {
                 // 确保命令是给当前显示器的
                 if cmd.monitor_id == monitor_id {
@@ -4570,7 +4563,7 @@ impl Dwm {
                 }
 
                 let (isvisible, _) = match c_opt.clone() {
-                    Some(c_rc) => (c_rc.borrow().isvisible(), c_rc.borrow().is_egui_bar()),
+                    Some(c_rc) => (c_rc.borrow().isvisible(), c_rc.borrow().is_iced_bar()),
                     _ => (false, false),
                 };
                 if !isvisible {
@@ -4747,11 +4740,26 @@ impl Dwm {
 
                 // 获取并设置窗口标题
                 self.updatetitle(&mut client_mut);
+                if client_mut.name == Config::iced_bar_name {
+                    let monitor_nums = { self.iced_bar_child.keys().cloned() };
+                    let mut class_instance = String::new();
+                    for monitor_num in monitor_nums {
+                        if !self.statusbar_clients.contains_key(&monitor_num) {
+                            class_instance = format!("{}_{}", Config::iced_bar_name, monitor_num);
+                            break;
+                        }
+                    }
+                    if !class_instance.is_empty() {
+                        self.set_class_info(&mut client_mut, &class_instance, &class_instance)
+                            .unwrap();
+                    }
+                }
                 self.update_class_info(&mut client_mut);
+                info!("[manage] {}", client_mut);
 
-                if client_mut.is_egui_bar() {
+                if client_mut.is_iced_bar() {
                     drop(client_mut);
-                    info!("[manage] Detected egui_bar, managing as statusbar");
+                    info!("[manage] Detected iced_bar, managing as statusbar");
                     self.manage_statusbar(client_rc, wa_ptr);
                     return; // 直接返回，不执行常规管理流程
                 }
@@ -5050,7 +5058,7 @@ impl Dwm {
         info!("[determine_statusbar_monitor]: {}", client);
         if let Some(suffix) = client
             .name
-            .strip_prefix(&format!("{}_", Config::egui_bar_name))
+            .strip_prefix(&format!("{}_", Config::iced_bar_name))
         {
             if let Ok(monitor_id) = suffix.parse::<i32>() {
                 return monitor_id;
@@ -5058,7 +5066,7 @@ impl Dwm {
         }
         if let Some(suffix) = client
             .class
-            .strip_prefix(&format!("{}_", Config::egui_bar_name))
+            .strip_prefix(&format!("{}_", Config::iced_bar_name))
         {
             if let Ok(monitor_id) = suffix.parse::<i32>() {
                 return monitor_id;
@@ -5066,7 +5074,7 @@ impl Dwm {
         }
         if let Some(suffix) = client
             .instance
-            .strip_prefix(&format!("{}_", Config::egui_bar_name))
+            .strip_prefix(&format!("{}_", Config::iced_bar_name))
         {
             if let Ok(monitor_id) = suffix.parse::<i32>() {
                 return monitor_id;
@@ -5084,7 +5092,7 @@ impl Dwm {
             client_mut.x = monitor_borrow.m_x;
             client_mut.y = monitor_borrow.m_y;
             client_mut.w = monitor_borrow.m_w;
-            // 高度由 egui_bar 自己决定，或使用默认值
+            // 高度由 iced_bar 自己决定，或使用默认值
             if client_mut.h <= 0 {
                 client_mut.h = Config::bar_height.unwrap_or(30);
             }
@@ -5128,9 +5136,9 @@ impl Dwm {
                     monitor_mut.w_h,
                 );
                 monitor_mut.w_x = monitor_mut.m_x;
-                monitor_mut.w_y = statusbar_bottom + Config::egui_bar_pad;
+                monitor_mut.w_y = statusbar_bottom + Config::iced_bar_pad;
                 monitor_mut.w_w = monitor_mut.m_w;
-                monitor_mut.w_h = available_height - Config::egui_bar_pad;
+                monitor_mut.w_h = available_height - Config::iced_bar_pad;
                 // 确保工作区域不会变成负数或过小
                 if monitor_mut.w_h < 50 {
                     monitor_mut.w_h = 50;
@@ -5219,13 +5227,13 @@ impl Dwm {
 
         if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
             let statusbar_borrow = statusbar.borrow();
-            let offset = statusbar_borrow.h + Config::egui_bar_pad;
+            let offset = statusbar_borrow.h + Config::iced_bar_pad;
             info!(
                 "[client_y_offset] Monitor {}: offset = {} (statusbar_h: {} + pad: {})",
                 monitor_id,
                 offset,
                 statusbar_borrow.h,
-                Config::egui_bar_pad
+                Config::iced_bar_pad
             );
             return offset;
         }
@@ -5303,12 +5311,121 @@ impl Dwm {
         None
     }
 
+    fn set_class_info(
+        &mut self,
+        client_mut: &mut Client,
+        res_class: &str,
+        res_name: &str,
+    ) -> Result<(), String> {
+        use std::ffi::CString;
+
+        // 参数验证
+        if res_class.is_empty() && res_name.is_empty() {
+            return Err("Both class and name cannot be empty".to_string());
+        }
+
+        unsafe {
+            // 创建 C 字符串
+            let class_cstring = CString::new(res_class)
+                .map_err(|e| format!("Invalid class string '{}': {}", res_class, e))?;
+
+            let name_cstring = CString::new(res_name)
+                .map_err(|e| format!("Invalid name string '{}': {}", res_name, e))?;
+
+            // 检查窗口是否有效
+            let mut window_attrs: XWindowAttributes = std::mem::zeroed();
+            if XGetWindowAttributes(self.dpy, client_mut.win, &mut window_attrs) == 0 {
+                return Err(format!("Window 0x{:x} is not valid", client_mut.win));
+            }
+
+            // 创建 XClassHint 结构
+            let mut ch: XClassHint = std::mem::zeroed();
+            ch.res_class = class_cstring.as_ptr() as *mut _;
+            ch.res_name = name_cstring.as_ptr() as *mut _;
+
+            // 设置窗口的 class hint
+            let result = XSetClassHint(self.dpy, client_mut.win, &mut ch);
+
+            if result != 0 {
+                info!(
+                "[set_class_info] Successfully set class: '{}', instance: '{}' for window 0x{:x}",
+                res_class, res_name, client_mut.win
+            );
+
+                // 更新客户端的本地记录
+                client_mut.class = res_class.to_string();
+                client_mut.instance = res_name.to_string();
+
+                // 刷新X服务器
+                XFlush(self.dpy);
+
+                // 验证设置是否成功（可选）
+                self.verify_class_info_set(client_mut, res_class, res_name);
+
+                Ok(())
+            } else {
+                Err(format!(
+                    "XSetClassHint failed for window 0x{:x}",
+                    client_mut.win
+                ))
+            }
+        }
+    }
+
+    // 验证设置是否成功的辅助函数
+    fn verify_class_info_set(
+        &mut self,
+        client: &Client,
+        expected_class: &str,
+        expected_name: &str,
+    ) {
+        unsafe {
+            let mut ch: XClassHint = std::mem::zeroed();
+            if XGetClassHint(self.dpy, client.win, &mut ch) > 0 {
+                let actual_class = if !ch.res_class.is_null() {
+                    CStr::from_ptr(ch.res_class).to_str().unwrap_or("")
+                } else {
+                    ""
+                };
+
+                let actual_name = if !ch.res_name.is_null() {
+                    CStr::from_ptr(ch.res_name).to_str().unwrap_or("")
+                } else {
+                    ""
+                };
+
+                if actual_class == expected_class && actual_name == expected_name {
+                    info!("[verify_class_info_set] Verification successful");
+                } else {
+                    warn!(
+                    "[verify_class_info_set] Verification failed. Expected: class='{}', name='{}'. Actual: class='{}', name='{}'",
+                    expected_class, expected_name, actual_class, actual_name
+                );
+                }
+
+                // 清理内存
+                if !ch.res_class.is_null() {
+                    XFree(ch.res_class as *mut _);
+                }
+                if !ch.res_name.is_null() {
+                    XFree(ch.res_name as *mut _);
+                }
+            } else {
+                warn!("[verify_class_info_set] Failed to get class hint for verification");
+            }
+        }
+    }
+
     // 更新窗口类信息
     fn update_class_info(&mut self, client_mut: &mut Client) {
         unsafe {
             let mut ch: XClassHint = std::mem::zeroed();
             if XGetClassHint(self.dpy, client_mut.win, &mut ch) > 0 {
                 client_mut.class = if !ch.res_class.is_null() {
+                    info!(
+                        "[update_class_info] class: {:?}",
+                        CStr::from_ptr(ch.res_class)
+                    );
                     CStr::from_ptr(ch.res_class)
                         .to_str()
                         .unwrap_or("")
@@ -5317,6 +5434,10 @@ impl Dwm {
                     String::new()
                 };
                 client_mut.instance = if !ch.res_name.is_null() {
+                    info!(
+                        "[update_class_info] instance: {:?}",
+                        CStr::from_ptr(ch.res_name)
+                    );
                     CStr::from_ptr(ch.res_name)
                         .to_str()
                         .unwrap_or("")
@@ -5482,7 +5603,7 @@ impl Dwm {
             // 🚀 优化的资源清理顺序
 
             // 1. 首先终止子进程
-            if let Err(e) = self.terminate_egui_bar_process_safe(monitor_id) {
+            if let Err(e) = self.terminate_iced_bar_process_safe(monitor_id) {
                 error!(
                     "[unmanage_statusbar] Failed to terminate process for monitor {}: {}",
                     monitor_id, e
@@ -5505,10 +5626,10 @@ impl Dwm {
     }
 
     /// 安全的进程终止方法
-    fn terminate_egui_bar_process_safe(&mut self, monitor_id: i32) -> Result<(), String> {
-        if let Some(mut child) = self.egui_bar_child.remove(&monitor_id) {
+    fn terminate_iced_bar_process_safe(&mut self, monitor_id: i32) -> Result<(), String> {
+        if let Some(mut child) = self.iced_bar_child.remove(&monitor_id) {
             info!(
-                "[terminate_egui_bar_process_safe] Terminating process for monitor {}",
+                "[terminate_iced_bar_process_safe] Terminating process for monitor {}",
                 monitor_id
             );
 
@@ -5521,7 +5642,7 @@ impl Dwm {
             match signal::kill(nix_pid, None) {
                 Err(_) => {
                     // 进程已经不存在
-                    info!("[terminate_egui_bar_process_safe] Process already terminated for monitor {}", monitor_id);
+                    info!("[terminate_iced_bar_process_safe] Process already terminated for monitor {}", monitor_id);
                     return Ok(());
                 }
                 Ok(_) => {} // 进程存在，继续终止流程
@@ -5537,7 +5658,7 @@ impl Dwm {
                     match child.try_wait() {
                         Ok(Some(status)) => {
                             info!(
-                                "[terminate_egui_bar_process_safe] Process exited gracefully: {:?}",
+                                "[terminate_iced_bar_process_safe] Process exited gracefully: {:?}",
                                 status
                             );
                             return Ok(());
@@ -5553,7 +5674,7 @@ impl Dwm {
 
                 // 超时后强制终止
                 warn!(
-                    "[terminate_egui_bar_process_safe] Graceful termination timeout, forcing kill"
+                    "[terminate_iced_bar_process_safe] Graceful termination timeout, forcing kill"
                 );
             }
 
@@ -5562,7 +5683,7 @@ impl Dwm {
                 Ok(_) => match child.wait() {
                     Ok(status) => {
                         info!(
-                            "[terminate_egui_bar_process_safe] Process force killed: {:?}",
+                            "[terminate_iced_bar_process_safe] Process force killed: {:?}",
                             status
                         );
                         Ok(())
@@ -5573,7 +5694,7 @@ impl Dwm {
             }
         } else {
             info!(
-                "[terminate_egui_bar_process_safe] No process found for monitor {}",
+                "[terminate_iced_bar_process_safe] No process found for monitor {}",
                 monitor_id
             );
             Ok(())
@@ -5582,7 +5703,7 @@ impl Dwm {
 
     /// 安全的共享内存清理方法
     fn cleanup_shared_memory_safe(&mut self, monitor_id: i32) -> Result<(), String> {
-        if let Some(shmem) = self.egui_bar_shmem.remove(&monitor_id) {
+        if let Some(shmem) = self.iced_bar_shmem.remove(&monitor_id) {
             info!(
                 "[cleanup_shared_memory_safe] Cleaning up shared memory for monitor {}",
                 monitor_id
@@ -5594,7 +5715,7 @@ impl Dwm {
             // 如果需要手动删除系统共享内存对象
             #[cfg(unix)]
             {
-                let shmem_name = format!("egui_bar_{}", monitor_id);
+                let shmem_name = format!("iced_bar_{}", monitor_id);
                 if let Ok(c_name) = std::ffi::CString::new(shmem_name) {
                     unsafe {
                         let result = libc::shm_unlink(c_name.as_ptr());
