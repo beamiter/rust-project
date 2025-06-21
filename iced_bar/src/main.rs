@@ -465,7 +465,7 @@ impl TabBarExample {
                         info!("window_size: {:?}", window_size);
                         tasks.push(window::move_to(id, window_pos));
                         tasks.push(window::resize(id, window_size));
-                        // self.is_resized = true;
+                        self.is_resized = true;
                     }
                     Task::batch(tasks)
                 } else {
