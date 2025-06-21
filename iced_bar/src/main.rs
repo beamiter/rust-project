@@ -1,7 +1,10 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::time::{self};
-use iced::widget::Space;
+use iced::widget::scrollable::{Direction, Scrollbar};
+use iced::widget::span;
+use iced::widget::{Scrollable, Space, button, rich_text, row};
+
 use iced::window::Id;
 use iced::{
     Background, Border, Color, Element, Length, Subscription, Task, Theme, color,
@@ -13,7 +16,7 @@ pub use error::AppError;
 use iced_aw::{TabBar, TabLabel};
 use iced_fonts::NERD_FONT_BYTES;
 use log::{error, info, warn};
-use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
+use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
 use std::env;
 use std::path::Path;
 use std::sync::mpsc;
@@ -251,7 +254,7 @@ fn main() -> iced::Result {
 #[derive(Debug, Clone)]
 enum Message {
     TabSelected(usize),
-    LayoutClicked,
+    LayoutClicked(u32),
     CheckSharedMessages,
     SharedMessageReceived(SharedMessage),
     GetWindowId,
@@ -274,6 +277,7 @@ struct TabBarExample {
     last_shared_message: Option<SharedMessage>,
     message_count: u32,
     layout_symbol: String,
+    monitor_num: u8,
     now: chrono::DateTime<chrono::Local>,
     current_window_id: Option<Id>,
     is_resized: bool,
@@ -324,6 +328,7 @@ impl TabBarExample {
             last_shared_message: None,
             message_count: 0,
             layout_symbol: String::from(" ? "),
+            monitor_num: 0,
             now: chrono::offset::Local::now(),
             current_window_id: None,
             is_resized: false,
@@ -342,6 +347,34 @@ impl TabBarExample {
         self
     }
 
+    fn send_tag_command(&self, command_sender: &mpsc::Sender<SharedCommand>, is_view: bool) {
+        if let Some(ref message) = self.last_shared_message {
+            let monitor_id = message.monitor_info.monitor_num;
+
+            let tag_bit = 1 << self.active_tab;
+            let command = if is_view {
+                SharedCommand::view_tag(tag_bit, monitor_id)
+            } else {
+                SharedCommand::toggle_tag(tag_bit, monitor_id)
+            };
+
+            match command_sender.send(command) {
+                Ok(_) => {
+                    let action = if is_view { "ViewTag" } else { "ToggleTag" };
+                    log::info!(
+                        "Sent {} command for tag {} in channel",
+                        action,
+                        self.active_tab + 1
+                    );
+                }
+                Err(e) => {
+                    let action = if is_view { "ViewTag" } else { "ToggleTag" };
+                    log::error!("Failed to send {} command: {}", action, e);
+                }
+            }
+        }
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
         match message {
             Message::TabSelected(index) => {
@@ -349,17 +382,29 @@ impl TabBarExample {
                 self.active_tab = index;
 
                 // 发送命令到共享内存
-                if let Some(ref _sender) = self.command_sender {
-                    // let cmd = SharedCommand::TabChanged(index); // 假设有这个命令
-                    // if let Err(e) = sender.send(cmd) {
-                    //     error!("Failed to send command: {}", e);
-                    // }
+                if let Some(ref command_sender) = self.command_sender {
+                    self.send_tag_command(command_sender, true);
                 }
 
                 Task::none()
             }
 
-            Message::LayoutClicked => Task::none(),
+            Message::LayoutClicked(layout_index) => {
+                if let Some(ref message) = self.last_shared_message {
+                    let monitor_id = message.monitor_info.monitor_num;
+                    let command =
+                        SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
+                    if let Some(ref command_sender) = self.command_sender {
+                        self.send_tag_command(command_sender, true);
+                        if let Err(e) = command_sender.send(command) {
+                            log::error!("Failed to send SetLayout command: {}", e);
+                        } else {
+                            log::info!("Sent SetLayout command: layout_index={}", layout_index);
+                        }
+                    }
+                }
+                Task::none()
+            }
 
             Message::GetWindowId => {
                 info!("GetWindowId");
@@ -472,6 +517,7 @@ impl TabBarExample {
                 self.last_shared_message = Some(shared_msg.clone());
                 self.message_count += 1;
                 self.layout_symbol = shared_msg.monitor_info.ltsymbol;
+                self.monitor_num = shared_msg.monitor_info.monitor_num as u8;
                 let current_window_id = self.current_window_id;
                 if !self.is_resized {
                     Task::perform(async move { current_window_id }, Message::ResizeWithId)
@@ -503,18 +549,39 @@ impl TabBarExample {
             .tab_width(Length::Fixed(Self::TAB_WIDTH))
             .height(Length::Fixed(Self::TAB_HEIGHT))
             .spacing(Self::TAB_SPACING)
-            .padding(1.0)
+            .padding(0.0)
             .width(Length::Shrink)
             .text_size(Self::TEXT_SIZE);
 
-        let layout_text = container(text(self.layout_symbol.as_str()).size(Self::TEXT_SIZE))
-            .center_x(Length::Shrink);
+        let layout_text =
+            container(rich_text([span(self.layout_symbol.clone())])).center_x(Length::Shrink);
 
+        let scrollable_content = Scrollable::with_direction(
+            row![
+                button("[]=").on_press(Message::LayoutClicked(0)),
+                button("><>").on_press(Message::LayoutClicked(1)),
+                button("[M]").on_press(Message::LayoutClicked(2)),
+            ]
+            .spacing(10)
+            .padding(0.0),
+            Direction::Horizontal(Scrollbar::new().scroller_width(3.0).width(1.)),
+        )
+        .width(50.0)
+        .height(Self::TAB_HEIGHT)
+        .spacing(0.);
         let work_space_row = Row::new()
             .push(tab_bar)
+            .push(Space::with_width(3))
             .push(layout_text)
+            .push(Space::with_width(3))
+            .push(scrollable_content)
             .push(Space::with_width(Length::Fill))
-            .push(text(self.scale_factor))
+            .push(rich_text([
+                span("scale "),
+                span(self.scale_factor),
+                span(", mon "),
+                span(self.monitor_num),
+            ]))
             .align_y(iced::Alignment::Center);
 
         work_space_row.into()
