@@ -1,6 +1,7 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::time::{self};
+use iced::widget::container::bordered_box;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{Scrollable, Space, button, rich_text, row};
 use iced::widget::{mouse_area, span};
@@ -290,11 +291,13 @@ struct TabBarExample {
     layout_symbol: String,
     monitor_num: u8,
     now: chrono::DateTime<chrono::Local>,
+    formated_now: String,
     current_window_id: Option<Id>,
     is_resized: bool,
     scale_factor: f32,
     is_hovered: bool,
     mouse_position: Option<iced::Point>,
+    show_seconds: bool,
 }
 
 impl Default for TabBarExample {
@@ -343,11 +346,13 @@ impl TabBarExample {
             layout_symbol: String::from(" ? "),
             monitor_num: 0,
             now: chrono::offset::Local::now(),
+            formated_now: String::new(),
             current_window_id: None,
             is_resized: false,
             scale_factor: 1.0,
             is_hovered: false,
             mouse_position: None,
+            show_seconds: false,
         }
     }
 
@@ -521,10 +526,16 @@ impl TabBarExample {
             Message::CheckSharedMessages => {
                 // info!("CheckSharedMessages");
                 let now = Local::now();
-                if now != self.now {
+                let format_str = if self.show_seconds {
+                    "%Y-%m-%d %H:%M:%S"
+                // "%Y-%m-%d_%H_%M_%S"
+                } else {
+                    "%Y-%m-%d %H:%M"
+                };
+                if now.timestamp() != self.now.timestamp() {
                     self.now = now;
-                    // let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
-                    // info!("timestamp: {}", timestamp);
+                    self.formated_now = now.format(format_str).to_string();
+                    info!("formated_now: {}", self.formated_now);
                 }
                 // 检查并处理所有待处理的消息
                 let mut tasks = Vec::new();
@@ -656,6 +667,15 @@ impl TabBarExample {
                     .on_enter(Message::MouseEnter)
                     .on_exit(Message::MouseExit)
                     .on_press(Message::LeftClick),
+            )
+            .push(Space::with_width(3))
+            .push(
+                container(rich_text([
+                    span(" "),
+                    span(self.formated_now.clone()),
+                    span(" "),
+                ]))
+                .style(move |theme: &Theme| bordered_box(theme)),
             )
             .push(rich_text([
                 span(" "),
