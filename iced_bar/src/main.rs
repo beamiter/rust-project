@@ -556,6 +556,12 @@ impl TabBarExample {
                     info!("formated_now: {}", self.formated_now);
                 }
 
+                // Update system monitor
+                self.system_monitor.update_if_needed();
+
+                // Update audio manager
+                self.audio_manager.update_if_needed();
+
                 let mut tasks = Vec::new();
                 START.call_once(|| {
                     // run initialization here
@@ -670,6 +676,16 @@ impl TabBarExample {
             })
             .padding(0.0);
         let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
+        let (cpu_average, memory_available, memory_used) =
+            if let Some(snapshot) = self.system_monitor.get_snapshot() {
+                (
+                    format!("{:.2}", snapshot.cpu_average),
+                    format!("{:.2}", snapshot.memory_available as f64 / 1e9), // GB
+                    format!("{:.2}", snapshot.memory_used as f64 / 1e9),      // GB
+                )
+            } else {
+                ("0".into(), "0".into(), "0".into())
+            };
         let work_space_row = Row::new()
             .push(tab_bar)
             .push(Space::with_width(3))
@@ -677,6 +693,15 @@ impl TabBarExample {
             .push(Space::with_width(3))
             .push(scrollable_content)
             .push(Space::with_width(Length::Fill))
+            .push(rich_text([
+                span(" "),
+                span(cpu_average),
+                span(" "),
+                span(memory_available),
+                span(" "),
+                span(memory_used),
+                span(" "),
+            ]))
             .push(
                 mouse_area(screenshot_text)
                     .on_enter(Message::MouseEnter)

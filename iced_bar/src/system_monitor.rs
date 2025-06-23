@@ -1,10 +1,54 @@
 //! System monitoring with caching and efficient updates
 
-use crate::constants::intervals;
-use crate::utils::RollingAverage;
 use battery::Manager;
+use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use sysinfo::System;
+
+/// Rolling average calculator
+#[derive(Debug, Clone)]
+pub struct RollingAverage {
+    values: VecDeque<f64>,
+    capacity: usize,
+    sum: f64,
+}
+
+impl RollingAverage {
+    pub fn new(capacity: usize) -> Self {
+        Self {
+            values: VecDeque::with_capacity(capacity),
+            capacity,
+            sum: 0.0,
+        }
+    }
+
+    pub fn add(&mut self, value: f64) {
+        if self.values.len() >= self.capacity {
+            if let Some(old_value) = self.values.pop_front() {
+                self.sum -= old_value;
+            }
+        }
+
+        self.values.push_back(value);
+        self.sum += value;
+    }
+
+    pub fn average(&self) -> f64 {
+        if self.values.is_empty() {
+            0.0
+        } else {
+            self.sum / self.values.len() as f64
+        }
+    }
+
+    pub fn len(&self) -> usize {
+        self.values.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.values.is_empty()
+    }
+}
 
 /// System information snapshot
 #[derive(Debug, Clone)]
@@ -72,7 +116,7 @@ impl SystemMonitor {
         Self {
             system,
             last_update: Instant::now(),
-            update_interval: Duration::from_millis(intervals::SYSTEM_UPDATE),
+            update_interval: Duration::from_millis(500),
             cpu_history: RollingAverage::new(history_length),
             memory_history: RollingAverage::new(history_length),
             last_snapshot: None,
@@ -118,7 +162,7 @@ impl SystemMonitor {
     /// Force refresh system information
     pub fn refresh(&mut self) {
         // Refresh only what we need to minimize overhead
-        self.system.refresh_cpu();
+        self.system.refresh_cpu_all();
         self.system.refresh_memory();
 
         // Create new snapshot

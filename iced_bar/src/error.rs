@@ -35,7 +35,7 @@ pub enum AppError {
 }
 
 /// Convenient Result type alias
-// pub type Result<T> = std::result::Result<T, AppError>;
+pub type Result<T> = std::result::Result<T, AppError>;
 
 /// Helper functions for creating specific error types
 impl AppError {
