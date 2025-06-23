@@ -17,11 +17,11 @@ use iced_aw::{TabBar, TabLabel};
 use iced_fonts::NERD_FONT_BYTES;
 use log::{error, info, warn};
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
-use std::env;
 use std::path::Path;
 use std::sync::{Once, mpsc};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{env, task};
 
 static START: Once = Once::new();
 
@@ -492,6 +492,17 @@ impl TabBarExample {
                         tasks.push(Task::perform(async {}, |_| Message::GetWindowId));
                     }
                 });
+                if self.current_window_id.is_none() {
+                    // Wait for current_window_id update.
+                    return Task::batch(tasks);
+                }
+                let current_window_id = self.current_window_id;
+                if !self.is_resized {
+                    tasks.push(Task::perform(
+                        async move { current_window_id },
+                        Message::ResizeWithId,
+                    ));
+                }
 
                 if let Some(ref receiver) = self.message_receiver {
                     // 非阻塞地读取所有可用消息
@@ -515,12 +526,7 @@ impl TabBarExample {
                 self.message_count += 1;
                 self.layout_symbol = shared_msg.monitor_info.ltsymbol;
                 self.monitor_num = shared_msg.monitor_info.monitor_num as u8;
-                let current_window_id = self.current_window_id;
-                if current_window_id.is_some() && !self.is_resized {
-                    Task::perform(async move { current_window_id }, Message::ResizeWithId)
-                } else {
-                    Task::none()
-                }
+                Task::none()
             }
         }
     }
