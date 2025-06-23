@@ -24,6 +24,12 @@ use std::sync::{Once, mpsc};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use crate::audio_manager::AudioManager;
+use crate::system_monitor::SystemMonitor;
+
+pub mod audio_manager;
+pub mod system_monitor;
+
 static START: Once = Once::new();
 
 /// Monitor heartbeat from background thread
@@ -297,6 +303,12 @@ struct TabBarExample {
     is_hovered: bool,
     mouse_position: Option<iced::Point>,
     show_seconds: bool,
+
+    /// Audio system
+    pub audio_manager: AudioManager,
+
+    /// System monitoring
+    pub system_monitor: SystemMonitor,
 }
 
 impl Default for TabBarExample {
@@ -352,6 +364,8 @@ impl TabBarExample {
             is_hovered: false,
             mouse_position: None,
             show_seconds: false,
+            audio_manager: AudioManager::new(),
+            system_monitor: SystemMonitor::new(10),
         }
     }
 
@@ -541,9 +555,8 @@ impl TabBarExample {
                     self.formated_now = now.format(format_str).to_string();
                     info!("formated_now: {}", self.formated_now);
                 }
-                // 检查并处理所有待处理的消息
-                let mut tasks = Vec::new();
 
+                let mut tasks = Vec::new();
                 START.call_once(|| {
                     // run initialization here
                     if self.current_window_id.is_none() {
