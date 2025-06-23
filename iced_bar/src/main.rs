@@ -1,7 +1,6 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::time::{self};
-use iced::widget::container::bordered_box;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{Scrollable, Space, button, rich_text, row};
 use iced::widget::{mouse_area, span};
@@ -11,12 +10,11 @@ use iced::{
     Background, Color, Element, Length, Subscription, Task, Theme, color,
     widget::{Column, Row, container, text},
 };
-use iced::{Font, Point, Size, window};
+use iced::{Point, Size, window};
 mod error;
 pub use error::AppError;
 use iced_aw::{TabBar, TabLabel};
 use iced_fonts::NERD_FONT_BYTES;
-use iced_futures::core::font;
 use log::{error, info, warn};
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
 use std::env;
@@ -268,6 +266,7 @@ enum Message {
     WindowIdReceived(Option<Id>),
     ResizeWindow,
     ResizeWithId(Option<Id>),
+    ShowSecondsToggle,
 
     // For mouse_area
     MouseEnter,
@@ -435,6 +434,11 @@ impl TabBarExample {
             Message::MouseEnter => {
                 self.is_hovered = true;
                 // info!("鼠标进入区域");
+                Task::none()
+            }
+
+            Message::ShowSecondsToggle => {
+                self.show_seconds = !self.show_seconds;
                 Task::none()
             }
 
@@ -638,23 +642,21 @@ impl TabBarExample {
 
         let cyan = Color::from_rgb(0.0, 1.0, 1.0); // 青色
         let dark_orange = Color::from_rgb(1.0, 0.5, 0.0); // 深橙色
-        let screenshot_text = container(text(format!("s {:.2}", self.scale_factor)).font(Font {
-            weight: font::Weight::Semibold,
-            ..Font::default()
-        }))
-        .center_y(Length::Fill)
-        .style(move |_theme: &Theme| {
-            if self.is_hovered {
-                container::Style {
-                    text_color: Some(dark_orange),
-                    background: Some(Background::Color(cyan)),
-                    ..Default::default()
+        let screenshot_text = container(text(format!("s {:.2}", self.scale_factor)).center())
+            .center_y(Length::Fill)
+            .style(move |_theme: &Theme| {
+                if self.is_hovered {
+                    container::Style {
+                        text_color: Some(dark_orange),
+                        background: Some(Background::Color(cyan)),
+                        ..Default::default()
+                    }
+                } else {
+                    container::Style::default()
                 }
-            } else {
-                container::Style::default()
-            }
-        })
-        .padding(0.0);
+            })
+            .padding(0.0);
+        let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
         let work_space_row = Row::new()
             .push(tab_bar)
             .push(Space::with_width(3))
@@ -669,14 +671,7 @@ impl TabBarExample {
                     .on_press(Message::LeftClick),
             )
             .push(Space::with_width(3))
-            .push(
-                container(rich_text([
-                    span(" "),
-                    span(self.formated_now.clone()),
-                    span(" "),
-                ]))
-                .style(move |theme: &Theme| bordered_box(theme)),
-            )
+            .push(time_button)
             .push(rich_text([
                 span(" "),
                 span(Self::monitor_num_to_icon(self.monitor_num)),
