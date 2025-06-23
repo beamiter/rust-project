@@ -2,26 +2,28 @@ use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::time::{self};
 use iced::widget::scrollable::{Direction, Scrollbar};
-use iced::widget::span;
 use iced::widget::{Scrollable, Space, button, rich_text, row};
+use iced::widget::{mouse_area, span};
 
 use iced::window::Id;
 use iced::{
-    Background, Border, Color, Element, Length, Subscription, Task, Theme, color,
+    Background, Color, Element, Length, Subscription, Task, Theme, color,
     widget::{Column, Row, container, text},
 };
-use iced::{Point, Size, window};
+use iced::{Font, Point, Size, window};
 mod error;
 pub use error::AppError;
 use iced_aw::{TabBar, TabLabel};
 use iced_fonts::NERD_FONT_BYTES;
+use iced_futures::core::font;
 use log::{error, info, warn};
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
+use std::env;
 use std::path::Path;
+use std::process::Command;
 use std::sync::{Once, mpsc};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use std::{env, task};
 
 static START: Once = Once::new();
 
@@ -265,6 +267,13 @@ enum Message {
     WindowIdReceived(Option<Id>),
     ResizeWindow,
     ResizeWithId(Option<Id>),
+
+    // For mouse_area
+    MouseEnter,
+    MouseExit,
+    MouseMove(iced::Point),
+    LeftClick,
+    RightClick,
 }
 
 #[derive(Debug)]
@@ -284,6 +293,8 @@ struct TabBarExample {
     current_window_id: Option<Id>,
     is_resized: bool,
     scale_factor: f32,
+    is_hovered: bool,
+    mouse_position: Option<iced::Point>,
 }
 
 impl Default for TabBarExample {
@@ -335,6 +346,8 @@ impl TabBarExample {
             current_window_id: None,
             is_resized: false,
             scale_factor: 1.0,
+            is_hovered: false,
+            mouse_position: None,
         }
     }
 
@@ -412,6 +425,36 @@ impl TabBarExample {
                 info!("GetWindowId");
                 // 获取最新窗口的 ID
                 window::get_latest().map(Message::WindowIdReceived)
+            }
+
+            Message::MouseEnter => {
+                self.is_hovered = true;
+                // info!("鼠标进入区域");
+                Task::none()
+            }
+
+            Message::MouseExit => {
+                self.is_hovered = false;
+                self.mouse_position = None;
+                // info!("鼠标离开区域");
+                Task::none()
+            }
+
+            Message::MouseMove(point) => {
+                self.mouse_position = Some(point);
+                // info!("鼠标位置: ({:.1}, {:.1})", point.x, point.y);
+                Task::none()
+            }
+
+            Message::LeftClick => {
+                // info!("左键点击");
+                let _ = Command::new("flameshot").arg("gui").spawn();
+                Task::none()
+            }
+
+            Message::RightClick => {
+                // info!("右键点击");
+                Task::none()
             }
 
             Message::GetWindowSize(window_size) => {
@@ -540,6 +583,15 @@ impl TabBarExample {
         // Theme::ALL[(self.now.timestamp() as usize / 10) % Theme::ALL.len()].clone()
     }
 
+    fn monitor_num_to_icon(monitor_num: u8) -> &'static str {
+        match monitor_num {
+            0 => "🥇",
+            1 => "🥈",
+            2 => "🥉",
+            _ => "?",
+        }
+    }
+
     fn view_work_space(&self) -> Element<Message> {
         let tab_bar = self
             .tabs
@@ -572,6 +624,26 @@ impl TabBarExample {
         .width(50.0)
         .height(Self::TAB_HEIGHT)
         .spacing(0.);
+
+        let cyan = Color::from_rgb(0.0, 1.0, 1.0); // 青色
+        let dark_orange = Color::from_rgb(1.0, 0.5, 0.0); // 深橙色
+        let screenshot_text = container(text(format!("s {:.2}", self.scale_factor)).font(Font {
+            weight: font::Weight::Semibold,
+            ..Font::default()
+        }))
+        .center_y(Length::Fill)
+        .style(move |_theme: &Theme| {
+            if self.is_hovered {
+                container::Style {
+                    text_color: Some(dark_orange),
+                    background: Some(Background::Color(cyan)),
+                    ..Default::default()
+                }
+            } else {
+                container::Style::default()
+            }
+        })
+        .padding(0.0);
         let work_space_row = Row::new()
             .push(tab_bar)
             .push(Space::with_width(3))
@@ -579,11 +651,15 @@ impl TabBarExample {
             .push(Space::with_width(3))
             .push(scrollable_content)
             .push(Space::with_width(Length::Fill))
+            .push(
+                mouse_area(screenshot_text)
+                    .on_enter(Message::MouseEnter)
+                    .on_exit(Message::MouseExit)
+                    .on_press(Message::LeftClick),
+            )
             .push(rich_text([
-                span("scale "),
-                span(self.scale_factor),
-                span(", mon "),
-                span(self.monitor_num),
+                span(" "),
+                span(Self::monitor_num_to_icon(self.monitor_num)),
             ]))
             .align_y(iced::Alignment::Center);
 
@@ -622,7 +698,6 @@ impl TabBarExample {
                             .height(Length::Fixed(4.0))
                             .style(move |_theme: &Theme| container::Style {
                                 background: Some(Background::Color(Color::from_rgb(1., 0., 0.))),
-                                border: Border::default(),
                                 ..Default::default()
                             }),
                     )
@@ -637,7 +712,6 @@ impl TabBarExample {
                             .height(Length::Fixed(4.0))
                             .style(move |_theme: &Theme| container::Style {
                                 background: Some(Background::Color(Color::from_rgb(0., 1., 0.))),
-                                border: Border::default(),
                                 ..Default::default()
                             }),
                     )
@@ -652,7 +726,6 @@ impl TabBarExample {
                             .height(Length::Fixed(3.0))
                             .style(move |_theme: &Theme| container::Style {
                                 background: Some(Background::Color(Self::DEFAULT_COLOR)),
-                                border: Border::default(),
                                 ..Default::default()
                             }),
                     )
@@ -667,7 +740,6 @@ impl TabBarExample {
                             .height(Length::Fixed(1.0))
                             .style(move |_theme: &Theme| container::Style {
                                 background: Some(Background::Color(*tab_color)),
-                                border: Border::default(),
                                 ..Default::default()
                             }),
                     )
@@ -682,7 +754,6 @@ impl TabBarExample {
                             .height(Length::Fixed(3.0))
                             .style(move |_theme: &Theme| container::Style {
                                 background: Some(Background::Color(*tab_color)),
-                                border: Border::default(),
                                 ..Default::default()
                             }),
                     )
@@ -701,7 +772,6 @@ impl TabBarExample {
                             .height(Length::Fixed(3.0))
                             .style(move |_theme: &Theme| container::Style {
                                 background: Some(Background::Color(*tab_color)),
-                                border: Border::default(),
                                 ..Default::default()
                             }),
                     )
@@ -725,11 +795,10 @@ impl TabBarExample {
         let under_line_row = self.view_under_line();
 
         Column::new()
+            .padding(2)
+            .spacing(2)
             .push(work_space_row)
             .push(under_line_row)
-            .spacing(2)
-            .padding(2)
-            .height(Length::Fixed(50.))
             .into()
     }
 }
