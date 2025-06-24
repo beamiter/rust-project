@@ -1,7 +1,6 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::daemon::Appearance;
-use iced::mouse;
 use iced::time::{self};
 use iced::widget::canvas::path::Arc;
 use iced::widget::canvas::{Cache, Geometry, Path};
@@ -9,6 +8,7 @@ use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{Scrollable, Space, button, progress_bar, rich_text, row};
 use iced::widget::{canvas, container};
 use iced::widget::{mouse_area, span};
+use iced::{gradient, mouse};
 
 use iced::window::Id;
 use iced::{
@@ -734,7 +734,13 @@ impl TabBarExample {
             .push(Space::with_width(3))
             .push(scrollable_content)
             .push(Space::with_width(Length::Fill))
-            .push(container(canvas).padding(1))
+            .push(container(canvas).style(move |_theme| {
+                let gradient = gradient::Linear::new(0.0)
+                    .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
+                    .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
+                gradient.into()
+            }))
+            .push(Space::with_width(3))
             .push(
                 mouse_area(screenshot_text)
                     .on_enter(Message::MouseEnter)
@@ -885,6 +891,16 @@ impl TabBarExample {
                 0.0..=100.0,
                 memory_available / (memory_available + memory_used) * 100.0,
             )
+            .style(move |theme: &Theme| progress_bar::Style {
+                background: Background::Gradient({
+                    let gradient = gradient::Linear::new(Radians::from(Degrees(-90.0)))
+                        .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
+                        .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
+                    gradient.into()
+                }),
+                bar: Background::Color(theme.palette().primary),
+                border: border::rounded(2.0),
+            })
             .height(Length::Fixed(3.0))
             .width(200.),
         );
@@ -963,17 +979,10 @@ impl<Message> canvas::Program<Message> for TabBarExample {
             })
         } else {
             self.cpu_pie.draw(renderer, bounds.size(), |frame| {
-                let palette = theme.extended_palette();
                 let width = bounds.width;
                 let height = bounds.height;
-                let used_height = height * cpu_average / 100.0;
-                let x = 0.0;
-                let y = height - used_height;
-                frame.fill_rectangle(
-                    Point::new(x, y),
-                    Size::new(width, used_height),
-                    palette.background.strong.color,
-                );
+                let used_height = height * (1. - cpu_average / 100.0);
+                frame.fill_rectangle(Point::ORIGIN, Size::new(width, used_height), Color::BLACK);
             })
         };
 
