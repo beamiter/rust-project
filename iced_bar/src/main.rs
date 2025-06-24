@@ -320,6 +320,7 @@ struct TabBarExample {
     transparent: bool,
 
     cpu_pie: Cache,
+    use_circle: bool,
 }
 
 impl Default for TabBarExample {
@@ -379,6 +380,7 @@ impl TabBarExample {
             system_monitor: SystemMonitor::new(10),
             transparent: true,
             cpu_pie: Cache::default(),
+            use_circle: false,
         }
     }
 
@@ -921,52 +923,59 @@ impl<Message> canvas::Program<Message> for TabBarExample {
             0.0
         };
         self.cpu_pie.clear();
-        let sector = self.cpu_pie.draw(renderer, bounds.size(), |frame| {
-            // 1. 定义扇形的几何属性
-            let center = frame.center();
-            let radius = frame.width().min(frame.height()) * 0.5;
-            let palette = theme.extended_palette();
-            let background = Path::circle(center, radius);
-            frame.fill(&background, palette.secondary.strong.color);
+        let sector = if self.use_circle {
+            self.cpu_pie.draw(renderer, bounds.size(), |frame| {
+                // 1. 定义扇形的几何属性
+                let center = frame.center();
+                let radius = frame.width().min(frame.height()) * 0.5;
+                let palette = theme.extended_palette();
+                let background = Path::circle(center, radius);
+                frame.fill(&background, palette.secondary.strong.color);
 
-            let start_angle_deg = 0.0;
-            let end_angle_deg = -360.0 * cpu_average / 100.0;
-            // 将角度转换为弧度
-            let start_angle_rad = Radians::from(Degrees(start_angle_deg));
-            let end_angle_rad = Radians::from(Degrees(end_angle_deg));
-            let sector_path = Path::new(|builder| {
-                // 步骤 a: 将画笔移动到圆心
-                builder.move_to(center);
-                // 步骤 b: 画第一条半径。我们需要计算出圆弧的起点坐标，然后画一条直线过去。
-                let start_point = Point {
-                    x: center.x + radius * start_angle_rad.0.cos(),
-                    y: center.y + radius * start_angle_rad.0.sin(),
-                };
-                builder.line_to(start_point);
-                // 步骤 c: 绘制圆弧。此时画笔位于圆弧起点，arc会从这个点开始画。
-                builder.arc(Arc {
-                    center,
-                    radius,
-                    start_angle: start_angle_rad.into(),
-                    end_angle: end_angle_rad.into(),
+                let start_angle_deg = 0.0;
+                let end_angle_deg = -360.0 * cpu_average / 100.0;
+                // 将角度转换为弧度
+                let start_angle_rad = Radians::from(Degrees(start_angle_deg));
+                let end_angle_rad = Radians::from(Degrees(end_angle_deg));
+                let sector_path = Path::new(|builder| {
+                    // 步骤 a: 将画笔移动到圆心
+                    builder.move_to(center);
+                    // 步骤 b: 画第一条半径。我们需要计算出圆弧的起点坐标，然后画一条直线过去。
+                    let start_point = Point {
+                        x: center.x + radius * start_angle_rad.0.cos(),
+                        y: center.y + radius * start_angle_rad.0.sin(),
+                    };
+                    builder.line_to(start_point);
+                    // 步骤 c: 绘制圆弧。此时画笔位于圆弧起点，arc会从这个点开始画。
+                    builder.arc(Arc {
+                        center,
+                        radius,
+                        start_angle: start_angle_rad.into(),
+                        end_angle: end_angle_rad.into(),
+                    });
+                    // 步骤 d: 闭合路径。这会从圆弧的终点画一条直线回到整个路径的起点（即圆心），
+                    builder.line_to(center);
                 });
-                // 步骤 d: 闭合路径。这会从圆弧的终点画一条直线回到整个路径的起点（即圆心），
-                builder.line_to(center);
-            });
 
-            // 3. 填充路径
-            let fill_color = Color::from_rgb8(0, 150, 255);
-            frame.fill(&sector_path, fill_color);
-            // 4. (可选) 添加描边
-            // let stroke = canvas::Stroke {
-            //     style: canvas::Style::Solid(Color::BLACK),
-            //     width: 0.1,
-            //     ..canvas::Stroke::default()
-            // };
-            // frame.stroke(&sector_path, stroke);
-        });
-
-        // 将生成的几何图形返回给 Iced 进行渲染
+                // 3. 填充路径
+                let fill_color = Color::from_rgb8(0, 150, 255);
+                frame.fill(&sector_path, fill_color);
+            })
+        } else {
+            self.cpu_pie.draw(renderer, bounds.size(), |frame| {
+                let palette = theme.extended_palette();
+                let width = bounds.width;
+                let height = bounds.height;
+                let used_height = height * cpu_average / 100.0;
+                let x = 0.0;
+                let y = height - used_height;
+                frame.fill_rectangle(
+                    Point::new(x, y),
+                    Size::new(width, used_height),
+                    palette.background.strong.color,
+                );
+            })
+        };
 
         vec![sector]
     }
