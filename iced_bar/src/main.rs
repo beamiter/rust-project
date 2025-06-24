@@ -1,5 +1,6 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+use iced::daemon::Appearance;
 use iced::time::{self};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{Scrollable, Space, button, rich_text, row};
@@ -10,7 +11,7 @@ use iced::{
     Background, Color, Element, Length, Subscription, Task, Theme, color,
     widget::{Column, Row, container, text},
 };
-use iced::{Border, Point, Size, border, window};
+use iced::{Border, Point, Size, border, theme, window};
 mod error;
 pub use error::AppError;
 use iced_aw::{TabBar, TabLabel};
@@ -28,6 +29,7 @@ use crate::audio_manager::AudioManager;
 use crate::system_monitor::SystemMonitor;
 
 pub mod audio_manager;
+// pub mod memory_chart;
 pub mod system_monitor;
 
 static START: Once = Once::new();
@@ -255,6 +257,8 @@ fn main() -> iced::Result {
         .font(NERD_FONT_BYTES)
         .window_size(Size::from([800., 40.]))
         .subscription(TabBarExample::subscription)
+        .style(TabBarExample::style)
+        // .transparent(true)
         .theme(TabBarExample::theme)
         .run_with(|| (app, iced::Task::none()))
 }
@@ -309,6 +313,7 @@ struct TabBarExample {
 
     /// System monitoring
     pub system_monitor: SystemMonitor,
+    transparent: bool,
 }
 
 impl Default for TabBarExample {
@@ -366,6 +371,7 @@ impl TabBarExample {
             show_seconds: false,
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(10),
+            transparent: true,
         }
     }
 
@@ -618,6 +624,20 @@ impl TabBarExample {
         time::every(Duration::from_millis(50)).map(|_| Message::CheckSharedMessages)
     }
 
+    fn style(&self, theme: &Theme) -> Appearance {
+        if self.transparent {
+            Appearance {
+                background_color: Color::TRANSPARENT,
+                text_color: theme.palette().text,
+            }
+        } else {
+            Appearance {
+                background_color: theme.palette().background,
+                text_color: theme.palette().text,
+            }
+        }
+    }
+
     fn theme(&self) -> Theme {
         Theme::Dracula
         // Theme::ALL[(self.now.timestamp() as usize / 10) % Theme::ALL.len()].clone()
@@ -674,6 +694,10 @@ impl TabBarExample {
                 if self.is_hovered {
                     container::Style {
                         text_color: Some(dark_orange),
+                        border: Border {
+                            radius: border::radius(2.0),
+                            ..Default::default()
+                        },
                         background: Some(Background::Color(cyan)),
                         ..Default::default()
                     }
