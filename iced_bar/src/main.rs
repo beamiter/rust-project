@@ -1,17 +1,22 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::daemon::Appearance;
+use iced::mouse;
 use iced::time::{self};
+use iced::widget::canvas::path::Arc;
+use iced::widget::canvas::{Cache, Geometry, Path};
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{Scrollable, Space, button, progress_bar, rich_text, row};
+use iced::widget::{canvas, container};
 use iced::widget::{mouse_area, span};
 
 use iced::window::Id;
 use iced::{
-    Background, Color, Element, Length, Subscription, Task, Theme, color,
-    widget::{Column, Row, container, text},
+    Background, Border, Color, Degrees, Element, Length, Point, Radians, Rectangle, Renderer, Size,
+    Subscription, Task, Theme, border, color,
+    widget::{Column, Row, text},
+    window,
 };
-use iced::{Border, Point, Size, border, window};
 mod error;
 pub use error::AppError;
 use iced_aw::{TabBar, TabLabel};
@@ -19,7 +24,6 @@ use iced_fonts::NERD_FONT_BYTES;
 use log::{error, info, warn};
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
 use std::env;
-use std::path::Path;
 use std::process::Command;
 use std::sync::{Once, mpsc};
 use std::thread;
@@ -29,7 +33,6 @@ use crate::audio_manager::AudioManager;
 use crate::system_monitor::SystemMonitor;
 
 pub mod audio_manager;
-// pub mod memory_chart;
 pub mod system_monitor;
 
 static START: Once = Once::new();
@@ -179,7 +182,7 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     let file_name = if shared_path.is_empty() {
         "iced_bar".to_string()
     } else {
-        Path::new(shared_path)
+        std::path::Path::new(shared_path)
             .file_name()
             .and_then(|name| name.to_str())
             .map(|name| format!("iced_bar_{}", name))
@@ -254,6 +257,7 @@ fn main() -> iced::Result {
             },
             ..Default::default()
         })
+        .antialiasing(true)
         .font(NERD_FONT_BYTES)
         .window_size(Size::from([800., 40.]))
         .subscription(TabBarExample::subscription)
@@ -314,6 +318,8 @@ struct TabBarExample {
     /// System monitoring
     pub system_monitor: SystemMonitor,
     transparent: bool,
+
+    cpu_pie: Cache,
 }
 
 impl Default for TabBarExample {
@@ -372,6 +378,7 @@ impl TabBarExample {
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(10),
             transparent: true,
+            cpu_pie: Cache::default(),
         }
     }
 
@@ -714,12 +721,10 @@ impl TabBarExample {
             })
             .padding(0.0);
         let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
-        let cpu_average = if let Some(snapshot) = self.system_monitor.get_snapshot() {
-            snapshot.cpu_average
-        } else {
-            0.0
-        };
-        let cpu_average = format!("{:.2}", cpu_average);
+        let canvas = canvas(self as &Self)
+            .width(Length::Fixed(Self::TAB_HEIGHT))
+            .height(Length::Fixed(Self::TAB_HEIGHT));
+
         let work_space_row = Row::new()
             .push(tab_bar)
             .push(Space::with_width(3))
@@ -727,7 +732,7 @@ impl TabBarExample {
             .push(Space::with_width(3))
             .push(scrollable_content)
             .push(Space::with_width(Length::Fill))
-            .push(rich_text([span(" "), span(cpu_average), span(" ")]))
+            .push(container(canvas).padding(1))
             .push(
                 mouse_area(screenshot_text)
                     .on_enter(Message::MouseEnter)
@@ -896,5 +901,73 @@ impl TabBarExample {
             .push(work_space_row)
             .push(under_line_row)
             .into()
+    }
+}
+
+impl<Message> canvas::Program<Message> for TabBarExample {
+    type State = ();
+
+    fn draw(
+        &self,
+        _state: &Self::State,
+        renderer: &Renderer,
+        theme: &Theme,
+        bounds: Rectangle,
+        _cursor: mouse::Cursor,
+    ) -> Vec<Geometry> {
+        let cpu_average = if let Some(snapshot) = self.system_monitor.get_snapshot() {
+            snapshot.cpu_average
+        } else {
+            0.0
+        };
+        self.cpu_pie.clear();
+        let sector = self.cpu_pie.draw(renderer, bounds.size(), |frame| {
+            // 1. 定义扇形的几何属性
+            let center = frame.center();
+            let radius = frame.width().min(frame.height()) * 0.5;
+            let palette = theme.extended_palette();
+            let background = Path::circle(center, radius);
+            frame.fill(&background, palette.secondary.strong.color);
+
+            let start_angle_deg = 0.0;
+            let end_angle_deg = -360.0 * cpu_average / 100.0;
+            // 将角度转换为弧度
+            let start_angle_rad = Radians::from(Degrees(start_angle_deg));
+            let end_angle_rad = Radians::from(Degrees(end_angle_deg));
+            let sector_path = Path::new(|builder| {
+                // 步骤 a: 将画笔移动到圆心
+                builder.move_to(center);
+                // 步骤 b: 画第一条半径。我们需要计算出圆弧的起点坐标，然后画一条直线过去。
+                let start_point = Point {
+                    x: center.x + radius * start_angle_rad.0.cos(),
+                    y: center.y + radius * start_angle_rad.0.sin(),
+                };
+                builder.line_to(start_point);
+                // 步骤 c: 绘制圆弧。此时画笔位于圆弧起点，arc会从这个点开始画。
+                builder.arc(Arc {
+                    center,
+                    radius,
+                    start_angle: start_angle_rad.into(),
+                    end_angle: end_angle_rad.into(),
+                });
+                // 步骤 d: 闭合路径。这会从圆弧的终点画一条直线回到整个路径的起点（即圆心），
+                builder.line_to(center);
+            });
+
+            // 3. 填充路径
+            let fill_color = Color::from_rgb8(0, 150, 255);
+            frame.fill(&sector_path, fill_color);
+            // 4. (可选) 添加描边
+            // let stroke = canvas::Stroke {
+            //     style: canvas::Style::Solid(Color::BLACK),
+            //     width: 0.1,
+            //     ..canvas::Stroke::default()
+            // };
+            // frame.stroke(&sector_path, stroke);
+        });
+
+        // 将生成的几何图形返回给 Iced 进行渲染
+
+        vec![sector]
     }
 }
