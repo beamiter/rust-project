@@ -553,7 +553,7 @@ impl TabBarExample {
                 if now.timestamp() != self.now.timestamp() {
                     self.now = now;
                     self.formated_now = now.format(format_str).to_string();
-                    info!("formated_now: {}", self.formated_now);
+                    // info!("formated_now: {}", self.formated_now);
                 }
 
                 // Update system monitor
@@ -603,6 +603,12 @@ impl TabBarExample {
                 self.message_count += 1;
                 self.layout_symbol = shared_msg.monitor_info.ltsymbol;
                 self.monitor_num = shared_msg.monitor_info.monitor_num as u8;
+                for (index, tag_status) in shared_msg.monitor_info.tag_status_vec.iter().enumerate()
+                {
+                    if tag_status.is_selected {
+                        self.active_tab = index;
+                    }
+                }
                 Task::none()
             }
         }
