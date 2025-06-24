@@ -10,7 +10,7 @@ use iced::{
     Background, Color, Element, Length, Subscription, Task, Theme, color,
     widget::{Column, Row, container, text},
 };
-use iced::{Point, Size, window};
+use iced::{Border, Point, Size, border, window};
 mod error;
 pub use error::AppError;
 use iced_aw::{TabBar, TabLabel};
@@ -661,6 +661,7 @@ impl TabBarExample {
 
         let cyan = Color::from_rgb(0.0, 1.0, 1.0); // 青色
         let dark_orange = Color::from_rgb(1.0, 0.5, 0.0); // 深橙色
+
         let screenshot_text = container(text(format!("s {:.2}", self.scale_factor)).center())
             .center_y(Length::Fill)
             .style(move |_theme: &Theme| {
@@ -671,7 +672,14 @@ impl TabBarExample {
                         ..Default::default()
                     }
                 } else {
-                    container::Style::default()
+                    container::Style {
+                        border: Border {
+                            color: Color::WHITE,
+                            width: 0.5,
+                            radius: border::radius(2.0),
+                        },
+                        ..Default::default()
+                    }
                 }
             })
             .padding(0.0);
