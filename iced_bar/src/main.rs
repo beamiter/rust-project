@@ -3,7 +3,7 @@ use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::daemon::Appearance;
 use iced::time::{self};
 use iced::widget::scrollable::{Direction, Scrollbar};
-use iced::widget::{Scrollable, Space, button, rich_text, row};
+use iced::widget::{Scrollable, Space, button, progress_bar, rich_text, row};
 use iced::widget::{mouse_area, span};
 
 use iced::window::Id;
@@ -11,7 +11,7 @@ use iced::{
     Background, Color, Element, Length, Subscription, Task, Theme, color,
     widget::{Column, Row, container, text},
 };
-use iced::{Border, Point, Size, border, theme, window};
+use iced::{Border, Point, Size, border, window};
 mod error;
 pub use error::AppError;
 use iced_aw::{TabBar, TabLabel};
@@ -688,7 +688,7 @@ impl TabBarExample {
         let cyan = Color::from_rgb(0.0, 1.0, 1.0); // 青色
         let dark_orange = Color::from_rgb(1.0, 0.5, 0.0); // 深橙色
 
-        let screenshot_text = container(text(format!("s {:.2}", self.scale_factor)).center())
+        let screenshot_text = container(text(format!(" s {:.2} ", self.scale_factor)).center())
             .center_y(Length::Fill)
             .style(move |_theme: &Theme| {
                 if self.is_hovered {
@@ -714,16 +714,12 @@ impl TabBarExample {
             })
             .padding(0.0);
         let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
-        let (cpu_average, memory_available, memory_used) =
-            if let Some(snapshot) = self.system_monitor.get_snapshot() {
-                (
-                    format!("{:.2}", snapshot.cpu_average),
-                    format!("{:.2}", snapshot.memory_available as f64 / 1e9), // GB
-                    format!("{:.2}", snapshot.memory_used as f64 / 1e9),      // GB
-                )
-            } else {
-                ("0".into(), "0".into(), "0".into())
-            };
+        let cpu_average = if let Some(snapshot) = self.system_monitor.get_snapshot() {
+            snapshot.cpu_average
+        } else {
+            0.0
+        };
+        let cpu_average = format!("{:.2}", cpu_average);
         let work_space_row = Row::new()
             .push(tab_bar)
             .push(Space::with_width(3))
@@ -731,15 +727,7 @@ impl TabBarExample {
             .push(Space::with_width(3))
             .push(scrollable_content)
             .push(Space::with_width(Length::Fill))
-            .push(rich_text([
-                span(" "),
-                span(cpu_average),
-                span(" "),
-                span(memory_available),
-                span(" "),
-                span(memory_used),
-                span(" "),
-            ]))
+            .push(rich_text([span(" "), span(cpu_average), span(" ")]))
             .push(
                 mouse_area(screenshot_text)
                     .on_enter(Message::MouseEnter)
@@ -876,6 +864,23 @@ impl TabBarExample {
                 underline_row = underline_row.push(underline);
             }
         }
+        let (memory_available, memory_used) =
+            if let Some(snapshot) = self.system_monitor.get_snapshot() {
+                (
+                    snapshot.memory_available as f32 / 1e9, // GB
+                    snapshot.memory_used as f32 / 1e9,      // GB
+                )
+            } else {
+                (0.0, 0.0)
+            };
+        underline_row = underline_row.push(Space::with_width(Length::Fill)).push(
+            progress_bar(
+                0.0..=100.0,
+                memory_available / (memory_available + memory_used) * 100.0,
+            )
+            .height(Length::Fixed(3.0))
+            .width(200.),
+        );
         underline_row.into()
     }
 
