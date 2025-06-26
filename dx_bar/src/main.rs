@@ -1,7 +1,12 @@
-use dioxus::prelude::*;
+use dioxus::{
+    desktop::{Config, WindowBuilder},
+    prelude::*,
+};
 
 fn main() {
-    dioxus::launch(App);
+    dioxus::LaunchBuilder::desktop()
+        .with_cfg(Config::new().with_window(WindowBuilder::new().with_title("dx_bar")))
+        .launch(App);
 }
 
 // 将按钮数据定义为静态常量
