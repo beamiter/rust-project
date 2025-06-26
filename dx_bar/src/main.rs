@@ -174,7 +174,7 @@ fn main() {
         std::process::exit(1);
     }
 
-    info!("Starting iced_bar v{}", 1.0);
+    info!("Starting dx_bar v{}", 1.0);
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(Config::new().with_window(WindowBuilder::new().with_title("dx_bar")))
