@@ -132,3 +132,43 @@
     background: #6c757d;
     cursor: not-allowed;
 }
+
+/* 原有样式保持不变 */
+
+/* 新增：禁用按钮样式 */
+.emoji-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: #f8f9fa !important;
+    transform: none !important;
+}
+
+.emoji-button:disabled:hover {
+    transform: none !important;
+    background: #f8f9fa !important;
+}
+
+/* 外部选择的特殊样式 */
+.emoji-button.selected.external {
+    background: #28a745;
+    border-color: #1e7e34;
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 4px 8px rgba(40, 167, 69, 0.3);
+    }
+    50% {
+        box-shadow: 0 4px 16px rgba(40, 167, 69, 0.6);
+    }
+    100% {
+        box-shadow: 0 4px 8px rgba(40, 167, 69, 0.3);
+    }
+}
+
+/* 连接状态样式 */
+.connection-status {
+    font-size: 14px;
+    font-weight: bold;
+}
