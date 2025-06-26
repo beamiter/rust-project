@@ -1,50 +1,134 @@
 /* 应用主容器样式 */
 .app-container {
-    padding: 20px;          /* 内边距 */
-    text-align: center;     /* 文本居中 */
-    font-family: system-ui; /* 使用系统默认字体 */
+    padding: 20px;
+    text-align: center;
+    font-family: system-ui;
 }
 
 /* 标题样式 */
 .app-title {
-    margin-bottom: 20px; /* 下边距 */
-    color: #333;         /* 深灰色文字 */
+    margin-bottom: 20px;
+    color: #333;
 }
 
 /* 按钮容器 - Flexbox 布局 */
 .button-container {
-    display: flex;          /* 弹性布局 */
-    gap: 10px;             /* 元素间距 */
-    justify-content: center; /* 水平居中 */
-    margin: 20px 0;        /* 上下外边距 */
-    flex-wrap: wrap;       /* 允许换行 */
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin: 20px 0;
+    flex-wrap: wrap;
 }
 
 /* 单个按钮样式 */
 .emoji-button {
-    font-size: 30px;       /* 字体大小 */
-    padding: 10px;         /* 内边距 */
-    border: 1px solid #ccc; /* 边框 */
-    border-radius: 8px;    /* 圆角 */
-    background: white;     /* 背景色 */
-    cursor: pointer;       /* 鼠标指针样式 */
-    transition: all 0.2s ease; /* 平滑过渡效果 */
+    font-size: 30px;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background: white;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    position: relative;
 }
 
 /* 按钮悬停效果 */
 .emoji-button:hover {
-    background: #f0f0f0;   /* 悬停时背景变灰 */
-    transform: scale(1.1); /* 放大 1.1 倍 */
+    background: #f0f0f0;
+    transform: scale(1.1);
 }
 
 /* 按钮点击效果 */
 .emoji-button:active {
-    transform: scale(0.95); /* 点击时缩小到 0.95 倍 */
+    transform: scale(0.95);
+}
+
+/* 选中按钮的样式 */
+.emoji-button.selected {
+    background: #007bff;
+    border-color: #0056b3;
+    color: white;
+    box-shadow: 0 4px 8px rgba(0, 123, 255, 0.3);
+    transform: scale(1.05);
+}
+
+.emoji-button.selected:hover {
+    background: #0056b3;
+    transform: scale(1.1);
+}
+
+/* 选中指示器 */
+.emoji-button.selected::after {
+    content: "✓";
+    position: absolute;
+    top: -5px;
+    right: -5px;
+    background: #28a745;
+    color: white;
+    border-radius: 50%;
+    width: 20px;
+    height: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: bold;
 }
 
 /* 消息显示区域 */
 .message-display {
-    margin-top: 20px; /* 上边距 */
-    font-size: 18px;  /* 字体大小 */
-    color: #666;      /* 中等灰色 */
+    margin-top: 20px;
+    font-size: 18px;
+    color: #666;
+    min-height: 50px;
+    padding: 10px;
+    border-radius: 8px;
+    background: #f8f9fa;
+}
+
+/* 状态信息区域 */
+.status-info {
+    margin-top: 20px;
+    padding: 15px;
+    background: #e9ecef;
+    border-radius: 8px;
+    border-left: 4px solid #007bff;
+}
+
+.status-title {
+    font-weight: bold;
+    margin-bottom: 8px;
+    color: #495057;
+}
+
+.current-selection {
+    font-size: 24px;
+    margin: 5px 0;
+}
+
+.selection-count {
+    color: #6c757d;
+    font-size: 14px;
+}
+
+/* 清除选择按钮 */
+.clear-button {
+    margin-top: 15px;
+    padding: 8px 16px;
+    background: #dc3545;
+    color: white;
+    border: none;
+    border-radius: 6px;
+    cursor: pointer;
+    font-size: 14px;
+    transition: background 0.2s ease;
+}
+
+.clear-button:hover {
+    background: #c82333;
+}
+
+.clear-button:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
 }
