@@ -6,9 +6,9 @@ use libc::{
     SIG_IGN, WNOHANG,
 };
 use libc::{fd_set, select, timeval, FD_ISSET, FD_SET, FD_ZERO};
-use log::error;
 use log::info;
 use log::warn;
+use log::{debug, error};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 use shared_structures::CommandType;
@@ -1829,6 +1829,57 @@ impl Dwm {
         }
     }
 
+    fn ensure_bar_is_running(&mut self, num: i32, shared_path: &str) {
+        let mut needs_spawn = true; // 默认需要启动
+        if let Some(child) = self.iced_bar_child.get_mut(&num) {
+            match child.try_wait() {
+                // Ok(None) 表示子进程仍在运行
+                Ok(None) => {
+                    debug!(" checked: iced_bar for monitor {} is still running.", num);
+                    needs_spawn = false; // 不需要启动
+                }
+                // Ok(Some(status)) 表示子进程已退出
+                Ok(Some(status)) => {
+                    error!(
+                        " checked: iced_bar for monitor {} has exited with status: {}. Restarting...",
+                        num, status
+                    );
+                    // needs_spawn 保持为 true
+                }
+                // 检查时发生 I/O 错误
+                Err(e) => {
+                    error!(
+                        " error: Failed to check status of iced_bar for monitor {}: {}. Assuming it's dead and restarting...",
+                        num, e
+                    );
+                    // needs_spawn 保持为 true
+                }
+            }
+        } else {
+            // 哈希表中不存在记录，是第一次启动
+            info!(
+                "- first time: Spawning iced_bar for monitor {} for the first time.",
+                num
+            );
+            // needs_spawn 保持为 true
+        }
+        // --- 执行操作 ---
+        // 如果需要启动（无论是第一次还是重启）
+        if needs_spawn {
+            let child = Command::new(Config::iced_bar_name)
+                .arg0(&Self::monitor_to_bar_name(num))
+                .arg(shared_path)
+                .spawn()
+                .expect("Failed to start/restart iced_bar");
+            // insert 会自动处理新增和覆盖两种情况
+            self.iced_bar_child.insert(num, child);
+            info!(
+                "   -> spawned: Successfully started/restarted iced_bar for monitor {}.",
+                num
+            );
+        }
+    }
+
     pub fn drawbar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
         self.update_bar_message_for_monitor(m);
         let num = self.message.monitor_info.monitor_num;
@@ -1846,14 +1897,7 @@ impl Dwm {
         }
         // info!("[drawbar] message: {:?}", self.message);
         let _ = self.write_message(num, &self.message.clone());
-        if !self.iced_bar_child.contains_key(&num) {
-            let child = Command::new(Config::iced_bar_name)
-                .arg0(Self::monitor_to_bar_name(num))
-                .arg(shared_path)
-                .spawn()
-                .expect("Failled to start iced_bar");
-            self.iced_bar_child.insert(num, child);
-        }
+        self.ensure_bar_is_running(num, shared_path.as_str());
     }
 
     pub fn restack(&mut self, mon_rc_opt: Option<Rc<RefCell<Monitor>>>) {
