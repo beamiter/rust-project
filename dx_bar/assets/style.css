@@ -1,44 +1,50 @@
-/* assets/style.css */
+/* 应用主容器样式 */
 .app-container {
-    padding: 20px;
-    text-align: center;
-    font-family: system-ui;
+    padding: 20px;          /* 内边距 */
+    text-align: center;     /* 文本居中 */
+    font-family: system-ui; /* 使用系统默认字体 */
 }
 
+/* 标题样式 */
 .app-title {
-    margin-bottom: 20px;
-    color: #333;
+    margin-bottom: 20px; /* 下边距 */
+    color: #333;         /* 深灰色文字 */
 }
 
+/* 按钮容器 - Flexbox 布局 */
 .button-container {
-    display: flex;
-    gap: 10px;
-    justify-content: center;
-    margin: 20px 0;
-    flex-wrap: wrap;
+    display: flex;          /* 弹性布局 */
+    gap: 10px;             /* 元素间距 */
+    justify-content: center; /* 水平居中 */
+    margin: 20px 0;        /* 上下外边距 */
+    flex-wrap: wrap;       /* 允许换行 */
 }
 
+/* 单个按钮样式 */
 .emoji-button {
-    font-size: 30px;
-    padding: 10px;
-    border: 1px solid #ccc;
-    border-radius: 8px;
-    background: white;
-    cursor: pointer;
-    transition: all 0.2s ease;
+    font-size: 30px;       /* 字体大小 */
+    padding: 10px;         /* 内边距 */
+    border: 1px solid #ccc; /* 边框 */
+    border-radius: 8px;    /* 圆角 */
+    background: white;     /* 背景色 */
+    cursor: pointer;       /* 鼠标指针样式 */
+    transition: all 0.2s ease; /* 平滑过渡效果 */
 }
 
+/* 按钮悬停效果 */
 .emoji-button:hover {
-    background: #f0f0f0;
-    transform: scale(1.1);
+    background: #f0f0f0;   /* 悬停时背景变灰 */
+    transform: scale(1.1); /* 放大 1.1 倍 */
 }
 
+/* 按钮点击效果 */
 .emoji-button:active {
-    transform: scale(0.95);
+    transform: scale(0.95); /* 点击时缩小到 0.95 倍 */
 }
 
+/* 消息显示区域 */
 .message-display {
-    margin-top: 20px;
-    font-size: 18px;
-    color: #666;
+    margin-top: 20px; /* 上边距 */
+    font-size: 18px;  /* 字体大小 */
+    color: #666;      /* 中等灰色 */
 }
