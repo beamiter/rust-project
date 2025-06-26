@@ -61,7 +61,6 @@ fn heartbeat_monitor(heartbeat_receiver: mpsc::Receiver<()>) {
 fn shared_memory_worker(
     shared_path: String,
     message_sender: mpsc::Sender<SharedMessage>,
-    heartbeat_sender: mpsc::Sender<()>,
     command_receiver: mpsc::Receiver<SharedCommand>,
 ) {
     info!("Starting shared memory worker thread");
@@ -104,12 +103,6 @@ fn shared_memory_worker(
     let mut consecutive_errors = 0;
 
     loop {
-        // 发送心跳信号
-        if heartbeat_sender.send(()).is_err() {
-            warn!("Heartbeat receiver disconnected");
-            break;
-        }
-
         // 处理发送到共享内存的命令
         while let Ok(cmd) = command_receiver.try_recv() {
             info!("Receive command: {:?} in channel", cmd);
@@ -234,19 +227,15 @@ fn main() -> iced::Result {
 
     let shared_path_clone = shared_path.clone();
     thread::spawn(move || {
-        shared_memory_worker(
-            shared_path_clone,
-            message_sender,
-            heartbeat_sender,
-            command_receiver,
-        )
+        shared_memory_worker(shared_path_clone, message_sender, command_receiver)
     });
 
     // Start heartbeat monitor
     thread::spawn(move || heartbeat_monitor(heartbeat_receiver));
 
     // 创建应用实例并传入通道
-    let app = TabBarExample::new().with_channels(message_receiver, command_sender);
+    let app =
+        TabBarExample::new().with_channels(message_receiver, command_sender, heartbeat_sender);
 
     // 使用 iced::application 的 Builder 模式
     iced::application("iced_bar", TabBarExample::update, TabBarExample::view)
@@ -298,6 +287,7 @@ struct TabBarExample {
     // 添加通信通道
     message_receiver: Option<mpsc::Receiver<SharedMessage>>,
     command_sender: Option<mpsc::Sender<SharedCommand>>,
+    heartbeat_sender: Option<mpsc::Sender<()>>,
     // 新增：用于显示共享消息的状态
     last_shared_message: Option<SharedMessage>,
     message_count: u32,
@@ -364,6 +354,7 @@ impl TabBarExample {
             ],
             message_receiver: None,
             command_sender: None,
+            heartbeat_sender: None,
             last_shared_message: None,
             message_count: 0,
             layout_symbol: String::from(" ? "),
@@ -389,9 +380,11 @@ impl TabBarExample {
         mut self,
         message_receiver: mpsc::Receiver<SharedMessage>,
         command_sender: mpsc::Sender<SharedCommand>,
+        heartbeat_sender: mpsc::Sender<()>,
     ) -> Self {
         self.message_receiver = Some(message_receiver);
         self.command_sender = Some(command_sender);
+        self.heartbeat_sender = Some(heartbeat_sender);
         self
     }
 
@@ -568,6 +561,11 @@ impl TabBarExample {
                 if now.timestamp() != self.now.timestamp() {
                     self.now = now;
                     self.formated_now = now.format(format_str).to_string();
+                    if let Some(ref heartbeat_sender) = self.heartbeat_sender {
+                        if heartbeat_sender.send(()).is_err() {
+                            warn!("Heartbeat receiver disconnected");
+                        }
+                    }
                     // info!("formated_now: {}", self.formated_now);
                 }
 
