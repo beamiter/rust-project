@@ -1,0 +1,44 @@
+/* assets/style.css */
+.app-container {
+    padding: 20px;
+    text-align: center;
+    font-family: system-ui;
+}
+
+.app-title {
+    margin-bottom: 20px;
+    color: #333;
+}
+
+.button-container {
+    display: flex;
+    gap: 10px;
+    justify-content: center;
+    margin: 20px 0;
+    flex-wrap: wrap;
+}
+
+.emoji-button {
+    font-size: 30px;
+    padding: 10px;
+    border: 1px solid #ccc;
+    border-radius: 8px;
+    background: white;
+    cursor: pointer;
+    transition: all 0.2s ease;
+}
+
+.emoji-button:hover {
+    background: #f0f0f0;
+    transform: scale(1.1);
+}
+
+.emoji-button:active {
+    transform: scale(0.95);
+}
+
+.message-display {
+    margin-top: 20px;
+    font-size: 18px;
+    color: #666;
+}

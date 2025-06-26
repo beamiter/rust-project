@@ -12,31 +12,35 @@ fn App() -> Element {
     let mut message = use_signal(|| "点击按钮".to_string());
 
     rsx! {
-        div {
-            style: "padding: 20px; text-align: center; font-family: system-ui;",
+        document::Link {
+            rel: "stylesheet",
+            href: asset!("./assets/style.css"),
+        }
 
-            h2 { "Emoji按钮" }
+        div {
+            class: "app-container",
+
+            h2 {
+                class: "app-title",
+                "Emoji按钮"
+            }
 
             div {
-                style: "display: flex; gap: 10px; justify-content: center; margin: 20px 0;",
+                class: "button-container",
                 for (i, emoji) in BUTTONS.iter().enumerate() {
                     button {
                         key: "{i}",
-                        style: "
-                            font-size: 30px; 
-                            padding: 10px; 
-                            border: 1px solid #ccc; 
-                            border-radius: 8px; 
-                            background: white;
-                            cursor: pointer;
-                        ",
+                        class: "emoji-button",
                         onclick: move |_| message.set(format!("点击了 {}", emoji)),
                         "{emoji}"
                     }
                 }
             }
 
-            p { "{message()}" }
+            p {
+                class: "message-display",
+                "{message()}"
+            }
         }
     }
 }
