@@ -5,8 +5,25 @@ edition = "2024"
 
 [dependencies]
 dioxus = { version = "0.6.3", features = ["web"] }
+
+tokio = { version = "1.45.1", features = ["time"] }
 wasm-bindgen = "0.2.100"
 web-sys = "0.3.77"
+chrono = "0.4.41"
+flexi_logger = "0.31.0"
+log = "0.4.27"
+thiserror = "2.0.12"
+toml = "0.8.23"
+shared_structures = { path = "../shared_structures" }
+time = "0.3.41"
+sysinfo = "0.35.2"
+battery = "0.7.8"
+alsa = "0.9.1"
+
+# 为 WebAssembly 目标启用 js 特性
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+
+getrandom = { version = "*", features = ["js"] }
 
 [profile]
 
