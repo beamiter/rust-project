@@ -508,10 +508,10 @@ impl Client {
         self.h + 2 * self.border_w
     }
 
-    pub fn is_iced_bar(&self) -> bool {
-        return self.name == Config::iced_bar_name
-            && ((self.class == Config::iced_bar_0 && self.instance == Config::iced_bar_0)
-                || (self.class == Config::iced_bar_1 && self.instance == Config::iced_bar_1));
+    pub fn is_status_bar(&self) -> bool {
+        return self.name == Config::status_bar_name
+            && ((self.class == Config::status_bar_0 && self.instance == Config::status_bar_0)
+                || (self.class == Config::status_bar_1 && self.instance == Config::status_bar_1));
     }
 }
 
@@ -688,8 +688,8 @@ pub struct Dwm {
     pub depth: i32,
     pub color_map: Colormap,
     pub sender: Sender<u8>,
-    pub iced_bar_shmem: HashMap<i32, SharedRingBuffer>,
-    pub iced_bar_child: HashMap<i32, Child>,
+    pub status_bar_shmem: HashMap<i32, SharedRingBuffer>,
+    pub status_bar_child: HashMap<i32, Child>,
     pub message: SharedMessage,
 
     // 状态栏专用管理
@@ -742,8 +742,8 @@ impl Dwm {
             depth: 0,
             color_map: 0,
             sender,
-            iced_bar_shmem: HashMap::new(),
-            iced_bar_child: HashMap::new(),
+            status_bar_shmem: HashMap::new(),
+            status_bar_child: HashMap::new(),
             message: SharedMessage::default(),
             statusbar_clients: HashMap::new(),
             statusbar_windows: HashMap::new(),
@@ -1430,7 +1430,7 @@ impl Dwm {
             let mut geometry_changed = false;
             let mut needs_workarea_update = false;
 
-            // 被动接受 iced_bar 的大小变化请求，不做任何限制或修正
+            // 被动接受 status bar 的大小变化请求，不做任何限制或修正
             if ev.value_mask & CWX as u64 > 0 {
                 statusbar_mut.x = ev.x;
                 geometry_changed = true;
@@ -1456,7 +1456,7 @@ impl Dwm {
                 old_geometry, statusbar_mut.x, statusbar_mut.y, statusbar_mut.w, statusbar_mut.h
             );
 
-                // 只是同意 iced_bar 的请求，允许它按照请求的大小进行配置
+                // 只是同意 status bar 的请求，允许它按照请求的大小进行配置
                 unsafe {
                     let mut wc: XWindowChanges = std::mem::zeroed();
                     wc.x = statusbar_mut.x;
@@ -1464,14 +1464,14 @@ impl Dwm {
                     wc.width = statusbar_mut.w;
                     wc.height = statusbar_mut.h;
 
-                    // 应用 iced_bar 请求的配置
+                    // 应用 status bar 请求的配置
                     XConfigureWindow(self.dpy, ev.window, ev.value_mask as u32, &mut wc);
 
                     // 确保状态栏始终在最上层
                     XRaiseWindow(self.dpy, statusbar_mut.win);
                 }
 
-                // 发送确认配置事件给 iced_bar
+                // 发送确认配置事件给 status bar
                 self.configure(&mut statusbar_mut);
             }
 
@@ -1790,7 +1790,7 @@ impl Dwm {
     }
 
     fn write_message(&mut self, num: i32, message: &SharedMessage) -> std::io::Result<()> {
-        if let Some(ring_buffer) = self.iced_bar_shmem.get_mut(&num) {
+        if let Some(ring_buffer) = self.status_bar_shmem.get_mut(&num) {
             // Assuming get_mut
             match ring_buffer.try_write_message(&message) {
                 Ok(true) => {
@@ -1823,25 +1823,25 @@ impl Dwm {
 
     fn monitor_to_bar_name(num: i32) -> String {
         match num {
-            0 => Config::iced_bar_0.to_string(),
-            1 => Config::iced_bar_1.to_string(),
+            0 => Config::status_bar_0.to_string(),
+            1 => Config::status_bar_1.to_string(),
             _ => Config::broken.to_string(),
         }
     }
 
     fn ensure_bar_is_running(&mut self, num: i32, shared_path: &str) {
         let mut needs_spawn = true; // 默认需要启动
-        if let Some(child) = self.iced_bar_child.get_mut(&num) {
+        if let Some(child) = self.status_bar_child.get_mut(&num) {
             match child.try_wait() {
                 // Ok(None) 表示子进程仍在运行
                 Ok(None) => {
-                    debug!(" checked: iced_bar for monitor {} is still running.", num);
+                    debug!(" checked: status bar for monitor {} is still running.", num);
                     needs_spawn = false; // 不需要启动
                 }
                 // Ok(Some(status)) 表示子进程已退出
                 Ok(Some(status)) => {
                     error!(
-                        " checked: iced_bar for monitor {} has exited with status: {}. Restarting...",
+                        " checked: status bar for monitor {} has exited with status: {}. Restarting...",
                         num, status
                     );
                     // needs_spawn 保持为 true
@@ -1849,7 +1849,7 @@ impl Dwm {
                 // 检查时发生 I/O 错误
                 Err(e) => {
                     error!(
-                        " error: Failed to check status of iced_bar for monitor {}: {}. Assuming it's dead and restarting...",
+                        " error: Failed to check status of status bar for monitor {}: {}. Assuming it's dead and restarting...",
                         num, e
                     );
                     // needs_spawn 保持为 true
@@ -1858,7 +1858,7 @@ impl Dwm {
         } else {
             // 哈希表中不存在记录，是第一次启动
             info!(
-                "- first time: Spawning iced_bar for monitor {} for the first time.",
+                "- first time: Spawning status bar for monitor {} for the first time.",
                 num
             );
             // needs_spawn 保持为 true
@@ -1866,15 +1866,15 @@ impl Dwm {
         // --- 执行操作 ---
         // 如果需要启动（无论是第一次还是重启）
         if needs_spawn {
-            if let Ok(child) = Command::new(Config::iced_bar_name)
+            if let Ok(child) = Command::new(Config::status_bar_name)
                 .arg0(&Self::monitor_to_bar_name(num))
                 .arg(shared_path)
                 .spawn()
             {
                 // insert 会自动处理新增和覆盖两种情况
-                self.iced_bar_child.insert(num, child);
+                self.status_bar_child.insert(num, child);
                 info!(
-                    "   -> spawned: Successfully started/restarted iced_bar for monitor {}.",
+                    "   -> spawned: Successfully started/restarted status bar for monitor {}.",
                     num
                 );
             }
@@ -1886,7 +1886,7 @@ impl Dwm {
         let num = self.message.monitor_info.monitor_num;
         info!("[drawbar] num: {}", num);
         let shared_path = format!("/dev/shm/monitor_{}", num);
-        if !self.iced_bar_shmem.contains_key(&num) {
+        if !self.status_bar_shmem.contains_key(&num) {
             let ring_buffer = match SharedRingBuffer::open(&shared_path) {
                 Ok(rb) => rb,
                 Err(_) => {
@@ -1894,7 +1894,7 @@ impl Dwm {
                     SharedRingBuffer::create(&shared_path, None, None).unwrap()
                 }
             };
-            self.iced_bar_shmem.insert(num, ring_buffer);
+            self.status_bar_shmem.insert(num, ring_buffer);
         }
         // info!("[drawbar] message: {:?}", self.message);
         let _ = self.write_message(num, &self.message.clone());
@@ -1962,8 +1962,8 @@ impl Dwm {
                     self.handler(ev.type_, &mut ev);
                 }
 
-                // 处理来自iced_bar的命令
-                self.process_commands_from_iced_bar();
+                // 处理来自status bar的命令
+                self.process_commands_from_status_bar();
 
                 // 设置select参数
                 let mut read_fds: fd_set = std::mem::zeroed();
@@ -2005,12 +2005,12 @@ impl Dwm {
     }
 
     // 新增处理命令的方法
-    fn process_commands_from_iced_bar(&mut self) {
+    fn process_commands_from_status_bar(&mut self) {
         // 创建一个临时向量来收集所有命令
         let mut commands_to_process: Vec<(i32, SharedCommand)> = Vec::new();
 
         // 第一步：遍历共享内存缓冲区并收集命令
-        for (&monitor_id, buffer) in &self.iced_bar_shmem {
+        for (&monitor_id, buffer) in &self.status_bar_shmem {
             while let Some(cmd) = buffer.receive_command() {
                 // 确保命令是给当前显示器的
                 if cmd.monitor_id == monitor_id {
@@ -4618,7 +4618,7 @@ impl Dwm {
                 }
 
                 let (isvisible, _) = match c_opt.clone() {
-                    Some(c_rc) => (c_rc.borrow().isvisible(), c_rc.borrow().is_iced_bar()),
+                    Some(c_rc) => (c_rc.borrow().isvisible(), c_rc.borrow().is_status_bar()),
                     _ => (false, false),
                 };
                 if !isvisible {
@@ -4798,9 +4798,9 @@ impl Dwm {
                 self.update_class_info(&mut client_mut);
                 info!("[manage] {}", client_mut);
 
-                if client_mut.is_iced_bar() {
+                if client_mut.is_status_bar() {
                     drop(client_mut);
-                    info!("[manage] Detected iced_bar, managing as statusbar");
+                    info!("[manage] Detected status bar, managing as statusbar");
                     self.manage_statusbar(client_rc, wa_ptr);
                     return; // 直接返回，不执行常规管理流程
                 }
@@ -5099,7 +5099,7 @@ impl Dwm {
         info!("[determine_statusbar_monitor]: {}", client);
         if let Some(suffix) = client
             .name
-            .strip_prefix(&format!("{}_", Config::iced_bar_name))
+            .strip_prefix(&format!("{}_", Config::status_bar_name))
         {
             if let Ok(monitor_id) = suffix.parse::<i32>() {
                 return monitor_id;
@@ -5107,7 +5107,7 @@ impl Dwm {
         }
         if let Some(suffix) = client
             .class
-            .strip_prefix(&format!("{}_", Config::iced_bar_name))
+            .strip_prefix(&format!("{}_", Config::status_bar_name))
         {
             if let Ok(monitor_id) = suffix.parse::<i32>() {
                 return monitor_id;
@@ -5115,7 +5115,7 @@ impl Dwm {
         }
         if let Some(suffix) = client
             .instance
-            .strip_prefix(&format!("{}_", Config::iced_bar_name))
+            .strip_prefix(&format!("{}_", Config::status_bar_name))
         {
             if let Ok(monitor_id) = suffix.parse::<i32>() {
                 return monitor_id;
@@ -5133,7 +5133,7 @@ impl Dwm {
             client_mut.x = monitor_borrow.m_x;
             client_mut.y = monitor_borrow.m_y;
             client_mut.w = monitor_borrow.m_w;
-            // 高度由 iced_bar 自己决定，或使用默认值
+            // 高度由 status bar 自己决定，或使用默认值
             if client_mut.h <= 0 {
                 client_mut.h = Config::bar_height.unwrap_or(30);
             }
@@ -5177,9 +5177,9 @@ impl Dwm {
                     monitor_mut.w_h,
                 );
                 monitor_mut.w_x = monitor_mut.m_x;
-                monitor_mut.w_y = statusbar_bottom + Config::iced_bar_pad;
+                monitor_mut.w_y = statusbar_bottom + Config::status_bar_pad;
                 monitor_mut.w_w = monitor_mut.m_w;
-                monitor_mut.w_h = available_height - Config::iced_bar_pad;
+                monitor_mut.w_h = available_height - Config::status_bar_pad;
                 // 确保工作区域不会变成负数或过小
                 if monitor_mut.w_h < 50 {
                     monitor_mut.w_h = 50;
@@ -5268,13 +5268,13 @@ impl Dwm {
 
         if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
             let statusbar_borrow = statusbar.borrow();
-            let offset = statusbar_borrow.h + Config::iced_bar_pad;
+            let offset = statusbar_borrow.h + Config::status_bar_pad;
             info!(
                 "[client_y_offset] Monitor {}: offset = {} (statusbar_h: {} + pad: {})",
                 monitor_id,
                 offset,
                 statusbar_borrow.h,
-                Config::iced_bar_pad
+                Config::status_bar_pad
             );
             return offset;
         }
@@ -5629,7 +5629,7 @@ impl Dwm {
             // 🚀 优化的资源清理顺序
 
             // 1. 首先终止子进程
-            if let Err(e) = self.terminate_iced_bar_process_safe(monitor_id) {
+            if let Err(e) = self.terminate_status_bar_process_safe(monitor_id) {
                 error!(
                     "[unmanage_statusbar] Failed to terminate process for monitor {}: {}",
                     monitor_id, e
@@ -5651,10 +5651,10 @@ impl Dwm {
         }
     }
 
-    fn terminate_iced_bar_process_safe(&mut self, monitor_id: i32) -> Result<(), String> {
-        if let Some(mut child) = self.iced_bar_child.remove(&monitor_id) {
+    fn terminate_status_bar_process_safe(&mut self, monitor_id: i32) -> Result<(), String> {
+        if let Some(mut child) = self.status_bar_child.remove(&monitor_id) {
             info!(
-                "[terminate_iced_bar_process_safe] Terminating process for monitor {}",
+                "[terminate_status_bar_process_safe] Terminating process for monitor {}",
                 monitor_id
             );
 
@@ -5667,7 +5667,7 @@ impl Dwm {
             match signal::kill(nix_pid, None) {
                 Err(_) => {
                     // 进程已经不存在
-                    info!("[terminate_iced_bar_process_safe] Process already terminated for monitor {}", monitor_id);
+                    info!("[terminate_status_bar_process_safe] Process already terminated for monitor {}", monitor_id);
                     return Ok(());
                 }
                 Ok(_) => {} // 进程存在，继续终止流程
@@ -5683,7 +5683,7 @@ impl Dwm {
                     match child.try_wait() {
                         Ok(Some(status)) => {
                             info!(
-                                "[terminate_iced_bar_process_safe] Process exited gracefully: {:?}",
+                                "[terminate_status_bar_process_safe] Process exited gracefully: {:?}",
                                 status
                             );
                             return Ok(());
@@ -5699,7 +5699,7 @@ impl Dwm {
 
                 // 超时后强制终止
                 warn!(
-                    "[terminate_iced_bar_process_safe] Graceful termination timeout, forcing kill"
+                    "[terminate_status_bar_process_safe] Graceful termination timeout, forcing kill"
                 );
             }
 
@@ -5708,7 +5708,7 @@ impl Dwm {
                 Ok(_) => match child.wait() {
                     Ok(status) => {
                         info!(
-                            "[terminate_iced_bar_process_safe] Process force killed: {:?}",
+                            "[terminate_status_bar_process_safe] Process force killed: {:?}",
                             status
                         );
                         Ok(())
@@ -5719,7 +5719,7 @@ impl Dwm {
             }
         } else {
             info!(
-                "[terminate_iced_bar_process_safe] No process found for monitor {}",
+                "[terminate_status_bar_process_safe] No process found for monitor {}",
                 monitor_id
             );
             Ok(())
@@ -5728,7 +5728,7 @@ impl Dwm {
 
     /// 安全的共享内存清理方法
     fn cleanup_shared_memory_safe(&mut self, monitor_id: i32) -> Result<(), String> {
-        if let Some(shmem) = self.iced_bar_shmem.remove(&monitor_id) {
+        if let Some(shmem) = self.status_bar_shmem.remove(&monitor_id) {
             info!(
                 "[cleanup_shared_memory_safe] Cleaning up shared memory for monitor {}",
                 monitor_id
@@ -5740,7 +5740,7 @@ impl Dwm {
             // 如果需要手动删除系统共享内存对象
             #[cfg(unix)]
             {
-                let shmem_name = format!("iced_bar_{}", monitor_id);
+                let shmem_name = format!("{}_{}", Config::status_bar_name, monitor_id);
                 if let Ok(c_name) = std::ffi::CString::new(shmem_name) {
                     unsafe {
                         let result = libc::shm_unlink(c_name.as_ptr());
