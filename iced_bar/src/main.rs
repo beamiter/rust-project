@@ -4,6 +4,7 @@ use iced::daemon::Appearance;
 use iced::time::{self};
 use iced::widget::canvas::path::Arc;
 use iced::widget::canvas::{Cache, Geometry, Path};
+use iced::widget::lazy;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{Scrollable, Space, button, progress_bar, rich_text, row};
 use iced::widget::{canvas, container};
@@ -300,6 +301,7 @@ struct TabBarExample {
     current_window_id: Option<Id>,
     is_resized: bool,
     scale_factor: f32,
+    scale_factor_string: String,
     is_hovered: bool,
     mouse_position: Option<iced::Point>,
     show_seconds: bool,
@@ -366,6 +368,7 @@ impl TabBarExample {
             current_window_id: None,
             is_resized: false,
             scale_factor: 1.0,
+            scale_factor_string: "1.0".to_string(),
             is_hovered: false,
             mouse_position: None,
             show_seconds: false,
@@ -498,6 +501,7 @@ impl TabBarExample {
             Message::GetScaleFactor(scale_factor) => {
                 info!("scale_factor: {}", scale_factor);
                 self.scale_factor = scale_factor;
+                self.scale_factor_string = format!("{:.2}", self.scale_factor);
                 Task::none()
             }
 
@@ -662,42 +666,52 @@ impl TabBarExample {
     }
 
     fn view_work_space(&self) -> Element<Message> {
-        let tab_bar = self
-            .tabs
-            .iter()
-            .fold(TabBar::new(Message::TabSelected), |tab_bar, tab_label| {
-                let idx = tab_bar.size();
-                tab_bar.push(idx, TabLabel::Text(tab_label.to_owned()))
-            })
-            .set_active_tab(&self.active_tab)
-            .tab_width(Length::Fixed(Self::TAB_WIDTH))
-            .height(Length::Fixed(Self::TAB_HEIGHT))
-            .spacing(Self::TAB_SPACING)
-            .padding(0.0)
-            .width(Length::Shrink)
-            .text_size(Self::TEXT_SIZE);
+        // lazy template
+        // let _ = lazy(&, |_| {});
+        let tab_bar = lazy(&self.message_count, |_| {
+            let tab_bar = self
+                .tabs
+                .iter()
+                .fold(TabBar::new(Message::TabSelected), |tab_bar, tab_label| {
+                    let idx = tab_bar.size();
+                    tab_bar.push(idx, TabLabel::Text(tab_label.to_owned()))
+                })
+                .set_active_tab(&self.active_tab)
+                .tab_width(Length::Fixed(Self::TAB_WIDTH))
+                .height(Length::Fixed(Self::TAB_HEIGHT))
+                .spacing(Self::TAB_SPACING)
+                .padding(0.0)
+                .width(Length::Shrink)
+                .text_size(Self::TEXT_SIZE);
+            tab_bar
+        });
 
-        let layout_text =
-            container(rich_text([span(self.layout_symbol.clone())])).center_x(Length::Shrink);
+        let layout_text = lazy(&self.layout_symbol, |_| {
+            let layout_text =
+                container(rich_text([span(self.layout_symbol.clone())])).center_x(Length::Shrink);
+            layout_text
+        });
 
-        let scrollable_content = Scrollable::with_direction(
-            row![
-                button("[]=").on_press(Message::LayoutClicked(0)),
-                button("><>").on_press(Message::LayoutClicked(1)),
-                button("[M]").on_press(Message::LayoutClicked(2)),
-            ]
-            .spacing(10)
-            .padding(0.0),
-            Direction::Horizontal(Scrollbar::new().scroller_width(3.0).width(1.)),
-        )
-        .width(50.0)
-        .height(Self::TAB_HEIGHT)
-        .spacing(0.);
+        let scrollable_content = lazy(&self.layout_symbol, |_| {
+            let scrollable_content = Scrollable::with_direction(
+                row![
+                    button("[]=").on_press(Message::LayoutClicked(0)),
+                    button("><>").on_press(Message::LayoutClicked(1)),
+                    button("[M]").on_press(Message::LayoutClicked(2)),
+                ]
+                .spacing(10)
+                .padding(0.0),
+                Direction::Horizontal(Scrollbar::new().scroller_width(3.0).width(1.)),
+            )
+            .width(50.0)
+            .height(Self::TAB_HEIGHT)
+            .spacing(0.);
+            scrollable_content
+        });
 
         let cyan = Color::from_rgb(0.0, 1.0, 1.0); // 青色
         let dark_orange = Color::from_rgb(1.0, 0.5, 0.0); // 深橙色
-
-        let screenshot_text = container(text(format!(" s {:.2} ", self.scale_factor)).center())
+        let screenshot_text = container(text(format!(" s {} ", self.scale_factor_string)).center())
             .center_y(Length::Fill)
             .style(move |_theme: &Theme| {
                 if self.is_hovered {
@@ -722,6 +736,7 @@ impl TabBarExample {
                 }
             })
             .padding(0.0);
+
         let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
         let canvas = canvas(self as &Self)
             .width(Length::Fixed(Self::TAB_HEIGHT))
