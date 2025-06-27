@@ -7,6 +7,7 @@ use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use log::{error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::{
+    collections::{HashSet, hash_set},
     env,
     sync::mpsc,
     thread,
@@ -193,6 +194,9 @@ fn App() -> Element {
 
     // 共享内存同步状态
     let mut external_selected_button = use_signal(|| None::<usize>);
+    let mut external_filterd_button = use_signal(|| None::<usize>);
+    let mut external_urg_button = use_signal(|| None::<usize>);
+    let mut external_occ_buttons = use_signal(|| HashSet::<usize>::new());
     let mut connection_status = use_signal(|| "未连接".to_string());
 
     // 初始化共享内存通信
@@ -215,7 +219,6 @@ fn App() -> Element {
             loop {
                 if let Ok(shared_message) = message_receiver.try_recv() {
                     info!("Received shared message: {:?}", shared_message);
-                    let mut button_index: Option<usize> = None;
                     for (index, tag_status) in shared_message
                         .monitor_info
                         .tag_status_vec
@@ -223,17 +226,22 @@ fn App() -> Element {
                         .enumerate()
                     {
                         if tag_status.is_selected {
-                            button_index = Some(index);
-                            break;
+                            external_selected_button.set(Some(index));
+                        }
+                        if tag_status.is_urg {
+                            external_urg_button.set(Some(index));
+                        }
+                        if tag_status.is_occ {
+                            external_occ_buttons().insert(index);
+                        }
+                        if tag_status.is_filled {
+                            external_filterd_button.set(Some(index));
                         }
                     }
                     // 更新外部选择状态
-                    if let Some(index) = button_index {
-                        if index < BUTTONS.len() {
-                            external_selected_button.set(Some(index));
-                            message.set(format!("外部选择: {}", BUTTONS[index]));
-                            connection_status.set("已连接 - 接收数据".to_string());
-                        }
+                    if let Some(index) = external_selected_button() {
+                        message.set(format!("外部选择: {}", BUTTONS[index]));
+                        connection_status.set("已连接 - 接收数据".to_string());
                     } else {
                         external_selected_button.set(None);
                         message.set("外部清除选择".to_string());
@@ -299,7 +307,7 @@ fn App() -> Element {
                             }
                         },
                         // 当有外部选择时，禁用本地点击
-                        disabled: external_selected_button().is_some(),
+                        // disabled: external_selected_button().is_some(),
                         "{emoji}"
                     }
                 }
@@ -353,17 +361,17 @@ fn App() -> Element {
                 }
 
                 // 强制清除外部选择的按钮（调试用）
-                if external_selected_button().is_some() {
-                    button {
-                        class: "clear-button",
-                        style: "background: #ffc107; color: #000;",
-                        onclick: move |_| {
-                            external_selected_button.set(None);
-                            message.set("强制清除外部选择".to_string());
-                        },
-                        "强制清除外部选择"
-                    }
-                }
+                // if external_selected_button().is_some() {
+                //     button {
+                //         class: "clear-button",
+                //         style: "background: #ffc107; color: #000;",
+                //         onclick: move |_| {
+                //             external_selected_button.set(None);
+                //             message.set("强制清除外部选择".to_string());
+                //         },
+                //         "强制清除外部选择"
+                //     }
+                // }
             }
         }
     }

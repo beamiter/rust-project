@@ -142,6 +142,12 @@
     background: #f8f9fa !important;
     transform: none !important;
 }
+.emoji-button:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+    background: #f8f9fa !important;
+    transform: none !important;
+}
 
 .emoji-button:disabled:hover {
     transform: none !important;
@@ -150,6 +156,26 @@
 
 /* 外部选择的特殊样式 */
 .emoji-button.selected.external {
+    background: #28a745;
+    border-color: #1e7e34;
+    animation: pulse 2s infinite;
+}
+.emoji-button.selected.is_selected {
+    background: #28a745;
+    border-color: #1e7e34;
+    animation: pulse 2s infinite;
+}
+.emoji-button.selected.is_filtered {
+    background: #28a745;
+    border-color: #1e7e34;
+    animation: pulse 2s infinite;
+}
+.emoji-button.selected.is_urg {
+    background: #28a745;
+    border-color: #1e7e34;
+    animation: pulse 2s infinite;
+}
+.emoji-button.selected.is_occ {
     background: #28a745;
     border-color: #1e7e34;
     animation: pulse 2s infinite;
