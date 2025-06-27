@@ -22,6 +22,7 @@ mod error;
 pub use error::AppError;
 use iced_aw::{TabBar, TabLabel};
 use iced_fonts::NERD_FONT_BYTES;
+use iced_futures::subscription;
 use log::{error, info, warn};
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
 use std::env;
@@ -48,16 +49,15 @@ fn heartbeat_monitor(heartbeat_receiver: mpsc::Receiver<()>) {
                 // Heartbeat received, continue
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
-                error!("Shared memory thread heartbeat timeout");
-                thread::sleep(Duration::from_secs(60 * 5));
-                std::process::exit(1);
+                error!("thread heartbeat timeout");
+                // std::process::exit(1);
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
-                error!("Shared memory thread disconnected");
-                thread::sleep(Duration::from_secs(60 * 5));
-                std::process::exit(1);
+                error!("thread disconnected");
+                // std::process::exit(1);
             }
         }
+        thread::sleep(Duration::from_millis(1000));
     }
 }
 
@@ -255,7 +255,7 @@ fn main() -> iced::Result {
         .subscription(TabBarExample::subscription)
         .style(TabBarExample::style)
         // .transparent(true)
-        .theme(TabBarExample::theme)
+        // .theme(TabBarExample::theme)
         .run_with(|| (app, iced::Task::none()))
 }
 
@@ -422,6 +422,7 @@ impl TabBarExample {
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
+        info!("update");
         match message {
             Message::TabSelected(index) => {
                 info!("Tab selected: {}", index);
@@ -634,6 +635,7 @@ impl TabBarExample {
     }
 
     fn subscription(&self) -> Subscription<Message> {
+        // Subscription::none()
         time::every(Duration::from_millis(50)).map(|_| Message::CheckSharedMessages)
     }
 
@@ -923,6 +925,7 @@ impl TabBarExample {
     }
 
     fn view(&self) -> Element<Message> {
+        info!("view");
         // let work_space_row = self.view_work_space().explain(Color::from_rgb(1., 0., 1.));
         let work_space_row = self.view_work_space();
 
