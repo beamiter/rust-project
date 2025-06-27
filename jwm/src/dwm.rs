@@ -1866,17 +1866,18 @@ impl Dwm {
         // --- 执行操作 ---
         // 如果需要启动（无论是第一次还是重启）
         if needs_spawn {
-            let child = Command::new(Config::iced_bar_name)
+            if let Ok(child) = Command::new(Config::iced_bar_name)
                 .arg0(&Self::monitor_to_bar_name(num))
                 .arg(shared_path)
                 .spawn()
-                .expect("Failed to start/restart iced_bar");
-            // insert 会自动处理新增和覆盖两种情况
-            self.iced_bar_child.insert(num, child);
-            info!(
-                "   -> spawned: Successfully started/restarted iced_bar for monitor {}.",
-                num
-            );
+            {
+                // insert 会自动处理新增和覆盖两种情况
+                self.iced_bar_child.insert(num, child);
+                info!(
+                    "   -> spawned: Successfully started/restarted iced_bar for monitor {}.",
+                    num
+                );
+            }
         }
     }
 
