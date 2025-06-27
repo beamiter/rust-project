@@ -48,10 +48,12 @@ fn heartbeat_monitor(heartbeat_receiver: mpsc::Receiver<()>) {
             }
             Err(mpsc::RecvTimeoutError::Timeout) => {
                 error!("Shared memory thread heartbeat timeout");
+                thread::sleep(Duration::from_secs(60 * 5));
                 std::process::exit(1);
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => {
                 error!("Shared memory thread disconnected");
+                thread::sleep(Duration::from_secs(60 * 5));
                 std::process::exit(1);
             }
         }
