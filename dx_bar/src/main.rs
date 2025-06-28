@@ -1,18 +1,19 @@
 use chrono::Local;
 use dioxus::{
-    desktop::{Config, WindowBuilder},
+    desktop::{Config, LogicalPosition, WindowBuilder},
     prelude::*,
 };
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use log::{error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::{
-    collections::{HashSet, hash_set},
+    collections::HashSet,
     env,
     sync::mpsc,
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+
 mod error;
 pub use error::AppError;
 
@@ -62,7 +63,6 @@ fn shared_memory_worker(
 ) {
     info!("Starting shared memory worker thread");
 
-    // 尝试打开或创建共享环形缓冲区
     let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
         warn!("No shared path provided, running without shared memory");
         None
@@ -122,15 +122,12 @@ fn shared_memory_worker(
         if let Some(ref shared_buffer) = shared_buffer_opt {
             match shared_buffer.try_read_latest_message::<SharedMessage>() {
                 Ok(Some(message)) => {
-                    // info!("shared_buffer {:?}", message);
                     consecutive_errors = 0;
                     if prev_timestamp != message.timestamp {
                         prev_timestamp = message.timestamp;
                         if let Err(e) = message_sender.send(message) {
                             error!("Failed to send message: {}", e);
                             break;
-                        } else {
-                            info!("send message ok");
                         }
                     }
                 }
@@ -166,7 +163,7 @@ fn shared_memory_worker(
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let class_instance = args.get(0).cloned().unwrap_or_default();
+    let _class_instance = args.get(0).cloned().unwrap_or_default();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
     // Initialize logging
@@ -178,35 +175,103 @@ fn main() {
     info!("Starting dx_bar v{}", 1.0);
 
     dioxus::LaunchBuilder::desktop()
-        .with_cfg(Config::new().with_window(WindowBuilder::new().with_title("dx_bar")))
+        .with_cfg(
+            Config::new().with_window(
+                WindowBuilder::new()
+                    .with_title("dx_bar")
+                    .with_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(1980.0, 50.0))
+                    .with_position(LogicalPosition::new(0.0, 0.0))
+                    .with_resizable(false)
+                    .with_maximizable(false)
+                    .with_minimizable(false)
+                    .with_decorations(false) // 去掉标题栏和边框
+                    .with_always_on_top(true), // 保持在最顶层
+            ),
+        )
         .launch(App);
 }
 
 // 将按钮数据定义为静态常量
 const BUTTONS: &[&str] = &["🔴", "🟠", "🟡", "🟢", "🔵", "🟣", "🟤", "⚪", "⚫", "🌈"];
 
+// 定义按钮状态枚举
+#[derive(Debug, Clone, PartialEq)]
+enum ButtonState {
+    Filtered, // 最高优先级
+    Selected, // 次高优先级
+    Urgent,   // 中优先级
+    Occupied, // 低优先级
+    Default,  // 默认状态
+}
+
+impl ButtonState {
+    /// 根据各个状态标志确定按钮的最终状态（按优先级）
+    fn from_flags(is_filtered: bool, is_selected: bool, is_urg: bool, is_occ: bool) -> Self {
+        if is_filtered {
+            ButtonState::Filtered
+        } else if is_selected {
+            ButtonState::Selected
+        } else if is_urg {
+            ButtonState::Urgent
+        } else if is_occ {
+            ButtonState::Occupied
+        } else {
+            ButtonState::Default
+        }
+    }
+
+    /// 获取对应的CSS类名
+    fn to_css_class(&self) -> &'static str {
+        match self {
+            ButtonState::Filtered => "emoji-button state-filtered",
+            ButtonState::Selected => "emoji-button state-selected",
+            ButtonState::Urgent => "emoji-button state-urgent",
+            ButtonState::Occupied => "emoji-button state-occupied",
+            ButtonState::Default => "emoji-button state-default",
+        }
+    }
+}
+
+// 按钮状态数据结构
+#[derive(Debug, Clone, Default)]
+struct ButtonStateData {
+    is_filtered: bool,
+    is_selected: bool,
+    is_urg: bool,
+    is_occ: bool,
+}
+
+impl ButtonStateData {
+    fn get_state(&self) -> ButtonState {
+        ButtonState::from_flags(self.is_filtered, self.is_selected, self.is_urg, self.is_occ)
+    }
+}
+
+/// 获取按钮的CSS类名
+fn get_button_class(index: usize, button_states: &[ButtonStateData]) -> String {
+    if index < button_states.len() {
+        button_states[index].get_state().to_css_class().to_string()
+    } else {
+        ButtonState::Default.to_css_class().to_string()
+    }
+}
+
 #[component]
 fn App() -> Element {
-    // UI 状态
-    let mut message = use_signal(|| "请选择一个按钮".to_string());
-    let mut selected_button = use_signal(|| None::<usize>);
-    let mut click_count = use_signal(|| 0u32);
-
-    // 共享内存同步状态
-    let mut external_selected_button = use_signal(|| None::<usize>);
-    let mut external_filterd_button = use_signal(|| None::<usize>);
-    let mut external_urg_button = use_signal(|| None::<usize>);
-    let mut external_occ_buttons = use_signal(|| HashSet::<usize>::new());
-    let mut connection_status = use_signal(|| "未连接".to_string());
+    // 按钮状态数组
+    let mut button_states = use_signal(|| vec![ButtonStateData::default(); BUTTONS.len()]);
 
     // 初始化共享内存通信
     use_effect(move || {
         let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
-        let (command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
+        let (_command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
 
-        // 你可以根据需要配置共享内存路径
-        let shared_path = std::env::var("SHARED_MEMORY_PATH")
-            .unwrap_or_else(|_| "/dev/shm/monitor_0".to_string());
+        // 配置共享内存路径 - 从命令行参数获取
+        let shared_path = std::env::args().nth(1).unwrap_or_else(|| {
+            std::env::var("SHARED_MEMORY_PATH").unwrap_or_else(|_| "/dev/shm/monitor_0".to_string())
+        });
+
+        info!("Using shared memory path: {}", shared_path);
 
         // 启动共享内存工作线程
         let shared_path_clone = shared_path.clone();
@@ -218,51 +283,38 @@ fn App() -> Element {
         spawn(async move {
             loop {
                 if let Ok(shared_message) = message_receiver.try_recv() {
-                    info!("Received shared message: {:?}", shared_message);
+                    info!(
+                        "Received shared message with {} tags",
+                        shared_message.monitor_info.tag_status_vec.len()
+                    );
+
+                    // 重置所有按钮状态
+                    let mut new_states = vec![ButtonStateData::default(); BUTTONS.len()];
+
+                    // 更新按钮状态
                     for (index, tag_status) in shared_message
                         .monitor_info
                         .tag_status_vec
                         .iter()
                         .enumerate()
                     {
-                        if tag_status.is_selected {
-                            external_selected_button.set(Some(index));
-                        }
-                        if tag_status.is_urg {
-                            external_urg_button.set(Some(index));
-                        }
-                        if tag_status.is_occ {
-                            external_occ_buttons().insert(index);
-                        }
-                        if tag_status.is_filled {
-                            external_filterd_button.set(Some(index));
+                        if index < new_states.len() {
+                            new_states[index] = ButtonStateData {
+                                is_filtered: tag_status.is_filled,
+                                is_selected: tag_status.is_selected,
+                                is_urg: tag_status.is_urg,
+                                is_occ: tag_status.is_occ,
+                            };
                         }
                     }
-                    // 更新外部选择状态
-                    if let Some(index) = external_selected_button() {
-                        message.set(format!("外部选择: {}", BUTTONS[index]));
-                        connection_status.set("已连接 - 接收数据".to_string());
-                    } else {
-                        external_selected_button.set(None);
-                        message.set("外部清除选择".to_string());
-                    }
+
+                    button_states.set(new_states);
                 }
 
                 tokio::time::sleep(Duration::from_millis(10)).await;
             }
         });
-
-        // 保存 command_sender 以便发送命令
-        // 注意：这里需要使用某种方式保存 command_sender，比如使用 use_context
-        // 或者将其存储在一个全局状态中
     });
-
-    // 合并本地选择和外部选择
-    let current_selection = if external_selected_button().is_some() {
-        external_selected_button()
-    } else {
-        selected_button()
-    };
 
     rsx! {
         document::Link {
@@ -271,107 +323,13 @@ fn App() -> Element {
         }
 
         div {
-            class: "app-container",
-
-            h2 {
-                class: "app-title",
-                "Emoji 按钮选择器 (共享内存同步)"
-            }
-
-            // 连接状态显示
-            div {
-                class: "connection-status",
-                style: "margin-bottom: 15px; padding: 8px; border-radius: 4px; background: #e9ecef;",
-                "连接状态: {connection_status()}"
-            }
-
-            div {
-                class: "button-container",
-                for (i, emoji) in BUTTONS.iter().enumerate() {
-                    button {
-                        key: "{i}",
-                        class: if current_selection == Some(i) {
-                            "emoji-button selected"
-                        } else {
-                            "emoji-button"
-                        },
-                        onclick: move |_| {
-                            // 只有在没有外部选择时才允许本地选择
-                            if external_selected_button().is_none() {
-                                selected_button.set(Some(i));
-                                message.set(format!("本地选择: {}", emoji));
-                                click_count.set(click_count() + 1);
-
-                                // TODO: 发送命令到共享内存
-                                // command_sender.send(SharedCommand::SelectButton(i));
-                            }
-                        },
-                        // 当有外部选择时，禁用本地点击
-                        // disabled: external_selected_button().is_some(),
-                        "{emoji}"
-                    }
+            class: "button-row",
+            for (i, emoji) in BUTTONS.iter().enumerate() {
+                button {
+                    key: "{i}",
+                    class: get_button_class(i, &button_states()),
+                    "{emoji}"
                 }
-            }
-
-            p {
-                class: "message-display",
-                "{message()}"
-            }
-
-            div {
-                class: "status-info",
-
-                div {
-                    class: "status-title",
-                    "选择状态:"
-                }
-
-                div {
-                    class: "current-selection",
-                    if let Some(index) = current_selection {
-                        if external_selected_button().is_some() {
-                            "外部选择: {BUTTONS[index]} (索引: {index})"
-                        } else {
-                            "本地选择: {BUTTONS[index]} (索引: {index})"
-                        }
-                    } else {
-                        "暂无选择"
-                    }
-                }
-
-                div {
-                    class: "selection-count",
-                    "本地点击次数: {click_count()}"
-                }
-
-                // 只有在没有外部选择时才显示清除按钮
-                if external_selected_button().is_none() {
-                    button {
-                        class: "clear-button",
-                        disabled: selected_button().is_none(),
-                        onclick: move |_| {
-                            selected_button.set(None);
-                            message.set("已清除本地选择".to_string());
-
-                            // TODO: 发送清除命令到共享内存
-                            // command_sender.send(SharedCommand::ClearSelection);
-                        },
-                        "清除选择"
-                    }
-                }
-
-                // 强制清除外部选择的按钮（调试用）
-                // if external_selected_button().is_some() {
-                //     button {
-                //         class: "clear-button",
-                //         style: "background: #ffc107; color: #000;",
-                //         onclick: move |_| {
-                //             external_selected_button.set(None);
-                //             message.set("强制清除外部选择".to_string());
-                //         },
-                //         "强制清除外部选择"
-                //     }
-                // }
             }
         }
     }
