@@ -5455,7 +5455,7 @@ impl Dwm {
                     CStr::from_ptr(ch.res_class)
                         .to_str()
                         .unwrap_or("")
-                        .to_string()
+                        .to_lowercase()
                 } else {
                     String::new()
                 };
@@ -5467,7 +5467,7 @@ impl Dwm {
                     CStr::from_ptr(ch.res_name)
                         .to_str()
                         .unwrap_or("")
-                        .to_string()
+                        .to_lowercase()
                 } else {
                     String::new()
                 };

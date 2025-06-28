@@ -167,8 +167,23 @@ fn shared_memory_worker(
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let _class_instance = args.get(0).cloned().unwrap_or_default();
+    let instance_name = args
+        .get(0)
+        .cloned()
+        .or_else(|| env::var("DX_BAR_INSTANCE").ok())
+        .unwrap_or_else(|| "dx_bar_default".to_string());
+    info!("instance_name: {instance_name}");
     let shared_path = args.get(1).cloned().unwrap_or_default();
+    // 设置进程名称（在某些系统上有效）
+    // #[cfg(target_os = "linux")]
+    // {
+    //     use std::ffi::CString;
+    //     if let Ok(name) = CString::new(format!("{}", instance_name)) {
+    //         unsafe {
+    //             libc::prctl(libc::PR_SET_NAME, name.as_ptr(), 0, 0, 0);
+    //         }
+    //     }
+    // }
 
     // Initialize logging
     if let Err(e) = initialize_logging(&shared_path) {
@@ -187,6 +202,7 @@ fn main() {
                     .with_position(LogicalPosition::new(0, 0)) // 使用整数而不是浮点数
                     .with_maximizable(false)
                     .with_minimizable(false)
+                    .with_visible_on_all_workspaces(true)
                     .with_decorations(false) // 去掉标题栏和边框
                     .with_always_on_top(true), // 保持在最顶层
             ),
