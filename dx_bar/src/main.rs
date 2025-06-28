@@ -7,10 +7,7 @@ use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use log::{error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::{
-    env,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    env, process::Command, sync::mpsc, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}
 };
 // 导入 tao 用于窗口配置
 use tao::dpi::{LogicalPosition, LogicalSize};
@@ -297,6 +294,71 @@ fn format_bytes(bytes: u64) -> String {
     }
 }
 
+// 截图按钮组件
+#[component]
+fn ScreenshotButton() -> Element {
+    let mut is_taking_screenshot = use_signal(|| false);
+
+    let take_screenshot = move |_| {
+        if is_taking_screenshot() {
+            return; // 防止重复点击
+        }
+
+        is_taking_screenshot.set(true);
+        info!("Taking screenshot with flameshot");
+
+        // 在新线程中执行截图命令，避免阻塞UI
+        spawn(async move {
+            let result =
+                tokio::task::spawn_blocking(|| Command::new("flameshot").arg("gui").spawn()).await;
+
+            match result {
+                Ok(Ok(mut child)) => {
+                    info!("Flameshot launched successfully");
+                    // 等待命令完成
+                    tokio::task::spawn_blocking(move || {
+                        let _ = child.wait();
+                    })
+                    .await
+                    .ok();
+                }
+                Ok(Err(e)) => {
+                    error!("Failed to launch flameshot: {}", e);
+                }
+                Err(e) => {
+                    error!("Task error when launching flameshot: {}", e);
+                }
+            }
+
+            is_taking_screenshot.set(false);
+        });
+    };
+
+    let button_class = if is_taking_screenshot() {
+        "screenshot-button taking"
+    } else {
+        "screenshot-button"
+    };
+
+    rsx! {
+        button {
+            class: "{button_class}",
+            onclick: take_screenshot,
+            title: "截图 (Flameshot)",
+            disabled: is_taking_screenshot(),
+
+            span {
+                class: "screenshot-icon",
+                if is_taking_screenshot() {
+                    "⏳" // 执行中
+                } else {
+                    "📷" // 默认截图图标
+                }
+            }
+        }
+    }
+}
+
 /// 系统信息显示组件
 #[component]
 fn SystemInfoDisplay(snapshot: Option<SystemSnapshot>) -> Element {
@@ -344,27 +406,27 @@ fn SystemInfoDisplay(snapshot: Option<SystemSnapshot>) -> Element {
         rsx! {
             div {
                 class: "system-info-container",
-                
+
                 // CPU 使用率
                 div {
                     class: "system-metric",
                     title: "CPU 平均使用率",
-                    
+
                     span { class: "metric-icon", "💻" }
-                    span { 
+                    span {
                         class: "metric-value",
                         style: "color: {cpu_color};",
                         "{snap.cpu_average:.1}%"
                     }
                 }
 
-                // 内存使用情况  
+                // 内存使用情况
                 div {
                     class: "system-metric",
                     title: "内存使用: {memory_text} / {memory_total_text}",
-                    
+
                     span { class: "metric-icon", "🧠" }
-                    span { 
+                    span {
                         class: "metric-value",
                         style: "color: {mem_color};",
                         "{snap.memory_usage_percent:.1}%"
@@ -374,14 +436,14 @@ fn SystemInfoDisplay(snapshot: Option<SystemSnapshot>) -> Element {
                 // 电池状态
                 div {
                     class: "system-metric",
-                    title: if snap.is_charging { 
+                    title: if snap.is_charging {
                         format!("电池充电中: {:.1}%", snap.battery_percent)
-                    } else { 
+                    } else {
                         format!("电池电量: {:.1}%", snap.battery_percent)
                     },
-                    
+
                     span { class: "metric-icon", "{battery_icon}" }
-                    span { 
+                    span {
                         class: "metric-value",
                         style: "color: {battery_color};",
                         "{snap.battery_percent:.0}%"
@@ -393,7 +455,7 @@ fn SystemInfoDisplay(snapshot: Option<SystemSnapshot>) -> Element {
         rsx! {
             div {
                 class: "system-info-container",
-                
+
                 div {
                     class: "system-metric",
                     span { class: "metric-icon", "💻" }
@@ -469,14 +531,14 @@ fn App() -> Element {
         spawn(async move {
             // 在独立的线程中运行系统监控，避免阻塞UI
             let (sys_sender, sys_receiver) = std::sync::mpsc::channel();
-            
+
             thread::spawn(move || {
                 let mut monitor = SystemMonitor::new(30); // 保存30个历史数据点
                 monitor.set_update_interval(Duration::from_millis(2000)); // 2秒更新一次
 
                 loop {
                     monitor.update_if_needed();
-                    
+
                     if let Some(snapshot) = monitor.get_snapshot() {
                         if sys_sender.send(snapshot.clone()).is_err() {
                             // 接收端已关闭，退出线程
@@ -493,7 +555,7 @@ fn App() -> Element {
                 if let Ok(snapshot) = sys_receiver.try_recv() {
                     system_snapshot.set(Some(snapshot));
                 }
-                
+
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
@@ -587,9 +649,12 @@ fn App() -> Element {
             // 右侧信息区域
             div {
                 class: "right-info-container",
-                
+
                 // 系统信息显示
                 SystemInfoDisplay { snapshot: system_snapshot() }
+
+                // 截图按钮
+                ScreenshotButton {}
 
                 // 时间显示
                 div {

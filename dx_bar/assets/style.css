@@ -527,3 +527,131 @@ html, body {
         display: none; /* 隐藏电池信息 */
     }
 }
+
+/* 截图按钮样式 */
+.screenshot-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    min-width: 40px;
+    min-height: 40px;
+    background: rgba(248, 249, 250, 0.8);
+    border: 1px solid rgba(222, 226, 230, 0.8);
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    user-select: none;
+    flex-shrink: 0;
+}
+
+.screenshot-button:hover {
+    background: rgba(233, 236, 239, 0.9);
+    border-color: rgba(173, 181, 189, 0.8);
+    transform: scale(1.05);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+}
+
+.screenshot-button:active {
+    transform: scale(0.98);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+/* 截图按钮执行状态 */
+.screenshot-button.taking {
+    background: linear-gradient(135deg, #007bff, #0056b3);
+    border-color: #004085;
+    color: white;
+    cursor: not-allowed;
+    animation: screenshot-pulse 1s ease-in-out infinite;
+}
+
+.screenshot-button.taking:hover {
+    transform: none;
+    background: linear-gradient(135deg, #007bff, #0056b3);
+}
+
+/* 截图图标 */
+.screenshot-icon {
+    font-size: 20px;
+    line-height: 1;
+}
+
+/* 截图执行动画 */
+@keyframes screenshot-pulse {
+    0%, 100% {
+        opacity: 1;
+        box-shadow: 0 2px 4px rgba(0, 123, 255, 0.4);
+    }
+    50% {
+        opacity: 0.8;
+        box-shadow: 0 4px 12px rgba(0, 123, 255, 0.7);
+    }
+}
+
+/* 更新右侧容器布局以容纳新按钮 */
+.right-info-container {
+    display: flex;
+    align-items: center;
+    gap: 10px; /* 稍微减小gap以容纳更多内容 */
+    flex-shrink: 0;
+    flex-grow: 0;
+    margin-left: auto;
+}
+
+/* ==================== 响应式调整 ==================== */
+
+/* 中等屏幕调整 */
+@media (max-width: 1199px) and (min-width: 800px) {
+    .screenshot-button {
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+        min-height: 36px;
+    }
+    
+    .screenshot-icon {
+        font-size: 18px;
+    }
+    
+    .right-info-container {
+        gap: 8px;
+    }
+}
+
+/* 小屏幕调整 */
+@media (max-width: 799px) and (min-width: 600px) {
+    .screenshot-button {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        min-height: 32px;
+    }
+    
+    .screenshot-icon {
+        font-size: 16px;
+    }
+    
+    .right-info-container {
+        gap: 6px;
+    }
+}
+
+/* 超小屏幕调整 */
+@media (max-width: 599px) {
+    .screenshot-button {
+        width: 28px;
+        height: 28px;
+        min-width: 28px;
+        min-height: 28px;
+    }
+    
+    .screenshot-icon {
+        font-size: 14px;
+    }
+    
+    .right-info-container {
+        gap: 4px;
+    }
+}

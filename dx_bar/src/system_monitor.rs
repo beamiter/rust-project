@@ -13,6 +13,7 @@ pub struct RollingAverage {
     sum: f64,
 }
 
+#[allow(dead_code)]
 impl RollingAverage {
     pub fn new(capacity: usize) -> Self {
         Self {
@@ -78,6 +79,7 @@ pub struct LoadAverage {
 
 /// CPU information
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct CpuInfo {
     pub name: String,
     pub usage: f32,
@@ -85,6 +87,7 @@ pub struct CpuInfo {
 }
 
 /// Memory information
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MemoryInfo {
     pub total: u64,
@@ -106,6 +109,7 @@ pub struct SystemMonitor {
     battery_manager: Option<Manager>,
 }
 
+#[allow(dead_code)]
 impl SystemMonitor {
     /// Create a new system monitor
     pub fn new(history_length: usize) -> Self {
