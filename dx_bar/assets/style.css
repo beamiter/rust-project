@@ -73,9 +73,7 @@ html, body {
     filter: grayscale(50%);
 }
 
-/* ==================== 按钮状态样式 ==================== */
-
-/* 默认状态 */
+/* ==================== 默认状态 ==================== */
 .emoji-button.state-default {
     background: #ffffff;
     border-color: #dee2e6;
@@ -88,94 +86,116 @@ html, body {
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
-/* 已过滤状态 - 蓝色主题 */
+/* ==================== 已过滤状态 - 蓝色主题 ==================== */
 .emoji-button.state-filtered {
-    background: linear-gradient(135deg, #007bff, #0056b3);
-    border-color: #004085;
-    color: white;
-    animation: filtered-pulse 2s ease-in-out infinite;
+    background: linear-gradient(135deg, #007bff, #0056b3) !important;
+    border-color: #004085 !important;
+    color: white !important;
+    /* animation: filtered-pulse 2s ease-in-out infinite; */
 }
 
 .emoji-button.state-filtered::after {
-    content: "●";
+    content: "F";
     position: absolute;
     top: -3px;
     right: -3px;
     background: #28a745;
     border-radius: 50%;
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
     border: 1px solid white;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
     font-size: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
 }
 
-/* 已选择状态 - 绿色主题 */
+/* ==================== 已选择状态 - 绿色主题 ==================== */
 .emoji-button.state-selected {
-    background: linear-gradient(135deg, #28a745, #1e7e34);
-    border-color: #155724;
-    color: white;
+    background: linear-gradient(135deg, #28a745, #1e7e34) !important;
+    border-color: #155724 !important;
+    color: white !important;
     transform: scale(1.02);
-    animation: selected-glow 1.5s ease-in-out infinite;
+    /* animation: selected-glow 1.5s ease-in-out infinite; */
 }
 
 .emoji-button.state-selected::after {
-    content: "●";
+    content: "S";
     position: absolute;
     top: -3px;
     right: -3px;
     background: #007bff;
     border-radius: 50%;
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
     border: 1px solid white;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    font-size: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
 }
 
-/* 紧急状态 - 红色主题 */
+/* ==================== 紧急状态 - 红色主题 ==================== */
 .emoji-button.state-urgent {
-    background: linear-gradient(135deg, #dc3545, #c82333);
-    border-color: #bd2130;
-    color: white;
-    animation: urgent-blink 1s ease-in-out infinite;
+    background: linear-gradient(135deg, #dc3545, #c82333) !important;
+    border-color: #bd2130 !important;
+    color: white !important;
+    /* animation: urgent-blink 1s ease-in-out infinite; */
 }
 
 .emoji-button.state-urgent::after {
-    content: "●";
+    content: "U";
     position: absolute;
     top: -3px;
     right: -3px;
     background: #ffc107;
     border-radius: 50%;
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
     border: 1px solid white;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    font-size: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #000;
+    font-weight: bold;
 }
 
-/* 已占用状态 - 橙色主题 */
+/* ==================== 已占用状态 - 橙色主题 ==================== */
 .emoji-button.state-occupied {
-    background: linear-gradient(135deg, #fd7e14, #e55a3c);
-    border-color: #d9534f;
-    color: white;
-    animation: occupied-fade 3s ease-in-out infinite;
+    background: linear-gradient(135deg, #fd7e14, #e55a3c) !important;
+    border-color: #d9534f !important;
+    color: white !important;
+    /* animation: occupied-fade 3s ease-in-out infinite; */
 }
 
 .emoji-button.state-occupied::after {
-    content: "●";
+    content: "O";
     position: absolute;
     top: -3px;
     right: -3px;
     background: #6c757d;
     border-radius: 50%;
-    width: 10px;
-    height: 10px;
+    width: 12px;
+    height: 12px;
     border: 1px solid white;
     box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    font-size: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: white;
+    font-weight: bold;
 }
 
-/* ==================== 动画效果 - 减小幅度适配小尺寸 ==================== */
-
+/* ==================== 动画效果 ==================== */
 @keyframes filtered-pulse {
     0%, 100% {
         box-shadow: 0 1px 3px rgba(0, 123, 255, 0.4);

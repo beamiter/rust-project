@@ -28,9 +28,9 @@ impl Config {
     pub const border_px: u32 = 5;
     // snap pixel
     pub const snap: u32 = 32;
-    pub const status_bar_name: &str = "egui_bar";
-    pub const status_bar_0: &str = "egui_bar_0";
-    pub const status_bar_1: &str = "egui_bar_1";
+    pub const status_bar_name: &str = "dx_bar";
+    pub const status_bar_0: &str = "dx_bar_0";
+    pub const status_bar_1: &str = "dx_bar_1";
     pub const broken: &str = "broken";
     pub const dmenu_font: &str = "SauceCodePro Nerd Font Regular 11";
     pub const col_gray1: &str = "#222222";
