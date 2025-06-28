@@ -530,8 +530,8 @@ fn App() -> Element {
     // 系统信息状态
     let mut system_snapshot = use_signal(|| None::<SystemSnapshot>);
 
-    // 点击效果状态 - 记录哪个按钮被点击了
-    let mut clicked_button = use_signal(|| None::<usize>);
+    // 按下状态 - 记录哪个按钮被按下了
+    let mut pressed_button = use_signal(|| None::<usize>);
 
     // 初始化系统监控
     use_effect(move || {
@@ -635,21 +635,24 @@ fn App() -> Element {
         });
     });
 
-    // 处理按钮点击
-    let mut handle_button_click = move |index: usize| {
-        info!("Button {} clicked", index);
+    // 处理按钮按下
+    let mut handle_button_press = move |index: usize| {
+        info!("Button {} pressed", index);
+        pressed_button.set(Some(index));
+    };
 
-        // 设置点击状态
-        clicked_button.set(Some(index));
+    // 处理按钮松开
+    let mut handle_button_release = move |index: usize| {
+        info!("Button {} released", index);
+        pressed_button.set(None);
 
-        // 200毫秒后清除点击效果
-        spawn(async move {
-            tokio::time::sleep(Duration::from_millis(200)).await;
-            clicked_button.set(None);
-        });
-
-        // 这里可以添加发送命令到共享内存的逻辑
+        // 这里可以添加实际的按钮功能逻辑
         // 例如：command_sender.send(SharedCommand::SelectTag(index));
+    };
+
+    // 处理鼠标离开（防止按下后拖拽离开按钮区域导致状态卡住）
+    let mut handle_button_leave = move |_index: usize| {
+        pressed_button.set(None);
     };
 
     rsx! {
@@ -664,9 +667,9 @@ fn App() -> Element {
                 for (i, emoji) in BUTTONS.iter().enumerate() {
                     {
                         let base_class = get_button_class(i, &button_states());
-                        let is_clicked = clicked_button() == Some(i);
-                        let button_class = if is_clicked {
-                            format!("{} clicked", base_class)
+                        let is_pressed = pressed_button() == Some(i);
+                        let button_class = if is_pressed {
+                            format!("{} pressed", base_class)
                         } else {
                             base_class.to_string()
                         };
@@ -675,7 +678,16 @@ fn App() -> Element {
                             button {
                                 key: "{i}",
                                 class: "{button_class}",
-                                onclick: move |_| handle_button_click(i),
+                                onmousedown: move |_| handle_button_press(i),
+                                onmouseup: move |_| handle_button_release(i),
+                                onmouseleave: move |_| handle_button_leave(i),
+                                // 也可以保留 onclick 作为备选
+                                onclick: move |_| {
+                                    // 如果没有触发 mouseup (比如触摸屏)，确保释放状态
+                                    if pressed_button() == Some(i) {
+                                        handle_button_release(i);
+                                    }
+                                },
                                 "{emoji}"
                             }
                         }
