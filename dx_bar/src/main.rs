@@ -17,11 +17,11 @@ use tao::dpi::{LogicalPosition, LogicalSize};
 
 mod error;
 pub use error::AppError;
+mod system_monitor;
+use system_monitor::{SystemMonitor, SystemSnapshot};
 
 // 在编译时直接包含CSS文件
 const STYLE_CSS: &str = include_str!("../assets/style.css");
-
-// ... (initialize_logging 和 shared_memory_worker 函数保持不变) ...
 
 /// Initialize logging system
 fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
@@ -279,7 +279,144 @@ fn get_button_class(index: usize, button_states: &[ButtonStateData]) -> &'static
     }
 }
 
-// 时间组件
+/// 格式化字节为人类可读的格式
+fn format_bytes(bytes: u64) -> String {
+    const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
+    let mut size = bytes as f64;
+    let mut unit_index = 0;
+
+    while size >= 1024.0 && unit_index < UNITS.len() - 1 {
+        size /= 1024.0;
+        unit_index += 1;
+    }
+
+    if unit_index == 0 {
+        format!("{:.0}{}", size, UNITS[unit_index])
+    } else {
+        format!("{:.1}{}", size, UNITS[unit_index])
+    }
+}
+
+/// 系统信息显示组件
+#[component]
+fn SystemInfoDisplay(snapshot: Option<SystemSnapshot>) -> Element {
+    if let Some(ref snap) = snapshot {
+        let cpu_color = if snap.cpu_average > 80.0 {
+            "#dc3545" // 红色
+        } else if snap.cpu_average > 60.0 {
+            "#ffc107" // 黄色
+        } else {
+            "#28a745" // 绿色
+        };
+
+        let mem_color = if snap.memory_usage_percent > 85.0 {
+            "#dc3545" // 红色
+        } else if snap.memory_usage_percent > 70.0 {
+            "#ffc107" // 黄色
+        } else {
+            "#28a745" // 绿色
+        };
+
+        let memory_text = format_bytes(snap.memory_used);
+        let memory_total_text = format_bytes(snap.memory_total);
+
+        // 电池相关
+        let battery_color = if snap.battery_percent > 50.0 {
+            "#28a745" // 绿色
+        } else if snap.battery_percent > 20.0 {
+            "#ffc107" // 黄色
+        } else {
+            "#dc3545" // 红色
+        };
+
+        let battery_icon = if snap.is_charging {
+            "🔌" // 充电中
+        } else if snap.battery_percent > 75.0 {
+            "🔋" // 满电
+        } else if snap.battery_percent > 50.0 {
+            "🔋" // 较满
+        } else if snap.battery_percent > 25.0 {
+            "🔋" // 一般
+        } else {
+            "🪫" // 低电量
+        };
+
+        rsx! {
+            div {
+                class: "system-info-container",
+                
+                // CPU 使用率
+                div {
+                    class: "system-metric",
+                    title: "CPU 平均使用率",
+                    
+                    span { class: "metric-icon", "💻" }
+                    span { 
+                        class: "metric-value",
+                        style: "color: {cpu_color};",
+                        "{snap.cpu_average:.1}%"
+                    }
+                }
+
+                // 内存使用情况  
+                div {
+                    class: "system-metric",
+                    title: "内存使用: {memory_text} / {memory_total_text}",
+                    
+                    span { class: "metric-icon", "🧠" }
+                    span { 
+                        class: "metric-value",
+                        style: "color: {mem_color};",
+                        "{snap.memory_usage_percent:.1}%"
+                    }
+                }
+
+                // 电池状态
+                div {
+                    class: "system-metric",
+                    title: if snap.is_charging { 
+                        format!("电池充电中: {:.1}%", snap.battery_percent)
+                    } else { 
+                        format!("电池电量: {:.1}%", snap.battery_percent)
+                    },
+                    
+                    span { class: "metric-icon", "{battery_icon}" }
+                    span { 
+                        class: "metric-value",
+                        style: "color: {battery_color};",
+                        "{snap.battery_percent:.0}%"
+                    }
+                }
+            }
+        }
+    } else {
+        rsx! {
+            div {
+                class: "system-info-container",
+                
+                div {
+                    class: "system-metric",
+                    span { class: "metric-icon", "💻" }
+                    span { class: "metric-value", "--%" }
+                }
+
+                div {
+                    class: "system-metric",
+                    span { class: "metric-icon", "🧠" }
+                    span { class: "metric-value", "--%" }
+                }
+
+                div {
+                    class: "system-metric",
+                    span { class: "metric-icon", "🔋" }
+                    span { class: "metric-value", "--%" }
+                }
+            }
+        }
+    }
+}
+
+/// 时间组件
 #[component]
 fn TimeDisplay(show_seconds: bool) -> Element {
     let mut current_time = use_signal(|| Local::now());
@@ -324,6 +461,44 @@ fn App() -> Element {
     // 时间显示秒数的状态
     let mut show_seconds = use_signal(|| true); // 默认显示秒
 
+    // 系统信息状态
+    let mut system_snapshot = use_signal(|| None::<SystemSnapshot>);
+
+    // 初始化系统监控
+    use_effect(move || {
+        spawn(async move {
+            // 在独立的线程中运行系统监控，避免阻塞UI
+            let (sys_sender, sys_receiver) = std::sync::mpsc::channel();
+            
+            thread::spawn(move || {
+                let mut monitor = SystemMonitor::new(30); // 保存30个历史数据点
+                monitor.set_update_interval(Duration::from_millis(2000)); // 2秒更新一次
+
+                loop {
+                    monitor.update_if_needed();
+                    
+                    if let Some(snapshot) = monitor.get_snapshot() {
+                        if sys_sender.send(snapshot.clone()).is_err() {
+                            // 接收端已关闭，退出线程
+                            break;
+                        }
+                    }
+
+                    thread::sleep(Duration::from_millis(500));
+                }
+            });
+
+            // 在异步任务中接收系统信息更新
+            loop {
+                if let Ok(snapshot) = sys_receiver.try_recv() {
+                    system_snapshot.set(Some(snapshot));
+                }
+                
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+        });
+    });
+
     // 初始化共享内存通信
     use_effect(move || {
         let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
@@ -362,11 +537,6 @@ fn App() -> Element {
                     let now = Instant::now();
 
                     if now.duration_since(last_update()) >= Duration::from_millis(150) {
-                        info!(
-                            "Processing message with {} tags",
-                            shared_message.monitor_info.tag_status_vec.len()
-                        );
-
                         let mut new_states = vec![ButtonStateData::default(); BUTTONS.len()];
 
                         for (index, tag_status) in shared_message
@@ -382,21 +552,6 @@ fn App() -> Element {
                                     is_urg: tag_status.is_urg,
                                     is_occ: tag_status.is_occ,
                                 };
-
-                                if tag_status.is_selected
-                                    || tag_status.is_occ
-                                    || tag_status.is_urg
-                                    || tag_status.is_filled
-                                {
-                                    info!(
-                                        "Button {} state: filtered={}, selected={}, urgent={}, occupied={}",
-                                        index,
-                                        tag_status.is_filled,
-                                        tag_status.is_selected,
-                                        tag_status.is_urg,
-                                        tag_status.is_occ
-                                    );
-                                }
                             }
                         }
 
@@ -404,7 +559,6 @@ fn App() -> Element {
                         if *current_states != new_states {
                             button_states.set(new_states);
                             last_update.set(now);
-                            info!("Button states updated");
                         }
                     }
                 }
@@ -418,7 +572,7 @@ fn App() -> Element {
         div {
             class: "button-row",
 
-            // 按钮区域 - 现在会显示在左侧
+            // 按钮区域 - 左侧
             div {
                 class: "buttons-container",
                 for (i, emoji) in BUTTONS.iter().enumerate() {
@@ -430,16 +584,23 @@ fn App() -> Element {
                 }
             }
 
-            // 时间显示区域 - 现在会显示在最右侧
+            // 右侧信息区域
             div {
-                class: "time-container",
-                onclick: move |_| {
-                    show_seconds.set(!show_seconds());
-                    info!("Toggle seconds display: {}", show_seconds());
-                },
-                TimeDisplay { show_seconds: show_seconds() }
-            }
+                class: "right-info-container",
+                
+                // 系统信息显示
+                SystemInfoDisplay { snapshot: system_snapshot() }
 
+                // 时间显示
+                div {
+                    class: "time-container",
+                    onclick: move |_| {
+                        show_seconds.set(!show_seconds());
+                        info!("Toggle seconds display: {}", show_seconds());
+                    },
+                    TimeDisplay { show_seconds: show_seconds() }
+                }
+            }
         }
     }
 }
