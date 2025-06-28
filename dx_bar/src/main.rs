@@ -1,21 +1,25 @@
 use chrono::Local;
 use dioxus::{
-    desktop::{Config, LogicalPosition, WindowBuilder},
+    desktop::{Config, WindowBuilder},
     prelude::*,
 };
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use log::{error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::{
-    collections::HashSet,
     env,
     sync::mpsc,
     thread,
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
+// 导入 tao 用于窗口配置
+use tao::dpi::{LogicalPosition, LogicalSize};
 
 mod error;
 pub use error::AppError;
+
+// 在编译时直接包含CSS文件
+const STYLE_CSS: &str = include_str!("../assets/style.css");
 
 /// Initialize logging system
 fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
@@ -179,9 +183,8 @@ fn main() {
             Config::new().with_window(
                 WindowBuilder::new()
                     .with_title("dx_bar")
-                    .with_inner_size(dioxus::desktop::tao::dpi::LogicalSize::new(1980.0, 50.0))
-                    .with_position(LogicalPosition::new(0.0, 0.0))
-                    .with_resizable(false)
+                    .with_inner_size(LogicalSize::new(1980, 50)) // 使用整数而不是浮点数
+                    .with_position(LogicalPosition::new(0, 0)) // 使用整数而不是浮点数
                     .with_maximizable(false)
                     .with_minimizable(false)
                     .with_decorations(false) // 去掉标题栏和边框
@@ -317,10 +320,11 @@ fn App() -> Element {
     });
 
     rsx! {
-        document::Link {
-            rel: "stylesheet",
-            href: asset!("./assets/style.css"),
-        }
+        // document::Link {
+        //     rel: "stylesheet",
+        //     href: asset!("./assets/style.css"),
+        // }
+        document::Style { "{STYLE_CSS}" }
 
         div {
             class: "button-row",

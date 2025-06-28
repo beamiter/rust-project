@@ -35,6 +35,7 @@ pub enum AppError {
 }
 
 /// Convenient Result type alias
+#[allow(dead_code)]
 pub type Result<T> = std::result::Result<T, AppError>;
 
 /// Helper functions for creating specific error types

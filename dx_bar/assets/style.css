@@ -1,50 +1,69 @@
-/* 重置默认样式 */
+/* 重置所有默认样式 */
 * {
     margin: 0;
     padding: 0;
     box-sizing: border-box;
 }
 
-body {
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: #f8f9fa;
+html, body {
+    margin: 0;
+    padding: 0;
+    height: 50px !important;
+    width: 1980px !important;
     overflow: hidden;
-    height: 50px; /* 固定高度 */
-    width: 1980px; /* 固定宽度 */
+    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+    background: transparent;
 }
 
-/* 按钮行容器 - 固定水平布局 */
+/* 确保根容器也是正确尺寸 */
+#main, #app {
+    margin: 0;
+    padding: 0;
+    height: 50px !important;
+    width: 1980px !important;
+    overflow: hidden;
+}
+
+/* 按钮行容器 - 严格控制尺寸 */
 .button-row {
     display: flex;
     flex-direction: row;
     align-items: center;
-    justify-content: flex-start; /* 改为左对齐 */
-    padding: 5px 10px; /* 减小padding适应50px高度 */
+    justify-content: flex-start;
+    margin: 0;
+    padding: 5px 10px;
     gap: 8px;
-    width: 100%;
-    height: 50px; /* 固定行高与窗口高度一致 */
+    width: 1980px;
+    height: 50px;
+    min-height: 50px;
+    max-height: 50px;
     background: rgba(255, 255, 255, 0.95);
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-    position: relative; /* 改为相对定位 */
+    position: relative;
+    overflow: hidden;
 }
 
-/* 基础按钮样式 - 固定40px尺寸 */
+/* 基础按钮样式 - 适配50px高度 */
 .emoji-button {
     width: 40px;
     height: 40px;
-    font-size: 24px;
-    border: 2px solid transparent;
-    border-radius: 8px;
+    min-width: 40px;
+    min-height: 40px;
+    max-width: 40px;
+    max-height: 40px;
+    font-size: 22px;
+    border: 1px solid transparent;
+    border-radius: 6px;
     background: transparent;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: all 0.2s ease;
     position: relative;
     display: flex;
     align-items: center;
     justify-content: center;
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
     user-select: none;
-    flex-shrink: 0; /* 防止按钮被压缩 */
+    flex-shrink: 0;
 }
 
 /* 禁用按钮样式 */
@@ -65,8 +84,8 @@ body {
 .emoji-button.state-default:hover:not(:disabled) {
     background: #f8f9fa;
     border-color: #adb5bd;
-    transform: scale(1.05);
-    box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
+    transform: scale(1.02);
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
 /* 已过滤状态 - 蓝色主题 */
@@ -80,14 +99,15 @@ body {
 .emoji-button.state-filtered::after {
     content: "●";
     position: absolute;
-    top: -4px;
-    right: -4px;
+    top: -3px;
+    right: -3px;
     background: #28a745;
     border-radius: 50%;
-    width: 12px;
-    height: 12px;
-    border: 2px solid white;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    width: 10px;
+    height: 10px;
+    border: 1px solid white;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+    font-size: 8px;
 }
 
 /* 已选择状态 - 绿色主题 */
@@ -95,21 +115,21 @@ body {
     background: linear-gradient(135deg, #28a745, #1e7e34);
     border-color: #155724;
     color: white;
-    transform: scale(1.05);
+    transform: scale(1.02);
     animation: selected-glow 1.5s ease-in-out infinite;
 }
 
 .emoji-button.state-selected::after {
     content: "●";
     position: absolute;
-    top: -4px;
-    right: -4px;
+    top: -3px;
+    right: -3px;
     background: #007bff;
     border-radius: 50%;
-    width: 12px;
-    height: 12px;
-    border: 2px solid white;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    width: 10px;
+    height: 10px;
+    border: 1px solid white;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 /* 紧急状态 - 红色主题 */
@@ -123,14 +143,14 @@ body {
 .emoji-button.state-urgent::after {
     content: "●";
     position: absolute;
-    top: -4px;
-    right: -4px;
+    top: -3px;
+    right: -3px;
     background: #ffc107;
     border-radius: 50%;
-    width: 12px;
-    height: 12px;
-    border: 2px solid white;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    width: 10px;
+    height: 10px;
+    border: 1px solid white;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
 /* 已占用状态 - 橙色主题 */
@@ -144,73 +164,58 @@ body {
 .emoji-button.state-occupied::after {
     content: "●";
     position: absolute;
-    top: -4px;
-    right: -4px;
+    top: -3px;
+    right: -3px;
     background: #6c757d;
     border-radius: 50%;
-    width: 12px;
-    height: 12px;
-    border: 2px solid white;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3);
+    width: 10px;
+    height: 10px;
+    border: 1px solid white;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
 }
 
-/* ==================== 动画效果 ==================== */
+/* ==================== 动画效果 - 减小幅度适配小尺寸 ==================== */
 
 @keyframes filtered-pulse {
     0%, 100% {
-        box-shadow: 0 2px 4px rgba(0, 123, 255, 0.4);
+        box-shadow: 0 1px 3px rgba(0, 123, 255, 0.4);
     }
     50% {
-        box-shadow: 0 4px 12px rgba(0, 123, 255, 0.7);
-        transform: scale(1.05) translateY(-1px);
+        box-shadow: 0 2px 8px rgba(0, 123, 255, 0.7);
+        transform: scale(1.02);
     }
 }
 
 @keyframes selected-glow {
     0%, 100% {
-        box-shadow: 0 2px 4px rgba(40, 167, 69, 0.4);
+        box-shadow: 0 1px 3px rgba(40, 167, 69, 0.4);
     }
     50% {
-        box-shadow: 0 4px 16px rgba(40, 167, 69, 0.8);
-        transform: scale(1.08);
+        box-shadow: 0 2px 10px rgba(40, 167, 69, 0.8);
+        transform: scale(1.04);
     }
 }
 
 @keyframes urgent-blink {
     0%, 50%, 100% {
         opacity: 1;
-        box-shadow: 0 2px 4px rgba(220, 53, 69, 0.5);
+        box-shadow: 0 1px 3px rgba(220, 53, 69, 0.5);
     }
     25%, 75% {
-        opacity: 0.8;
-        box-shadow: 0 4px 12px rgba(220, 53, 69, 0.8);
-        transform: scale(1.08);
+        opacity: 0.9;
+        box-shadow: 0 2px 8px rgba(220, 53, 69, 0.8);
+        transform: scale(1.04);
     }
 }
 
 @keyframes occupied-fade {
     0%, 100% {
-        opacity: 0.85;
-        box-shadow: 0 2px 4px rgba(253, 126, 20, 0.4);
+        opacity: 0.9;
+        box-shadow: 0 1px 3px rgba(253, 126, 20, 0.4);
     }
     50% {
         opacity: 1;
-        box-shadow: 0 4px 8px rgba(253, 126, 20, 0.6);
-        transform: scale(1.03);
+        box-shadow: 0 2px 6px rgba(253, 126, 20, 0.6);
+        transform: scale(1.02);
     }
 }
-
-/* 高DPI屏幕优化 */
-@media (-webkit-min-device-pixel-ratio: 2), (min-resolution: 192dpi) {
-    .emoji-button {
-        border-width: 1px;
-    }
-    .emoji-button.state-filtered::after,
-    .emoji-button.state-selected::after,
-    .emoji-button.state-urgent::after,
-    .emoji-button.state-occupied::after {
-        border-width: 1px;
-    }
-}
-
-/* 移除所有响应式媒体查询，因为窗口尺寸固定 */
