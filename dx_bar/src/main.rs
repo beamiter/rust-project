@@ -21,6 +21,8 @@ pub use error::AppError;
 // 在编译时直接包含CSS文件
 const STYLE_CSS: &str = include_str!("../assets/style.css");
 
+// ... (initialize_logging 和 shared_memory_worker 函数保持不变) ...
+
 /// Initialize logging system
 fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     let now = Local::now();
@@ -104,14 +106,12 @@ fn shared_memory_worker(
     let mut consecutive_errors = 0;
     let mut last_message_read = Instant::now();
 
-    // 大幅降低轮询频率
     const POLL_INTERVAL: Duration = Duration::from_millis(5);
-    const MAX_IDLE_TIME: Duration = Duration::from_secs(1); // 空闲时进一步降低频率
+    const MAX_IDLE_TIME: Duration = Duration::from_secs(1);
 
     loop {
         let loop_start = Instant::now();
 
-        // 处理命令（保持响应性）
         let mut has_commands = false;
         while let Ok(cmd) = command_receiver.try_recv() {
             has_commands = true;
@@ -131,7 +131,6 @@ fn shared_memory_worker(
             }
         }
 
-        // 处理共享内存消息 - 降低频率
         if let Some(ref shared_buffer) = shared_buffer_opt {
             match shared_buffer.try_read_latest_message::<SharedMessage>() {
                 Ok(Some(message)) => {
@@ -140,7 +139,6 @@ fn shared_memory_worker(
 
                     if prev_timestamp != message.timestamp {
                         prev_timestamp = message.timestamp;
-                        // 使用非阻塞发送，避免死锁
                         if let Err(e) = message_sender.send(message) {
                             error!("Failed to send message: {}", e);
                             break;
@@ -152,7 +150,6 @@ fn shared_memory_worker(
                 }
                 Err(e) => {
                     consecutive_errors += 1;
-                    // 减少错误日志频率
                     if consecutive_errors == 1 || consecutive_errors % 50 == 0 {
                         error!(
                             "Ring buffer read error ({}): {}. Buffer state: available={}, last_timestamp={}",
@@ -172,12 +169,9 @@ fn shared_memory_worker(
             }
         }
 
-        // 动态睡眠时间 - 没有活动时延长睡眠
         let mut sleep_duration = POLL_INTERVAL;
-
-        // 如果很长时间没有消息且没有命令，延长睡眠时间
         if !has_commands && last_message_read.elapsed() > MAX_IDLE_TIME {
-            sleep_duration = Duration::from_millis(10); // 空闲时降低到5Hz
+            sleep_duration = Duration::from_millis(10);
         }
 
         let elapsed = loop_start.elapsed();
@@ -199,7 +193,6 @@ fn main() {
     info!("instance_name: {instance_name}");
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
-    // Initialize logging
     if let Err(e) = initialize_logging(&shared_path) {
         error!("Failed to initialize logging: {}", e);
         std::process::exit(1);
@@ -264,7 +257,7 @@ impl ButtonState {
 }
 
 // 按钮状态数据结构
-#[derive(Debug, Clone, Default, PartialEq)] // 添加 PartialEq 用于状态比较
+#[derive(Debug, Clone, Default, PartialEq)]
 struct ButtonStateData {
     is_filtered: bool,
     is_selected: bool,
@@ -278,12 +271,47 @@ impl ButtonStateData {
     }
 }
 
-// 使用静态字符串避免重复分配
 fn get_button_class(index: usize, button_states: &[ButtonStateData]) -> &'static str {
     if index < button_states.len() {
         button_states[index].get_state().to_css_class()
     } else {
         "emoji-button state-default"
+    }
+}
+
+// 时间组件
+#[component]
+fn TimeDisplay(show_seconds: bool) -> Element {
+    let mut current_time = use_signal(|| Local::now());
+
+    // 时间更新循环
+    use_effect(move || {
+        spawn(async move {
+            loop {
+                // 根据是否显示秒来决定更新频率
+                let update_interval = if show_seconds {
+                    Duration::from_millis(1000) // 显示秒时每秒更新
+                } else {
+                    Duration::from_millis(60000) // 不显示秒时每分钟更新
+                };
+
+                tokio::time::sleep(update_interval).await;
+                current_time.set(Local::now());
+            }
+        });
+    });
+
+    let time_format = if show_seconds { "%H:%M:%S" } else { "%H:%M" };
+    let time_str = current_time().format(time_format).to_string();
+
+    rsx! {
+        div {
+            class: "time-display",
+            onclick: move |_| {
+                info!("Time clicked - current format includes seconds: {}", show_seconds);
+            },
+            "{time_str}"
+        }
     }
 }
 
@@ -293,33 +321,31 @@ fn App() -> Element {
     let mut button_states = use_signal(|| vec![ButtonStateData::default(); BUTTONS.len()]);
     let mut last_update = use_signal(|| Instant::now());
 
+    // 时间显示秒数的状态
+    let mut show_seconds = use_signal(|| true); // 默认显示秒
+
     // 初始化共享内存通信
     use_effect(move || {
         let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
         let (_command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
 
-        // 配置共享内存路径 - 从命令行参数获取
         let shared_path = std::env::args().nth(1).unwrap_or_else(|| {
             std::env::var("SHARED_MEMORY_PATH").unwrap_or_else(|_| "/dev/shm/monitor_0".to_string())
         });
 
         info!("Using shared memory path: {}", shared_path);
 
-        // 启动共享内存工作线程
         let shared_path_clone = shared_path.clone();
         thread::spawn(move || {
             shared_memory_worker(shared_path_clone, message_sender, command_receiver);
         });
 
-        // 优化的消息接收线程 - 降低更新频率
         spawn(async move {
-            // 大幅降低UI更新频率
-            let mut interval = tokio::time::interval(Duration::from_millis(200)); // 从10ms改为200ms
+            let mut interval = tokio::time::interval(Duration::from_millis(200));
 
             loop {
                 interval.tick().await;
 
-                // 批处理消息 - 只处理最新的消息
                 let mut latest_message = None;
                 let mut message_count = 0;
 
@@ -327,27 +353,22 @@ fn App() -> Element {
                     latest_message = Some(message);
                     message_count += 1;
 
-                    // 限制批处理数量
                     if message_count >= 5 {
                         break;
                     }
                 }
 
-                // 修复状态比较部分
                 if let Some(shared_message) = latest_message {
                     let now = Instant::now();
 
-                    // 限制更新频率 - 至少150ms间隔
                     if now.duration_since(last_update()) >= Duration::from_millis(150) {
                         info!(
                             "Processing message with {} tags",
                             shared_message.monitor_info.tag_status_vec.len()
                         );
 
-                        // 重置所有按钮状态
                         let mut new_states = vec![ButtonStateData::default(); BUTTONS.len()];
 
-                        // 更新按钮状态
                         for (index, tag_status) in shared_message
                             .monitor_info
                             .tag_status_vec
@@ -362,7 +383,6 @@ fn App() -> Element {
                                     is_occ: tag_status.is_occ,
                                 };
 
-                                // 添加调试日志
                                 if tag_status.is_selected
                                     || tag_status.is_occ
                                     || tag_status.is_urg
@@ -380,7 +400,6 @@ fn App() -> Element {
                             }
                         }
 
-                        // 修复状态比较 - 使用正确的方式比较
                         let current_states = button_states.read().clone();
                         if *current_states != new_states {
                             button_states.set(new_states);
@@ -398,14 +417,29 @@ fn App() -> Element {
 
         div {
             class: "button-row",
-            // 直接在这里循环渲染按钮，避免使用 memo
-            for (i, emoji) in BUTTONS.iter().enumerate() {
-                button {
-                    key: "{i}",
-                    class: get_button_class(i, &button_states()),
-                    "{emoji}"
+
+            // 按钮区域 - 现在会显示在左侧
+            div {
+                class: "buttons-container",
+                for (i, emoji) in BUTTONS.iter().enumerate() {
+                    button {
+                        key: "{i}",
+                        class: get_button_class(i, &button_states()),
+                        "{emoji}"
+                    }
                 }
             }
+
+            // 时间显示区域 - 现在会显示在最右侧
+            div {
+                class: "time-container",
+                onclick: move |_| {
+                    show_seconds.set(!show_seconds());
+                    info!("Toggle seconds display: {}", show_seconds());
+                },
+                TimeDisplay { show_seconds: show_seconds() }
+            }
+
         }
     }
 }

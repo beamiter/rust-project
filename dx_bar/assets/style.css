@@ -9,31 +9,28 @@ html, body {
     margin: 0;
     padding: 0;
     height: 50px !important;
-    width: 1980px !important;
     overflow: hidden;
     font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     background: transparent;
 }
 
-/* 确保根容器也是正确尺寸 */
 #main, #app {
     margin: 0;
     padding: 0;
     height: 50px !important;
-    width: 1980px !important;
     overflow: hidden;
 }
 
-/* 按钮行容器 - 严格控制尺寸 */
+/* 主容器 - 响应式布局 */
 .button-row {
     display: flex;
     flex-direction: row;
     align-items: center;
-    justify-content: flex-start;
+    justify-content: space-between; /* 左右分布 */
     margin: 0;
-    padding: 5px 10px;
+    padding: 5px 15px; /* 左右padding为15px */
     gap: 8px;
-    width: 1980px;
+    width: 100vw; /* 使用视口宽度 */
     height: 50px;
     min-height: 50px;
     max-height: 50px;
@@ -41,9 +38,69 @@ html, body {
     box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
     position: relative;
     overflow: hidden;
+    box-sizing: border-box;
 }
 
-/* 基础按钮样式 - 适配50px高度 */
+/* 左侧按钮容器 */
+.buttons-container {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 1; /* 允许压缩 */
+    flex-grow: 0;   /* 不扩张 */
+    min-width: 0;   /* 允许压缩到0 */
+    overflow: hidden; /* 隐藏溢出的按钮 */
+}
+
+/* 时间容器 - 始终在最右侧 */
+.time-container {
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    flex-shrink: 0; /* 不允许压缩 */
+    flex-grow: 0;   /* 不扩张 */
+    cursor: pointer;
+    transition: all 0.2s ease;
+    margin-left: auto; /* 确保推到最右侧 */
+    min-width: fit-content; /* 最小宽度为内容宽度 */
+}
+
+.time-container:hover {
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 4px;
+}
+
+/* 时间显示样式 */
+.time-display {
+    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', Consolas, monospace;
+    font-size: 16px;
+    font-weight: 500;
+    color: #495057;
+    padding: 6px 12px;
+    background: rgba(248, 249, 250, 0.8);
+    border-radius: 6px;
+    border: 1px solid rgba(222, 226, 230, 0.8);
+    text-align: center;
+    user-select: none;
+    transition: all 0.2s ease;
+    white-space: nowrap;
+    min-width: 65px; /* HH:MM 最小宽度 */
+}
+
+/* 时间显示 - 根据内容调整宽度 */
+.time-display {
+    width: auto !important;
+}
+
+.time-display:hover {
+    background: rgba(233, 236, 239, 0.9);
+    border-color: rgba(173, 181, 189, 0.8);
+    transform: scale(1.02);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+/* 按钮样式 */
 .emoji-button {
     width: 40px;
     height: 40px;
@@ -73,7 +130,7 @@ html, body {
     filter: grayscale(50%);
 }
 
-/* ==================== 默认状态 ==================== */
+/* ==================== 按钮状态样式 ==================== */
 .emoji-button.state-default {
     background: #ffffff;
     border-color: #dee2e6;
@@ -86,12 +143,11 @@ html, body {
     box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
-/* ==================== 已过滤状态 - 蓝色主题 ==================== */
 .emoji-button.state-filtered {
     background: linear-gradient(135deg, #007bff, #0056b3) !important;
     border-color: #004085 !important;
     color: white !important;
-    /* animation: filtered-pulse 2s ease-in-out infinite; */
+    animation: filtered-pulse 2s ease-in-out infinite;
 }
 
 .emoji-button.state-filtered::after {
@@ -113,13 +169,12 @@ html, body {
     font-weight: bold;
 }
 
-/* ==================== 已选择状态 - 绿色主题 ==================== */
 .emoji-button.state-selected {
     background: linear-gradient(135deg, #28a745, #1e7e34) !important;
     border-color: #155724 !important;
     color: white !important;
     transform: scale(1.02);
-    /* animation: selected-glow 1.5s ease-in-out infinite; */
+    animation: selected-glow 1.5s ease-in-out infinite;
 }
 
 .emoji-button.state-selected::after {
@@ -141,12 +196,11 @@ html, body {
     font-weight: bold;
 }
 
-/* ==================== 紧急状态 - 红色主题 ==================== */
 .emoji-button.state-urgent {
     background: linear-gradient(135deg, #dc3545, #c82333) !important;
     border-color: #bd2130 !important;
     color: white !important;
-    /* animation: urgent-blink 1s ease-in-out infinite; */
+    animation: urgent-blink 1s ease-in-out infinite;
 }
 
 .emoji-button.state-urgent::after {
@@ -168,12 +222,11 @@ html, body {
     font-weight: bold;
 }
 
-/* ==================== 已占用状态 - 橙色主题 ==================== */
 .emoji-button.state-occupied {
     background: linear-gradient(135deg, #fd7e14, #e55a3c) !important;
     border-color: #d9534f !important;
     color: white !important;
-    /* animation: occupied-fade 3s ease-in-out infinite; */
+    animation: occupied-fade 3s ease-in-out infinite;
 }
 
 .emoji-button.state-occupied::after {
@@ -237,5 +290,106 @@ html, body {
         opacity: 1;
         box-shadow: 0 2px 6px rgba(253, 126, 20, 0.6);
         transform: scale(1.02);
+    }
+}
+
+/* ==================== 响应式设计 ==================== */
+
+/* 大屏幕：显示所有按钮 */
+@media (min-width: 1200px) {
+    .button-row {
+        padding: 5px 20px; /* 更大的padding */
+    }
+}
+
+/* 中等屏幕：稍微压缩 */
+@media (max-width: 1199px) and (min-width: 800px) {
+    .button-row {
+        padding: 5px 15px;
+    }
+    
+    .emoji-button {
+        width: 36px;
+        height: 36px;
+        min-width: 36px;
+        min-height: 36px;
+        max-width: 36px;
+        max-height: 36px;
+        font-size: 20px;
+    }
+    
+    .buttons-container {
+        gap: 6px;
+    }
+}
+
+/* 小屏幕：进一步压缩 */
+@media (max-width: 799px) and (min-width: 600px) {
+    .button-row {
+        padding: 5px 10px;
+    }
+    
+    .emoji-button {
+        width: 32px;
+        height: 32px;
+        min-width: 32px;
+        min-height: 32px;
+        max-width: 32px;
+        max-height: 32px;
+        font-size: 18px;
+    }
+    
+    .buttons-container {
+        gap: 4px;
+    }
+    
+    .time-display {
+        font-size: 14px;
+        padding: 4px 8px;
+    }
+}
+
+/* 超小屏幕：紧凑显示 */
+@media (max-width: 599px) {
+    .button-row {
+        padding: 3px 8px;
+    }
+    
+    .emoji-button {
+        width: 28px;
+        height: 28px;
+        min-width: 28px;
+        min-height: 28px;
+        max-width: 28px;
+        max-height: 28px;
+        font-size: 16px;
+    }
+    
+    .buttons-container {
+        gap: 3px;
+        overflow-x: auto; /* 允许水平滚动 */
+        scrollbar-width: none;
+        -ms-overflow-style: none;
+    }
+    
+    .buttons-container::-webkit-scrollbar {
+        display: none;
+    }
+    
+    .time-display {
+        font-size: 12px;
+        padding: 3px 6px;
+        min-width: 50px;
+    }
+    
+    .emoji-button.state-filtered::after,
+    .emoji-button.state-selected::after,
+    .emoji-button.state-urgent::after,
+    .emoji-button.state-occupied::after {
+        width: 8px;
+        height: 8px;
+        font-size: 6px;
+        top: -2px;
+        right: -2px;
     }
 }
