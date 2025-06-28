@@ -7,7 +7,11 @@ use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use log::{error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::{
-    env, process::Command, sync::mpsc, thread, time::{Duration, Instant, SystemTime, UNIX_EPOCH}
+    env,
+    process::Command,
+    sync::mpsc,
+    thread,
+    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 // 导入 tao 用于窗口配置
 use tao::dpi::{LogicalPosition, LogicalSize};
@@ -526,6 +530,9 @@ fn App() -> Element {
     // 系统信息状态
     let mut system_snapshot = use_signal(|| None::<SystemSnapshot>);
 
+    // 点击效果状态 - 记录哪个按钮被点击了
+    let mut clicked_button = use_signal(|| None::<usize>);
+
     // 初始化系统监控
     use_effect(move || {
         spawn(async move {
@@ -628,6 +635,23 @@ fn App() -> Element {
         });
     });
 
+    // 处理按钮点击
+    let mut handle_button_click = move |index: usize| {
+        info!("Button {} clicked", index);
+
+        // 设置点击状态
+        clicked_button.set(Some(index));
+
+        // 200毫秒后清除点击效果
+        spawn(async move {
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            clicked_button.set(None);
+        });
+
+        // 这里可以添加发送命令到共享内存的逻辑
+        // 例如：command_sender.send(SharedCommand::SelectTag(index));
+    };
+
     rsx! {
         document::Style { "{STYLE_CSS}" }
 
@@ -638,10 +662,23 @@ fn App() -> Element {
             div {
                 class: "buttons-container",
                 for (i, emoji) in BUTTONS.iter().enumerate() {
-                    button {
-                        key: "{i}",
-                        class: get_button_class(i, &button_states()),
-                        "{emoji}"
+                    {
+                        let base_class = get_button_class(i, &button_states());
+                        let is_clicked = clicked_button() == Some(i);
+                        let button_class = if is_clicked {
+                            format!("{} clicked", base_class)
+                        } else {
+                            base_class.to_string()
+                        };
+
+                        rsx! {
+                            button {
+                                key: "{i}",
+                                class: "{button_class}",
+                                onclick: move |_| handle_button_click(i),
+                                "{emoji}"
+                            }
+                        }
                     }
                 }
             }
