@@ -106,7 +106,7 @@ pub struct SystemMonitor {
     cpu_history: RollingAverage,
     memory_history: RollingAverage,
     last_snapshot: Option<SystemSnapshot>,
-    battery_manager: Option<Manager>,
+    // battery_manager: Option<Manager>,
 }
 
 #[allow(dead_code)]
@@ -115,7 +115,7 @@ impl SystemMonitor {
     pub fn new(history_length: usize) -> Self {
         let mut system = System::new_all();
         system.refresh_all();
-        let battery_manager = Manager::new().ok();
+        // let battery_manager = Manager::new().ok();
 
         Self {
             system,
@@ -124,28 +124,28 @@ impl SystemMonitor {
             cpu_history: RollingAverage::new(history_length),
             memory_history: RollingAverage::new(history_length),
             last_snapshot: None,
-            battery_manager,
+            // battery_manager,
         }
     }
 
     // 获取电池信息的方法
     fn get_battery_info(&self) -> (f32, bool) {
-        if let Some(ref manager) = self.battery_manager {
-            match manager.batteries() {
-                Ok(batteries) => {
-                    for battery_result in batteries {
-                        if let Ok(battery) = battery_result {
-                            let percentage = battery
-                                .state_of_charge()
-                                .get::<battery::units::ratio::percent>();
-                            let is_charging = matches!(battery.state(), battery::State::Charging);
-                            return (percentage, is_charging);
-                        }
-                    }
-                }
-                Err(_) => {}
-            }
-        }
+        // if let Some(ref manager) = self.battery_manager {
+        //     match manager.batteries() {
+        //         Ok(batteries) => {
+        //             for battery_result in batteries {
+        //                 if let Ok(battery) = battery_result {
+        //                     let percentage = battery
+        //                         .state_of_charge()
+        //                         .get::<battery::units::ratio::percent>();
+        //                     let is_charging = matches!(battery.state(), battery::State::Charging);
+        //                     return (percentage, is_charging);
+        //                 }
+        //             }
+        //         }
+        //         Err(_) => {}
+        //     }
+        // }
 
         // 默认值：无电池或获取失败
         (100.0, false)

@@ -773,9 +773,9 @@ fn main() -> glib::ExitCode {
         // 启动共享内存工作线程
         let shared_path_clone = shared_path.clone();
         let app_state = app_instance.borrow().state.clone();
-        // thread::spawn(move || {
-        //     shared_memory_worker(shared_path_clone, app_state, command_receiver);
-        // });
+        thread::spawn(move || {
+            shared_memory_worker(shared_path_clone, app_state, command_receiver);
+        });
 
         // 显示窗口
         app_instance.borrow().show();
