@@ -530,6 +530,8 @@ fn App() -> Element {
     // 系统信息状态
     let mut system_snapshot = use_signal(|| None::<SystemSnapshot>);
 
+    let mut monitor_geometry = use_signal(|| None::<[f32; 4]>);
+
     // 按下状态 - 记录哪个按钮被按下了
     let mut pressed_button = use_signal(|| None::<usize>);
 
@@ -585,7 +587,7 @@ fn App() -> Element {
         });
 
         spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(100));
+            let mut interval = tokio::time::interval(Duration::from_millis(20));
 
             loop {
                 interval.tick().await;
@@ -605,15 +607,20 @@ fn App() -> Element {
                 if let Some(shared_message) = latest_message {
                     let now = Instant::now();
 
-                    if now.duration_since(last_update()) >= Duration::from_millis(50) {
+                    if now.duration_since(last_update()) >= Duration::from_millis(20) {
                         let mut new_states = vec![ButtonStateData::default(); BUTTONS.len()];
 
-                        for (index, tag_status) in shared_message
-                            .monitor_info
-                            .tag_status_vec
-                            .iter()
-                            .enumerate()
-                        {
+                        let monitor_info = shared_message.monitor_info;
+                        let new_monitor_geometry = [
+                            monitor_info.monitor_x as f32,
+                            monitor_info.monitor_y as f32,
+                            monitor_info.monitor_width as f32,
+                            monitor_info.monitor_height as f32,
+                        ];
+                        if monitor_geometry().is_none() {
+                            monitor_geometry.set(Some(new_monitor_geometry));
+                        }
+                        for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
                             if index < new_states.len() {
                                 new_states[index] = ButtonStateData {
                                     is_filtered: tag_status.is_filled,
@@ -624,8 +631,8 @@ fn App() -> Element {
                             }
                         }
 
-                        let current_states = button_states.read().clone();
-                        if *current_states != new_states {
+                        let need_update_button_states = { *button_states.read() != new_states };
+                        if need_update_button_states {
                             button_states.set(new_states);
                             last_update.set(now);
                         }
