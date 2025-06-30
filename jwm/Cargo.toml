@@ -4,6 +4,9 @@ version = "0.1.0"
 edition = "2021"
 # build = "build.rs"
 
+[features]
+nixgl = []
+
 [dependencies]
 # alsa = "0.9.1"
 battery = "0.7.8"

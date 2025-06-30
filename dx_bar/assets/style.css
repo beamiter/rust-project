@@ -1,811 +1,853 @@
 /* 重置所有默认样式 */
 * {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
 }
 
-html, body {
-    margin: 0;
-    padding: 0;
-    height: 50px !important;
-    overflow: hidden;
-    font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-    background: transparent;
+html,
+body {
+  margin: 0;
+  padding: 0;
+  height: 50px !important;
+  overflow: hidden;
+  font-family:
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    sans-serif;
+  background: transparent;
 }
 
-#main, #app {
-    margin: 0;
-    padding: 0;
-    height: 50px !important;
-    overflow: hidden;
+#main,
+#app {
+  margin: 0;
+  padding: 0;
+  height: 50px !important;
+  overflow: hidden;
 }
 
 /* 主容器 - 响应式布局 */
 .button-row {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    justify-content: space-between; /* 左右分布 */
-    margin: 0;
-    padding: 5px 15px; /* 左右padding为15px */
-    gap: 8px;
-    width: 100vw; /* 使用视口宽度 */
-    height: 50px;
-    min-height: 50px;
-    max-height: 50px;
-    background: rgba(255, 255, 255, 0.95);
-    box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-    position: relative;
-    overflow: hidden;
-    box-sizing: border-box;
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between; /* 左右分布 */
+  margin: 0;
+  padding: 5px 15px; /* 左右padding为15px */
+  gap: 8px;
+  width: 100vw; /* 使用视口宽度 */
+  height: 50px;
+  min-height: 50px;
+  max-height: 50px;
+  background: rgba(255, 255, 255, 0.95);
+  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+  position: relative;
+  overflow: hidden;
+  box-sizing: border-box;
 }
 
 /* 左侧按钮容器 */
 .buttons-container {
-    display: flex;
-    flex-direction: row;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 1; /* 允许压缩 */
-    flex-grow: 0;   /* 不扩张 */
-    min-width: 0;   /* 允许压缩到0 */
-    overflow: hidden; /* 隐藏溢出的按钮 */
+  display: flex;
+  flex-direction: row;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 1; /* 允许压缩 */
+  flex-grow: 0; /* 不扩张 */
+  min-width: 0; /* 允许压缩到0 */
+  overflow: hidden; /* 隐藏溢出的按钮 */
 }
 
 /* 时间容器 - 始终在最右侧 */
 .time-container {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    flex-shrink: 0; /* 不允许压缩 */
-    flex-grow: 0;   /* 不扩张 */
-    cursor: pointer;
-    transition: all 0.2s ease;
-    margin-left: auto; /* 确保推到最右侧 */
-    min-width: fit-content; /* 最小宽度为内容宽度 */
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0; /* 不允许压缩 */
+  flex-grow: 0; /* 不扩张 */
+  cursor: pointer;
+  transition: all 0.2s ease;
+  margin-left: auto; /* 确保推到最右侧 */
+  min-width: fit-content; /* 最小宽度为内容宽度 */
 }
 
 .time-container:hover {
-    background: rgba(0, 0, 0, 0.05);
-    border-radius: 4px;
+  background: rgba(0, 0, 0, 0.05);
+  border-radius: 4px;
 }
 
 /* 时间显示样式 */
 .time-display {
-    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', Consolas, monospace;
-    font-size: 16px;
-    font-weight: 500;
-    color: #495057;
-    padding: 6px 12px;
-    background: rgba(248, 249, 250, 0.8);
-    border-radius: 6px;
-    border: 1px solid rgba(222, 226, 230, 0.8);
-    text-align: center;
-    user-select: none;
-    transition: all 0.2s ease;
-    white-space: nowrap;
-    min-width: 65px; /* HH:MM 最小宽度 */
+  font-family:
+    "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", Consolas,
+    monospace;
+  font-size: 16px;
+  font-weight: 500;
+  color: #495057;
+  padding: 6px 12px;
+  background: rgba(248, 249, 250, 0.8);
+  border-radius: 6px;
+  border: 1px solid rgba(222, 226, 230, 0.8);
+  text-align: center;
+  user-select: none;
+  transition: all 0.2s ease;
+  white-space: nowrap;
+  min-width: 65px; /* HH:MM 最小宽度 */
 }
 
 /* 时间显示 - 根据内容调整宽度 */
 .time-display {
-    width: auto !important;
+  width: auto !important;
 }
 
 .time-display:hover {
-    background: rgba(233, 236, 239, 0.9);
-    border-color: rgba(173, 181, 189, 0.8);
-    transform: scale(1.02);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  background: rgba(233, 236, 239, 0.9);
+  border-color: rgba(173, 181, 189, 0.8);
+  transform: scale(1.02);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 /* 按钮样式 */
 .emoji-button {
-    width: 40px;
-    height: 40px;
-    min-width: 40px;
-    min-height: 40px;
-    max-width: 40px;
-    max-height: 40px;
-    font-size: 22px;
-    border: 1px solid transparent;
-    border-radius: 6px;
-    background: transparent;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    position: relative;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-    user-select: none;
-    flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  max-width: 40px;
+  max-height: 40px;
+  font-size: 22px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  user-select: none;
+  flex-shrink: 0;
 }
 
 /* 禁用按钮样式 */
 .emoji-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-    filter: grayscale(50%);
+  opacity: 0.5;
+  cursor: not-allowed;
+  filter: grayscale(50%);
 }
 
 /* ==================== 按钮状态样式 ==================== */
 .emoji-button.state-default {
-    background: #ffffff;
-    border-color: #dee2e6;
+  background: #ffffff;
+  border-color: #dee2e6;
 }
 
 .emoji-button.state-default:hover:not(:disabled) {
-    background: #f8f9fa;
-    border-color: #adb5bd;
-    transform: scale(1.02);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  background: #f8f9fa;
+  border-color: #adb5bd;
+  transform: scale(1.02);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
 .emoji-button.state-filtered {
-    background: linear-gradient(135deg, #007bff, #0056b3) !important;
-    border-color: #004085 !important;
-    color: white !important;
-    /* animation: filtered-pulse 2s ease-in-out infinite; */
+  background: linear-gradient(135deg, #007bff, #0056b3) !important;
+  border-color: #004085 !important;
+  color: white !important;
+  /* animation: filtered-pulse 2s ease-in-out infinite; */
 }
 
 .emoji-button.state-filtered::after {
-    content: "F";
-    position: absolute;
-    top: -3px;
-    right: -3px;
-    background: #28a745;
-    border-radius: 50%;
-    width: 12px;
-    height: 12px;
-    border: 1px solid white;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-    font-size: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-weight: bold;
+  content: "F";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  background: #28a745;
+  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  border: 1px solid white;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  font-size: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
 }
 
 .emoji-button.state-selected {
-    background: linear-gradient(135deg, #28a745, #1e7e34) !important;
-    border-color: #155724 !important;
-    color: white !important;
-    transform: scale(1.02);
-    /* animation: selected-glow 1.5s ease-in-out infinite; */
+  background: linear-gradient(135deg, #28a745, #1e7e34) !important;
+  border-color: #155724 !important;
+  color: white !important;
+  transform: scale(1.02);
+  /* animation: selected-glow 1.5s ease-in-out infinite; */
 }
 
 .emoji-button.state-selected::after {
-    content: "S";
-    position: absolute;
-    top: -3px;
-    right: -3px;
-    background: #007bff;
-    border-radius: 50%;
-    width: 12px;
-    height: 12px;
-    border: 1px solid white;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-    font-size: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-weight: bold;
+  content: "S";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  background: #007bff;
+  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  border: 1px solid white;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  font-size: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
 }
 
 .emoji-button.state-urgent {
-    background: linear-gradient(135deg, #dc3545, #c82333) !important;
-    border-color: #bd2130 !important;
-    color: white !important;
-    /* animation: urgent-blink 1s ease-in-out infinite; */
+  background: linear-gradient(135deg, #dc3545, #c82333) !important;
+  border-color: #bd2130 !important;
+  color: white !important;
+  /* animation: urgent-blink 1s ease-in-out infinite; */
 }
 
 .emoji-button.state-urgent::after {
-    content: "U";
-    position: absolute;
-    top: -3px;
-    right: -3px;
-    background: #ffc107;
-    border-radius: 50%;
-    width: 12px;
-    height: 12px;
-    border: 1px solid white;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-    font-size: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: #000;
-    font-weight: bold;
+  content: "U";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  background: #ffc107;
+  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  border: 1px solid white;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  font-size: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #000;
+  font-weight: bold;
 }
 
 .emoji-button.state-occupied {
-    background: linear-gradient(135deg, #fd7e14, #e55a3c) !important;
-    border-color: #d9534f !important;
-    color: white !important;
-    /* animation: occupied-fade 3s ease-in-out infinite; */
+  background: linear-gradient(135deg, #fd7e14, #e55a3c) !important;
+  border-color: #d9534f !important;
+  color: white !important;
+  /* animation: occupied-fade 3s ease-in-out infinite; */
 }
 
 .emoji-button.state-occupied::after {
-    content: "O";
-    position: absolute;
-    top: -3px;
-    right: -3px;
-    background: #6c757d;
-    border-radius: 50%;
-    width: 12px;
-    height: 12px;
-    border: 1px solid white;
-    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-    font-size: 8px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    color: white;
-    font-weight: bold;
+  content: "O";
+  position: absolute;
+  top: -3px;
+  right: -3px;
+  background: #6c757d;
+  border-radius: 50%;
+  width: 12px;
+  height: 12px;
+  border: 1px solid white;
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
+  font-size: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-weight: bold;
 }
 
 /* ==================== 动画效果 ==================== */
 @keyframes filtered-pulse {
-    0%, 100% {
-        box-shadow: 0 1px 3px rgba(0, 123, 255, 0.4);
-    }
-    50% {
-        box-shadow: 0 2px 8px rgba(0, 123, 255, 0.7);
-        transform: scale(1.02);
-    }
+  0%,
+  100% {
+    box-shadow: 0 1px 3px rgba(0, 123, 255, 0.4);
+  }
+  50% {
+    box-shadow: 0 2px 8px rgba(0, 123, 255, 0.7);
+    transform: scale(1.02);
+  }
 }
 
 @keyframes selected-glow {
-    0%, 100% {
-        box-shadow: 0 1px 3px rgba(40, 167, 69, 0.4);
-    }
-    50% {
-        box-shadow: 0 2px 10px rgba(40, 167, 69, 0.8);
-        transform: scale(1.04);
-    }
+  0%,
+  100% {
+    box-shadow: 0 1px 3px rgba(40, 167, 69, 0.4);
+  }
+  50% {
+    box-shadow: 0 2px 10px rgba(40, 167, 69, 0.8);
+    transform: scale(1.04);
+  }
 }
 
 @keyframes urgent-blink {
-    0%, 50%, 100% {
-        opacity: 1;
-        box-shadow: 0 1px 3px rgba(220, 53, 69, 0.5);
-    }
-    25%, 75% {
-        opacity: 0.9;
-        box-shadow: 0 2px 8px rgba(220, 53, 69, 0.8);
-        transform: scale(1.04);
-    }
+  0%,
+  50%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 1px 3px rgba(220, 53, 69, 0.5);
+  }
+  25%,
+  75% {
+    opacity: 0.9;
+    box-shadow: 0 2px 8px rgba(220, 53, 69, 0.8);
+    transform: scale(1.04);
+  }
 }
 
 @keyframes occupied-fade {
-    0%, 100% {
-        opacity: 0.9;
-        box-shadow: 0 1px 3px rgba(253, 126, 20, 0.4);
-    }
-    50% {
-        opacity: 1;
-        box-shadow: 0 2px 6px rgba(253, 126, 20, 0.6);
-        transform: scale(1.02);
-    }
+  0%,
+  100% {
+    opacity: 0.9;
+    box-shadow: 0 1px 3px rgba(253, 126, 20, 0.4);
+  }
+  50% {
+    opacity: 1;
+    box-shadow: 0 2px 6px rgba(253, 126, 20, 0.6);
+    transform: scale(1.02);
+  }
 }
 
 /* ==================== 响应式设计 ==================== */
 
 /* 大屏幕：显示所有按钮 */
 @media (min-width: 1200px) {
-    .button-row {
-        padding: 5px 20px; /* 更大的padding */
-    }
+  .button-row {
+    padding: 5px 20px; /* 更大的padding */
+  }
 }
 
 /* 中等屏幕：稍微压缩 */
 @media (max-width: 1199px) and (min-width: 800px) {
-    .button-row {
-        padding: 5px 15px;
-    }
-    
-    .emoji-button {
-        width: 36px;
-        height: 36px;
-        min-width: 36px;
-        min-height: 36px;
-        max-width: 36px;
-        max-height: 36px;
-        font-size: 20px;
-    }
-    
-    .buttons-container {
-        gap: 6px;
-    }
+  .button-row {
+    padding: 5px 15px;
+  }
+
+  .emoji-button {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+    max-width: 36px;
+    max-height: 36px;
+    font-size: 20px;
+  }
+
+  .buttons-container {
+    gap: 6px;
+  }
 }
 
 /* 小屏幕：进一步压缩 */
 @media (max-width: 799px) and (min-width: 600px) {
-    .button-row {
-        padding: 5px 10px;
-    }
-    
-    .emoji-button {
-        width: 32px;
-        height: 32px;
-        min-width: 32px;
-        min-height: 32px;
-        max-width: 32px;
-        max-height: 32px;
-        font-size: 18px;
-    }
-    
-    .buttons-container {
-        gap: 4px;
-    }
-    
-    .time-display {
-        font-size: 14px;
-        padding: 4px 8px;
-    }
+  .button-row {
+    padding: 5px 10px;
+  }
+
+  .emoji-button {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+    max-width: 32px;
+    max-height: 32px;
+    font-size: 18px;
+  }
+
+  .buttons-container {
+    gap: 4px;
+  }
+
+  .time-display {
+    font-size: 14px;
+    padding: 4px 8px;
+  }
 }
 
 /* 超小屏幕：紧凑显示 */
 @media (max-width: 599px) {
-    .button-row {
-        padding: 3px 8px;
-    }
-    
-    .emoji-button {
-        width: 28px;
-        height: 28px;
-        min-width: 28px;
-        min-height: 28px;
-        max-width: 28px;
-        max-height: 28px;
-        font-size: 16px;
-    }
-    
-    .buttons-container {
-        gap: 3px;
-        overflow-x: auto; /* 允许水平滚动 */
-        scrollbar-width: none;
-        -ms-overflow-style: none;
-    }
-    
-    .buttons-container::-webkit-scrollbar {
-        display: none;
-    }
-    
-    .time-display {
-        font-size: 12px;
-        padding: 3px 6px;
-        min-width: 50px;
-    }
-    
-    .emoji-button.state-filtered::after,
-    .emoji-button.state-selected::after,
-    .emoji-button.state-urgent::after,
-    .emoji-button.state-occupied::after {
-        width: 8px;
-        height: 8px;
-        font-size: 6px;
-        top: -2px;
-        right: -2px;
-    }
+  .button-row {
+    padding: 3px 8px;
+  }
+
+  .emoji-button {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    min-height: 28px;
+    max-width: 28px;
+    max-height: 28px;
+    font-size: 16px;
+  }
+
+  .buttons-container {
+    gap: 3px;
+    overflow-x: auto; /* 允许水平滚动 */
+    scrollbar-width: none;
+    -ms-overflow-style: none;
+  }
+
+  .buttons-container::-webkit-scrollbar {
+    display: none;
+  }
+
+  .time-display {
+    font-size: 12px;
+    padding: 3px 6px;
+    min-width: 50px;
+  }
+
+  .emoji-button.state-filtered::after,
+  .emoji-button.state-selected::after,
+  .emoji-button.state-urgent::after,
+  .emoji-button.state-occupied::after {
+    width: 8px;
+    height: 8px;
+    font-size: 6px;
+    top: -2px;
+    right: -2px;
+  }
 }
 
 /* 在现有CSS的基础上添加以下样式 */
 
 /* 右侧信息容器 */
 .right-info-container {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    flex-shrink: 0;
-    flex-grow: 0;
-    margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
+  flex-grow: 0;
+  margin-left: auto;
 }
 
 /* 系统信息容器 */
 .system-info-container {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 
 /* 单个系统指标 */
 .system-metric {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    padding: 4px 8px;
-    background: rgba(248, 249, 250, 0.8);
-    border-radius: 6px;
-    border: 1px solid rgba(222, 226, 230, 0.8);
-    transition: all 0.2s ease;
-    cursor: default;
-    user-select: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 4px 8px;
+  background: rgba(248, 249, 250, 0.8);
+  border-radius: 6px;
+  border: 1px solid rgba(222, 226, 230, 0.8);
+  transition: all 0.2s ease;
+  cursor: default;
+  user-select: none;
 }
 
 .system-metric:hover {
-    background: rgba(233, 236, 239, 0.9);
-    border-color: rgba(173, 181, 189, 0.8);
-    transform: scale(1.02);
-    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+  background: rgba(233, 236, 239, 0.9);
+  border-color: rgba(173, 181, 189, 0.8);
+  transform: scale(1.02);
+  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
 }
 
 /* 指标图标 */
 .metric-icon {
-    font-size: 14px;
-    line-height: 1;
+  font-size: 14px;
+  line-height: 1;
 }
 
 /* 指标数值 */
 .metric-value {
-    font-family: 'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'SF Mono', Consolas, monospace;
-    font-size: 13px;
-    font-weight: 600;
-    min-width: 40px;
-    text-align: right;
+  font-family:
+    "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", Consolas,
+    monospace;
+  font-size: 13px;
+  font-weight: 600;
+  min-width: 40px;
+  text-align: right;
 }
 
 /* 时间容器调整 */
 .time-container {
-    display: flex;
-    align-items: center;
-    justify-content: flex-end;
-    flex-shrink: 0;
-    flex-grow: 0;
-    cursor: pointer;
-    transition: all 0.2s ease;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-shrink: 0;
+  flex-grow: 0;
+  cursor: pointer;
+  transition: all 0.2s ease;
 }
 
 /* ==================== 响应式调整 ==================== */
 
 /* 中等屏幕调整 */
 @media (max-width: 1199px) and (min-width: 800px) {
-    .system-metric {
-        padding: 3px 6px;
-    }
-    
-    .metric-icon {
-        font-size: 12px;
-    }
-    
-    .metric-value {
-        font-size: 12px;
-        min-width: 35px;
-    }
-    
-    .right-info-container {
-        gap: 8px;
-    }
+  .system-metric {
+    padding: 3px 6px;
+  }
+
+  .metric-icon {
+    font-size: 12px;
+  }
+
+  .metric-value {
+    font-size: 12px;
+    min-width: 35px;
+  }
+
+  .right-info-container {
+    gap: 8px;
+  }
 }
 
 /* 小屏幕调整 */
 @media (max-width: 799px) and (min-width: 600px) {
-    .system-metric {
-        padding: 2px 4px;
-    }
-    
-    .metric-icon {
-        font-size: 11px;
-    }
-    
-    .metric-value {
-        font-size: 11px;
-        min-width: 30px;
-    }
-    
-    .right-info-container {
-        gap: 6px;
-    }
+  .system-metric {
+    padding: 2px 4px;
+  }
+
+  .metric-icon {
+    font-size: 11px;
+  }
+
+  .metric-value {
+    font-size: 11px;
+    min-width: 30px;
+  }
+
+  .right-info-container {
+    gap: 6px;
+  }
 }
 
 /* 超小屏幕 - 简化显示 */
 @media (max-width: 599px) {
-    .system-metric {
-        padding: 2px 3px;
-    }
-    
-    .metric-icon {
-        font-size: 10px;
-    }
-    
-    .metric-value {
-        font-size: 10px;
-        min-width: 25px;
-    }
-    
-    .right-info-container {
-        gap: 4px;
-    }
-    
-    /* 在超小屏幕上隐藏部分系统信息 */
-    .system-info-container .system-metric:nth-child(3) {
-        display: none; /* 隐藏电池信息 */
-    }
+  .system-metric {
+    padding: 2px 3px;
+  }
+
+  .metric-icon {
+    font-size: 10px;
+  }
+
+  .metric-value {
+    font-size: 10px;
+    min-width: 25px;
+  }
+
+  .right-info-container {
+    gap: 4px;
+  }
+
+  /* 在超小屏幕上隐藏部分系统信息 */
+  .system-info-container .system-metric:nth-child(3) {
+    display: none; /* 隐藏电池信息 */
+  }
 }
 
 /* 截图按钮样式 */
 .screenshot-button {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 40px;
-    height: 40px;
-    min-width: 40px;
-    min-height: 40px;
-    background: rgba(248, 249, 250, 0.8);
-    border: 1px solid rgba(222, 226, 230, 0.8);
-    border-radius: 8px;
-    cursor: pointer;
-    transition: all 0.2s ease;
-    user-select: none;
-    flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  min-width: 40px;
+  min-height: 40px;
+  background: rgba(248, 249, 250, 0.8);
+  border: 1px solid rgba(222, 226, 230, 0.8);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  user-select: none;
+  flex-shrink: 0;
 }
 
 .screenshot-button:hover {
-    background: rgba(233, 236, 239, 0.9);
-    border-color: rgba(173, 181, 189, 0.8);
-    transform: scale(1.05);
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  background: rgba(233, 236, 239, 0.9);
+  border-color: rgba(173, 181, 189, 0.8);
+  transform: scale(1.05);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
 .screenshot-button:active {
-    transform: scale(0.98);
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  transform: scale(0.98);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 /* 截图按钮执行状态 */
 .screenshot-button.taking {
-    background: linear-gradient(135deg, #007bff, #0056b3);
-    border-color: #004085;
-    color: white;
-    cursor: not-allowed;
-    animation: screenshot-pulse 1s ease-in-out infinite;
+  background: linear-gradient(135deg, #007bff, #0056b3);
+  border-color: #004085;
+  color: white;
+  cursor: not-allowed;
+  animation: screenshot-pulse 1s ease-in-out infinite;
 }
 
 .screenshot-button.taking:hover {
-    transform: none;
-    background: linear-gradient(135deg, #007bff, #0056b3);
+  transform: none;
+  background: linear-gradient(135deg, #007bff, #0056b3);
 }
 
 /* 截图图标 */
 .screenshot-icon {
-    font-size: 20px;
-    line-height: 1;
+  font-size: 20px;
+  line-height: 1;
 }
 
 /* 截图执行动画 */
 @keyframes screenshot-pulse {
-    0%, 100% {
-        opacity: 1;
-        box-shadow: 0 2px 4px rgba(0, 123, 255, 0.4);
-    }
-    50% {
-        opacity: 0.8;
-        box-shadow: 0 4px 12px rgba(0, 123, 255, 0.7);
-    }
+  0%,
+  100% {
+    opacity: 1;
+    box-shadow: 0 2px 4px rgba(0, 123, 255, 0.4);
+  }
+  50% {
+    opacity: 0.8;
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.7);
+  }
 }
 
 /* 更新右侧容器布局以容纳新按钮 */
 .right-info-container {
-    display: flex;
-    align-items: center;
-    gap: 10px; /* 稍微减小gap以容纳更多内容 */
-    flex-shrink: 0;
-    flex-grow: 0;
-    margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 10px; /* 稍微减小gap以容纳更多内容 */
+  flex-shrink: 0;
+  flex-grow: 0;
+  margin-left: auto;
 }
 
 /* ==================== 响应式调整 ==================== */
 
 /* 中等屏幕调整 */
 @media (max-width: 1199px) and (min-width: 800px) {
-    .screenshot-button {
-        width: 36px;
-        height: 36px;
-        min-width: 36px;
-        min-height: 36px;
-    }
-    
-    .screenshot-icon {
-        font-size: 18px;
-    }
-    
-    .right-info-container {
-        gap: 8px;
-    }
+  .screenshot-button {
+    width: 36px;
+    height: 36px;
+    min-width: 36px;
+    min-height: 36px;
+  }
+
+  .screenshot-icon {
+    font-size: 18px;
+  }
+
+  .right-info-container {
+    gap: 8px;
+  }
 }
 
 /* 小屏幕调整 */
 @media (max-width: 799px) and (min-width: 600px) {
-    .screenshot-button {
-        width: 32px;
-        height: 32px;
-        min-width: 32px;
-        min-height: 32px;
-    }
-    
-    .screenshot-icon {
-        font-size: 16px;
-    }
-    
-    .right-info-container {
-        gap: 6px;
-    }
+  .screenshot-button {
+    width: 32px;
+    height: 32px;
+    min-width: 32px;
+    min-height: 32px;
+  }
+
+  .screenshot-icon {
+    font-size: 16px;
+  }
+
+  .right-info-container {
+    gap: 6px;
+  }
 }
 
 /* 超小屏幕调整 */
 @media (max-width: 599px) {
-    .screenshot-button {
-        width: 28px;
-        height: 28px;
-        min-width: 28px;
-        min-height: 28px;
-    }
-    
-    .screenshot-icon {
-        font-size: 14px;
-    }
-    
-    .right-info-container {
-        gap: 4px;
-    }
+  .screenshot-button {
+    width: 28px;
+    height: 28px;
+    min-width: 28px;
+    min-height: 28px;
+  }
+
+  .screenshot-icon {
+    font-size: 14px;
+  }
+
+  .right-info-container {
+    gap: 4px;
+  }
 }
 
 /* 基础按钮按下效果 - 立即响应 */
 .emoji-button.pressed {
-    transform: scale(0.92) !important;
-    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2) !important;
-    transition: all 0.1s ease !important;
+  transform: scale(0.92) !important;
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.3),
+    0 1px 2px rgba(0, 0, 0, 0.2) !important;
+  transition: all 0.1s ease !important;
 }
 
 /* 各状态按钮的按下效果 */
 .emoji-button.state-default.pressed {
-    background: #dee2e6 !important;
-    border-color: #6c757d !important;
+  background: #dee2e6 !important;
+  border-color: #6c757d !important;
 }
 
 .emoji-button.state-filtered.pressed {
-    background: linear-gradient(135deg, #003066, #001a3d) !important;
+  background: linear-gradient(135deg, #003066, #001a3d) !important;
 }
 
 .emoji-button.state-selected.pressed {
-    background: linear-gradient(135deg, #0f4419, #0a2e10) !important;
+  background: linear-gradient(135deg, #0f4419, #0a2e10) !important;
 }
 
 .emoji-button.state-urgent.pressed {
-    background: linear-gradient(135deg, #a01e2a, #751620) !important;
+  background: linear-gradient(135deg, #a01e2a, #751620) !important;
 }
 
 .emoji-button.state-occupied.pressed {
-    background: linear-gradient(135deg, #c44821, #96351a) !important;
+  background: linear-gradient(135deg, #c44821, #96351a) !important;
 }
 
 /* 移除之前的 clicked 样式，改为更直接的 active 和 pressed 效果 */
 .emoji-button:active {
-    transform: scale(0.92) !important;
-    box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2) !important;
-    transition: all 0.05s ease !important;
+  transform: scale(0.92) !important;
+  box-shadow:
+    inset 0 2px 6px rgba(0, 0, 0, 0.3),
+    0 1px 2px rgba(0, 0, 0, 0.2) !important;
+  transition: all 0.05s ease !important;
 }
 
 /* 默认状态的按下效果 */
 .emoji-button.state-default:active {
-    background: #dee2e6 !important;
-    border-color: #6c757d !important;
+  background: #dee2e6 !important;
+  border-color: #6c757d !important;
 }
 
 .emoji-button.state-filtered:active {
-    background: linear-gradient(135deg, #003066, #001a3d) !important;
+  background: linear-gradient(135deg, #003066, #001a3d) !important;
 }
 
 .emoji-button.state-selected:active {
-    background: linear-gradient(135deg, #0f4419, #0a2e10) !important;
+  background: linear-gradient(135deg, #0f4419, #0a2e10) !important;
 }
 
 .emoji-button.state-urgent:active {
-    background: linear-gradient(135deg, #a01e2a, #751620) !important;
+  background: linear-gradient(135deg, #a01e2a, #751620) !important;
 }
 
 .emoji-button.state-occupied:active {
-    background: linear-gradient(135deg, #c44821, #96351a) !important;
+  background: linear-gradient(135deg, #c44821, #96351a) !important;
 }
 
 /* 增强的按下波纹效果 */
 .emoji-button::after {
-    content: '';
-    position: absolute;
-    top: 50%;
-    left: 50%;
-    width: 0;
-    height: 0;
-    border-radius: 50%;
-    background: radial-gradient(circle, rgba(255, 255, 255, 0.6) 0%, rgba(255, 255, 255, 0) 70%);
-    transform: translate(-50%, -50%);
-    opacity: 0;
-    pointer-events: none;
-    z-index: 1;
-    transition: all 0.3s ease;
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 0;
+  height: 0;
+  border-radius: 50%;
+  background: radial-gradient(
+    circle,
+    rgba(255, 255, 255, 0.6) 0%,
+    rgba(255, 255, 255, 0) 70%
+  );
+  transform: translate(-50%, -50%);
+  opacity: 0;
+  pointer-events: none;
+  z-index: 1;
+  transition: all 0.3s ease;
 }
 
 .emoji-button.pressed::after,
 .emoji-button:active::after {
-    width: 80px;
-    height: 80px;
-    opacity: 1;
-    transition: all 0.15s ease;
+  width: 80px;
+  height: 80px;
+  opacity: 1;
+  transition: all 0.15s ease;
 }
 
 /* 确保emoji在效果层之上 */
 .emoji-button {
-    position: relative;
-    overflow: hidden;
+  position: relative;
+  overflow: hidden;
 }
 
 .emoji-button > * {
-    position: relative;
-    z-index: 2;
+  position: relative;
+  z-index: 2;
 }
 
 /* 正常悬停效果 - 不与按下效果冲突 */
 .emoji-button:hover:not(.pressed):not(:active) {
-    transform: scale(1.05);
-    transition: all 0.2s ease;
+  transform: scale(1.05);
+  transition: all 0.2s ease;
 }
 
 /* 禁用状态不显示按下效果 */
 .emoji-button:disabled.pressed,
 .emoji-button:disabled:active {
-    transform: none !important;
-    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
-    background: #f8f9fa !important;
+  transform: none !important;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
+  background: #f8f9fa !important;
 }
 
 .emoji-button:disabled::after {
-    display: none;
+  display: none;
 }
 
 /* 触摸设备优化 */
 @media (hover: none) {
-    .emoji-button:hover {
-        transform: none;
-    }
-    
-    .emoji-button.pressed,
-    .emoji-button:active {
-        transform: scale(0.95) !important;
-    }
+  .emoji-button:hover {
+    transform: none;
+  }
+
+  .emoji-button.pressed,
+  .emoji-button:active {
+    transform: scale(0.95) !important;
+  }
 }
 
 /* 响应式调整按下效果 */
 @media (max-width: 1199px) and (min-width: 800px) {
-    .emoji-button.pressed::after,
-    .emoji-button:active::after {
-        width: 70px;
-        height: 70px;
-    }
+  .emoji-button.pressed::after,
+  .emoji-button:active::after {
+    width: 70px;
+    height: 70px;
+  }
 }
 
 @media (max-width: 799px) and (min-width: 600px) {
-    .emoji-button.pressed::after,
-    .emoji-button:active::after {
-        width: 60px;
-        height: 60px;
-    }
+  .emoji-button.pressed::after,
+  .emoji-button:active::after {
+    width: 60px;
+    height: 60px;
+  }
 }
 
 @media (max-width: 599px) {
-    .emoji-button.pressed::after,
-    .emoji-button:active::after {
-        width: 50px;
-        height: 50px;
-    }
-    
-    .emoji-button.pressed,
-    .emoji-button:active {
-        transform: scale(0.94) !important;
-    }
+  .emoji-button.pressed::after,
+  .emoji-button:active::after {
+    width: 50px;
+    height: 50px;
+  }
+
+  .emoji-button.pressed,
+  .emoji-button:active {
+    transform: scale(0.94) !important;
+  }
+}
+
+.layout-symbol {
+  color: #000000;
+  font-size: 14px;
+  padding: 4px 8px;
+  background-color: rgba(255, 255, 255, 0.1);
+  border-radius: 4px;
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  min-width: 20px;
+  text-align: center;
+  margin-left: 8px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }

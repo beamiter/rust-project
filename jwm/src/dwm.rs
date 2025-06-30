@@ -2,8 +2,8 @@
 #![allow(non_snake_case)]
 
 use libc::{
-    exit, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT, SA_RESTART, SIGCHLD,
-    SIG_IGN, WNOHANG,
+    close, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
+    SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
 };
 use libc::{fd_set, select, timeval, FD_ISSET, FD_SET, FD_ZERO};
 use log::info;
@@ -22,7 +22,6 @@ use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
 use std::os::unix::process::CommandExt;
-use std::process::Stdio;
 use std::process::{Child, Command};
 use std::ptr::{addr_of_mut, null, null_mut};
 use std::rc::Rc;
@@ -1866,7 +1865,26 @@ impl Dwm {
         // --- 执行操作 ---
         // 如果需要启动（无论是第一次还是重启）
         if needs_spawn {
-            if let Ok(child) = Command::new(Config::status_bar_name)
+            let mut command: Command;
+            // --- 使用 #[cfg] 进行条件编译 ---
+            // 这段代码只有在编译时启用了 nixgl feature 时才会存在
+            #[cfg(feature = "nixgl")]
+            {
+                let nixgl_command = "nixGL".to_string();
+                info!(
+                    "   -> [feature=nixgl] enabled. Launching status bar with '{}'.",
+                    nixgl_command
+                );
+                command = Command::new(&nixgl_command);
+                command.arg(Config::status_bar_name);
+            }
+            // 这段代码只有在编译时 *没有* 启用 nixgl feature 时才会存在
+            #[cfg(not(feature = "nixgl"))]
+            {
+                info!("   -> [feature=nixgl] disabled. Launching status bar directly.");
+                command = Command::new(Config::status_bar_name);
+            }
+            if let Ok(child) = command
                 .arg0(&Self::monitor_to_bar_name(num))
                 .arg(shared_path)
                 .spawn()
@@ -2385,76 +2403,41 @@ impl Dwm {
         }
     }
 
-    pub fn spawn(&mut self, arg_ptr: *const Arg) {
+    pub fn spawn(&mut self, arg: *const Arg) {
         info!("[spawn]");
+        unsafe {
+            let mut sa: sigaction = zeroed();
 
-        let arg = match unsafe { arg_ptr.as_ref() } {
-            Some(a) => a.clone(),
-            None => {
-                error!("[spawn] Argument pointer was null");
-                return;
-            }
-        };
-
-        if let Arg::V(cmd_vec) = arg {
-            let mut processed_cmd_vec = cmd_vec.clone();
-
-            if processed_cmd_vec == *Config::dmenucmd {
-                if let Some(selmon_rc) = self.sel_mon.as_ref() {
-                    let monitor_num_str = {
-                        let selmon_borrow = selmon_rc.borrow();
-                        (b'0' + selmon_borrow.num as u8) as char
-                    }
-                    .to_string();
-
+            let mut mut_arg: Arg = (*arg).clone();
+            if let Arg::V(ref mut v) = mut_arg {
+                if *v == *Config::dmenucmd {
+                    let tmp =
+                        (b'0' + self.sel_mon.as_ref().unwrap().borrow_mut().num as u8) as char;
+                    let tmp = tmp.to_string();
                     info!(
-                        "[spawn] dmenumon: {}, num: {}",
-                        monitor_num_str,
-                        selmon_rc.borrow().num
+                        "[spawn] dmenumon tmp: {}, num: {}",
+                        tmp,
+                        self.sel_mon.as_ref().unwrap().borrow_mut().num
                     );
-                    if let Some(m_idx) = processed_cmd_vec.iter().position(|s| s == "-m") {
-                        if m_idx + 1 < processed_cmd_vec.len() {
-                            processed_cmd_vec[m_idx + 1] = monitor_num_str;
-                        } else {
-                            error!("[spawn] dmenu command has -m but no subsequent argument.");
-                        }
-                    } else {
-                        error!("[spawn] dmenu command format in Config::dmenucmd does not contain '-m'.");
+                    (*v)[2] = tmp;
+                }
+                if fork() == 0 {
+                    if !self.dpy.is_null() {
+                        close(XConnectionNumber(self.dpy));
                     }
-                } else {
-                    error!("[spawn] No selected monitor for dmenu.");
-                }
-            }
+                    setsid();
 
-            if processed_cmd_vec.is_empty() {
-                error!("[spawn] Command vector is empty.");
-                return;
-            }
+                    sigemptyset(&mut sa.sa_mask);
+                    sa.sa_flags = 0;
+                    sa.sa_sigaction = SIG_DFL;
+                    sigaction(SIGCHLD, &sa, null_mut());
 
-            info!("[spawn] Spawning command: {:?}", processed_cmd_vec);
-            match Command::new(&processed_cmd_vec[0])
-                .args(&processed_cmd_vec[1..])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn()
-            {
-                Ok(child_process) => {
-                    info!(
-                        "[spawn] Command {:?} spawned successfully with PID: {}",
-                        processed_cmd_vec,
-                        child_process.id()
-                    );
-                }
-                Err(e) => {
-                    error!(
-                        "[spawn] Failed to spawn command '{:?}': {}",
-                        processed_cmd_vec, e
-                    );
+                    info!("[spawn] arg v: {:?}", v);
+                    if let Err(val) = Command::new(&v[0]).args(&v[1..]).spawn() {
+                        info!("[spawn] Command exited with error {:?}", val);
+                    }
                 }
             }
-        } else {
-            error!("[spawn] Argument was not Arg::V type");
         }
     }
 

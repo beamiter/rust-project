@@ -1,6 +1,6 @@
 use chrono::Local;
 use dioxus::{
-    desktop::{Config, WindowBuilder},
+    desktop::{Config, WindowBuilder, tao::platform::unix::WindowBuilderExtUnix, use_window},
     prelude::*,
 };
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
@@ -14,7 +14,11 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 // 导入 tao 用于窗口配置
-use tao::dpi::{LogicalPosition, LogicalSize};
+use tao::platform::unix::EventLoopBuilderExtUnix;
+use tao::{
+    dpi::{LogicalPosition, LogicalSize},
+    event_loop::EventLoopBuilder,
+};
 
 mod error;
 pub use error::AppError;
@@ -146,7 +150,7 @@ fn shared_memory_worker(
                         }
                     }
                 }
-                Ok(None) => {
+                Ok(_) => {
                     consecutive_errors = 0;
                 }
                 Err(e) => {
@@ -201,12 +205,15 @@ fn main() {
 
     info!("Starting dx_bar v{}", 1.0);
 
+    // 创建自定义的 EventLoopBuilder
+    let event_loop = EventLoopBuilder::new().with_app_id(instance_name).build();
+
     dioxus::LaunchBuilder::desktop()
         .with_cfg(
             Config::new().with_window(
                 WindowBuilder::new()
                     .with_title("dx_bar")
-                    .with_inner_size(LogicalSize::new(1980, 50))
+                    .with_inner_size(LogicalSize::new(1080, 50))
                     .with_position(LogicalPosition::new(0, 0))
                     .with_maximizable(false)
                     .with_minimizable(false)
@@ -520,57 +527,73 @@ fn TimeDisplay(show_seconds: bool) -> Element {
 
 #[component]
 fn App() -> Element {
+    // 获取窗口控制句柄
+    let window = use_window();
+    let scale_factor = window.scale_factor();
+
     // 按钮状态数组
     let mut button_states = use_signal(|| vec![ButtonStateData::default(); BUTTONS.len()]);
     let mut last_update = use_signal(|| Instant::now());
-
-    // 时间显示秒数的状态
-    let mut show_seconds = use_signal(|| true); // 默认显示秒
-
-    // 系统信息状态
+    let mut show_seconds = use_signal(|| true);
     let mut system_snapshot = use_signal(|| None::<SystemSnapshot>);
-
     let mut monitor_geometry = use_signal(|| None::<[f32; 4]>);
-
-    // 按下状态 - 记录哪个按钮被按下了
     let mut pressed_button = use_signal(|| None::<usize>);
+    let mut layout_symbol = use_signal(|| " ? ".to_string());
 
-    // 初始化系统监控
+    // 使用 Signal 来触发窗口调整
+    let mut window_adjustment_trigger = use_signal(|| None::<[f32; 4]>);
+
+    // 窗口调整 effect - 独立的 effect 监听调整触发器
+    use_effect(move || {
+        if let Some(geometry) = window_adjustment_trigger() {
+            let [x, y, width, _height] = geometry;
+
+            info!("Adjusting window: position=({}, {}), width={}", x, y, width);
+
+            // 设置窗口位置
+            window.set_outer_position(LogicalPosition::new(x as f64, y as f64));
+
+            // 设置窗口大小（保持高度为50，使用监视器的宽度）
+            window.set_inner_size(LogicalSize::new(width as f64, 50.0));
+
+            // 确保窗口在所有工作区可见且置顶
+            window.set_always_on_top(true);
+
+            // 清除触发器
+            window_adjustment_trigger.set(None);
+        }
+    });
+
+    // 系统信息监控（保持原有逻辑）
     use_effect(move || {
         spawn(async move {
-            // 在独立的线程中运行系统监控，避免阻塞UI
             let (sys_sender, sys_receiver) = std::sync::mpsc::channel();
 
             thread::spawn(move || {
-                let mut monitor = SystemMonitor::new(30); // 保存30个历史数据点
-                monitor.set_update_interval(Duration::from_millis(2000)); // 2秒更新一次
+                let mut monitor = SystemMonitor::new(30);
+                monitor.set_update_interval(Duration::from_millis(2000));
 
                 loop {
                     monitor.update_if_needed();
-
                     if let Some(snapshot) = monitor.get_snapshot() {
                         if sys_sender.send(snapshot.clone()).is_err() {
-                            // 接收端已关闭，退出线程
                             break;
                         }
                     }
-
                     thread::sleep(Duration::from_millis(500));
                 }
             });
 
-            // 在异步任务中接收系统信息更新
             loop {
                 if let Ok(snapshot) = sys_receiver.try_recv() {
                     system_snapshot.set(Some(snapshot));
                 }
-
                 tokio::time::sleep(Duration::from_millis(100)).await;
             }
         });
     });
 
-    // 初始化共享内存通信
+    // 共享内存通信逻辑
     use_effect(move || {
         let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
         let (_command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
@@ -598,7 +621,6 @@ fn App() -> Element {
                 while let Ok(message) = message_receiver.try_recv() {
                     latest_message = Some(message);
                     message_count += 1;
-
                     if message_count >= 5 {
                         break;
                     }
@@ -611,15 +633,32 @@ fn App() -> Element {
                         let mut new_states = vec![ButtonStateData::default(); BUTTONS.len()];
 
                         let monitor_info = shared_message.monitor_info;
+                        layout_symbol.set(monitor_info.ltsymbol.clone());
                         let new_monitor_geometry = [
                             monitor_info.monitor_x as f32,
                             monitor_info.monitor_y as f32,
                             monitor_info.monitor_width as f32,
                             monitor_info.monitor_height as f32,
                         ];
-                        if monitor_geometry().is_none() {
+
+                        // 检查是否需要调整窗口
+                        let should_adjust_window =
+                            if let Some(current_geometry) = monitor_geometry() {
+                                // 如果几何信息发生变化，重新调整
+                                current_geometry != new_monitor_geometry
+                            } else {
+                                // 如果是第一次获取几何信息，需要调整
+                                true
+                            };
+
+                        if should_adjust_window {
                             monitor_geometry.set(Some(new_monitor_geometry));
+                            // 触发窗口调整
+                            window_adjustment_trigger.set(Some(new_monitor_geometry));
+                            info!("Triggering window adjustment: {:?}", new_monitor_geometry);
                         }
+
+                        // 更新按钮状态
                         for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
                             if index < new_states.len() {
                                 new_states[index] = ButtonStateData {
@@ -642,22 +681,17 @@ fn App() -> Element {
         });
     });
 
-    // 处理按钮按下
+    // 按钮处理函数
     let mut handle_button_press = move |index: usize| {
         info!("Button {} pressed", index);
         pressed_button.set(Some(index));
     };
 
-    // 处理按钮松开
     let mut handle_button_release = move |index: usize| {
         info!("Button {} released", index);
         pressed_button.set(None);
-
-        // 这里可以添加实际的按钮功能逻辑
-        // 例如：command_sender.send(SharedCommand::SelectTag(index));
     };
 
-    // 处理鼠标离开（防止按下后拖拽离开按钮区域导致状态卡住）
     let mut handle_button_leave = move |_index: usize| {
         pressed_button.set(None);
     };
@@ -668,7 +702,6 @@ fn App() -> Element {
         div {
             class: "button-row",
 
-            // 按钮区域 - 左侧
             div {
                 class: "buttons-container",
                 for (i, emoji) in BUTTONS.iter().enumerate() {
@@ -688,9 +721,7 @@ fn App() -> Element {
                                 onmousedown: move |_| handle_button_press(i),
                                 onmouseup: move |_| handle_button_release(i),
                                 onmouseleave: move |_| handle_button_leave(i),
-                                // 也可以保留 onclick 作为备选
                                 onclick: move |_| {
-                                    // 如果没有触发 mouseup (比如触摸屏)，确保释放状态
                                     if pressed_button() == Some(i) {
                                         handle_button_release(i);
                                     }
@@ -700,19 +731,20 @@ fn App() -> Element {
                         }
                     }
                 }
+
+                // 添加 layout_symbol 显示
+                span {
+                    class: "layout-symbol",
+                    title: "当前布局",
+                    "{layout_symbol()}"
+                }
+
             }
 
-            // 右侧信息区域
             div {
                 class: "right-info-container",
-
-                // 系统信息显示
                 SystemInfoDisplay { snapshot: system_snapshot() }
-
-                // 截图按钮
                 ScreenshotButton {}
-
-                // 时间显示
                 div {
                     class: "time-container",
                     onclick: move |_| {
