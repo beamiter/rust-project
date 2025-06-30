@@ -677,6 +677,7 @@ fn App() -> Element {
 
         spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(20));
+            let mut should_adjust_window = true;
 
             loop {
                 interval.tick().await;
@@ -711,16 +712,14 @@ fn App() -> Element {
                         ];
 
                         // 检查是否需要调整窗口
-                        let should_adjust_window =
-                            if let Some(current_geometry) = window_adjustment_trigger() {
-                                // 如果几何信息发生变化，重新调整
-                                current_geometry != new_monitor_geometry
-                            } else {
-                                // 如果是第一次获取几何信息，需要调整
-                                true
-                            };
+                        if let Some(current_geometry) = window_adjustment_trigger() {
+                            if current_geometry == new_monitor_geometry {
+                                should_adjust_window = false;
+                            }
+                        }
 
                         if should_adjust_window {
+                            should_adjust_window = false;
                             // 触发窗口调整
                             window_adjustment_trigger.set(Some(new_monitor_geometry));
                             info!("Triggering window adjustment: {:?}", new_monitor_geometry);
