@@ -27,8 +27,6 @@ use system_monitor::SystemMonitor;
 static RUNTIME: Lazy<tokio::runtime::Runtime> =
     Lazy::new(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"));
 
-const APPLICATION_ID: &str = "com.example.gtk4-bar";
-
 #[derive(Debug, Clone)]
 enum Message {
     TabSelected(usize),
@@ -750,13 +748,19 @@ fn main() -> glib::ExitCode {
 
     // 解析命令行参数
     let args: Vec<String> = env::args().collect();
+    let instance_name = args
+        .get(0)
+        .cloned()
+        .or_else(|| env::var("GTK_BAR_INSTANCE").ok())
+        .unwrap_or_else(|| "gtk_bar_instance".to_string());
+    info!("instance_name: {instance_name}");
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
     info!("Starting GTK4 Bar v1.0");
 
     // 创建 GTK 应用
     let app = Application::builder()
-        .application_id(APPLICATION_ID)
+        .application_id(format!("{}.{}", instance_name, instance_name))
         .build();
 
     app.connect_activate(move |app| {

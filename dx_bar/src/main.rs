@@ -1,6 +1,10 @@
 use chrono::Local;
 use dioxus::{
-    desktop::{Config, WindowBuilder, tao::platform::unix::WindowBuilderExtUnix, use_window},
+    desktop::{
+        Config, LogicalPosition, LogicalSize, WindowBuilder,
+        tao::{event_loop::EventLoopBuilder, platform::unix::EventLoopBuilderExtUnix},
+        use_window,
+    },
     prelude::*,
 };
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
@@ -12,12 +16,6 @@ use std::{
     sync::mpsc,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
-};
-// 导入 tao 用于窗口配置
-use tao::platform::unix::EventLoopBuilderExtUnix;
-use tao::{
-    dpi::{LogicalPosition, LogicalSize},
-    event_loop::EventLoopBuilder,
 };
 
 mod error;
@@ -34,13 +32,13 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
 
     let file_name = if shared_path.is_empty() {
-        "iced_bar".to_string()
+        "dx_bar".to_string()
     } else {
         std::path::Path::new(shared_path)
             .file_name()
             .and_then(|name| name.to_str())
-            .map(|name| format!("iced_bar_{}", name))
-            .unwrap_or_else(|| "iced_bar".to_string())
+            .map(|name| format!("dx_bar_{}", name))
+            .unwrap_or_else(|| "dx_bar".to_string())
     };
 
     let log_filename = format!("{}_{}", file_name, timestamp);
@@ -194,33 +192,35 @@ fn main() {
         .get(0)
         .cloned()
         .or_else(|| env::var("DX_BAR_INSTANCE").ok())
-        .unwrap_or_else(|| "dx_bar_default".to_string());
-    info!("instance_name: {instance_name}");
+        .unwrap_or_else(|| "dx_bar_instance".to_string());
     let shared_path = args.get(1).cloned().unwrap_or_default();
-
     if let Err(e) = initialize_logging(&shared_path) {
         error!("Failed to initialize logging: {}", e);
         std::process::exit(1);
     }
 
     info!("Starting dx_bar v{}", 1.0);
+    info!("instance_name: {instance_name}");
 
-    // 创建自定义的 EventLoopBuilder
-    let event_loop = EventLoopBuilder::new().with_app_id(instance_name).build();
+    let event_loop = EventLoopBuilder::with_user_event()
+        .with_app_id(format!("{}.{}", instance_name, instance_name))
+        .build();
 
     dioxus::LaunchBuilder::desktop()
         .with_cfg(
-            Config::new().with_window(
-                WindowBuilder::new()
-                    .with_title("dx_bar")
-                    .with_inner_size(LogicalSize::new(1080, 50))
-                    .with_position(LogicalPosition::new(0, 0))
-                    .with_maximizable(false)
-                    .with_minimizable(false)
-                    .with_visible_on_all_workspaces(true)
-                    .with_decorations(false)
-                    .with_always_on_top(true),
-            ),
+            Config::new()
+                .with_window(
+                    WindowBuilder::new()
+                        .with_title("dx_bar")
+                        .with_inner_size(LogicalSize::new(1080, 50))
+                        .with_position(LogicalPosition::new(0, 0))
+                        .with_maximizable(false)
+                        .with_minimizable(false)
+                        .with_visible_on_all_workspaces(true)
+                        .with_decorations(false)
+                        .with_always_on_top(true),
+                )
+                .with_event_loop(event_loop),
         )
         .launch(App);
 }
@@ -529,14 +529,13 @@ fn TimeDisplay(show_seconds: bool) -> Element {
 fn App() -> Element {
     // 获取窗口控制句柄
     let window = use_window();
-    let scale_factor = window.scale_factor();
+    let _scale_factor = window.scale_factor();
 
     // 按钮状态数组
     let mut button_states = use_signal(|| vec![ButtonStateData::default(); BUTTONS.len()]);
     let mut last_update = use_signal(|| Instant::now());
     let mut show_seconds = use_signal(|| true);
     let mut system_snapshot = use_signal(|| None::<SystemSnapshot>);
-    let mut monitor_geometry = use_signal(|| None::<[f32; 4]>);
     let mut pressed_button = use_signal(|| None::<usize>);
     let mut layout_symbol = use_signal(|| " ? ".to_string());
 
@@ -643,7 +642,7 @@ fn App() -> Element {
 
                         // 检查是否需要调整窗口
                         let should_adjust_window =
-                            if let Some(current_geometry) = monitor_geometry() {
+                            if let Some(current_geometry) = window_adjustment_trigger() {
                                 // 如果几何信息发生变化，重新调整
                                 current_geometry != new_monitor_geometry
                             } else {
@@ -651,8 +650,7 @@ fn App() -> Element {
                                 true
                             };
 
-                        if should_adjust_window {
-                            monitor_geometry.set(Some(new_monitor_geometry));
+                        if should_adjust_window || true {
                             // 触发窗口调整
                             window_adjustment_trigger.set(Some(new_monitor_geometry));
                             info!("Triggering window adjustment: {:?}", new_monitor_geometry);
