@@ -585,7 +585,7 @@ fn App() -> Element {
         });
 
         spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(200));
+            let mut interval = tokio::time::interval(Duration::from_millis(100));
 
             loop {
                 interval.tick().await;
@@ -605,7 +605,7 @@ fn App() -> Element {
                 if let Some(shared_message) = latest_message {
                     let now = Instant::now();
 
-                    if now.duration_since(last_update()) >= Duration::from_millis(150) {
+                    if now.duration_since(last_update()) >= Duration::from_millis(50) {
                         let mut new_states = vec![ButtonStateData::default(); BUTTONS.len()];
 
                         for (index, tag_status) in shared_message
