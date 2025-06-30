@@ -199,6 +199,24 @@ fn main() {
         std::process::exit(1);
     }
 
+    // 检查环境信息
+    info!("=== Environment Debug Info ===");
+    info!("DISPLAY: {:?}", env::var("DISPLAY"));
+    info!("WAYLAND_DISPLAY: {:?}", env::var("WAYLAND_DISPLAY"));
+    info!("XDG_SESSION_TYPE: {:?}", env::var("XDG_SESSION_TYPE"));
+    info!("DESKTOP_SESSION: {:?}", env::var("DESKTOP_SESSION"));
+    info!("XDG_CURRENT_DESKTOP: {:?}", env::var("XDG_CURRENT_DESKTOP"));
+
+    // 检查屏幕分辨率（如果可能）
+    if let Ok(output) = Command::new("xrandr").arg("--current").output() {
+        let output_str = String::from_utf8_lossy(&output.stdout);
+        for line in output_str.lines() {
+            if line.contains("primary") || line.contains("*") {
+                info!("Screen info: {}", line.trim());
+            }
+        }
+    }
+
     info!("Starting dx_bar v{}", 1.0);
     info!("instance_name: {instance_name}");
 
@@ -212,13 +230,13 @@ fn main() {
                 .with_window(
                     WindowBuilder::new()
                         .with_title("dx_bar")
-                        .with_inner_size(LogicalSize::new(1080, 50))
                         .with_position(LogicalPosition::new(0, 0))
                         .with_maximizable(false)
                         .with_minimizable(false)
+                        .with_resizable(true)
+                        .with_always_on_top(true)
                         .with_visible_on_all_workspaces(true)
-                        .with_decorations(false)
-                        .with_always_on_top(true),
+                        .with_decorations(false),
                 )
                 .with_event_loop(event_loop),
         )
@@ -527,9 +545,40 @@ fn TimeDisplay(show_seconds: bool) -> Element {
 
 #[component]
 fn App() -> Element {
+    // 在组件初始化时立即检查窗口状态
+    use_effect(move || {
+        info!("=== App Component Initialization ===");
+        // 立即检查窗口状态
+        spawn(async move {
+            tokio::time::sleep(Duration::from_millis(10)).await; // 等待一小段时间
+            let window = use_window();
+            let scale_factor = window.scale_factor();
+            let size = window.inner_size();
+            let outer_size = window.outer_size();
+            let pos = window.outer_position().unwrap_or_default();
+            info!("App init - Inner size: {}x{}", size.width, size.height);
+            info!(
+                "App init - Outer size: {}x{}",
+                outer_size.width, outer_size.height
+            );
+            info!("App init - Position: ({}, {})", pos.x, pos.y);
+            info!("App init - Scale factor: {}", scale_factor);
+            info!("App init - Is decorated: {}", window.is_decorated());
+            info!("App init - Is resizable: {}", window.is_resizable());
+            info!("App init - Is maximized: {}", window.is_maximized());
+            // 计算逻辑大小
+            let logical_width = size.width as f64 / scale_factor;
+            let logical_height = size.height as f64 / scale_factor;
+            info!(
+                "App init - Logical size: {:.1}x{:.1}",
+                logical_width, logical_height
+            );
+        });
+    });
+
     // 获取窗口控制句柄
     let window = use_window();
-    let _scale_factor = window.scale_factor();
+    let scale_factor = window.scale_factor();
 
     // 按钮状态数组
     let mut button_states = use_signal(|| vec![ButtonStateData::default(); BUTTONS.len()]);
@@ -546,20 +595,38 @@ fn App() -> Element {
     use_effect(move || {
         if let Some(geometry) = window_adjustment_trigger() {
             let [x, y, width, _height] = geometry;
+            // 在窗口调整代码中添加更详细的调试信息
+            info!("=== Window Adjustment Debug ===");
+            info!("Target: x={}, y={}, width={}", x, y, width);
+            info!("Window decorations: {}", window.is_decorated());
+            info!("Window resizable: {}", window.is_resizable());
+            info!("Window maximized: {}", window.is_maximized());
+            info!("Window minimized: {}", window.is_minimized());
+            info!("Scale factor: {}", window.scale_factor());
 
-            info!("Adjusting window: position=({}, {}), width={}", x, y, width);
+            // 调整前状态
+            let before_size = window.inner_size();
+            let before_pos = window.outer_position().unwrap_or_default();
+            info!(
+                "Before: size={}x{}, pos=({}, {})",
+                before_size.width, before_size.height, before_pos.x, before_pos.y
+            );
 
-            // 设置窗口位置
+            // 执行调整
             window.set_outer_position(LogicalPosition::new(x as f64, y as f64));
-
-            // 设置窗口大小（保持高度为50，使用监视器的宽度）
             window.set_inner_size(LogicalSize::new(width as f64, 50.0));
 
-            // 确保窗口在所有工作区可见且置顶
-            window.set_always_on_top(true);
+            let after_size = window.inner_size();
+            let after_pos = window.outer_position().unwrap_or_default();
+            info!(
+                "After: size={}x{}, pos=({}, {})",
+                after_size.width, after_size.height, after_pos.x, after_pos.y
+            );
 
             // 清除触发器
             window_adjustment_trigger.set(None);
+        } else {
+            info!("window adjstment idle");
         }
     });
 
@@ -632,7 +699,10 @@ fn App() -> Element {
                         let mut new_states = vec![ButtonStateData::default(); BUTTONS.len()];
 
                         let monitor_info = shared_message.monitor_info;
-                        layout_symbol.set(monitor_info.ltsymbol.clone());
+                        layout_symbol.set(
+                            monitor_info.ltsymbol.clone()
+                                + format!(" s: {:.2}", scale_factor).as_str(),
+                        );
                         let new_monitor_geometry = [
                             monitor_info.monitor_x as f32,
                             monitor_info.monitor_y as f32,
@@ -650,7 +720,7 @@ fn App() -> Element {
                                 true
                             };
 
-                        if should_adjust_window || true {
+                        if should_adjust_window {
                             // 触发窗口调整
                             window_adjustment_trigger.set(Some(new_monitor_geometry));
                             info!("Triggering window adjustment: {:?}", new_monitor_geometry);
