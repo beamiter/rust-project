@@ -1,5 +1,6 @@
 use cairo::Context;
 use chrono::Local;
+use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use glib::{clone, timeout_add_local};
 use gtk4::prelude::*;
 use gtk4::{
@@ -738,24 +739,54 @@ fn shared_memory_worker(
     }
 }
 
-fn main() -> glib::ExitCode {
-    // 初始化日志
-    flexi_logger::Logger::try_with_str("info")
-        .unwrap()
+/// Initialize logging system
+fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
+    let now = Local::now();
+    let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
+
+    let file_name = if shared_path.is_empty() {
+        "dx_bar".to_string()
+    } else {
+        std::path::Path::new(shared_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| format!("dx_bar_{}", name))
+            .unwrap_or_else(|| "dx_bar".to_string())
+    };
+
+    let log_filename = format!("{}_{}", file_name, timestamp);
+    info!("log_filename: {}", log_filename);
+
+    Logger::try_with_str("info")
+        .map_err(|e| AppError::config(format!("Failed to create logger: {}", e)))?
         .format(flexi_logger::colored_opt_format)
+        .log_to_file(
+            FileSpec::default()
+                .directory("/tmp")
+                .basename(log_filename)
+                .suffix("log"),
+        )
+        .duplicate_to_stdout(Duplicate::Debug)
+        .rotate(
+            Criterion::Size(10_000_000), // 10MB
+            Naming::Numbers,
+            Cleanup::KeepLogFiles(5),
+        )
         .start()
-        .unwrap();
+        .map_err(|e| AppError::config(format!("Failed to start logger: {}", e)))?;
 
-    // 解析命令行参数
+    Ok(())
+}
+
+fn main() -> glib::ExitCode {
     let args: Vec<String> = env::args().collect();
-    let instance_name = args
-        .get(0)
-        .cloned()
-        .or_else(|| env::var("GTK_BAR_INSTANCE").ok())
-        .unwrap_or_else(|| "gtk_bar_instance".to_string());
-    info!("instance_name: {instance_name}");
     let shared_path = args.get(1).cloned().unwrap_or_default();
-
+    if let Err(e) = initialize_logging(&shared_path) {
+        error!("Failed to initialize logging: {}", e);
+        std::process::exit(1);
+    }
+    let instance_name = shared_path.replace("/dev/shm/monitor_", "gtk_bar_");
+    info!("instance_name: {instance_name}");
     info!("Starting GTK4 Bar v1.0");
 
     // 创建 GTK 应用
