@@ -1879,7 +1879,7 @@ impl Dwm {
                     }
                 }
                 if not_fully_initialized {
-                    std::thread::sleep(Duration::from_millis(2000));
+                    return;
                 }
 
                 let nixgl_command = "nixGL".to_string();
