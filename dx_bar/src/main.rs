@@ -188,12 +188,8 @@ fn shared_memory_worker(
 
 fn main() {
     let args: Vec<String> = env::args().collect();
-    let instance_name = args
-        .get(0)
-        .cloned()
-        .or_else(|| env::var("DX_BAR_INSTANCE").ok())
-        .unwrap_or_else(|| "dx_bar_instance".to_string());
     let shared_path = args.get(1).cloned().unwrap_or_default();
+    let instance_name = shared_path.replace("/dev/shm/monitor_", "dx_bar_");
     if let Err(e) = initialize_logging(&shared_path) {
         error!("Failed to initialize logging: {}", e);
         std::process::exit(1);
