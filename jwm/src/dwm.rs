@@ -692,8 +692,8 @@ pub struct Dwm {
     pub message: SharedMessage,
 
     // 状态栏专用管理
-    pub statusbar_clients: HashMap<i32, Rc<RefCell<Client>>>, // monitor_id -> statusbar_client
-    pub statusbar_windows: HashMap<Window, i32>,              // window_id -> monitor_id (快速查找)
+    pub status_bar_clients: HashMap<i32, Rc<RefCell<Client>>>, // monitor_id -> statusbar_client
+    pub status_bar_windows: HashMap<Window, i32>,              // window_id -> monitor_id (快速查找)
 }
 
 impl Dwm {
@@ -744,8 +744,8 @@ impl Dwm {
             status_bar_shmem: HashMap::new(),
             status_bar_child: HashMap::new(),
             message: SharedMessage::default(),
-            statusbar_clients: HashMap::new(),
-            statusbar_windows: HashMap::new(),
+            status_bar_clients: HashMap::new(),
+            status_bar_windows: HashMap::new(),
         }
     }
 
@@ -1030,7 +1030,7 @@ impl Dwm {
         // info!("[cleanup]");
         // Bitwise or to get max value.
         // 清理状态栏
-        let statusbar_monitor_ids: Vec<i32> = self.statusbar_clients.keys().cloned().collect();
+        let statusbar_monitor_ids: Vec<i32> = self.status_bar_clients.keys().cloned().collect();
         for monitor_id in statusbar_monitor_ids {
             self.unmanage_statusbar(monitor_id, false);
         }
@@ -1383,7 +1383,7 @@ impl Dwm {
 
             if let Some(ref client_rc) = c {
                 // 检查是否是状态栏
-                if let Some(&monitor_id) = self.statusbar_windows.get(&ev.window) {
+                if let Some(&monitor_id) = self.status_bar_windows.get(&ev.window) {
                     info!("[configurerequest] statusbar on monitor {}", monitor_id);
                     self.handle_statusbar_configure_request(monitor_id, &ev);
                     // let mut wc: XWindowChanges = std::mem::zeroed();
@@ -1418,7 +1418,7 @@ impl Dwm {
         monitor_id, ev.width, ev.height, ev.x, ev.y, ev.value_mask
     );
 
-        if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
+        if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
             let mut statusbar_mut = statusbar.borrow_mut();
             let old_geometry = (
                 statusbar_mut.x,
@@ -1794,7 +1794,7 @@ impl Dwm {
             match ring_buffer.try_write_message(&message) {
                 Ok(true) => {
                     // (TODO).
-                    if let Some(statusbar) = self.statusbar_clients.get(&num) {
+                    if let Some(statusbar) = self.status_bar_clients.get(&num) {
                         info!("statusbar: {}", statusbar.borrow());
                     }
                     info!("[write_message] {:?}", message);
@@ -1870,6 +1870,18 @@ impl Dwm {
             // 这段代码只有在编译时启用了 nixgl feature 时才会存在
             #[cfg(feature = "nixgl")]
             {
+                // Hack for nixgl.
+                let mut not_fully_initialized = false;
+                for (&tmp_num, _) in self.status_bar_child.iter() {
+                    if !self.status_bar_clients.contains_key(&tmp_num) {
+                        not_fully_initialized = true;
+                        break;
+                    }
+                }
+                if not_fully_initialized {
+                    std::thread::sleep(Duration::from_millis(2000));
+                }
+
                 let nixgl_command = "nixGL".to_string();
                 info!(
                     "   -> [feature=nixgl] enabled. Launching status bar with '{}'.",
@@ -1941,7 +1953,7 @@ impl Dwm {
             }
             // 确保状态栏始终在最上方
             let monitor_id = mon_borrow.num;
-            if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
+            if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
                 XRaiseWindow(self.dpy, statusbar.borrow().win);
             }
             wc.stack_mode = Below;
@@ -2303,8 +2315,8 @@ impl Dwm {
 
     pub fn wintoclient(&mut self, w: Window) -> Option<Rc<RefCell<Client>>> {
         // 首先检查是否是状态栏窗口
-        if let Some(&monitor_id) = self.statusbar_windows.get(&w) {
-            return self.statusbar_clients.get(&monitor_id).cloned();
+        if let Some(&monitor_id) = self.status_bar_windows.get(&w) {
+            return self.status_bar_clients.get(&monitor_id).cloned();
         }
 
         // 然后检查常规客户端
@@ -4515,7 +4527,7 @@ impl Dwm {
             }
 
             // 检查是否进入状态栏
-            if let Some(&monitor_id) = self.statusbar_windows.get(&ev.window) {
+            if let Some(&monitor_id) = self.status_bar_windows.get(&ev.window) {
                 // 状态栏不改变焦点，但可能需要切换显示器
                 if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
                     if !Rc::ptr_eq(&monitor, self.sel_mon.as_ref().unwrap()) {
@@ -4595,7 +4607,7 @@ impl Dwm {
             {
                 // 如果传入的是状态栏客户端，忽略并寻找合适的替代
                 if let Some(ref c) = c_opt {
-                    if self.statusbar_windows.contains_key(&c.borrow().win) {
+                    if self.status_bar_windows.contains_key(&c.borrow().win) {
                         c_opt = None; // 忽略状态栏
                     }
                 }
@@ -4778,6 +4790,28 @@ impl Dwm {
 
                 // 获取并设置窗口标题
                 self.updatetitle(&mut client_mut);
+                #[cfg(feature = "nixgl")]
+                {
+                    if client_mut.name == Config::status_bar_name {
+                        let mut instance_name = String::new();
+                        for &tmp_num in self.status_bar_child.keys() {
+                            if !self.status_bar_clients.contains_key(&tmp_num) {
+                                instance_name = match tmp_num {
+                                    0 => Config::status_bar_0.to_string(),
+                                    1 => Config::status_bar_1.to_string(),
+                                    _ => Config::status_bar_name.to_string(),
+                                };
+                            }
+                        }
+                        if !instance_name.is_empty() {
+                            let _ = self.set_class_info(
+                                &mut client_mut,
+                                instance_name.as_str(),
+                                instance_name.as_str(),
+                            );
+                        }
+                    }
+                }
                 self.update_class_info(&mut client_mut);
                 info!("[manage] {}", client_mut);
 
@@ -5060,8 +5094,9 @@ impl Dwm {
             }
 
             // 注册状态栏到管理映射中
-            self.statusbar_clients.insert(monitor_id, client_rc.clone());
-            self.statusbar_windows
+            self.status_bar_clients
+                .insert(monitor_id, client_rc.clone());
+            self.status_bar_windows
                 .insert(client_rc.borrow().win, monitor_id);
 
             // 映射状态栏窗口
@@ -5147,7 +5182,7 @@ impl Dwm {
     fn update_monitor_workarea(&mut self, monitor_id: i32) {
         if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
             let mut monitor_mut = monitor.borrow_mut();
-            if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
+            if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
                 let statusbar_borrow = statusbar.borrow();
                 // 根据状态栏的实际位置和大小重新计算工作区域
                 let statusbar_bottom = statusbar_borrow.y + statusbar_borrow.h;
@@ -5188,7 +5223,7 @@ impl Dwm {
     // 实时同步状态栏几何信息
     #[allow(dead_code)]
     pub fn sync_statusbar_geometry(&mut self, monitor_id: i32) -> bool {
-        if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
+        if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
             unsafe {
                 let win = statusbar.borrow().win;
                 let mut wa: XWindowAttributes = std::mem::zeroed();
@@ -5249,7 +5284,7 @@ impl Dwm {
         //     );
         // }
 
-        if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
+        if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
             let statusbar_borrow = statusbar.borrow();
             let offset = statusbar_borrow.h + Config::status_bar_pad;
             info!(
@@ -5269,7 +5304,7 @@ impl Dwm {
     #[allow(dead_code)]
     fn validate_statusbar_geometry(&mut self, monitor_id: i32) -> bool {
         if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-            if let Some(statusbar) = self.statusbar_clients.get(&monitor_id) {
+            if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
                 let monitor_borrow = monitor.borrow();
                 let mut statusbar_mut = statusbar.borrow_mut();
                 let mut changed = false;
@@ -5578,7 +5613,7 @@ impl Dwm {
         };
         let win = client_rc.borrow().win;
         // 检查是否是状态栏
-        if let Some(&monitor_id) = self.statusbar_windows.get(&win) {
+        if let Some(&monitor_id) = self.status_bar_windows.get(&win) {
             self.unmanage_statusbar(monitor_id, destroyed);
             return;
         }
@@ -5592,9 +5627,9 @@ impl Dwm {
             monitor_id
         );
 
-        if let Some(statusbar) = self.statusbar_clients.remove(&monitor_id) {
+        if let Some(statusbar) = self.status_bar_clients.remove(&monitor_id) {
             let win = statusbar.borrow().win;
-            self.statusbar_windows.remove(&win);
+            self.status_bar_windows.remove(&win);
 
             if !destroyed {
                 unsafe {
