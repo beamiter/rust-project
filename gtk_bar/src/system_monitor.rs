@@ -1,6 +1,5 @@
 //! System monitoring with caching and efficient updates
 
-use battery::Manager;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use sysinfo::System;

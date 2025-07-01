@@ -1,15 +1,14 @@
 use cairo::Context;
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-use glib::{clone, timeout_add_local};
+use glib::timeout_add_local;
+use gtk4::gio::{self};
 use gtk4::prelude::*;
 use gtk4::{
-    Application, ApplicationWindow, Box, Button, DrawingArea, EventControllerMotion, GestureClick,
-    Label, Orientation, ProgressBar, ScrolledWindow, glib,
+    Application, ApplicationWindow, Box, Button, DrawingArea, EventControllerMotion, Label,
+    Orientation, ProgressBar, ScrolledWindow, glib,
 };
 use log::{error, info, warn};
-use once_cell::sync::Lazy;
-use std::cell::RefCell;
 use std::env;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex, mpsc};
@@ -25,19 +24,7 @@ use error::AppError;
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
 use system_monitor::SystemMonitor;
 
-static RUNTIME: Lazy<tokio::runtime::Runtime> =
-    Lazy::new(|| tokio::runtime::Runtime::new().expect("Failed to create tokio runtime"));
-
-#[derive(Debug, Clone)]
-enum Message {
-    TabSelected(usize),
-    LayoutClicked(u32),
-    SharedMessageReceived(SharedMessage),
-    UpdateTime,
-    ToggleSeconds,
-    Screenshot,
-    Tick,
-}
+const STATUS_BAR_PREFIX: &str = "gtk_bar";
 
 // 使用 Arc<Mutex<>> 来共享状态
 type SharedAppState = Arc<Mutex<AppState>>;
@@ -74,14 +61,10 @@ struct TabBarApp {
 
     // Shared state
     state: SharedAppState,
-
-    // Static data
-    tabs: Vec<String>,
-    tab_colors: Vec<(f64, f64, f64)>,
 }
 
 impl TabBarApp {
-    fn new(app: &Application) -> Rc<RefCell<Self>> {
+    fn new(app: &Application) -> Rc<Self> {
         let tabs = vec![
             "🍜".to_string(),
             "🎨".to_string(),
@@ -94,7 +77,7 @@ impl TabBarApp {
             "🏡".to_string(),
         ];
 
-        let tab_colors = vec![
+        let _tab_colors = vec![
             (1.0, 0.42, 0.42),  // 红色
             (0.31, 0.80, 0.77), // 青色
             (0.27, 0.72, 0.82), // 蓝色
@@ -123,7 +106,7 @@ impl TabBarApp {
         // 创建主窗口
         let window = ApplicationWindow::builder()
             .application(app)
-            .title("GTK4 Bar")
+            .title(STATUS_BAR_PREFIX)
             .default_width(800)
             .default_height(40)
             .decorated(false)
@@ -145,7 +128,7 @@ impl TabBarApp {
         let mut tab_buttons = Vec::new();
         let tab_box = Box::new(Orientation::Horizontal, 1);
 
-        for (i, tab_text) in tabs.iter().enumerate() {
+        for (_, tab_text) in tabs.iter().enumerate() {
             let button = Button::builder()
                 .label(tab_text)
                 .width_request(32)
@@ -244,7 +227,7 @@ impl TabBarApp {
         // 应用 CSS 样式
         Self::apply_styles();
 
-        let app_instance = Rc::new(RefCell::new(Self {
+        let app_instance = Rc::new(Self {
             window,
             tab_buttons,
             layout_label,
@@ -253,9 +236,7 @@ impl TabBarApp {
             memory_progress,
             cpu_drawing_area,
             state,
-            tabs,
-            tab_colors,
-        }));
+        });
 
         // 设置事件处理器
         Self::setup_event_handlers(
@@ -271,12 +252,11 @@ impl TabBarApp {
 
     fn apply_styles() {
         let provider = gtk4::CssProvider::new();
-        provider.load_from_data(
+        provider.load_from_string(
             r#"
             window {
                 background-color: transparent;
             }
-            
             .tab-button {
                 border-radius: 4px;
                 margin: 0px;
@@ -284,37 +264,31 @@ impl TabBarApp {
                 font-size: 18px;
                 border: 1px solid rgba(255,255,255,0.3);
             }
-            
             .tab-button.active {
                 background-color: #4ECDC4;
                 color: white;
                 font-weight: bold;
             }
-            
             .time-button {
                 border-radius: 2px;
                 border: 1px solid white;
                 padding: 2px 4px;
                 background-color: rgba(0,0,0,0.1);
             }
-            
             .time-button:hover {
                 background-color: cyan;
                 color: darkorange;
             }
-            
             .layout-button {
                 font-size: 12px;
                 padding: 2px 4px;
             }
-            
             .screenshot-button {
                 border-radius: 2px;
                 border: 0.5px solid white;
                 padding: 0px;
                 background-color: rgba(0,0,0,0.1);
             }
-            
             .screenshot-button:hover {
                 background-color: cyan;
                 color: darkorange;
@@ -330,95 +304,117 @@ impl TabBarApp {
     }
 
     fn setup_event_handlers(
-        app: Rc<RefCell<Self>>,
+        app: Rc<Self>,
         layout_button_1: Button,
         layout_button_2: Button,
         layout_button_3: Button,
         screenshot_button: Button,
     ) {
         // 设置定时器进行定期更新
-        timeout_add_local(
-            Duration::from_millis(50),
-            clone!(@strong app => move || {
+        timeout_add_local(Duration::from_millis(50), {
+            let app = app.clone();
+            move || {
                 Self::handle_tick(app.clone());
                 glib::ControlFlow::Continue
-            }),
-        );
+            }
+        });
 
-        timeout_add_local(
-            Duration::from_secs(1),
-            clone!(@strong app => move || {
+        timeout_add_local(Duration::from_secs(1), {
+            let app = app.clone();
+            move || {
                 Self::handle_update_time(app.clone());
                 glib::ControlFlow::Continue
-            }),
-        );
+            }
+        });
 
         // 设置标签按钮点击事件
-        {
-            let app_ref = app.borrow();
-            for (i, button) in app_ref.tab_buttons.iter().enumerate() {
-                button.add_css_class("tab-button");
-                button.connect_clicked(clone!(@strong app => move |_| {
+        for (i, button) in app.tab_buttons.iter().enumerate() {
+            button.add_css_class("tab-button");
+            button.connect_clicked({
+                let app = app.clone();
+                move |_| {
                     Self::handle_tab_selected(app.clone(), i);
-                }));
-            }
+                }
+            });
         }
 
         // 布局按钮事件
-        layout_button_1.connect_clicked(clone!(@strong app => move |_| {
-            Self::handle_layout_clicked(app.clone(), 0);
-        }));
+        layout_button_1.connect_clicked({
+            let app = app.clone();
+            move |_| {
+                Self::handle_layout_clicked(app.clone(), 0);
+            }
+        });
 
-        layout_button_2.connect_clicked(clone!(@strong app => move |_| {
-            Self::handle_layout_clicked(app.clone(), 1);
-        }));
+        layout_button_2.connect_clicked({
+            let app = app.clone();
+            move |_| {
+                Self::handle_layout_clicked(app.clone(), 1);
+            }
+        });
 
-        layout_button_3.connect_clicked(clone!(@strong app => move |_| {
-            Self::handle_layout_clicked(app.clone(), 2);
-        }));
+        layout_button_3.connect_clicked({
+            let app = app.clone();
+            move |_| {
+                Self::handle_layout_clicked(app.clone(), 2);
+            }
+        });
 
         // 时间按钮点击事件
-        app.borrow().time_label.add_css_class("time-button");
-        app.borrow()
-            .time_label
-            .connect_clicked(clone!(@strong app => move |_| {
+        app.time_label.add_css_class("time-button");
+        app.time_label.connect_clicked({
+            let app = app.clone();
+            move |_| {
                 Self::handle_toggle_seconds(app.clone());
-            }));
+            }
+        });
 
         // 截图按钮事件
         screenshot_button.add_css_class("screenshot-button");
-        screenshot_button.connect_clicked(clone!(@strong app => move |_| {
-            Self::handle_screenshot(app.clone());
-        }));
+        screenshot_button.connect_clicked({
+            let app = app.clone();
+            move |_| {
+                Self::handle_screenshot(app.clone());
+            }
+        });
 
         // CPU 绘制
-        app.borrow().cpu_drawing_area.set_draw_func(
-            clone!(@strong app => move |_, ctx, width, height| {
+        app.cpu_drawing_area.set_draw_func({
+            let app = app.clone();
+            move |_, ctx, width, height| {
                 Self::draw_cpu_usage(app.clone(), ctx, width, height);
-            }),
-        );
+            }
+        });
 
         // 鼠标事件
         let motion_controller = EventControllerMotion::new();
-        motion_controller.connect_enter(clone!(@strong app => move |_, _, _| {
-            if let Ok(mut state) = app.borrow().state.lock() {
-                state.is_hovered = true;
+
+        motion_controller.connect_enter({
+            let app = app.clone();
+            move |_, _, _| {
+                if let Ok(mut state) = app.state.lock() {
+                    state.is_hovered = true;
+                }
             }
-        }));
-        motion_controller.connect_leave(clone!(@strong app => move |_| {
-            if let Ok(mut state) = app.borrow().state.lock() {
-                state.is_hovered = false;
+        });
+
+        motion_controller.connect_leave({
+            let app = app.clone();
+            move |_| {
+                if let Ok(mut state) = app.state.lock() {
+                    state.is_hovered = false;
+                }
             }
-        }));
+        });
 
         screenshot_button.add_controller(motion_controller);
     }
 
     // 事件处理方法
-    fn handle_tab_selected(app: Rc<RefCell<Self>>, index: usize) {
+    fn handle_tab_selected(app: Rc<Self>, index: usize) {
         info!("Tab selected: {}", index);
 
-        if let Ok(mut state) = app.borrow().state.lock() {
+        if let Ok(mut state) = app.state.lock() {
             state.active_tab = index;
 
             // 发送命令到共享内存
@@ -427,11 +423,11 @@ impl TabBarApp {
             }
         }
 
-        app.borrow().update_tab_styles();
+        app.update_tab_styles();
     }
 
-    fn handle_layout_clicked(app: Rc<RefCell<Self>>, layout_index: u32) {
-        if let Ok(state) = app.borrow().state.lock() {
+    fn handle_layout_clicked(app: Rc<Self>, layout_index: u32) {
+        if let Ok(state) = app.state.lock() {
             if let Some(ref message) = state.last_shared_message {
                 let monitor_id = message.monitor_info.monitor_num;
                 let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
@@ -446,18 +442,18 @@ impl TabBarApp {
         }
     }
 
-    fn handle_update_time(app: Rc<RefCell<Self>>) {
-        app.borrow().update_time_display();
+    fn handle_update_time(app: Rc<Self>) {
+        app.update_time_display();
     }
 
-    fn handle_toggle_seconds(app: Rc<RefCell<Self>>) {
-        if let Ok(mut state) = app.borrow().state.lock() {
+    fn handle_toggle_seconds(app: Rc<Self>) {
+        if let Ok(mut state) = app.state.lock() {
             state.show_seconds = !state.show_seconds;
         }
-        app.borrow().update_time_display();
+        app.update_time_display();
     }
 
-    fn handle_screenshot(_app: Rc<RefCell<Self>>) {
+    fn handle_screenshot(_app: Rc<Self>) {
         info!("Taking screenshot");
         std::process::Command::new("flameshot")
             .arg("gui")
@@ -465,22 +461,22 @@ impl TabBarApp {
             .ok();
     }
 
-    fn handle_tick(app: Rc<RefCell<Self>>) {
+    fn handle_tick(app: Rc<Self>) {
         // 检查共享内存消息
-        app.borrow().check_shared_messages();
+        app.check_shared_messages();
 
         // 更新系统监控
-        if let Ok(mut state) = app.borrow().state.lock() {
+        if let Ok(mut state) = app.state.lock() {
             state.system_monitor.update_if_needed();
             state.audio_manager.update_if_needed();
         }
 
         // 更新UI
-        app.borrow().update_memory_progress();
-        app.borrow().cpu_drawing_area.queue_draw();
+        app.update_memory_progress();
+        app.cpu_drawing_area.queue_draw();
 
         // 处理待处理的消息
-        app.borrow().process_pending_messages();
+        app.process_pending_messages();
     }
 
     fn update_tab_styles(&self) {
@@ -601,8 +597,8 @@ impl TabBarApp {
         }
     }
 
-    fn draw_cpu_usage(app: Rc<RefCell<Self>>, ctx: &Context, width: i32, height: i32) {
-        let cpu_usage = if let Ok(state) = app.borrow().state.lock() {
+    fn draw_cpu_usage(app: Rc<Self>, ctx: &Context, width: i32, height: i32) {
+        let cpu_usage = if let Ok(state) = app.state.lock() {
             if let Some(snapshot) = state.system_monitor.get_snapshot() {
                 snapshot.cpu_average as f64 / 100.0
             } else {
@@ -644,6 +640,7 @@ impl TabBarApp {
         }
     }
 
+    #[allow(dead_code)]
     fn add_shared_message(&self, message: SharedMessage) {
         if let Ok(mut state) = self.state.lock() {
             state.pending_messages.push(message);
@@ -745,13 +742,13 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
 
     let file_name = if shared_path.is_empty() {
-        "dx_bar".to_string()
+        STATUS_BAR_PREFIX.to_string()
     } else {
         std::path::Path::new(shared_path)
             .file_name()
             .and_then(|name| name.to_str())
-            .map(|name| format!("dx_bar_{}", name))
-            .unwrap_or_else(|| "dx_bar".to_string())
+            .map(|name| format!("{}_{}", STATUS_BAR_PREFIX, name))
+            .unwrap_or_else(|| STATUS_BAR_PREFIX.to_string())
     };
 
     let log_filename = format!("{}_{}", file_name, timestamp);
@@ -781,39 +778,68 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 fn main() -> glib::ExitCode {
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
+
     if let Err(e) = initialize_logging(&shared_path) {
         error!("Failed to initialize logging: {}", e);
         std::process::exit(1);
     }
+
     let instance_name = shared_path.replace("/dev/shm/monitor_", "gtk_bar_");
     info!("instance_name: {instance_name}");
     info!("Starting GTK4 Bar v1.0");
 
-    // 创建 GTK 应用
+    // 创建 GTK 应用 - 修复版本
     let app = Application::builder()
-        .application_id(format!("{}.{}", instance_name, instance_name))
+        .application_id(&format!("{}.{}", instance_name, instance_name))
+        .flags(gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
 
+    let shared_path_clone = shared_path.clone();
     app.connect_activate(move |app| {
         // 创建通信通道
-        let (_message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
+        let (_message_sender, _message_receiver) = mpsc::channel::<SharedMessage>();
         let (command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
 
         // 创建应用实例
         let app_instance = TabBarApp::new(app);
 
         // 设置命令发送器
-        app_instance.borrow().with_channels(command_sender);
+        app_instance.with_channels(command_sender);
 
         // 启动共享内存工作线程
-        let shared_path_clone = shared_path.clone();
-        let app_state = app_instance.borrow().state.clone();
+        let app_state = app_instance.state.clone();
+        let shared_path_for_thread = shared_path_clone.clone();
         thread::spawn(move || {
-            shared_memory_worker(shared_path_clone, app_state, command_receiver);
+            shared_memory_worker(shared_path_for_thread, app_state, command_receiver);
         });
 
         // 显示窗口
-        app_instance.borrow().show();
+        app_instance.show();
+    });
+
+    // 添加文件打开处理
+    app.connect_open(move |app, files, hint| {
+        info!(
+            "App received {} files to open with hint: {}",
+            files.len(),
+            hint
+        );
+        for file in files {
+            if let Some(path) = file.path() {
+                info!("File to open: {:?}", path);
+                // 这里可以根据需要处理特定文件
+            }
+        }
+        // 激活主应用
+        app.activate();
+    });
+
+    // 添加命令行处理
+    app.connect_command_line(move |app, command_line| {
+        let args = command_line.arguments();
+        info!("Command line arguments: {:?}", args);
+        app.activate();
+        0 // 返回0表示成功
     });
 
     app.run()

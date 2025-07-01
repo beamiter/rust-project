@@ -2,6 +2,7 @@
 
 /// Application error types
 #[derive(Debug, thiserror::Error)]
+#[allow(dead_code)]
 pub enum AppError {
     #[error("Audio system error: {message}")]
     Audio { message: String },
@@ -39,6 +40,7 @@ pub enum AppError {
 pub type Result<T> = std::result::Result<T, AppError>;
 
 /// Helper functions for creating specific error types
+#[allow(dead_code)]
 impl AppError {
     pub fn audio<S: Into<String>>(message: S) -> Self {
         Self::Audio {

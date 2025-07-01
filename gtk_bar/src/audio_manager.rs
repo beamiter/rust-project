@@ -69,6 +69,7 @@ pub struct AudioManager {
     max_error_logs: usize,
 }
 
+#[allow(dead_code)]
 impl AudioManager {
     /// Create a new audio manager
     pub fn new() -> Self {
@@ -381,6 +382,7 @@ impl Default for AudioManager {
 
 /// Audio system statistics
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct AudioStats {
     pub total_devices: usize,
     pub devices_with_volume: usize,

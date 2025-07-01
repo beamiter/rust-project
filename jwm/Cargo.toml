@@ -5,7 +5,7 @@ edition = "2021"
 # build = "build.rs"
 
 [features]
-default = ["dx_bar"]
+default = []
 egui_bar = []
 iced_bar = []
 dx_bar = []
