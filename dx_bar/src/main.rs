@@ -613,6 +613,7 @@ fn App() -> Element {
     let mut pressed_button = use_signal(|| None::<usize>);
     let mut monitor_num = use_signal(|| None::<i32>);
     let mut layout_symbol = use_signal(|| " ? ".to_string());
+    let mut command_sender = use_signal(|| None::<mpsc::Sender<SharedCommand>>);
 
     // 使用 Signal 来触发窗口调整
     let mut window_adjustment_trigger = use_signal(|| None::<[f32; 4]>);
@@ -688,7 +689,8 @@ fn App() -> Element {
     // 共享内存通信逻辑
     use_effect(move || {
         let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
-        let (command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
+        let (command_sender_in, command_receiver) = mpsc::channel::<SharedCommand>();
+        command_sender.set(Some(command_sender_in));
 
         let shared_path = std::env::args().nth(1).unwrap_or_else(|| {
             std::env::var("SHARED_MEMORY_PATH").unwrap_or_else(|_| "/dev/shm/monitor_0".to_string())
@@ -786,7 +788,9 @@ fn App() -> Element {
         info!("Button {} released", index);
         pressed_button.set(None);
         if let Some(monitor_num) = monitor_num() {
-            send_tag_command(command_sender, monitor_num, index, true);
+            if let Some(command_sender) = command_sender() {
+                send_tag_command(&command_sender, monitor_num, index, true);
+            }
         }
     };
 
