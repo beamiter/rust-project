@@ -186,6 +186,35 @@ fn shared_memory_worker(
     info!("Shared memory worker thread exiting");
 }
 
+fn send_tag_command(
+    command_sender: &mpsc::Sender<SharedCommand>,
+    monitor_id: i32,
+    active_tab: usize,
+    is_view: bool,
+) {
+    let tag_bit = 1 << active_tab;
+    let command = if is_view {
+        SharedCommand::view_tag(tag_bit, monitor_id)
+    } else {
+        SharedCommand::toggle_tag(tag_bit, monitor_id)
+    };
+
+    match command_sender.send(command) {
+        Ok(_) => {
+            let action = if is_view { "ViewTag" } else { "ToggleTag" };
+            log::info!(
+                "Sent {} command for tag {} in channel",
+                action,
+                active_tab + 1
+            );
+        }
+        Err(e) => {
+            let action = if is_view { "ViewTag" } else { "ToggleTag" };
+            log::error!("Failed to send {} command: {}", action, e);
+        }
+    }
+}
+
 fn main() {
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
@@ -582,6 +611,7 @@ fn App() -> Element {
     let mut show_seconds = use_signal(|| true);
     let mut system_snapshot = use_signal(|| None::<SystemSnapshot>);
     let mut pressed_button = use_signal(|| None::<usize>);
+    let mut monitor_num = use_signal(|| None::<i32>);
     let mut layout_symbol = use_signal(|| " ? ".to_string());
 
     // 使用 Signal 来触发窗口调整
@@ -658,7 +688,7 @@ fn App() -> Element {
     // 共享内存通信逻辑
     use_effect(move || {
         let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
-        let (_command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
+        let (command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
 
         let shared_path = std::env::args().nth(1).unwrap_or_else(|| {
             std::env::var("SHARED_MEMORY_PATH").unwrap_or_else(|_| "/dev/shm/monitor_0".to_string())
@@ -698,8 +728,10 @@ fn App() -> Element {
                         let monitor_info = shared_message.monitor_info;
                         layout_symbol.set(
                             monitor_info.ltsymbol.clone()
-                                + format!(" s: {:.2}", scale_factor).as_str(),
+                                + format!(" s: {:.2}", scale_factor).as_str()
+                                + format!(", m: {}", monitor_info.monitor_num).as_str(),
                         );
+                        monitor_num.set(Some(monitor_info.monitor_num));
                         let new_monitor_geometry = [
                             monitor_info.monitor_x as f32,
                             monitor_info.monitor_y as f32,
@@ -753,6 +785,9 @@ fn App() -> Element {
     let mut handle_button_release = move |index: usize| {
         info!("Button {} released", index);
         pressed_button.set(None);
+        if let Some(monitor_num) = monitor_num() {
+            send_tag_command(command_sender, monitor_num, index, true);
+        }
     };
 
     let mut handle_button_leave = move |_index: usize| {
