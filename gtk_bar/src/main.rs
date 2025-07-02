@@ -5,8 +5,8 @@ use glib::timeout_add_local;
 use gtk4::gio::{self};
 use gtk4::prelude::*;
 use gtk4::{
-    Application, ApplicationWindow, Box, Button, DrawingArea, Label, Orientation, ProgressBar,
-    ScrolledWindow, glib,
+    Application, ApplicationWindow, Box, Button, DrawingArea, Grid, Label, Orientation,
+    ProgressBar, ScrolledWindow, glib,
 };
 use log::{error, info, warn};
 use std::env;
@@ -110,122 +110,116 @@ impl TabBarApp {
             .application(app)
             .title(STATUS_BAR_PREFIX)
             .default_width(800)
-            .default_height(40)
+            .default_height(45)
             .decorated(false)
             .resizable(true)
             .build();
 
-        // 创建主容器
-        let main_box = Box::new(Orientation::Vertical, 2);
-        main_box.set_margin_top(2);
-        main_box.set_margin_bottom(2);
-        main_box.set_margin_start(2);
-        main_box.set_margin_end(2);
+        // 创建主网格容器
+        let main_grid = Grid::new();
+        main_grid.set_margin_top(2);
+        main_grid.set_margin_bottom(2);
+        main_grid.set_margin_start(2);
+        main_grid.set_margin_end(2);
+        main_grid.set_row_spacing(2);
+        main_grid.set_column_spacing(3);
 
-        // 创建工作区行
-        let workspace_box = Box::new(Orientation::Horizontal, 3);
-        workspace_box.set_valign(gtk4::Align::Center);
-
-        // 创建标签按钮
+        // ========== 第一行：Tab 按钮 ==========
         let mut tab_buttons = Vec::new();
-        let tab_box = Box::new(Orientation::Horizontal, 1);
-
-        for (_, tab_text) in tabs.iter().enumerate() {
+        for (i, tab_text) in tabs.iter().enumerate() {
             let button = Button::builder()
                 .label(tab_text)
                 .width_request(32)
                 .height_request(32)
                 .build();
 
-            tab_box.append(&button);
+            // 每个tab按钮放在对应的列中，第0行
+            main_grid.attach(&button, i as i32, 0, 1, 1);
             tab_buttons.push(button);
         }
+
+        // ========== 布局相关组件：放在tab区域之后 ==========
+        let layout_start_col = tabs.len() as i32;
 
         // 布局标签
         let layout_label = Label::new(Some(" ? "));
         layout_label.set_halign(gtk4::Align::Center);
+        layout_label.set_width_request(40);
+        layout_label.set_height_request(32);
+        main_grid.attach(&layout_label, layout_start_col, 0, 1, 1);
 
-        // 布局按钮区域
-        let layout_box = Box::new(Orientation::Horizontal, 10);
+        // 布局按钮
         let layout_button_1 = Button::with_label("[]=");
         let layout_button_2 = Button::with_label("><>");
         let layout_button_3 = Button::with_label("[M]");
 
-        layout_button_1.set_size_request(40, 32);
-        layout_button_2.set_size_request(40, 32);
-        layout_button_3.set_size_request(40, 32);
+        layout_button_1.set_size_request(35, 32);
+        layout_button_2.set_size_request(35, 32);
+        layout_button_3.set_size_request(35, 32);
 
-        layout_box.append(&layout_button_1);
-        layout_box.append(&layout_button_2);
-        layout_box.append(&layout_button_3);
+        main_grid.attach(&layout_button_1, layout_start_col + 1, 0, 1, 1);
+        main_grid.attach(&layout_button_2, layout_start_col + 2, 0, 1, 1);
+        main_grid.attach(&layout_button_3, layout_start_col + 3, 0, 1, 1);
 
-        let layout_scroll = ScrolledWindow::new();
-        layout_scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Never);
-        layout_scroll.set_size_request(50, 32);
-        layout_scroll.set_child(Some(&layout_box));
+        // ========== 右侧系统信息区域 ==========
+        // 计算右侧组件的起始列（为了右对齐，我们需要预留足够的列）
+        let total_cols = 20; // 设定总列数
+        let right_start_col = total_cols - 4; // 右侧4个组件
 
         // CPU 绘制区域
         let cpu_drawing_area = DrawingArea::new();
         cpu_drawing_area.set_size_request(32, 32);
+        cpu_drawing_area.set_halign(gtk4::Align::End);
+        main_grid.attach(&cpu_drawing_area, right_start_col, 0, 1, 1);
 
         // 截图按钮
         let screenshot_button = Button::with_label(&format!(" s {:.2} ", 1.0));
+        screenshot_button.set_size_request(60, 32);
+        main_grid.attach(&screenshot_button, right_start_col + 1, 0, 1, 1);
 
         // 时间按钮
         let time_label = Button::with_label("--:--");
+        time_label.set_size_request(60, 32);
+        main_grid.attach(&time_label, right_start_col + 2, 0, 1, 1);
 
         // 显示器标签
         let monitor_label = Label::new(Some("🥇"));
+        monitor_label.set_size_request(30, 32);
+        monitor_label.set_halign(gtk4::Align::Center);
+        main_grid.attach(&monitor_label, right_start_col + 3, 0, 1, 1);
 
-        // 组装工作区行
-        workspace_box.append(&tab_box);
-        workspace_box.append(&layout_label);
-        workspace_box.append(&layout_scroll);
-
-        // 添加弹性空间
-        let spacer = Box::new(Orientation::Horizontal, 0);
-        spacer.set_hexpand(true);
-        workspace_box.append(&spacer);
-
-        workspace_box.append(&cpu_drawing_area);
-        workspace_box.append(&screenshot_button);
-        workspace_box.append(&time_label);
-        workspace_box.append(&monitor_label);
-
-        // 创建下划线行
-        let underline_box = Box::new(Orientation::Horizontal, 1);
-        underline_box.set_valign(gtk4::Align::Start);
-        underline_box.set_height_request(5);
-
-        // 添加标签下划线
+        // ========== 第二行：下划线 ==========
         let mut underline_areas = Vec::new();
         for i in 0..tabs.len() {
             let underline = DrawingArea::new();
-            underline.set_size_request(32, 4); // 增加高度以便显示不同状态
-            underline_box.append(&underline);
+            underline.set_size_request(32, 4);
+            underline.set_halign(gtk4::Align::Center);
+
+            // 下划线放在对应tab按钮的正下方，第1行
+            main_grid.attach(&underline, i as i32, 1, 1, 1);
             underline_areas.push(underline);
-            if i < tabs.len() - 1 {
-                let spacer = Box::new(Orientation::Horizontal, 0);
-                spacer.set_size_request(1, 4);
-                underline_box.append(&spacer);
-            }
         }
 
-        // 内存进度条
+        // ========== 内存进度条：第二行右侧 ==========
         let memory_progress = ProgressBar::new();
         memory_progress.set_size_request(200, 3);
-        memory_progress.set_hexpand(false);
         memory_progress.set_halign(gtk4::Align::End);
+        memory_progress.set_valign(gtk4::Align::Start);
 
-        let underline_spacer = Box::new(Orientation::Horizontal, 0);
-        underline_spacer.set_hexpand(true);
-        underline_box.append(&underline_spacer);
-        underline_box.append(&memory_progress);
+        // 进度条跨越右侧所有列，放在第1行
+        main_grid.attach(&memory_progress, right_start_col, 1, 4, 1);
 
-        // 组装主容器
-        main_box.append(&workspace_box);
-        main_box.append(&underline_box);
-        window.set_child(Some(&main_box));
+        // ========== 设置网格的列扩展属性 ==========
+        // 让中间的列可以扩展，实现左右分离的效果
+        for i in (layout_start_col + 4)..(right_start_col) {
+            main_grid.set_column_homogeneous(false);
+        }
+
+        // 设置一个中间列为可扩展的
+        let spacer_col = (layout_start_col + 4 + right_start_col) / 2;
+        main_grid.set_hexpand(true);
+
+        window.set_child(Some(&main_grid));
 
         // 应用 CSS 样式
         Self::apply_styles();
