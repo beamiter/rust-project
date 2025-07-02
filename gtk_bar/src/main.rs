@@ -1,6 +1,8 @@
 use cairo::Context;
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+use gdk4::prelude::*;
+use gdk4_x11::x11::xlib::{XFlush, XMoveWindow};
 use glib::timeout_add_local;
 use gtk4::gio::{self};
 use gtk4::prelude::*;
@@ -110,8 +112,8 @@ impl TabBarApp {
         let window = ApplicationWindow::builder()
             .application(app)
             .title(STATUS_BAR_PREFIX)
-            .default_width(800)
-            .default_height(45)
+            .default_width(1000)
+            .default_height(50)
             .decorated(false)
             .resizable(true)
             .build();
@@ -776,6 +778,8 @@ impl TabBarApp {
     fn process_pending_messages(&self) {
         let mut need_update = false;
         let mut need_resize = false;
+        let mut new_x = 0;
+        let mut new_y = 0;
         let mut new_width = 0;
         let mut new_height = 0;
 
@@ -793,6 +797,7 @@ impl TabBarApp {
                 let current_height = self.window.height();
                 let monitor_width = message.monitor_info.monitor_width;
                 let monitor_height = message.monitor_info.monitor_height;
+                let border_width = message.monitor_info.border_w;
 
                 info!(
                     "Current window size: {}x{}, Monitor size: {}x{}",
@@ -800,16 +805,20 @@ impl TabBarApp {
                 );
 
                 // 计算状态栏应该的大小（通常宽度等于监视器宽度，高度固定）
-                let expected_width = monitor_width;
+                let expected_x = border_width;
+                let expected_y = border_width / 2;
+                let expected_width = monitor_width - 2 * border_width;
                 let expected_height = 45; // 或者根据需要调整
 
                 // 检查是否需要调整窗口大小（允许小的误差）
                 let width_diff = (current_width - expected_width).abs();
                 let height_diff = (current_height - expected_height).abs();
 
-                if width_diff > 5 || height_diff > 5 {
+                if width_diff > 1 || height_diff > 1 {
                     // 允许5像素的误差
                     need_resize = true;
+                    new_x = expected_x;
+                    new_y = expected_y;
                     new_width = expected_width;
                     new_height = expected_height;
 
@@ -844,7 +853,7 @@ impl TabBarApp {
 
         // 先调整窗口大小，再更新UI
         if need_resize {
-            self.resize_window_to_monitor(new_width, new_height);
+            self.resize_window_to_monitor(new_x, new_y, new_width, new_height);
         }
 
         if need_update {
@@ -852,89 +861,37 @@ impl TabBarApp {
         }
     }
 
-    fn resize_window_to_monitor(&self, expected_width: i32, expected_height: i32) {
+    fn resize_window_to_monitor(
+        &self,
+        expected_x: i32,
+        expected_y: i32,
+        expected_width: i32,
+        expected_height: i32,
+    ) {
         let current_width = self.window.width();
         let current_height = self.window.height();
-
         info!(
             "Resizing window: {}x{} -> {}x{}",
             current_width, current_height, expected_width, expected_height
         );
-
         // 设置新的默认大小
         self.window
             .set_default_size(expected_width, expected_height);
-
-        if self.window.is_visible() {
-            // 窗口已显示，需要立即应用更改
-
-            // 方法1：设置大小请求
-            self.window
-                .set_size_request(expected_width, expected_height);
-
-            // 方法2：如果窗口可调整大小，强制重新布局
-            if self.window.is_resizable() {
-                self.window.queue_resize();
-            }
-
-            // 方法3：对于某些窗口管理器，可能需要重新显示
-            if self.needs_window_refresh(
-                current_width,
-                current_height,
-                expected_width,
-                expected_height,
-            ) {
-                // 保存当前可见性状态
-                let was_visible = self.window.is_visible();
-
-                // 临时隐藏并重新显示（作为最后手段）
-                self.window.set_visible(false);
-                self.window
-                    .set_default_size(expected_width, expected_height);
-
-                if was_visible {
-                    self.window.set_visible(true);
-                    self.window.present();
+        let display = gtk4::gdk::Display::default().unwrap();
+        unsafe {
+            if let Some(x11_display) = display.downcast_ref::<gdk4_x11::X11Display>() {
+                // 获取 X Display
+                let xdisplay = x11_display.xdisplay();
+                // 获取窗口 surface
+                let surface = self.window.surface().unwrap();
+                // 转换为 X11 surface
+                if let Some(x11_surface) = surface.downcast_ref::<gdk4_x11::X11Surface>() {
+                    let xwindow = x11_surface.xid();
+                    XMoveWindow(xdisplay as *mut _, xwindow, expected_x, expected_y);
+                    XFlush(xdisplay as *mut _);
                 }
             }
-
-            info!("Applied resize to visible window");
-        } else {
-            info!("Window not visible, default size set for next show");
         }
-
-        // 调整布局以适应新尺寸
-        self.adjust_layout_for_window_size(expected_width, expected_height);
-    }
-
-    /// 判断是否需要强制刷新窗口（作为最后手段）
-    fn needs_window_refresh(
-        &self,
-        current_w: i32,
-        current_h: i32,
-        expected_w: i32,
-        expected_h: i32,
-    ) -> bool {
-        // 只有在尺寸差异很大时才使用这种激进的方法
-        let width_change_ratio = (expected_w - current_w).abs() as f32 / current_w as f32;
-        let height_change_ratio = (expected_h - current_h).abs() as f32 / current_h as f32;
-
-        width_change_ratio > 0.1 || height_change_ratio > 0.1 // 变化超过10%
-    }
-
-    /// 根据窗口大小调整内部布局
-    fn adjust_layout_for_window_size(&self, width: i32, height: i32) {
-        // 根据新的窗口大小调整内部组件
-        if width > 2560 {
-            self.time_label.set_size_request(80, height - 10);
-        } else if width > 1920 {
-            self.time_label.set_size_request(70, height - 10);
-        } else {
-            self.time_label.set_size_request(60, height - 10);
-        }
-
-        // 調整其他組件...
-        info!("Layout adjusted for window size: {}x{}", width, height);
     }
 
     fn update_ui(&self) {
