@@ -119,188 +119,118 @@ impl TabBarApp {
             .build();
 
         // 使用垂直 Box 作为主容器
-
         let main_vbox = Box::new(Orientation::Vertical, 2);
-
         main_vbox.set_margin_top(2);
-
         main_vbox.set_margin_bottom(2);
-
         main_vbox.set_margin_start(2);
-
         main_vbox.set_margin_end(2);
 
         // 第一行：主要内容区域
-
         let top_hbox = Box::new(Orientation::Horizontal, 3);
 
         // 左侧：Tab 按钮区域
-
         let tab_box = Box::new(Orientation::Horizontal, 3);
-
         let mut tab_buttons = Vec::new();
-
         for tab_text in &tabs {
             let button = Button::builder()
                 .label(tab_text)
-                .width_request(32)
+                .width_request(40)
                 .height_request(32)
                 .build();
-
             tab_box.append(&button);
-
             tab_buttons.push(button);
         }
 
         // 布局区域
-
         let layout_label = Label::new(Some(" ? "));
-
         layout_label.set_halign(gtk4::Align::Center);
-
         layout_label.set_width_request(40);
-
         layout_label.set_height_request(32);
+        layout_label.add_css_class("layout-label");
 
         // 布局按钮容器
-
         let layout_box = Box::new(Orientation::Horizontal, 5);
-
         let layout_button_1 = Button::with_label("[]=");
-
         let layout_button_2 = Button::with_label("><>");
-
         let layout_button_3 = Button::with_label("[M]");
-
         layout_button_1.set_size_request(40, 32);
-
         layout_button_2.set_size_request(40, 32);
-
         layout_button_3.set_size_request(40, 32);
-
         layout_box.append(&layout_button_1);
-
         layout_box.append(&layout_button_2);
-
         layout_box.append(&layout_button_3);
-
         let layout_scroll = ScrolledWindow::new();
-
         layout_scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Never);
-
-        layout_scroll.set_size_request(70, 32);
-
+        layout_scroll.set_size_request(60, 32);
         layout_scroll.set_child(Some(&layout_box));
 
         // 中间：弹性空间
-
         let spacer = Box::new(Orientation::Horizontal, 0);
-
         spacer.set_hexpand(true); // 这个会占据所有剩余空间
 
         // 右侧：系统信息区域
-
         let right_box = Box::new(Orientation::Horizontal, 3);
-
         right_box.set_halign(gtk4::Align::End); // 确保对齐到右侧
-
         let cpu_drawing_area = DrawingArea::new();
-
         cpu_drawing_area.set_size_request(32, 32);
-
         let screenshot_button = Button::with_label(&format!(" s {:.2} ", 1.0));
-
         screenshot_button.set_size_request(60, 32);
-
         let time_label = Button::with_label("--:--");
-
         time_label.set_size_request(60, 32);
-
         let monitor_label = Label::new(Some("🥇"));
-
         monitor_label.set_size_request(30, 32);
-
         monitor_label.set_halign(gtk4::Align::Center);
 
         // 添加到右侧容器
-
         right_box.append(&cpu_drawing_area);
-
         right_box.append(&screenshot_button);
-
         right_box.append(&time_label);
-
         right_box.append(&monitor_label);
 
         // 组装顶部行
-
         top_hbox.append(&tab_box);
-
         top_hbox.append(&layout_label);
-
         top_hbox.append(&layout_scroll);
-
         top_hbox.append(&spacer); // 弹性空间
-
         top_hbox.append(&right_box); // 右侧组件
 
         // 第二行：下划线和进度条
-
-        let bottom_hbox = Box::new(Orientation::Horizontal, 0);
+        let bottom_hbox = Box::new(Orientation::Horizontal, 3);
 
         // 左侧：下划线区域
-
         let underline_box = Box::new(Orientation::Horizontal, 3);
-
         let mut underline_areas = Vec::new();
-
         for _ in &tabs {
             let underline = DrawingArea::new();
-
-            underline.set_size_request(32, 4);
-
+            underline.set_size_request(40, 4);
             underline.set_halign(gtk4::Align::Center);
-
             underline_box.append(&underline);
-
             underline_areas.push(underline);
         }
 
         // 右侧：内存进度条
-
         let memory_progress = ProgressBar::new();
-
         memory_progress.set_size_request(200, 3);
-
         memory_progress.set_halign(gtk4::Align::End);
-
         memory_progress.set_valign(gtk4::Align::Start);
+        memory_progress.add_css_class("neon-progress");
 
         // 底部行的弹性空间
-
         let bottom_spacer = Box::new(Orientation::Horizontal, 0);
-
         bottom_spacer.set_hexpand(true);
 
         // 组装底部行
-
         bottom_hbox.append(&underline_box);
-
         bottom_hbox.append(&bottom_spacer);
-
         bottom_hbox.append(&memory_progress);
 
         // 组装主容器
-
         main_vbox.append(&top_hbox);
-
         main_vbox.append(&bottom_hbox);
-
         window.set_child(Some(&main_vbox));
 
         // 应用 CSS 样式
         Self::apply_styles();
-
         let app_instance = Rc::new(Self {
             window,
             tab_buttons,
@@ -429,6 +359,27 @@ impl TabBarApp {
             background-color: cyan;
             color: darkorange;
         }
+        .layout-label {
+            color: cyan;
+        }
+        /* 彩虹渐变 */
+        .rainbow-progress progress {
+            background: linear-gradient(to left,
+                #ff0000, #ff8000, #ffff00, #00ff00, #0080ff, #8000ff);
+            border-radius: 1px;
+        }
+        /* 金属质感 */
+        .metal-progress progress {
+            background: linear-gradient(to left,
+                #c0c0c0 0%, #808080 50%, #404040 51%, #c0c0c0 100%);
+            border: 1px solid #666;
+        }
+        /* 霓虹效果 */
+        .neon-progress progress {
+            background: linear-gradient(to left, #ff00ff, #00ffff);
+            box-shadow: 0 0 1px #ff00ff, inset 0 0 1px #00ffff;
+            border-radius: 1px;
+        }
         "#,
         );
 
@@ -521,24 +472,6 @@ impl TabBarApp {
                 Self::draw_cpu_usage(app.clone(), ctx, width, height);
             }
         });
-
-        // 鼠标事件
-        // let motion_controller = EventControllerMotion::new();
-        // motion_controller.connect_enter({
-        //     let app = app.clone();
-        //     move |_, _, _| {
-        //         if let Ok(mut state) = app.state.lock() {
-        //         }
-        //     }
-        // });
-        // motion_controller.connect_leave({
-        //     let app = app.clone();
-        //     move |_| {
-        //         if let Ok(mut state) = app.state.lock() {
-        //         }
-        //     }
-        // });
-        // screenshot_button.add_controller(motion_controller);
     }
 
     // 事件处理方法
@@ -691,7 +624,7 @@ impl TabBarApp {
                 ((0.4, 0.4, 0.4, 0.8), 3.0)
             } else if !status.is_selected && status.is_occ {
                 // 仅占用：黄色，高1px
-                ((1.0, 0.79, 0.34, 0.8), 1.0)
+                ((1.0, 0.79, 0.34, 0.8), 2.0)
             } else {
                 // 空闲状态：不绘制
                 return;
@@ -795,6 +728,8 @@ impl TabBarApp {
                 // 获取当前窗口大小
                 let current_width = self.window.width();
                 let current_height = self.window.height();
+                let monitor_x = message.monitor_info.monitor_x;
+                let monitor_y = message.monitor_info.monitor_y;
                 let monitor_width = message.monitor_info.monitor_width;
                 let monitor_height = message.monitor_info.monitor_height;
                 let border_width = message.monitor_info.border_w;
@@ -805,8 +740,8 @@ impl TabBarApp {
                 );
 
                 // 计算状态栏应该的大小（通常宽度等于监视器宽度，高度固定）
-                let expected_x = border_width;
-                let expected_y = border_width / 2;
+                let expected_x = monitor_x + border_width;
+                let expected_y = monitor_y + border_width / 2;
                 let expected_width = monitor_width - 2 * border_width;
                 let expected_height = 45; // 或者根据需要调整
 
@@ -935,8 +870,10 @@ impl TabBarApp {
 
         // 设置渐变色
         let gradient = cairo::LinearGradient::new(0.0, 0.0, 0.0, height_f);
-        gradient.add_color_stop_rgba(1.0, 1.0, 0.0, 0.0, 0.8); // 红色
-        gradient.add_color_stop_rgba(0.0, 0.0, 1.0, 1.0, 0.8); // 青色
+        // 彩虹渐变
+        gradient.add_color_stop_rgba(0.0, 1.0, 0.0, 0.0, 0.9);
+        gradient.add_color_stop_rgba(0.5, 1.0, 1.0, 0.0, 0.9);
+        gradient.add_color_stop_rgba(1.0, 0.0, 1.0, 1.0, 0.9);
 
         ctx.set_source(&gradient).ok();
         ctx.rectangle(0.0, y_offset, width_f, used_height);
