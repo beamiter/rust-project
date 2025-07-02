@@ -148,22 +148,33 @@ impl TabBarApp {
         layout_label.set_height_request(32);
         main_grid.attach(&layout_label, layout_start_col, 0, 1, 1);
 
-        // 布局按钮
+        // 创建布局按钮容器和滚动窗口
+        let layout_box = Box::new(Orientation::Horizontal, 10);
         let layout_button_1 = Button::with_label("[]=");
         let layout_button_2 = Button::with_label("><>");
         let layout_button_3 = Button::with_label("[M]");
 
-        layout_button_1.set_size_request(35, 32);
-        layout_button_2.set_size_request(35, 32);
-        layout_button_3.set_size_request(35, 32);
+        layout_button_1.set_size_request(40, 32);
+        layout_button_2.set_size_request(40, 32);
+        layout_button_3.set_size_request(40, 32);
 
-        main_grid.attach(&layout_button_1, layout_start_col + 1, 0, 1, 1);
-        main_grid.attach(&layout_button_2, layout_start_col + 2, 0, 1, 1);
-        main_grid.attach(&layout_button_3, layout_start_col + 3, 0, 1, 1);
+        layout_box.append(&layout_button_1);
+        layout_box.append(&layout_button_2);
+        layout_box.append(&layout_button_3);
+
+        // 创建可滚动的布局区域
+        let layout_scroll = ScrolledWindow::new();
+        layout_scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Never);
+        layout_scroll.set_size_request(70, 32); // 增加宽度以容纳3个按钮
+        layout_scroll.set_child(Some(&layout_box));
+        layout_scroll.set_halign(gtk4::Align::Start);
+
+        // 将滚动窗口放置在网格中，跨越多列
+        main_grid.attach(&layout_scroll, layout_start_col + 1, 0, 3, 1);
 
         // ========== 右侧系统信息区域 ==========
-        // 计算右侧组件的起始列（为了右对齐，我们需要预留足够的列）
-        let total_cols = 20; // 设定总列数
+        // 计算右侧组件的起始列
+        let total_cols = 25; // 增加总列数以容纳layout_scroll
         let right_start_col = total_cols - 4; // 右侧4个组件
 
         // CPU 绘制区域
@@ -209,16 +220,6 @@ impl TabBarApp {
         // 进度条跨越右侧所有列，放在第1行
         main_grid.attach(&memory_progress, right_start_col, 1, 4, 1);
 
-        // ========== 设置网格的列扩展属性 ==========
-        // 让中间的列可以扩展，实现左右分离的效果
-        for i in (layout_start_col + 4)..(right_start_col) {
-            main_grid.set_column_homogeneous(false);
-        }
-
-        // 设置一个中间列为可扩展的
-        let spacer_col = (layout_start_col + 4 + right_start_col) / 2;
-        main_grid.set_hexpand(true);
-
         window.set_child(Some(&main_grid));
 
         // 应用 CSS 样式
@@ -255,7 +256,6 @@ impl TabBarApp {
         window {
             background-color: transparent;
         }
-        
         /* 标签按钮基础样式 */
         .tab-button {
             border-radius: 4px;
@@ -266,7 +266,6 @@ impl TabBarApp {
             background-color: rgba(0,0,0,0.1);
             color: white;
         }
-        
         /* 选中状态 */
         .tab-button.selected {
             background-color: #4ECDC4;
@@ -274,14 +273,12 @@ impl TabBarApp {
             font-weight: bold;
             border: 2px solid #4ECDC4;
         }
-        
         /* 占用状态（有窗口但未选中） */
         .tab-button.occupied {
             background-color: rgba(255,255,255,0.3);
             border: 1px solid #FECA57;
             color: #FECA57;
         }
-        
         /* 选中且占用状态 */
         .tab-button.selected.occupied {
             background-color: #4ECDC4;
@@ -289,7 +286,6 @@ impl TabBarApp {
             color: white;
             font-weight: bold;
         }
-        
         /* 填满状态 */
         .tab-button.filled {
             background-color: rgba(0,255,0,0.4);
@@ -297,7 +293,6 @@ impl TabBarApp {
             color: #00FF00;
             font-weight: bold;
         }
-        
         /* 紧急状态 */
         .tab-button.urgent {
             background-color: rgba(255,0,0,0.6);
@@ -306,41 +301,33 @@ impl TabBarApp {
             font-weight: bold;
             animation: urgent-blink 1s ease-in-out infinite alternate;
         }
-        
         /* 空闲状态（无窗口且未选中） */
         .tab-button.empty {
             background-color: rgba(102,102,102,0.3);
             border: 1px solid rgba(255,255,255,0.2);
             color: rgba(255,255,255,0.6);
         }
-        
         /* 紧急状态闪烁动画 */
         @keyframes urgent-blink {
             0% { background-color: rgba(255,0,0,0.6); }
             100% { background-color: rgba(255,0,0,0.9); }
         }
-        
         /* 下划线样式 */
         .underline-selected {
             background-color: #4ECDC4;
         }
-        
         .underline-occupied {
             background-color: #FECA57;
         }
-        
         .underline-filled {
             background-color: #00FF00;
         }
-        
         .underline-urgent {
             background-color: #FF0000;
         }
-        
         .underline-empty {
             background-color: transparent;
         }
-        
         /* 其他现有样式 */
         .time-button {
             border-radius: 2px;
