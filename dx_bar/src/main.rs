@@ -554,7 +554,11 @@ fn TimeDisplay(show_seconds: bool) -> Element {
         });
     });
 
-    let time_format = if show_seconds { "%H:%M:%S" } else { "%H:%M" };
+    let time_format = if show_seconds {
+        "%Y-%m-%d %H:%M:%S"
+    } else {
+        "%Y-%m-%d %H:%M"
+    };
     let time_str = current_time().format(time_format).to_string();
 
     rsx! {

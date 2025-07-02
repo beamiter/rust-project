@@ -5,8 +5,8 @@ use glib::timeout_add_local;
 use gtk4::gio::{self};
 use gtk4::prelude::*;
 use gtk4::{
-    Application, ApplicationWindow, Box, Button, DrawingArea, EventControllerMotion, Label,
-    Orientation, ProgressBar, ScrolledWindow, glib,
+    Application, ApplicationWindow, Box, Button, DrawingArea, Label, Orientation, ProgressBar,
+    ScrolledWindow, glib,
 };
 use log::{error, info, warn};
 use std::env;
@@ -21,7 +21,7 @@ mod system_monitor;
 
 use audio_manager::AudioManager;
 use error::AppError;
-use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
+use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus};
 use system_monitor::SystemMonitor;
 
 const STATUS_BAR_PREFIX: &str = "gtk_bar";
@@ -35,7 +35,8 @@ struct AppState {
     layout_symbol: String,
     monitor_num: u8,
     show_seconds: bool,
-    is_hovered: bool,
+
+    tag_status_vec: Vec<TagStatus>,
 
     // System components
     audio_manager: AudioManager,
@@ -45,7 +46,6 @@ struct AppState {
     command_sender: Option<mpsc::Sender<SharedCommand>>,
     last_shared_message: Option<SharedMessage>,
 
-    // 新增：用于在线程间传递消息的队列
     pending_messages: Vec<SharedMessage>,
 }
 
@@ -58,6 +58,8 @@ struct TabBarApp {
     monitor_label: Label,
     memory_progress: ProgressBar,
     cpu_drawing_area: DrawingArea,
+
+    underline_areas: Vec<DrawingArea>,
 
     // Shared state
     state: SharedAppState,
@@ -95,7 +97,7 @@ impl TabBarApp {
             layout_symbol: " ? ".to_string(),
             monitor_num: 0,
             show_seconds: false,
-            is_hovered: false,
+            tag_status_vec: Vec::new(),
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(10),
             command_sender: None,
@@ -196,14 +198,15 @@ impl TabBarApp {
         underline_box.set_height_request(5);
 
         // 添加标签下划线
+        let mut underline_areas = Vec::new();
         for i in 0..tabs.len() {
             let underline = DrawingArea::new();
-            underline.set_size_request(32, 3);
+            underline.set_size_request(32, 4); // 增加高度以便显示不同状态
             underline_box.append(&underline);
-
+            underline_areas.push(underline);
             if i < tabs.len() - 1 {
                 let spacer = Box::new(Orientation::Horizontal, 0);
-                spacer.set_size_request(1, 3);
+                spacer.set_size_request(1, 4);
                 underline_box.append(&spacer);
             }
         }
@@ -235,6 +238,7 @@ impl TabBarApp {
             monitor_label,
             memory_progress,
             cpu_drawing_area,
+            underline_areas,
             state,
         });
 
@@ -254,46 +258,121 @@ impl TabBarApp {
         let provider = gtk4::CssProvider::new();
         provider.load_from_string(
             r#"
-            window {
-                background-color: transparent;
-            }
-            .tab-button {
-                border-radius: 4px;
-                margin: 0px;
-                padding: 4px 8px;
-                font-size: 18px;
-                border: 1px solid rgba(255,255,255,0.3);
-            }
-            .tab-button.active {
-                background-color: #4ECDC4;
-                color: white;
-                font-weight: bold;
-            }
-            .time-button {
-                border-radius: 2px;
-                border: 1px solid white;
-                padding: 2px 4px;
-                background-color: rgba(0,0,0,0.1);
-            }
-            .time-button:hover {
-                background-color: cyan;
-                color: darkorange;
-            }
-            .layout-button {
-                font-size: 12px;
-                padding: 2px 4px;
-            }
-            .screenshot-button {
-                border-radius: 2px;
-                border: 0.5px solid white;
-                padding: 0px;
-                background-color: rgba(0,0,0,0.1);
-            }
-            .screenshot-button:hover {
-                background-color: cyan;
-                color: darkorange;
-            }
-            "#,
+        window {
+            background-color: transparent;
+        }
+        
+        /* 标签按钮基础样式 */
+        .tab-button {
+            border-radius: 4px;
+            margin: 0px;
+            padding: 4px 8px;
+            font-size: 18px;
+            border: 1px solid rgba(255,255,255,0.3);
+            background-color: rgba(0,0,0,0.1);
+            color: white;
+        }
+        
+        /* 选中状态 */
+        .tab-button.selected {
+            background-color: #4ECDC4;
+            color: white;
+            font-weight: bold;
+            border: 2px solid #4ECDC4;
+        }
+        
+        /* 占用状态（有窗口但未选中） */
+        .tab-button.occupied {
+            background-color: rgba(255,255,255,0.3);
+            border: 1px solid #FECA57;
+            color: #FECA57;
+        }
+        
+        /* 选中且占用状态 */
+        .tab-button.selected.occupied {
+            background-color: #4ECDC4;
+            border: 2px solid #FECA57;
+            color: white;
+            font-weight: bold;
+        }
+        
+        /* 填满状态 */
+        .tab-button.filled {
+            background-color: rgba(0,255,0,0.4);
+            border: 2px solid #00FF00;
+            color: #00FF00;
+            font-weight: bold;
+        }
+        
+        /* 紧急状态 */
+        .tab-button.urgent {
+            background-color: rgba(255,0,0,0.6);
+            border: 2px solid #FF0000;
+            color: white;
+            font-weight: bold;
+            animation: urgent-blink 1s ease-in-out infinite alternate;
+        }
+        
+        /* 空闲状态（无窗口且未选中） */
+        .tab-button.empty {
+            background-color: rgba(102,102,102,0.3);
+            border: 1px solid rgba(255,255,255,0.2);
+            color: rgba(255,255,255,0.6);
+        }
+        
+        /* 紧急状态闪烁动画 */
+        @keyframes urgent-blink {
+            0% { background-color: rgba(255,0,0,0.6); }
+            100% { background-color: rgba(255,0,0,0.9); }
+        }
+        
+        /* 下划线样式 */
+        .underline-selected {
+            background-color: #4ECDC4;
+        }
+        
+        .underline-occupied {
+            background-color: #FECA57;
+        }
+        
+        .underline-filled {
+            background-color: #00FF00;
+        }
+        
+        .underline-urgent {
+            background-color: #FF0000;
+        }
+        
+        .underline-empty {
+            background-color: transparent;
+        }
+        
+        /* 其他现有样式 */
+        .time-button {
+            border-radius: 2px;
+            border: 1px solid white;
+            padding: 2px 4px;
+            background-color: rgba(0,0,0,0.1);
+        }
+        .time-button:hover {
+            background-color: cyan;
+            color: darkorange;
+        }
+        .layout-button {
+            font-size: 12px;
+            padding: 2px 4px;
+        }
+        .screenshot-button {
+            border-radius: 2px;
+            border: 0.5px solid white;
+            padding: 0px;
+            background-color: rgba(0,0,0,0.1);
+        }
+        .screenshot-button:hover {
+            background-color: cyan;
+            color: darkorange;
+        }
+        "#,
         );
 
         gtk4::style_context_add_provider_for_display(
@@ -387,27 +466,22 @@ impl TabBarApp {
         });
 
         // 鼠标事件
-        let motion_controller = EventControllerMotion::new();
-
-        motion_controller.connect_enter({
-            let app = app.clone();
-            move |_, _, _| {
-                if let Ok(mut state) = app.state.lock() {
-                    state.is_hovered = true;
-                }
-            }
-        });
-
-        motion_controller.connect_leave({
-            let app = app.clone();
-            move |_| {
-                if let Ok(mut state) = app.state.lock() {
-                    state.is_hovered = false;
-                }
-            }
-        });
-
-        screenshot_button.add_controller(motion_controller);
+        // let motion_controller = EventControllerMotion::new();
+        // motion_controller.connect_enter({
+        //     let app = app.clone();
+        //     move |_, _, _| {
+        //         if let Ok(mut state) = app.state.lock() {
+        //         }
+        //     }
+        // });
+        // motion_controller.connect_leave({
+        //     let app = app.clone();
+        //     move |_| {
+        //         if let Ok(mut state) = app.state.lock() {
+        //         }
+        //     }
+        // });
+        // screenshot_button.add_controller(motion_controller);
     }
 
     // 事件处理方法
@@ -462,9 +536,6 @@ impl TabBarApp {
     }
 
     fn handle_tick(app: Rc<Self>) {
-        // 检查共享内存消息
-        app.check_shared_messages();
-
         // 更新系统监控
         if let Ok(mut state) = app.state.lock() {
             state.system_monitor.update_if_needed();
@@ -479,15 +550,104 @@ impl TabBarApp {
         app.process_pending_messages();
     }
 
+    // 根据标签状态更新样式
     fn update_tab_styles(&self) {
         if let Ok(state) = self.state.lock() {
             for (i, button) in self.tab_buttons.iter().enumerate() {
-                if i == state.active_tab {
-                    button.add_css_class("active");
+                // 先清除所有样式类
+                button.remove_css_class("selected");
+                button.remove_css_class("occupied");
+                button.remove_css_class("filled");
+                button.remove_css_class("urgent");
+                button.remove_css_class("empty");
+
+                // 获取对应的标签状态
+                if let Some(tag_status) = state.tag_status_vec.get(i) {
+                    // 根据优先级应用样式
+                    if tag_status.is_urg {
+                        button.add_css_class("urgent");
+                    } else if tag_status.is_filled {
+                        button.add_css_class("filled");
+                    } else if tag_status.is_selected && tag_status.is_occ {
+                        button.add_css_class("selected");
+                        button.add_css_class("occupied");
+                    } else if tag_status.is_selected && !tag_status.is_occ {
+                        button.add_css_class("selected");
+                    } else if !tag_status.is_selected && tag_status.is_occ {
+                        button.add_css_class("occupied");
+                    } else {
+                        button.add_css_class("empty");
+                    }
                 } else {
-                    button.remove_css_class("active");
+                    // 回退到简单的活动状态检查
+                    if i == state.active_tab {
+                        button.add_css_class("selected");
+                    } else {
+                        button.add_css_class("empty");
+                    }
                 }
             }
+        }
+
+        // 同时更新下划线
+        self.update_underlines();
+    }
+
+    // 更新下划线显示
+    fn update_underlines(&self) {
+        if let Ok(state) = self.state.lock() {
+            for (i, underline) in self.underline_areas.iter().enumerate() {
+                // 设置绘制函数
+                underline.set_draw_func({
+                    let tag_status = state.tag_status_vec.get(i).cloned();
+                    move |_, ctx, width, height| {
+                        Self::draw_underline(ctx, width, height, &tag_status);
+                    }
+                });
+                // 触发重绘
+                underline.queue_draw();
+            }
+        }
+    }
+
+    // 绘制下划线的静态方法
+    fn draw_underline(ctx: &Context, width: i32, height: i32, tag_status: &Option<TagStatus>) {
+        let width_f = width as f64;
+        let height_f = height as f64;
+
+        // 清除背景
+        ctx.set_source_rgba(0.0, 0.0, 0.0, 0.0);
+        ctx.paint().ok();
+
+        if let Some(status) = tag_status {
+            let (color, line_height) = if status.is_urg {
+                // 紧急状态：红色，高4px
+                ((1.0, 0.0, 0.0, 0.9), 4.0)
+            } else if status.is_filled {
+                // 填满状态：绿色，高4px
+                ((0.0, 1.0, 0.0, 0.9), 4.0)
+            } else if status.is_selected && status.is_occ {
+                // 选中且占用：青色，高3px
+                ((0.31, 0.80, 0.77, 0.9), 3.0)
+            } else if status.is_selected && !status.is_occ {
+                // 仅选中：灰色，高3px
+                ((0.4, 0.4, 0.4, 0.8), 3.0)
+            } else if !status.is_selected && status.is_occ {
+                // 仅占用：黄色，高1px
+                ((1.0, 0.79, 0.34, 0.8), 1.0)
+            } else {
+                // 空闲状态：不绘制
+                return;
+            };
+
+            // 居中绘制长28px的线条
+            let line_width = 28.0;
+            let x_offset = (width_f - line_width) / 2.0;
+            let y_offset = height_f - line_height;
+
+            ctx.set_source_rgba(color.0, color.1, color.2, color.3);
+            ctx.rectangle(x_offset, y_offset, line_width, line_height);
+            ctx.fill().ok();
         }
     }
 
@@ -516,17 +676,6 @@ impl TabBarApp {
                 self.memory_progress.set_fraction(usage_ratio);
             }
         }
-    }
-
-    fn update_ui(&self) {
-        if let Ok(state) = self.state.lock() {
-            self.layout_label.set_text(&state.layout_symbol);
-
-            let monitor_icon = Self::monitor_num_to_icon(state.monitor_num);
-            self.monitor_label.set_text(monitor_icon);
-        }
-
-        self.update_tab_styles();
     }
 
     fn monitor_num_to_icon(monitor_num: u8) -> &'static str {
@@ -569,19 +718,21 @@ impl TabBarApp {
         }
     }
 
-    fn check_shared_messages(&self) {
-        // 这里需要一个共享的消息接收器
-        // 由于没有直接的方式在这里访问，我们将在外部处理
-    }
-
     fn process_pending_messages(&self) {
+        let mut need_update = false;
         if let Ok(mut state) = self.state.lock() {
             let messages = state.pending_messages.drain(..).collect::<Vec<_>>();
-            for message in messages {
+            if !messages.is_empty() {
+                need_update = true;
+            }
+            for message in &messages {
                 info!("Processing shared message: {:?}", message);
                 state.last_shared_message = Some(message.clone());
                 state.layout_symbol = message.monitor_info.ltsymbol.clone();
                 state.monitor_num = message.monitor_info.monitor_num as u8;
+
+                // 更新标签状态向量
+                state.tag_status_vec = message.monitor_info.tag_status_vec.clone();
 
                 // 更新活动标签
                 for (index, tag_status) in message.monitor_info.tag_status_vec.iter().enumerate() {
@@ -591,10 +742,21 @@ impl TabBarApp {
                 }
             }
         }
-
-        if !self.state.lock().unwrap().pending_messages.is_empty() {
+        if need_update {
             self.update_ui();
         }
+    }
+
+    fn update_ui(&self) {
+        if let Ok(state) = self.state.lock() {
+            self.layout_label.set_text(&state.layout_symbol);
+
+            let monitor_icon = Self::monitor_num_to_icon(state.monitor_num);
+            self.monitor_label.set_text(monitor_icon);
+        }
+
+        // 重要：更新标签样式（包括下划线）
+        self.update_tab_styles();
     }
 
     fn draw_cpu_usage(app: Rc<Self>, ctx: &Context, width: i32, height: i32) {
@@ -640,26 +802,17 @@ impl TabBarApp {
         }
     }
 
-    #[allow(dead_code)]
-    fn add_shared_message(&self, message: SharedMessage) {
-        if let Ok(mut state) = self.state.lock() {
-            state.pending_messages.push(message);
-        }
-    }
-
     fn show(&self) {
         self.window.present();
     }
 }
 
-// 共享内存工作线程 - 修改为使用不同的komunikation方式
 fn shared_memory_worker(
     shared_path: String,
     app_state: SharedAppState,
     command_receiver: mpsc::Receiver<SharedCommand>,
 ) {
     info!("Starting shared memory worker thread");
-
     let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
         warn!("No shared path provided, running without shared memory");
         None
