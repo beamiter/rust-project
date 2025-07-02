@@ -109,8 +109,8 @@ impl TabBarApp {
         let window = ApplicationWindow::builder()
             .application(app)
             .title(STATUS_BAR_PREFIX)
-            .default_width(800)
-            .default_height(48)
+            // .default_width(800)
+            // .default_height(48)
             .decorated(false)
             .resizable(true)
             .build();
@@ -254,7 +254,7 @@ impl TabBarApp {
         provider.load_from_string(
             r#"
         window {
-            background-color: transparent;
+            background-color: rgba(255,255,255,0.8);
         }
         /* 标签按钮基础样式 */
         .tab-button {
@@ -714,21 +714,42 @@ impl TabBarApp {
             for message in &messages {
                 info!("Processing shared message: {:?}", message);
 
-                // 检查是否需要调整窗口大小
-                if let Some(ref last_msg) = state.last_shared_message {
-                    if last_msg.monitor_info.monitor_width != message.monitor_info.monitor_width
-                        || last_msg.monitor_info.monitor_height
-                            != message.monitor_info.monitor_height
-                    {
-                        need_resize = true;
-                        new_width = message.monitor_info.monitor_width;
-                        new_height = message.monitor_info.monitor_height;
-                    }
-                } else {
-                    // 第一次接收消息时也需要设置大小
+                // 获取当前窗口大小
+                let current_width = self.window.width();
+                let current_height = self.window.height();
+                let monitor_width = message.monitor_info.monitor_width;
+                let monitor_height = message.monitor_info.monitor_height;
+
+                info!(
+                    "Current window size: {}x{}, Monitor size: {}x{}",
+                    current_width, current_height, monitor_width, monitor_height
+                );
+
+                // 计算状态栏应该的大小（通常宽度等于监视器宽度，高度固定）
+                let expected_width = monitor_width;
+                let expected_height = 45; // 或者根据需要调整
+
+                // 检查是否需要调整窗口大小（允许小的误差）
+                let width_diff = (current_width - expected_width).abs();
+                let height_diff = (current_height - expected_height).abs();
+
+                if width_diff > 5 || height_diff > 5 {
+                    // 允许5像素的误差
                     need_resize = true;
-                    new_width = message.monitor_info.monitor_width;
-                    new_height = message.monitor_info.monitor_height;
+                    new_width = expected_width;
+                    new_height = expected_height;
+
+                    info!(
+                        "Window resize needed: current({}x{}) -> expected({}x{}), diff({},{})",
+                        current_width,
+                        current_height,
+                        expected_width,
+                        expected_height,
+                        width_diff,
+                        height_diff
+                    );
+                } else {
+                    info!("Window size is appropriate, no resize needed");
                 }
 
                 state.last_shared_message = Some(message.clone());
@@ -757,52 +778,89 @@ impl TabBarApp {
         }
     }
 
-    /// 根据监视器尺寸调整窗口大小
-    fn resize_window_to_monitor(&self, monitor_width: i32, monitor_height: i32) {
-        // 计算状态栏的适当高度（通常是固定的，比如px）
-        let bar_height = 48;
-
-        // 状态栏宽度通常与监视器宽度一致
-        let bar_width = monitor_width;
+    fn resize_window_to_monitor(&self, expected_width: i32, expected_height: i32) {
+        let current_width = self.window.width();
+        let current_height = self.window.height();
 
         info!(
-            "Resizing window to: {}x{} (monitor: {}x{})",
-            bar_width, bar_height, monitor_width, monitor_height
+            "Resizing window: {}x{} -> {}x{}",
+            current_width, current_height, expected_width, expected_height
         );
 
-        // 设置窗口大小
-        self.window.set_default_size(bar_width, bar_height);
+        // 设置新的默认大小
+        self.window
+            .set_default_size(expected_width, expected_height);
 
-        // 如果需要强制调整已显示窗口的大小
         if self.window.is_visible() {
-            // 先取消最大化状态（如果有的话）
-            self.window.unmaximize();
+            // 窗口已显示，需要立即应用更改
 
-            // 设置新的大小
-            // 注意：对于装饰器关闭的窗口，可能需要使用不同的方法
-            self.window.set_default_size(bar_width, bar_height);
+            // 方法1：设置大小请求
+            self.window
+                .set_size_request(expected_width, expected_height);
 
-            // 强制重新布局
-            self.window.queue_resize();
+            // 方法2：如果窗口可调整大小，强制重新布局
+            if self.window.is_resizable() {
+                self.window.queue_resize();
+            }
+
+            // 方法3：对于某些窗口管理器，可能需要重新显示
+            if self.needs_window_refresh(
+                current_width,
+                current_height,
+                expected_width,
+                expected_height,
+            ) {
+                // 保存当前可见性状态
+                let was_visible = self.window.is_visible();
+
+                // 临时隐藏并重新显示（作为最后手段）
+                self.window.set_visible(false);
+                self.window
+                    .set_default_size(expected_width, expected_height);
+
+                if was_visible {
+                    self.window.set_visible(true);
+                    self.window.present();
+                }
+            }
+
+            info!("Applied resize to visible window");
+        } else {
+            info!("Window not visible, default size set for next show");
         }
 
-        // 可选：将窗口定位到监视器顶部
-        self.position_window_on_monitor();
+        // 调整布局以适应新尺寸
+        self.adjust_layout_for_window_size(expected_width, expected_height);
     }
 
-    /// 将窗口定位到监视器的顶部
-    fn position_window_on_monitor(&self) {
-        // 这里可以根据 monitor_num 来确定窗口在哪个监视器上
-        // 由于你的窗口是无装饰的状态栏，通常放在顶部
+    /// 判断是否需要强制刷新窗口（作为最后手段）
+    fn needs_window_refresh(
+        &self,
+        current_w: i32,
+        current_h: i32,
+        expected_w: i32,
+        expected_h: i32,
+    ) -> bool {
+        // 只有在尺寸差异很大时才使用这种激进的方法
+        let width_change_ratio = (expected_w - current_w).abs() as f32 / current_w as f32;
+        let height_change_ratio = (expected_h - current_h).abs() as f32 / current_h as f32;
 
-        // 如果你有多监视器设置，可以根据 monitor_num 计算偏移
-        if let Ok(state) = self.state.lock() {
-            let monitor_num = state.monitor_num;
-            info!("Positioning window on monitor {}", monitor_num);
+        width_change_ratio > 0.1 || height_change_ratio > 0.1 // 变化超过10%
+    }
 
-            // 这里可以添加特定的定位逻辑
-            // 例如，如果你知道各个监视器的位置关系
+    /// 根据窗口大小调整内部布局
+    fn adjust_layout_for_window_size(&self, width: i32, height: i32) {
+        // 根据新的窗口大小调整内部组件
+        if width > 2560 {
+            self.time_label.set_size_request(80, height - 10);
+        } else if width > 1920 {
+            self.time_label.set_size_request(70, height - 10);
+        } else {
+            self.time_label.set_size_request(60, height - 10);
         }
+
+        // 調整其他組件...
+        info!("Layout adjusted for window size: {}x{}", width, height);
     }
 
     fn update_ui(&self) {
