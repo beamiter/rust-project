@@ -110,7 +110,7 @@ impl TabBarApp {
             .application(app)
             .title(STATUS_BAR_PREFIX)
             .default_width(800)
-            .default_height(45)
+            .default_height(48)
             .decorated(false)
             .resizable(true)
             .build();
@@ -701,13 +701,36 @@ impl TabBarApp {
 
     fn process_pending_messages(&self) {
         let mut need_update = false;
+        let mut need_resize = false;
+        let mut new_width = 0;
+        let mut new_height = 0;
+
         if let Ok(mut state) = self.state.lock() {
             let messages = state.pending_messages.drain(..).collect::<Vec<_>>();
             if !messages.is_empty() {
                 need_update = true;
             }
+
             for message in &messages {
                 info!("Processing shared message: {:?}", message);
+
+                // 检查是否需要调整窗口大小
+                if let Some(ref last_msg) = state.last_shared_message {
+                    if last_msg.monitor_info.monitor_width != message.monitor_info.monitor_width
+                        || last_msg.monitor_info.monitor_height
+                            != message.monitor_info.monitor_height
+                    {
+                        need_resize = true;
+                        new_width = message.monitor_info.monitor_width;
+                        new_height = message.monitor_info.monitor_height;
+                    }
+                } else {
+                    // 第一次接收消息时也需要设置大小
+                    need_resize = true;
+                    new_width = message.monitor_info.monitor_width;
+                    new_height = message.monitor_info.monitor_height;
+                }
+
                 state.last_shared_message = Some(message.clone());
                 state.layout_symbol = message.monitor_info.ltsymbol.clone();
                 state.monitor_num = message.monitor_info.monitor_num as u8;
@@ -723,8 +746,62 @@ impl TabBarApp {
                 }
             }
         }
+
+        // 先调整窗口大小，再更新UI
+        if need_resize {
+            self.resize_window_to_monitor(new_width, new_height);
+        }
+
         if need_update {
             self.update_ui();
+        }
+    }
+
+    /// 根据监视器尺寸调整窗口大小
+    fn resize_window_to_monitor(&self, monitor_width: i32, monitor_height: i32) {
+        // 计算状态栏的适当高度（通常是固定的，比如px）
+        let bar_height = 48;
+
+        // 状态栏宽度通常与监视器宽度一致
+        let bar_width = monitor_width;
+
+        info!(
+            "Resizing window to: {}x{} (monitor: {}x{})",
+            bar_width, bar_height, monitor_width, monitor_height
+        );
+
+        // 设置窗口大小
+        self.window.set_default_size(bar_width, bar_height);
+
+        // 如果需要强制调整已显示窗口的大小
+        if self.window.is_visible() {
+            // 先取消最大化状态（如果有的话）
+            self.window.unmaximize();
+
+            // 设置新的大小
+            // 注意：对于装饰器关闭的窗口，可能需要使用不同的方法
+            self.window.set_default_size(bar_width, bar_height);
+
+            // 强制重新布局
+            self.window.queue_resize();
+        }
+
+        // 可选：将窗口定位到监视器顶部
+        self.position_window_on_monitor();
+    }
+
+    /// 将窗口定位到监视器的顶部
+    fn position_window_on_monitor(&self) {
+        // 这里可以根据 monitor_num 来确定窗口在哪个监视器上
+        // 由于你的窗口是无装饰的状态栏，通常放在顶部
+
+        // 如果你有多监视器设置，可以根据 monitor_num 计算偏移
+        if let Ok(state) = self.state.lock() {
+            let monitor_num = state.monitor_num;
+            info!("Positioning window on monitor {}", monitor_num);
+
+            // 这里可以添加特定的定位逻辑
+            // 例如，如果你知道各个监视器的位置关系
         }
     }
 
@@ -859,7 +936,7 @@ fn shared_memory_worker(
                         }
                     }
                 }
-                Ok(None) => {}
+                Ok(_) => {}
                 Err(e) => {
                     error!("Ring buffer read error: {}", e);
                 }

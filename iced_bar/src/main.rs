@@ -22,7 +22,6 @@ mod error;
 pub use error::AppError;
 use iced_aw::{TabBar, TabLabel};
 use iced_fonts::NERD_FONT_BYTES;
-use iced_futures::subscription;
 use log::{error, info, warn};
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
 use std::env;
