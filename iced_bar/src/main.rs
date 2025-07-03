@@ -2,7 +2,6 @@ use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::daemon::Appearance;
 use iced::time::{self};
-use iced::widget::canvas::path::Arc;
 use iced::widget::canvas::{Cache, Geometry, Path};
 use iced::widget::lazy;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -26,9 +25,10 @@ use log::{error, info, warn};
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
 use std::env;
 use std::process::Command;
-use std::sync::{Once, mpsc};
+use std::sync::{Arc, Once};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use tokio::sync::Mutex;
 
 use crate::audio_manager::AudioManager;
 use crate::system_monitor::SystemMonitor;
@@ -39,7 +39,7 @@ pub mod system_monitor;
 static START: Once = Once::new();
 
 /// Monitor heartbeat from background thread
-fn heartbeat_monitor(heartbeat_receiver: mpsc::Receiver<()>) {
+fn heartbeat_monitor(heartbeat_receiver: std::sync::mpsc::Receiver<()>) {
     info!("Starting heartbeat monitor");
 
     loop {
@@ -47,11 +47,11 @@ fn heartbeat_monitor(heartbeat_receiver: mpsc::Receiver<()>) {
             Ok(_) => {
                 // Heartbeat received, continue
             }
-            Err(mpsc::RecvTimeoutError::Timeout) => {
+            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 error!("thread heartbeat timeout");
                 // std::process::exit(1);
             }
-            Err(mpsc::RecvTimeoutError::Disconnected) => {
+            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
                 error!("thread disconnected");
                 // std::process::exit(1);
             }
@@ -62,109 +62,114 @@ fn heartbeat_monitor(heartbeat_receiver: mpsc::Receiver<()>) {
 
 fn shared_memory_worker(
     shared_path: String,
-    message_sender: mpsc::Sender<SharedMessage>,
-    command_receiver: mpsc::Receiver<SharedCommand>,
+    message_sender: tokio::sync::mpsc::Sender<SharedMessage>, // 改为异步发送器
+    mut command_receiver: tokio::sync::mpsc::Receiver<SharedCommand>, // 改为异步接收器
 ) {
     info!("Starting shared memory worker thread");
 
-    // 尝试打开或创建共享环形缓冲区
-    let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
-        warn!("No shared path provided, running without shared memory");
-        None
-    } else {
-        match SharedRingBuffer::open(&shared_path) {
-            Ok(shared_buffer) => {
-                info!("Successfully opened shared ring buffer: {}", shared_path);
-                Some(shared_buffer)
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to open shared ring buffer: {}, attempting to create new one",
-                    e
-                );
-                match SharedRingBuffer::create(&shared_path, None, None) {
-                    Ok(shared_buffer) => {
-                        info!("Created new shared ring buffer: {}", shared_path);
-                        Some(shared_buffer)
-                    }
-                    Err(create_err) => {
-                        error!("Failed to create shared ring buffer: {}", create_err);
-                        None
-                    }
+    // 创建 tokio 运行时用于这个工作线程
+    let rt = tokio::runtime::Runtime::new().unwrap();
+
+    rt.block_on(async {
+        // 尝试打开或创建共享环形缓冲区（保持不变）
+        let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
+            warn!("No shared path provided, running without shared memory");
+            None
+        } else {
+            match SharedRingBuffer::open(&shared_path) {
+                Ok(shared_buffer) => {
+                    info!("Successfully opened shared ring buffer: {}", shared_path);
+                    Some(shared_buffer)
                 }
-            }
-        }
-    };
-
-    let mut prev_timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-
-    let mut frame_count: u128 = 0;
-    let mut consecutive_errors = 0;
-
-    loop {
-        // 处理发送到共享内存的命令
-        while let Ok(cmd) = command_receiver.try_recv() {
-            info!("Receive command: {:?} in channel", cmd);
-            if let Some(ref shared_buffer) = shared_buffer_opt {
-                match shared_buffer.send_command(cmd) {
-                    Ok(true) => {
-                        info!("Sent command: {:?} by shared_buffer", cmd);
-                    }
-                    Ok(false) => {
-                        warn!("Command buffer full, command dropped");
-                    }
-                    Err(e) => {
-                        error!("Failed to send command: {}", e);
-                    }
-                }
-            }
-        }
-
-        // 处理共享内存消息
-        if let Some(ref shared_buffer) = shared_buffer_opt {
-            match shared_buffer.try_read_latest_message::<SharedMessage>() {
-                Ok(Some(message)) => {
-                    // info!("shared_buffer {:?}", message);
-                    consecutive_errors = 0;
-                    if prev_timestamp != message.timestamp {
-                        prev_timestamp = message.timestamp;
-                        if let Err(e) = message_sender.send(message) {
-                            error!("Failed to send message: {}", e);
-                            break;
-                        } else {
-                            info!("send message ok");
+                Err(e) => {
+                    warn!(
+                        "Failed to open shared ring buffer: {}, attempting to create new one",
+                        e
+                    );
+                    match SharedRingBuffer::create(&shared_path, None, None) {
+                        Ok(shared_buffer) => {
+                            info!("Created new shared ring buffer: {}", shared_path);
+                            Some(shared_buffer)
+                        }
+                        Err(create_err) => {
+                            error!("Failed to create shared ring buffer: {}", create_err);
+                            None
                         }
                     }
                 }
-                Ok(None) => {
-                    consecutive_errors = 0;
-                }
-                Err(e) => {
-                    consecutive_errors += 1;
-                    if frame_count % 1000 == 0 || consecutive_errors == 1 {
-                        error!(
-                            "Ring buffer read error: {}. Buffer state: available={}, last_timestamp={}",
-                            e,
-                            shared_buffer.available_messages(),
-                            shared_buffer.get_last_timestamp()
-                        );
-                    }
+            }
+        };
 
-                    if consecutive_errors > 10 {
-                        warn!("Too many consecutive errors, resetting read index");
-                        shared_buffer.reset_read_index();
-                        consecutive_errors = 0;
+        let mut prev_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+
+        let mut frame_count: u128 = 0;
+        let mut consecutive_errors = 0;
+
+        loop {
+            // 异步处理命令
+            while let Ok(cmd) = command_receiver.try_recv() {
+                info!("Receive command: {:?} in channel", cmd);
+                if let Some(ref shared_buffer) = shared_buffer_opt {
+                    match shared_buffer.send_command(cmd) {
+                        Ok(true) => {
+                            info!("Sent command: {:?} by shared_buffer", cmd);
+                        }
+                        Ok(false) => {
+                            warn!("Command buffer full, command dropped");
+                        }
+                        Err(e) => {
+                            error!("Failed to send command: {}", e);
+                        }
                     }
                 }
             }
-        }
 
-        frame_count = frame_count.wrapping_add(1);
-        thread::sleep(Duration::from_millis(10));
-    }
+            // 处理共享内存消息
+            if let Some(ref shared_buffer) = shared_buffer_opt {
+                match shared_buffer.try_read_latest_message::<SharedMessage>() {
+                    Ok(Some(message)) => {
+                        consecutive_errors = 0;
+                        if prev_timestamp != message.timestamp {
+                            prev_timestamp = message.timestamp;
+                            // 异步发送消息
+                            if let Err(e) = message_sender.send(message).await {
+                                error!("Failed to send message: {}", e);
+                                break;
+                            } else {
+                                info!("send message ok");
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        consecutive_errors = 0;
+                    }
+                    Err(e) => {
+                        consecutive_errors += 1;
+                        if frame_count % 1000 == 0 || consecutive_errors == 1 {
+                            error!(
+                                "Ring buffer read error: {}. Buffer state: available={}, last_timestamp={}",
+                                e,
+                                shared_buffer.available_messages(),
+                                shared_buffer.get_last_timestamp()
+                            );
+                        }
+
+                        if consecutive_errors > 10 {
+                            warn!("Too many consecutive errors, resetting read index");
+                            shared_buffer.reset_read_index();
+                            consecutive_errors = 0;
+                        }
+                    }
+                }
+            }
+
+            frame_count = frame_count.wrapping_add(1);
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
+        }
+    });
 
     info!("Shared memory worker thread exiting");
 }
@@ -222,10 +227,10 @@ fn main() -> iced::Result {
 
     info!("Starting iced_bar v{}", 1.0);
 
-    // Create communication channels
-    let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
-    let (command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
-    let (heartbeat_sender, heartbeat_receiver) = mpsc::channel();
+    // 修改为异步通道 - 增加缓冲区大小以处理突发消息
+    let (message_sender, message_receiver) = tokio::sync::mpsc::channel::<SharedMessage>(1000);
+    let (command_sender, command_receiver) = tokio::sync::mpsc::channel::<SharedCommand>(100);
+    let (heartbeat_sender, heartbeat_receiver) = std::sync::mpsc::channel(); // heartbeat 保持同步
 
     let shared_path_clone = shared_path.clone();
     thread::spawn(move || {
@@ -265,6 +270,7 @@ enum Message {
     LayoutClicked(u32),
     CheckSharedMessages,
     SharedMessageReceived(SharedMessage),
+    BatchSharedMessages(Vec<SharedMessage>),
     GetWindowId,
     GetWindowSize(Size),
     GetScaleFactor(f32),
@@ -286,10 +292,10 @@ struct TabBarExample {
     active_tab: usize,
     tabs: Vec<String>,
     tab_colors: Vec<Color>,
-    // 添加通信通道
-    message_receiver: Option<mpsc::Receiver<SharedMessage>>,
-    command_sender: Option<mpsc::Sender<SharedCommand>>,
-    heartbeat_sender: Option<mpsc::Sender<()>>,
+    // 使用 Arc<Mutex<>> 包装接收器
+    message_receiver: Option<Arc<Mutex<tokio::sync::mpsc::Receiver<SharedMessage>>>>,
+    command_sender: Option<tokio::sync::mpsc::Sender<SharedCommand>>,
+    heartbeat_sender: Option<std::sync::mpsc::Sender<()>>,
     // 新增：用于显示共享消息的状态
     last_shared_message: Option<SharedMessage>,
     message_count: u32,
@@ -382,34 +388,39 @@ impl TabBarExample {
     // 添加设置通道的方法
     fn with_channels(
         mut self,
-        message_receiver: mpsc::Receiver<SharedMessage>,
-        command_sender: mpsc::Sender<SharedCommand>,
-        heartbeat_sender: mpsc::Sender<()>,
+        message_receiver: tokio::sync::mpsc::Receiver<SharedMessage>,
+        command_sender: tokio::sync::mpsc::Sender<SharedCommand>,
+        heartbeat_sender: std::sync::mpsc::Sender<()>,
     ) -> Self {
-        self.message_receiver = Some(message_receiver);
+        self.message_receiver = Some(Arc::new(Mutex::new(message_receiver)));
         self.command_sender = Some(command_sender);
         self.heartbeat_sender = Some(heartbeat_sender);
         self
     }
 
-    fn send_tag_command(&self, command_sender: &mpsc::Sender<SharedCommand>, is_view: bool) {
-        if let Some(ref message) = self.last_shared_message {
+    // 改为静态方法，不借用 self
+    async fn send_tag_command_async(
+        command_sender: tokio::sync::mpsc::Sender<SharedCommand>,
+        last_shared_message: Option<SharedMessage>,
+        active_tab: usize,
+        is_view: bool,
+    ) {
+        if let Some(message) = last_shared_message {
             let monitor_id = message.monitor_info.monitor_num;
-
-            let tag_bit = 1 << self.active_tab;
+            let tag_bit = 1 << active_tab;
             let command = if is_view {
                 SharedCommand::view_tag(tag_bit, monitor_id)
             } else {
                 SharedCommand::toggle_tag(tag_bit, monitor_id)
             };
 
-            match command_sender.send(command) {
+            match command_sender.send(command).await {
                 Ok(_) => {
                     let action = if is_view { "ViewTag" } else { "ToggleTag" };
                     log::info!(
                         "Sent {} command for tag {} in channel",
                         action,
-                        self.active_tab + 1
+                        active_tab + 1
                     );
                 }
                 Err(e) => {
@@ -420,33 +431,77 @@ impl TabBarExample {
         }
     }
 
+    // 新增：发送布局命令的异步方法
+    async fn send_layout_command_async(
+        command_sender: tokio::sync::mpsc::Sender<SharedCommand>,
+        layout_index: u32,
+        monitor_id: i32,
+    ) {
+        let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
+
+        if let Err(e) = command_sender.send(command).await {
+            log::error!("Failed to send SetLayout command: {}", e);
+        } else {
+            log::info!("Sent SetLayout command: layout_index={}", layout_index);
+        }
+    }
+
+    // 异步批量读取消息
+    async fn read_all_messages_async(
+        receiver: Arc<Mutex<tokio::sync::mpsc::Receiver<SharedMessage>>>,
+    ) -> Vec<SharedMessage> {
+        let mut messages = Vec::new();
+        let timeout_duration = tokio::time::Duration::from_millis(5);
+        let mut receiver_guard = receiver.lock().await;
+        loop {
+            match tokio::time::timeout(timeout_duration, receiver_guard.recv()).await {
+                Ok(Some(message)) => {
+                    messages.push(message);
+                    if messages.len() >= 50 {
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(_) => {
+                    break;
+                }
+            }
+        }
+        // info!("Read {} messages in batch", messages.len());
+
+        messages
+    }
+
     fn update(&mut self, message: Message) -> Task<Message> {
-        info!("update");
+        // info!("update");
         match message {
             Message::TabSelected(index) => {
                 info!("Tab selected: {}", index);
                 self.active_tab = index;
-
-                // 发送命令到共享内存
+                // 提取需要的数据，避免借用 self
                 if let Some(ref command_sender) = self.command_sender {
-                    self.send_tag_command(command_sender, true);
+                    let sender = command_sender.clone();
+                    let last_message = self.last_shared_message.clone();
+                    let active_tab = self.active_tab;
+                    return Task::perform(
+                        Self::send_tag_command_async(sender, last_message, active_tab, true),
+                        |_| Message::CheckSharedMessages,
+                    );
                 }
-
                 Task::none()
             }
 
             Message::LayoutClicked(layout_index) => {
                 if let Some(ref message) = self.last_shared_message {
                     let monitor_id = message.monitor_info.monitor_num;
-                    let command =
-                        SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
                     if let Some(ref command_sender) = self.command_sender {
-                        self.send_tag_command(command_sender, true);
-                        if let Err(e) = command_sender.send(command) {
-                            log::error!("Failed to send SetLayout command: {}", e);
-                        } else {
-                            log::info!("Sent SetLayout command: layout_index={}", layout_index);
-                        }
+                        let sender = command_sender.clone();
+                        return Task::perform(
+                            Self::send_layout_command_async(sender, layout_index, monitor_id),
+                            |_| Message::CheckSharedMessages,
+                        );
                     }
                 }
                 Task::none()
@@ -556,40 +611,33 @@ impl TabBarExample {
             }
 
             Message::CheckSharedMessages => {
-                // info!("CheckSharedMessages");
+                // 时间更新逻辑
                 let now = Local::now();
                 let format_str = if self.show_seconds {
                     "%Y-%m-%d %H:%M:%S"
-                // "%Y-%m-%d_%H_%M_%S"
                 } else {
                     "%Y-%m-%d %H:%M"
                 };
                 if now.timestamp() != self.now.timestamp() {
                     self.now = now;
                     self.formated_now = now.format(format_str).to_string();
+                    info!("CheckSharedMessages");
                     if let Some(ref heartbeat_sender) = self.heartbeat_sender {
                         if heartbeat_sender.send(()).is_err() {
                             warn!("Heartbeat receiver disconnected");
                         }
                     }
-                    // info!("formated_now: {}", self.formated_now);
                 }
-
-                // Update system monitor
+                // 系统监控更新
                 self.system_monitor.update_if_needed();
-
-                // Update audio manager
                 self.audio_manager.update_if_needed();
-
                 let mut tasks = Vec::new();
                 START.call_once(|| {
-                    // run initialization here
                     if self.current_window_id.is_none() {
                         tasks.push(Task::perform(async {}, |_| Message::GetWindowId));
                     }
                 });
                 if self.current_window_id.is_none() {
-                    // Wait for current_window_id update.
                     return Task::batch(tasks);
                 }
                 let current_window_id = self.current_window_id;
@@ -599,18 +647,28 @@ impl TabBarExample {
                         Message::ResizeWithId,
                     ));
                 }
-
+                // 异步读取消息 - 使用 Arc 共享
                 if let Some(ref receiver) = self.message_receiver {
-                    // 非阻塞地读取所有可用消息
-                    while let Ok(shared_msg) = receiver.try_recv() {
-                        // info!("recieve shared_msg: {:?}", shared_msg);
-                        tasks.push(Task::perform(
-                            async move { shared_msg },
-                            Message::SharedMessageReceived,
-                        ));
-                    }
+                    let receiver_clone = receiver.clone();
+                    tasks.push(Task::perform(
+                        Self::read_all_messages_async(receiver_clone),
+                        Message::BatchSharedMessages,
+                    ));
                 }
 
+                Task::batch(tasks)
+            }
+
+            // 新增：批量消息处理
+            Message::BatchSharedMessages(messages) => {
+                let mut tasks = Vec::new();
+                // info!("Processing {} messages in batch", messages.len());
+                for shared_msg in messages {
+                    tasks.push(Task::perform(
+                        async move { shared_msg },
+                        Message::SharedMessageReceived,
+                    ));
+                }
                 Task::batch(tasks)
             }
 
@@ -652,6 +710,7 @@ impl TabBarExample {
         }
     }
 
+    #[allow(dead_code)]
     fn theme(&self) -> Theme {
         Theme::Dracula
         // Theme::ALL[(self.now.timestamp() as usize / 10) % Theme::ALL.len()].clone()
@@ -924,7 +983,7 @@ impl TabBarExample {
     }
 
     fn view(&self) -> Element<Message> {
-        info!("view");
+        // info!("view");
         // let work_space_row = self.view_work_space().explain(Color::from_rgb(1., 0., 1.));
         let work_space_row = self.view_work_space();
 
@@ -980,7 +1039,7 @@ impl<Message> canvas::Program<Message> for TabBarExample {
                     };
                     builder.line_to(start_point);
                     // 步骤 c: 绘制圆弧。此时画笔位于圆弧起点，arc会从这个点开始画。
-                    builder.arc(Arc {
+                    builder.arc(iced::widget::canvas::path::Arc {
                         center,
                         radius,
                         start_angle: start_angle_rad.into(),
