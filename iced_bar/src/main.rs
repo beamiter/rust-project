@@ -663,7 +663,7 @@ impl TabBarExample {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        time::every(milliseconds(500)).map(|_| Message::CheckSharedMessages)
+        time::every(milliseconds(25)).map(|_| Message::CheckSharedMessages)
     }
 
     fn style(&self, theme: &Theme) -> theme::Style {
