@@ -1,14 +1,13 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-use iced::daemon::Appearance;
-use iced::time::{self};
+use iced::time::{self, milliseconds};
 use iced::widget::canvas::{Cache, Geometry, Path};
 use iced::widget::lazy;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{Scrollable, Space, button, progress_bar, rich_text, row};
 use iced::widget::{canvas, container};
 use iced::widget::{mouse_area, span};
-use iced::{gradient, mouse};
+use iced::{gradient, mouse, theme};
 
 use iced::window::Id;
 use iced::{
@@ -19,8 +18,6 @@ use iced::{
 };
 mod error;
 pub use error::AppError;
-use iced_aw::{TabBar, TabLabel};
-use iced_fonts::NERD_FONT_BYTES;
 use log::{error, info, warn};
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
 use std::env;
@@ -214,53 +211,28 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 }
 
 fn main() -> iced::Result {
-    // Parse command line arguments
     let args: Vec<String> = env::args().collect();
     let application_id = args.get(0).cloned().unwrap_or_default();
-    let shared_path = args.get(1).cloned().unwrap_or_default();
-
-    // Initialize logging
-    if let Err(e) = initialize_logging(&shared_path) {
-        error!("Failed to initialize logging: {}", e);
-        std::process::exit(1);
-    }
-
-    info!("Starting iced_bar v{}", 1.0);
-
-    // 修改为异步通道 - 增加缓冲区大小以处理突发消息
-    let (message_sender, message_receiver) = tokio::sync::mpsc::channel::<SharedMessage>(1000);
-    let (command_sender, command_receiver) = tokio::sync::mpsc::channel::<SharedCommand>(100);
-    let (heartbeat_sender, heartbeat_receiver) = std::sync::mpsc::channel(); // heartbeat 保持同步
-
-    let shared_path_clone = shared_path.clone();
-    thread::spawn(move || {
-        shared_memory_worker(shared_path_clone, message_sender, command_receiver)
-    });
-
-    // Start heartbeat monitor
-    thread::spawn(move || heartbeat_monitor(heartbeat_receiver));
-
-    // 创建应用实例并传入通道
-    let app =
-        TabBarExample::new().with_channels(message_receiver, command_sender, heartbeat_sender);
-
-    // 使用 iced::application 的 Builder 模式
-    iced::application("iced_bar", TabBarExample::update, TabBarExample::view)
-        .window(window::Settings {
-            platform_specific: window::settings::PlatformSpecific {
-                application_id,
-                ..Default::default()
-            },
+    info!("application_id: {application_id}");
+    iced::application(
+        TabBarExample::new,
+        TabBarExample::update,
+        TabBarExample::view,
+    )
+    .window(window::Settings {
+        platform_specific: window::settings::PlatformSpecific {
+            application_id,
             ..Default::default()
-        })
-        .antialiasing(true)
-        .font(NERD_FONT_BYTES)
-        .window_size(Size::from([800., 40.]))
-        .subscription(TabBarExample::subscription)
-        .style(TabBarExample::style)
-        // .transparent(true)
-        // .theme(TabBarExample::theme)
-        .run_with(|| (app, iced::Task::none()))
+        },
+        ..Default::default()
+    })
+    .font(include_bytes!("../fonts/NotoColorEmoji.ttf").as_slice())
+    .window_size(Size::from([800., 40.]))
+    .subscription(TabBarExample::subscription)
+    .title("iced_bar")
+    .style(TabBarExample::style)
+    .theme(|_| Theme::TokyoNight)
+    .run()
 }
 
 #[allow(dead_code)]
@@ -280,9 +252,8 @@ enum Message {
     ShowSecondsToggle,
 
     // For mouse_area
-    MouseEnter,
-    MouseExit,
-    MouseMove(iced::Point),
+    MouseEnterScreenShot,
+    MouseExitScreenShot,
     LeftClick,
     RightClick,
 }
@@ -334,9 +305,29 @@ impl TabBarExample {
     const TAB_HEIGHT: f32 = 32.0;
     const TAB_SPACING: f32 = 1.0;
     const UNDERLINE_WIDTH: f32 = 28.0;
-    const TEXT_SIZE: f32 = 18.0;
 
     fn new() -> Self {
+        // Parse command line arguments
+        let args: Vec<String> = env::args().collect();
+        let shared_path = args.get(1).cloned().unwrap_or_default();
+        // Initialize logging
+        if let Err(e) = initialize_logging(&shared_path) {
+            error!("Failed to initialize logging: {}", e);
+            std::process::exit(1);
+        }
+        info!("Starting iced_bar v{}, shared_path: {shared_path}", 1.0);
+
+        // 修改为异步通道 - 增加缓冲区大小以处理突发消息
+        let (message_sender, message_receiver) = tokio::sync::mpsc::channel::<SharedMessage>(1000);
+        let (command_sender, command_receiver) = tokio::sync::mpsc::channel::<SharedCommand>(100);
+        let (heartbeat_sender, heartbeat_receiver) = std::sync::mpsc::channel(); // heartbeat 保持同步
+        let shared_path_clone = shared_path.clone();
+        thread::spawn(move || {
+            shared_memory_worker(shared_path_clone, message_sender, command_receiver)
+        });
+
+        // Start heartbeat monitor
+        thread::spawn(move || heartbeat_monitor(heartbeat_receiver));
         Self {
             active_tab: 0,
             tabs: vec![
@@ -361,9 +352,9 @@ impl TabBarExample {
                 color!(0x5F27CD), // 紫色
                 color!(0x00D2D3), // 青绿色
             ],
-            message_receiver: None,
-            command_sender: None,
-            heartbeat_sender: None,
+            message_receiver: Some(Arc::new(Mutex::new(message_receiver))),
+            command_sender: Some(command_sender),
+            heartbeat_sender: Some(heartbeat_sender),
             last_shared_message: None,
             message_count: 0,
             layout_symbol: String::from(" ? "),
@@ -383,19 +374,6 @@ impl TabBarExample {
             cpu_pie: Cache::default(),
             use_circle: false,
         }
-    }
-
-    // 添加设置通道的方法
-    fn with_channels(
-        mut self,
-        message_receiver: tokio::sync::mpsc::Receiver<SharedMessage>,
-        command_sender: tokio::sync::mpsc::Sender<SharedCommand>,
-        heartbeat_sender: std::sync::mpsc::Sender<()>,
-    ) -> Self {
-        self.message_receiver = Some(Arc::new(Mutex::new(message_receiver)));
-        self.command_sender = Some(command_sender);
-        self.heartbeat_sender = Some(heartbeat_sender);
-        self
     }
 
     // 改为静态方法，不借用 self
@@ -480,7 +458,6 @@ impl TabBarExample {
             Message::TabSelected(index) => {
                 info!("Tab selected: {}", index);
                 self.active_tab = index;
-                // 提取需要的数据，避免借用 self
                 if let Some(ref command_sender) = self.command_sender {
                     let sender = command_sender.clone();
                     let last_message = self.last_shared_message.clone();
@@ -513,7 +490,7 @@ impl TabBarExample {
                 window::get_latest().map(Message::WindowIdReceived)
             }
 
-            Message::MouseEnter => {
+            Message::MouseEnterScreenShot => {
                 self.is_hovered = true;
                 // info!("鼠标进入区域");
                 Task::none()
@@ -524,16 +501,10 @@ impl TabBarExample {
                 Task::none()
             }
 
-            Message::MouseExit => {
+            Message::MouseExitScreenShot => {
                 self.is_hovered = false;
                 self.mouse_position = None;
                 // info!("鼠标离开区域");
-                Task::none()
-            }
-
-            Message::MouseMove(point) => {
-                self.mouse_position = Some(point);
-                // info!("鼠标位置: ({:.1}, {:.1})", point.x, point.y);
                 Task::none()
             }
 
@@ -692,28 +663,18 @@ impl TabBarExample {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        // Subscription::none()
-        time::every(Duration::from_millis(50)).map(|_| Message::CheckSharedMessages)
+        time::every(milliseconds(500)).map(|_| Message::CheckSharedMessages)
     }
 
-    fn style(&self, theme: &Theme) -> Appearance {
+    fn style(&self, theme: &Theme) -> theme::Style {
         if self.transparent {
-            Appearance {
+            theme::Style {
                 background_color: Color::TRANSPARENT,
                 text_color: theme.palette().text,
             }
         } else {
-            Appearance {
-                background_color: theme.palette().background,
-                text_color: theme.palette().text,
-            }
+            theme::default(theme)
         }
-    }
-
-    #[allow(dead_code)]
-    fn theme(&self) -> Theme {
-        Theme::Dracula
-        // Theme::ALL[(self.now.timestamp() as usize / 10) % Theme::ALL.len()].clone()
     }
 
     fn monitor_num_to_icon(monitor_num: u8) -> &'static str {
@@ -726,29 +687,21 @@ impl TabBarExample {
     }
 
     fn view_work_space(&self) -> Element<Message> {
-        // lazy template
-        // let _ = lazy(&, |_| {});
-        let tab_bar = lazy(&self.message_count, |_| {
-            let tab_bar = self
-                .tabs
-                .iter()
-                .fold(TabBar::new(Message::TabSelected), |tab_bar, tab_label| {
-                    let idx = tab_bar.size();
-                    tab_bar.push(idx, TabLabel::Text(tab_label.to_owned()))
-                })
-                .set_active_tab(&self.active_tab)
-                .tab_width(Length::Fixed(Self::TAB_WIDTH))
-                .height(Length::Fixed(Self::TAB_HEIGHT))
-                .spacing(Self::TAB_SPACING)
-                .padding(0.0)
-                .width(Length::Shrink)
-                .text_size(Self::TEXT_SIZE);
-            tab_bar
-        });
+        let mut tab_buttons = Row::new();
+        for (index, tab) in self.tabs.iter().enumerate() {
+            tab_buttons = tab_buttons.push(
+                mouse_area(button(
+                    rich_text![span(tab)].on_link_click(std::convert::identity),
+                ))
+                .on_press(Message::TabSelected(index)),
+            );
+        }
 
         let layout_text = lazy(&self.layout_symbol, |_| {
-            let layout_text =
-                container(rich_text([span(self.layout_symbol.clone())])).center_x(Length::Shrink);
+            let layout_text = container(
+                rich_text![span(self.layout_symbol.clone())].on_link_click(std::convert::identity),
+            )
+            .center_x(Length::Shrink);
             layout_text
         });
 
@@ -803,7 +756,7 @@ impl TabBarExample {
             .height(Length::Fixed(Self::TAB_HEIGHT));
 
         let work_space_row = Row::new()
-            .push(tab_bar)
+            .push(tab_buttons)
             .push(Space::with_width(3))
             .push(layout_text)
             .push(Space::with_width(3))
@@ -818,16 +771,16 @@ impl TabBarExample {
             .push(Space::with_width(3))
             .push(
                 mouse_area(screenshot_text)
-                    .on_enter(Message::MouseEnter)
-                    .on_exit(Message::MouseExit)
+                    .on_enter(Message::MouseEnterScreenShot)
+                    .on_exit(Message::MouseExitScreenShot)
                     .on_press(Message::LeftClick),
             )
             .push(Space::with_width(3))
             .push(time_button)
-            .push(rich_text([
-                span(" "),
-                span(Self::monitor_num_to_icon(self.monitor_num)),
-            ]))
+            .push(
+                rich_text([span(" "), span(Self::monitor_num_to_icon(self.monitor_num))])
+                    .on_link_click(std::convert::identity),
+            )
             .align_y(iced::Alignment::Center);
 
         work_space_row.into()
@@ -976,8 +929,8 @@ impl TabBarExample {
                 bar: Background::Color(theme.palette().primary),
                 border: border::rounded(2.0),
             })
-            .height(Length::Fixed(3.0))
-            .width(200.),
+            .girth(Length::Fixed(3.0))
+            .length(200.),
         );
         underline_row.into()
     }
