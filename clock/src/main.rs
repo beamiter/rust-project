@@ -4,6 +4,7 @@ use iced::alignment;
 use iced::color;
 use iced::gradient;
 use iced::mouse;
+use iced::time::Duration;
 use iced::time::{self};
 use iced::widget::Column;
 use iced::widget::Row;
@@ -12,6 +13,7 @@ use iced::widget::Space;
 use iced::widget::button;
 use iced::widget::canvas::{Cache, Geometry, LineCap, Path, Stroke, stroke};
 use iced::widget::lazy;
+use iced::widget::mouse_area;
 use iced::widget::rich_text;
 use iced::widget::row;
 use iced::widget::scrollable::{Direction, Scrollbar};
@@ -48,6 +50,7 @@ struct Clock {
     is_hovered: bool,
     formated_now: String,
     monitor_num: u8,
+    show_seconds: bool,
 }
 
 impl Default for Clock {
@@ -61,6 +64,11 @@ enum Message {
     Tick(chrono::DateTime<chrono::Local>),
     TabSelected(usize),
     LayoutClicked(u32),
+    ShowSecondsToggle,
+    MouseEnter,
+    MouseExit,
+    LeftClick,
+    RightClick,
 }
 
 impl Clock {
@@ -105,6 +113,7 @@ impl Clock {
             is_hovered: false,
             formated_now: String::new(),
             monitor_num: 0,
+            show_seconds: false,
         }
     }
 
@@ -155,6 +164,24 @@ impl Clock {
                 // }
                 // Task::none()
             }
+
+            Message::MouseEnter => {
+                self.is_hovered = true;
+            }
+
+            Message::ShowSecondsToggle => {
+                self.show_seconds = !self.show_seconds;
+            }
+
+            Message::MouseExit => {
+                self.is_hovered = false;
+            }
+
+            Message::LeftClick => {
+                let _ = std::process::Command::new("flameshot").arg("gui").spawn();
+            }
+
+            Message::RightClick => {}
         }
     }
 
@@ -284,12 +311,12 @@ impl Clock {
             //     gradient.into()
             // }))
             .push(Space::with_width(3))
-            // .push(
-            //     mouse_area(screenshot_text)
-            //         .on_enter(Message::MouseEnter)
-            //         .on_exit(Message::MouseExit)
-            //         .on_press(Message::LeftClick),
-            // )
+            .push(
+                mouse_area(screenshot_text)
+                    .on_enter(Message::MouseEnter)
+                    .on_exit(Message::MouseExit)
+                    .on_press(Message::LeftClick),
+            )
             .push(Space::with_width(3))
             // .push(time_button)
             .push(rich_text([
