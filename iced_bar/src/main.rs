@@ -416,9 +416,7 @@ impl IcedBar {
                 Task::none()
             }
 
-            Message::RightClick => {
-                Task::none()
-            }
+            Message::RightClick => Task::none(),
 
             Message::GetWindowSize(window_size) => {
                 info!("window_size: {:?}", window_size);
@@ -457,27 +455,23 @@ impl IcedBar {
                 self.current_window_id = window_id;
                 if let Some(id) = self.current_window_id {
                     let mut tasks = Vec::new();
-                    if let Ok(shared_msg_lock) = self.last_shared_message_opt.lock() {
-                        if let Some(shared_msg) = &*shared_msg_lock {
-                            let monitor_info = &shared_msg.monitor_info;
-                            let width = (monitor_info.monitor_width as f32
-                                - 2.0 * monitor_info.border_w as f32)
-                                / self.scale_factor;
-                            let height = 40.0;
-                            let window_pos = Point::new(
-                                (monitor_info.monitor_x as f32 + monitor_info.border_w as f32)
-                                    / self.scale_factor,
-                                (monitor_info.monitor_y as f32
-                                    + monitor_info.border_w as f32 * 0.5)
-                                    / self.scale_factor,
-                            );
-                            let window_size = Size::new(width, height);
-                            info!("window_pos: {:?}", window_pos);
-                            info!("window_size: {:?}", window_size);
-                            tasks.push(window::move_to(id, window_pos));
-                            tasks.push(window::resize(id, window_size));
-                            self.is_resized = true;
-                        }
+                    if let Some(ref monitor_info) = self.monitor_info_opt {
+                        let width = (monitor_info.monitor_width as f32
+                            - 2.0 * monitor_info.border_w as f32)
+                            / self.scale_factor;
+                        let height = 40.0;
+                        let window_pos = Point::new(
+                            (monitor_info.monitor_x as f32 + monitor_info.border_w as f32)
+                                / self.scale_factor,
+                            (monitor_info.monitor_y as f32 + monitor_info.border_w as f32 * 0.5)
+                                / self.scale_factor,
+                        );
+                        let window_size = Size::new(width, height);
+                        info!("window_pos: {:?}", window_pos);
+                        info!("window_size: {:?}", window_size);
+                        tasks.push(window::move_to(id, window_pos));
+                        tasks.push(window::resize(id, window_size));
+                        self.is_resized = true;
                     }
                     Task::batch(tasks)
                 } else {
@@ -510,13 +504,6 @@ impl IcedBar {
                 if self.current_window_id.is_none() {
                     return Task::batch(tasks);
                 }
-                let current_window_id = self.current_window_id;
-                if !self.is_resized {
-                    tasks.push(Task::perform(
-                        async move { current_window_id },
-                        Message::ResizeWithId,
-                    ));
-                }
 
                 if self.message_received.load(Ordering::SeqCst) {
                     if let Some(last_shared_message) =
@@ -526,6 +513,15 @@ impl IcedBar {
                         self.monitor_info_opt = Some(last_shared_message.monitor_info.clone());
                     }
                     self.message_received.store(false, Ordering::SeqCst);
+
+                    // Only resize if get monitor message.
+                    let current_window_id = self.current_window_id;
+                    if !self.is_resized {
+                        tasks.push(Task::perform(
+                            async move { current_window_id },
+                            Message::ResizeWithId,
+                        ));
+                    }
                     if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
                         self.layout_symbol = monitor_info.ltsymbol.clone();
                         for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
