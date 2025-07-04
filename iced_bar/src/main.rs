@@ -69,6 +69,11 @@ fn shared_memory_worker(
                                     if !message_received_clone.load(Ordering::SeqCst) {
                                         message_received_clone.store(true, Ordering::SeqCst);
                                     }
+                                } else {
+                                    *last_shared_message_lock = Some(message);
+                                    if !message_received_clone.load(Ordering::SeqCst) {
+                                        message_received_clone.store(true, Ordering::SeqCst);
+                                    }
                                 }
                             }
                         }
@@ -451,9 +456,9 @@ impl IcedBar {
             }
 
             Message::ResizeWithId(window_id) => {
-                // info!("ResizeWithId");
                 self.current_window_id = window_id;
                 if let Some(id) = self.current_window_id {
+                    info!("ResizeWithId: {:?}, {:?}", window_id, self.monitor_info_opt);
                     let mut tasks = Vec::new();
                     if let Some(ref monitor_info) = self.monitor_info_opt {
                         let width = (monitor_info.monitor_width as f32
@@ -495,6 +500,7 @@ impl IcedBar {
                 // 系统监控更新
                 self.system_monitor.update_if_needed();
                 self.audio_manager.update_if_needed();
+
                 let mut tasks = Vec::new();
                 START.call_once(|| {
                     if self.current_window_id.is_none() {
@@ -514,14 +520,6 @@ impl IcedBar {
                     }
                     self.message_received.store(false, Ordering::SeqCst);
 
-                    // Only resize if get monitor message.
-                    let current_window_id = self.current_window_id;
-                    if !self.is_resized {
-                        tasks.push(Task::perform(
-                            async move { current_window_id },
-                            Message::ResizeWithId,
-                        ));
-                    }
                     if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
                         self.layout_symbol = monitor_info.ltsymbol.clone();
                         for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
@@ -529,6 +527,14 @@ impl IcedBar {
                                 self.active_tab = index;
                             }
                         }
+                    }
+
+                    let current_window_id = self.current_window_id;
+                    if !self.is_resized {
+                        tasks.push(Task::perform(
+                            async move { current_window_id },
+                            Message::ResizeWithId,
+                        ));
                     }
                 }
 
