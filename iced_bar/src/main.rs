@@ -93,6 +93,119 @@ macro_rules! tab_buttons {
     };
 }
 
+fn adaptive_polling_worker(
+    shared_buffer_opt_clone: Arc<Mutex<Option<SharedRingBuffer>>>,
+    last_shared_message_opt_clone: Arc<Mutex<Option<SharedMessage>>>,
+    message_received_clone: Arc<AtomicBool>,
+) {
+    info!("Starting adaptive polling worker thread");
+
+    let mut prev_timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
+
+    let mut frame_count: u128 = 0;
+    let mut consecutive_errors = 0;
+    let mut consecutive_empty_reads = 0;
+    let mut last_message_time = std::time::Instant::now();
+
+    // 自适应睡眠参数
+    let mut sleep_duration = Duration::from_millis(50); // 起始50ms
+    const MIN_SLEEP: Duration = Duration::from_millis(10);
+    const MAX_SLEEP: Duration = Duration::from_millis(500);
+    const ACTIVE_THRESHOLD: Duration = Duration::from_secs(2); // 2秒内有消息认为是活跃状态
+
+    loop {
+        frame_count = frame_count.wrapping_add(1);
+        let mut had_message = false;
+        let now = std::time::Instant::now();
+
+        // 处理共享内存消息
+        if let Ok(shared_buffer_lock) = shared_buffer_opt_clone.lock() {
+            if let Some(shared_buffer) = &*shared_buffer_lock {
+                match shared_buffer.try_read_latest_message::<SharedMessage>() {
+                    Ok(Some(message)) => {
+                        had_message = true;
+                        consecutive_errors = 0;
+                        consecutive_empty_reads = 0;
+                        last_message_time = now;
+
+                        if prev_timestamp != message.timestamp {
+                            prev_timestamp = message.timestamp;
+
+                            if let Ok(mut last_shared_message_lock) =
+                                last_shared_message_opt_clone.lock()
+                            {
+                                match last_shared_message_lock.as_mut() {
+                                    Some(last_shared_message) => {
+                                        *last_shared_message = message;
+                                    }
+                                    None => {
+                                        *last_shared_message_lock = Some(message);
+                                    }
+                                }
+                                message_received_clone.store(true, Ordering::Relaxed);
+                            }
+                        }
+                    }
+                    Ok(None) => {
+                        consecutive_errors = 0;
+                        consecutive_empty_reads += 1;
+                    }
+                    Err(e) => {
+                        consecutive_errors += 1;
+                        if consecutive_errors == 1 || consecutive_errors % 100 == 0 {
+                            log::warn!(
+                                "Ring buffer read error: {} (count: {})",
+                                e,
+                                consecutive_errors
+                            );
+                        }
+                        if consecutive_errors > 20 {
+                            shared_buffer.reset_read_index();
+                            consecutive_errors = 0;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 自适应睡眠策略
+        if had_message {
+            // 有消息，使用最短睡眠
+            sleep_duration = MIN_SLEEP;
+        } else {
+            let time_since_last_message = now.duration_since(last_message_time);
+            if time_since_last_message < ACTIVE_THRESHOLD {
+                // 最近有消息，使用较短的轮询间隔
+                sleep_duration = Duration::from_millis(25);
+            } else {
+                // 长时间无消息，增加睡眠时间
+                if consecutive_empty_reads > 20 {
+                    sleep_duration = std::cmp::min(
+                        Duration::from_millis(sleep_duration.as_millis() as u64 + 25),
+                        MAX_SLEEP,
+                    );
+                }
+            }
+        }
+
+        // 减少日志频率
+        if frame_count % 5000 == 0 {
+            log::debug!(
+                "Frame {}, sleep: {:?}ms, empty_reads: {}",
+                frame_count,
+                sleep_duration.as_millis(),
+                consecutive_empty_reads
+            );
+        }
+
+        thread::sleep(sleep_duration);
+    }
+}
+
+#[allow(dead_code)]
 fn shared_memory_worker(
     shared_buffer_opt_clone: Arc<Mutex<Option<SharedRingBuffer>>>,
     last_shared_message_opt_clone: Arc<Mutex<Option<SharedMessage>>>,
@@ -330,7 +443,7 @@ impl IcedBar {
         let message_received = Arc::new(AtomicBool::new(false));
         let message_received_clone = message_received.clone();
         thread::spawn(move || {
-            shared_memory_worker(
+            adaptive_polling_worker(
                 shared_buffer_opt_clone,
                 last_shared_message_opt_clone,
                 message_received_clone,
