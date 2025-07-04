@@ -545,7 +545,7 @@ impl IcedBar {
                 if now.timestamp() != self.now.timestamp() {
                     self.now = now;
                     self.formated_now = now.format(format_str).to_string();
-                    info!("CheckSharedMessages");
+                    // info!("CheckSharedMessages");
                 }
                 // 系统监控更新
                 self.system_monitor.update_if_needed();
@@ -707,7 +707,7 @@ impl IcedBar {
         } else {
             0.0
         };
-        info!("cpu_average: {cpu_average}");
+        // info!("cpu_average: {cpu_average}");
         let cpu_usage_bar = progress_bar(0.0..=100.0, 100.0 - cpu_average)
             .style(move |theme: &Theme| progress_bar::Style {
                 background: Background::Gradient({
