@@ -1,18 +1,17 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::time::{self, milliseconds};
-use iced::widget::canvas::{Cache, Geometry, Path};
+use iced::widget::container;
 use iced::widget::lazy;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{Scrollable, Space, button, progress_bar, rich_text, row};
-use iced::widget::{canvas, container};
 use iced::widget::{mouse_area, span};
-use iced::{gradient, mouse, theme};
+use iced::{gradient, theme};
 
 use iced::window::Id;
 use iced::{
-    Background, Border, Color, Degrees, Element, Length, Point, Radians, Rectangle, Renderer, Size,
-    Subscription, Task, Theme, border, color,
+    Background, Border, Color, Degrees, Element, Length, Point, Radians, Size, Subscription, Task,
+    Theme, border, color,
     widget::{Column, Row, text},
     window,
 };
@@ -102,7 +101,7 @@ fn shared_memory_worker(
         }
 
         frame_count = frame_count.wrapping_add(1);
-        thread::sleep(Duration::from_millis(30));
+        thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -214,9 +213,6 @@ struct IcedBar {
     system_monitor: SystemMonitor,
     transparent: bool,
 
-    cpu_pie: Cache,
-    use_circle: bool,
-
     message_received: Arc<AtomicBool>,
 }
 
@@ -327,8 +323,6 @@ impl IcedBar {
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(10),
             transparent: true,
-            cpu_pie: Cache::default(),
-            use_circle: false,
             message_received,
         }
     }
@@ -544,7 +538,7 @@ impl IcedBar {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        time::every(milliseconds(40)).map(|_| Message::CheckSharedMessages)
+        time::every(milliseconds(50)).map(|_| Message::CheckSharedMessages)
     }
 
     fn style(&self, theme: &Theme) -> theme::Style {
@@ -635,9 +629,6 @@ impl IcedBar {
             .padding(0.0);
 
         let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
-        // let canvas = canvas(self as &Self)
-        //     .width(Length::Fixed(Self::TAB_HEIGHT))
-        //     .height(Length::Fixed(Self::TAB_HEIGHT));
         let cpu_average = if let Some(snapshot) = self.system_monitor.get_snapshot() {
             snapshot.cpu_average
         } else {
@@ -671,12 +662,6 @@ impl IcedBar {
             .push(scrollable_content)
             .push(Space::with_width(Length::Fill))
             .push(cpu_usage_bar)
-            // .push(container(canvas).style(move |_theme| {
-            //     let gradient = gradient::Linear::new(0.0)
-            //         .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
-            //         .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
-            //     gradient.into()
-            // }))
             .push(Space::with_width(3))
             .push(
                 mouse_area(screenshot_text)
@@ -860,73 +845,5 @@ impl IcedBar {
             .push(work_space_row)
             .push(under_line_row)
             .into()
-    }
-}
-
-impl<Message> canvas::Program<Message> for IcedBar {
-    type State = ();
-
-    fn draw(
-        &self,
-        _state: &Self::State,
-        renderer: &Renderer,
-        theme: &Theme,
-        bounds: Rectangle,
-        _cursor: mouse::Cursor,
-    ) -> Vec<Geometry> {
-        let cpu_average = if let Some(snapshot) = self.system_monitor.get_snapshot() {
-            snapshot.cpu_average
-        } else {
-            0.0
-        };
-        self.cpu_pie.clear();
-        let sector = if self.use_circle {
-            self.cpu_pie.draw(renderer, bounds.size(), |frame| {
-                // 1. 定义扇形的几何属性
-                let center = frame.center();
-                let radius = frame.width().min(frame.height()) * 0.5;
-                let palette = theme.extended_palette();
-                let background = Path::circle(center, radius);
-                frame.fill(&background, palette.secondary.strong.color);
-
-                let start_angle_deg = 0.0;
-                let end_angle_deg = -360.0 * cpu_average / 100.0;
-                // 将角度转换为弧度
-                let start_angle_rad = Radians::from(Degrees(start_angle_deg));
-                let end_angle_rad = Radians::from(Degrees(end_angle_deg));
-                let sector_path = Path::new(|builder| {
-                    // 步骤 a: 将画笔移动到圆心
-                    builder.move_to(center);
-                    // 步骤 b: 画第一条半径。我们需要计算出圆弧的起点坐标，然后画一条直线过去。
-                    let start_point = Point {
-                        x: center.x + radius * start_angle_rad.0.cos(),
-                        y: center.y + radius * start_angle_rad.0.sin(),
-                    };
-                    builder.line_to(start_point);
-                    // 步骤 c: 绘制圆弧。此时画笔位于圆弧起点，arc会从这个点开始画。
-                    builder.arc(iced::widget::canvas::path::Arc {
-                        center,
-                        radius,
-                        start_angle: start_angle_rad.into(),
-                        end_angle: end_angle_rad.into(),
-                    });
-                    // 步骤 d: 闭合路径。这会从圆弧的终点画一条直线回到整个路径的起点（即圆心），
-                    builder.line_to(center);
-                });
-
-                // 3. 填充路径
-                let fill_color = Color::from_rgb8(0, 150, 255);
-                frame.fill(&sector_path, fill_color);
-            })
-        } else {
-            self.cpu_pie.draw(renderer, bounds.size(), |frame| {
-                let width = bounds.width;
-                let height = bounds.height;
-                let used_height = height * (1. - cpu_average / 100.0);
-                frame.fill_rectangle(Point::ORIGIN, Size::new(width, used_height), Color::BLACK);
-            })
-        };
-
-        vec![sector]
     }
 }
