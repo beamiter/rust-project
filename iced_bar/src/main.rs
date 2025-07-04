@@ -160,8 +160,8 @@ fn main() -> iced::Result {
         .window_size(Size::from([800., 40.]))
         .subscription(IcedBar::subscription)
         .title("iced_bar")
-        .style(IcedBar::style)
-        .theme(|_| Theme::CatppuccinMocha)
+        // .style(IcedBar::style)
+        .theme(|_| Theme::Light)
         .run()
 }
 
@@ -188,8 +188,8 @@ enum Message {
 
 struct IcedBar {
     active_tab: usize,
-    tabs: Vec<String>,
-    tab_colors: Vec<Color>,
+    tabs: [String; 9],
+    tab_colors: [Color; 9],
     last_shared_message_opt: Arc<Mutex<Option<SharedMessage>>>,
     shared_buffer_opt: Arc<Mutex<Option<SharedRingBuffer>>>,
     message_count: u32,
@@ -283,7 +283,7 @@ impl IcedBar {
 
         Self {
             active_tab: 0,
-            tabs: vec![
+            tabs: [
                 "🍜".to_string(),
                 "🎨".to_string(),
                 "🍀".to_string(),
@@ -294,7 +294,7 @@ impl IcedBar {
                 "🕊️".to_string(),
                 "🏡".to_string(),
             ],
-            tab_colors: vec![
+            tab_colors: [
                 color!(0xFF6B6B), // 红色
                 color!(0x4ECDC4), // 青色
                 color!(0x45B7D1), // 蓝色
@@ -541,6 +541,7 @@ impl IcedBar {
         time::every(milliseconds(50)).map(|_| Message::CheckSharedMessages)
     }
 
+    #[allow(dead_code)]
     fn style(&self, theme: &Theme) -> theme::Style {
         if self.transparent {
             theme::Style {
