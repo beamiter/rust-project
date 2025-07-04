@@ -102,7 +102,7 @@ fn shared_memory_worker(
         }
 
         frame_count = frame_count.wrapping_add(1);
-        thread::sleep(Duration::from_millis(10));
+        thread::sleep(Duration::from_millis(30));
     }
 }
 
@@ -162,7 +162,7 @@ fn main() -> iced::Result {
         .subscription(IcedBar::subscription)
         .title("iced_bar")
         .style(IcedBar::style)
-        .theme(|_| Theme::TokyoNight)
+        .theme(|_| Theme::CatppuccinMocha)
         .run()
 }
 
@@ -228,7 +228,7 @@ impl Default for IcedBar {
 
 impl IcedBar {
     const DEFAULT_COLOR: Color = color!(0x666666);
-    const TAB_WIDTH: f32 = 32.0;
+    const TAB_WIDTH: f32 = 40.0;
     const TAB_HEIGHT: f32 = 32.0;
     const TAB_SPACING: f32 = 1.0;
     const UNDERLINE_WIDTH: f32 = 28.0;
@@ -544,7 +544,7 @@ impl IcedBar {
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        time::every(milliseconds(25)).map(|_| Message::CheckSharedMessages)
+        time::every(milliseconds(40)).map(|_| Message::CheckSharedMessages)
     }
 
     fn style(&self, theme: &Theme) -> theme::Style {
@@ -568,12 +568,13 @@ impl IcedBar {
     }
 
     fn view_work_space(&self) -> Element<Message> {
-        let mut tab_buttons = Row::new();
+        let mut tab_buttons = Row::new().spacing(Self::TAB_SPACING);
         for (index, tab) in self.tabs.iter().enumerate() {
             tab_buttons = tab_buttons.push(
-                mouse_area(button(
-                    rich_text![span(tab)].on_link_click(std::convert::identity),
-                ))
+                mouse_area(
+                    button(rich_text![span(tab)].on_link_click(std::convert::identity))
+                        .width(Self::TAB_WIDTH),
+                )
                 .on_press(Message::TabSelected(index)),
             );
         }
@@ -632,9 +633,28 @@ impl IcedBar {
             .padding(0.0);
 
         let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
-        let canvas = canvas(self as &Self)
-            .width(Length::Fixed(Self::TAB_HEIGHT))
-            .height(Length::Fixed(Self::TAB_HEIGHT));
+        // let canvas = canvas(self as &Self)
+        //     .width(Length::Fixed(Self::TAB_HEIGHT))
+        //     .height(Length::Fixed(Self::TAB_HEIGHT));
+        let cpu_average = if let Some(snapshot) = self.system_monitor.get_snapshot() {
+            snapshot.cpu_average
+        } else {
+            0.0
+        };
+        info!("cpu_average: {cpu_average}");
+        let cpu_usage_bar = progress_bar(0.0..=100.0, 100.0 - cpu_average)
+            .style(move |theme: &Theme| progress_bar::Style {
+                background: Background::Gradient({
+                    let gradient = gradient::Linear::new(Radians::from(Degrees(-90.0)))
+                        .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
+                        .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
+                    gradient.into()
+                }),
+                bar: Background::Color(theme.palette().primary),
+                border: border::rounded(2.0),
+            })
+            .girth(Self::TAB_HEIGHT * 0.5)
+            .length(100.);
 
         let monitor_num = if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
             monitor_info.monitor_num
@@ -648,12 +668,13 @@ impl IcedBar {
             .push(Space::with_width(3))
             .push(scrollable_content)
             .push(Space::with_width(Length::Fill))
-            .push(container(canvas).style(move |_theme| {
-                let gradient = gradient::Linear::new(0.0)
-                    .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
-                    .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
-                gradient.into()
-            }))
+            .push(cpu_usage_bar)
+            // .push(container(canvas).style(move |_theme| {
+            //     let gradient = gradient::Linear::new(0.0)
+            //         .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
+            //         .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
+            //     gradient.into()
+            // }))
             .push(Space::with_width(3))
             .push(
                 mouse_area(screenshot_text)
@@ -818,7 +839,7 @@ impl IcedBar {
                 bar: Background::Color(theme.palette().primary),
                 border: border::rounded(2.0),
             })
-            .girth(Length::Fixed(3.0))
+            .girth(3.0)
             .length(200.),
         );
         underline_row.into()
