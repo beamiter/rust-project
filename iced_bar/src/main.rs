@@ -19,13 +19,16 @@ use iced::{
 mod error;
 pub use error::AppError;
 use log::{error, info, warn};
-use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
+use shared_structures::{
+    CommandType, MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus,
+};
 use std::env;
 use std::process::Command;
+use std::sync::Mutex;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Once};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-use tokio::sync::Mutex;
 
 use crate::audio_manager::AudioManager;
 use crate::system_monitor::SystemMonitor;
@@ -35,108 +38,38 @@ pub mod system_monitor;
 
 static START: Once = Once::new();
 
-/// Monitor heartbeat from background thread
-fn heartbeat_monitor(heartbeat_receiver: std::sync::mpsc::Receiver<()>) {
-    info!("Starting heartbeat monitor");
-
-    loop {
-        match heartbeat_receiver.recv_timeout(Duration::from_secs(5)) {
-            Ok(_) => {
-                // Heartbeat received, continue
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                error!("thread heartbeat timeout");
-                // std::process::exit(1);
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                error!("thread disconnected");
-                // std::process::exit(1);
-            }
-        }
-        thread::sleep(Duration::from_millis(1000));
-    }
-}
-
 fn shared_memory_worker(
-    shared_path: String,
-    message_sender: tokio::sync::mpsc::Sender<SharedMessage>, // 改为异步发送器
-    mut command_receiver: tokio::sync::mpsc::Receiver<SharedCommand>, // 改为异步接收器
+    shared_buffer_opt_clone: Arc<Mutex<Option<SharedRingBuffer>>>,
+    last_shared_message_opt_clone: Arc<Mutex<Option<SharedMessage>>>,
+    message_received_clone: Arc<AtomicBool>,
 ) {
     info!("Starting shared memory worker thread");
+    let mut prev_timestamp = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
 
-    // 创建 tokio 运行时用于这个工作线程
-    let rt = tokio::runtime::Runtime::new().unwrap();
-
-    rt.block_on(async {
-        // 尝试打开或创建共享环形缓冲区（保持不变）
-        let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
-            warn!("No shared path provided, running without shared memory");
-            None
-        } else {
-            match SharedRingBuffer::open(&shared_path) {
-                Ok(shared_buffer) => {
-                    info!("Successfully opened shared ring buffer: {}", shared_path);
-                    Some(shared_buffer)
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to open shared ring buffer: {}, attempting to create new one",
-                        e
-                    );
-                    match SharedRingBuffer::create(&shared_path, None, None) {
-                        Ok(shared_buffer) => {
-                            info!("Created new shared ring buffer: {}", shared_path);
-                            Some(shared_buffer)
-                        }
-                        Err(create_err) => {
-                            error!("Failed to create shared ring buffer: {}", create_err);
-                            None
-                        }
-                    }
-                }
-            }
-        };
-
-        let mut prev_timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-
-        let mut frame_count: u128 = 0;
-        let mut consecutive_errors = 0;
-
-        loop {
-            // 异步处理命令
-            while let Ok(cmd) = command_receiver.try_recv() {
-                info!("Receive command: {:?} in channel", cmd);
-                if let Some(ref shared_buffer) = shared_buffer_opt {
-                    match shared_buffer.send_command(cmd) {
-                        Ok(true) => {
-                            info!("Sent command: {:?} by shared_buffer", cmd);
-                        }
-                        Ok(false) => {
-                            warn!("Command buffer full, command dropped");
-                        }
-                        Err(e) => {
-                            error!("Failed to send command: {}", e);
-                        }
-                    }
-                }
-            }
-
-            // 处理共享内存消息
-            if let Some(ref shared_buffer) = shared_buffer_opt {
+    let mut frame_count: u128 = 0;
+    let mut consecutive_errors = 0;
+    loop {
+        // 处理共享内存消息
+        if let Ok(shared_buffer_lock) = shared_buffer_opt_clone.lock() {
+            if let Some(shared_buffer) = &*shared_buffer_lock {
                 match shared_buffer.try_read_latest_message::<SharedMessage>() {
                     Ok(Some(message)) => {
-                        consecutive_errors = 0;
+                        consecutive_errors = 0; // 成功读取，重置错误计数
                         if prev_timestamp != message.timestamp {
                             prev_timestamp = message.timestamp;
-                            // 异步发送消息
-                            if let Err(e) = message_sender.send(message).await {
-                                error!("Failed to send message: {}", e);
-                                break;
-                            } else {
-                                info!("send message ok");
+                            if let Ok(mut last_shared_message_lock) =
+                                last_shared_message_opt_clone.lock()
+                            {
+                                if let Some(last_shared_message) = last_shared_message_lock.as_mut()
+                                {
+                                    *last_shared_message = message;
+                                    if !message_received_clone.load(Ordering::SeqCst) {
+                                        message_received_clone.store(true, Ordering::SeqCst);
+                                    }
+                                }
                             }
                         }
                     }
@@ -153,7 +86,6 @@ fn shared_memory_worker(
                                 shared_buffer.get_last_timestamp()
                             );
                         }
-
                         if consecutive_errors > 10 {
                             warn!("Too many consecutive errors, resetting read index");
                             shared_buffer.reset_read_index();
@@ -162,13 +94,11 @@ fn shared_memory_worker(
                     }
                 }
             }
-
-            frame_count = frame_count.wrapping_add(1);
-            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
-    });
 
-    info!("Shared memory worker thread exiting");
+        frame_count = frame_count.wrapping_add(1);
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 /// Initialize logging system
@@ -214,25 +144,21 @@ fn main() -> iced::Result {
     let args: Vec<String> = env::args().collect();
     let application_id = args.get(0).cloned().unwrap_or_default();
     info!("application_id: {application_id}");
-    iced::application(
-        TabBarExample::new,
-        TabBarExample::update,
-        TabBarExample::view,
-    )
-    .window(window::Settings {
-        platform_specific: window::settings::PlatformSpecific {
-            application_id,
+    iced::application(IcedBar::new, IcedBar::update, IcedBar::view)
+        .window(window::Settings {
+            platform_specific: window::settings::PlatformSpecific {
+                application_id,
+                ..Default::default()
+            },
             ..Default::default()
-        },
-        ..Default::default()
-    })
-    .font(include_bytes!("../fonts/NotoColorEmoji.ttf").as_slice())
-    .window_size(Size::from([800., 40.]))
-    .subscription(TabBarExample::subscription)
-    .title("iced_bar")
-    .style(TabBarExample::style)
-    .theme(|_| Theme::TokyoNight)
-    .run()
+        })
+        .font(include_bytes!("../fonts/NotoColorEmoji.ttf").as_slice())
+        .window_size(Size::from([800., 40.]))
+        .subscription(IcedBar::subscription)
+        .title("iced_bar")
+        .style(IcedBar::style)
+        .theme(|_| Theme::TokyoNight)
+        .run()
 }
 
 #[allow(dead_code)]
@@ -241,8 +167,6 @@ enum Message {
     TabSelected(usize),
     LayoutClicked(u32),
     CheckSharedMessages,
-    SharedMessageReceived(SharedMessage),
-    BatchSharedMessages(Vec<SharedMessage>),
     GetWindowId,
     GetWindowSize(Size),
     GetScaleFactor(f32),
@@ -258,20 +182,14 @@ enum Message {
     RightClick,
 }
 
-#[derive(Debug)]
-struct TabBarExample {
+struct IcedBar {
     active_tab: usize,
     tabs: Vec<String>,
     tab_colors: Vec<Color>,
-    // 使用 Arc<Mutex<>> 包装接收器
-    message_receiver: Option<Arc<Mutex<tokio::sync::mpsc::Receiver<SharedMessage>>>>,
-    command_sender: Option<tokio::sync::mpsc::Sender<SharedCommand>>,
-    heartbeat_sender: Option<std::sync::mpsc::Sender<()>>,
-    // 新增：用于显示共享消息的状态
-    last_shared_message: Option<SharedMessage>,
+    last_shared_message_opt: Arc<Mutex<Option<SharedMessage>>>,
+    shared_buffer_opt: Arc<Mutex<Option<SharedRingBuffer>>>,
     message_count: u32,
-    layout_symbol: String,
-    monitor_num: u8,
+    monitor_info_opt: Option<MonitorInfo>,
     now: chrono::DateTime<chrono::Local>,
     formated_now: String,
     current_window_id: Option<Id>,
@@ -281,25 +199,29 @@ struct TabBarExample {
     is_hovered: bool,
     mouse_position: Option<iced::Point>,
     show_seconds: bool,
+    layout_symbol: String,
+    monitor_num: i32,
 
     /// Audio system
-    pub audio_manager: AudioManager,
+    audio_manager: AudioManager,
 
     /// System monitoring
-    pub system_monitor: SystemMonitor,
+    system_monitor: SystemMonitor,
     transparent: bool,
 
     cpu_pie: Cache,
     use_circle: bool,
+
+    message_received: Arc<AtomicBool>,
 }
 
-impl Default for TabBarExample {
+impl Default for IcedBar {
     fn default() -> Self {
-        TabBarExample::new()
+        IcedBar::new()
     }
 }
 
-impl TabBarExample {
+impl IcedBar {
     const DEFAULT_COLOR: Color = color!(0x666666);
     const TAB_WIDTH: f32 = 32.0;
     const TAB_HEIGHT: f32 = 32.0;
@@ -317,17 +239,47 @@ impl TabBarExample {
         }
         info!("Starting iced_bar v{}, shared_path: {shared_path}", 1.0);
 
-        // 修改为异步通道 - 增加缓冲区大小以处理突发消息
-        let (message_sender, message_receiver) = tokio::sync::mpsc::channel::<SharedMessage>(1000);
-        let (command_sender, command_receiver) = tokio::sync::mpsc::channel::<SharedCommand>(100);
-        let (heartbeat_sender, heartbeat_receiver) = std::sync::mpsc::channel(); // heartbeat 保持同步
-        let shared_path_clone = shared_path.clone();
+        let local_shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
+            warn!("No shared path provided, running without shared memory");
+            None
+        } else {
+            match SharedRingBuffer::open(&shared_path) {
+                Ok(shared_buffer) => {
+                    info!("Successfully opened shared ring buffer: {}", shared_path);
+                    Some(shared_buffer)
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to open shared ring buffer: {}, attempting to create new one",
+                        e
+                    );
+                    match SharedRingBuffer::create(&shared_path, None, None) {
+                        Ok(shared_buffer) => {
+                            info!("Created new shared ring buffer: {}", shared_path);
+                            Some(shared_buffer)
+                        }
+                        Err(create_err) => {
+                            error!("Failed to create shared ring buffer: {}", create_err);
+                            None
+                        }
+                    }
+                }
+            }
+        };
+        let shared_buffer_opt = Arc::new(Mutex::new(local_shared_buffer_opt));
+        let shared_buffer_opt_clone = shared_buffer_opt.clone();
+        let last_shared_message_opt = Arc::new(Mutex::new(None::<SharedMessage>));
+        let last_shared_message_opt_clone = last_shared_message_opt.clone();
+        let message_received = Arc::new(AtomicBool::new(false));
+        let message_received_clone = message_received.clone();
         thread::spawn(move || {
-            shared_memory_worker(shared_path_clone, message_sender, command_receiver)
+            shared_memory_worker(
+                shared_buffer_opt_clone,
+                last_shared_message_opt_clone,
+                message_received_clone,
+            )
         });
 
-        // Start heartbeat monitor
-        thread::spawn(move || heartbeat_monitor(heartbeat_receiver));
         Self {
             active_tab: 0,
             tabs: vec![
@@ -352,13 +304,10 @@ impl TabBarExample {
                 color!(0x5F27CD), // 紫色
                 color!(0x00D2D3), // 青绿色
             ],
-            message_receiver: Some(Arc::new(Mutex::new(message_receiver))),
-            command_sender: Some(command_sender),
-            heartbeat_sender: Some(heartbeat_sender),
-            last_shared_message: None,
+            last_shared_message_opt,
+            shared_buffer_opt,
             message_count: 0,
-            layout_symbol: String::from(" ? "),
-            monitor_num: 0,
+            monitor_info_opt: None,
             now: chrono::offset::Local::now(),
             formated_now: String::new(),
             current_window_id: None,
@@ -368,131 +317,86 @@ impl TabBarExample {
             is_hovered: false,
             mouse_position: None,
             show_seconds: false,
+            layout_symbol: String::new(),
+            monitor_num: 0,
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(10),
             transparent: true,
             cpu_pie: Cache::default(),
             use_circle: false,
+            message_received,
         }
     }
 
-    // 改为静态方法，不借用 self
-    async fn send_tag_command_async(
-        command_sender: tokio::sync::mpsc::Sender<SharedCommand>,
-        last_shared_message: Option<SharedMessage>,
-        active_tab: usize,
-        is_view: bool,
-    ) {
-        if let Some(message) = last_shared_message {
-            let monitor_id = message.monitor_info.monitor_num;
-            let tag_bit = 1 << active_tab;
-            let command = if is_view {
-                SharedCommand::view_tag(tag_bit, monitor_id)
-            } else {
-                SharedCommand::toggle_tag(tag_bit, monitor_id)
-            };
-
-            match command_sender.send(command).await {
-                Ok(_) => {
-                    let action = if is_view { "ViewTag" } else { "ToggleTag" };
-                    log::info!(
-                        "Sent {} command for tag {} in channel",
-                        action,
-                        active_tab + 1
-                    );
-                }
-                Err(e) => {
-                    let action = if is_view { "ViewTag" } else { "ToggleTag" };
-                    log::error!("Failed to send {} command: {}", action, e);
-                }
-            }
-        }
-    }
-
-    // 新增：发送布局命令的异步方法
-    async fn send_layout_command_async(
-        command_sender: tokio::sync::mpsc::Sender<SharedCommand>,
-        layout_index: u32,
-        monitor_id: i32,
-    ) {
-        let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
-
-        if let Err(e) = command_sender.send(command).await {
-            log::error!("Failed to send SetLayout command: {}", e);
+    fn send_tag_command(&mut self, is_view: bool) {
+        let tag_bit = 1 << self.active_tab;
+        let command = if is_view {
+            SharedCommand::view_tag(tag_bit, self.monitor_num)
         } else {
-            log::info!("Sent SetLayout command: layout_index={}", layout_index);
-        }
-    }
+            SharedCommand::toggle_tag(tag_bit, self.monitor_num)
+        };
 
-    // 异步批量读取消息
-    async fn read_all_messages_async(
-        receiver: Arc<Mutex<tokio::sync::mpsc::Receiver<SharedMessage>>>,
-    ) -> Vec<SharedMessage> {
-        let mut messages = Vec::new();
-        let timeout_duration = tokio::time::Duration::from_millis(5);
-        let mut receiver_guard = receiver.lock().await;
-        loop {
-            match tokio::time::timeout(timeout_duration, receiver_guard.recv()).await {
-                Ok(Some(message)) => {
-                    messages.push(message);
-                    if messages.len() >= 50 {
-                        break;
+        if let Ok(shared_buffer_lock) = self.shared_buffer_opt.lock() {
+            if let Some(shared_buffer) = &*shared_buffer_lock {
+                match shared_buffer.send_command(command) {
+                    Ok(true) => {
+                        info!("Sent command: {:?} by shared_buffer", command);
+                    }
+                    Ok(false) => {
+                        warn!("Command buffer full, command dropped");
+                    }
+                    Err(e) => {
+                        error!("Failed to send command: {}", e);
                     }
                 }
-                Ok(None) => {
-                    break;
-                }
-                Err(_) => {
-                    break;
+            }
+        }
+    }
+
+    fn send_layout_command(&mut self, layout_index: u32) {
+        let command = SharedCommand::new(CommandType::SetLayout, layout_index, self.monitor_num);
+        if let Ok(shared_buffer_lock) = self.shared_buffer_opt.lock() {
+            if let Some(shared_buffer) = &*shared_buffer_lock {
+                match shared_buffer.send_command(command) {
+                    Ok(true) => {
+                        info!("Sent command: {:?} by shared_buffer", command);
+                    }
+                    Ok(false) => {
+                        warn!("Command buffer full, command dropped");
+                    }
+                    Err(e) => {
+                        error!("Failed to send command: {}", e);
+                    }
                 }
             }
         }
-        // info!("Read {} messages in batch", messages.len());
-
-        messages
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
         // info!("update");
         match message {
-            Message::TabSelected(index) => {
-                info!("Tab selected: {}", index);
-                self.active_tab = index;
-                if let Some(ref command_sender) = self.command_sender {
-                    let sender = command_sender.clone();
-                    let last_message = self.last_shared_message.clone();
-                    let active_tab = self.active_tab;
-                    return Task::perform(
-                        Self::send_tag_command_async(sender, last_message, active_tab, true),
-                        |_| Message::CheckSharedMessages,
-                    );
-                }
+            Message::TabSelected(tab_index) => {
+                info!("Tab selected: {}", tab_index);
+                self.active_tab = tab_index;
+                self.send_tag_command(true);
+
                 Task::none()
             }
 
             Message::LayoutClicked(layout_index) => {
-                if let Some(ref message) = self.last_shared_message {
-                    let monitor_id = message.monitor_info.monitor_num;
-                    if let Some(ref command_sender) = self.command_sender {
-                        let sender = command_sender.clone();
-                        return Task::perform(
-                            Self::send_layout_command_async(sender, layout_index, monitor_id),
-                            |_| Message::CheckSharedMessages,
-                        );
-                    }
-                }
+                self.send_layout_command(layout_index);
+                info!("Layout selected: {}", layout_index);
+
                 Task::none()
             }
 
             Message::GetWindowId => {
                 info!("GetWindowId");
-                // 获取最新窗口的 ID
                 window::get_latest().map(Message::WindowIdReceived)
             }
 
             Message::MouseEnterScreenShot => {
                 self.is_hovered = true;
-                // info!("鼠标进入区域");
                 Task::none()
             }
 
@@ -504,18 +408,15 @@ impl TabBarExample {
             Message::MouseExitScreenShot => {
                 self.is_hovered = false;
                 self.mouse_position = None;
-                // info!("鼠标离开区域");
                 Task::none()
             }
 
             Message::LeftClick => {
-                // info!("左键点击");
                 let _ = Command::new("flameshot").arg("gui").spawn();
                 Task::none()
             }
 
             Message::RightClick => {
-                // info!("右键点击");
                 Task::none()
             }
 
@@ -556,24 +457,27 @@ impl TabBarExample {
                 self.current_window_id = window_id;
                 if let Some(id) = self.current_window_id {
                     let mut tasks = Vec::new();
-                    if let Some(ref shared_msg) = self.last_shared_message {
-                        let monitor_info = &shared_msg.monitor_info;
-                        let width = (monitor_info.monitor_width as f32
-                            - 2.0 * monitor_info.border_w as f32)
-                            / self.scale_factor;
-                        let height = 40.0;
-                        let window_pos = Point::new(
-                            (monitor_info.monitor_x as f32 + monitor_info.border_w as f32)
-                                / self.scale_factor,
-                            (monitor_info.monitor_y as f32 + monitor_info.border_w as f32 * 0.5)
-                                / self.scale_factor,
-                        );
-                        let window_size = Size::new(width, height);
-                        info!("window_pos: {:?}", window_pos);
-                        info!("window_size: {:?}", window_size);
-                        tasks.push(window::move_to(id, window_pos));
-                        tasks.push(window::resize(id, window_size));
-                        self.is_resized = true;
+                    if let Ok(shared_msg_lock) = self.last_shared_message_opt.lock() {
+                        if let Some(shared_msg) = &*shared_msg_lock {
+                            let monitor_info = &shared_msg.monitor_info;
+                            let width = (monitor_info.monitor_width as f32
+                                - 2.0 * monitor_info.border_w as f32)
+                                / self.scale_factor;
+                            let height = 40.0;
+                            let window_pos = Point::new(
+                                (monitor_info.monitor_x as f32 + monitor_info.border_w as f32)
+                                    / self.scale_factor,
+                                (monitor_info.monitor_y as f32
+                                    + monitor_info.border_w as f32 * 0.5)
+                                    / self.scale_factor,
+                            );
+                            let window_size = Size::new(width, height);
+                            info!("window_pos: {:?}", window_pos);
+                            info!("window_size: {:?}", window_size);
+                            tasks.push(window::move_to(id, window_pos));
+                            tasks.push(window::resize(id, window_size));
+                            self.is_resized = true;
+                        }
                     }
                     Task::batch(tasks)
                 } else {
@@ -593,11 +497,6 @@ impl TabBarExample {
                     self.now = now;
                     self.formated_now = now.format(format_str).to_string();
                     info!("CheckSharedMessages");
-                    if let Some(ref heartbeat_sender) = self.heartbeat_sender {
-                        if heartbeat_sender.send(()).is_err() {
-                            warn!("Heartbeat receiver disconnected");
-                        }
-                    }
                 }
                 // 系统监控更新
                 self.system_monitor.update_if_needed();
@@ -618,46 +517,26 @@ impl TabBarExample {
                         Message::ResizeWithId,
                     ));
                 }
-                // 异步读取消息 - 使用 Arc 共享
-                if let Some(ref receiver) = self.message_receiver {
-                    let receiver_clone = receiver.clone();
-                    tasks.push(Task::perform(
-                        Self::read_all_messages_async(receiver_clone),
-                        Message::BatchSharedMessages,
-                    ));
-                }
 
-                Task::batch(tasks)
-            }
-
-            // 新增：批量消息处理
-            Message::BatchSharedMessages(messages) => {
-                let mut tasks = Vec::new();
-                // info!("Processing {} messages in batch", messages.len());
-                for shared_msg in messages {
-                    tasks.push(Task::perform(
-                        async move { shared_msg },
-                        Message::SharedMessageReceived,
-                    ));
-                }
-                Task::batch(tasks)
-            }
-
-            Message::SharedMessageReceived(shared_msg) => {
-                info!("SharedMessageReceived");
-                info!("recieve shared_msg: {:?}", shared_msg);
-                // 更新应用状态
-                self.last_shared_message = Some(shared_msg.clone());
-                self.message_count += 1;
-                self.layout_symbol = shared_msg.monitor_info.ltsymbol;
-                self.monitor_num = shared_msg.monitor_info.monitor_num as u8;
-                for (index, tag_status) in shared_msg.monitor_info.tag_status_vec.iter().enumerate()
-                {
-                    if tag_status.is_selected {
-                        self.active_tab = index;
+                if self.message_received.load(Ordering::SeqCst) {
+                    if let Some(last_shared_message) =
+                        &*self.last_shared_message_opt.lock().unwrap()
+                    {
+                        self.message_count += 1;
+                        self.monitor_info_opt = Some(last_shared_message.monitor_info.clone());
+                    }
+                    self.message_received.store(false, Ordering::SeqCst);
+                    if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
+                        self.layout_symbol = monitor_info.ltsymbol.clone();
+                        for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
+                            if tag_status.is_selected {
+                                self.active_tab = index;
+                            }
+                        }
                     }
                 }
-                Task::none()
+
+                Task::batch(tasks)
             }
         }
     }
@@ -755,6 +634,11 @@ impl TabBarExample {
             .width(Length::Fixed(Self::TAB_HEIGHT))
             .height(Length::Fixed(Self::TAB_HEIGHT));
 
+        let monitor_num = if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
+            monitor_info.monitor_num
+        } else {
+            0
+        };
         let work_space_row = Row::new()
             .push(tab_buttons)
             .push(Space::with_width(3))
@@ -778,8 +662,11 @@ impl TabBarExample {
             .push(Space::with_width(3))
             .push(time_button)
             .push(
-                rich_text([span(" "), span(Self::monitor_num_to_icon(self.monitor_num))])
-                    .on_link_click(std::convert::identity),
+                rich_text([
+                    span(" "),
+                    span(Self::monitor_num_to_icon(monitor_num as u8)),
+                ])
+                .on_link_click(std::convert::identity),
             )
             .align_y(iced::Alignment::Center);
 
@@ -788,9 +675,9 @@ impl TabBarExample {
 
     fn view_under_line(&self) -> Element<Message> {
         // 创建下划线行
-        let mut tag_status_vec = Vec::new();
-        if let Some(ref shared_msg) = self.last_shared_message {
-            tag_status_vec = shared_msg.monitor_info.tag_status_vec.clone();
+        let mut tag_status_vec: Vec<TagStatus> = Vec::new();
+        if let Some(ref monitor_info) = self.monitor_info_opt {
+            tag_status_vec = monitor_info.tag_status_vec.clone();
         }
 
         let mut underline_row = Row::new().spacing(Self::TAB_SPACING);
@@ -951,7 +838,7 @@ impl TabBarExample {
     }
 }
 
-impl<Message> canvas::Program<Message> for TabBarExample {
+impl<Message> canvas::Program<Message> for IcedBar {
     type State = ();
 
     fn draw(
