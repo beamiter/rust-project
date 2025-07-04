@@ -453,7 +453,7 @@ impl IcedBar {
             }
 
             Message::ResizeWithId(window_id) => {
-                info!("ResizeWithId");
+                // info!("ResizeWithId");
                 self.current_window_id = window_id;
                 if let Some(id) = self.current_window_id {
                     let mut tasks = Vec::new();
