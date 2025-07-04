@@ -568,16 +568,18 @@ impl IcedBar {
     }
 
     fn view_work_space(&self) -> Element<Message> {
-        let mut tab_buttons = Row::new().spacing(Self::TAB_SPACING);
-        for (index, tab) in self.tabs.iter().enumerate() {
-            tab_buttons = tab_buttons.push(
-                mouse_area(
-                    button(rich_text![span(tab)].on_link_click(std::convert::identity))
-                        .width(Self::TAB_WIDTH),
+        let tab_buttons = self.tabs.iter().enumerate().fold(
+            Row::new().spacing(Self::TAB_SPACING),
+            |row, (index, tab)| {
+                row.push(
+                    mouse_area(
+                        button(rich_text![span(tab)].on_link_click(std::convert::identity))
+                            .width(Self::TAB_WIDTH),
+                    )
+                    .on_press(Message::TabSelected(index)),
                 )
-                .on_press(Message::TabSelected(index)),
-            );
-        }
+            },
+        );
 
         let layout_text = lazy(&self.layout_symbol, |_| {
             let layout_text = container(
