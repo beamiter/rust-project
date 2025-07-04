@@ -37,6 +37,62 @@ pub mod system_monitor;
 
 static START: Once = Once::new();
 
+#[allow(unused_macros)]
+macro_rules! create_tab_button {
+    ($self:expr, $index:expr) => {
+        lazy(&$self.active_tab, |_| {
+            mouse_area(
+                button(
+                    rich_text![span($self.tabs[$index].clone())]
+                        .on_link_click(std::convert::identity),
+                )
+                .width(Self::TAB_WIDTH),
+            )
+            .on_press(Message::TabSelected($index))
+        })
+    };
+}
+macro_rules! tab_buttons {
+    (
+        $self:expr;
+        $($name:ident[$index:expr]),* $(,)?
+    ) => {
+        $(
+            let $name = lazy(&$self.active_tab, |_| {
+                mouse_area(
+                    button(
+                        rich_text![span($self.tabs[$index].clone())].on_link_click(std::convert::identity),
+                    )
+                    .width(Self::TAB_WIDTH),
+                )
+                .on_press(Message::TabSelected($index))
+            });
+        )*
+    };
+
+    // 支持自定义属性
+    (
+        $self:expr;
+        $(
+            $(#[$attr:meta])*
+            $name:ident[$index:expr]
+        ),* $(,)?
+    ) => {
+        $(
+            $(#[$attr])*
+            let $name = lazy(&$self.active_tab, |_| {
+                mouse_area(
+                    button(
+                        rich_text![span($self.tabs[$index].clone())].on_link_click(std::convert::identity),
+                    )
+                    .width(Self::TAB_WIDTH),
+                )
+                .on_press(Message::TabSelected($index))
+            });
+        )*
+    };
+}
+
 fn shared_memory_worker(
     shared_buffer_opt_clone: Arc<Mutex<Option<SharedRingBuffer>>>,
     last_shared_message_opt_clone: Arc<Mutex<Option<SharedMessage>>>,
@@ -226,7 +282,7 @@ impl IcedBar {
     const DEFAULT_COLOR: Color = color!(0x666666);
     const TAB_WIDTH: f32 = 40.0;
     const TAB_HEIGHT: f32 = 32.0;
-    const TAB_SPACING: f32 = 1.0;
+    const TAB_SPACING: f32 = 2.0;
     const UNDERLINE_WIDTH: f32 = 28.0;
 
     fn new() -> Self {
@@ -563,18 +619,21 @@ impl IcedBar {
     }
 
     fn view_work_space(&self) -> Element<Message> {
-        let tab_buttons = self.tabs.iter().enumerate().fold(
-            Row::new().spacing(Self::TAB_SPACING),
-            |row, (index, tab)| {
-                row.push(
-                    mouse_area(
-                        button(rich_text![span(tab)].on_link_click(std::convert::identity))
-                            .width(Self::TAB_WIDTH),
-                    )
-                    .on_press(Message::TabSelected(index)),
-                )
-            },
-        );
+        tab_buttons! {
+            self;
+            button0[0],
+            button1[1],
+            button2[2],
+            button3[3],
+            button4[4],
+            button5[5],
+            button6[6],
+            button7[7],
+            button8[8],
+        }
+        let tab_buttons = row![
+            button0, button1, button2, button3, button4, button5, button6, button7, button8,
+        ].spacing(Self::TAB_SPACING);
 
         let layout_text = lazy(&self.layout_symbol, |_| {
             let layout_text = container(
@@ -842,7 +901,7 @@ impl IcedBar {
 
         Column::new()
             .padding(2)
-            .spacing(2)
+            .spacing(Self::TAB_SPACING)
             .push(work_space_row)
             .push(under_line_row)
             .into()
