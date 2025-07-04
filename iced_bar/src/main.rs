@@ -633,7 +633,20 @@ impl IcedBar {
         }
         let tab_buttons = row![
             button0, button1, button2, button3, button4, button5, button6, button7, button8,
-        ].spacing(Self::TAB_SPACING);
+        ]
+        .spacing(Self::TAB_SPACING);
+        // let tab_buttons = self.tabs.iter().enumerate().fold(
+        //     Row::new().spacing(Self::TAB_SPACING),
+        //     |row, (index, tab)| {
+        //         row.push(
+        //             mouse_area(
+        //                 button(rich_text![span(tab)].on_link_click(std::convert::identity))
+        //                     .width(Self::TAB_WIDTH),
+        //             )
+        //             .on_press(Message::TabSelected(index)),
+        //         )
+        //     },
+        // );
 
         let layout_text = lazy(&self.layout_symbol, |_| {
             let layout_text = container(
