@@ -344,6 +344,7 @@ enum Message {
     GetWindowSize(Size),
     GetScaleFactor(f32),
     WindowIdReceived(Option<Id>),
+    RawIdReceived(u64),
     ResizeWindow,
     ResizeWithId(Option<Id>),
     ShowSecondsToggle,
@@ -606,7 +607,13 @@ impl IcedBar {
                 Task::batch([
                     window::get_size(window_id.unwrap()).map(Message::GetWindowSize),
                     window::get_scale_factor(window_id.unwrap()).map(Message::GetScaleFactor),
+                    window::get_raw_id::<Message>(window_id.unwrap()).map(Message::RawIdReceived),
                 ])
+            }
+
+            Message::RawIdReceived(raw_id) => {
+                info!("{}", format!("RawIdReceived: 0x{:X}", raw_id));
+                Task::none()
             }
 
             Message::ResizeWindow => {
