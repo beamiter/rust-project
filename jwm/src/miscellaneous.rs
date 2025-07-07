@@ -15,7 +15,7 @@ pub fn init_auto_command() {
     if let Err(_) = Command::new(start_amixer)
         .arg("sset")
         .arg("Master")
-        .arg("60")
+        .arg("80%")
         .arg("unmute")
         .spawn()
     {
@@ -24,7 +24,7 @@ pub fn init_auto_command() {
     if let Err(_) = Command::new(start_amixer)
         .arg("sset")
         .arg("Headphone")
-        .arg("60")
+        .arg("80%")
         .arg("unmute")
         .spawn()
     {

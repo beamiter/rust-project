@@ -612,6 +612,8 @@ impl IcedBar {
             }
 
             Message::RawIdReceived(raw_id) => {
+                // Use xwininfo to get window id.
+                // xdotool windowsize 0xc00004 800 40 work!
                 info!("{}", format!("RawIdReceived: 0x{:X}", raw_id));
                 Task::none()
             }
