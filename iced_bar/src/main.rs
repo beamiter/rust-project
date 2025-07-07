@@ -24,7 +24,7 @@ use shared_structures::{
 use std::env;
 use std::process::Command;
 use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
 use std::sync::{Arc, Once};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -97,6 +97,8 @@ fn adaptive_polling_worker(
     shared_buffer_opt_clone: Arc<Mutex<Option<SharedRingBuffer>>>,
     last_shared_message_opt_clone: Arc<Mutex<Option<SharedMessage>>>,
     message_received_clone: Arc<AtomicBool>,
+    heartbeat_timestamp_clone: Arc<AtomicI64>,
+    raw_window_id_clone: Arc<AtomicU64>,
 ) {
     info!("Starting adaptive polling worker thread");
 
@@ -119,7 +121,26 @@ fn adaptive_polling_worker(
     loop {
         frame_count = frame_count.wrapping_add(1);
         let mut had_message = false;
-        let now = std::time::Instant::now();
+        let tmp_now = std::time::Instant::now();
+        let heartbeat_gap =
+            Local::now().timestamp() - heartbeat_timestamp_clone.load(Ordering::Relaxed);
+        // info!("heartbeat_gap: {heartbeat_gap}");
+        if heartbeat_gap > 60 {
+            // Should call resize
+            //xdotool windowsize 0xc00004 800 40
+            if let Err(_) = Command::new("xdotool")
+                .arg("windowsize")
+                .arg(format!(
+                    "0x{:X}",
+                    raw_window_id_clone.load(Ordering::Relaxed)
+                ))
+                .arg(800.to_string())
+                .arg(40.to_string())
+                .spawn()
+            {
+                error!("Failed to resize with xdotool");
+            }
+        }
 
         // 处理共享内存消息
         if let Ok(shared_buffer_lock) = shared_buffer_opt_clone.lock() {
@@ -129,7 +150,7 @@ fn adaptive_polling_worker(
                         had_message = true;
                         consecutive_errors = 0;
                         consecutive_empty_reads = 0;
-                        last_message_time = now;
+                        last_message_time = tmp_now;
 
                         if prev_timestamp != message.timestamp {
                             prev_timestamp = message.timestamp;
@@ -176,7 +197,7 @@ fn adaptive_polling_worker(
             // 有消息，使用最短睡眠
             sleep_duration = MIN_SLEEP;
         } else {
-            let time_since_last_message = now.duration_since(last_message_time);
+            let time_since_last_message = tmp_now.duration_since(last_message_time);
             if time_since_last_message < ACTIVE_THRESHOLD {
                 // 最近有消息，使用较短的轮询间隔
                 sleep_duration = Duration::from_millis(25);
@@ -366,6 +387,8 @@ struct IcedBar {
     monitor_info_opt: Option<MonitorInfo>,
     now: chrono::DateTime<chrono::Local>,
     formated_now: String,
+    heartbeat_timestamp: Arc<AtomicI64>,
+    raw_window_id: Arc<AtomicU64>,
     current_window_id: Option<Id>,
     is_resized: bool,
     scale_factor: f32,
@@ -443,11 +466,17 @@ impl IcedBar {
         let last_shared_message_opt_clone = last_shared_message_opt.clone();
         let message_received = Arc::new(AtomicBool::new(false));
         let message_received_clone = message_received.clone();
+        let heartbeat_timestamp = Arc::new(AtomicI64::new(Local::now().timestamp()));
+        let heartbeat_timestamp_clone = heartbeat_timestamp.clone();
+        let raw_window_id = Arc::new(AtomicU64::new(0));
+        let raw_window_id_clone = raw_window_id.clone();
         thread::spawn(move || {
             adaptive_polling_worker(
                 shared_buffer_opt_clone,
                 last_shared_message_opt_clone,
                 message_received_clone,
+                heartbeat_timestamp_clone,
+                raw_window_id_clone,
             )
         });
 
@@ -479,7 +508,7 @@ impl IcedBar {
             shared_buffer_opt,
             message_count: 0,
             monitor_info_opt: None,
-            now: chrono::offset::Local::now(),
+            now: Local::now(),
             formated_now: String::new(),
             current_window_id: None,
             is_resized: false,
@@ -494,6 +523,8 @@ impl IcedBar {
             system_monitor: SystemMonitor::new(10),
             transparent: true,
             message_received,
+            heartbeat_timestamp,
+            raw_window_id,
         }
     }
 
@@ -614,6 +645,7 @@ impl IcedBar {
             Message::RawIdReceived(raw_id) => {
                 // Use xwininfo to get window id.
                 // xdotool windowsize 0xc00004 800 40 work!
+                self.raw_window_id.store(raw_id, Ordering::Relaxed);
                 info!("{}", format!("RawIdReceived: 0x{:X}", raw_id));
                 Task::none()
             }
@@ -658,15 +690,17 @@ impl IcedBar {
 
             Message::CheckSharedMessages => {
                 // 时间更新逻辑
-                let now = Local::now();
+                let tmp_now = Local::now();
                 let format_str = if self.show_seconds {
                     "%Y-%m-%d %H:%M:%S"
                 } else {
                     "%Y-%m-%d %H:%M"
                 };
-                if now.timestamp() != self.now.timestamp() {
-                    self.now = now;
-                    self.formated_now = now.format(format_str).to_string();
+                if tmp_now.timestamp() != self.now.timestamp() {
+                    self.now = tmp_now;
+                    self.heartbeat_timestamp
+                        .store(tmp_now.timestamp(), Ordering::Release);
+                    self.formated_now = tmp_now.format(format_str).to_string();
                     // info!("CheckSharedMessages");
                 }
                 // 系统监控更新
