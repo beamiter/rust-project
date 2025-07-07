@@ -171,6 +171,6 @@ impl ThemeManager {
 
 impl Default for ThemeManager {
     fn default() -> Self {
-        Self::new(ThemeType::Dark)
+        Self::new(ThemeType::Light)
     }
 }

@@ -89,8 +89,9 @@ impl ControllerInfoPanel {
             (icons::VOLUME_MUTED, "无音频设备".to_string())
         };
 
-        let label_response = EmojiLabel::new(volume_icon).sense(Sense::click()).show(ui);
-
+        let label_response = EmojiLabel::new(volume_icon)
+            .sense(Sense::click() | Sense::hover())
+            .show(ui).highlight();
         if label_response.clicked() {
             app_state.ui_state.toggle_volume_window();
         }
