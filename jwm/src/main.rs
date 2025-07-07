@@ -15,8 +15,8 @@ mod drw;
 mod dwm;
 mod icon_gallery;
 mod miscellaneous;
-mod xproto;
 mod terminal_prober;
+mod xproto;
 
 // Xnest and Xephyr is all you need!
 // Xnest:
@@ -33,7 +33,7 @@ mod terminal_prober;
 
 fn main() {
     let _ = register_panic_handler();
-    miscellaneous::for_test();
+    miscellaneous::init_auto_command();
     miscellaneous::init_auto_start();
     let (tx, rx) = mpsc::channel();
 
