@@ -96,7 +96,7 @@ pub mod icons {
     pub const SETTINGS_ICON: &str = "⚙️";
 
     // Monitor numbers
-    pub const MONITOR_NUMBERS: [&str; 2] = ["🥇", "🥈"];
+    pub const MONITOR_NUMBERS: [&str; 2] = ["󰎡", "󰎤"];
 }
 
 /// Font families to try loading
@@ -106,8 +106,8 @@ pub const FONT_FAMILIES: &[&str] = &[
     // "Noto Color Emoji",
     // "Noto Emoji",
     "SauceCodeProNerdFont",
-    "DejaVuSansMonoNerdFont",
-    "JetBrainsMonoNerdFont",
+    // "DejaVuSansMonoNerdFont",
+    // "JetBrainsMonoNerdFont",
 ];
 
 /// Application metadata

@@ -3,9 +3,8 @@
 use crate::app::state::AppState;
 use crate::constants::colors;
 use crate::utils::RollingAverage;
-use egui::Color32;
+use egui::{Button, Color32};
 use egui_plot::{Line, Plot, PlotPoints};
-use egui_twemoji::EmojiLabel;
 
 /// System information panel component
 #[allow(dead_code)]
@@ -53,7 +52,7 @@ impl SystemInfoPanel {
             if snapshot.memory_usage_percent
                 > app_state.config.system.memory_warning_threshold * 100.0
             {
-                EmojiLabel::new("⚠️").show(ui);
+                ui.label("⚠️");
                 ui.add_space(padding);
             }
         }
@@ -62,7 +61,7 @@ impl SystemInfoPanel {
 
     fn draw_cpu_chart(&mut self, ui: &mut egui::Ui, app_state: &AppState) {
         // Reset button
-        let reset_view = EmojiLabel::new("🔄").show(ui).clicked();
+        let reset_view = ui.add(Button::new("🔄"));
 
         // CPU usage indicator
         if let Some(snapshot) = app_state.system_monitor.get_snapshot() {
@@ -95,7 +94,7 @@ impl SystemInfoPanel {
             .show_background(false)
             .width(chart_width)
             .height(chart_height);
-        if reset_view {
+        if reset_view.clicked() {
             plot = plot.reset();
         }
 

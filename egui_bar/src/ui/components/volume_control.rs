@@ -3,8 +3,7 @@
 use crate::app::events::AppEvent;
 use crate::app::state::AppState;
 use crate::constants::{colors, icons};
-use egui::{Align, Layout};
-use egui_twemoji::EmojiLabel;
+use egui::{Align, Label, Layout};
 use log::error;
 use std::sync::mpsc;
 use std::time::Instant;
@@ -93,7 +92,7 @@ impl VolumeControlWindow {
             app_state.audio_manager.get_devices().to_vec();
 
         if devices.is_empty() {
-            EmojiLabel::new("❌ 没有找到可控制的音频设备").show(ui);
+            ui.add(Label::new("❌ 没有找到可控制的音频设备"));
             return;
         }
 
@@ -105,7 +104,7 @@ impl VolumeControlWindow {
             .collect();
 
         if controllable_devices.is_empty() {
-            EmojiLabel::new("❌ 没有找到可控制的音频设备").show(ui);
+            ui.add(Label::new("❌ 没有找到可控制的音频设备"));
             return;
         }
 
@@ -129,7 +128,7 @@ impl VolumeControlWindow {
         controllable_devices: &[(usize, crate::audio::AudioDevice)],
     ) {
         ui.horizontal(|ui| {
-            EmojiLabel::new("🎵 设备：").show(ui);
+            ui.add(Label::new("🎵 设备："));
 
             // Ensure selected device index is valid
             if app_state.ui_state.volume_window.selected_device >= controllable_devices.len() {
@@ -172,7 +171,7 @@ impl VolumeControlWindow {
         // Volume control
         if device.has_volume_control {
             ui.horizontal(|ui| {
-                EmojiLabel::new("🔊 音量：").show(ui);
+                ui.add(Label::new("🔊 音量："));
 
                 // Mute button
                 if device.has_switch_control {
@@ -242,14 +241,14 @@ impl VolumeControlWindow {
                 }
             });
         } else {
-            EmojiLabel::new("❌ 此设备没有可用的控制选项").show(ui);
+            ui.add(Label::new("❌ 此设备没有可用的控制选项"));
         }
 
         // Device info
         ui.separator();
         ui.horizontal(|ui| {
-            EmojiLabel::new(format!("📋 类型: {:?}", device.device_type)).show(ui);
-            EmojiLabel::new(format!(
+            ui.add(Label::new(format!("📋 类型: {:?}", device.device_type)));
+            ui.add(Label::new(format!(
                 "📹 控制: {}",
                 if device.has_volume_control && device.has_switch_control {
                     "音量+开关"
@@ -260,8 +259,7 @@ impl VolumeControlWindow {
                 } else {
                     "无"
                 }
-            ))
-            .show(ui);
+            )));
         });
     }
 }

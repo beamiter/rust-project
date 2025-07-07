@@ -1,7 +1,6 @@
 //! Workspace information display component
 
-use egui::{Color32, Rect, Sense, Stroke, StrokeKind};
-use egui_twemoji::EmojiLabel;
+use egui::{Button, Color32, Stroke, StrokeKind};
 use log::info;
 use shared_structures::{CommandType, SharedCommand};
 
@@ -29,69 +28,37 @@ impl WorkspacePanel {
         let spacing = 3.0;
         let bold_thickness = 2.5;
         let light_thickness = 1.0;
-
         if let Some(ref message) = app_state.current_message {
             tag_status_vec = message.monitor_info.tag_status_vec.clone();
             layout_symbol = message.monitor_info.ltsymbol.clone();
         }
-
-        let style = ui.style();
-        let window_margin = style.spacing.window_margin; // Margin
-
-        let mut previous_rect: Option<Rect> = None;
         // Draw tag icons as buttons
         for (i, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {
             ui.add_space(spacing);
             let tag_color = colors::TAG_COLORS[i];
             let tag_bit = 1 << i;
-
             // 构建基础文本样式
             let rich_text = egui::RichText::new(tag_icon).monospace();
-
             // 设置工具提示文本
             let mut tooltip = format!("标签 {}", i + 1);
-
             // 根据状态设置样式
             if let Some(tag_status) = tag_status_vec.get(i) {
                 if tag_status.is_filled {
                     tooltip.push_str(" (有窗口)");
                 }
-
                 // is_selected: 当前标签标记
                 if tag_status.is_selected {
                     tooltip.push_str(" (当前)");
                 }
-
                 // is_urg: 紧急状态标记
                 if tag_status.is_urg {
                     tooltip.push_str(" (紧急)");
                 }
             }
-
             // 创建可点击标签
-            let label_response = EmojiLabel::new(rich_text).sense(Sense::click()).show(ui);
-
+            let label_response = ui.add(Button::new(rich_text));
             // 绘制各种装饰效果
             let rect = label_response.rect;
-            let new_rect = if let Some(previous_rect) = previous_rect {
-                Rect::from_min_max(
-                    egui::Pos2 {
-                        x: (previous_rect.max.x + 2.0 * spacing),
-                        y: (previous_rect.min.y),
-                    },
-                    rect.max,
-                )
-                .expand(1.0)
-            } else {
-                Rect::from_min_max(
-                    egui::Pos2 {
-                        x: (rect.min.x + spacing + window_margin.leftf()),
-                        y: (rect.min.y),
-                    },
-                    rect.max,
-                )
-                .expand(1.0)
-            };
             if let Some(tag_status) = tag_status_vec.get(i) {
                 if tag_status.is_selected {
                     let underline_color = if tag_status.is_occ {
@@ -100,12 +67,12 @@ impl WorkspacePanel {
                         Color32::WHITE
                     };
                     ui.painter().line_segment(
-                        [new_rect.left_bottom(), new_rect.right_bottom()],
+                        [rect.left_bottom(), rect.right_bottom()],
                         Stroke::new(bold_thickness, underline_color),
                     );
                 } else if tag_status.is_occ {
                     ui.painter().line_segment(
-                        [new_rect.left_bottom(), new_rect.right_bottom()],
+                        [rect.left_bottom(), rect.right_bottom()],
                         Stroke::new(light_thickness, tag_color),
                     );
                 }
@@ -113,7 +80,7 @@ impl WorkspacePanel {
                 // is_urg: 绘制wheat色边框
                 if tag_status.is_urg {
                     ui.painter().rect_stroke(
-                        new_rect,
+                        rect,
                         0.0,
                         Stroke::new(bold_thickness, colors::WHEAT),
                         StrokeKind::Inside,
@@ -127,14 +94,13 @@ impl WorkspacePanel {
             // 悬停效果和工具提示
             if label_response.hovered() {
                 ui.painter().rect_stroke(
-                    new_rect,
+                    rect.expand(1.0),
                     1.0,
                     Stroke::new(bold_thickness, tag_color),
                     StrokeKind::Inside,
                 );
                 label_response.on_hover_text(tooltip);
             }
-            previous_rect = Some(rect);
             ui.add_space(spacing);
         }
 

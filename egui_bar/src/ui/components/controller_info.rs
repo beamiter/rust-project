@@ -5,8 +5,7 @@ use std::sync::mpsc;
 use crate::app::events::AppEvent;
 use crate::constants::colors;
 use crate::{app::state::AppState, constants::icons};
-use egui::Sense;
-use egui_twemoji::EmojiLabel;
+use egui::{Button, Label, Sense};
 
 /// Controller information panel component
 pub struct ControllerInfoPanel {}
@@ -42,7 +41,7 @@ impl ControllerInfoPanel {
             };
 
             // 显示电池图标
-            EmojiLabel::new(egui::RichText::new(battery_icon).color(battery_color)).show(ui);
+            ui.label(egui::RichText::new(battery_icon).color(battery_color));
 
             // 显示电量百分比
             ui.label(egui::RichText::new(format!("{:.0}%", battery_percent)).color(battery_color));
@@ -51,16 +50,16 @@ impl ControllerInfoPanel {
             if battery_percent < app_state.config.system.battery_warning_threshold * 100.0
                 && !is_charging
             {
-                EmojiLabel::new(egui::RichText::new("⚠️").color(colors::WARNING)).show(ui);
+                ui.label(egui::RichText::new("⚠️").color(colors::WARNING));
             }
 
             // 充电指示
             if is_charging {
-                EmojiLabel::new(egui::RichText::new("⚡").color(colors::CHARGING)).show(ui);
+                ui.label(egui::RichText::new("⚡").color(colors::CHARGING));
             }
         } else {
             // 无法获取电池信息时显示
-            EmojiLabel::new(egui::RichText::new("❓").color(colors::UNAVAILABLE)).show(ui);
+            ui.label(egui::RichText::new("❓").color(colors::UNAVAILABLE));
         }
     }
 
@@ -89,9 +88,7 @@ impl ControllerInfoPanel {
             (icons::VOLUME_MUTED, "无音频设备".to_string())
         };
 
-        let label_response = EmojiLabel::new(volume_icon)
-            .sense(Sense::click() | Sense::hover())
-            .show(ui).highlight();
+        let label_response = ui.add(Button::new(volume_icon));
         if label_response.clicked() {
             app_state.ui_state.toggle_volume_window();
         }
@@ -102,13 +99,12 @@ impl ControllerInfoPanel {
     /// Draw debug control button
     fn draw_debug_button(&mut self, ui: &mut egui::Ui, app_state: &mut AppState) {
         let (debug_icon, tooltip) = if app_state.ui_state.show_debug_window {
-            ("🐛", "关闭调试窗口") // 激活状态的图标和提示
+            ("󰱭", "关闭调试窗口") // 激活状态的图标和提示
         } else {
             ("🔍", "打开调试窗口") // 默认状态的图标和提示
         };
 
-        let label_response = EmojiLabel::new(debug_icon).sense(Sense::click()).show(ui);
-
+        let label_response = ui.add(Button::new(debug_icon).sense(Sense::click()));
         if label_response.clicked() {
             app_state.ui_state.toggle_debug_window();
         }
@@ -168,13 +164,11 @@ impl ControllerInfoPanel {
         app_state: &mut AppState,
         event_sender: &mpsc::Sender<AppEvent>,
     ) {
-        let label_response = EmojiLabel::new(format!(
+        let label_response = ui.add(Button::new(format!(
             "{} {:.2}",
             icons::SCREENSHOT_ICON,
             app_state.ui_state.scale_factor
-        ))
-        .sense(Sense::click())
-        .show(ui);
+        )));
 
         if label_response.clicked() {
             event_sender.send(AppEvent::ScreenshotRequested).ok();
@@ -184,10 +178,9 @@ impl ControllerInfoPanel {
     fn draw_monitor_number(&mut self, ui: &mut egui::Ui, app_state: &mut AppState) {
         if let Some(ref message) = app_state.current_message {
             let monitor_num = (message.monitor_info.monitor_num as usize).min(1);
-            EmojiLabel::new(
+            ui.add(Label::new(
                 egui::RichText::new(format!("{}", icons::MONITOR_NUMBERS[monitor_num])).strong(),
-            )
-            .show(ui);
+            ));
         }
     }
 

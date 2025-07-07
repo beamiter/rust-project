@@ -4,7 +4,6 @@ use crate::app::events::AppEvent;
 use crate::app::state::AppState;
 use crate::constants::colors;
 use egui::{Align, Layout};
-use egui_twemoji::EmojiLabel;
 use log::error;
 use std::sync::mpsc;
 use std::time::Instant;
@@ -42,7 +41,7 @@ impl DebugDisplayWindow {
             .default_height(300.0)
             .open(&mut window_open)
             .show(ctx, |ui| {
-                EmojiLabel::new("📊 性能指标").show(ui);
+                ui.label("📊 性能指标");
                 ui.horizontal(|ui| {
                     ui.label("FPS:");
                     ui.label(
@@ -70,7 +69,7 @@ impl DebugDisplayWindow {
 
                 ui.separator();
 
-                EmojiLabel::new("💻 系统状态").show(ui);
+                ui.label("💻 系统状态");
                 if let Some(snapshot) = app_state.system_monitor.get_snapshot() {
                     ui.horizontal(|ui| {
                         ui.label("CPU:");
@@ -108,7 +107,7 @@ impl DebugDisplayWindow {
 
                 ui.separator();
 
-                EmojiLabel::new("🔊 音频系统").show(ui);
+                ui.label("🔊 音频系统");
                 let stats = app_state.audio_manager.get_stats();
                 ui.horizontal(|ui| {
                     ui.label("设备数量:");

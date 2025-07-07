@@ -37,7 +37,6 @@ thiserror = "2.0.12"
 tempfile = "3.20.0"
 battery = "0.7.8"
 egui_extras = { version = "0.31.1", features = ["all_loaders"] }
-egui-twemoji = "0.7.0"
 image = "0.25.6"
 
 [dev-dependencies]
