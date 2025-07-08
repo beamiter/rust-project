@@ -392,12 +392,14 @@ struct IcedBar {
     current_window_id: Option<Id>,
     is_resized: bool,
     scale_factor: f32,
-    scale_factor_string: String,
     is_hovered: bool,
     mouse_position: Option<iced::Point>,
     show_seconds: bool,
     layout_symbol: String,
     monitor_num: i32,
+    current_window_size: Option<Size>,
+    target_window_pos: Option<Point>,
+    target_window_size: Option<Size>,
 
     /// Audio system
     audio_manager: AudioManager,
@@ -513,12 +515,14 @@ impl IcedBar {
             current_window_id: None,
             is_resized: false,
             scale_factor: 1.0,
-            scale_factor_string: "1.0".to_string(),
             is_hovered: false,
             mouse_position: None,
             show_seconds: false,
             layout_symbol: String::new(),
             monitor_num: 0,
+            current_window_size: None,
+            target_window_pos: None,
+            target_window_size: None,
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(10),
             transparent: true,
@@ -620,13 +624,20 @@ impl IcedBar {
 
             Message::GetWindowSize(window_size) => {
                 info!("window_size: {:?}", window_size);
+                self.current_window_size = Some(window_size);
+                if self.current_window_size != self.target_window_size {
+                    self.is_resized = false;
+                }
+                let current_window_id = self.current_window_id;
+                if !self.is_resized {
+                    return Task::perform(async move { current_window_id }, Message::ResizeWithId);
+                }
                 Task::none()
             }
 
             Message::GetScaleFactor(scale_factor) => {
                 info!("scale_factor: {}", scale_factor);
                 self.scale_factor = scale_factor;
-                self.scale_factor_string = format!("{:.2}", self.scale_factor);
                 Task::none()
             }
 
@@ -680,6 +691,8 @@ impl IcedBar {
                         info!("window_size: {:?}", window_size);
                         tasks.push(window::move_to(id, window_pos));
                         tasks.push(window::resize(id, window_size));
+                        self.target_window_pos = Some(window_pos);
+                        self.target_window_size = Some(window_size);
                         self.is_resized = true;
                     }
                     Task::batch(tasks)
@@ -696,18 +709,21 @@ impl IcedBar {
                 } else {
                     "%Y-%m-%d %H:%M"
                 };
+                let mut tasks = Vec::new();
                 if tmp_now.timestamp() != self.now.timestamp() {
                     self.now = tmp_now;
                     self.heartbeat_timestamp
                         .store(tmp_now.timestamp(), Ordering::Release);
                     self.formated_now = tmp_now.format(format_str).to_string();
+                    if let Some(window_id) = self.current_window_id {
+                        tasks.push(window::get_size(window_id).map(Message::GetWindowSize));
+                    }
                     // info!("CheckSharedMessages");
                 }
                 // 系统监控更新
                 self.system_monitor.update_if_needed();
                 self.audio_manager.update_if_needed();
 
-                let mut tasks = Vec::new();
                 START.call_once(|| {
                     if self.current_window_id.is_none() {
                         tasks.push(Task::perform(async {}, |_| Message::GetWindowId));
@@ -831,31 +847,32 @@ impl IcedBar {
 
         let cyan = Color::from_rgb(0.0, 1.0, 1.0); // 青色
         let dark_orange = Color::from_rgb(1.0, 0.5, 0.0); // 深橙色
-        let screenshot_text = container(text(format!(" s {} ", self.scale_factor_string)).center())
-            .center_y(Length::Fill)
-            .style(move |_theme: &Theme| {
-                if self.is_hovered {
-                    container::Style {
-                        text_color: Some(dark_orange),
-                        border: Border {
-                            radius: border::radius(2.0),
+        let screenshot_text =
+            container(text(format!(" s {:.2} ", self.scale_factor.to_string())).center())
+                .center_y(Length::Fill)
+                .style(move |_theme: &Theme| {
+                    if self.is_hovered {
+                        container::Style {
+                            text_color: Some(dark_orange),
+                            border: Border {
+                                radius: border::radius(2.0),
+                                ..Default::default()
+                            },
+                            background: Some(Background::Color(cyan)),
                             ..Default::default()
-                        },
-                        background: Some(Background::Color(cyan)),
-                        ..Default::default()
+                        }
+                    } else {
+                        container::Style {
+                            border: Border {
+                                color: Color::WHITE,
+                                width: 0.5,
+                                radius: border::radius(2.0),
+                            },
+                            ..Default::default()
+                        }
                     }
-                } else {
-                    container::Style {
-                        border: Border {
-                            color: Color::WHITE,
-                            width: 0.5,
-                            radius: border::radius(2.0),
-                        },
-                        ..Default::default()
-                    }
-                }
-            })
-            .padding(0.0);
+                })
+                .padding(0.0);
 
         let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
         let cpu_average = if let Some(snapshot) = self.system_monitor.get_snapshot() {
