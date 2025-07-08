@@ -623,10 +623,19 @@ impl IcedBar {
             Message::RightClick => Task::none(),
 
             Message::GetWindowSize(window_size) => {
-                info!("window_size: {:?}", window_size);
                 self.current_window_size = Some(window_size);
-                if self.current_window_size != self.target_window_size {
-                    self.is_resized = false;
+                if self.current_window_size.is_some() && self.target_window_size.is_some() {
+                    let current_size = self.current_window_size.unwrap();
+                    let target_size = self.target_window_size.unwrap();
+                    if (current_size.width - target_size.width).abs() > 10.
+                        || (current_size.height - target_size.height) > 10.
+                    {
+                        info!(
+                            "current_window_size: {:?}, target_window_size: {:?}",
+                            self.current_window_size, self.target_window_size
+                        );
+                        self.is_resized = false;
+                    }
                 }
                 let current_window_id = self.current_window_id;
                 if !self.is_resized {
