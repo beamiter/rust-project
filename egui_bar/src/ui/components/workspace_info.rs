@@ -25,7 +25,7 @@ impl WorkspacePanel {
     ) {
         let mut tag_status_vec = Vec::new();
         let mut layout_symbol = String::from(" ? ");
-        let spacing = 3.0;
+        let spacing = 1.5;
         let bold_thickness = 2.5;
         let light_thickness = 1.0;
         if let Some(ref message) = app_state.current_message {
@@ -34,7 +34,7 @@ impl WorkspacePanel {
         }
         // Draw tag icons as buttons
         for (i, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {
-            ui.add_space(spacing);
+            // ui.add_space(spacing);
             let tag_color = colors::TAG_COLORS[i];
             let tag_bit = 1 << i;
             // 构建基础文本样式
@@ -101,7 +101,7 @@ impl WorkspacePanel {
                 );
                 label_response.on_hover_text(tooltip);
             }
-            ui.add_space(spacing);
+            // ui.add_space(spacing);
         }
 
         self.render_layout_section(ui, app_state, command_sender, &layout_symbol);

@@ -191,35 +191,35 @@ impl ControllerInfoPanel {
         app_state: &mut AppState,
         event_sender: &mpsc::Sender<AppEvent>,
     ) {
-        let padding = 2.5;
+        let padding = 1.0;
         // Battery info
         self.draw_battery_info(ui, app_state);
-        ui.add_space(padding);
-        ui.separator();
+        // ui.add_space(padding);
+        // ui.separator();
 
         // Volume button
         self.draw_volume_button(ui, app_state);
-        ui.add_space(padding);
-        ui.separator();
+        // ui.add_space(padding);
+        // ui.separator();
 
         // Debug button
         self.draw_debug_button(ui, app_state);
-        ui.add_space(padding);
-        ui.separator();
+        // ui.add_space(padding);
+        // ui.separator();
 
         // Time display
         self.draw_time_display(ui, app_state, event_sender);
-        ui.add_space(padding);
-        ui.separator();
+        // ui.add_space(padding);
+        // ui.separator();
 
         // Screenshot button
         self.draw_screenshot_button(ui, app_state, event_sender);
-        ui.add_space(padding);
-        ui.separator();
+        // ui.add_space(padding);
+        // ui.separator();
 
         // Monitor number
         self.draw_monitor_number(ui, app_state);
-        ui.add_space(padding);
+        // ui.add_space(padding);
     }
 }
 

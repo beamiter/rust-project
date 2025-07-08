@@ -504,15 +504,13 @@ impl EguiBarApp {
                     .draw(ui, &mut self.state, &self.command_sender);
             });
 
-            ui.columns(2, |columns_outer| {
-                columns_outer[0].with_layout(Layout::left_to_right(Align::Center), |_ui| {});
+            ui.columns(2, |ui| {
+                ui[0].with_layout(Layout::left_to_right(Align::Center), |_ui| {});
 
-                columns_outer[1].with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui[1].with_layout(Layout::right_to_left(Align::Center), |ui| {
                     self.controller_info_panel
                         .draw(ui, &mut self.state, event_sender);
-
-                    ui.separator();
-
+                    // ui.separator();
                     self.system_info_panel.draw(ui, &self.state);
                 });
             });

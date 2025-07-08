@@ -35,17 +35,17 @@ impl SystemInfoPanel {
 
     fn draw_memory_info(&self, ui: &mut egui::Ui, app_state: &AppState) {
         let (available_gb, used_gb) = app_state.get_memory_display_info();
-        let padding = 2.5;
+        let padding = 1.0;
 
         // Available memory
         ui.label(
             egui::RichText::new(format!("{:.1}G", available_gb)).color(colors::MEMORY_AVAILABLE),
         );
-        ui.add_space(padding);
+        // ui.add_space(padding);
 
         // Used memory
         ui.label(egui::RichText::new(format!("{:.1}G", used_gb)).color(colors::MEMORY_USED));
-        ui.add_space(padding);
+        // ui.add_space(padding);
 
         // Memory warning indicator
         if let Some(snapshot) = app_state.system_monitor.get_snapshot() {
@@ -53,7 +53,7 @@ impl SystemInfoPanel {
                 > app_state.config.system.memory_warning_threshold * 100.0
             {
                 ui.label("⚠️");
-                ui.add_space(padding);
+                // ui.add_space(padding);
             }
         }
         ui.separator();
