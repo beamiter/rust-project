@@ -491,8 +491,8 @@ impl IcedBar {
                 "🧿".to_string(),
                 "🌟".to_string(),
                 "🐐".to_string(),
-                "🏆".to_string(),
-                "🕊️".to_string(),
+                "🐢".to_string(),
+                "🦣".to_string(),
                 "🏡".to_string(),
             ],
             tab_colors: [

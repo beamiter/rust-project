@@ -157,7 +157,6 @@ body {
   background: linear-gradient(135deg, #007bff, #0056b3) !important;
   border-color: #004085 !important;
   color: white !important;
-  /* animation: filtered-pulse 2s ease-in-out infinite; */
 }
 
 .emoji-button.state-filtered::after {
@@ -184,7 +183,6 @@ body {
   border-color: #155724 !important;
   color: white !important;
   transform: scale(1.02);
-  /* animation: selected-glow 1.5s ease-in-out infinite; */
 }
 
 .emoji-button.state-selected::after {
@@ -210,7 +208,6 @@ body {
   background: linear-gradient(135deg, #dc3545, #c82333) !important;
   border-color: #bd2130 !important;
   color: white !important;
-  /* animation: urgent-blink 1s ease-in-out infinite; */
 }
 
 .emoji-button.state-urgent::after {
@@ -236,7 +233,6 @@ body {
   background: linear-gradient(135deg, #fd7e14, #e55a3c) !important;
   border-color: #d9534f !important;
   color: white !important;
-  /* animation: occupied-fade 3s ease-in-out infinite; */
 }
 
 .emoji-button.state-occupied::after {
@@ -582,7 +578,6 @@ body {
   border-color: #004085;
   color: white;
   cursor: not-allowed;
-  animation: screenshot-pulse 1s ease-in-out infinite;
 }
 
 .screenshot-button.taking:hover {
