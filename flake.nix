@@ -48,6 +48,7 @@
             pkgs.xdotool
 
             pkgs.libadwaita
+            pkgs.librsvg
           ];
 
           # 相当于 shell.nix 中的 shellHook
