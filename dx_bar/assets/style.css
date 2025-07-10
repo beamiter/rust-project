@@ -29,36 +29,37 @@ body {
   overflow: hidden;
 }
 
-/* 主容器 - 响应式布局 */
+/* 修改容器以支持阴影显示 */
+
 .button-row {
   display: flex;
   flex-direction: row;
   align-items: center;
-  justify-content: space-between; /* 左右分布 */
+  justify-content: space-between;
   margin: 0;
-  padding: 5px 15px; /* 左右padding为15px */
+  padding: 6px 15px 4px 15px; /* 上padding增加，下padding减少 */
   gap: 8px;
-  width: 100vw; /* 使用视口宽度 */
+  width: 100vw;
   height: 50px;
   min-height: 50px;
   max-height: 50px;
   background: rgba(255, 255, 255, 0.95);
   box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
   position: relative;
-  overflow: hidden;
+  overflow: visible;
   box-sizing: border-box;
 }
 
-/* 左侧按钮容器 */
 .buttons-container {
   display: flex;
   flex-direction: row;
   align-items: center;
   gap: 8px;
-  flex-shrink: 1; /* 允许压缩 */
-  flex-grow: 0; /* 不扩张 */
-  min-width: 0; /* 允许压缩到0 */
-  overflow: hidden; /* 隐藏溢出的按钮 */
+  flex-shrink: 1;
+  flex-grow: 0;
+  min-width: 0;
+  overflow: visible;
+  padding: 2px 0; /* 为阴影留出空间 */
 }
 
 /* 时间容器 - 始终在最右侧 */
@@ -310,14 +311,14 @@ body {
 /* 大屏幕：显示所有按钮 */
 @media (min-width: 1200px) {
   .button-row {
-    padding: 5px 20px; /* 更大的padding */
+    padding: 2px 5px; /* 更大的padding */
   }
 }
 
 /* 中等屏幕：稍微压缩 */
 @media (max-width: 1199px) and (min-width: 800px) {
   .button-row {
-    padding: 5px 15px;
+    padding: 1px 5px;
   }
 
   .emoji-button {
@@ -338,7 +339,7 @@ body {
 /* 小屏幕：进一步压缩 */
 @media (max-width: 799px) and (min-width: 600px) {
   .button-row {
-    padding: 5px 10px;
+    padding: 1px 5px;
   }
 
   .emoji-button {
@@ -364,7 +365,7 @@ body {
 /* 超小屏幕：紧凑显示 */
 @media (max-width: 599px) {
   .button-row {
-    padding: 3px 8px;
+    padding: 1px 5px;
   }
 
   .emoji-button {
@@ -845,4 +846,115 @@ body {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+}
+
+/* 优化的悬停效果 - 使用更紧凑的阴影 */
+
+.emoji-button:nth-child(1):hover:not(:disabled):not(.pressed):not(:active) {
+  border-color: #ff6b6b !important;
+
+  border-width: 2px !important;
+
+  box-shadow: 0 0 6px rgba(255, 107, 107, 0.4);
+
+  background: rgba(255, 107, 107, 0.1);
+}
+
+.emoji-button:nth-child(2):hover:not(:disabled):not(.pressed):not(:active) {
+  border-color: #4ecdc4 !important;
+
+  border-width: 2px !important;
+
+  box-shadow: 0 0 6px rgba(78, 205, 196, 0.4);
+
+  background: rgba(78, 205, 196, 0.1);
+}
+
+.emoji-button:nth-child(3):hover:not(:disabled):not(.pressed):not(:active) {
+  border-color: #45b7d1 !important;
+
+  border-width: 2px !important;
+
+  box-shadow: 0 0 6px rgba(69, 183, 209, 0.4);
+
+  background: rgba(69, 183, 209, 0.1);
+}
+
+.emoji-button:nth-child(4):hover:not(:disabled):not(.pressed):not(:active) {
+  border-color: #96ceb4 !important;
+
+  border-width: 2px !important;
+
+  box-shadow: 0 0 6px rgba(150, 206, 180, 0.4);
+
+  background: rgba(150, 206, 180, 0.1);
+}
+
+.emoji-button:nth-child(5):hover:not(:disabled):not(.pressed):not(:active) {
+  border-color: #feca57 !important;
+
+  border-width: 2px !important;
+
+  box-shadow: 0 0 6px rgba(254, 202, 87, 0.4);
+
+  background: rgba(254, 202, 87, 0.1);
+}
+
+.emoji-button:nth-child(6):hover:not(:disabled):not(.pressed):not(:active) {
+  border-color: #ff9ff3 !important;
+
+  border-width: 2px !important;
+
+  box-shadow: 0 0 6px rgba(255, 159, 243, 0.4);
+
+  background: rgba(255, 159, 243, 0.1);
+}
+
+.emoji-button:nth-child(7):hover:not(:disabled):not(.pressed):not(:active) {
+  border-color: #54a0ff !important;
+
+  border-width: 2px !important;
+
+  box-shadow: 0 0 6px rgba(84, 160, 255, 0.4);
+
+  background: rgba(84, 160, 255, 0.1);
+}
+
+.emoji-button:nth-child(8):hover:not(:disabled):not(.pressed):not(:active) {
+  border-color: #5f27cd !important;
+
+  border-width: 2px !important;
+
+  box-shadow: 0 0 6px rgba(95, 39, 205, 0.4);
+
+  background: rgba(95, 39, 205, 0.1);
+}
+
+.emoji-button:nth-child(9):hover:not(:disabled):not(.pressed):not(:active) {
+  border-color: #00d2d3 !important;
+
+  border-width: 2px !important;
+
+  box-shadow: 0 0 6px rgba(0, 210, 211, 0.4);
+
+  background: rgba(0, 210, 211, 0.1);
+}
+
+/* 优化过渡效果 */
+.emoji-button {
+  transition:
+    all 0.2s ease,
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
+}
+
+/* 确保状态按钮的悬停效果优先级更高 */
+.emoji-button.state-filtered:hover:not(:disabled):not(.pressed):not(:active),
+.emoji-button.state-selected:hover:not(:disabled):not(.pressed):not(:active),
+.emoji-button.state-urgent:hover:not(:disabled):not(.pressed):not(:active),
+.emoji-button.state-occupied:hover:not(:disabled):not(.pressed):not(:active) {
+  /* 保持原有状态样式，不应用index颜色 */
+  border-color: inherit;
+  background: inherit;
+  box-shadow: inherit;
 }
