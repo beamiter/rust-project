@@ -1,5 +1,5 @@
 [package]
-name = "dx_bar"
+name = "dioxus_bar"
 version = "0.1.0"
 edition = "2024"
 

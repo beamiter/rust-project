@@ -32,13 +32,13 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
 
     let file_name = if shared_path.is_empty() {
-        "dx_bar".to_string()
+        "dioxus_bar".to_string()
     } else {
         std::path::Path::new(shared_path)
             .file_name()
             .and_then(|name| name.to_str())
-            .map(|name| format!("dx_bar_{}", name))
-            .unwrap_or_else(|| "dx_bar".to_string())
+            .map(|name| format!("dioxus_bar_{}", name))
+            .unwrap_or_else(|| "dioxus_bar".to_string())
     };
 
     let log_filename = format!("{}_{}", file_name, timestamp);
@@ -218,7 +218,7 @@ fn send_tag_command(
 fn main() {
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
-    let instance_name = shared_path.replace("/dev/shm/monitor_", "dx_bar_");
+    let instance_name = shared_path.replace("/dev/shm/monitor_", "dioxus_bar_");
     if let Err(e) = initialize_logging(&shared_path) {
         error!("Failed to initialize logging: {}", e);
         std::process::exit(1);
@@ -242,7 +242,7 @@ fn main() {
         }
     }
 
-    info!("Starting dx_bar v{}", 1.0);
+    info!("Starting dioxus_bar v{}", 1.0);
     info!("instance_name: {instance_name}");
 
     let event_loop = EventLoopBuilder::with_user_event()
@@ -254,7 +254,7 @@ fn main() {
             Config::new()
                 .with_window(
                     WindowBuilder::new()
-                        .with_title("dx_bar")
+                        .with_title("dioxus_bar")
                         .with_position(LogicalPosition::new(0, 0))
                         .with_maximizable(false)
                         .with_minimizable(false)

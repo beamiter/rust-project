@@ -30,10 +30,10 @@ impl Config {
     // snap pixel
     pub const snap: u32 = 32;
     cfg_if! {
-        if #[cfg(feature = "dx_bar")] {
-            pub const status_bar_name: &str = "dx_bar";
-            pub const status_bar_0: &str = "dx_bar_0";
-            pub const status_bar_1: &str = "dx_bar_1";
+        if #[cfg(feature = "dioxus_bar")] {
+            pub const status_bar_name: &str = "dioxus_bar";
+            pub const status_bar_0: &str = "dioxus_bar_0";
+            pub const status_bar_1: &str = "dioxus_bar_1";
         } else if #[cfg(feature = "egui_bar")] {
             pub const status_bar_name: &str = "egui_bar";
             pub const status_bar_0: &str = "egui_bar_0";
