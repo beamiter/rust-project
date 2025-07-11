@@ -4,15 +4,27 @@
   "version": "0.1.0",
   "identifier": "com.mm.tauri_bar",
   "build": {
-    "frontendDist": "../src"
+    "beforeDevCommand": "pnpm dev",
+    "devUrl": "http://localhost:1420",
+    "beforeBuildCommand": "pnpm build",
+    "frontendDist": "../dist"
   },
   "app": {
-    "withGlobalTauri": true,
     "windows": [
       {
-        "title": "tauri_bar",
-        "width": 800,
-        "height": 600
+        "title": "dx_bar",
+        "width": 1920,
+        "height": 50,
+        "decorations": false,
+        "alwaysOnTop": true,
+        "resizable": true,
+        "maximizable": false,
+        "minimizable": false,
+        "visible": true,
+        "skipTaskbar": true,
+        "x": 0,
+        "y": 0,
+        "label": "main"
       }
     ],
     "security": {
