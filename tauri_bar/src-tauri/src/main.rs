@@ -41,13 +41,13 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
 
     let file_name = if shared_path.is_empty() {
-        "dx_bar_tauri".to_string()
+        "tauri_bar".to_string()
     } else {
         std::path::Path::new(shared_path)
             .file_name()
             .and_then(|name| name.to_str())
-            .map(|name| format!("dx_bar_tauri_{}", name))
-            .unwrap_or_else(|| "dx_bar_tauri".to_string())
+            .map(|name| format!("tauri_bar_{}", name))
+            .unwrap_or_else(|| "tauri_bar".to_string())
     };
 
     let log_filename = format!("{}_{}", file_name, timestamp);
@@ -191,6 +191,7 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
                         .as_ref()
                         .map_or(true, |m| m.timestamp != msg.timestamp)
                     {
+                        info!("msg: {:?}", msg);
                         last_message = Some(msg);
                         state_changed = true;
                     }

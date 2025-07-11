@@ -46,6 +46,10 @@ impl Config {
             pub const status_bar_name: &str = "gtk_bar";
             pub const status_bar_0: &str = "gtk_bar_0";
             pub const status_bar_1: &str = "gtk_bar_1";
+        } else if #[cfg(feature = "tauri_bar")] {
+            pub const status_bar_name: &str = "tauri_bar";
+            pub const status_bar_0: &str = "tauri_bar_0";
+            pub const status_bar_1: &str = "tauri_bar_1";
         } else {
             pub const status_bar_name: &str = "egui_bar";
             pub const status_bar_0: &str = "egui_bar_0";

@@ -9,6 +9,7 @@ default = []
 egui_bar = []
 iced_bar = []
 dioxus_bar = []
+tauri_bar = []
 gtk_bar = []
 nixgl = []
 
