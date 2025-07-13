@@ -218,12 +218,14 @@ fn send_tag_command(
 fn main() {
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
-    let instance_name = shared_path.replace("/dev/shm/monitor_", "dioxus_bar_");
+    let mut instance_name = shared_path.replace("/dev/shm/monitor_", "dioxus_bar_");
+    if instance_name.is_empty() {
+        instance_name = "dioxus_bar".to_string();
+    }
     if let Err(e) = initialize_logging(&shared_path) {
         error!("Failed to initialize logging: {}", e);
         std::process::exit(1);
     }
-
     // 检查环境信息
     info!("=== Environment Debug Info ===");
     info!("DISPLAY: {:?}", env::var("DISPLAY"));
@@ -231,7 +233,6 @@ fn main() {
     info!("XDG_SESSION_TYPE: {:?}", env::var("XDG_SESSION_TYPE"));
     info!("DESKTOP_SESSION: {:?}", env::var("DESKTOP_SESSION"));
     info!("XDG_CURRENT_DESKTOP: {:?}", env::var("XDG_CURRENT_DESKTOP"));
-
     // 检查屏幕分辨率（如果可能）
     if let Ok(output) = Command::new("xrandr").arg("--current").output() {
         let output_str = String::from_utf8_lossy(&output.stdout);
@@ -241,12 +242,11 @@ fn main() {
             }
         }
     }
-
     info!("Starting dioxus_bar v{}", 1.0);
+    instance_name = format!("{}.{}", instance_name, instance_name);
     info!("instance_name: {instance_name}");
-
     let event_loop = EventLoopBuilder::with_user_event()
-        .with_app_id(format!("{}.{}", instance_name, instance_name))
+        .with_app_id(instance_name)
         .build();
 
     dioxus::LaunchBuilder::desktop()

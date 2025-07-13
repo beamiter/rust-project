@@ -10,9 +10,10 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "enableGTKAppId": true,
     "windows": [
       {
-        "title": "dx_bar",
+        "title": "tauri_bar",
         "width": 1920,
         "height": 50,
         "decorations": false,

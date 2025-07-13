@@ -1021,13 +1021,17 @@ fn main() -> glib::ExitCode {
         std::process::exit(1);
     }
 
-    let instance_name = shared_path.replace("/dev/shm/monitor_", "gtk_bar_");
-    info!("instance_name: {instance_name}");
+    let mut instance_name = shared_path.replace("/dev/shm/monitor_", "gtk_bar_");
+    if instance_name.is_empty() {
+        instance_name = "gtk_bar".to_string();
+    }
+    instance_name = format!("{}.{}", instance_name, instance_name);
+    info!("instance_name: {}", instance_name);
     info!("Starting GTK4 Bar v1.0");
 
     // 创建 GTK 应用 - 修复版本
     let app = Application::builder()
-        .application_id(&format!("{}.{}", instance_name, instance_name))
+        .application_id(instance_name)
         .flags(gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
 

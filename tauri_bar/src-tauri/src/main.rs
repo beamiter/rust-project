@@ -244,22 +244,30 @@ fn main() {
         eprintln!("Failed to initialize logging: {}", e);
     }
 
+    let mut instance_name = shared_path.replace("/dev/shm/monitor_", "tauri_bar_");
+    if instance_name.is_empty() {
+        instance_name = "tauri_bar".to_string();
+    }
+    let mut context = tauri::generate_context!();
+    instance_name = format!("{}.{}", instance_name, instance_name);
+    info!("instance_name: {}", instance_name);
+    context.config_mut().identifier = instance_name;
+
     info!("=== Environment Debug Info ===");
-    // ... (环境信息日志可以保留)
-
     let shared_path_clone = shared_path.clone();
-
-    tauri::Builder::default()
+    tauri::Builder::new()
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
             // 在 setup hook 中启动我们的后台工作线程
             let app_handle = app.handle().clone();
+            let app_id = app_handle.config().identifier.clone();
+            info!("Application ID has been set to: {}", app_id);
             thread::spawn(move || {
                 background_worker(app_handle, shared_path_clone);
             });
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![send_tag_command, take_screenshot])
-        .run(tauri::generate_context!())
+        .run(context)
         .expect("error while running tauri application");
 }
