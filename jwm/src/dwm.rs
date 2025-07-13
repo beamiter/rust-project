@@ -4790,7 +4790,7 @@ impl Dwm {
 
                 // 获取并设置窗口标题
                 self.updatetitle(&mut client_mut);
-                #[cfg(feature = "nixgl")]
+                #[cfg(any(feature = "nixgl", feature = "tauri_bar"))]
                 {
                     if client_mut.name == Config::status_bar_name {
                         let mut instance_name = String::new();

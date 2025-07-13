@@ -249,6 +249,8 @@ fn main() {
         instance_name = "tauri_bar".to_string();
     }
     let mut context = tauri::generate_context!();
+    context.config_mut().product_name = Some(instance_name.clone());
+    info!("product_name: {:?}", context.config_mut().product_name);
     instance_name = format!("{}.{}", instance_name, instance_name);
     info!("instance_name: {}", instance_name);
     context.config_mut().identifier = instance_name;
