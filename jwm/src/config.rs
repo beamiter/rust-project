@@ -187,6 +187,7 @@ impl Config {
             Self::col_cyan.to_string(),
             "-sf".to_string(),
             Self::col_gray4.to_string(),
+            "-b".to_string(),
         ]
     });
     // pub const termcmd: Lazy<Vec<String>> = Lazy::new(|| vec!["terminator".to_string()]);
