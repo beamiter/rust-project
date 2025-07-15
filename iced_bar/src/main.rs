@@ -628,7 +628,7 @@ impl IcedBar {
                     let current_size = self.current_window_size.unwrap();
                     let target_size = self.target_window_size.unwrap();
                     if (current_size.width - target_size.width).abs() > 10.
-                        || (current_size.height - target_size.height) > 10.
+                        || (current_size.height - target_size.height).abs() > 5.
                     {
                         info!(
                             "current_window_size: {:?}, target_window_size: {:?}",
