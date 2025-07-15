@@ -167,7 +167,7 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
 
     let mut last_message: Option<SharedMessage> = None;
     let mut last_snapshot: Option<SystemSnapshot> = None;
-    let mut last_update_time = Instant::now();
+    // let mut last_update_time = Instant::now();
 
     // 主循环
     loop {
@@ -208,7 +208,7 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
         }
 
         // 4. 如果状态有变或达到更新间隔，则向前端发送事件
-        if state_changed || last_update_time.elapsed() > Duration::from_millis(50) {
+        if state_changed {
             if let Some(msg) = &last_message {
                 // 窗口位置调整逻辑
                 let window = app_handle.get_webview_window("main").unwrap();
@@ -228,7 +228,7 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
                     system_snapshot: last_snapshot.clone(),
                 };
                 app_handle.emit("state-update", state).unwrap();
-                last_update_time = Instant::now();
+                // last_update_time = Instant::now();
             }
         }
 
