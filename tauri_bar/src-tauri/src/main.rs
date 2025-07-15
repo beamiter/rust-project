@@ -7,13 +7,7 @@ use log::{error, info, warn};
 use tauri::Emitter;
 use tauri::Manager;
 
-use std::{
-    env,
-    process::Command as StdCommand,
-    sync::mpsc,
-    thread,
-    time::{Duration, Instant},
-};
+use std::{env, process::Command as StdCommand, sync::mpsc, thread, time::Duration};
 
 // 引入我们的模块
 mod error;
