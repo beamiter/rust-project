@@ -222,9 +222,13 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
                         .set_size(tauri::LogicalSize::new(monitor_info.monitor_width, 50))
                         .unwrap();
                 }
-
+                let scale_factor = window.scale_factor().unwrap();
+                let mut monitor_info = msg.monitor_info.clone();
+                monitor_info.ltsymbol = monitor_info.ltsymbol.clone()
+                    + format!(" s: {:.2}", scale_factor).as_str()
+                    + format!(", m: {}", monitor_info.monitor_num).as_str();
                 let state = UiState {
-                    monitor_info: msg.monitor_info.clone(),
+                    monitor_info,
                     system_snapshot: last_snapshot.clone(),
                 };
                 app_handle.emit("state-update", state).unwrap();
