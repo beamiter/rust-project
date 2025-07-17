@@ -9,11 +9,13 @@ window {
     font-size: 18px;
     border: 1px solid rgba(255,255,255,0.3);
     background-color: rgba(0,0,0,0.1);
+    background-image: none;
     color: white;
 }
 /* 选中状态 */
 .tab-button.selected {
     background-color: #4ECDC4;
+    background-image: none;
     color: white;
     font-weight: bold;
     border: 2px solid #4ECDC4;
@@ -21,12 +23,14 @@ window {
 /* 占用状态（有窗口但未选中） */
 .tab-button.occupied {
     background-color: rgba(255,255,255,0.3);
+    background-image: none;
     border: 1px solid #FECA57;
     color: #FECA57;
 }
 /* 选中且占用状态 */
 .tab-button.selected.occupied {
     background-color: #4ECDC4;
+    background-image: none;
     border: 2px solid #FECA57;
     color: white;
     font-weight: bold;
@@ -34,6 +38,7 @@ window {
 /* 填满状态 */
 .tab-button.filled {
     background-color: rgba(0,255,0,0.4);
+    background-image: none;
     border: 2px solid #00FF00;
     color: #00FF00;
     font-weight: bold;
@@ -41,6 +46,7 @@ window {
 /* 紧急状态 */
 .tab-button.urgent {
     background-color: rgba(255,0,0,0.6);
+    background-image: none;
     border: 2px solid #FF0000;
     color: white;
     font-weight: bold;
@@ -49,6 +55,7 @@ window {
 /* 空闲状态（无窗口且未选中） */
 .tab-button.empty {
     background-color: rgba(102,102,102,0.3);
+    background-image: none;
     border: 1px solid rgba(255,255,255,0.2);
     color: rgba(255,255,255,0.6);
 }
@@ -79,9 +86,11 @@ window {
     border: 1px solid white;
     padding: 2px 4px;
     background-color: rgba(0,0,0,0.1);
+    background-image: none;
 }
 .time-button:hover {
     background-color: cyan;
+    background-image: none;
     color: darkorange;
 }
 .layout-button {
@@ -93,9 +102,11 @@ window {
     border: 0.5px solid white;
     padding: 0px;
     background-color: rgba(0,0,0,0.1);
+    background-image: none;
 }
 .screenshot-button:hover {
     background-color: cyan;
+    background-image: none;
     color: darkorange;
 }
 .layout-label {
