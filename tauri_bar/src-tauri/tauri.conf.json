@@ -14,8 +14,6 @@
     "windows": [
       {
         "title": "tauri_bar",
-        "width": 1920,
-        "height": 50,
         "decorations": false,
         "alwaysOnTop": false,
         "resizable": true,

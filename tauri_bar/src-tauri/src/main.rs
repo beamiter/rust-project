@@ -190,7 +190,7 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
                         state_changed = true;
                     }
                 }
-                Ok(None) => (),
+                Ok(_) => (),
                 Err(e) => error!("Error reading from shared buffer: {}", e),
             }
         }
@@ -208,10 +208,17 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
                 let window = app_handle.get_webview_window("main").unwrap();
                 let monitor_info = &msg.monitor_info;
                 let before_size = window.inner_size().unwrap_or_default();
-                let _before_pos = window.outer_position().unwrap_or_default();
+                let before_pos = window.outer_position().unwrap_or_default();
                 if (before_size.width as i32 - monitor_info.monitor_width).abs() > 10
                     || (before_size.height as i32 - 50).abs() > 5
+                    || (before_pos.x - monitor_info.monitor_x).abs() > 5
                 {
+                    info!(
+                        "before_pos: {:?}, before_size: {:?}, {:?}",
+                        before_pos,
+                        before_size,
+                        window.is_resizable()
+                    );
                     window
                         .set_position(tauri::LogicalPosition::new(
                             monitor_info.monitor_x,
