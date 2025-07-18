@@ -7,8 +7,7 @@ use glib::timeout_add_local;
 use gtk4::gio::{self};
 use gtk4::prelude::*;
 use gtk4::{
-    Application, ApplicationWindow, Box, Button, DrawingArea, Label, Orientation, ProgressBar,
-    ScrolledWindow, glib,
+    Application, ApplicationWindow, Builder, Button, DrawingArea, Label, ProgressBar, glib,
 };
 use log::{error, info, warn};
 use std::env;
@@ -52,7 +51,8 @@ struct AppState {
 }
 
 struct TabBarApp {
-    // GTK widgets
+    // GTK widgets - 从 Builder 获取
+    builder: Builder,
     window: ApplicationWindow,
     tab_buttons: Vec<Button>,
     layout_label: Label,
@@ -67,29 +67,45 @@ struct TabBarApp {
 
 impl TabBarApp {
     fn new(app: &Application) -> Rc<Self> {
-        let tabs = vec![
-            "🍜".to_string(),
-            "🎨".to_string(),
-            "🍀".to_string(),
-            "🧿".to_string(),
-            "🌟".to_string(),
-            "🐐".to_string(),
-            "🏆".to_string(),
-            "🕊️".to_string(),
-            "🏡".to_string(),
-        ];
+        // 加载 UI 布局
+        let builder = Builder::from_string(include_str!("resources/main_layout.ui"));
 
-        let _tab_colors = vec![
-            (1.0, 0.42, 0.42),  // 红色
-            (0.31, 0.80, 0.77), // 青色
-            (0.27, 0.72, 0.82), // 蓝色
-            (0.59, 0.81, 0.71), // 绿色
-            (1.0, 0.79, 0.34),  // 黄色
-            (1.0, 0.62, 0.95),  // 粉色
-            (0.33, 0.63, 1.0),  // 淡蓝色
-            (0.37, 0.15, 0.80), // 紫色
-            (0.0, 0.82, 0.83),  // 青绿色
-        ];
+        // 获取主窗口
+        let window: ApplicationWindow = builder
+            .object("main_window")
+            .expect("Failed to get main_window from builder");
+        window.set_application(Some(app));
+
+        // 获取标签按钮
+        let mut tab_buttons = Vec::new();
+        for i in 0..9 {
+            let button_id = format!("tab_button_{}", i);
+            let button: Button = builder
+                .object(&button_id)
+                .expect(&format!("Failed to get {} from builder", button_id));
+            tab_buttons.push(button);
+        }
+
+        // 获取其他组件
+        let layout_label: Label = builder
+            .object("layout_label")
+            .expect("Failed to get layout_label from builder");
+
+        let time_label: Button = builder
+            .object("time_label")
+            .expect("Failed to get time_label from builder");
+
+        let monitor_label: Label = builder
+            .object("monitor_label")
+            .expect("Failed to get monitor_label from builder");
+
+        let memory_progress: ProgressBar = builder
+            .object("memory_progress")
+            .expect("Failed to get memory_progress from builder");
+
+        let cpu_drawing_area: DrawingArea = builder
+            .object("cpu_drawing_area")
+            .expect("Failed to get cpu_drawing_area from builder");
 
         // 创建共享状态
         let state = Arc::new(Mutex::new(AppState {
@@ -105,113 +121,11 @@ impl TabBarApp {
             pending_messages: Vec::new(),
         }));
 
-        // 创建主窗口
-
-        let window = ApplicationWindow::builder()
-            .application(app)
-            .title(STATUS_BAR_PREFIX)
-            .default_width(1000)
-            .default_height(50)
-            .decorated(false)
-            .resizable(true)
-            .build();
-
-        // 第一行：主要内容区域
-        let top_hbox = Box::new(Orientation::Horizontal, 3);
-        top_hbox.set_margin_top(3);
-        top_hbox.set_margin_bottom(3);
-        top_hbox.set_margin_start(3);
-        top_hbox.set_margin_end(3);
-
-        // 左侧：Tab 按钮区域
-        let tab_box = Box::new(Orientation::Horizontal, 3);
-        let mut tab_buttons = Vec::new();
-        for tab_text in &tabs {
-            let button = Button::builder()
-                .label(tab_text)
-                .width_request(40)
-                .height_request(32)
-                .build();
-            tab_box.append(&button);
-            tab_buttons.push(button);
-        }
-
-        // 布局区域
-        let layout_label = Label::new(Some(" ? "));
-        layout_label.set_halign(gtk4::Align::Center);
-        layout_label.set_width_request(40);
-        layout_label.set_height_request(32);
-        layout_label.add_css_class("layout-label");
-
-        // 布局按钮容器
-        let layout_box = Box::new(Orientation::Horizontal, 5);
-        let layout_button_1 = Button::with_label("[]=");
-        let layout_button_2 = Button::with_label("><>");
-        let layout_button_3 = Button::with_label("[M]");
-        layout_button_1.set_size_request(40, 32);
-        layout_button_2.set_size_request(40, 32);
-        layout_button_3.set_size_request(40, 32);
-        layout_box.append(&layout_button_1);
-        layout_box.append(&layout_button_2);
-        layout_box.append(&layout_button_3);
-        let layout_scroll = ScrolledWindow::new();
-        layout_scroll.set_policy(gtk4::PolicyType::Automatic, gtk4::PolicyType::Never);
-        layout_scroll.set_size_request(60, 32);
-        layout_scroll.set_child(Some(&layout_box));
-
-        // 中间：弹性空间
-        let spacer = Box::new(Orientation::Horizontal, 0);
-        spacer.set_hexpand(true); // 这个会占据所有剩余空间
-
-        // 右侧：系统信息区域
-        let right_box = Box::new(Orientation::Horizontal, 3);
-        right_box.set_halign(gtk4::Align::End); // 确保对齐到右侧
-
-        let cpu_drawing_area = DrawingArea::new();
-        cpu_drawing_area.set_size_request(32, 32);
-
-        let screenshot_button = Button::with_label(&format!(" s {:.2} ", 1.0));
-        screenshot_button.set_size_request(60, 32);
-
-        let time_label = Button::with_label("--:--");
-        time_label.set_size_request(60, 32);
-
-        let monitor_label = Label::new(Some("🥇"));
-        monitor_label.set_size_request(30, 32);
-        monitor_label.set_halign(gtk4::Align::Center);
-
-        let vbox = Box::new(Orientation::Vertical, 10);
-        vbox.set_margin_top(2);
-        vbox.set_margin_bottom(2);
-        vbox.set_margin_start(2);
-        vbox.set_margin_end(2);
-        let memory_progress = ProgressBar::new();
-        memory_progress.set_size_request(200, 32);
-        memory_progress.set_halign(gtk4::Align::Center);
-        memory_progress.set_valign(gtk4::Align::Center);
-        memory_progress.add_css_class("neon-progress");
-        vbox.append(&memory_progress);
-
-        // 添加到右侧容器
-        right_box.append(&vbox);
-        right_box.append(&cpu_drawing_area);
-        right_box.append(&screenshot_button);
-        right_box.append(&time_label);
-        right_box.append(&monitor_label);
-
-        // 组装顶部行
-        top_hbox.append(&tab_box);
-        top_hbox.append(&layout_label);
-        top_hbox.append(&layout_scroll);
-        top_hbox.append(&spacer); // 弹性空间
-        top_hbox.append(&right_box); // 右侧组件
-
-        // 组装主容器
-        window.set_child(Some(&top_hbox));
-
         // 应用 CSS 样式
         Self::apply_styles();
+
         let app_instance = Rc::new(Self {
+            builder,
             window,
             tab_buttons,
             layout_label,
@@ -223,13 +137,7 @@ impl TabBarApp {
         });
 
         // 设置事件处理器
-        Self::setup_event_handlers(
-            app_instance.clone(),
-            layout_button_1,
-            layout_button_2,
-            layout_button_3,
-            screenshot_button,
-        );
+        Self::setup_event_handlers(app_instance.clone());
 
         app_instance
     }
@@ -244,13 +152,7 @@ impl TabBarApp {
         );
     }
 
-    fn setup_event_handlers(
-        app: Rc<Self>,
-        layout_button_1: Button,
-        layout_button_2: Button,
-        layout_button_3: Button,
-        screenshot_button: Button,
-    ) {
+    fn setup_event_handlers(app: Rc<Self>) {
         // 设置定时器进行定期更新
         timeout_add_local(Duration::from_millis(50), {
             let app = app.clone();
@@ -270,7 +172,6 @@ impl TabBarApp {
 
         // 设置标签按钮点击事件
         for (i, button) in app.tab_buttons.iter().enumerate() {
-            button.add_css_class("tab-button");
             button.connect_clicked({
                 let app = app.clone();
                 move |_| {
@@ -280,29 +181,20 @@ impl TabBarApp {
         }
 
         // 布局按钮事件
-        layout_button_1.connect_clicked({
-            let app = app.clone();
-            move |_| {
-                Self::handle_layout_clicked(app.clone(), 0);
+        for i in 1..=3 {
+            let button_id = format!("layout_button_{}", i);
+            if let Some(button) = app.builder.object::<Button>(&button_id) {
+                button.connect_clicked({
+                    let app = app.clone();
+                    let layout_index = i - 1; // 转换为0-based索引
+                    move |_| {
+                        Self::handle_layout_clicked(app.clone(), layout_index);
+                    }
+                });
             }
-        });
-
-        layout_button_2.connect_clicked({
-            let app = app.clone();
-            move |_| {
-                Self::handle_layout_clicked(app.clone(), 1);
-            }
-        });
-
-        layout_button_3.connect_clicked({
-            let app = app.clone();
-            move |_| {
-                Self::handle_layout_clicked(app.clone(), 2);
-            }
-        });
+        }
 
         // 时间按钮点击事件
-        app.time_label.add_css_class("time-button");
         app.time_label.connect_clicked({
             let app = app.clone();
             move |_| {
@@ -311,13 +203,14 @@ impl TabBarApp {
         });
 
         // 截图按钮事件
-        screenshot_button.add_css_class("screenshot-button");
-        screenshot_button.connect_clicked({
-            let app = app.clone();
-            move |_| {
-                Self::handle_screenshot(app.clone());
-            }
-        });
+        if let Some(screenshot_button) = app.builder.object::<Button>("screenshot_button") {
+            screenshot_button.connect_clicked({
+                let app = app.clone();
+                move |_| {
+                    Self::handle_screenshot(app.clone());
+                }
+            });
+        }
 
         // CPU 绘制
         app.cpu_drawing_area.set_draw_func({
@@ -328,7 +221,7 @@ impl TabBarApp {
         });
     }
 
-    // 事件处理方法
+    // 事件处理方法保持不变
     fn handle_tab_selected(app: Rc<Self>, index: usize) {
         info!("Tab selected: {}", index);
 
@@ -394,7 +287,7 @@ impl TabBarApp {
         app.process_pending_messages();
     }
 
-    // 根据标签状态更新样式
+    // UI 更新方法保持不变
     fn update_tab_styles(&self) {
         if let Ok(state) = self.state.lock() {
             for (i, button) in self.tab_buttons.iter().enumerate() {
@@ -461,6 +354,7 @@ impl TabBarApp {
         }
     }
 
+    // 其他方法保持不变...
     fn monitor_num_to_icon(monitor_num: u8) -> &'static str {
         match monitor_num {
             0 => "🥇",
@@ -684,6 +578,7 @@ impl TabBarApp {
     }
 }
 
+// shared_memory_worker 和其他函数保持不变...
 fn shared_memory_worker(
     shared_path: String,
     app_state: SharedAppState,
