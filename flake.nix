@@ -26,6 +26,9 @@
             pkgs.glib
             pkgs.pkg-config
 
+            pkgs.glade
+            pkgs.cambalache
+
             pkgs.vte
             pkgs.vte-gtk4
             pkgs.libsoup_3
