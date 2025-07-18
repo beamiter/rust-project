@@ -61,8 +61,6 @@ struct TabBarApp {
     memory_progress: ProgressBar,
     cpu_drawing_area: DrawingArea,
 
-    underline_areas: Vec<DrawingArea>,
-
     // Shared state
     state: SharedAppState,
 }
@@ -118,15 +116,12 @@ impl TabBarApp {
             .resizable(true)
             .build();
 
-        // 使用垂直 Box 作为主容器
-        let main_vbox = Box::new(Orientation::Vertical, 2);
-        main_vbox.set_margin_top(2);
-        main_vbox.set_margin_bottom(2);
-        main_vbox.set_margin_start(2);
-        main_vbox.set_margin_end(2);
-
         // 第一行：主要内容区域
         let top_hbox = Box::new(Orientation::Horizontal, 3);
+        top_hbox.set_margin_top(3);
+        top_hbox.set_margin_bottom(3);
+        top_hbox.set_margin_start(3);
+        top_hbox.set_margin_end(3);
 
         // 左侧：Tab 按钮区域
         let tab_box = Box::new(Orientation::Horizontal, 3);
@@ -171,17 +166,34 @@ impl TabBarApp {
         // 右侧：系统信息区域
         let right_box = Box::new(Orientation::Horizontal, 3);
         right_box.set_halign(gtk4::Align::End); // 确保对齐到右侧
+
         let cpu_drawing_area = DrawingArea::new();
         cpu_drawing_area.set_size_request(32, 32);
+
         let screenshot_button = Button::with_label(&format!(" s {:.2} ", 1.0));
         screenshot_button.set_size_request(60, 32);
+
         let time_label = Button::with_label("--:--");
         time_label.set_size_request(60, 32);
+
         let monitor_label = Label::new(Some("🥇"));
         monitor_label.set_size_request(30, 32);
         monitor_label.set_halign(gtk4::Align::Center);
 
+        let vbox = Box::new(Orientation::Vertical, 10);
+        vbox.set_margin_top(2);
+        vbox.set_margin_bottom(2);
+        vbox.set_margin_start(2);
+        vbox.set_margin_end(2);
+        let memory_progress = ProgressBar::new();
+        memory_progress.set_size_request(200, 32);
+        memory_progress.set_halign(gtk4::Align::Center);
+        memory_progress.set_valign(gtk4::Align::Center);
+        memory_progress.add_css_class("neon-progress");
+        vbox.append(&memory_progress);
+
         // 添加到右侧容器
+        right_box.append(&vbox);
         right_box.append(&cpu_drawing_area);
         right_box.append(&screenshot_button);
         right_box.append(&time_label);
@@ -194,40 +206,8 @@ impl TabBarApp {
         top_hbox.append(&spacer); // 弹性空间
         top_hbox.append(&right_box); // 右侧组件
 
-        // 第二行：下划线和进度条
-        let bottom_hbox = Box::new(Orientation::Horizontal, 3);
-
-        // 左侧：下划线区域
-        let underline_box = Box::new(Orientation::Horizontal, 3);
-        let mut underline_areas = Vec::new();
-        for _ in &tabs {
-            let underline = DrawingArea::new();
-            underline.set_size_request(40, 4);
-            underline.set_halign(gtk4::Align::Center);
-            underline_box.append(&underline);
-            underline_areas.push(underline);
-        }
-
-        // 右侧：内存进度条
-        let memory_progress = ProgressBar::new();
-        memory_progress.set_size_request(200, 3);
-        memory_progress.set_halign(gtk4::Align::End);
-        memory_progress.set_valign(gtk4::Align::Start);
-        memory_progress.add_css_class("neon-progress");
-
-        // 底部行的弹性空间
-        let bottom_spacer = Box::new(Orientation::Horizontal, 0);
-        bottom_spacer.set_hexpand(true);
-
-        // 组装底部行
-        bottom_hbox.append(&underline_box);
-        bottom_hbox.append(&bottom_spacer);
-        bottom_hbox.append(&memory_progress);
-
         // 组装主容器
-        main_vbox.append(&top_hbox);
-        main_vbox.append(&bottom_hbox);
-        window.set_child(Some(&main_vbox));
+        window.set_child(Some(&top_hbox));
 
         // 应用 CSS 样式
         Self::apply_styles();
@@ -239,7 +219,6 @@ impl TabBarApp {
             monitor_label,
             memory_progress,
             cpu_drawing_area,
-            underline_areas,
             state,
         });
 
@@ -452,67 +431,6 @@ impl TabBarApp {
                     }
                 }
             }
-        }
-
-        // 同时更新下划线
-        self.update_underlines();
-    }
-
-    // 更新下划线显示
-    fn update_underlines(&self) {
-        if let Ok(state) = self.state.lock() {
-            for (i, underline) in self.underline_areas.iter().enumerate() {
-                // 设置绘制函数
-                underline.set_draw_func({
-                    let tag_status = state.tag_status_vec.get(i).cloned();
-                    move |_, ctx, width, height| {
-                        Self::draw_underline(ctx, width, height, &tag_status);
-                    }
-                });
-                // 触发重绘
-                underline.queue_draw();
-            }
-        }
-    }
-
-    // 绘制下划线的静态方法
-    fn draw_underline(ctx: &Context, width: i32, height: i32, tag_status: &Option<TagStatus>) {
-        let width_f = width as f64;
-        let height_f = height as f64;
-
-        // 清除背景
-        ctx.set_source_rgba(0.0, 0.0, 0.0, 0.0);
-        ctx.paint().ok();
-
-        if let Some(status) = tag_status {
-            let (color, line_height) = if status.is_urg {
-                // 紧急状态：红色，高4px
-                ((1.0, 0.0, 0.0, 0.9), 4.0)
-            } else if status.is_filled {
-                // 填满状态：绿色，高4px
-                ((0.0, 1.0, 0.0, 0.9), 4.0)
-            } else if status.is_selected && status.is_occ {
-                // 选中且占用：青色，高3px
-                ((0.31, 0.80, 0.77, 0.9), 3.0)
-            } else if status.is_selected && !status.is_occ {
-                // 仅选中：灰色，高3px
-                ((0.4, 0.4, 0.4, 0.8), 3.0)
-            } else if !status.is_selected && status.is_occ {
-                // 仅占用：黄色，高1px
-                ((1.0, 0.79, 0.34, 0.8), 2.0)
-            } else {
-                // 空闲状态：不绘制
-                return;
-            };
-
-            // 居中绘制长28px的线条
-            let line_width = 28.0;
-            let x_offset = (width_f - line_width) / 2.0;
-            let y_offset = height_f - line_height;
-
-            ctx.set_source_rgba(color.0, color.1, color.2, color.3);
-            ctx.rectangle(x_offset, y_offset, line_width, line_height);
-            ctx.fill().ok();
         }
     }
 

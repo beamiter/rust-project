@@ -1,132 +1,435 @@
 window {
-    background-color: rgba(1,1,1,0.8);
+  background-color: rgba(1, 1, 1, 0.9);
 }
-/* 标签按钮基础样式 */
+
+/* ==================== 标签按钮基础样式 ==================== */
 .tab-button {
-    border-radius: 4px;
-    margin: 0px;
-    padding: 4px 8px;
-    font-size: 18px;
-    border: 1px solid rgba(255,255,255,0.3);
-    background-color: rgba(0,0,0,0.1);
-    background-image: none;
-    color: white;
+  border-radius: 6px;
+  margin: 0px;
+  padding: 4px 8px;
+  font-size: 22px;
+  border: 1px solid transparent;
+  background-image: none;
+  color: #333;
+  transition: all 0.2s ease;
+  min-width: 40px;
+  min-height: 40px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
-/* 选中状态 */
-.tab-button.selected {
-    background-color: #4ECDC4;
-    background-image: none;
-    color: white;
-    font-weight: bold;
-    border: 2px solid #4ECDC4;
+
+/* 悬停效果基础 */
+.tab-button:hover {
+  transform: scale(1.02);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  transition: all 0.2s ease;
 }
-/* 占用状态（有窗口但未选中） */
-.tab-button.occupied {
-    background-color: rgba(255,255,255,0.3);
-    background-image: none;
-    border: 1px solid #FECA57;
-    color: #FECA57;
+
+/* ==================== 按索引位置的颜色定义 ==================== */
+
+/* 第1个按钮 (索引0) - 红色系 #FF6B6B */
+.tab-button:nth-child(1).empty {
+  background-color: #ffffff;
+  border-color: #dee2e6;
+  color: #333;
 }
-/* 选中且占用状态 */
-.tab-button.selected.occupied {
-    background-color: #4ECDC4;
-    background-image: none;
-    border: 2px solid #FECA57;
-    color: white;
-    font-weight: bold;
+
+.tab-button:nth-child(1).empty:hover {
+  border-color: #ff6b6b;
+  border-width: 2px;
+  box-shadow: 0 0 6px rgba(255, 107, 107, 0.4);
+  background-color: rgba(255, 107, 107, 0.1);
 }
-/* 填满状态 */
-.tab-button.filled {
-    background-color: rgba(0,255,0,0.4);
-    background-image: none;
-    border: 2px solid #00FF00;
-    color: #00FF00;
-    font-weight: bold;
+
+.tab-button:nth-child(1).occupied {
+  background-color: rgba(255, 107, 107, 0.3);
+  border-color: rgba(255, 107, 107, 0.6);
+  color: #333;
 }
-/* 紧急状态 */
+
+.tab-button:nth-child(1).selected {
+  background-color: rgba(255, 107, 107, 0.7);
+  border-color: rgba(255, 107, 107, 0.9);
+  color: white;
+  font-weight: bold;
+}
+
+.tab-button:nth-child(1).filled {
+  background-color: rgba(255, 107, 107, 1);
+  border-color: rgba(255, 107, 107, 1);
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(255, 107, 107, 0.4);
+}
+
+/* 第2个按钮 (索引1) - 青色系 #4ECDC4 */
+.tab-button:nth-child(2).empty {
+  background-color: #ffffff;
+  border-color: #dee2e6;
+  color: #333;
+}
+
+.tab-button:nth-child(2).empty:hover {
+  border-color: #4ecdc4;
+  border-width: 2px;
+  box-shadow: 0 0 6px rgba(78, 205, 196, 0.4);
+  background-color: rgba(78, 205, 196, 0.1);
+}
+
+.tab-button:nth-child(2).occupied {
+  background-color: rgba(78, 205, 196, 0.3);
+  border-color: rgba(78, 205, 196, 0.6);
+  color: #333;
+}
+
+.tab-button:nth-child(2).selected {
+  background-color: rgba(78, 205, 196, 0.7);
+  border-color: rgba(78, 205, 196, 0.9);
+  color: white;
+  font-weight: bold;
+}
+
+.tab-button:nth-child(2).filled {
+  background-color: rgba(78, 205, 196, 1);
+  border-color: rgba(78, 205, 196, 1);
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(78, 205, 196, 0.4);
+}
+
+/* 第3个按钮 (索引2) - 蓝色系 #45B7D1 */
+.tab-button:nth-child(3).empty {
+  background-color: #ffffff;
+  border-color: #dee2e6;
+  color: #333;
+}
+
+.tab-button:nth-child(3).empty:hover {
+  border-color: #45b7d1;
+  border-width: 2px;
+  box-shadow: 0 0 6px rgba(69, 183, 209, 0.4);
+  background-color: rgba(69, 183, 209, 0.1);
+}
+
+.tab-button:nth-child(3).occupied {
+  background-color: rgba(69, 183, 209, 0.3);
+  border-color: rgba(69, 183, 209, 0.6);
+  color: #333;
+}
+
+.tab-button:nth-child(3).selected {
+  background-color: rgba(69, 183, 209, 0.7);
+  border-color: rgba(69, 183, 209, 0.9);
+  color: white;
+  font-weight: bold;
+}
+
+.tab-button:nth-child(3).filled {
+  background-color: rgba(69, 183, 209, 1);
+  border-color: rgba(69, 183, 209, 1);
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(69, 183, 209, 0.4);
+}
+
+/* 第4个按钮 (索引3) - 绿色系 #96CEB4 */
+.tab-button:nth-child(4).empty {
+  background-color: #ffffff;
+  border-color: #dee2e6;
+  color: #333;
+}
+
+.tab-button:nth-child(4).empty:hover {
+  border-color: #96ceb4;
+  border-width: 2px;
+  box-shadow: 0 0 6px rgba(150, 206, 180, 0.4);
+  background-color: rgba(150, 206, 180, 0.1);
+}
+
+.tab-button:nth-child(4).occupied {
+  background-color: rgba(150, 206, 180, 0.3);
+  border-color: rgba(150, 206, 180, 0.6);
+  color: #333;
+}
+
+.tab-button:nth-child(4).selected {
+  background-color: rgba(150, 206, 180, 0.7);
+  border-color: rgba(150, 206, 180, 0.9);
+  color: white;
+  font-weight: bold;
+}
+
+.tab-button:nth-child(4).filled {
+  background-color: rgba(150, 206, 180, 1);
+  border-color: rgba(150, 206, 180, 1);
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(150, 206, 180, 0.4);
+}
+
+/* 第5个按钮 (索引4) - 黄色系 #FECA57 */
+.tab-button:nth-child(5).empty {
+  background-color: #ffffff;
+  border-color: #dee2e6;
+  color: #333;
+}
+
+.tab-button:nth-child(5).empty:hover {
+  border-color: #feca57;
+  border-width: 2px;
+  box-shadow: 0 0 6px rgba(254, 202, 87, 0.4);
+  background-color: rgba(254, 202, 87, 0.1);
+}
+
+.tab-button:nth-child(5).occupied {
+  background-color: rgba(254, 202, 87, 0.3);
+  border-color: rgba(254, 202, 87, 0.6);
+  color: #333;
+}
+
+.tab-button:nth-child(5).selected {
+  background-color: rgba(254, 202, 87, 0.7);
+  border-color: rgba(254, 202, 87, 0.9);
+  color: #333; /* 黄色背景用深色文字 */
+  font-weight: bold;
+}
+
+.tab-button:nth-child(5).filled {
+  background-color: rgba(254, 202, 87, 1);
+  border-color: rgba(254, 202, 87, 1);
+  color: #333; /* 黄色背景用深色文字 */
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(254, 202, 87, 0.4);
+}
+
+/* 第6个按钮 (索引5) - 粉色系 #FF9FF3 */
+.tab-button:nth-child(6).empty {
+  background-color: #ffffff;
+  border-color: #dee2e6;
+  color: #333;
+}
+
+.tab-button:nth-child(6).empty:hover {
+  border-color: #ff9ff3;
+  border-width: 2px;
+  box-shadow: 0 0 6px rgba(255, 159, 243, 0.4);
+  background-color: rgba(255, 159, 243, 0.1);
+}
+
+.tab-button:nth-child(6).occupied {
+  background-color: rgba(255, 159, 243, 0.3);
+  border-color: rgba(255, 159, 243, 0.6);
+  color: #333;
+}
+
+.tab-button:nth-child(6).selected {
+  background-color: rgba(255, 159, 243, 0.7);
+  border-color: rgba(255, 159, 243, 0.9);
+  color: white;
+  font-weight: bold;
+}
+
+.tab-button:nth-child(6).filled {
+  background-color: rgba(255, 159, 243, 1);
+  border-color: rgba(255, 159, 243, 1);
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(255, 159, 243, 0.4);
+}
+
+/* 第7个按钮 (索引6) - 淡蓝色系 #54A0FF */
+.tab-button:nth-child(7).empty {
+  background-color: #ffffff;
+  border-color: #dee2e6;
+  color: #333;
+}
+
+.tab-button:nth-child(7).empty:hover {
+  border-color: #54a0ff;
+  border-width: 2px;
+  box-shadow: 0 0 6px rgba(84, 160, 255, 0.4);
+  background-color: rgba(84, 160, 255, 0.1);
+}
+
+.tab-button:nth-child(7).occupied {
+  background-color: rgba(84, 160, 255, 0.3);
+  border-color: rgba(84, 160, 255, 0.6);
+  color: #333;
+}
+
+.tab-button:nth-child(7).selected {
+  background-color: rgba(84, 160, 255, 0.7);
+  border-color: rgba(84, 160, 255, 0.9);
+  color: white;
+  font-weight: bold;
+}
+
+.tab-button:nth-child(7).filled {
+  background-color: rgba(84, 160, 255, 1);
+  border-color: rgba(84, 160, 255, 1);
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(84, 160, 255, 0.4);
+}
+
+/* 第8个按钮 (索引7) - 紫色系 #5F27CD */
+.tab-button:nth-child(8).empty {
+  background-color: #ffffff;
+  border-color: #dee2e6;
+  color: #333;
+}
+
+.tab-button:nth-child(8).empty:hover {
+  border-color: #5f27cd;
+  border-width: 2px;
+  box-shadow: 0 0 6px rgba(95, 39, 205, 0.4);
+  background-color: rgba(95, 39, 205, 0.1);
+}
+
+.tab-button:nth-child(8).occupied {
+  background-color: rgba(95, 39, 205, 0.3);
+  border-color: rgba(95, 39, 205, 0.6);
+  color: #333;
+}
+
+.tab-button:nth-child(8).selected {
+  background-color: rgba(95, 39, 205, 0.7);
+  border-color: rgba(95, 39, 205, 0.9);
+  color: white;
+  font-weight: bold;
+}
+
+.tab-button:nth-child(8).filled {
+  background-color: rgba(95, 39, 205, 1);
+  border-color: rgba(95, 39, 205, 1);
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(95, 39, 205, 0.4);
+}
+
+/* 第9个按钮 (索引8) - 青绿色系 #00D2D3 */
+.tab-button:nth-child(9).empty {
+  background-color: #ffffff;
+  border-color: #dee2e6;
+  color: #333;
+}
+
+.tab-button:nth-child(9).empty:hover {
+  border-color: #00d2d3;
+  border-width: 2px;
+  box-shadow: 0 0 6px rgba(0, 210, 211, 0.4);
+  background-color: rgba(0, 210, 211, 0.1);
+}
+
+.tab-button:nth-child(9).occupied {
+  background-color: rgba(0, 210, 211, 0.3);
+  border-color: rgba(0, 210, 211, 0.6);
+  color: #333;
+}
+
+.tab-button:nth-child(9).selected {
+  background-color: rgba(0, 210, 211, 0.7);
+  border-color: rgba(0, 210, 211, 0.9);
+  color: white;
+  font-weight: bold;
+}
+
+.tab-button:nth-child(9).filled {
+  background-color: rgba(0, 210, 211, 1);
+  border-color: rgba(0, 210, 211, 1);
+  color: white;
+  font-weight: bold;
+  box-shadow: 0 2px 8px rgba(0, 210, 211, 0.4);
+}
+
+/* ==================== Urgent 状态（最高优先级）==================== */
 .tab-button.urgent {
-    background-color: rgba(255,0,0,0.6);
-    background-image: none;
-    border: 2px solid #FF0000;
-    color: white;
-    font-weight: bold;
-    animation: urgent-blink 1s ease-in-out infinite alternate;
+  background-color: rgba(220, 53, 69, 0.8) !important;
+  border: 2px solid #dc3545 !important;
+  color: white !important;
+  font-weight: bold !important;
+  animation: urgent-blink 1s ease-in-out infinite alternate;
+  box-shadow: 0 2px 8px rgba(220, 53, 69, 0.5) !important;
 }
-/* 空闲状态（无窗口且未选中） */
-.tab-button.empty {
-    background-color: rgba(102,102,102,0.3);
-    background-image: none;
-    border: 1px solid rgba(255,255,255,0.2);
-    color: rgba(255,255,255,0.6);
-}
+
 /* 紧急状态闪烁动画 */
 @keyframes urgent-blink {
-    0% { background-color: rgba(255,0,0,0.6); }
-    100% { background-color: rgba(255,0,0,0.9); }
+  0% {
+    background-color: rgba(220, 53, 69, 0.8);
+    box-shadow: 0 1px 3px rgba(220, 53, 69, 0.5);
+  }
+  100% {
+    background-color: rgba(220, 53, 69, 1);
+    box-shadow: 0 2px 8px rgba(220, 53, 69, 0.8);
+    transform: scale(1.04);
+  }
 }
-/* 下划线样式 */
-.underline-selected {
-    background-color: #4ECDC4;
-}
-.underline-occupied {
-    background-color: #FECA57;
-}
-.underline-filled {
-    background-color: #00FF00;
-}
-.underline-urgent {
-    background-color: #FF0000;
-}
-.underline-empty {
-    background-color: transparent;
-}
-/* 其他现有样式 */
+
+/* ==================== 其他现有样式保持不变 ==================== */
 .time-button {
-    border-radius: 2px;
-    border: 1px solid white;
-    padding: 2px 4px;
-    background-color: rgba(0,0,0,0.1);
-    background-image: none;
+  border-radius: 2px;
+  border: 1px solid white;
+  padding: 2px 4px;
+  background-color: rgba(255, 254, 253, 0.8);
+  background-image: none;
 }
+
 .time-button:hover {
-    background-color: cyan;
-    background-image: none;
-    color: darkorange;
+  background-color: cyan;
+  background-image: none;
+  color: darkorange;
 }
+
 .layout-button {
-    font-size: 12px;
-    padding: 2px 4px;
+  font-size: 12px;
+  padding: 2px 4px;
 }
+
 .screenshot-button {
-    border-radius: 2px;
-    border: 0.5px solid white;
-    padding: 0px;
-    background-color: rgba(0,0,0,0.1);
-    background-image: none;
+  border-radius: 2px;
+  border: 0.5px solid white;
+  padding: 0px;
+  background-color: rgba(255, 254, 253, 0.8);
+  background-image: none;
 }
+
 .screenshot-button:hover {
-    background-color: cyan;
-    background-image: none;
-    color: darkorange;
+  background-color: cyan;
+  background-image: none;
+  color: darkorange;
 }
+
 .layout-label {
-    color: cyan;
+  color: cyan;
 }
+
 /* 彩虹渐变 */
 .rainbow-progress progress {
-    background: linear-gradient(to left,
-        #ff0000, #ff8000, #ffff00, #00ff00, #0080ff, #8000ff);
-    border-radius: 1px;
+  background: linear-gradient(
+    to left,
+    #ff0000,
+    #ff8000,
+    #ffff00,
+    #00ff00,
+    #0080ff,
+    #8000ff
+  );
+  border-radius: 1px;
 }
+
 /* 金属质感 */
 .metal-progress progress {
-    background: linear-gradient(to left,
-        #c0c0c0 0%, #808080 50%, #404040 51%, #c0c0c0 100%);
-    border: 1px solid #666;
+  background: linear-gradient(
+    to left,
+    #c0c0c0 0%,
+    #808080 50%,
+    #404040 51%,
+    #c0c0c0 100%
+  );
+  border: 1px solid #666;
 }
+
 /* 霓虹效果 */
 .neon-progress progress {
-    background: linear-gradient(to left, #ff00ff, #00ffff);
-    box-shadow: 0 0 1px #ff00ff, inset 0 0 1px #00ffff;
-    border-radius: 1px;
+  background: linear-gradient(to left, #ff00ff, #00ffff);
+  border-radius: 1px;
 }
