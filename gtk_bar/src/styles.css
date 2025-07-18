@@ -5,15 +5,11 @@ window {
 /* ==================== 标签按钮基础样式 ==================== */
 .tab-button {
   border-radius: 6px;
-  margin: 0px;
-  padding: 4px 8px;
-  font-size: 22px;
+  font-size: 20px;
   border: 1px solid transparent;
   background-image: none;
   color: #333;
   transition: all 0.2s ease;
-  min-width: 40px;
-  min-height: 40px;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
