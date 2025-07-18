@@ -430,7 +430,7 @@ impl TabBarApp {
                 let expected_x = monitor_x + border_width;
                 let expected_y = monitor_y + border_width / 2;
                 let expected_width = monitor_width - 2 * border_width;
-                let expected_height = 45; // 或者根据需要调整
+                let expected_height = 36; // 或者根据需要调整
 
                 // 检查是否需要调整窗口大小（允许小的误差）
                 let width_diff = (current_width - expected_width).abs();
