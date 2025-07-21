@@ -207,10 +207,11 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
                 // 窗口位置调整逻辑
                 let window = app_handle.get_webview_window("main").unwrap();
                 let monitor_info = &msg.monitor_info;
+                let target_height = 40;
                 let before_size = window.inner_size().unwrap_or_default();
                 let before_pos = window.outer_position().unwrap_or_default();
                 if (before_size.width as i32 - monitor_info.monitor_width).abs() > 10
-                    || (before_size.height as i32 - 50).abs() > 5
+                    || (before_size.height as i32 - target_height).abs() > 5
                     || (before_pos.x - monitor_info.monitor_x).abs() > 5
                 {
                     info!(
@@ -226,7 +227,10 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
                         ))
                         .unwrap();
                     window
-                        .set_size(tauri::LogicalSize::new(monitor_info.monitor_width, 50))
+                        .set_size(tauri::LogicalSize::new(
+                            monitor_info.monitor_width,
+                            target_height,
+                        ))
                         .unwrap();
                 }
                 let scale_factor = window.scale_factor().unwrap();
