@@ -6,30 +6,26 @@
   <!-- 主窗口 -->
   <object class="GtkApplicationWindow" id="main_window">
     <property name="decorated">false</property>
-    <property name="default-height">30</property>
+    <property name="default-height">40</property>
     <property name="default-width">1000</property>
     <property name="resizable">true</property>
     <property name="title">gtk_bar</property>
     <child>
       <object class="GtkBox" id="top_hbox">
-        <!-- <property name="margin-bottom">3</property> -->
-        <!-- <property name="margin-end">3</property> -->
-        <!-- <property name="margin-start">3</property> -->
-        <!-- <property name="margin-top">3</property> -->
+        <property name="margin-bottom">3</property>
+        <property name="margin-end">3</property>
+        <property name="margin-start">3</property>
+        <property name="margin-top">3</property>
         <property name="orientation">horizontal</property>
-        <!-- <property name="spacing">3</property> -->
+        <property name="spacing">3</property>
         <child>
           <object class="GtkBox" id="tab_box">
             <property name="orientation">horizontal</property>
-            <!-- <property name="spacing">3</property> -->
+            <property name="spacing">3</property>
             <child>
               <object class="GtkButton" id="tab_button_0">
                 <property name="label">🍜</property>
                 <property name="width-request">40</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
                 <style>
                   <class name="tab-button"/>
                 </style>
@@ -39,10 +35,6 @@
               <object class="GtkButton" id="tab_button_1">
                 <property name="label">🎨</property>
                 <property name="width-request">40</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
                 <style>
                   <class name="tab-button"/>
                 </style>
@@ -52,10 +44,6 @@
               <object class="GtkButton" id="tab_button_2">
                 <property name="label">🍀</property>
                 <property name="width-request">40</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
                 <style>
                   <class name="tab-button"/>
                 </style>
@@ -65,10 +53,6 @@
               <object class="GtkButton" id="tab_button_3">
                 <property name="label">🧿</property>
                 <property name="width-request">40</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
                 <style>
                   <class name="tab-button"/>
                 </style>
@@ -78,10 +62,6 @@
               <object class="GtkButton" id="tab_button_4">
                 <property name="label">🌟</property>
                 <property name="width-request">40</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
                 <style>
                   <class name="tab-button"/>
                 </style>
@@ -91,10 +71,6 @@
               <object class="GtkButton" id="tab_button_5">
                 <property name="label">🐐</property>
                 <property name="width-request">40</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
                 <style>
                   <class name="tab-button"/>
                 </style>
@@ -104,10 +80,6 @@
               <object class="GtkButton" id="tab_button_6">
                 <property name="label">🏆</property>
                 <property name="width-request">40</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
                 <style>
                   <class name="tab-button"/>
                 </style>
@@ -117,10 +89,6 @@
               <object class="GtkButton" id="tab_button_7">
                 <property name="label">🕊️</property>
                 <property name="width-request">40</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
                 <style>
                   <class name="tab-button"/>
                 </style>
@@ -130,10 +98,6 @@
               <object class="GtkButton" id="tab_button_8">
                 <property name="label">🏡</property>
                 <property name="width-request">40</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
                 <style>
                   <class name="tab-button"/>
                 </style>
@@ -156,42 +120,26 @@
             <property name="hscrollbar-policy">automatic</property>
             <property name="vscrollbar-policy">never</property>
             <property name="width-request">60</property>
-            <property name="margin-bottom">3</property>
-            <property name="margin-end">3</property>
-            <property name="margin-start">3</property>
-            <property name="margin-top">3</property>
             <child>
               <object class="GtkBox" id="layout_box">
                 <property name="orientation">horizontal</property>
-                <!-- <property name="spacing">5</property> -->
+                <property name="spacing">5</property>
                 <child>
                   <object class="GtkButton" id="layout_button_1">
                     <property name="label">[]=</property>
                     <property name="width-request">40</property>
-                    <property name="margin-bottom">3</property>
-                    <property name="margin-end">3</property>
-                    <property name="margin-start">3</property>
-                    <property name="margin-top">3</property>
                   </object>
                 </child>
                 <child>
                   <object class="GtkButton" id="layout_button_2">
                     <property name="label">&lt;&gt;&lt;</property>
                     <property name="width-request">40</property>
-                    <property name="margin-bottom">3</property>
-                    <property name="margin-end">3</property>
-                    <property name="margin-start">3</property>
-                    <property name="margin-top">3</property>
                   </object>
                 </child>
                 <child>
                   <object class="GtkButton" id="layout_button_3">
                     <property name="label">[M]</property>
                     <property name="width-request">40</property>
-                    <property name="margin-bottom">3</property>
-                    <property name="margin-end">3</property>
-                    <property name="margin-start">3</property>
-                    <property name="margin-top">3</property>
                   </object>
                 </child>
               </object>
@@ -208,15 +156,11 @@
           <object class="GtkBox" id="right_box">
             <property name="halign">end</property>
             <property name="orientation">horizontal</property>
-            <!-- <property name="spacing">3</property> -->
+            <property name="spacing">3</property>
             <child>
               <object class="GtkBox" id="memory_vbox">
-                <property name="margin-bottom">2</property>
-                <property name="margin-end">2</property>
-                <property name="margin-start">2</property>
-                <property name="margin-top">2</property>
                 <property name="orientation">vertical</property>
-                <!-- <property name="spacing">10</property> -->
+                <property name="spacing">10</property>
                 <child>
                   <object class="GtkProgressBar" id="memory_progress">
                     <property name="halign">center</property>
@@ -232,21 +176,13 @@
             </child>
             <child>
               <object class="GtkDrawingArea" id="cpu_drawing_area">
-                <property name="width-request">32</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
+                <property name="width-request">64</property>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="screenshot_button">
                 <property name="label"> s 1.0 </property>
                 <property name="width-request">60</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
                 <style>
                   <class name="screenshot-button"/>
                 </style>
@@ -256,10 +192,6 @@
               <object class="GtkButton" id="time_label">
                 <property name="label">--:--</property>
                 <property name="width-request">60</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
                 <style>
                   <class name="time-button"/>
                 </style>
@@ -269,11 +201,7 @@
               <object class="GtkLabel" id="monitor_label">
                 <property name="halign">center</property>
                 <property name="label">🥇</property>
-                <property name="width-request">30</property>
-                <property name="margin-bottom">3</property>
-                <property name="margin-end">3</property>
-                <property name="margin-start">3</property>
-                <property name="margin-top">3</property>
+                <property name="width-request">40</property>
               </object>
             </child>
           </object>

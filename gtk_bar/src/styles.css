@@ -4,6 +4,8 @@ window {
 
 /* ==================== 标签按钮基础样式 ==================== */
 .tab-button {
+  margin: 0px 2px;
+  padding: 0px;
   border-radius: 6px;
   font-size: 20px;
   border: 1px solid transparent;
@@ -364,7 +366,8 @@ window {
 .time-button {
   border-radius: 2px;
   border: 1px solid white;
-  padding: 2px 4px;
+  margin: 0px 2px;
+  padding: 0px;
   background-color: rgba(255, 254, 253, 0.8);
   background-image: none;
 }
@@ -376,14 +379,16 @@ window {
 }
 
 .layout-button {
+  margin: 0px 2px;
+  padding: 0px;
   font-size: 12px;
-  padding: 2px 4px;
 }
 
 .screenshot-button {
+  margin: 0px 2px;
+  padding: 0px;
   border-radius: 2px;
   border: 0.5px solid white;
-  padding: 0px;
   background-color: rgba(255, 254, 253, 0.8);
   background-image: none;
 }
@@ -395,7 +400,7 @@ window {
 }
 
 .layout-label {
-  color: cyan;
+  color: orange;
 }
 
 /* 彩虹渐变 */
