@@ -645,7 +645,7 @@ fn App() -> Element {
 
             // 执行调整
             window.set_outer_position(LogicalPosition::new(x as f64, y as f64));
-            window.set_inner_size(LogicalSize::new(width as f64, 50.0));
+            window.set_inner_size(LogicalSize::new(width as f64, 42.0));
 
             let after_size = window.inner_size();
             let after_pos = window.outer_position().unwrap_or_default();
