@@ -26,3 +26,5 @@ gdk4-x11 = { version = "0.9.6", features = ["xlib"] }
 gdk4 = { version = "0.9.6", features = ["v4_14"] }
 glib-build-tools = "0.21.0"
 adw = { version = "0.7.2", package = "libadwaita", features = ["v1_5"] }
+relm4-components = "0.9.1"
+tracker = "0.2.2"

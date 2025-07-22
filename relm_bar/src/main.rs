@@ -1,12 +1,10 @@
 // main.rs
-use relm4::prelude::*;
-// use adw::prelude::*;
 use cairo::Context;
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use gtk::prelude::*;
 use log::{error, info, warn};
-use std::sync::{Arc, Mutex};
+use relm4::prelude::*;
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -14,7 +12,6 @@ mod audio_manager;
 mod error;
 mod system_monitor;
 
-// use audio_manager::AudioManager;
 use error::AppError;
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus};
 use system_monitor::SystemMonitor;
@@ -28,14 +25,13 @@ pub struct SystemSnapshot {
 }
 
 // 应用状态
+#[derive(PartialEq)]
 pub struct AppState {
     pub active_tab: usize,
     pub layout_symbol: String,
     pub monitor_num: u8,
     pub show_seconds: bool,
     pub tag_status_vec: Vec<TagStatus>,
-    pub system_monitor: SystemMonitor,
-    // pub audio_manager: AudioManager,
     pub last_shared_message: Option<SharedMessage>,
 }
 
@@ -47,8 +43,6 @@ impl AppState {
             monitor_num: 0,
             show_seconds: false,
             tag_status_vec: Vec::new(),
-            system_monitor: SystemMonitor::new(1),
-            // audio_manager: AudioManager::new(),
             last_shared_message: None,
         }
     }
@@ -67,9 +61,13 @@ pub enum AppInput {
 }
 
 // 主应用模型
+#[tracker::track]
 pub struct App {
-    state: Arc<Mutex<AppState>>,
+    state: AppState,
+    #[do_not_track]
     command_sender: Option<mpsc::UnboundedSender<SharedCommand>>,
+    #[do_not_track]
+    pub system_monitor: SystemMonitor,
     memory_usage: f64,
     cpu_usage: f64,
     current_time: String,
@@ -104,9 +102,7 @@ impl SimpleComponent for App {
                         set_label: "🍜",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AppInput::TabSelected(0));
-                        },
+                        connect_clicked => AppInput::TabSelected(0),
                     },
 
                     #[name = "tab_button_1"]
@@ -114,9 +110,7 @@ impl SimpleComponent for App {
                         set_label: "🎨",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AppInput::TabSelected(1));
-                        },
+                        connect_clicked => AppInput::TabSelected(0),
                     },
 
                     #[name = "tab_button_2"]
@@ -124,9 +118,7 @@ impl SimpleComponent for App {
                         set_label: "🍀",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AppInput::TabSelected(2));
-                        },
+                        connect_clicked => AppInput::TabSelected(0),
                     },
 
                     #[name = "tab_button_3"]
@@ -134,9 +126,7 @@ impl SimpleComponent for App {
                         set_label: "🧿",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AppInput::TabSelected(3));
-                        },
+                        connect_clicked => AppInput::TabSelected(0),
                     },
 
                     #[name = "tab_button_4"]
@@ -144,9 +134,7 @@ impl SimpleComponent for App {
                         set_label: "🌟",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AppInput::TabSelected(4));
-                        },
+                        connect_clicked => AppInput::TabSelected(0),
                     },
 
                     #[name = "tab_button_5"]
@@ -154,9 +142,7 @@ impl SimpleComponent for App {
                         set_label: "🐐",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AppInput::TabSelected(5));
-                        },
+                        connect_clicked => AppInput::TabSelected(0),
                     },
 
                     #[name = "tab_button_6"]
@@ -164,9 +150,7 @@ impl SimpleComponent for App {
                         set_label: "🏆",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AppInput::TabSelected(6));
-                        },
+                        connect_clicked => AppInput::TabSelected(0),
                     },
 
                     #[name = "tab_button_7"]
@@ -174,9 +158,7 @@ impl SimpleComponent for App {
                         set_label: "🕊️",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AppInput::TabSelected(7));
-                        },
+                        connect_clicked => AppInput::TabSelected(0),
                     },
 
                     #[name = "tab_button_8"]
@@ -184,9 +166,7 @@ impl SimpleComponent for App {
                         set_label: "🏡",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AppInput::TabSelected(8));
-                        },
+                        connect_clicked => AppInput::TabSelected(0),
                     },
                 },
 
@@ -213,27 +193,21 @@ impl SimpleComponent for App {
                             set_label: "[]=",
                             set_width_request: 40,
                             add_css_class: "layout-button",
-                            connect_clicked[sender] => move |_| {
-                                sender.input(AppInput::LayoutChanged(0));
-                            },
+                            connect_clicked => AppInput::LayoutChanged(0),
                         },
 
                         gtk::Button {
                             set_label: "<><",
                             set_width_request: 40,
                             add_css_class: "layout-button",
-                            connect_clicked[sender] => move |_| {
-                                sender.input(AppInput::LayoutChanged(1));
-                            },
+                            connect_clicked => AppInput::LayoutChanged(1),
                         },
 
                         gtk::Button {
                             set_label: "[M]",
                             set_width_request: 40,
                             add_css_class: "layout-button",
-                            connect_clicked[sender] => move |_| {
-                                sender.input(AppInput::LayoutChanged(2));
-                            },
+                            connect_clicked => AppInput::LayoutChanged(2),
                         },
                     }
                 },
@@ -279,9 +253,7 @@ impl SimpleComponent for App {
                         set_label: " s 1.0 ",
                         set_width_request: 60,
                         add_css_class: "screenshot-button",
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AppInput::Screenshot);
-                        },
+                        connect_clicked => AppInput::Screenshot,
                     },
 
                     // 时间显示
@@ -290,9 +262,7 @@ impl SimpleComponent for App {
                         set_label: &model.current_time,
                         set_width_request: 60,
                         add_css_class: "time-button",
-                        connect_clicked[sender] => move |_| {
-                            sender.input(AppInput::ToggleSeconds);
-                        },
+                        connect_clicked => AppInput::ToggleSeconds,
                     },
 
                     // 监视器标签
@@ -320,23 +290,23 @@ impl SimpleComponent for App {
         info!("Starting Relm4 Bar v1.0");
         info!("Shared path: {}", shared_path);
 
-        // 初始化状态
-        let state = Arc::new(Mutex::new(AppState::new()));
         // 创建命令通道
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
         let model = App {
-            state: state.clone(),
+            state: AppState::new(),
             command_sender: Some(command_sender),
+            system_monitor: SystemMonitor::new(1),
             memory_usage: 0.0,
             cpu_usage: 0.0,
             current_time: String::new(),
+            tracker: 0,
         };
 
         // 应用CSS样式
         load_css();
 
         // 启动后台任务
-        spawn_background_tasks(sender.clone(), state.clone(), shared_path, command_receiver);
+        spawn_background_tasks(sender.clone(), shared_path, command_receiver);
 
         let widgets = view_output!();
 
@@ -347,9 +317,7 @@ impl SimpleComponent for App {
         match msg {
             AppInput::TabSelected(index) => {
                 info!("Tab selected: {}", index);
-                if let Ok(mut state) = self.state.lock() {
-                    state.active_tab = index;
-                }
+                self.state.active_tab = index;
                 self.send_tag_command(true);
                 self.update_tab_styles(&sender);
             }
@@ -360,9 +328,7 @@ impl SimpleComponent for App {
             }
 
             AppInput::ToggleSeconds => {
-                if let Ok(mut state) = self.state.lock() {
-                    state.show_seconds = !state.show_seconds;
-                }
+                self.state.show_seconds = !self.state.show_seconds;
                 self.update_time_display();
             }
 
@@ -381,15 +347,12 @@ impl SimpleComponent for App {
             }
 
             AppInput::SystemUpdate => {
-                if let Ok(mut state) = self.state.lock() {
-                    state.system_monitor.update_if_needed();
-                    // state.audio_manager.update_if_needed();
+                self.system_monitor.update_if_needed();
 
-                    if let Some(snapshot) = state.system_monitor.get_snapshot() {
-                        let total = snapshot.memory_available + snapshot.memory_used;
-                        self.memory_usage = snapshot.memory_used as f64 / total as f64;
-                        self.cpu_usage = snapshot.cpu_average as f64 / 100.0;
-                    }
+                if let Some(snapshot) = self.system_monitor.get_snapshot() {
+                    let total = snapshot.memory_available + snapshot.memory_used;
+                    self.memory_usage = snapshot.memory_used as f64 / total as f64;
+                    self.cpu_usage = snapshot.cpu_average as f64 / 100.0;
                 }
             }
 
@@ -402,30 +365,16 @@ impl SimpleComponent for App {
 
 impl App {
     fn get_layout_symbol(&self) -> String {
-        if let Ok(state) = self.state.lock() {
-            state.layout_symbol.clone()
-        } else {
-            " ? ".to_string()
-        }
+        self.state.layout_symbol.clone()
     }
 
     fn get_monitor_icon(&self) -> String {
-        if let Ok(state) = self.state.lock() {
-            monitor_num_to_icon(state.monitor_num)
-        } else {
-            "?".to_string()
-        }
+        monitor_num_to_icon(self.state.monitor_num)
     }
 
     fn update_time_display(&mut self) {
-        let show_seconds = if let Ok(state) = self.state.lock() {
-            state.show_seconds
-        } else {
-            false
-        };
-
         let now = Local::now();
-        let format_str = if show_seconds {
+        let format_str = if self.state.show_seconds {
             "%Y-%m-%d %H:%M:%S"
         } else {
             "%Y-%m-%d %H:%M"
@@ -434,13 +383,16 @@ impl App {
     }
 
     fn send_tag_command(&self, is_view: bool) {
-        if let (Ok(state), Some(sender)) = (self.state.lock(), &self.command_sender) {
-            if let Some(ref message) = state.last_shared_message {
+        if let Some(sender) = &self.command_sender {
+            if let Some(ref message) = self.state.last_shared_message {
                 let command = if is_view {
-                    SharedCommand::view_tag(1 << state.active_tab, message.monitor_info.monitor_num)
+                    SharedCommand::view_tag(
+                        1 << self.state.active_tab,
+                        message.monitor_info.monitor_num,
+                    )
                 } else {
                     SharedCommand::toggle_tag(
-                        1 << state.active_tab,
+                        1 << self.state.active_tab,
                         message.monitor_info.monitor_num,
                     )
                 };
@@ -453,8 +405,8 @@ impl App {
     }
 
     fn send_layout_command(&self, layout_index: u32) {
-        if let (Ok(state), Some(sender)) = (self.state.lock(), &self.command_sender) {
-            if let Some(ref message) = state.last_shared_message {
+        if let Some(sender) = &self.command_sender {
+            if let Some(ref message) = self.state.last_shared_message {
                 let monitor_id = message.monitor_info.monitor_num;
                 let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
                 if let Err(e) = sender.send(command) {
@@ -465,17 +417,15 @@ impl App {
     }
 
     fn process_shared_message(&mut self, message: SharedMessage) {
-        if let Ok(mut state) = self.state.lock() {
-            state.last_shared_message = Some(message.clone());
-            state.layout_symbol = message.monitor_info.ltsymbol.clone();
-            state.monitor_num = message.monitor_info.monitor_num as u8;
-            state.tag_status_vec = message.monitor_info.tag_status_vec.clone();
+        self.state.last_shared_message = Some(message.clone());
+        self.state.layout_symbol = message.monitor_info.ltsymbol.clone();
+        self.state.monitor_num = message.monitor_info.monitor_num as u8;
+        self.state.tag_status_vec = message.monitor_info.tag_status_vec.clone();
 
-            // 更新活动标签
-            for (index, tag_status) in message.monitor_info.tag_status_vec.iter().enumerate() {
-                if tag_status.is_selected {
-                    state.active_tab = index;
-                }
+        // 更新活动标签
+        for (index, tag_status) in message.monitor_info.tag_status_vec.iter().enumerate() {
+            if tag_status.is_selected {
+                self.state.active_tab = index;
             }
         }
     }
@@ -520,7 +470,6 @@ fn draw_cpu_usage(ctx: &Context, width: i32, height: i32, cpu_usage: f64) {
 // 后台任务
 fn spawn_background_tasks(
     sender: ComponentSender<App>,
-    state: Arc<Mutex<AppState>>,
     shared_path: String,
     command_receiver: mpsc::UnboundedReceiver<SharedCommand>,
 ) {
@@ -547,14 +496,13 @@ fn spawn_background_tasks(
     // 共享内存任务
     let sender_clone = sender.clone();
     relm4::spawn(async move {
-        shared_memory_worker(shared_path, state, sender_clone, command_receiver).await;
+        shared_memory_worker(shared_path, sender_clone, command_receiver).await;
     });
 }
 
 // 共享内存工作器
 async fn shared_memory_worker(
     shared_path: String,
-    state: Arc<Mutex<AppState>>,
     sender: ComponentSender<App>,
     mut command_receiver: mpsc::UnboundedReceiver<SharedCommand>,
 ) {
@@ -632,7 +580,7 @@ fn monitor_num_to_icon(monitor_num: u8) -> String {
 
 fn load_css() {
     let provider = gtk::CssProvider::new();
-    provider.load_from_string(CSS_STYLES);
+    provider.load_from_string(include_str!("styles.css"));
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
@@ -641,75 +589,6 @@ fn load_css() {
         );
     }
 }
-
-const CSS_STYLES: &str = r#"
-window {
-  background-color: rgba(255, 255, 255, 0.9);
-}
-
-.tab-button {
-  margin: 0px 2px;
-  padding: 0px;
-  border-radius: 6px;
-  font-size: 20px;
-  border: 1px solid transparent;
-  background-image: none;
-  color: #333;
-  transition: all 0.2s ease;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-.tab-button:hover {
-  transform: scale(1.02);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-  transition: all 0.2s ease;
-}
-
-.time-button {
-  border-radius: 2px;
-  border: 1px solid white;
-  margin: 0px 2px;
-  padding: 0px;
-  background-color: rgba(255, 254, 253, 0.8);
-  background-image: none;
-}
-
-.time-button:hover {
-  background-color: cyan;
-  background-image: none;
-  color: darkorange;
-}
-
-.layout-button {
-  margin: 0px 2px;
-  padding: 0px;
-  font-size: 12px;
-}
-
-.screenshot-button {
-  margin: 0px 2px;
-  padding: 0px;
-  border-radius: 2px;
-  border: 0.5px solid white;
-  background-color: rgba(255, 254, 253, 0.8);
-  background-image: none;
-}
-
-.screenshot-button:hover {
-  background-color: cyan;
-  background-image: none;
-  color: darkorange;
-}
-
-.layout-label {
-  color: orange;
-}
-
-.neon-progress progress {
-  background: linear-gradient(to left, #ff00ff, #00ffff);
-  border-radius: 1px;
-}
-"#;
 
 fn initialize_logging(shared_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let now = Local::now();
