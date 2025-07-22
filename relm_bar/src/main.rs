@@ -424,18 +424,16 @@ impl SimpleComponent for App {
     ) -> ComponentParts<Self> {
         // 初始化日志
         if let Err(e) = initialize_logging(&shared_path) {
-            eprintln!("Failed to initialize logging: {}", e);
+            error!("Failed to initialize logging: {}", e);
+            std::process::exit(1);
         }
-
-        info!("Starting GTK4 Bar with Relm4 v1.0");
+        info!("Starting Relm4 Bar v1.0");
         info!("Shared path: {}", shared_path);
 
         // 初始化状态
         let state = Arc::new(Mutex::new(AppState::new()));
-
         // 创建命令通道
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
-
         let model = App {
             state: state.clone(),
             command_sender: Some(command_sender),
@@ -827,7 +825,12 @@ fn initialize_logging(shared_path: &str) -> Result<(), Box<dyn std::error::Error
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
-
-    let app = RelmApp::new("com.example.gtk_bar_relm4").with_args(vec![]); // 传递空参数避免文件处理
+    let mut instance_name = shared_path.replace("/dev/shm/monitor_", "relm_bar_");
+    if instance_name.is_empty() {
+        instance_name = "relm_bar".to_string();
+    }
+    instance_name = format!("{}.{}", instance_name, instance_name);
+    info!("instance_name: {}", instance_name);
+    let app = RelmApp::new(&instance_name).with_args(vec![]); // 传递空参数避免文件处理
     app.run::<App>(shared_path);
 }
