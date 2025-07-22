@@ -103,6 +103,12 @@ impl SimpleComponent for App {
                         set_width_request: 40,
                         add_css_class: "tab-button",
                         connect_clicked => AppInput::TabSelected(0),
+                           // 使用 track! 宏动态更新CSS类
+                            #[track = (
+                                model.tag_status_vec.get(i),
+                                model.active_tab == i
+                            )]
+                            set_class_active("urgent", model.tag_status_vec.get(i).map_or(false, |s| s.is_urg)),
                     },
 
                     #[name = "tab_button_1"]
