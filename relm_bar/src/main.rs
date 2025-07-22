@@ -7,7 +7,7 @@ use log::{error, info, warn};
 use relm4::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmApp, RelmWidgetExt, SimpleComponent};
 use std::time::Duration;
-use tokio::sync::mpsc;
+use tokio::sync::mpsc::{self, UnboundedSender};
 
 mod audio_manager;
 mod error;
@@ -16,38 +16,6 @@ mod system_monitor;
 use error::AppError;
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus};
 use system_monitor::SystemMonitor;
-
-// 系统监控结构
-#[derive(Debug, Clone)]
-pub struct SystemSnapshot {
-    pub memory_used: u64,
-    pub memory_available: u64,
-    pub cpu_average: f32,
-}
-
-// 应用状态
-#[derive(PartialEq)]
-pub struct AppState {
-    pub active_tab: usize,
-    pub layout_symbol: String,
-    pub monitor_num: u8,
-    pub show_seconds: bool,
-    pub tag_status_vec: Vec<TagStatus>,
-    pub last_shared_message: Option<SharedMessage>,
-}
-
-impl AppState {
-    pub fn new() -> Self {
-        Self {
-            active_tab: 0,
-            layout_symbol: " ? ".to_string(),
-            monitor_num: 0,
-            show_seconds: false,
-            tag_status_vec: Vec::new(),
-            last_shared_message: None,
-        }
-    }
-}
 
 // 主应用消息
 #[derive(Debug)]
@@ -63,19 +31,25 @@ pub enum AppInput {
 
 // 主应用模型
 #[tracker::track]
-pub struct App {
-    state: AppState,
+pub struct AppModel {
+    pub active_tab: usize,
+    pub layout_symbol: String,
+    pub monitor_num: u8,
+    pub show_seconds: bool,
+    pub tag_status_vec: Vec<TagStatus>,
+    pub last_shared_message: Option<SharedMessage>,
+    pub memory_usage: f64,
+    pub cpu_usage: f64,
+    pub current_time: String,
+
     #[do_not_track]
     command_sender: Option<mpsc::UnboundedSender<SharedCommand>>,
     #[do_not_track]
     pub system_monitor: SystemMonitor,
-    memory_usage: f64,
-    cpu_usage: f64,
-    current_time: String,
 }
 
 #[relm4::component(pub)]
-impl SimpleComponent for App {
+impl SimpleComponent for AppModel {
     type Init = String; // 共享路径
     type Input = AppInput;
     type Output = ();
@@ -104,12 +78,16 @@ impl SimpleComponent for App {
                         set_width_request: 40,
                         add_css_class: "tab-button",
                         connect_clicked => AppInput::TabSelected(0),
-                           // 使用 track! 宏动态更新CSS类
-                            #[track = (
-                                model.tag_status_vec.get(0),
-                                model.active_tab == 0
-                            )]
-                            set_class_active("urgent", model.state.tag_status_vec.get(0).map_or(false, |s| s.is_urg)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("occupied", model.tag_status_vec.get(0).map_or(false, |s| s.is_occ)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("urgent", model.tag_status_vec.get(0).map_or(false, |s| s.is_urg)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("filled", model.tag_status_vec.get(0).map_or(false, |s| s.is_filled)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("selected", model.tag_status_vec.get(0).map_or(false, |s| s.is_selected)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("empty", model.tag_status_vec.get(0).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
                     },
 
                     #[name = "tab_button_1"]
@@ -117,7 +95,17 @@ impl SimpleComponent for App {
                         set_label: "🎨",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(0),
+                        connect_clicked => AppInput::TabSelected(1),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("occupied", model.tag_status_vec.get(1).map_or(false, |s| s.is_occ)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("urgent", model.tag_status_vec.get(1).map_or(false, |s| s.is_urg)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("filled", model.tag_status_vec.get(1).map_or(false, |s| s.is_filled)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("selected", model.tag_status_vec.get(1).map_or(false, |s| s.is_selected)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("empty", model.tag_status_vec.get(1).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
                     },
 
                     #[name = "tab_button_2"]
@@ -125,7 +113,17 @@ impl SimpleComponent for App {
                         set_label: "🍀",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(0),
+                        connect_clicked => AppInput::TabSelected(2),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("occupied", model.tag_status_vec.get(2).map_or(false, |s| s.is_occ)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("urgent", model.tag_status_vec.get(2).map_or(false, |s| s.is_urg)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("filled", model.tag_status_vec.get(2).map_or(false, |s| s.is_filled)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("selected", model.tag_status_vec.get(2).map_or(false, |s| s.is_selected)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("empty", model.tag_status_vec.get(2).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
                     },
 
                     #[name = "tab_button_3"]
@@ -133,7 +131,17 @@ impl SimpleComponent for App {
                         set_label: "🧿",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(0),
+                        connect_clicked => AppInput::TabSelected(3),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("occupied", model.tag_status_vec.get(3).map_or(false, |s| s.is_occ)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("urgent", model.tag_status_vec.get(3).map_or(false, |s| s.is_urg)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("filled", model.tag_status_vec.get(3).map_or(false, |s| s.is_filled)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("selected", model.tag_status_vec.get(3).map_or(false, |s| s.is_selected)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("empty", model.tag_status_vec.get(3).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
                     },
 
                     #[name = "tab_button_4"]
@@ -141,7 +149,17 @@ impl SimpleComponent for App {
                         set_label: "🌟",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(0),
+                        connect_clicked => AppInput::TabSelected(4),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("occupied", model.tag_status_vec.get(4).map_or(false, |s| s.is_occ)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("urgent", model.tag_status_vec.get(4).map_or(false, |s| s.is_urg)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("filled", model.tag_status_vec.get(4).map_or(false, |s| s.is_filled)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("selected", model.tag_status_vec.get(4).map_or(false, |s| s.is_selected)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("empty", model.tag_status_vec.get(4).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
                     },
 
                     #[name = "tab_button_5"]
@@ -149,7 +167,17 @@ impl SimpleComponent for App {
                         set_label: "🐐",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(0),
+                        connect_clicked => AppInput::TabSelected(5),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("occupied", model.tag_status_vec.get(5).map_or(false, |s| s.is_occ)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("urgent", model.tag_status_vec.get(5).map_or(false, |s| s.is_urg)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("filled", model.tag_status_vec.get(5).map_or(false, |s| s.is_filled)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("selected", model.tag_status_vec.get(5).map_or(false, |s| s.is_selected)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("empty", model.tag_status_vec.get(5).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
                     },
 
                     #[name = "tab_button_6"]
@@ -157,7 +185,17 @@ impl SimpleComponent for App {
                         set_label: "🏆",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(0),
+                        connect_clicked => AppInput::TabSelected(6),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("occupied", model.tag_status_vec.get(6).map_or(false, |s| s.is_occ)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("urgent", model.tag_status_vec.get(6).map_or(false, |s| s.is_urg)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("filled", model.tag_status_vec.get(6).map_or(false, |s| s.is_filled)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("selected", model.tag_status_vec.get(6).map_or(false, |s| s.is_selected)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("empty", model.tag_status_vec.get(6).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
                     },
 
                     #[name = "tab_button_7"]
@@ -165,7 +203,17 @@ impl SimpleComponent for App {
                         set_label: "🕊️",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(0),
+                        connect_clicked => AppInput::TabSelected(7),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("occupied", model.tag_status_vec.get(7).map_or(false, |s| s.is_occ)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("urgent", model.tag_status_vec.get(7).map_or(false, |s| s.is_urg)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("filled", model.tag_status_vec.get(7).map_or(false, |s| s.is_filled)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("selected", model.tag_status_vec.get(7).map_or(false, |s| s.is_selected)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("empty", model.tag_status_vec.get(7).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
                     },
 
                     #[name = "tab_button_8"]
@@ -173,7 +221,17 @@ impl SimpleComponent for App {
                         set_label: "🏡",
                         set_width_request: 40,
                         add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(0),
+                        connect_clicked => AppInput::TabSelected(8),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("occupied", model.tag_status_vec.get(8).map_or(false, |s| s.is_occ)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("urgent", model.tag_status_vec.get(8).map_or(false, |s| s.is_urg)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("filled", model.tag_status_vec.get(8).map_or(false, |s| s.is_filled)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("selected", model.tag_status_vec.get(8).map_or(false, |s| s.is_selected)),
+                        #[track(model.changed(AppModel::tag_status_vec()))]
+                        set_class_active: ("empty", model.tag_status_vec.get(8).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
                     },
                 },
 
@@ -303,15 +361,7 @@ impl SimpleComponent for App {
 
         // 创建命令通道
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
-        let model = App {
-            state: AppState::new(),
-            command_sender: Some(command_sender),
-            system_monitor: SystemMonitor::new(1),
-            memory_usage: 0.0,
-            cpu_usage: 0.0,
-            current_time: String::new(),
-            tracker: 0,
-        };
+        let model = AppModel::new(command_sender);
 
         // 应用CSS样式
         load_css();
@@ -328,7 +378,7 @@ impl SimpleComponent for App {
         match msg {
             AppInput::TabSelected(index) => {
                 info!("Tab selected: {}", index);
-                self.state.active_tab = index;
+                self.active_tab = index;
                 self.send_tag_command(true);
                 self.update_tab_styles(&sender);
             }
@@ -339,7 +389,7 @@ impl SimpleComponent for App {
             }
 
             AppInput::ToggleSeconds => {
-                self.state.show_seconds = !self.state.show_seconds;
+                self.show_seconds = !self.show_seconds;
                 self.update_time_display();
             }
 
@@ -374,18 +424,31 @@ impl SimpleComponent for App {
     }
 }
 
-impl App {
-    fn get_layout_symbol(&self) -> String {
-        self.state.layout_symbol.clone()
+impl AppModel {
+    pub fn new(command_sender: UnboundedSender<SharedCommand>) -> Self {
+        Self {
+            active_tab: 0,
+            layout_symbol: " ? ".to_string(),
+            monitor_num: 0,
+            show_seconds: false,
+            tag_status_vec: Vec::new(),
+            last_shared_message: None,
+            memory_usage: 0.,
+            cpu_usage: 0.,
+            current_time: "".to_string(),
+            command_sender: Some(command_sender),
+            system_monitor: SystemMonitor::new(1),
+            tracker: 0,
+        }
     }
 
     fn get_monitor_icon(&self) -> String {
-        monitor_num_to_icon(self.state.monitor_num)
+        monitor_num_to_icon(self.monitor_num)
     }
 
     fn update_time_display(&mut self) {
         let now = Local::now();
-        let format_str = if self.state.show_seconds {
+        let format_str = if self.show_seconds {
             "%Y-%m-%d %H:%M:%S"
         } else {
             "%Y-%m-%d %H:%M"
@@ -395,15 +458,12 @@ impl App {
 
     fn send_tag_command(&self, is_view: bool) {
         if let Some(sender) = &self.command_sender {
-            if let Some(ref message) = self.state.last_shared_message {
+            if let Some(ref message) = self.last_shared_message {
                 let command = if is_view {
-                    SharedCommand::view_tag(
-                        1 << self.state.active_tab,
-                        message.monitor_info.monitor_num,
-                    )
+                    SharedCommand::view_tag(1 << self.active_tab, message.monitor_info.monitor_num)
                 } else {
                     SharedCommand::toggle_tag(
-                        1 << self.state.active_tab,
+                        1 << self.active_tab,
                         message.monitor_info.monitor_num,
                     )
                 };
@@ -417,7 +477,7 @@ impl App {
 
     fn send_layout_command(&self, layout_index: u32) {
         if let Some(sender) = &self.command_sender {
-            if let Some(ref message) = self.state.last_shared_message {
+            if let Some(ref message) = self.last_shared_message {
                 let monitor_id = message.monitor_info.monitor_num;
                 let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
                 if let Err(e) = sender.send(command) {
@@ -428,15 +488,15 @@ impl App {
     }
 
     fn process_shared_message(&mut self, message: SharedMessage) {
-        self.state.last_shared_message = Some(message.clone());
-        self.state.layout_symbol = message.monitor_info.ltsymbol.clone();
-        self.state.monitor_num = message.monitor_info.monitor_num as u8;
-        self.state.tag_status_vec = message.monitor_info.tag_status_vec.clone();
+        self.last_shared_message = Some(message.clone());
+        self.layout_symbol = message.monitor_info.ltsymbol.clone();
+        self.monitor_num = message.monitor_info.monitor_num as u8;
+        self.set_tag_status_vec(message.monitor_info.tag_status_vec.clone());
 
         // 更新活动标签
         for (index, tag_status) in message.monitor_info.tag_status_vec.iter().enumerate() {
             if tag_status.is_selected {
-                self.state.active_tab = index;
+                self.active_tab = index;
             }
         }
     }
@@ -480,7 +540,7 @@ fn draw_cpu_usage(ctx: &Context, width: i32, height: i32, cpu_usage: f64) {
 
 // 后台任务
 fn spawn_background_tasks(
-    sender: ComponentSender<App>,
+    sender: ComponentSender<AppModel>,
     shared_path: String,
     command_receiver: mpsc::UnboundedReceiver<SharedCommand>,
 ) {
@@ -514,7 +574,7 @@ fn spawn_background_tasks(
 // 共享内存工作器
 async fn shared_memory_worker(
     shared_path: String,
-    sender: ComponentSender<App>,
+    sender: ComponentSender<AppModel>,
     mut command_receiver: mpsc::UnboundedReceiver<SharedCommand>,
 ) {
     info!("Starting shared memory worker");
@@ -646,5 +706,5 @@ fn main() {
     instance_name = format!("{}.{}", instance_name, instance_name);
     info!("instance_name: {}", instance_name);
     let app = RelmApp::new(&instance_name).with_args(vec![]); // 传递空参数避免文件处理
-    app.run::<App>(shared_path);
+    app.run::<AppModel>(shared_path);
 }
