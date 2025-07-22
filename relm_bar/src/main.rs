@@ -374,13 +374,12 @@ impl SimpleComponent for AppModel {
         ComponentParts { model, widgets }
     }
 
-    fn update(&mut self, msg: Self::Input, sender: ComponentSender<Self>) {
+    fn update(&mut self, msg: Self::Input, _sender: ComponentSender<Self>) {
         match msg {
             AppInput::TabSelected(index) => {
                 info!("Tab selected: {}", index);
                 self.active_tab = index;
                 self.send_tag_command(true);
-                self.update_tab_styles(&sender);
             }
 
             AppInput::LayoutChanged(layout_index) => {
@@ -404,7 +403,6 @@ impl SimpleComponent for AppModel {
             AppInput::SharedMessageReceived(message) => {
                 info!("SharedMessageReceived: {:?}", message);
                 self.process_shared_message(message);
-                self.update_tab_styles(&sender);
             }
 
             AppInput::SystemUpdate => {
@@ -499,12 +497,6 @@ impl AppModel {
                 self.active_tab = index;
             }
         }
-    }
-
-    fn update_tab_styles(&self, _sender: &ComponentSender<Self>) {
-        // 在Relm4中，样式更新需要通过重新渲染来实现
-        // 这里暂时留空，实际实现需要更复杂的机制
-        info!("Updating tab styles");
     }
 }
 
@@ -666,13 +658,13 @@ fn initialize_logging(shared_path: &str) -> Result<(), Box<dyn std::error::Error
     let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
 
     let file_name = if shared_path.is_empty() {
-        "gtk_bar_relm4".to_string()
+        "relm_bar".to_string()
     } else {
         std::path::Path::new(shared_path)
             .file_name()
             .and_then(|name| name.to_str())
-            .map(|name| format!("gtk_bar_relm4_{}", name))
-            .unwrap_or_else(|| "gtk_bar_relm4".to_string())
+            .map(|name| format!("relm_bar_{}", name))
+            .unwrap_or_else(|| "relm_bar".to_string())
     };
 
     let log_filename = format!("{}_{}", file_name, timestamp);

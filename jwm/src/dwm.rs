@@ -508,7 +508,9 @@ impl Client {
     }
 
     pub fn is_status_bar(&self) -> bool {
-        return self.name == Config::status_bar_name
+        return ((self.name == Config::status_bar_name)
+            || (self.name == Config::status_bar_0)
+            || (self.name == Config::status_bar_1))
             && ((self.class == Config::status_bar_0 && self.instance == Config::status_bar_0)
                 || (self.class == Config::status_bar_1 && self.instance == Config::status_bar_1));
     }

@@ -11,6 +11,7 @@ iced_bar = []
 dioxus_bar = []
 tauri_bar = []
 gtk_bar = []
+relm_bar = []
 nixgl = []
 
 [dependencies]
