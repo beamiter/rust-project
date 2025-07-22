@@ -716,7 +716,7 @@ fn main() -> glib::ExitCode {
     info!("instance_name: {}", instance_name);
     info!("Starting GTK4 Bar v1.0");
 
-    // 创建 GTK 应用 - 修复版本
+    // 创建 GTK 应用
     let app = Application::builder()
         .application_id(instance_name)
         .flags(gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::HANDLES_COMMAND_LINE)

@@ -5,65 +5,19 @@ use cairo::Context;
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use gtk::prelude::*;
-use log::{error, info};
+use log::{error, info, warn};
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
-// 假设这些是外部依赖，需要根据实际情况调整
-// use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus};
+mod audio_manager;
+mod error;
+mod system_monitor;
 
-// 为了演示，这里定义简化的结构体
-#[derive(Debug, Clone)]
-pub struct TagStatus {
-    pub is_selected: bool,
-    pub is_occ: bool,
-    pub is_filled: bool,
-    pub is_urg: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct MonitorInfo {
-    pub monitor_num: u32,
-    pub monitor_x: i32,
-    pub monitor_y: i32,
-    pub monitor_width: i32,
-    pub monitor_height: i32,
-    pub border_w: i32,
-    pub ltsymbol: String,
-    pub tag_status_vec: Vec<TagStatus>,
-}
-
-#[derive(Debug, Clone)]
-pub struct SharedMessage {
-    pub timestamp: u128,
-    pub monitor_info: MonitorInfo,
-}
-
-#[derive(Debug, Clone)]
-pub struct SharedCommand {
-    pub command_type: u32,
-    pub value: u32,
-    pub monitor_id: u32,
-}
-
-impl SharedCommand {
-    pub fn new(command_type: u32, value: u32, monitor_id: u32) -> Self {
-        Self {
-            command_type,
-            value,
-            monitor_id,
-        }
-    }
-
-    pub fn view_tag(tag_bit: u32, monitor_id: u32) -> Self {
-        Self::new(1, tag_bit, monitor_id)
-    }
-
-    pub fn toggle_tag(tag_bit: u32, monitor_id: u32) -> Self {
-        Self::new(2, tag_bit, monitor_id)
-    }
-}
+// use audio_manager::AudioManager;
+use error::AppError;
+use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus};
+use system_monitor::SystemMonitor;
 
 // 系统监控结构
 #[derive(Debug, Clone)]
@@ -71,68 +25,6 @@ pub struct SystemSnapshot {
     pub memory_used: u64,
     pub memory_available: u64,
     pub cpu_average: f32,
-}
-
-pub struct SystemMonitor {
-    last_update: std::time::Instant,
-    update_interval: Duration,
-    snapshot: Option<SystemSnapshot>,
-}
-
-impl SystemMonitor {
-    pub fn new(interval_secs: u64) -> Self {
-        Self {
-            last_update: std::time::Instant::now() - Duration::from_secs(interval_secs),
-            update_interval: Duration::from_secs(interval_secs),
-            snapshot: None,
-        }
-    }
-
-    pub fn update_if_needed(&mut self) {
-        if self.last_update.elapsed() >= self.update_interval {
-            self.update();
-        }
-    }
-
-    pub fn update(&mut self) {
-        // 模拟系统数据获取
-        self.snapshot = Some(SystemSnapshot {
-            memory_used: 4_000_000_000,
-            memory_available: 8_000_000_000,
-            cpu_average: (std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs()
-                % 100) as f32,
-        });
-        self.last_update = std::time::Instant::now();
-    }
-
-    pub fn get_snapshot(&self) -> Option<&SystemSnapshot> {
-        self.snapshot.as_ref()
-    }
-}
-
-// 音频管理器
-pub struct AudioManager {
-    last_update: std::time::Instant,
-    update_interval: Duration,
-}
-
-impl AudioManager {
-    pub fn new() -> Self {
-        Self {
-            last_update: std::time::Instant::now(),
-            update_interval: Duration::from_secs(1),
-        }
-    }
-
-    pub fn update_if_needed(&mut self) {
-        if self.last_update.elapsed() >= self.update_interval {
-            self.last_update = std::time::Instant::now();
-            // 音频更新逻辑
-        }
-    }
 }
 
 // 应用状态
@@ -143,9 +35,8 @@ pub struct AppState {
     pub show_seconds: bool,
     pub tag_status_vec: Vec<TagStatus>,
     pub system_monitor: SystemMonitor,
-    pub audio_manager: AudioManager,
+    // pub audio_manager: AudioManager,
     pub last_shared_message: Option<SharedMessage>,
-    pub pending_messages: Vec<SharedMessage>,
 }
 
 impl AppState {
@@ -157,9 +48,8 @@ impl AppState {
             show_seconds: false,
             tag_status_vec: Vec::new(),
             system_monitor: SystemMonitor::new(1),
-            audio_manager: AudioManager::new(),
+            // audio_manager: AudioManager::new(),
             last_shared_message: None,
-            pending_messages: Vec::new(),
         }
     }
 }
@@ -485,6 +375,7 @@ impl SimpleComponent for App {
             }
 
             AppInput::SharedMessageReceived(message) => {
+                info!("SharedMessageReceived: {:?}", message);
                 self.process_shared_message(message);
                 self.update_tab_styles(&sender);
             }
@@ -492,7 +383,7 @@ impl SimpleComponent for App {
             AppInput::SystemUpdate => {
                 if let Ok(mut state) = self.state.lock() {
                     state.system_monitor.update_if_needed();
-                    state.audio_manager.update_if_needed();
+                    // state.audio_manager.update_if_needed();
 
                     if let Some(snapshot) = state.system_monitor.get_snapshot() {
                         let total = snapshot.memory_available + snapshot.memory_used;
@@ -564,7 +455,8 @@ impl App {
     fn send_layout_command(&self, layout_index: u32) {
         if let (Ok(state), Some(sender)) = (self.state.lock(), &self.command_sender) {
             if let Some(ref message) = state.last_shared_message {
-                let command = SharedCommand::new(3, layout_index, message.monitor_info.monitor_num);
+                let monitor_id = message.monitor_info.monitor_num;
+                let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
                 if let Err(e) = sender.send(command) {
                     error!("Failed to send layout command: {}", e);
                 }
@@ -583,7 +475,6 @@ impl App {
             for (index, tag_status) in message.monitor_info.tag_status_vec.iter().enumerate() {
                 if tag_status.is_selected {
                     state.active_tab = index;
-                    break;
                 }
             }
         }
@@ -662,30 +553,63 @@ fn spawn_background_tasks(
 
 // 共享内存工作器
 async fn shared_memory_worker(
-    _shared_path: String,
+    shared_path: String,
     state: Arc<Mutex<AppState>>,
     sender: ComponentSender<App>,
     mut command_receiver: mpsc::UnboundedReceiver<SharedCommand>,
 ) {
     info!("Starting shared memory worker");
+    let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
+        warn!("No shared path provided, running without shared memory");
+        None
+    } else {
+        match SharedRingBuffer::open(&shared_path) {
+            Ok(shared_buffer) => {
+                info!("Successfully opened shared ring buffer: {}", shared_path);
+                Some(shared_buffer)
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to open shared ring buffer: {}, attempting to create new one",
+                    e
+                );
+                match SharedRingBuffer::create(&shared_path, None, None) {
+                    Ok(shared_buffer) => {
+                        info!("Created new shared ring buffer: {}", shared_path);
+                        Some(shared_buffer)
+                    }
+                    Err(create_err) => {
+                        error!("Failed to create shared ring buffer: {}", create_err);
+                        None
+                    }
+                }
+            }
+        }
+    };
 
     let mut interval = tokio::time::interval(Duration::from_millis(10));
-
+    let mut prev_timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis();
     loop {
         tokio::select! {
             _ = interval.tick() => {
-                // 处理待处理的消息
-                if let Ok(mut state) = state.lock() {
-                    let messages = state.pending_messages.drain(..).collect::<Vec<_>>();
-                    for message in messages {
-                        sender.input(AppInput::SharedMessageReceived(message));
+                if let Some(ref shared_buffer) = shared_buffer_opt {
+                    match shared_buffer.try_read_latest_message::<SharedMessage>() {
+                        Ok(Some(message)) => {
+                            if prev_timestamp != message.timestamp {
+                                prev_timestamp = message.timestamp;
+                                sender.input(AppInput::SharedMessageReceived(message));
+                            }
+                        }
+                        Ok(_) => {}
+                        Err(e) => {
+                            error!("Ring buffer read error: {}", e);
+                        }
                     }
                 }
-
-                // 模拟接收共享内存消息
-                // 实际实现需要替换为真实的共享内存读取逻辑
             }
-
             command = command_receiver.recv() => {
                 if let Some(cmd) = command {
                     info!("Processing command: {:?}", cmd);
