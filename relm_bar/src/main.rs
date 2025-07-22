@@ -828,6 +828,6 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
-    let app = RelmApp::new("com.example.gtk_bar_relm4");
+    let app = RelmApp::new("com.example.gtk_bar_relm4").with_args(vec![]); // 传递空参数避免文件处理
     app.run::<App>(shared_path);
 }
