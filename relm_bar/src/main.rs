@@ -173,6 +173,7 @@ impl SimpleComponent for App {
                 // 布局标签
                 #[name = "layout_label"]
                 gtk::Label {
+                    #[watch]
                     set_text: &model.get_layout_symbol(),
                     set_width_request: 40,
                     set_halign: gtk::Align::Center,
@@ -234,6 +235,7 @@ impl SimpleComponent for App {
                             set_valign: gtk::Align::Center,
                             set_vexpand: true,
                             set_width_request: 200,
+                            #[watch]
                             set_fraction: model.memory_usage,
                             add_css_class: "neon-progress",
                         },
@@ -259,6 +261,7 @@ impl SimpleComponent for App {
                     // 时间显示
                     #[name = "time_label"]
                     gtk::Button {
+                        #[watch]
                         set_label: &model.current_time,
                         set_width_request: 60,
                         add_css_class: "time-button",
@@ -268,6 +271,7 @@ impl SimpleComponent for App {
                     // 监视器标签
                     #[name = "monitor_label"]
                     gtk::Label {
+                        #[watch]
                         set_text: &model.get_monitor_icon(),
                         set_width_request: 40,
                         set_halign: gtk::Align::Center,
