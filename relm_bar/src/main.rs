@@ -1,14 +1,14 @@
 // main.rs
 use relm4::prelude::*;
-use adw::prelude::*;
-use gtk::prelude::*;
+// use adw::prelude::*;
 use cairo::Context;
 use chrono::Local;
-use std::sync::{Arc, Mutex};
-use tokio::sync::mpsc;
-use std::time::Duration;
-use log::{error, info, warn};
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+use gtk::prelude::*;
+use log::{error, info};
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+use tokio::sync::mpsc;
 
 // 假设这些是外部依赖，需要根据实际情况调整
 // use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus};
@@ -49,13 +49,17 @@ pub struct SharedCommand {
 
 impl SharedCommand {
     pub fn new(command_type: u32, value: u32, monitor_id: u32) -> Self {
-        Self { command_type, value, monitor_id }
+        Self {
+            command_type,
+            value,
+            monitor_id,
+        }
     }
-    
+
     pub fn view_tag(tag_bit: u32, monitor_id: u32) -> Self {
         Self::new(1, tag_bit, monitor_id)
     }
-    
+
     pub fn toggle_tag(tag_bit: u32, monitor_id: u32) -> Self {
         Self::new(2, tag_bit, monitor_id)
     }
@@ -83,13 +87,13 @@ impl SystemMonitor {
             snapshot: None,
         }
     }
-    
+
     pub fn update_if_needed(&mut self) {
         if self.last_update.elapsed() >= self.update_interval {
             self.update();
         }
     }
-    
+
     pub fn update(&mut self) {
         // 模拟系统数据获取
         self.snapshot = Some(SystemSnapshot {
@@ -98,11 +102,12 @@ impl SystemMonitor {
             cpu_average: (std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
-                .as_secs() % 100) as f32,
+                .as_secs()
+                % 100) as f32,
         });
         self.last_update = std::time::Instant::now();
     }
-    
+
     pub fn get_snapshot(&self) -> Option<&SystemSnapshot> {
         self.snapshot.as_ref()
     }
@@ -121,7 +126,7 @@ impl AudioManager {
             update_interval: Duration::from_secs(1),
         }
     }
-    
+
     pub fn update_if_needed(&mut self) {
         if self.last_update.elapsed() >= self.update_interval {
             self.last_update = std::time::Instant::now();
@@ -188,7 +193,7 @@ impl SimpleComponent for App {
 
     view! {
         #[root]
-        adw::ApplicationWindow {
+        gtk::ApplicationWindow {
             set_decorated: false,
             set_default_size: (1000, 40),
             set_resizable: true,
@@ -371,13 +376,13 @@ impl SimpleComponent for App {
                     },
 
                     // CPU使用率绘制区域
-                    #[name = "cpu_drawing_area"]
-                    gtk::DrawingArea {
-                        set_width_request: 64,
-                        set_draw_func[model.cpu_usage] => move |_, ctx, width, height| {
-                            draw_cpu_usage(ctx, width, height, cpu_usage);
-                        },
-                    },
+                    // #[name = "cpu_drawing_area"]
+                    // gtk::DrawingArea {
+                    //     set_width_request: 64,
+                    //     set_draw_func[model.cpu_usage] => move |_, ctx, width, height| {
+                    //         draw_cpu_usage(ctx, width, height, cpu_usage);
+                    //     },
+                    // },
 
                     // 截图按钮
                     gtk::Button {
@@ -490,7 +495,7 @@ impl SimpleComponent for App {
                 if let Ok(mut state) = self.state.lock() {
                     state.system_monitor.update_if_needed();
                     state.audio_manager.update_if_needed();
-                    
+
                     if let Some(snapshot) = state.system_monitor.get_snapshot() {
                         let total = snapshot.memory_available + snapshot.memory_used;
                         self.memory_usage = snapshot.memory_used as f64 / total as f64;
@@ -540,14 +545,17 @@ impl App {
     }
 
     fn send_tag_command(&self, is_view: bool) {
-        if let (Ok(state), Some(ref sender)) = (self.state.lock(), &self.command_sender) {
+        if let (Ok(state), Some(sender)) = (self.state.lock(), &self.command_sender) {
             if let Some(ref message) = state.last_shared_message {
                 let command = if is_view {
                     SharedCommand::view_tag(1 << state.active_tab, message.monitor_info.monitor_num)
                 } else {
-                    SharedCommand::toggle_tag(1 << state.active_tab, message.monitor_info.monitor_num)
+                    SharedCommand::toggle_tag(
+                        1 << state.active_tab,
+                        message.monitor_info.monitor_num,
+                    )
                 };
-                
+
                 if let Err(e) = sender.send(command) {
                     error!("Failed to send tag command: {}", e);
                 }
@@ -556,7 +564,7 @@ impl App {
     }
 
     fn send_layout_command(&self, layout_index: u32) {
-        if let (Ok(state), Some(ref sender)) = (self.state.lock(), &self.command_sender) {
+        if let (Ok(state), Some(sender)) = (self.state.lock(), &self.command_sender) {
             if let Some(ref message) = state.last_shared_message {
                 let command = SharedCommand::new(3, layout_index, message.monitor_info.monitor_num);
                 if let Err(e) = sender.send(command) {
@@ -591,6 +599,7 @@ impl App {
 }
 
 // CPU绘制函数
+#[allow(dead_code)]
 fn draw_cpu_usage(ctx: &Context, width: i32, height: i32, cpu_usage: f64) {
     let width_f = width as f64;
     let height_f = height as f64;
@@ -624,7 +633,7 @@ fn spawn_background_tasks(
     sender: ComponentSender<App>,
     state: Arc<Mutex<AppState>>,
     shared_path: String,
-    mut command_receiver: mpsc::UnboundedReceiver<SharedCommand>,
+    command_receiver: mpsc::UnboundedReceiver<SharedCommand>,
 ) {
     // 系统监控任务
     let sender_clone = sender.clone();
@@ -655,15 +664,15 @@ fn spawn_background_tasks(
 
 // 共享内存工作器
 async fn shared_memory_worker(
-    shared_path: String,
+    _shared_path: String,
     state: Arc<Mutex<AppState>>,
     sender: ComponentSender<App>,
     mut command_receiver: mpsc::UnboundedReceiver<SharedCommand>,
 ) {
     info!("Starting shared memory worker");
-    
+
     let mut interval = tokio::time::interval(Duration::from_millis(10));
-    
+
     loop {
         tokio::select! {
             _ = interval.tick() => {
@@ -674,11 +683,11 @@ async fn shared_memory_worker(
                         sender.input(AppInput::SharedMessageReceived(message));
                     }
                 }
-                
+
                 // 模拟接收共享内存消息
                 // 实际实现需要替换为真实的共享内存读取逻辑
             }
-            
+
             command = command_receiver.recv() => {
                 if let Some(cmd) = command {
                     info!("Processing command: {:?}", cmd);
@@ -701,8 +710,7 @@ fn monitor_num_to_icon(monitor_num: u8) -> String {
 
 fn load_css() {
     let provider = gtk::CssProvider::new();
-    provider.load_from_data(CSS_STYLES);
-    
+    provider.load_from_string(CSS_STYLES);
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,
