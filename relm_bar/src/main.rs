@@ -5,6 +5,7 @@ use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use gtk::prelude::*;
 use log::{error, info, warn};
 use relm4::prelude::*;
+use relm4::{ComponentParts, ComponentSender, RelmApp, RelmWidgetExt, SimpleComponent};
 use std::time::Duration;
 use tokio::sync::mpsc;
 
@@ -105,10 +106,10 @@ impl SimpleComponent for App {
                         connect_clicked => AppInput::TabSelected(0),
                            // 使用 track! 宏动态更新CSS类
                             #[track = (
-                                model.tag_status_vec.get(i),
-                                model.active_tab == i
+                                model.tag_status_vec.get(0),
+                                model.active_tab == 0
                             )]
-                            set_class_active("urgent", model.tag_status_vec.get(i).map_or(false, |s| s.is_urg)),
+                            set_class_active("urgent", model.state.tag_status_vec.get(0).map_or(false, |s| s.is_urg)),
                     },
 
                     #[name = "tab_button_1"]
