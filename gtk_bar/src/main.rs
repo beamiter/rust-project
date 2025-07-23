@@ -495,7 +495,6 @@ impl TabBarApp {
             "Resizing window: {}x{} -> {}x{}",
             current_width, current_height, expected_width, expected_height
         );
-        // 设置新的默认大小
         self.window
             .set_default_size(expected_width, expected_height);
         let display = gtk4::gdk::Display::default().unwrap();

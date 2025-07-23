@@ -2,7 +2,9 @@
 use cairo::Context;
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+use gdk4_x11::x11::xlib::{XFlush, XMoveWindow};
 use gtk::prelude::*;
+use gtk4::Window;
 use log::{error, info, warn};
 use relm4::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmApp, RelmWidgetExt, SimpleComponent};
@@ -485,11 +487,81 @@ impl AppModel {
         }
     }
 
+    fn resize_window_to_monitor(
+        &self,
+        window: Window,
+        expected_x: i32,
+        expected_y: i32,
+        expected_width: i32,
+        expected_height: i32,
+    ) {
+        let current_width = window.width();
+        let current_height = window.height();
+        info!(
+            "Resizing window: {}x{} -> {}x{}",
+            current_width, current_height, expected_width, expected_height
+        );
+        window.set_default_size(expected_width, expected_height);
+        let display = gtk4::gdk::Display::default().unwrap();
+        unsafe {
+            if let Some(x11_display) = display.downcast_ref::<gdk4_x11::X11Display>() {
+                let xdisplay = x11_display.xdisplay();
+                let surface = window.surface().unwrap();
+                if let Some(x11_surface) = surface.downcast_ref::<gdk4_x11::X11Surface>() {
+                    let xwindow = x11_surface.xid();
+                    XMoveWindow(xdisplay as *mut _, xwindow, expected_x, expected_y);
+                    XFlush(xdisplay as *mut _);
+                }
+            }
+        }
+    }
+
     fn process_shared_message(&mut self, message: SharedMessage) {
         self.last_shared_message = Some(message.clone());
         self.layout_symbol = message.monitor_info.ltsymbol.clone();
         self.monitor_num = message.monitor_info.monitor_num as u8;
         self.set_tag_status_vec(message.monitor_info.tag_status_vec.clone());
+        let app = relm4::main_application();
+        if let Some(window) = app.active_window() {
+            let mut need_resize = false;
+            let mut new_x = 0;
+            let mut new_y = 0;
+            let mut new_width = 0;
+            let mut new_height = 0;
+            let current_width = window.width();
+            let current_height = window.height();
+            let monitor_x = message.monitor_info.monitor_x;
+            let monitor_y = message.monitor_info.monitor_y;
+            let monitor_width = message.monitor_info.monitor_width;
+            let border_width = message.monitor_info.border_w;
+            let expected_x = monitor_x + border_width;
+            let expected_y = monitor_y + border_width / 2;
+            let expected_width = monitor_width - 2 * border_width;
+            let expected_height = 40;
+            let width_diff = (current_width - expected_width).abs();
+            let height_diff = (current_height - expected_height).abs();
+            if width_diff > 2 || height_diff > 15 {
+                need_resize = true;
+                new_x = expected_x;
+                new_y = expected_y;
+                new_width = expected_width;
+                new_height = expected_height;
+                info!(
+                    "Window resize needed: current({}x{}) -> expected({}x{}), diff({},{})",
+                    current_width,
+                    current_height,
+                    expected_width,
+                    expected_height,
+                    width_diff,
+                    height_diff
+                );
+            } else {
+                info!("Window size is appropriate, no resize needed");
+            }
+            if need_resize {
+                self.resize_window_to_monitor(window, new_x, new_y, new_width, new_height);
+            }
+        }
 
         // 更新活动标签
         for (index, tag_status) in message.monitor_info.tag_status_vec.iter().enumerate() {
