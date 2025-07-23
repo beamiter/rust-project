@@ -6,6 +6,7 @@ use gdk4_x11::x11::xlib::{XFlush, XMoveWindow};
 use gtk::prelude::*;
 use gtk4::Window;
 use log::{error, info, warn};
+use relm4::abstractions::DrawHandler;
 use relm4::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmApp, RelmWidgetExt, SimpleComponent};
 use std::time::Duration;
@@ -48,6 +49,8 @@ pub struct AppModel {
     command_sender: Option<mpsc::UnboundedSender<SharedCommand>>,
     #[do_not_track]
     pub system_monitor: SystemMonitor,
+    #[do_not_track]
+    handler: DrawHandler,
 }
 
 #[relm4::component(pub)]
@@ -309,13 +312,12 @@ impl SimpleComponent for AppModel {
                     },
 
                     // CPU使用率绘制区域
-                    // #[name = "cpu_drawing_area"]
-                    // gtk::DrawingArea {
-                    //     set_width_request: 64,
-                    //     set_draw_func[model.cpu_usage] => move |_, ctx, width, height| {
-                    //         draw_cpu_usage(ctx, width, height, cpu_usage);
-                    //     },
-                    // },
+                    #[local_ref]
+                    area -> gtk::DrawingArea {
+                      set_vexpand: true,
+                      set_hexpand: true,
+                      set_width_request: 64,
+                    },
 
                     // 截图按钮
                     gtk::Button {
@@ -364,6 +366,7 @@ impl SimpleComponent for AppModel {
         // 创建命令通道
         let (command_sender, command_receiver) = mpsc::unbounded_channel();
         let model = AppModel::new(command_sender);
+        let area = model.handler.drawing_area();
 
         // 应用CSS样式
         load_css();
@@ -421,6 +424,14 @@ impl SimpleComponent for AppModel {
                 self.update_time_display();
             }
         }
+
+        let ctx = self.handler.get_context();
+        draw_cpu_usage(
+            &ctx,
+            self.handler.width(),
+            self.handler.height(),
+            self.cpu_usage,
+        );
     }
 }
 
@@ -439,6 +450,7 @@ impl AppModel {
             command_sender: Some(command_sender),
             system_monitor: SystemMonitor::new(1),
             tracker: 0,
+            handler: DrawHandler::new(),
         }
     }
 
@@ -583,7 +595,7 @@ fn draw_cpu_usage(ctx: &Context, width: i32, height: i32, cpu_usage: f64) {
     ctx.paint().unwrap();
 
     // 绘制背景
-    ctx.set_source_rgba(0.0, 0.0, 0.0, 0.3);
+    ctx.set_source_rgba(0.2, 0.2, 0.2, 0.3);
     ctx.rectangle(0.0, 0.0, width_f, height_f);
     ctx.fill().unwrap();
 
@@ -611,7 +623,7 @@ fn spawn_background_tasks(
     // 系统监控任务
     let sender_clone = sender.clone();
     relm4::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_millis(100));
+        let mut interval = tokio::time::interval(Duration::from_millis(1000));
         loop {
             interval.tick().await;
             sender_clone.input(AppInput::SystemUpdate);
