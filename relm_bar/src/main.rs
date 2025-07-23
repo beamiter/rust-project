@@ -568,7 +568,7 @@ impl AppModel {
                     height_diff
                 );
             } else {
-                info!("Window size is appropriate, no resize needed");
+                // info!("Window size is appropriate, no resize needed");
             }
             if need_resize {
                 self.resize_window_to_monitor(window, new_x, new_y, new_width, new_height);
@@ -708,7 +708,19 @@ async fn shared_memory_worker(
             command = command_receiver.recv() => {
                 if let Some(cmd) = command {
                     info!("Processing command: {:?}", cmd);
-                    // 实际实现需要发送到共享内存
+                    if let Some(ref shared_buffer) = shared_buffer_opt {
+                        match shared_buffer.send_command(cmd) {
+                            Ok(true) => {
+                                info!("Sent command: {:?} by shared_buffer", cmd);
+                            }
+                            Ok(false) => {
+                                warn!("Command buffer full, command dropped");
+                            }
+                            Err(e) => {
+                                error!("Failed to send command: {}", e);
+                            }
+                        }
+                    }
                 }
             }
         }
