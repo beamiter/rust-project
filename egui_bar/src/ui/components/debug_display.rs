@@ -126,10 +126,6 @@ impl DebugDisplayWindow {
 
                 // 操作按钮
                 ui.horizontal(|ui| {
-                    if ui.small_button("💾 保存配置").clicked() {
-                        event_sender.send(AppEvent::SaveConfig).ok();
-                    }
-
                     if ui.small_button("🔄 刷新音频").clicked() {
                         if let Err(e) = app_state.audio_manager.refresh_devices() {
                             error!("Failed to refresh audio devices: {}", e);

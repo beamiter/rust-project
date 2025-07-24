@@ -49,9 +49,7 @@ impl SystemInfoPanel {
 
         // Memory warning indicator
         if let Some(snapshot) = app_state.system_monitor.get_snapshot() {
-            if snapshot.memory_usage_percent
-                > app_state.config.system.memory_warning_threshold * 100.0
-            {
+            if snapshot.memory_usage_percent > 0.8 * 100.0 {
                 ui.label("⚠️");
                 // ui.add_space(padding);
             }
@@ -71,7 +69,7 @@ impl SystemInfoPanel {
             );
 
             // CPU warning indicator
-            if snapshot.cpu_average > app_state.config.system.cpu_warning_threshold * 100.0 {
+            if snapshot.cpu_average > 0.8 * 100.0 {
                 ui.label(egui::RichText::new("🔥").color(colors::WARNING));
             }
         }

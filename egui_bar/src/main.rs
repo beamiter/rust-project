@@ -1,7 +1,7 @@
 //! egui_bar - A modern system status bar application
 
 use chrono::Local;
-use egui_bar::{app::EguiBarApp, config::AppConfig, utils::AppError};
+use egui_bar::{app::EguiBarApp, utils::AppError};
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use log::{error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
@@ -23,21 +23,7 @@ fn main() -> eframe::Result<()> {
         std::process::exit(1);
     }
 
-    info!("Starting egui_bar v{}", egui_bar::VERSION);
-
-    // Load configuration
-    let config = match AppConfig::load() {
-        Ok(mut config) => {
-            config.validate().unwrap_or_else(|e| {
-                warn!("Configuration validation failed: {}", e);
-            });
-            config
-        }
-        Err(e) => {
-            error!("Failed to load configuration: {}", e);
-            AppConfig::default()
-        }
-    };
+    info!("Starting egui_bar V1.0");
 
     // Create communication channels
     let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
@@ -62,9 +48,10 @@ fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_position(egui::Pos2::new(0.0, 0.0))
             .with_inner_size([1080.0, 540.])
-            .with_min_inner_size([480.0, config.ui.font_size])
+            .with_min_inner_size([480.0, 20.])
             .with_decorations(false)
-            .with_transparent(config.ui.window_opacity < 1.0),
+            .with_resizable(true)
+            .with_transparent(false),
         vsync: true,
         ..Default::default()
     };

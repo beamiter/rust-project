@@ -1,9 +1,9 @@
 //! Application state management
 
 use crate::audio::{AudioDevice, AudioManager};
-use crate::config::AppConfig;
 use crate::system::SystemMonitor;
 use crate::ui::theme::ThemeManager;
+use crate::ui::ThemeType;
 use crate::utils::PerformanceMetrics;
 use shared_structures::SharedMessage;
 use std::time::Instant;
@@ -11,9 +11,6 @@ use std::time::Instant;
 /// Main application state
 #[derive(Debug)]
 pub struct AppState {
-    /// Configuration
-    pub config: AppConfig,
-
     /// Audio system
     pub audio_manager: AudioManager,
 
@@ -58,8 +55,11 @@ pub struct UiState {
     /// Whether window needs resizing
     pub need_resize: bool,
 
-    /// Current window height
-    pub current_window_height: f32,
+    /// Target window height
+    pub target_window_height: f32,
+
+    /// Target window width
+    pub target_window_width: f32,
 
     /// Time display format toggle
     pub show_seconds: bool,
@@ -95,8 +95,7 @@ pub struct VolumeWindowState {
 
 impl AppState {
     /// Create new application state
-    pub fn new(config: AppConfig) -> Self {
-        let theme_type = config.ui.theme.parse().unwrap_or_default();
+    pub fn new() -> Self {
         let available_layouts = vec![
             LayoutInfo {
                 symbol: "[]=".to_string(),
@@ -117,11 +116,10 @@ impl AppState {
 
         Self {
             audio_manager: AudioManager::new(),
-            system_monitor: SystemMonitor::new(config.system.cpu_history_length),
-            theme_manager: ThemeManager::new(theme_type),
+            system_monitor: SystemMonitor::new(10),
+            theme_manager: ThemeManager::new(ThemeType::Light),
             performance_metrics: PerformanceMetrics::new(),
             ui_state: UiState::new(),
-            config,
             current_message: None,
             start_time: Instant::now(),
             layout_selector_open: false,
@@ -192,21 +190,12 @@ impl AppState {
 
     /// Check if system resources are under stress
     pub fn is_system_stressed(&self) -> bool {
-        self.system_monitor
-            .is_cpu_usage_high(self.config.system.cpu_warning_threshold)
-            || self
-                .system_monitor
-                .is_memory_usage_high(self.config.system.memory_warning_threshold)
+        self.system_monitor.is_cpu_usage_high(0.8) || self.system_monitor.is_memory_usage_high(0.8)
     }
 
     /// Get application uptime
     pub fn get_uptime(&self) -> std::time::Duration {
         Instant::now().duration_since(self.start_time)
-    }
-
-    /// Save current configuration
-    pub fn save_config(&self) -> crate::utils::Result<()> {
-        self.config.save()
     }
 }
 
@@ -216,7 +205,8 @@ impl UiState {
             volume_window: VolumeWindowState::new(),
             scale_factor: 1.0,
             need_resize: true,
-            current_window_height: crate::constants::ui::DEFAULT_FONT_SIZE * 2.0,
+            target_window_height: 40.,
+            target_window_width: 1080.,
             show_seconds: false,
             show_debug_window: false,
             show_settings_window: false,
@@ -230,7 +220,7 @@ impl UiState {
         self.need_resize = true;
     }
 
-    /// Toggle debug window - 新增方法
+    /// Toggle debug window
     pub fn toggle_debug_window(&mut self) {
         self.show_debug_window = !self.show_debug_window;
         self.need_resize = true;
@@ -239,11 +229,6 @@ impl UiState {
     /// Toggle time format
     pub fn toggle_time_format(&mut self) {
         self.show_seconds = !self.show_seconds;
-    }
-
-    /// Request window resize
-    pub fn request_resize(&mut self) {
-        self.need_resize = true;
     }
 }
 

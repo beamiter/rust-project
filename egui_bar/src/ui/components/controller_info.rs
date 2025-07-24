@@ -47,9 +47,7 @@ impl ControllerInfoPanel {
             ui.label(egui::RichText::new(format!("{:.0}%", battery_percent)).color(battery_color));
 
             // 低电量警告
-            if battery_percent < app_state.config.system.battery_warning_threshold * 100.0
-                && !is_charging
-            {
+            if battery_percent < 0.2 * 100.0 && !is_charging {
                 ui.label(egui::RichText::new("⚠️").color(colors::WARNING));
             }
 

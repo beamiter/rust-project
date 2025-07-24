@@ -1,9 +1,7 @@
 //! Event handling system for the application
-
-use log::info;
-
 use crate::audio::AudioDevice;
 use crate::system::SystemSnapshot;
+use log::info;
 use std::sync::mpsc;
 
 /// Application events
@@ -28,12 +26,6 @@ pub enum AppEvent {
     /// Audio device list refreshed
     AudioDevicesRefreshed(Vec<AudioDevice>),
 
-    /// Window resize requested
-    WindowResize { width: f32, height: f32 },
-
-    /// Scale factor changed
-    ScaleFactorChanged(f32),
-
     /// Theme change requested
     ThemeChanged(String),
 
@@ -48,9 +40,6 @@ pub enum AppEvent {
 
     /// Debug window toggle
     DebugToggle,
-
-    /// Configuration save requested
-    SaveConfig,
 
     /// Application shutdown requested
     Shutdown,
@@ -84,20 +73,10 @@ impl EventBus {
             handler(event);
         }
     }
-
-    /// Send event
-    pub fn send(&self, event: AppEvent) -> Result<(), mpsc::SendError<AppEvent>> {
-        self.sender.send(event)
-    }
 }
 
 impl Default for EventBus {
     fn default() -> Self {
         Self::new()
     }
-}
-
-/// Event handler trait
-pub trait EventHandler {
-    fn handle_event(&mut self, event: AppEvent) -> crate::utils::Result<()>;
 }

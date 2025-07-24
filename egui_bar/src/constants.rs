@@ -8,8 +8,6 @@ pub mod ui {
     pub const MIN_WINDOW_WIDTH: f32 = 480.0;
     pub const MIN_WINDOW_HEIGHT: f32 = 20.0;
     pub const DEFAULT_SCALE_FACTOR: f32 = 1.0;
-    pub const MAX_SCALE_FACTOR: f32 = 2.0;
-    pub const MIN_SCALE_FACTOR: f32 = 0.5;
 }
 
 /// Update intervals in milliseconds

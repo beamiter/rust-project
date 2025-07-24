@@ -3,7 +3,6 @@
 pub mod events;
 pub mod state;
 
-use crate::config::AppConfig;
 use crate::constants::ui;
 use crate::ui::components::controller_info::ControllerInfoPanel;
 use crate::ui::components::{
@@ -16,13 +15,14 @@ use events::{AppEvent, EventBus};
 use log::{debug, error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage};
 use state::AppState;
+pub use state::{UiState, VolumeWindowState};
 use std::collections::BTreeMap;
 use std::process::Command;
-use std::sync::{mpsc, Arc, Mutex};
+use std::sync::{mpsc, Arc, Mutex, Once};
 use std::thread;
 use std::time::{Duration, Instant};
 
-pub use state::{UiState, VolumeWindowState};
+static START: Once = Once::new();
 
 /// 线程间共享的应用状态
 #[derive(Debug)]
@@ -41,7 +41,6 @@ impl SharedAppState {
 }
 
 /// Main egui application
-#[allow(dead_code)]
 pub struct EguiBarApp {
     /// Application state
     state: AppState,
@@ -60,12 +59,6 @@ pub struct EguiBarApp {
     controller_info_panel: ControllerInfoPanel,
     workspace_panel: WorkspacePanel,
 
-    /// Initialization flag
-    initialized: bool,
-
-    /// egui context for requesting repaints
-    egui_ctx: egui::Context,
-
     command_sender: mpsc::Sender<SharedCommand>,
 }
 
@@ -76,12 +69,8 @@ impl EguiBarApp {
         message_receiver: mpsc::Receiver<SharedMessage>,
         command_sender: mpsc::Sender<SharedCommand>,
     ) -> Result<Self> {
-        // Load configuration
-        let mut config = AppConfig::load()?;
-        config.validate()?;
-
         // Initialize application state
-        let state = AppState::new(config);
+        let state = AppState::new();
 
         // Initialize event bus
         let event_bus = EventBus::new();
@@ -96,7 +85,7 @@ impl EguiBarApp {
         state.theme_manager.apply_to_context(&cc.egui_ctx);
 
         // Configure text styles
-        Self::configure_text_styles(&cc.egui_ctx, state.ui_state.scale_factor);
+        Self::configure_text_styles(&cc.egui_ctx);
 
         // 启动消息处理线程
         let shared_state_clone = Arc::clone(&shared_state);
@@ -121,8 +110,6 @@ impl EguiBarApp {
             system_info_panel: SystemInfoPanel::new(),
             controller_info_panel: ControllerInfoPanel::new(),
             workspace_panel: WorkspacePanel::new(),
-            initialized: false,
-            egui_ctx: cc.egui_ctx.clone(),
             command_sender,
         })
     }
@@ -146,7 +133,6 @@ impl EguiBarApp {
             match message_receiver.recv() {
                 Ok(message) => {
                     info!("Received message: {:?}", message);
-
                     // 更新共享状态
                     if let Ok(mut state) = shared_state.lock() {
                         let need_update = state
@@ -154,11 +140,9 @@ impl EguiBarApp {
                             .as_ref()
                             .map(|m| m.timestamp != message.timestamp)
                             .unwrap_or(true);
-
                         if need_update {
                             state.current_message = Some(message);
                             state.last_update = Instant::now();
-
                             egui_ctx.request_repaint_after(Duration::from_millis(1));
                         }
                     } else {
@@ -171,25 +155,18 @@ impl EguiBarApp {
                 }
             }
         }
-
         info!("Message handler thread exiting");
     }
 
     /// 定时更新线程（每秒更新时间显示等）
     fn periodic_update_thread(_shared_state: Arc<Mutex<SharedAppState>>, egui_ctx: egui::Context) {
         info!("Starting periodic update thread");
-
         let mut last_second = chrono::Local::now().timestamp();
-
         loop {
-            thread::sleep(Duration::from_millis(500)); // 每500ms检查一次
-
+            thread::sleep(Duration::from_millis(500));
             let current_second = chrono::Local::now().timestamp();
-
-            // 每秒更新一次
             if current_second != last_second {
                 last_second = current_second;
-
                 egui_ctx.request_repaint_after(Duration::from_millis(1));
             }
         }
@@ -308,10 +285,9 @@ impl EguiBarApp {
     }
 
     /// Configure text styles
-    pub fn configure_text_styles(ctx: &egui::Context, scale_factor: f32) {
+    pub fn configure_text_styles(ctx: &egui::Context) {
         ctx.all_styles_mut(|style| {
-            let base_font_size = ui::DEFAULT_FONT_SIZE / scale_factor;
-
+            let base_font_size = ui::DEFAULT_FONT_SIZE;
             let text_styles: BTreeMap<TextStyle, FontId> = [
                 (
                     TextStyle::Body,
@@ -335,8 +311,8 @@ impl EguiBarApp {
                 ),
             ]
             .into();
-
             style.text_styles = text_styles;
+            // add here
             // style.spacing.window_margin = Margin::same(0);
             // style.spacing.menu_margin = Margin::same(0);
         });
@@ -365,18 +341,6 @@ impl EguiBarApp {
                 }
             }
 
-            AppEvent::WindowResize {
-                width: _,
-                height: _,
-            } => {
-                self.state.ui_state.request_resize();
-            }
-
-            AppEvent::ScaleFactorChanged(factor) => {
-                self.state.ui_state.scale_factor = factor;
-                self.state.ui_state.request_resize();
-            }
-
             AppEvent::ThemeChanged(theme_name) => {
                 if let Ok(theme_type) = theme_name.parse() {
                     self.state.theme_manager.set_theme(theme_type);
@@ -399,12 +363,6 @@ impl EguiBarApp {
             AppEvent::DebugToggle => {
                 // 使用新的 toggle_debug_window 方法
                 self.state.ui_state.toggle_debug_window();
-            }
-
-            AppEvent::SaveConfig => {
-                if let Err(e) = self.state.save_config() {
-                    error!("Failed to save configuration: {}", e);
-                }
             }
 
             _ => {
@@ -455,17 +413,14 @@ impl EguiBarApp {
                 monitor_info.monitor_height as f32 * 0.03
             };
 
-            let width = (monitor_info.monitor_width as f32 - 2.0 * monitor_info.border_w as f32)
-                / self.state.ui_state.scale_factor;
+            let width = monitor_info.monitor_width as f32 - 2.0 * monitor_info.border_w as f32;
             let button_height = Self::get_default_button_height(ui);
             info!("button_height: {button_height}");
-            let height = (base_height / self.state.ui_state.scale_factor).max(button_height);
+            let height = base_height.max(button_height);
 
             let pos = egui::Pos2::new(
-                (monitor_info.monitor_x as f32 + monitor_info.border_w as f32)
-                    / self.state.ui_state.scale_factor,
-                (monitor_info.monitor_y as f32 + monitor_info.border_w as f32 * 0.5)
-                    / self.state.ui_state.scale_factor,
+                monitor_info.monitor_x as f32 + monitor_info.border_w as f32,
+                monitor_info.monitor_y as f32 + monitor_info.border_w as f32 * 0.5,
             );
 
             Some((width, height, pos))
@@ -483,10 +438,17 @@ impl EguiBarApp {
                 ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2::new(
                     width, height,
                 )));
+                let viewport_info = ctx.input(|i| i.viewport().clone());
+                info!("screen_rect: {:?}", viewport_info);
+                let outer_rect = viewport_info.outer_rect.unwrap();
+                if outer_rect.width() != width || outer_rect.height() != height {
+                    info!("Window adjusted: {}x{} at {:?}", width, height, pos);
+                } else {
+                    self.state.ui_state.need_resize = false;
+                }
 
-                self.state.ui_state.current_window_height = height;
-                self.state.ui_state.need_resize = false;
-                info!("Window adjusted: {}x{} at {:?}", width, height, pos);
+                self.state.ui_state.target_window_width = width;
+                self.state.ui_state.target_window_height = height;
             }
         }
     }
@@ -521,19 +483,13 @@ impl EguiBarApp {
 impl eframe::App for EguiBarApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         // Initialize on first frame
-        if !self.initialized {
-            self.state.theme_manager.apply_to_context(ctx);
-            self.initialized = true;
-        }
-
-        // Handle scale factor changes
-        let current_scale = ctx.pixels_per_point();
-        if (current_scale - self.state.ui_state.scale_factor).abs() > 0.01 {
-            self.state.ui_state.scale_factor =
-                current_scale.clamp(ui::MIN_SCALE_FACTOR, ui::MAX_SCALE_FACTOR);
-            Self::configure_text_styles(ctx, self.state.ui_state.scale_factor);
-            self.state.ui_state.request_resize();
-        }
+        START.call_once(|| {
+            // self.state.theme_manager.apply_to_context(ctx);
+            // Self::configure_text_styles(ctx);
+            self.state.ui_state.need_resize = true;
+        });
+        ctx.set_pixels_per_point(1.0);
+        self.state.ui_state.scale_factor = ctx.pixels_per_point();
 
         // Handle events
         self.handle_events();
@@ -559,7 +515,7 @@ impl eframe::App for EguiBarApp {
 
         if self.state.ui_state.need_resize {
             info!("request for resize");
-            ctx.request_repaint_after(Duration::from_millis(3));
+            ctx.request_repaint_after(Duration::from_millis(1));
         }
     }
 }
