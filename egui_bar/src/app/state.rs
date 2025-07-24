@@ -1,6 +1,7 @@
 //! Application state management
 
 use crate::audio::{AudioDevice, AudioManager};
+use crate::constants;
 use crate::system::SystemMonitor;
 use crate::ui::theme::ThemeManager;
 use crate::ui::ThemeType;
@@ -55,12 +56,6 @@ pub struct UiState {
     /// Whether window needs resizing
     pub need_resize: bool,
 
-    /// Target window height
-    pub target_window_height: f32,
-
-    /// Target window width
-    pub target_window_width: f32,
-
     /// Time display format toggle
     pub show_seconds: bool,
 
@@ -72,6 +67,8 @@ pub struct UiState {
 
     /// Last UI update time
     pub last_ui_update: Instant,
+
+    pub button_height: f32,
 }
 
 /// Volume control window state
@@ -203,14 +200,13 @@ impl UiState {
     fn new() -> Self {
         Self {
             volume_window: VolumeWindowState::new(),
-            scale_factor: 1.0,
+            scale_factor: constants::ui::DEFAULT_SCALE_FACTOR,
             need_resize: true,
-            target_window_height: 40.,
-            target_window_width: 1080.,
             show_seconds: false,
             show_debug_window: false,
             show_settings_window: false,
             last_ui_update: Instant::now(),
+            button_height: 0.,
         }
     }
 

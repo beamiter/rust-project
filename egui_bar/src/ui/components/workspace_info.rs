@@ -1,6 +1,6 @@
 //! Workspace information display component
 
-use egui::{Button, Color32, Stroke, StrokeKind};
+use egui::{Button, Color32, Stroke, StrokeKind, Vec2};
 use log::info;
 use shared_structures::{CommandType, SharedCommand};
 
@@ -25,20 +25,18 @@ impl WorkspacePanel {
     ) {
         let mut tag_status_vec = Vec::new();
         let mut layout_symbol = String::from(" ? ");
-        let spacing = 1.5;
         let bold_thickness = 2.5;
-        let light_thickness = 1.0;
+        let light_thickness = 1.5;
         if let Some(ref message) = app_state.current_message {
             tag_status_vec = message.monitor_info.tag_status_vec.clone();
             layout_symbol = message.monitor_info.ltsymbol.clone();
         }
         // Draw tag icons as buttons
         for (i, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {
-            // ui.add_space(spacing);
             let tag_color = colors::TAG_COLORS[i];
             let tag_bit = 1 << i;
             // 构建基础文本样式
-            let rich_text = egui::RichText::new(tag_icon).monospace();
+            let mut rich_text = egui::RichText::new(tag_icon).monospace();
             // 设置工具提示文本
             let mut tooltip = format!("标签 {}", i + 1);
             // 根据状态设置样式
@@ -55,39 +53,70 @@ impl WorkspacePanel {
                     tooltip.push_str(" (紧急)");
                 }
             }
-            // 创建可点击标签
-            let label_response = ui.add(Button::new(rich_text));
             // 绘制各种装饰效果
-            let rect = label_response.rect;
+            let mut is_urg = false;
+            let mut is_filled = false;
+            let mut is_selected = false;
             if let Some(tag_status) = tag_status_vec.get(i) {
-                if tag_status.is_selected {
-                    let underline_color = if tag_status.is_occ {
-                        tag_color
-                    } else {
-                        Color32::WHITE
-                    };
-                    ui.painter().line_segment(
-                        [rect.left_bottom(), rect.right_bottom()],
-                        Stroke::new(bold_thickness, underline_color),
-                    );
-                } else if tag_status.is_occ {
-                    ui.painter().line_segment(
-                        [rect.left_bottom(), rect.right_bottom()],
-                        Stroke::new(light_thickness, tag_color),
-                    );
-                }
-
-                // is_urg: 绘制wheat色边框
                 if tag_status.is_urg {
-                    ui.painter().rect_stroke(
-                        rect,
-                        0.0,
-                        Stroke::new(bold_thickness, colors::WHEAT),
-                        StrokeKind::Inside,
+                    is_urg = true;
+                    rich_text = rich_text.background_color(Color32::RED);
+                } else if tag_status.is_filled {
+                    is_filled = true;
+                    let bg_color = Color32::from_rgba_premultiplied(
+                        tag_color.r(),
+                        tag_color.g(),
+                        tag_color.b(),
+                        255,
                     );
+                    rich_text = rich_text.background_color(bg_color);
+                } else if tag_status.is_selected {
+                    is_selected = true;
+                    let bg_color = Color32::from_rgba_premultiplied(
+                        tag_color.r(),
+                        tag_color.g(),
+                        tag_color.b(),
+                        200,
+                    );
+                    rich_text = rich_text.background_color(bg_color);
+                } else if tag_status.is_occ {
+                    let bg_color = Color32::from_rgba_premultiplied(
+                        tag_color.r(),
+                        tag_color.g(),
+                        tag_color.b(),
+                        150,
+                    );
+                    rich_text = rich_text.background_color(bg_color);
+                } else {
+                    rich_text = rich_text.background_color(Color32::TRANSPARENT);
                 }
             }
 
+            let label_response = ui.add(Button::new(rich_text).min_size(Vec2::new(36., 24.)));
+            let rect = label_response.rect;
+            app_state.ui_state.button_height = rect.height();
+            if is_urg {
+                ui.painter().rect_stroke(
+                    rect,
+                    1.0,
+                    Stroke::new(bold_thickness, colors::VIOLET),
+                    StrokeKind::Outside,
+                );
+            } else if is_filled {
+                ui.painter().rect_stroke(
+                    rect,
+                    1.0,
+                    Stroke::new(bold_thickness, tag_color),
+                    StrokeKind::Outside,
+                );
+            } else if is_selected {
+                ui.painter().rect_stroke(
+                    rect,
+                    1.0,
+                    Stroke::new(light_thickness, tag_color),
+                    StrokeKind::Outside,
+                );
+            }
             // 处理交互事件
             self.handle_tag_interactions(&label_response, tag_bit, i, app_state, command_sender);
 
@@ -97,11 +126,10 @@ impl WorkspacePanel {
                     rect.expand(1.0),
                     1.0,
                     Stroke::new(bold_thickness, tag_color),
-                    StrokeKind::Inside,
+                    StrokeKind::Outside,
                 );
                 label_response.on_hover_text(tooltip);
             }
-            // ui.add_space(spacing);
         }
 
         self.render_layout_section(ui, app_state, command_sender, &layout_symbol);

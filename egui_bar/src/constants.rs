@@ -4,9 +4,7 @@ pub use egui::Color32;
 
 /// UI constants
 pub mod ui {
-    pub const DEFAULT_FONT_SIZE: f32 = 16.0;
-    pub const MIN_WINDOW_WIDTH: f32 = 480.0;
-    pub const MIN_WINDOW_HEIGHT: f32 = 20.0;
+    pub const DEFAULT_FONT_SIZE: f32 = 18.0;
     pub const DEFAULT_SCALE_FACTOR: f32 = 1.0;
 }
 
@@ -50,15 +48,15 @@ pub mod colors {
 
     // Tag colors for workspace indicators
     pub const TAG_COLORS: [Color32; 9] = [
-        RED,
-        ORANGE,
-        YELLOW,
-        GREEN,
-        BLUE,
-        INDIGO,
-        VIOLET,
-        CYAN,
-        OLIVE_GREEN,
+        Color32::from_rgb(0xFF, 0x6B, 0x6B), // 红色
+        Color32::from_rgb(0x4E, 0xCD, 0xC4), // 青色
+        Color32::from_rgb(0x45, 0xB7, 0xD1), // 蓝色
+        Color32::from_rgb(0x96, 0xCE, 0xB4), // 绿色
+        Color32::from_rgb(0xFE, 0xCA, 0x57), // 黄色
+        Color32::from_rgb(0xFF, 0x9F, 0xF3), // 粉色
+        Color32::from_rgb(0x54, 0xA0, 0xFF), // 淡蓝色
+        Color32::from_rgb(0x5F, 0x27, 0xCD), // 紫色
+        Color32::from_rgb(0x00, 0xD2, 0xD3), // 青绿色
     ];
 
     // UI accent colors

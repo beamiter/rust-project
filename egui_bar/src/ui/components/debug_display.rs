@@ -26,7 +26,7 @@ impl DebugDisplayWindow {
         &mut self,
         ctx: &egui::Context,
         app_state: &mut AppState,
-        event_sender: &mpsc::Sender<AppEvent>,
+        _event_sender: &mpsc::Sender<AppEvent>,
     ) {
         if !app_state.ui_state.show_debug_window {
             return;

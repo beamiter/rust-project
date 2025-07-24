@@ -10,7 +10,7 @@ use crate::ui::components::{
 };
 use crate::utils::Result;
 use eframe::egui;
-use egui::{Align, FontFamily, FontId, Layout, TextStyle};
+use egui::{Align, FontFamily, FontId, Layout, Margin, TextStyle, Vec2};
 use events::{AppEvent, EventBus};
 use log::{debug, error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage};
@@ -290,6 +290,10 @@ impl EguiBarApp {
             let base_font_size = ui::DEFAULT_FONT_SIZE;
             let text_styles: BTreeMap<TextStyle, FontId> = [
                 (
+                    TextStyle::Small,
+                    FontId::new(base_font_size * 0.8, FontFamily::Monospace),
+                ),
+                (
                     TextStyle::Body,
                     FontId::new(base_font_size, FontFamily::Monospace),
                 ),
@@ -302,19 +306,36 @@ impl EguiBarApp {
                     FontId::new(base_font_size, FontFamily::Monospace),
                 ),
                 (
+                    TextStyle::Heading,
+                    FontId::new(base_font_size * 1.5, FontFamily::Monospace),
+                ),
+                (
                     TextStyle::Small,
-                    FontId::new(base_font_size * 0.8, FontFamily::Monospace),
+                    FontId::new(base_font_size * 0.8, FontFamily::Proportional),
+                ),
+                (
+                    TextStyle::Body,
+                    FontId::new(base_font_size, FontFamily::Proportional),
+                ),
+                (
+                    TextStyle::Monospace,
+                    FontId::new(base_font_size, FontFamily::Proportional),
+                ),
+                (
+                    TextStyle::Button,
+                    FontId::new(base_font_size, FontFamily::Proportional),
                 ),
                 (
                     TextStyle::Heading,
-                    FontId::new(base_font_size * 1.5, FontFamily::Monospace),
+                    FontId::new(base_font_size * 1.5, FontFamily::Proportional),
                 ),
             ]
             .into();
             style.text_styles = text_styles;
-            // add here
-            // style.spacing.window_margin = Margin::same(0);
-            // style.spacing.menu_margin = Margin::same(0);
+            style.spacing.window_margin = Margin::ZERO;
+            style.spacing.menu_margin = Margin::ZERO;
+            style.spacing.menu_spacing = 0.;
+            style.spacing.button_padding = Vec2::new(2., 1.);
         });
     }
 
@@ -371,34 +392,8 @@ impl EguiBarApp {
         });
     }
 
-    fn get_default_button_height(ui: &egui::Ui) -> f32 {
-        let style = ui.style();
-        // 按钮相关的样式属性
-        let button_padding = style.spacing.button_padding; // Vec2
-        let item_spacing = style.spacing.item_spacing; // Vec2
-        let window_margin = style.spacing.window_margin; // Margin
-        info!(
-            "button_padding: {button_padding}, item_spacing: {item_spacing}, window_margin: {:?}",
-            window_margin
-        );
-
-        // 字体相关
-        let font_id = &style.text_styles[&egui::TextStyle::Button];
-        let text_height = ui.fonts(|fonts| fonts.row_height(font_id));
-
-        // 颜色和视觉效果
-        // let button_fill = style.visuals.widgets.inactive.bg_fill;
-        // let button_stroke = style.visuals.widgets.inactive.bg_stroke;
-
-        let button_padding = style.spacing.button_padding;
-
-        let button_height = text_height + button_padding.x * 4.0;
-
-        button_height
-    }
-
     /// Calculate window dimensions
-    fn calculate_window_dimensions(&self, ui: &egui::Ui) -> Option<(f32, f32, egui::Pos2)> {
+    fn calculate_window_dimensions(&self, _ui: &egui::Ui) -> Option<(f32, f32, egui::Pos2)> {
         if let Some(message) = self.get_current_message() {
             let monitor_info = &message.monitor_info;
 
@@ -410,11 +405,11 @@ impl EguiBarApp {
                 monitor_info.monitor_height as f32 * 0.618
             } else {
                 // 否则使用默认紧凑高度
-                monitor_info.monitor_height as f32 * 0.03
+                40.
             };
 
             let width = monitor_info.monitor_width as f32 - 2.0 * monitor_info.border_w as f32;
-            let button_height = Self::get_default_button_height(ui);
+            let button_height = self.state.ui_state.button_height + 8. * 2.;
             info!("button_height: {button_height}");
             let height = base_height.max(button_height);
 
@@ -441,14 +436,13 @@ impl EguiBarApp {
                 let viewport_info = ctx.input(|i| i.viewport().clone());
                 info!("screen_rect: {:?}", viewport_info);
                 let outer_rect = viewport_info.outer_rect.unwrap();
-                if outer_rect.width() != width || outer_rect.height() != height {
+                if (outer_rect.width() - width).abs() > 5.
+                    || (outer_rect.height() - height).abs() > 5.
+                {
                     info!("Window adjusted: {}x{} at {:?}", width, height, pos);
                 } else {
                     self.state.ui_state.need_resize = false;
                 }
-
-                self.state.ui_state.target_window_width = width;
-                self.state.ui_state.target_window_height = height;
             }
         }
     }
@@ -482,14 +476,10 @@ impl EguiBarApp {
 
 impl eframe::App for EguiBarApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Initialize on first frame
         START.call_once(|| {
-            // self.state.theme_manager.apply_to_context(ctx);
-            // Self::configure_text_styles(ctx);
             self.state.ui_state.need_resize = true;
         });
-        ctx.set_pixels_per_point(1.0);
-        self.state.ui_state.scale_factor = ctx.pixels_per_point();
+        ctx.set_pixels_per_point(self.state.ui_state.scale_factor);
 
         // Handle events
         self.handle_events();
