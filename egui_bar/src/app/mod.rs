@@ -10,7 +10,7 @@ use crate::ui::components::{
 };
 use crate::utils::Result;
 use eframe::egui;
-use egui::{Align, FontFamily, FontId, Layout, Margin, TextStyle, Vec2};
+use egui::{Align, Color32, FontFamily, FontId, Layout, Margin, TextStyle, Vec2};
 use events::{AppEvent, EventBus};
 use log::{debug, error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage};
@@ -405,9 +405,9 @@ impl EguiBarApp {
             };
 
             let width = monitor_info.monitor_width as f32 - 2.0 * monitor_info.border_w as f32;
-            let button_height = self.state.ui_state.button_height + 8. * 2.;
-            info!("button_height: {button_height}");
-            let height = base_height.max(button_height);
+            let target_height = self.state.ui_state.button_height + 3. * 2.;
+            info!("target_height: {target_height}");
+            let height = base_height.max(target_height);
 
             let pos = egui::Pos2::new(
                 monitor_info.monitor_x as f32 + monitor_info.border_w as f32,
@@ -503,7 +503,11 @@ impl eframe::App for EguiBarApp {
 
         // Draw main UI
         egui::CentralPanel::default()
-            .frame(egui::Frame::default().inner_margin(egui::Margin::symmetric(4, 1)))
+            .frame(
+                egui::Frame::default()
+                    .fill(Color32::WHITE)
+                    .inner_margin(egui::Margin::symmetric(8, 4)),
+            )
             .show(ctx, |ui| {
                 self.draw_main_ui(ui, &self.event_bus.sender());
 
