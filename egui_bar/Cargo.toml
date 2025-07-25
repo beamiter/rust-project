@@ -48,6 +48,8 @@ default = []
 async = ["tokio"]
 tokio = ["dep:tokio"]
 
+debug_mode = []
+
 [profile.release]
 lto = true
 codegen-units = 1

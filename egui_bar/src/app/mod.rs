@@ -69,6 +69,8 @@ impl EguiBarApp {
         message_receiver: mpsc::Receiver<SharedMessage>,
         command_sender: mpsc::Sender<SharedCommand>,
     ) -> Result<Self> {
+        cc.egui_ctx.set_theme(egui::Theme::Light); // Switch to light mode
+
         // Initialize application state
         let state = AppState::new();
 
@@ -78,11 +80,13 @@ impl EguiBarApp {
         // 创建共享状态
         let shared_state = Arc::new(Mutex::new(SharedAppState::new()));
 
+        #[cfg(feature = "debug_mode")]
+        {
+            cc.egui_ctx.set_debug_on_hover(true);
+        }
+
         // Setup fonts
         Self::setup_custom_fonts(&cc.egui_ctx)?;
-
-        // Apply theme
-        state.theme_manager.apply_to_context(&cc.egui_ctx);
 
         // Configure text styles
         Self::configure_text_styles(&cc.egui_ctx);
@@ -333,8 +337,6 @@ impl EguiBarApp {
             .into();
             style.text_styles = text_styles;
             style.spacing.window_margin = Margin::ZERO;
-            style.spacing.menu_margin = Margin::ZERO;
-            style.spacing.menu_spacing = 0.;
             style.spacing.button_padding = Vec2::new(2., 1.);
         });
     }
@@ -359,12 +361,6 @@ impl EguiBarApp {
             AppEvent::ToggleMute(device_name) => {
                 if let Err(e) = self.state.audio_manager.toggle_mute(&device_name) {
                     error!("Failed to toggle mute: {}", e);
-                }
-            }
-
-            AppEvent::ThemeChanged(theme_name) => {
-                if let Ok(theme_type) = theme_name.parse() {
-                    self.state.theme_manager.set_theme(theme_type);
                 }
             }
 
@@ -487,21 +483,41 @@ impl eframe::App for EguiBarApp {
         // Update application state (system monitoring, audio, etc.)
         self.state.update();
 
+        #[cfg(feature = "debug_mode")]
+        {
+            let mut setting = true;
+            egui::Window::new("🔧 Settings")
+                .open(&mut setting)
+                .vscroll(true)
+                .show(ctx, |ui| {
+                    ctx.settings_ui(ui);
+                });
+
+            egui::Window::new("🔍 Inspection")
+                .open(&mut setting)
+                .vscroll(true)
+                .show(ctx, |ui| {
+                    ctx.inspection_ui(ui);
+                });
+        }
+
         // Draw main UI
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.draw_main_ui(ui, &self.event_bus.sender());
+        egui::CentralPanel::default()
+            .frame(egui::Frame::default().inner_margin(egui::Margin::symmetric(4, 1)))
+            .show(ctx, |ui| {
+                self.draw_main_ui(ui, &self.event_bus.sender());
 
-            // Draw volume control window
-            self.volume_window
-                .draw(ctx, &mut self.state, &self.event_bus.sender());
+                // Draw volume control window
+                self.volume_window
+                    .draw(ctx, &mut self.state, &self.event_bus.sender());
 
-            // Draw debug display window
-            self.debug_window
-                .draw(ctx, &mut self.state, &self.event_bus.sender());
+                // Draw debug display window
+                self.debug_window
+                    .draw(ctx, &mut self.state, &self.event_bus.sender());
 
-            // Adjust window if needed
-            self.adjust_window(ctx, ui);
-        });
+                // Adjust window if needed
+                self.adjust_window(ctx, ui);
+            });
 
         if self.state.ui_state.need_resize {
             info!("request for resize");

@@ -3,8 +3,6 @@
 use crate::audio::{AudioDevice, AudioManager};
 use crate::constants;
 use crate::system::SystemMonitor;
-use crate::ui::theme::ThemeManager;
-use crate::ui::ThemeType;
 use crate::utils::PerformanceMetrics;
 use shared_structures::SharedMessage;
 use std::time::Instant;
@@ -17,9 +15,6 @@ pub struct AppState {
 
     /// System monitoring
     pub system_monitor: SystemMonitor,
-
-    /// Theme management
-    pub theme_manager: ThemeManager,
 
     /// Performance metrics
     pub performance_metrics: PerformanceMetrics,
@@ -114,7 +109,6 @@ impl AppState {
         Self {
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(10),
-            theme_manager: ThemeManager::new(ThemeType::Light),
             performance_metrics: PerformanceMetrics::new(),
             ui_state: UiState::new(),
             current_message: None,

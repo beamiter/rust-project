@@ -26,9 +26,6 @@ pub enum AppEvent {
     /// Audio device list refreshed
     AudioDevicesRefreshed(Vec<AudioDevice>),
 
-    /// Theme change requested
-    ThemeChanged(String),
-
     /// Time format toggle
     TimeFormatToggle,
 
