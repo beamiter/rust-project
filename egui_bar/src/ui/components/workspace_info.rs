@@ -76,7 +76,7 @@ impl WorkspacePanel {
                         tag_color.r(),
                         tag_color.g(),
                         tag_color.b(),
-                        200,
+                        210,
                     );
                     rich_text = rich_text.background_color(bg_color);
                 } else if tag_status.is_occ {
@@ -84,7 +84,7 @@ impl WorkspacePanel {
                         tag_color.r(),
                         tag_color.g(),
                         tag_color.b(),
-                        150,
+                        180,
                     );
                     rich_text = rich_text.background_color(bg_color);
                 } else {
