@@ -1,7 +1,7 @@
 //! egui_bar - A modern system status bar application
 
 use chrono::Local;
-use egui_bar::{app::EguiBarApp, utils::AppError};
+use egui_bar::{EguiBarApp, AppError};
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use log::{error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
