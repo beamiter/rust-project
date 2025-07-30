@@ -315,13 +315,14 @@ impl IcedBar {
 
     fn shared_memory_worker(&mut self) {
         info!("Starting shared memory worker");
-        let mut prev_timestamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_millis();
-        if let Some(message) = &self.last_shared_message_opt {
-            prev_timestamp = message.timestamp;
-        }
+        let prev_timestamp = if let Some(message) = &self.last_shared_message_opt {
+            message.timestamp
+        } else {
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_millis()
+        };
 
         if let Some(shared_buffer) = &self.shared_buffer_opt {
             match shared_buffer.try_read_latest_message::<SharedMessage>() {
@@ -820,7 +821,7 @@ impl IcedBar {
                     let underline = container(
                         container(text(" "))
                             .width(Length::Fixed(Self::UNDERLINE_WIDTH))
-                            .height(Length::Fixed(2.0))
+                            .height(Length::Fixed(3.0))
                             .style(move |_theme: &Theme| container::Style {
                                 background: Some(Background::Color(*tab_color)),
                                 ..Default::default()
