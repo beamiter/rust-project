@@ -820,7 +820,7 @@ impl IcedBar {
                     let underline = container(
                         container(text(" "))
                             .width(Length::Fixed(Self::UNDERLINE_WIDTH))
-                            .height(Length::Fixed(1.0))
+                            .height(Length::Fixed(2.0))
                             .style(move |_theme: &Theme| container::Style {
                                 background: Some(Background::Color(*tab_color)),
                                 ..Default::default()
