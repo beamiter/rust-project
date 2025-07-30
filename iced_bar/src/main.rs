@@ -23,11 +23,9 @@ use shared_structures::{
 };
 use std::env;
 use std::process::Command;
-use std::sync::Mutex;
+use std::sync::Once;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
-use std::sync::{Arc, Once};
-use std::thread;
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::audio_manager::AudioManager;
 use crate::system_monitor::SystemMonitor;
@@ -91,208 +89,6 @@ macro_rules! tab_buttons {
             });
         )*
     };
-}
-
-fn adaptive_polling_worker(
-    shared_buffer_opt_clone: Arc<Mutex<Option<SharedRingBuffer>>>,
-    last_shared_message_opt_clone: Arc<Mutex<Option<SharedMessage>>>,
-    message_received_clone: Arc<AtomicBool>,
-    heartbeat_timestamp_clone: Arc<AtomicI64>,
-    raw_window_id_clone: Arc<AtomicU64>,
-) {
-    info!("Starting adaptive polling worker thread");
-
-    let mut prev_timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-
-    let mut frame_count: u128 = 0;
-    let mut consecutive_errors = 0;
-    let mut consecutive_empty_reads = 0;
-    let mut last_message_time = std::time::Instant::now();
-
-    // 自适应睡眠参数
-    let mut sleep_duration = Duration::from_millis(50); // 起始50ms
-    const MIN_SLEEP: Duration = Duration::from_millis(10);
-    const MAX_SLEEP: Duration = Duration::from_millis(500);
-    const ACTIVE_THRESHOLD: Duration = Duration::from_secs(2); // 2秒内有消息认为是活跃状态
-
-    loop {
-        frame_count = frame_count.wrapping_add(1);
-        let mut had_message = false;
-        let tmp_now = std::time::Instant::now();
-        let heartbeat_gap =
-            Local::now().timestamp() - heartbeat_timestamp_clone.load(Ordering::Relaxed);
-        // info!("heartbeat_gap: {heartbeat_gap}");
-        if heartbeat_gap > 60 {
-            // Should call resize
-            //xdotool windowsize 0xc00004 800 40
-            if let Err(_) = Command::new("xdotool")
-                .arg("windowsize")
-                .arg(format!(
-                    "0x{:X}",
-                    raw_window_id_clone.load(Ordering::Relaxed)
-                ))
-                .arg(800.to_string())
-                .arg(40.to_string())
-                .spawn()
-            {
-                error!("Failed to resize with xdotool");
-            }
-        }
-
-        // 处理共享内存消息
-        if let Ok(shared_buffer_lock) = shared_buffer_opt_clone.lock() {
-            if let Some(shared_buffer) = &*shared_buffer_lock {
-                match shared_buffer.try_read_latest_message::<SharedMessage>() {
-                    Ok(Some(message)) => {
-                        had_message = true;
-                        consecutive_errors = 0;
-                        consecutive_empty_reads = 0;
-                        last_message_time = tmp_now;
-
-                        if prev_timestamp != message.timestamp {
-                            prev_timestamp = message.timestamp;
-
-                            if let Ok(mut last_shared_message_lock) =
-                                last_shared_message_opt_clone.lock()
-                            {
-                                match last_shared_message_lock.as_mut() {
-                                    Some(last_shared_message) => {
-                                        *last_shared_message = message;
-                                    }
-                                    None => {
-                                        *last_shared_message_lock = Some(message);
-                                    }
-                                }
-                                message_received_clone.store(true, Ordering::Relaxed);
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        consecutive_errors = 0;
-                        consecutive_empty_reads += 1;
-                    }
-                    Err(e) => {
-                        consecutive_errors += 1;
-                        if consecutive_errors == 1 || consecutive_errors % 100 == 0 {
-                            log::warn!(
-                                "Ring buffer read error: {} (count: {})",
-                                e,
-                                consecutive_errors
-                            );
-                        }
-                        if consecutive_errors > 20 {
-                            shared_buffer.reset_read_index();
-                            consecutive_errors = 0;
-                        }
-                    }
-                }
-            }
-        }
-
-        // 自适应睡眠策略
-        if had_message {
-            // 有消息，使用最短睡眠
-            sleep_duration = MIN_SLEEP;
-        } else {
-            let time_since_last_message = tmp_now.duration_since(last_message_time);
-            if time_since_last_message < ACTIVE_THRESHOLD {
-                // 最近有消息，使用较短的轮询间隔
-                sleep_duration = Duration::from_millis(25);
-            } else {
-                // 长时间无消息，增加睡眠时间
-                if consecutive_empty_reads > 20 {
-                    sleep_duration = std::cmp::min(
-                        Duration::from_millis(sleep_duration.as_millis() as u64 + 25),
-                        MAX_SLEEP,
-                    );
-                }
-            }
-        }
-
-        // 减少日志频率
-        if frame_count % 5000 == 0 {
-            log::debug!(
-                "Frame {}, sleep: {:?}ms, empty_reads: {}",
-                frame_count,
-                sleep_duration.as_millis(),
-                consecutive_empty_reads
-            );
-        }
-
-        thread::sleep(sleep_duration);
-    }
-}
-
-#[allow(dead_code)]
-fn shared_memory_worker(
-    shared_buffer_opt_clone: Arc<Mutex<Option<SharedRingBuffer>>>,
-    last_shared_message_opt_clone: Arc<Mutex<Option<SharedMessage>>>,
-    message_received_clone: Arc<AtomicBool>,
-) {
-    info!("Starting shared memory worker thread");
-    let mut prev_timestamp = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap()
-        .as_millis();
-
-    let mut frame_count: u128 = 0;
-    let mut consecutive_errors = 0;
-    loop {
-        // 处理共享内存消息
-        if let Ok(shared_buffer_lock) = shared_buffer_opt_clone.lock() {
-            if let Some(shared_buffer) = &*shared_buffer_lock {
-                match shared_buffer.try_read_latest_message::<SharedMessage>() {
-                    Ok(Some(message)) => {
-                        consecutive_errors = 0; // 成功读取，重置错误计数
-                        if prev_timestamp != message.timestamp {
-                            prev_timestamp = message.timestamp;
-                            if let Ok(mut last_shared_message_lock) =
-                                last_shared_message_opt_clone.lock()
-                            {
-                                if let Some(last_shared_message) = last_shared_message_lock.as_mut()
-                                {
-                                    *last_shared_message = message;
-                                    if !message_received_clone.load(Ordering::SeqCst) {
-                                        message_received_clone.store(true, Ordering::SeqCst);
-                                    }
-                                } else {
-                                    *last_shared_message_lock = Some(message);
-                                    if !message_received_clone.load(Ordering::SeqCst) {
-                                        message_received_clone.store(true, Ordering::SeqCst);
-                                    }
-                                }
-                            }
-                        }
-                    }
-                    Ok(None) => {
-                        consecutive_errors = 0;
-                    }
-                    Err(e) => {
-                        consecutive_errors += 1;
-                        if frame_count % 1000 == 0 || consecutive_errors == 1 {
-                            error!(
-                                "Ring buffer read error: {}. Buffer state: available={}, last_timestamp={}",
-                                e,
-                                shared_buffer.available_messages(),
-                                shared_buffer.get_last_timestamp()
-                            );
-                        }
-                        if consecutive_errors > 10 {
-                            warn!("Too many consecutive errors, resetting read index");
-                            shared_buffer.reset_read_index();
-                            consecutive_errors = 0;
-                        }
-                    }
-                }
-            }
-        }
-
-        frame_count = frame_count.wrapping_add(1);
-        thread::sleep(Duration::from_millis(10));
-    }
 }
 
 /// Initialize logging system
@@ -381,14 +177,14 @@ struct IcedBar {
     active_tab: usize,
     tabs: [String; 9],
     tab_colors: [Color; 9],
-    last_shared_message_opt: Arc<Mutex<Option<SharedMessage>>>,
-    shared_buffer_opt: Arc<Mutex<Option<SharedRingBuffer>>>,
+    last_shared_message_opt: Option<SharedMessage>,
+    shared_buffer_opt: Option<SharedRingBuffer>,
     message_count: u32,
     monitor_info_opt: Option<MonitorInfo>,
     now: chrono::DateTime<chrono::Local>,
     formated_now: String,
-    heartbeat_timestamp: Arc<AtomicI64>,
-    raw_window_id: Arc<AtomicU64>,
+    heartbeat_timestamp: AtomicI64,
+    raw_window_id: AtomicU64,
     current_window_id: Option<Id>,
     is_resized: bool,
     scale_factor: f32,
@@ -408,7 +204,7 @@ struct IcedBar {
     system_monitor: SystemMonitor,
     transparent: bool,
 
-    message_received: Arc<AtomicBool>,
+    message_received: AtomicBool,
 }
 
 impl Default for IcedBar {
@@ -435,7 +231,7 @@ impl IcedBar {
         }
         info!("Starting iced_bar v{}, shared_path: {shared_path}", 1.0);
 
-        let local_shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
+        let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
             warn!("No shared path provided, running without shared memory");
             None
         } else {
@@ -462,25 +258,10 @@ impl IcedBar {
                 }
             }
         };
-        let shared_buffer_opt = Arc::new(Mutex::new(local_shared_buffer_opt));
-        let shared_buffer_opt_clone = shared_buffer_opt.clone();
-        let last_shared_message_opt = Arc::new(Mutex::new(None::<SharedMessage>));
-        let last_shared_message_opt_clone = last_shared_message_opt.clone();
-        let message_received = Arc::new(AtomicBool::new(false));
-        let message_received_clone = message_received.clone();
-        let heartbeat_timestamp = Arc::new(AtomicI64::new(Local::now().timestamp()));
-        let heartbeat_timestamp_clone = heartbeat_timestamp.clone();
-        let raw_window_id = Arc::new(AtomicU64::new(0));
-        let raw_window_id_clone = raw_window_id.clone();
-        thread::spawn(move || {
-            adaptive_polling_worker(
-                shared_buffer_opt_clone,
-                last_shared_message_opt_clone,
-                message_received_clone,
-                heartbeat_timestamp_clone,
-                raw_window_id_clone,
-            )
-        });
+        let last_shared_message_opt = None::<SharedMessage>;
+        let message_received = AtomicBool::new(false);
+        let heartbeat_timestamp = AtomicI64::new(Local::now().timestamp());
+        let raw_window_id = AtomicU64::new(0);
 
         Self {
             active_tab: 0,
@@ -532,6 +313,40 @@ impl IcedBar {
         }
     }
 
+    fn shared_memory_worker(&mut self) {
+        info!("Starting shared memory worker");
+        let mut prev_timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis();
+        if let Some(message) = &self.last_shared_message_opt {
+            prev_timestamp = message.timestamp;
+        }
+
+        if let Some(shared_buffer) = &self.shared_buffer_opt {
+            match shared_buffer.try_read_latest_message::<SharedMessage>() {
+                Ok(Some(message)) => {
+                    if prev_timestamp != message.timestamp {
+                        self.last_shared_message_opt = Some(message);
+                        if !self.message_received.load(Ordering::SeqCst) {
+                            self.message_received.store(true, Ordering::SeqCst);
+                        }
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    error!(
+                        "Ring buffer read error: {}. Buffer state: available={}, last_timestamp={}",
+                        e,
+                        shared_buffer.available_messages(),
+                        shared_buffer.get_last_timestamp()
+                    );
+                    shared_buffer.reset_read_index();
+                }
+            }
+        }
+    }
+
     fn send_tag_command(&mut self, is_view: bool) {
         let tag_bit = 1 << self.active_tab;
         let command = if is_view {
@@ -540,18 +355,16 @@ impl IcedBar {
             SharedCommand::toggle_tag(tag_bit, self.monitor_num)
         };
 
-        if let Ok(shared_buffer_lock) = self.shared_buffer_opt.lock() {
-            if let Some(shared_buffer) = &*shared_buffer_lock {
-                match shared_buffer.send_command(command) {
-                    Ok(true) => {
-                        info!("Sent command: {:?} by shared_buffer", command);
-                    }
-                    Ok(false) => {
-                        warn!("Command buffer full, command dropped");
-                    }
-                    Err(e) => {
-                        error!("Failed to send command: {}", e);
-                    }
+        if let Some(shared_buffer) = &self.shared_buffer_opt {
+            match shared_buffer.send_command(command) {
+                Ok(true) => {
+                    info!("Sent command: {:?} by shared_buffer", command);
+                }
+                Ok(false) => {
+                    warn!("Command buffer full, command dropped");
+                }
+                Err(e) => {
+                    error!("Failed to send command: {}", e);
                 }
             }
         }
@@ -559,18 +372,16 @@ impl IcedBar {
 
     fn send_layout_command(&mut self, layout_index: u32) {
         let command = SharedCommand::new(CommandType::SetLayout, layout_index, self.monitor_num);
-        if let Ok(shared_buffer_lock) = self.shared_buffer_opt.lock() {
-            if let Some(shared_buffer) = &*shared_buffer_lock {
-                match shared_buffer.send_command(command) {
-                    Ok(true) => {
-                        info!("Sent command: {:?} by shared_buffer", command);
-                    }
-                    Ok(false) => {
-                        warn!("Command buffer full, command dropped");
-                    }
-                    Err(e) => {
-                        error!("Failed to send command: {}", e);
-                    }
+        if let Some(shared_buffer) = &self.shared_buffer_opt {
+            match shared_buffer.send_command(command) {
+                Ok(true) => {
+                    info!("Sent command: {:?} by shared_buffer", command);
+                }
+                Ok(false) => {
+                    warn!("Command buffer full, command dropped");
+                }
+                Err(e) => {
+                    error!("Failed to send command: {}", e);
                 }
             }
         }
@@ -711,6 +522,8 @@ impl IcedBar {
             }
 
             Message::CheckSharedMessages => {
+                self.shared_memory_worker();
+
                 // 时间更新逻辑
                 let tmp_now = Local::now();
                 let format_str = if self.show_seconds {
@@ -743,9 +556,7 @@ impl IcedBar {
                 }
 
                 if self.message_received.load(Ordering::SeqCst) {
-                    if let Some(last_shared_message) =
-                        &*self.last_shared_message_opt.lock().unwrap()
-                    {
+                    if let Some(last_shared_message) = &self.last_shared_message_opt {
                         self.message_count += 1;
                         self.monitor_info_opt = Some(last_shared_message.monitor_info.clone());
                     }
