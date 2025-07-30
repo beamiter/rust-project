@@ -346,7 +346,7 @@ fn main() -> iced::Result {
             },
             ..Default::default()
         })
-        .font(include_bytes!("../fonts/NotoColorEmoji.ttf").as_slice())
+        // .font(include_bytes!("../fonts/NotoColorEmoji.ttf").as_slice())
         .window_size(Size::from([800., 40.]))
         .subscription(IcedBar::subscription)
         .title("iced_bar")
