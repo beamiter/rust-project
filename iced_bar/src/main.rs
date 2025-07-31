@@ -1,12 +1,18 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+use iced::futures::SinkExt;
+use iced::futures::Stream;
+use iced::futures::StreamExt;
+use iced::futures::channel::mpsc::{self};
 use iced::time::{self, milliseconds};
 use iced::widget::container;
 use iced::widget::lazy;
 use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{Scrollable, Space, button, progress_bar, rich_text, row};
 use iced::widget::{mouse_area, span};
-use iced::{gradient, theme};
+use iced::{gradient, stream, theme};
+use notify::event::{DataChange, ModifyKind};
+use notify::{Event, EventKind, RecursiveMode, Watcher};
 
 use iced::window::Id;
 use iced::{
@@ -22,6 +28,7 @@ use shared_structures::{
     CommandType, MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus,
 };
 use std::env;
+use std::path::Path;
 use std::process::Command;
 use std::sync::Once;
 use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
@@ -114,7 +121,7 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
         .format(flexi_logger::colored_opt_format)
         .log_to_file(
             FileSpec::default()
-                .directory("/tmp")
+                .directory("/tmp/jwm")
                 .basename(log_filename)
                 .suffix("log"),
         )
@@ -151,6 +158,11 @@ fn main() -> iced::Result {
         .run()
 }
 
+enum Input {
+    DoSomeWork,
+    // ...
+}
+
 #[allow(dead_code)]
 #[derive(Debug, Clone)]
 enum Message {
@@ -171,6 +183,12 @@ enum Message {
     MouseExitScreenShot,
     LeftClick,
     RightClick,
+
+    SharedMemoryUpdated,
+    SharedMemoryError(String),
+
+    Ready(mpsc::Sender<Input>),
+    WorkFinished,
 }
 
 struct IcedBar {
@@ -179,6 +197,7 @@ struct IcedBar {
     tab_colors: [Color; 9],
     last_shared_message_opt: Option<SharedMessage>,
     shared_buffer_opt: Option<SharedRingBuffer>,
+    shared_path: String,
     message_count: u32,
     monitor_info_opt: Option<MonitorInfo>,
     now: chrono::DateTime<chrono::Local>,
@@ -289,6 +308,7 @@ impl IcedBar {
             ],
             last_shared_message_opt,
             shared_buffer_opt,
+            shared_path,
             message_count: 0,
             monitor_info_opt: None,
             now: Local::now(),
@@ -313,8 +333,131 @@ impl IcedBar {
         }
     }
 
+    fn some_worker() -> impl Stream<Item = Message> {
+        info!("fuck 00");
+        stream::channel(100, async |mut output| {
+            // Create channel
+            let (sender, mut receiver) = mpsc::channel(100);
+
+            // Send the sender back to the application
+            let _ = output.send(Message::Ready(sender)).await;
+            info!("fuck 0");
+
+            loop {
+                info!("fuck 1");
+                // Read next input sent from `Application`
+                let input = receiver.select_next_some().await;
+
+                match input {
+                    Input::DoSomeWork => {
+                        info!("fuck 2");
+                        // Do some async work...
+
+                        // Finally, we can optionally produce a message to tell the
+                        // `Application` the work is done
+                        let _ = output.send(Message::WorkFinished).await;
+                    }
+                }
+            }
+        })
+    }
+
+    // 创建文件监听订阅
+    fn file_watcher_subscription(shared_path: String) -> Subscription<Message> {
+        Subscription::run_with(shared_path.clone(), move |path| {
+            let path = path.clone(); // 克隆路径以避免借用问题
+            info!("here 12");
+            stream::channel(100, move |mut output: mpsc::Sender<Message>| {
+                let path = path.clone(); // 再次克隆用于 async move
+                info!("here 0");
+                async move {
+                    info!("here 1");
+                    if path.is_empty() {
+                        let _ = output
+                            .send(Message::SharedMemoryError("Empty shared path".to_string()))
+                            .await;
+
+                        return;
+                    }
+                    info!("here 2");
+                    let (tx, mut rx) = mpsc::unbounded();
+                    let path_for_watcher = path.clone();
+                    // 创建文件监听器
+                    info!("here 3");
+                    let mut watcher = match notify::recommended_watcher(
+                        move |res: Result<Event, notify::Error>| {
+                            info!("here 13");
+                            match res {
+                                Ok(event) => {
+                                    info!("here 4");
+                                    // 只关注数据修改事件
+                                    if matches!(
+                                        event.kind,
+                                        EventKind::Modify(ModifyKind::Data(DataChange::Any))
+                                            | EventKind::Create(_)
+                                            | EventKind::Remove(_)
+                                    ) {
+                                        info!("here 5");
+                                        let _ = tx.unbounded_send(Message::SharedMemoryUpdated);
+                                    }
+                                }
+                                Err(e) => {
+                                    info!("here 6");
+                                    let _ = tx
+                                        .unbounded_send(Message::SharedMemoryError(e.to_string()));
+                                }
+                            }
+                        },
+                    ) {
+                        Ok(w) => {
+                            info!("here 7, {:?}", w);
+                            w
+                        }
+                        Err(e) => {
+                            info!("here 8");
+                            let _ = output
+                                .send(Message::SharedMemoryError(format!(
+                                    "Failed to create watcher: {}",
+                                    e
+                                )))
+                                .await;
+                            return;
+                        }
+                    };
+                    // 监听共享内存文件
+                    info!("here 9");
+                    let watch_path = Path::new(&path_for_watcher);
+                    if let Err(e) = watcher.watch(watch_path, RecursiveMode::NonRecursive) {
+                        info!("here 10");
+                        let _ = output
+                            .send(Message::SharedMemoryError(format!(
+                                "Failed to watch path {}: {}",
+                                path_for_watcher, e
+                            )))
+                            .await;
+
+                        return;
+                    }
+                    info!("Started watching shared memory file: {}", path_for_watcher);
+                    // 转发事件
+                    while let Some(msg) = rx.next().await {
+                        info!("here 11");
+                        if output.send(msg).await.is_err() {
+                            info!("Output channel closed, stopping file watcher");
+
+                            break;
+                        }
+                    }
+                    // 确保 watcher 在整个生命周期内存活
+                    drop(watcher);
+                    info!("File watcher stopped for: {}", path_for_watcher);
+                }
+            })
+        })
+    }
+
     fn shared_memory_worker(&mut self) {
-        info!("Starting shared memory worker");
+        // info!("Starting shared memory worker");
         let prev_timestamp = if let Some(message) = &self.last_shared_message_opt {
             message.timestamp
         } else {
@@ -583,11 +726,37 @@ impl IcedBar {
 
                 Task::batch(tasks)
             }
+
+            Message::SharedMemoryUpdated => {
+                // (todo)
+                info!("SharedMemoryUpdated");
+                Task::none()
+            }
+
+            Message::SharedMemoryError(err) => {
+                info!("SharedMemoryError: {err}");
+                Task::none()
+            }
+
+            Message::Ready(_) => Task::none(),
+
+            Message::WorkFinished => Task::none(),
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        time::every(milliseconds(50)).map(|_| Message::CheckSharedMessages)
+        Subscription::batch(vec![
+            // 高效的文件监听
+            if !self.shared_path.is_empty() {
+                info!("test");
+                Self::file_watcher_subscription(self.shared_path.clone())
+                // Subscription::run(Self::some_worker)
+            } else {
+                Subscription::none()
+            },
+            // UI更新
+            time::every(milliseconds(500)).map(|_| Message::CheckSharedMessages),
+        ])
     }
 
     #[allow(dead_code)]
