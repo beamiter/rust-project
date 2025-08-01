@@ -13,38 +13,22 @@ use std::os::unix::io::{AsRawFd, BorrowedFd};
 
 use crate::shared_message::{CommandType, SharedCommand};
 
-#[repr(C)]
-#[derive(Debug)]
-struct PaddedAtomicU32 {
-    value: AtomicU32,
-    _pad: [u8; 60],
-}
-
-impl PaddedAtomicU32 {
-    fn load(&self, order: Ordering) -> u32 {
-        self.value.load(order)
-    }
-    fn store(&self, val: u32, order: Ordering) {
-        self.value.store(val, order);
-    }
-}
-
-#[repr(C)]
+#[repr(C, align(128))]
 #[derive(Debug)]
 struct RingBufferHeader {
     magic: AtomicU64,
     version: AtomicU64,
     _pad0: [u8; 48],
-    write_idx: PaddedAtomicU32,
-    read_idx: PaddedAtomicU32,
+    write_idx: AtomicU32,
+    read_idx: AtomicU32,
     buffer_size: u32,
     max_message_size: u32,
     last_timestamp: AtomicU64,
     message_event_fd: AtomicI32,
     command_event_fd: AtomicI32,
     _pad1: [u8; 32],
-    cmd_write_idx: PaddedAtomicU32,
-    cmd_read_idx: PaddedAtomicU32,
+    cmd_write_idx: AtomicU32,
+    cmd_read_idx: AtomicU32,
     _pad2: [u8; 48],
 }
 
