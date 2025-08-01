@@ -480,12 +480,10 @@ impl IcedBar {
                 Ok(None) => {}
                 Err(e) => {
                     error!(
-                        "Ring buffer read error: {}. Buffer state: available={}, last_timestamp={}",
+                        "Ring buffer read error: {}. Buffer state: available={}",
                         e,
                         shared_buffer.available_messages(),
-                        shared_buffer.get_last_timestamp()
                     );
-                    shared_buffer.reset_read_index();
                 }
             }
         }

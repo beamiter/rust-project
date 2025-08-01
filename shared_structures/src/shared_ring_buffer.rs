@@ -2,16 +2,14 @@ use serde::{Deserialize, Serialize};
 use shared_memory::{Shmem, ShmemConf};
 use std::io::{Error, ErrorKind, Result};
 use std::mem::size_of;
-use std::os::fd::AsFd;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 // nix 用于 eventfd 和 poll
 use nix::poll::{poll, PollFd, PollFlags};
-use nix::sys::eventfd::{eventfd, EfdFlags, EventFd};
+use nix::sys::eventfd::EventFd;
 use nix::unistd;
-// --- 修正：引入 BorrowedFd ---
-use std::os::unix::io::{AsRawFd, BorrowedFd, FromRawFd};
+use std::os::unix::io::{AsRawFd, BorrowedFd};
 
 use crate::shared_message::{CommandType, SharedCommand};
 
@@ -115,18 +113,8 @@ impl SharedRingBuffer {
             .create()
             .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to create shmem: {}", e)))?;
 
-        let msg_efd = eventfd(0, EfdFlags::EFD_CLOEXEC | EfdFlags::EFD_NONBLOCK).map_err(|e| {
-            Error::new(
-                ErrorKind::Other,
-                format!("Failed to create message eventfd: {}", e),
-            )
-        })?;
-        let cmd_efd = eventfd(0, EfdFlags::EFD_CLOEXEC | EfdFlags::EFD_NONBLOCK).map_err(|e| {
-            Error::new(
-                ErrorKind::Other,
-                format!("Failed to create command eventfd: {}", e),
-            )
-        })?;
+        let msg_efd = EventFd::from_value(0)?;
+        let cmd_efd = EventFd::from_value(0)?;
 
         let msg_fd_raw = msg_efd.as_raw_fd();
         let cmd_fd_raw = cmd_efd.as_raw_fd();
@@ -371,9 +359,21 @@ impl SharedRingBuffer {
         }
     }
 
+    pub fn has_message(&self) -> bool {
+        self.available_messages() > 0
+    }
+    pub fn available_messages(&self) -> usize {
+        unsafe {
+            (*self.header)
+                .write_idx
+                .load(Ordering::Acquire)
+                .wrapping_sub((*self.header).read_idx.load(Ordering::Acquire)) as usize
+        }
+    }
+
     fn wait_on_fd(&self, fd: i32, timeout: Option<Duration>) -> Result<bool> {
-        let event_fd = EventFd::from_value(fd as u32).unwrap();
-        let poll_fd = PollFd::new(event_fd.as_fd(), PollFlags::POLLIN);
+        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
+        let poll_fd = PollFd::new(borrowed_fd, PollFlags::POLLIN);
         let timeout_ms = timeout.map_or(-1, |d| d.as_millis() as i32);
         let num_events = poll(&mut [poll_fd], timeout_ms as u16)
             .map_err(|e| Error::new(ErrorKind::Other, format!("poll failed: {}", e)))?;
@@ -381,7 +381,7 @@ impl SharedRingBuffer {
             return Ok(false);
         }
         let mut buf = [0u8; 8];
-        match unistd::read(event_fd.as_fd(), &mut buf) {
+        match unistd::read(borrowed_fd, &mut buf) {
             Ok(_) | Err(nix::errno::Errno::EAGAIN) => Ok(true),
             Err(e) => Err(Error::new(
                 ErrorKind::Other,
@@ -391,9 +391,9 @@ impl SharedRingBuffer {
     }
 
     fn signal_fd(&self, fd: i32) -> Result<()> {
-        let event_fd = EventFd::from_value(fd as u32).unwrap();
+        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
         let signal_val: u64 = 1;
-        match unistd::write(event_fd.as_fd(), &signal_val.to_ne_bytes()) {
+        match unistd::write(borrowed_fd, &signal_val.to_ne_bytes()) {
             Ok(_) | Err(nix::errno::Errno::EAGAIN) => Ok(()),
             Err(e) => Err(Error::new(
                 ErrorKind::Other,
@@ -440,7 +440,7 @@ mod tests {
             println!("[EGUI] Opened SharedRingBuffer.");
 
             for i in 1..=5 {
-                println!("[EGUI] Waiting for new message... (timeout 2s)");
+                println!("\n[EGUI] Waiting for new message... (timeout 2s)");
                 match egui_buffer.wait_for_message(Some(Duration::from_secs(2))) {
                     Ok(true) => {
                         println!("[EGUI] Event received! Reading message(s).");
@@ -475,7 +475,7 @@ mod tests {
             message.monitor_info.monitor_num = 1;
             message.monitor_info.client_name = format!("window-{}", i);
             println!(
-                "[JWM] Writing state for '{}'",
+                "\n[JWM] Writing state for '{}'",
                 message.monitor_info.client_name
             );
             if let Err(e) = jwm_buffer.try_write_message(&message) {
@@ -503,6 +503,7 @@ mod tests {
                 Err(e) => eprintln!("[JWM] Wait for command failed: {}", e),
             }
         }
+
         egui_thread.join().unwrap();
         println!("[JWM] EGUI thread finished. Test complete.");
     }

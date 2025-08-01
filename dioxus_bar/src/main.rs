@@ -155,11 +155,10 @@ fn shared_memory_worker(
                     consecutive_errors += 1;
                     if consecutive_errors == 1 || consecutive_errors % 50 == 0 {
                         error!(
-                            "Ring buffer read error ({}): {}. Buffer state: available={}, last_timestamp={}",
+                            "Ring buffer read error ({}): {}. Buffer state: available={}",
                             consecutive_errors,
                             e,
                             shared_buffer.available_messages(),
-                            shared_buffer.get_last_timestamp()
                         );
                     }
 

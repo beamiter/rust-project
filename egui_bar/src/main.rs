@@ -1,7 +1,7 @@
 //! egui_bar - A modern system status bar application
 
 use chrono::Local;
-use egui_bar::{EguiBarApp, AppError};
+use egui_bar::{AppError, EguiBarApp};
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use log::{error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
@@ -168,10 +168,9 @@ fn shared_memory_worker(
                     consecutive_errors += 1;
                     if frame_count % 1000 == 0 || consecutive_errors == 1 {
                         error!(
-                            "Ring buffer read error: {}. Buffer state: available={}, last_timestamp={}",
+                            "Ring buffer read error: {}. Buffer state: available={}",
                             e,
                             shared_buffer.available_messages(),
-                            shared_buffer.get_last_timestamp()
                         );
                     }
 
