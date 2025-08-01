@@ -1,9 +1,7 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-use iced::futures::SinkExt;
-use iced::futures::Stream;
-use iced::futures::StreamExt;
 use iced::futures::channel::mpsc::{self};
+use iced::futures::{SinkExt, Stream};
 use iced::time::{self, milliseconds};
 use iced::widget::container;
 use iced::widget::lazy;
@@ -11,8 +9,6 @@ use iced::widget::scrollable::{Direction, Scrollbar};
 use iced::widget::{Scrollable, Space, button, progress_bar, rich_text, row};
 use iced::widget::{mouse_area, span};
 use iced::{gradient, stream, theme};
-use notify::event::{DataChange, ModifyKind};
-use notify::{Event, EventKind, RecursiveMode, Watcher};
 
 use iced::window::Id;
 use iced::{
@@ -23,15 +19,15 @@ use iced::{
 };
 mod error;
 pub use error::AppError;
+use log::debug;
 use log::{error, info, warn};
 use shared_structures::{
     CommandType, MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus,
 };
 use std::env;
-use std::path::Path;
 use std::process::Command;
 use std::sync::Once;
-use std::sync::atomic::{AtomicBool, AtomicI64, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::audio_manager::AudioManager;
@@ -40,7 +36,7 @@ use crate::system_monitor::SystemMonitor;
 pub mod audio_manager;
 pub mod system_monitor;
 
-static START: Once = Once::new();
+static _START: Once = Once::new();
 
 #[allow(unused_macros)]
 macro_rules! create_tab_button {
@@ -100,8 +96,8 @@ macro_rules! tab_buttons {
 
 /// Initialize logging system
 fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
-    let now = Local::now();
-    let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
+    let tmp_now = Local::now();
+    let timestamp = tmp_now.format("%Y-%m-%d_%H_%M_%S").to_string();
 
     let file_name = if shared_path.is_empty() {
         "iced_bar".to_string()
@@ -168,7 +164,8 @@ enum Input {
 enum Message {
     TabSelected(usize),
     LayoutClicked(u32),
-    CheckSharedMessages,
+    UpdateTime,
+    UpdateSparceInfo,
     GetWindowId,
     GetWindowSize(Size),
     GetScaleFactor(f32),
@@ -184,7 +181,7 @@ enum Message {
     LeftClick,
     RightClick,
 
-    SharedMemoryUpdated,
+    SharedMemoryUpdated(SharedMessage),
     SharedMemoryError(String),
 
     Ready(mpsc::Sender<Input>),
@@ -200,7 +197,6 @@ struct IcedBar {
     shared_path: String,
     message_count: u32,
     monitor_info_opt: Option<MonitorInfo>,
-    now: chrono::DateTime<chrono::Local>,
     formated_now: String,
     heartbeat_timestamp: AtomicI64,
     raw_window_id: AtomicU64,
@@ -222,8 +218,6 @@ struct IcedBar {
     /// System monitoring
     system_monitor: SystemMonitor,
     transparent: bool,
-
-    message_received: AtomicBool,
 }
 
 impl Default for IcedBar {
@@ -278,7 +272,6 @@ impl IcedBar {
             }
         };
         let last_shared_message_opt = None::<SharedMessage>;
-        let message_received = AtomicBool::new(false);
         let heartbeat_timestamp = AtomicI64::new(Local::now().timestamp());
         let raw_window_id = AtomicU64::new(0);
 
@@ -311,7 +304,6 @@ impl IcedBar {
             shared_path,
             message_count: 0,
             monitor_info_opt: None,
-            now: Local::now(),
             formated_now: String::new(),
             current_window_id: None,
             is_resized: false,
@@ -327,107 +319,89 @@ impl IcedBar {
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(10),
             transparent: true,
-            message_received,
             heartbeat_timestamp,
             raw_window_id,
         }
     }
 
-    #[allow(dead_code)]
     fn some_worker() -> impl Stream<Item = Message> {
-        stream::channel(100, async |mut output| {
-            // Create channel
-            let (sender, mut receiver) = mpsc::channel(100);
-            // Send the sender back to the application
-            let _ = output.send(Message::Ready(sender)).await;
-            loop {
-                // Read next input sent from `Application`
-                let input = receiver.select_next_some().await;
-                match input {
-                    Input::DoSomeWork => {
-                        // Do some async work...
-                        // Finally, we can optionally produce a message to tell the
-                        // `Application` the work is done
-                        let _ = output.send(Message::WorkFinished).await;
-                    }
-                }
-            }
+        stream::channel(10, async |mut output| {
+            let _ = output.send(Message::GetWindowId).await;
         })
     }
 
-    fn file_watcher_subscription(shared_path: String) -> Subscription<Message> {
+    fn message_notify_subscription(shared_path: String) -> Subscription<Message> {
         Subscription::run_with(shared_path.clone(), move |path| {
-            let path = path.clone(); // 克隆路径以避免借用问题
+            let path = path.clone();
             stream::channel(100, move |mut output: mpsc::Sender<Message>| {
-                let path = path.clone(); // 再次克隆用于 async move
+                let path = path.clone();
                 async move {
                     if path.is_empty() {
                         let _ = output
                             .send(Message::SharedMemoryError("Empty shared path".to_string()))
                             .await;
-
                         return;
                     }
-                    let (tx, _) = mpsc::unbounded();
-                    let shared_buffer = SharedRingBuffer::open(&path).unwrap();
-                    let _ = tx.unbounded_send(Message::SharedMemoryUpdated);
-                    loop {
-                        match shared_buffer.wait_for_message(Some(time::Duration::from_secs(2))) {
-                            Ok(true) => {
-                                info!("[ICED] Event received! Reading message(s).");
-                                if let Ok(Some(message)) =
-                                    shared_buffer.try_read_latest_message::<SharedMessage>()
-                                {
-                                    info!(
-                                        "[ICED] Received State: client_name = '{}'",
-                                        message.monitor_info.client_name
-                                    );
+
+                    // 使用 spawn_blocking 来处理阻塞操作
+                    let shared_buffer = match SharedRingBuffer::open(&path) {
+                        Ok(buffer) => buffer,
+                        Err(e) => {
+                            let _ = output
+                                .send(Message::SharedMemoryError(format!(
+                                    "Failed to open shared buffer: {}",
+                                    e
+                                )))
+                                .await;
+                            return;
+                        }
+                    };
+
+                    let shared_buffer = std::sync::Arc::new(shared_buffer);
+                    let buffer_clone = shared_buffer.clone();
+
+                    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
+
+                    tokio::task::spawn_blocking(move || {
+                        let mut prev_timestamp = SystemTime::now()
+                            .duration_since(UNIX_EPOCH)
+                            .unwrap()
+                            .as_millis();
+                        loop {
+                            match buffer_clone.wait_for_message(Some(time::Duration::from_secs(2)))
+                            {
+                                Ok(true) => {
+                                    if let Ok(Some(message)) =
+                                        buffer_clone.try_read_latest_message::<SharedMessage>()
+                                    {
+                                        if prev_timestamp != message.timestamp {
+                                            prev_timestamp = message.timestamp;
+                                            debug!(
+                                                "[notifier] Received State: {}",
+                                                message.timestamp
+                                            );
+                                            let _ = tx
+                                                .blocking_send(Message::SharedMemoryUpdated(
+                                                    message,
+                                                ))
+                                                .unwrap();
+                                        }
+                                    }
+                                }
+                                Ok(false) => debug!("[notifier] Wait for message timed out."),
+                                Err(e) => {
+                                    error!("[notifier] Wait for message failed: {}", e);
+                                    break;
                                 }
                             }
-                            Ok(false) => info!("[ICED] Wait for message timed out."),
-                            Err(e) => {
-                                error!("[ICED] Wait for message failed: {}", e);
-                                break;
-                            }
                         }
-                        // break;
+                    });
+                    while let Some(msg) = rx.recv().await {
+                        let _ = output.send(msg).await;
                     }
                 }
             })
         })
-    }
-
-    fn shared_memory_worker(&mut self) {
-        // info!("Starting shared memory worker");
-        let prev_timestamp = if let Some(message) = &self.last_shared_message_opt {
-            message.timestamp
-        } else {
-            SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap()
-                .as_millis()
-        };
-
-        if let Some(shared_buffer) = &self.shared_buffer_opt {
-            match shared_buffer.try_read_latest_message::<SharedMessage>() {
-                Ok(Some(message)) => {
-                    if prev_timestamp != message.timestamp {
-                        self.last_shared_message_opt = Some(message);
-                        if !self.message_received.load(Ordering::SeqCst) {
-                            self.message_received.store(true, Ordering::SeqCst);
-                        }
-                    }
-                }
-                Ok(None) => {}
-                Err(e) => {
-                    error!(
-                        "Ring buffer read error: {}. Buffer state: available={}",
-                        e,
-                        shared_buffer.available_messages(),
-                    );
-                }
-            }
-        }
     }
 
     fn send_tag_command(&mut self, is_view: bool) {
@@ -500,7 +474,7 @@ impl IcedBar {
 
             Message::ShowSecondsToggle => {
                 self.show_seconds = !self.show_seconds;
-                Task::none()
+                return Task::perform(async {}, |_| Message::UpdateTime);
             }
 
             Message::MouseExitScreenShot => {
@@ -604,56 +578,47 @@ impl IcedBar {
                 }
             }
 
-            Message::CheckSharedMessages => {
-                self.shared_memory_worker();
-
-                // 时间更新逻辑
+            Message::UpdateTime => {
                 let tmp_now = Local::now();
                 let format_str = if self.show_seconds {
                     "%Y-%m-%d %H:%M:%S"
                 } else {
                     "%Y-%m-%d %H:%M"
                 };
-                let mut tasks = Vec::new();
-                if tmp_now.timestamp() != self.now.timestamp() {
-                    self.now = tmp_now;
-                    self.heartbeat_timestamp
-                        .store(tmp_now.timestamp(), Ordering::Release);
-                    self.formated_now = tmp_now.format(format_str).to_string();
-                    if let Some(window_id) = self.current_window_id {
-                        tasks.push(window::get_size(window_id).map(Message::GetWindowSize));
-                    }
-                    // info!("CheckSharedMessages");
-                }
-                // 系统监控更新
+                self.heartbeat_timestamp
+                    .store(tmp_now.timestamp(), Ordering::Release);
+                self.formated_now = tmp_now.format(format_str).to_string();
+
+                Task::none()
+            }
+
+            Message::UpdateSparceInfo => {
                 self.system_monitor.update_if_needed();
                 self.audio_manager.update_if_needed();
 
-                START.call_once(|| {
-                    if self.current_window_id.is_none() {
-                        tasks.push(Task::perform(async {}, |_| Message::GetWindowId));
-                    }
-                });
-                if self.current_window_id.is_none() {
-                    return Task::batch(tasks);
+                Task::none()
+            }
+
+            Message::SharedMemoryUpdated(message) => {
+                info!("SharedMemoryUpdated: {:?}", message);
+                self.last_shared_message_opt = Some(message);
+                let mut tasks = Vec::new();
+                if let Some(last_shared_message) = &self.last_shared_message_opt {
+                    self.message_count += 1;
+                    self.monitor_info_opt = Some(last_shared_message.monitor_info.clone());
                 }
 
-                if self.message_received.load(Ordering::SeqCst) {
-                    if let Some(last_shared_message) = &self.last_shared_message_opt {
-                        self.message_count += 1;
-                        self.monitor_info_opt = Some(last_shared_message.monitor_info.clone());
-                    }
-                    self.message_received.store(false, Ordering::SeqCst);
-
-                    if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
-                        self.layout_symbol = monitor_info.ltsymbol.clone();
-                        for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
-                            if tag_status.is_selected {
-                                self.active_tab = index;
-                            }
+                if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
+                    self.layout_symbol = monitor_info.ltsymbol.clone();
+                    for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
+                        if tag_status.is_selected {
+                            self.active_tab = index;
                         }
                     }
+                }
 
+                if let Some(window_id) = self.current_window_id {
+                    tasks.push(window::get_size(window_id).map(Message::GetWindowSize));
                     let current_window_id = self.current_window_id;
                     if !self.is_resized {
                         tasks.push(Task::perform(
@@ -664,12 +629,6 @@ impl IcedBar {
                 }
 
                 Task::batch(tasks)
-            }
-
-            Message::SharedMemoryUpdated => {
-                // (todo)
-                info!("SharedMemoryUpdated");
-                Task::none()
             }
 
             Message::SharedMemoryError(err) => {
@@ -684,14 +643,16 @@ impl IcedBar {
     }
 
     fn subscription(&self) -> Subscription<Message> {
+        let tick = if self.current_window_id.is_none() {
+            Subscription::run(Self::some_worker)
+        } else {
+            time::every(milliseconds(1000)).map(|_| Message::UpdateTime)
+        };
+
         Subscription::batch(vec![
-            if !self.shared_path.is_empty() {
-                Self::file_watcher_subscription(self.shared_path.clone())
-                // Subscription::run(Self::some_worker)
-            } else {
-                Subscription::none()
-            },
-            time::every(milliseconds(500)).map(|_| Message::CheckSharedMessages),
+            Self::message_notify_subscription(self.shared_path.clone()),
+            tick,
+            time::every(milliseconds(2000)).map(|_| Message::UpdateSparceInfo)
         ])
     }
 
