@@ -165,7 +165,6 @@ enum Message {
     TabSelected(usize),
     LayoutClicked(u32),
     UpdateTime,
-    UpdateSparceInfo,
     GetWindowId,
     GetWindowSize(Size),
     GetScaleFactor(f32),
@@ -192,10 +191,8 @@ struct IcedBar {
     active_tab: usize,
     tabs: [String; 9],
     tab_colors: [Color; 9],
-    last_shared_message_opt: Option<SharedMessage>,
     shared_buffer_opt: Option<SharedRingBuffer>,
     shared_path: String,
-    message_count: u32,
     monitor_info_opt: Option<MonitorInfo>,
     formated_now: String,
     heartbeat_timestamp: AtomicI64,
@@ -271,7 +268,6 @@ impl IcedBar {
                 }
             }
         };
-        let last_shared_message_opt = None::<SharedMessage>;
         let heartbeat_timestamp = AtomicI64::new(Local::now().timestamp());
         let raw_window_id = AtomicU64::new(0);
 
@@ -299,10 +295,8 @@ impl IcedBar {
                 color!(0x5F27CD), // 紫色
                 color!(0x00D2D3), // 青绿色
             ],
-            last_shared_message_opt,
             shared_buffer_opt,
             shared_path,
-            message_count: 0,
             monitor_info_opt: None,
             formated_now: String::new(),
             current_window_id: None,
@@ -342,7 +336,6 @@ impl IcedBar {
                             .await;
                         return;
                     }
-
                     // 使用 spawn_blocking 来处理阻塞操作
                     let shared_buffer = match SharedRingBuffer::open(&path) {
                         Ok(buffer) => buffer,
@@ -589,24 +582,18 @@ impl IcedBar {
                     .store(tmp_now.timestamp(), Ordering::Release);
                 self.formated_now = tmp_now.format(format_str).to_string();
 
-                Task::none()
-            }
-
-            Message::UpdateSparceInfo => {
-                self.system_monitor.update_if_needed();
-                self.audio_manager.update_if_needed();
+                if tmp_now.timestamp() % 2 == 0 {
+                    self.system_monitor.update_if_needed();
+                    self.audio_manager.update_if_needed();
+                }
 
                 Task::none()
             }
 
             Message::SharedMemoryUpdated(message) => {
                 info!("SharedMemoryUpdated: {:?}", message);
-                self.last_shared_message_opt = Some(message);
                 let mut tasks = Vec::new();
-                if let Some(last_shared_message) = &self.last_shared_message_opt {
-                    self.message_count += 1;
-                    self.monitor_info_opt = Some(last_shared_message.monitor_info.clone());
-                }
+                self.monitor_info_opt = Some(message.monitor_info);
 
                 if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
                     self.layout_symbol = monitor_info.ltsymbol.clone();
@@ -652,7 +639,6 @@ impl IcedBar {
         Subscription::batch(vec![
             Self::message_notify_subscription(self.shared_path.clone()),
             tick,
-            time::every(milliseconds(2000)).map(|_| Message::UpdateSparceInfo)
         ])
     }
 
@@ -818,18 +804,17 @@ impl IcedBar {
 
     fn view_under_line(&self) -> Element<Message> {
         // 创建下划线行
-        let mut tag_status_vec: Vec<TagStatus> = Vec::new();
-        if let Some(ref monitor_info) = self.monitor_info_opt {
-            tag_status_vec = monitor_info.tag_status_vec.clone();
-        }
-
         let mut underline_row = Row::new().spacing(Self::TAB_SPACING);
         for (index, _) in self.tabs.iter().enumerate() {
             // 创建下划线
             let tab_color = self.tab_colors.get(index).unwrap_or(&Self::DEFAULT_COLOR);
 
             // 根据状态设置样式
-            if let Some(tag_status) = tag_status_vec.get(index) {
+            if let Some(Some(tag_status)) = self
+                .monitor_info_opt
+                .as_ref()
+                .map(|s| s.tag_status_vec.get(index))
+            {
                 if !(tag_status.is_selected
                     || tag_status.is_occ
                     || tag_status.is_filled
