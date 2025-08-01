@@ -355,16 +355,12 @@ impl IcedBar {
         })
     }
 
-    // 创建文件监听订阅
     fn file_watcher_subscription(shared_path: String) -> Subscription<Message> {
         Subscription::run_with(shared_path.clone(), move |path| {
             let path = path.clone(); // 克隆路径以避免借用问题
-            info!("here 12");
             stream::channel(100, move |mut output: mpsc::Sender<Message>| {
                 let path = path.clone(); // 再次克隆用于 async move
-                info!("here 0");
                 async move {
-                    info!("here 1");
                     if path.is_empty() {
                         let _ = output
                             .send(Message::SharedMemoryError("Empty shared path".to_string()))
@@ -372,78 +368,30 @@ impl IcedBar {
 
                         return;
                     }
-                    info!("here 2");
-                    let (tx, mut rx) = mpsc::unbounded();
-                    let path_for_watcher = path.clone();
-                    // 创建文件监听器
-                    info!("here 3");
-                    let mut watcher = match notify::recommended_watcher(
-                        move |res: Result<Event, notify::Error>| {
-                            info!("here 13");
-                            match res {
-                                Ok(event) => {
-                                    info!("here 4");
-                                    // 只关注数据修改事件
-                                    if matches!(
-                                        event.kind,
-                                        EventKind::Modify(ModifyKind::Data(DataChange::Any))
-                                            | EventKind::Create(_)
-                                            | EventKind::Remove(_)
-                                    ) {
-                                        info!("here 5");
-                                        let _ = tx.unbounded_send(Message::SharedMemoryUpdated);
-                                    }
-                                }
-                                Err(e) => {
-                                    info!("here 6");
-                                    let _ = tx
-                                        .unbounded_send(Message::SharedMemoryError(e.to_string()));
+                    let (tx, _) = mpsc::unbounded();
+                    let shared_buffer = SharedRingBuffer::open(&path).unwrap();
+                    let _ = tx.unbounded_send(Message::SharedMemoryUpdated);
+                    loop {
+                        match shared_buffer.wait_for_message(Some(time::Duration::from_secs(2))) {
+                            Ok(true) => {
+                                info!("[ICED] Event received! Reading message(s).");
+                                if let Ok(Some(message)) =
+                                    shared_buffer.try_read_latest_message::<SharedMessage>()
+                                {
+                                    info!(
+                                        "[ICED] Received State: client_name = '{}'",
+                                        message.monitor_info.client_name
+                                    );
                                 }
                             }
-                        },
-                    ) {
-                        Ok(w) => {
-                            info!("here 7, {:?}", w);
-                            w
+                            Ok(false) => info!("[ICED] Wait for message timed out."),
+                            Err(e) => {
+                                error!("[ICED] Wait for message failed: {}", e);
+                                break;
+                            }
                         }
-                        Err(e) => {
-                            info!("here 8");
-                            let _ = output
-                                .send(Message::SharedMemoryError(format!(
-                                    "Failed to create watcher: {}",
-                                    e
-                                )))
-                                .await;
-                            return;
-                        }
-                    };
-                    // 监听共享内存文件
-                    info!("here 9");
-                    let watch_path = Path::new(&path_for_watcher);
-                    if let Err(e) = watcher.watch(watch_path, RecursiveMode::NonRecursive) {
-                        info!("here 10");
-                        let _ = output
-                            .send(Message::SharedMemoryError(format!(
-                                "Failed to watch path {}: {}",
-                                path_for_watcher, e
-                            )))
-                            .await;
-
-                        return;
+                        // break;
                     }
-                    info!("Started watching shared memory file: {}", path_for_watcher);
-                    // 转发事件
-                    while let Some(msg) = rx.next().await {
-                        info!("here 11");
-                        if output.send(msg).await.is_err() {
-                            info!("Output channel closed, stopping file watcher");
-
-                            break;
-                        }
-                    }
-                    // 确保 watcher 在整个生命周期内存活
-                    drop(watcher);
-                    info!("File watcher stopped for: {}", path_for_watcher);
                 }
             })
         })
@@ -737,15 +685,13 @@ impl IcedBar {
 
     fn subscription(&self) -> Subscription<Message> {
         Subscription::batch(vec![
-            // 高效的文件监听
             if !self.shared_path.is_empty() {
                 Self::file_watcher_subscription(self.shared_path.clone())
                 // Subscription::run(Self::some_worker)
             } else {
                 Subscription::none()
             },
-            // UI更新
-            time::every(milliseconds(50)).map(|_| Message::CheckSharedMessages),
+            time::every(milliseconds(500)).map(|_| Message::CheckSharedMessages),
         ])
     }
 
