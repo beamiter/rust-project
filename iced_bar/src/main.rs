@@ -240,7 +240,7 @@ impl IcedBar {
             warn!("No shared path provided, running without shared memory");
             None
         } else {
-            match SharedRingBuffer::open(&shared_path) {
+            match SharedRingBuffer::open(&shared_path, None) {
                 Ok(shared_buffer) => {
                     info!("Successfully opened shared ring buffer: {}", shared_path);
                     Some(shared_buffer)
@@ -250,7 +250,7 @@ impl IcedBar {
                         "Failed to open shared ring buffer: {}, attempting to create new one",
                         e
                     );
-                    match SharedRingBuffer::create(&shared_path, None, None) {
+                    match SharedRingBuffer::create(&shared_path, None, None, None) {
                         Ok(shared_buffer) => {
                             info!("Created new shared ring buffer: {}", shared_path);
                             Some(shared_buffer)
@@ -331,7 +331,7 @@ impl IcedBar {
                         return;
                     }
                     // 使用 spawn_blocking 来处理阻塞操作
-                    let shared_buffer = match SharedRingBuffer::open(&path) {
+                    let shared_buffer = match SharedRingBuffer::open(&path, None) {
                         Ok(buffer) => buffer,
                         Err(e) => {
                             let _ = output

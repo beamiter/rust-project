@@ -1919,11 +1919,11 @@ impl Dwm {
         info!("[drawbar] num: {}", num);
         let shared_path = format!("/dev/shm/monitor_{}", num);
         if !self.status_bar_shmem.contains_key(&num) {
-            let ring_buffer = match SharedRingBuffer::open(&shared_path) {
+            let ring_buffer = match SharedRingBuffer::open(&shared_path, None) {
                 Ok(rb) => rb,
                 Err(_) => {
                     println!("创建新的共享环形缓冲区");
-                    SharedRingBuffer::create(&shared_path, None, None).unwrap()
+                    SharedRingBuffer::create(&shared_path, None, None, None).unwrap()
                 }
             };
             self.status_bar_shmem.insert(num, ring_buffer);

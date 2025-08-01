@@ -1,5 +1,6 @@
 use serde::{Deserialize, Serialize};
 use shared_memory::{Shmem, ShmemConf};
+use std::hint;
 use std::io::{Error, ErrorKind, Result};
 use std::mem::size_of;
 use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
@@ -18,7 +19,6 @@ use crate::shared_message::{CommandType, SharedCommand};
 struct RingBufferHeader {
     magic: AtomicU64,
     version: AtomicU64,
-    _pad0: [u8; 48],
     write_idx: AtomicU32,
     read_idx: AtomicU32,
     buffer_size: u32,
@@ -26,10 +26,8 @@ struct RingBufferHeader {
     last_timestamp: AtomicU64,
     message_event_fd: AtomicI32,
     command_event_fd: AtomicI32,
-    _pad1: [u8; 32],
     cmd_write_idx: AtomicU32,
     cmd_read_idx: AtomicU32,
-    _pad2: [u8; 48],
 }
 
 #[repr(C)]
@@ -55,6 +53,8 @@ const DEFAULT_MAX_MESSAGE_SIZE: usize = 4096;
 const CMD_BUFFER_SIZE: usize = 16;
 const BUFFER_MASK: u32 = (DEFAULT_BUFFER_SIZE as u32) - 1;
 const CMD_BUFFER_MASK: u32 = (CMD_BUFFER_SIZE as u32) - 1;
+// 新增：自适应轮询的默认自旋次数
+const DEFAULT_ADAPTIVE_POLL_SPINS: u32 = 4000;
 
 pub struct SharedRingBuffer {
     shmem: Shmem,
@@ -64,6 +64,8 @@ pub struct SharedRingBuffer {
     is_creator: bool,
     message_event_fd: i32,
     command_event_fd: i32,
+    // 新增：自适应轮询的配置
+    adaptive_poll_spins: u32,
 }
 
 unsafe impl Send for SharedRingBuffer {}
@@ -74,9 +76,11 @@ impl SharedRingBuffer {
         path: &str,
         buffer_size: Option<usize>,
         max_message_size: Option<usize>,
+        adaptive_poll_spins: Option<u32>, // 新增参数
     ) -> Result<Self> {
         let buffer_size = buffer_size.unwrap_or(DEFAULT_BUFFER_SIZE);
         let max_message_size = max_message_size.unwrap_or(DEFAULT_MAX_MESSAGE_SIZE);
+        let adaptive_poll_spins = adaptive_poll_spins.unwrap_or(DEFAULT_ADAPTIVE_POLL_SPINS); // 初始化
 
         if !buffer_size.is_power_of_two() || !CMD_BUFFER_SIZE.is_power_of_two() {
             return Err(Error::new(
@@ -142,10 +146,12 @@ impl SharedRingBuffer {
             is_creator: true,
             message_event_fd: msg_fd_raw,
             command_event_fd: cmd_fd_raw,
+            adaptive_poll_spins, // 设置字段
         })
     }
 
-    pub fn open(path: &str) -> Result<Self> {
+    pub fn open(path: &str, adaptive_poll_spins: Option<u32>) -> Result<Self> {
+        // 新增参数
         let shmem = ShmemConf::new()
             .flink(path)
             .open()
@@ -188,6 +194,7 @@ impl SharedRingBuffer {
             is_creator: false,
             message_event_fd,
             command_event_fd,
+            adaptive_poll_spins: adaptive_poll_spins.unwrap_or(DEFAULT_ADAPTIVE_POLL_SPINS), // 设置字段
         })
     }
 
@@ -258,14 +265,16 @@ impl SharedRingBuffer {
         Ok(true)
     }
 
+    // 更新：现在调用新的 wait_on_fd
     pub fn wait_for_message(&self, timeout: Option<Duration>) -> Result<bool> {
-        self.wait_on_fd(self.message_event_fd, timeout)
-    }
-    pub fn wait_for_command(&self, timeout: Option<Duration>) -> Result<bool> {
-        self.wait_on_fd(self.command_event_fd, timeout)
+        self.wait_on_fd(self.message_event_fd, timeout, || self.has_message())
     }
 
-    // (Other methods like try_read_latest_message, receive_command, etc. remain unchanged)
+    // 更新：现在调用新的 wait_on_fd
+    pub fn wait_for_command(&self, timeout: Option<Duration>) -> Result<bool> {
+        self.wait_on_fd(self.command_event_fd, timeout, || self.has_command())
+    }
+
     pub fn try_read_latest_message<T: for<'de> Deserialize<'de>>(&self) -> Result<Option<T>> {
         unsafe {
             let max_msg_size = (*self.header).max_message_size as usize;
@@ -304,6 +313,7 @@ impl SharedRingBuffer {
             Ok(Some(message))
         }
     }
+
     pub fn receive_command(&self) -> Option<SharedCommand> {
         unsafe {
             let read_idx = (*self.header).cmd_read_idx.load(Ordering::Relaxed);
@@ -330,9 +340,11 @@ impl SharedRingBuffer {
             Some(command)
         }
     }
+
     pub fn has_command(&self) -> bool {
         self.available_commands() > 0
     }
+
     pub fn available_commands(&self) -> usize {
         unsafe {
             (*self.header)
@@ -346,6 +358,7 @@ impl SharedRingBuffer {
     pub fn has_message(&self) -> bool {
         self.available_messages() > 0
     }
+
     pub fn available_messages(&self) -> usize {
         unsafe {
             (*self.header)
@@ -355,18 +368,45 @@ impl SharedRingBuffer {
         }
     }
 
-    fn wait_on_fd(&self, fd: i32, timeout: Option<Duration>) -> Result<bool> {
+    // 核心修改：实现自适应轮询的等待方法
+    fn wait_on_fd(
+        &self,
+        fd: i32,
+        timeout: Option<Duration>,
+        has_data: impl Fn() -> bool,
+    ) -> Result<bool> {
+        // 1. 自适应轮询（Spinning）
+        for _ in 0..self.adaptive_poll_spins {
+            if has_data() {
+                return Ok(true); // 在自旋期间发现数据，立即返回
+            }
+            hint::spin_loop(); // 提示CPU正在忙等待
+        }
+
+        // 如果自旋后仍未发现数据，检查一次最终状态
+        if has_data() {
+            return Ok(true);
+        }
+
+        // 2. 回退到阻塞等待（poll）
         let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
         let poll_fd = PollFd::new(borrowed_fd, PollFlags::POLLIN);
-        let timeout_ms = timeout.map_or(-1, |d| d.as_millis() as i32);
+        // 如果没有超时，我们只做一次非阻塞的 poll 检查 eventfd
+        // 因为我们已经自旋过了，如果还没有事件，就没必要一直阻塞在这里
+        let timeout_ms = timeout.map_or(0, |d| d.as_millis() as i32);
+
         let num_events = poll(&mut [poll_fd], timeout_ms as u16)
             .map_err(|e| Error::new(ErrorKind::Other, format!("poll failed: {}", e)))?;
+
         if num_events == 0 {
-            return Ok(false);
+            // 在阻塞等待后，再次检查数据。这可以捕获在poll调用和返回之间到达的数据。
+            return Ok(has_data());
         }
+
+        // 清除 eventfd 的信号
         let mut buf = [0u8; 8];
         match unistd::read(borrowed_fd, &mut buf) {
-            Ok(_) | Err(nix::errno::Errno::EAGAIN) => Ok(true),
+            Ok(_) | Err(nix::errno::Errno::EAGAIN) => Ok(true), // 成功读取或信号已被其他线程处理
             Err(e) => Err(Error::new(
                 ErrorKind::Other,
                 format!("Failed to read from eventfd: {}", e),
@@ -416,11 +456,13 @@ mod tests {
         let shared_path = "/tmp/test_eventfd_buffer";
         let _ = std::fs::remove_file(shared_path);
 
-        let jwm_buffer = SharedRingBuffer::create(shared_path, None, None).unwrap();
+        // JWM 端创建时可以指定 spins 次数，或使用默认值
+        let jwm_buffer = SharedRingBuffer::create(shared_path, None, None, Some(5000)).unwrap();
         println!("[JWM] SharedRingBuffer created at '{}'", shared_path);
 
         let egui_thread = thread::spawn(move || {
-            let egui_buffer = SharedRingBuffer::open(shared_path).unwrap();
+            // EGUI 端打开时也可以独立配置
+            let egui_buffer = SharedRingBuffer::open(shared_path, None).unwrap();
             println!("[EGUI] Opened SharedRingBuffer.");
 
             for i in 1..=5 {
@@ -483,7 +525,7 @@ mod tests {
                         }
                     }
                 }
-                Ok(false) => {}
+                Ok(false) => {} // 在这个测试场景下，超时是正常的，因为EGUI不是每次都立即回复
                 Err(e) => eprintln!("[JWM] Wait for command failed: {}", e),
             }
         }
