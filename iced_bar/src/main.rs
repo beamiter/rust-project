@@ -21,9 +21,7 @@ mod error;
 pub use error::AppError;
 use log::debug;
 use log::{error, info, warn};
-use shared_structures::{
-    CommandType, MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus,
-};
+use shared_structures::{CommandType, MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer};
 use std::env;
 use std::process::Command;
 use std::sync::Once;
@@ -164,27 +162,25 @@ enum Input {
 enum Message {
     TabSelected(usize),
     LayoutClicked(u32),
-    UpdateTime,
-    GetWindowId,
-    GetWindowSize(Size),
-    GetScaleFactor(f32),
-    WindowIdReceived(Option<Id>),
-    RawIdReceived(u64),
-    ResizeWindow,
-    ResizeWithId(Option<Id>),
     ShowSecondsToggle,
 
-    // For mouse_area
+    GetWindowId,
+    WindowIdReceived(Option<Id>),
+
+    GetWindowSize(Size),
+    ResizeWindowSize,
+
+    GetScaleFactor(f32),
+    RawIdReceived(u64),
+
     MouseEnterScreenShot,
     MouseExitScreenShot,
     LeftClick,
     RightClick,
 
+    UpdateTime,
     SharedMemoryUpdated(SharedMessage),
     SharedMemoryError(String),
-
-    Ready(mpsc::Sender<Input>),
-    WorkFinished,
 }
 
 struct IcedBar {
@@ -198,7 +194,6 @@ struct IcedBar {
     heartbeat_timestamp: AtomicI64,
     raw_window_id: AtomicU64,
     current_window_id: Option<Id>,
-    is_resized: bool,
     scale_factor: f32,
     is_hovered: bool,
     mouse_position: Option<iced::Point>,
@@ -300,7 +295,6 @@ impl IcedBar {
             monitor_info_opt: None,
             formated_now: String::new(),
             current_window_id: None,
-            is_resized: false,
             scale_factor: 1.0,
             is_hovered: false,
             mouse_position: None,
@@ -318,7 +312,7 @@ impl IcedBar {
         }
     }
 
-    fn some_worker() -> impl Stream<Item = Message> {
+    fn prepare_worker() -> impl Stream<Item = Message> {
         stream::channel(10, async |mut output| {
             let _ = output.send(Message::GetWindowId).await;
         })
@@ -460,20 +454,31 @@ impl IcedBar {
                 window::get_latest().map(Message::WindowIdReceived)
             }
 
+            Message::WindowIdReceived(window_id) => {
+                info!("WindowIdReceived");
+                self.current_window_id = window_id;
+                info!("current_window_id: {:?}", self.current_window_id);
+                let window_id = window_id.unwrap();
+                Task::batch([
+                    window::get_scale_factor(window_id).map(Message::GetScaleFactor),
+                    window::get_raw_id::<Message>(window_id).map(Message::RawIdReceived),
+                ])
+            }
+
             Message::MouseEnterScreenShot => {
                 self.is_hovered = true;
                 Task::none()
-            }
-
-            Message::ShowSecondsToggle => {
-                self.show_seconds = !self.show_seconds;
-                return Task::perform(async {}, |_| Message::UpdateTime);
             }
 
             Message::MouseExitScreenShot => {
                 self.is_hovered = false;
                 self.mouse_position = None;
                 Task::none()
+            }
+
+            Message::ShowSecondsToggle => {
+                self.show_seconds = !self.show_seconds;
+                return Task::perform(async {}, |_| Message::UpdateTime);
             }
 
             Message::LeftClick => {
@@ -484,8 +489,18 @@ impl IcedBar {
             Message::RightClick => Task::none(),
 
             Message::GetWindowSize(window_size) => {
+                info!("window_size: {:?}", window_size);
                 self.current_window_size = Some(window_size);
-                if self.current_window_size.is_some() && self.target_window_size.is_some() {
+                Task::none()
+            }
+
+            Message::ResizeWindowSize => {
+                info!("ResizeWindowSize");
+                if self.current_window_id.is_some()
+                    && self.current_window_size.is_some()
+                    && self.target_window_size.is_some()
+                    && self.target_window_pos.is_some()
+                {
                     let current_size = self.current_window_size.unwrap();
                     let target_size = self.target_window_size.unwrap();
                     if (current_size.width - target_size.width).abs() > 10.
@@ -495,12 +510,17 @@ impl IcedBar {
                             "current_window_size: {:?}, target_window_size: {:?}",
                             self.current_window_size, self.target_window_size
                         );
-                        self.is_resized = false;
+                        return Task::batch([
+                            window::move_to(
+                                self.current_window_id.unwrap(),
+                                self.target_window_pos.unwrap(),
+                            ),
+                            window::resize(
+                                self.current_window_id.unwrap(),
+                                self.target_window_size.unwrap(),
+                            ),
+                        ]);
                     }
-                }
-                let current_window_id = self.current_window_id;
-                if !self.is_resized {
-                    return Task::perform(async move { current_window_id }, Message::ResizeWithId);
                 }
                 Task::none()
             }
@@ -511,64 +531,12 @@ impl IcedBar {
                 Task::none()
             }
 
-            Message::WindowIdReceived(window_id) => {
-                info!("WindowIdReceived");
-                // 保存窗口 ID 并用于后续操作
-                self.current_window_id = window_id;
-                info!("current_window_id: {:?}", self.current_window_id);
-                Task::batch([
-                    window::get_size(window_id.unwrap()).map(Message::GetWindowSize),
-                    window::get_scale_factor(window_id.unwrap()).map(Message::GetScaleFactor),
-                    window::get_raw_id::<Message>(window_id.unwrap()).map(Message::RawIdReceived),
-                ])
-            }
-
             Message::RawIdReceived(raw_id) => {
                 // Use xwininfo to get window id.
                 // xdotool windowsize 0xc00004 800 40 work!
                 self.raw_window_id.store(raw_id, Ordering::Relaxed);
                 info!("{}", format!("RawIdReceived: 0x{:X}", raw_id));
                 Task::none()
-            }
-
-            Message::ResizeWindow => {
-                info!("ResizeWindow");
-                if let Some(id) = self.current_window_id {
-                    Task::perform(async move { Some(id) }, Message::ResizeWithId)
-                } else {
-                    window::get_latest().map(|id| Message::ResizeWithId(id))
-                }
-            }
-
-            Message::ResizeWithId(window_id) => {
-                self.current_window_id = window_id;
-                if let Some(id) = self.current_window_id {
-                    info!("ResizeWithId: {:?}, {:?}", window_id, self.monitor_info_opt);
-                    let mut tasks = Vec::new();
-                    if let Some(ref monitor_info) = self.monitor_info_opt {
-                        let width = (monitor_info.monitor_width as f32
-                            - 2.0 * monitor_info.border_w as f32)
-                            / self.scale_factor;
-                        let height = 40.0;
-                        let window_pos = Point::new(
-                            (monitor_info.monitor_x as f32 + monitor_info.border_w as f32)
-                                / self.scale_factor,
-                            (monitor_info.monitor_y as f32 + monitor_info.border_w as f32 * 0.5)
-                                / self.scale_factor,
-                        );
-                        let window_size = Size::new(width, height);
-                        info!("window_pos: {:?}", window_pos);
-                        info!("window_size: {:?}", window_size);
-                        tasks.push(window::move_to(id, window_pos));
-                        tasks.push(window::resize(id, window_size));
-                        self.target_window_pos = Some(window_pos);
-                        self.target_window_size = Some(window_size);
-                        self.is_resized = true;
-                    }
-                    Task::batch(tasks)
-                } else {
-                    window::get_latest().map(|id| Message::ResizeWithId(id))
-                }
             }
 
             Message::UpdateTime => {
@@ -597,6 +565,23 @@ impl IcedBar {
 
                 if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
                     self.layout_symbol = monitor_info.ltsymbol.clone();
+
+                    let width = (monitor_info.monitor_width as f32
+                        - 2.0 * monitor_info.border_w as f32)
+                        / self.scale_factor;
+                    let height = 40.0;
+                    let window_pos = Point::new(
+                        (monitor_info.monitor_x as f32 + monitor_info.border_w as f32)
+                            / self.scale_factor,
+                        (monitor_info.monitor_y as f32 + monitor_info.border_w as f32 * 0.5)
+                            / self.scale_factor,
+                    );
+                    let window_size = Size::new(width, height);
+                    info!("window_pos: {:?}", window_pos);
+                    info!("window_size: {:?}", window_size);
+                    self.target_window_pos = Some(window_pos);
+                    self.target_window_size = Some(window_size);
+
                     for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
                         if tag_status.is_selected {
                             self.active_tab = index;
@@ -604,16 +589,11 @@ impl IcedBar {
                     }
                 }
 
-                if let Some(window_id) = self.current_window_id {
-                    tasks.push(window::get_size(window_id).map(Message::GetWindowSize));
-                    let current_window_id = self.current_window_id;
-                    if !self.is_resized {
-                        tasks.push(Task::perform(
-                            async move { current_window_id },
-                            Message::ResizeWithId,
-                        ));
-                    }
-                }
+                tasks.push(
+                    window::get_size(self.current_window_id.unwrap())
+                        .map(Message::GetWindowSize)
+                        .chain(Task::perform(async move {}, |_| Message::ResizeWindowSize)),
+                );
 
                 Task::batch(tasks)
             }
@@ -622,24 +602,19 @@ impl IcedBar {
                 info!("SharedMemoryError: {err}");
                 Task::none()
             }
-
-            Message::Ready(_) => Task::none(),
-
-            Message::WorkFinished => Task::none(),
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
         let tick = if self.current_window_id.is_none() {
-            Subscription::run(Self::some_worker)
+            Subscription::run(Self::prepare_worker)
         } else {
-            time::every(milliseconds(1000)).map(|_| Message::UpdateTime)
+            Subscription::batch(vec![
+                time::every(milliseconds(1000)).map(|_| Message::UpdateTime),
+                Self::message_notify_subscription(self.shared_path.clone()),
+            ])
         };
-
-        Subscription::batch(vec![
-            Self::message_notify_subscription(self.shared_path.clone()),
-            tick,
-        ])
+        return tick;
     }
 
     #[allow(dead_code)]
