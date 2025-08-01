@@ -177,7 +177,6 @@ fn shared_memory_worker(
                     // 如果连续错误过多，尝试重置读取位置
                     if consecutive_errors > 10 {
                         warn!("Too many consecutive errors, resetting read index");
-                        shared_buffer.reset_read_index();
                         consecutive_errors = 0;
                     }
                 }

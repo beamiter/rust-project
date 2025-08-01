@@ -158,9 +158,9 @@ fn main() -> iced::Result {
         .run()
 }
 
+#[allow(dead_code)]
 enum Input {
     DoSomeWork,
-    // ...
 }
 
 #[allow(dead_code)]
@@ -333,26 +333,19 @@ impl IcedBar {
         }
     }
 
+    #[allow(dead_code)]
     fn some_worker() -> impl Stream<Item = Message> {
-        info!("fuck 00");
         stream::channel(100, async |mut output| {
             // Create channel
             let (sender, mut receiver) = mpsc::channel(100);
-
             // Send the sender back to the application
             let _ = output.send(Message::Ready(sender)).await;
-            info!("fuck 0");
-
             loop {
-                info!("fuck 1");
                 // Read next input sent from `Application`
                 let input = receiver.select_next_some().await;
-
                 match input {
                     Input::DoSomeWork => {
-                        info!("fuck 2");
                         // Do some async work...
-
                         // Finally, we can optionally produce a message to tell the
                         // `Application` the work is done
                         let _ = output.send(Message::WorkFinished).await;
@@ -746,14 +739,13 @@ impl IcedBar {
         Subscription::batch(vec![
             // 高效的文件监听
             if !self.shared_path.is_empty() {
-                info!("test");
                 Self::file_watcher_subscription(self.shared_path.clone())
                 // Subscription::run(Self::some_worker)
             } else {
                 Subscription::none()
             },
             // UI更新
-            time::every(milliseconds(500)).map(|_| Message::CheckSharedMessages),
+            time::every(milliseconds(50)).map(|_| Message::CheckSharedMessages),
         ])
     }
 

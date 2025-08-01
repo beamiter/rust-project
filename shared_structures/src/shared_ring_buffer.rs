@@ -424,7 +424,7 @@ fn calculate_checksum(data: &[u8]) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shared_message::{MonitorInfo, SharedMessage};
+    use crate::shared_message::SharedMessage;
     use std::thread;
 
     #[test]

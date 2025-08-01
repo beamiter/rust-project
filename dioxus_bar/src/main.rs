@@ -164,7 +164,6 @@ fn shared_memory_worker(
 
                     if consecutive_errors > 50 {
                         warn!("Too many consecutive errors, resetting read index");
-                        shared_buffer.reset_read_index();
                         consecutive_errors = 0;
                     }
                 }
