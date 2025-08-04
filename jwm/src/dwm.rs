@@ -1923,7 +1923,7 @@ impl Dwm {
                 Ok(rb) => rb,
                 Err(_) => {
                     println!("创建新的共享环形缓冲区");
-                    SharedRingBuffer::create(&shared_path, None, None, None).unwrap()
+                    SharedRingBuffer::create(&shared_path, None, None).unwrap()
                 }
             };
             self.status_bar_shmem.insert(num, ring_buffer);
@@ -2053,7 +2053,7 @@ impl Dwm {
 
         // 第二步：处理收集到的命令
         for (_monitor_id, cmd) in commands_to_process {
-            match cmd.cmd_type {
+            match cmd.cmd_type.into() {
                 CommandType::ViewTag => {
                     // 切换到指定标签
                     info!(
