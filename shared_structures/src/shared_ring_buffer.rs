@@ -1,10 +1,10 @@
 use std::hint;
 use std::io::{Error, ErrorKind, Result};
 use std::mem::size_of;
-use std::sync::atomic::{AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// nix 用于 eventfd 和 poll
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::sys::eventfd::EventFd;
 use nix::unistd;
@@ -28,15 +28,16 @@ struct RingBufferHeader {
     command_event_fd: AtomicI32,
     cmd_write_idx: AtomicU32,
     cmd_read_idx: AtomicU32,
+    // 新增：标记是否已经被销毁
+    is_destroyed: AtomicBool,
 }
 
-// 消息槽结构体：移除 packed，使用自然对齐
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 struct MessageSlot {
     timestamp: u64,
     checksum: u32,
-    _padding: u32, // 确保 8 字节对齐
+    _padding: u32,
     message: SharedMessage,
 }
 
@@ -48,14 +49,54 @@ const BUFFER_MASK: u32 = (DEFAULT_BUFFER_SIZE as u32) - 1;
 const CMD_BUFFER_MASK: u32 = (CMD_BUFFER_SIZE as u32) - 1;
 const DEFAULT_ADAPTIVE_POLL_SPINS: u32 = 4000;
 
+// 使用 Arc 来管理 EventFd 的生命周期
+struct EventFdWrapper {
+    event_fd: EventFd,
+}
+
+impl EventFdWrapper {
+    fn new() -> Result<Self> {
+        Ok(Self {
+            event_fd: EventFd::from_value(0)?,
+        })
+    }
+
+    fn as_raw_fd(&self) -> i32 {
+        self.event_fd.as_raw_fd()
+    }
+
+    fn signal(&self) -> Result<()> {
+        match unistd::write(&self.event_fd, &1u64.to_ne_bytes()) {
+            Ok(_) | Err(nix::errno::Errno::EAGAIN) => Ok(()),
+            Err(e) => Err(Error::new(
+                ErrorKind::Other,
+                format!("Failed to signal eventfd: {}", e),
+            )),
+        }
+    }
+
+    #[allow(dead_code)]
+    fn clear(&self) -> Result<()> {
+        let mut buf = [0u8; 8];
+        match unistd::read(&self.event_fd, &mut buf) {
+            Ok(_) | Err(nix::errno::Errno::EAGAIN) => Ok(()),
+            Err(e) => Err(Error::new(
+                ErrorKind::Other,
+                format!("Failed to read from eventfd: {}", e),
+            )),
+        }
+    }
+}
+
 pub struct SharedRingBuffer {
     shmem: Shmem,
     header: *mut RingBufferHeader,
     message_slots: *mut MessageSlot,
     cmd_buffer_start: *mut SharedCommand,
     is_creator: bool,
-    message_event_fd: i32,
-    command_event_fd: i32,
+    // 使用 Arc 来管理 EventFd 生命周期
+    message_event_fd: Option<Arc<EventFdWrapper>>,
+    command_event_fd: Option<Arc<EventFdWrapper>>,
     adaptive_poll_spins: u32,
 }
 
@@ -78,12 +119,11 @@ impl SharedRingBuffer {
             ));
         }
 
-        // 计算内存布局，考虑对齐要求
+        // 计算内存布局
         let header_size = size_of::<RingBufferHeader>();
         let message_slot_size = size_of::<MessageSlot>();
         let cmd_size = size_of::<SharedCommand>();
 
-        // 确保各部分都正确对齐
         let messages_offset = align_up(header_size, std::mem::align_of::<MessageSlot>());
         let messages_size = buffer_size * message_slot_size;
         let commands_offset = align_up(
@@ -93,18 +133,6 @@ impl SharedRingBuffer {
         let commands_size = CMD_BUFFER_SIZE * cmd_size;
         let total_size = commands_offset + commands_size;
 
-        println!("Creating shared memory layout:");
-        println!("  Header: {} bytes at offset 0", header_size);
-        println!(
-            "  Messages: {} x {} = {} bytes at offset {}",
-            buffer_size, message_slot_size, messages_size, messages_offset
-        );
-        println!(
-            "  Commands: {} x {} = {} bytes at offset {}",
-            CMD_BUFFER_SIZE, cmd_size, commands_size, commands_offset
-        );
-        println!("  Total: {} bytes", total_size);
-
         let shmem = ShmemConf::new()
             .size(total_size)
             .flink(path)
@@ -112,14 +140,9 @@ impl SharedRingBuffer {
             .create()
             .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to create shmem: {}", e)))?;
 
-        let msg_efd = EventFd::from_value(0)?;
-        let cmd_efd = EventFd::from_value(0)?;
-
-        let msg_fd_raw = msg_efd.as_raw_fd();
-        let cmd_fd_raw = cmd_efd.as_raw_fd();
-
-        std::mem::forget(msg_efd);
-        std::mem::forget(cmd_efd);
+        // 创建 EventFd 包装器
+        let message_efd = Arc::new(EventFdWrapper::new()?);
+        let command_efd = Arc::new(EventFdWrapper::new()?);
 
         let header = shmem.as_ptr() as *mut RingBufferHeader;
         let message_slots = unsafe { shmem.as_ptr().add(messages_offset) as *mut MessageSlot };
@@ -137,12 +160,13 @@ impl SharedRingBuffer {
             (*header).last_timestamp.store(0, Ordering::Release);
             (*header).cmd_write_idx.store(0, Ordering::Release);
             (*header).cmd_read_idx.store(0, Ordering::Release);
+            (*header).is_destroyed.store(false, Ordering::Release);
             (*header)
                 .message_event_fd
-                .store(msg_fd_raw, Ordering::Release);
+                .store(message_efd.as_raw_fd(), Ordering::Release);
             (*header)
                 .command_event_fd
-                .store(cmd_fd_raw, Ordering::Release);
+                .store(command_efd.as_raw_fd(), Ordering::Release);
         }
 
         Ok(Self {
@@ -151,8 +175,8 @@ impl SharedRingBuffer {
             message_slots,
             cmd_buffer_start,
             is_creator: true,
-            message_event_fd: msg_fd_raw,
-            command_event_fd: cmd_fd_raw,
+            message_event_fd: Some(message_efd),
+            command_event_fd: Some(command_efd),
             adaptive_poll_spins,
         })
     }
@@ -164,7 +188,7 @@ impl SharedRingBuffer {
             .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to open shmem: {}", e)))?;
 
         let header = shmem.as_ptr() as *mut RingBufferHeader;
-        let (message_event_fd, command_event_fd, buffer_size);
+        let buffer_size;
 
         unsafe {
             if (*header).magic.load(Ordering::Acquire) != RING_BUFFER_MAGIC {
@@ -173,12 +197,10 @@ impl SharedRingBuffer {
             if (*header).version.load(Ordering::Acquire) != RING_BUFFER_VERSION {
                 return Err(Error::new(ErrorKind::InvalidData, "Incompatible version"));
             }
-            message_event_fd = (*header).message_event_fd.load(Ordering::Acquire);
-            command_event_fd = (*header).command_event_fd.load(Ordering::Acquire);
             buffer_size = (*header).buffer_size as usize;
         }
 
-        // 重新计算偏移量（必须与创建时相同）
+        // 重新计算偏移量
         let header_size = size_of::<RingBufferHeader>();
         let message_slot_size = size_of::<MessageSlot>();
         let messages_offset = align_up(header_size, std::mem::align_of::<MessageSlot>());
@@ -197,33 +219,42 @@ impl SharedRingBuffer {
             message_slots,
             cmd_buffer_start,
             is_creator: false,
-            message_event_fd,
-            command_event_fd,
+            message_event_fd: None, // 非创建者不拥有 EventFd
+            command_event_fd: None,
             adaptive_poll_spins: adaptive_poll_spins.unwrap_or(DEFAULT_ADAPTIVE_POLL_SPINS),
         })
     }
 
-    // 直接写入消息，无需序列化
+    // 检查是否已被销毁
+    fn is_destroyed(&self) -> bool {
+        unsafe { (*self.header).is_destroyed.load(Ordering::Acquire) }
+    }
+
     pub fn try_write_message(&self, message: &SharedMessage) -> Result<bool> {
+        if self.is_destroyed() {
+            return Err(Error::new(
+                ErrorKind::BrokenPipe,
+                "Buffer has been destroyed",
+            ));
+        }
+
         unsafe {
             let write_idx = (*self.header).write_idx.load(Ordering::Relaxed);
             let read_idx = (*self.header).read_idx.load(Ordering::Acquire);
 
             if write_idx.wrapping_sub(read_idx) == (*self.header).buffer_size {
-                return Ok(false); // 缓冲区满
+                return Ok(false);
             }
 
             let slot_idx = (write_idx & BUFFER_MASK) as usize;
             let slot = &mut *self.message_slots.add(slot_idx);
 
-            // 计算校验和
             let message_bytes = std::slice::from_raw_parts(
                 message as *const SharedMessage as *const u8,
                 size_of::<SharedMessage>(),
             );
             let checksum = calculate_checksum(message_bytes);
 
-            // 创建新的 MessageSlot
             let new_slot = MessageSlot {
                 timestamp: SystemTime::now()
                     .duration_since(UNIX_EPOCH)
@@ -234,10 +265,8 @@ impl SharedRingBuffer {
                 message: *message,
             };
 
-            // 一次性写入整个槽位
             *slot = new_slot;
 
-            // 更新头部信息
             (*self.header)
                 .last_timestamp
                 .store(new_slot.timestamp, Ordering::Release);
@@ -246,21 +275,23 @@ impl SharedRingBuffer {
                 .store(write_idx.wrapping_add(1), Ordering::Release);
         }
 
-        self.signal_fd(self.message_event_fd)?;
+        self.signal_message_event()?;
         Ok(true)
     }
 
-    // 直接从内存读取消息，无需反序列化
     pub fn try_read_latest_message(&self) -> Result<Option<SharedMessage>> {
+        if self.is_destroyed() {
+            return Ok(None);
+        }
+
         unsafe {
             let write_idx = (*self.header).write_idx.load(Ordering::Acquire);
             let mut read_idx = (*self.header).read_idx.load(Ordering::Relaxed);
 
             if read_idx == write_idx {
-                return Ok(None); // 没有新消息
+                return Ok(None);
             }
 
-            // 如果有多条消息，直接跳到最新的
             if write_idx.wrapping_sub(read_idx) > 1 {
                 read_idx = write_idx.wrapping_sub(1);
             }
@@ -268,7 +299,6 @@ impl SharedRingBuffer {
             let slot_idx = (read_idx & BUFFER_MASK) as usize;
             let slot = &*self.message_slots.add(slot_idx);
 
-            // 验证校验和
             let message_bytes = std::slice::from_raw_parts(
                 &slot.message as *const SharedMessage as *const u8,
                 size_of::<SharedMessage>(),
@@ -277,10 +307,8 @@ impl SharedRingBuffer {
                 return Err(Error::new(ErrorKind::InvalidData, "Checksum mismatch"));
             }
 
-            // 直接返回消息副本
             let message = slot.message;
 
-            // 更新读索引
             (*self.header)
                 .read_idx
                 .store(read_idx.wrapping_add(1), Ordering::Release);
@@ -290,40 +318,51 @@ impl SharedRingBuffer {
     }
 
     pub fn send_command(&self, command: SharedCommand) -> Result<bool> {
+        if self.is_destroyed() {
+            return Err(Error::new(
+                ErrorKind::BrokenPipe,
+                "Buffer has been destroyed",
+            ));
+        }
+
         unsafe {
             let write_idx = (*self.header).cmd_write_idx.load(Ordering::Relaxed);
             let read_idx = (*self.header).cmd_read_idx.load(Ordering::Acquire);
 
             if write_idx.wrapping_sub(read_idx) == CMD_BUFFER_SIZE as u32 {
-                return Ok(false); // 命令缓冲区满
+                return Ok(false);
             }
 
             let slot_idx = (write_idx & CMD_BUFFER_MASK) as usize;
             let cmd_slot = &mut *self.cmd_buffer_start.add(slot_idx);
 
-            *cmd_slot = command; // 直接内存拷贝
+            *cmd_slot = command;
 
             (*self.header)
                 .cmd_write_idx
                 .store(write_idx.wrapping_add(1), Ordering::Release);
         }
 
-        self.signal_fd(self.command_event_fd)?;
+        self.signal_command_event()?;
         Ok(true)
     }
 
     pub fn receive_command(&self) -> Option<SharedCommand> {
+        if self.is_destroyed() {
+            return None;
+        }
+
         unsafe {
             let read_idx = (*self.header).cmd_read_idx.load(Ordering::Relaxed);
             let write_idx = (*self.header).cmd_write_idx.load(Ordering::Acquire);
 
             if read_idx == write_idx {
-                return None; // 没有新命令
+                return None;
             }
 
             let slot_idx = (read_idx & CMD_BUFFER_MASK) as usize;
             let cmd_slot = &*self.cmd_buffer_start.add(slot_idx);
-            let command = *cmd_slot; // 直接内存拷贝
+            let command = *cmd_slot;
 
             (*self.header)
                 .cmd_read_idx
@@ -334,18 +373,27 @@ impl SharedRingBuffer {
     }
 
     pub fn wait_for_message(&self, timeout: Option<Duration>) -> Result<bool> {
-        self.wait_on_fd(self.message_event_fd, timeout, || self.has_message())
+        if self.is_destroyed() {
+            return Ok(false);
+        }
+        self.wait_on_fd_safe(true, timeout, || self.has_message())
     }
 
     pub fn wait_for_command(&self, timeout: Option<Duration>) -> Result<bool> {
-        self.wait_on_fd(self.command_event_fd, timeout, || self.has_command())
+        if self.is_destroyed() {
+            return Ok(false);
+        }
+        self.wait_on_fd_safe(false, timeout, || self.has_command())
     }
 
     pub fn has_command(&self) -> bool {
-        self.available_commands() > 0
+        !self.is_destroyed() && self.available_commands() > 0
     }
 
     pub fn available_commands(&self) -> usize {
+        if self.is_destroyed() {
+            return 0;
+        }
         unsafe {
             (*self.header)
                 .cmd_write_idx
@@ -356,10 +404,13 @@ impl SharedRingBuffer {
     }
 
     pub fn has_message(&self) -> bool {
-        self.available_messages() > 0
+        !self.is_destroyed() && self.available_messages() > 0
     }
 
     pub fn available_messages(&self) -> usize {
+        if self.is_destroyed() {
+            return 0;
+        }
         unsafe {
             (*self.header)
                 .write_idx
@@ -368,58 +419,71 @@ impl SharedRingBuffer {
         }
     }
 
-    // 自适应轮询等待方法
-    fn wait_on_fd(
+    // 安全的等待方法
+    fn wait_on_fd_safe(
         &self,
-        fd: i32,
+        is_message: bool,
         timeout: Option<Duration>,
         has_data: impl Fn() -> bool,
     ) -> Result<bool> {
-        // 1. 自适应轮询（Spinning）
+        // 1. 自适应轮询
         for _ in 0..self.adaptive_poll_spins {
-            if has_data() {
-                return Ok(true);
+            if has_data() || self.is_destroyed() {
+                return Ok(has_data());
             }
             hint::spin_loop();
         }
 
-        // 检查一次最终状态
-        if has_data() {
-            return Ok(true);
+        if has_data() || self.is_destroyed() {
+            return Ok(has_data());
         }
 
-        // 2. 回退到阻塞等待（poll）
+        // 2. 获取文件描述符
+        let fd = unsafe {
+            if is_message {
+                (*self.header).message_event_fd.load(Ordering::Acquire)
+            } else {
+                (*self.header).command_event_fd.load(Ordering::Acquire)
+            }
+        };
+
+        if fd < 0 {
+            return Ok(has_data());
+        }
+
+        // 3. 使用 poll 等待
         let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
         let poll_fd = PollFd::new(borrowed_fd, PollFlags::POLLIN);
         let timeout_ms = timeout.map_or(0, |d| d.as_millis() as i32);
 
-        let num_events = poll(&mut [poll_fd], timeout_ms as u16)
-            .map_err(|e| Error::new(ErrorKind::Other, format!("poll failed: {}", e)))?;
+        match poll(&mut [poll_fd], timeout_ms as u16) {
+            Ok(num_events) => {
+                if num_events == 0 {
+                    return Ok(has_data());
+                }
 
-        if num_events == 0 {
-            return Ok(has_data());
-        }
-
-        // 清除 eventfd 的信号
-        let mut buf = [0u8; 8];
-        match unistd::read(borrowed_fd, &mut buf) {
-            Ok(_) | Err(nix::errno::Errno::EAGAIN) => Ok(true),
-            Err(e) => Err(Error::new(
-                ErrorKind::Other,
-                format!("Failed to read from eventfd: {}", e),
-            )),
+                // 尝试清除信号，但不要在失败时崩溃
+                let mut buf = [0u8; 8];
+                let _ = unistd::read(borrowed_fd, &mut buf);
+                Ok(true)
+            }
+            Err(_) => Ok(has_data()), // poll 失败时返回当前状态
         }
     }
 
-    fn signal_fd(&self, fd: i32) -> Result<()> {
-        let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
-        let signal_val: u64 = 1;
-        match unistd::write(borrowed_fd, &signal_val.to_ne_bytes()) {
-            Ok(_) | Err(nix::errno::Errno::EAGAIN) => Ok(()),
-            Err(e) => Err(Error::new(
-                ErrorKind::Other,
-                format!("Failed to signal eventfd: {}", e),
-            )),
+    fn signal_message_event(&self) -> Result<()> {
+        if let Some(ref efd) = self.message_event_fd {
+            efd.signal()
+        } else {
+            Ok(()) // 非创建者无需发送信号
+        }
+    }
+
+    fn signal_command_event(&self) -> Result<()> {
+        if let Some(ref efd) = self.command_event_fd {
+            efd.signal()
+        } else {
+            Ok(()) // 非创建者无需发送信号
         }
     }
 }
@@ -428,8 +492,17 @@ impl Drop for SharedRingBuffer {
     fn drop(&mut self) {
         if self.is_creator {
             println!("(Creator) Cleaning up resources...");
-            let _ = unistd::close(self.message_event_fd);
-            let _ = unistd::close(self.command_event_fd);
+
+            // 标记为已销毁
+            unsafe {
+                (*self.header).is_destroyed.store(true, Ordering::Release);
+            }
+
+            // EventFd 会在 Arc 引用计数为 0 时自动清理
+            self.message_event_fd = None;
+            self.command_event_fd = None;
+
+            // 删除共享内存文件
             if let Some(path) = self.shmem.get_flink_path() {
                 println!("(Creator) Removing shmem flink: {:?}", path);
                 let _ = std::fs::remove_file(path);
@@ -438,7 +511,6 @@ impl Drop for SharedRingBuffer {
     }
 }
 
-// 辅助函数：向上对齐到指定边界
 fn align_up(value: usize, align: usize) -> usize {
     (value + align - 1) & !(align - 1)
 }
@@ -446,6 +518,7 @@ fn align_up(value: usize, align: usize) -> usize {
 fn calculate_checksum(data: &[u8]) -> u32 {
     data.iter().fold(0u32, |sum, &b| sum.wrapping_add(b as u32))
 }
+
 
 #[cfg(test)]
 mod tests {
