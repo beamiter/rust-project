@@ -13,3 +13,7 @@ shared_memory = "0.12.4"
 [[bench]]
 name = "ring_buffer_bench"
 harness = false
+
+[[bench]]
+name = "stress_test"
+harness = false

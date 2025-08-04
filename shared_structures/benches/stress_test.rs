@@ -1,5 +1,5 @@
 // benches/stress_test.rs
-use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
+use criterion::{criterion_group, criterion_main, BenchmarkId, Criterion};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::sync::{
     atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
