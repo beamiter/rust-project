@@ -167,8 +167,7 @@ enum Message {
     GetWindowId,
     WindowIdReceived(Option<Id>),
 
-    GetWindowSize(Size),
-    ResizeWindowSize,
+    GetAndResizeWindowSize(Size),
 
     GetScaleFactor(f32),
     RawIdReceived(u64),
@@ -488,40 +487,34 @@ impl IcedBar {
 
             Message::RightClick => Task::none(),
 
-            Message::GetWindowSize(window_size) => {
-                info!("window_size: {:?}", window_size);
+            Message::GetAndResizeWindowSize(window_size) => {
+                // info!("window_size: {:?}", window_size);
                 self.current_window_size = Some(window_size);
-                Task::none()
-            }
-
-            Message::ResizeWindowSize => {
-                info!("ResizeWindowSize");
-                if self.current_window_id.is_some()
-                    && self.current_window_size.is_some()
-                    && self.target_window_size.is_some()
-                    && self.target_window_pos.is_some()
-                {
-                    let current_size = self.current_window_size.unwrap();
-                    let target_size = self.target_window_size.unwrap();
-                    if (current_size.width - target_size.width).abs() > 10.
-                        || (current_size.height - target_size.height).abs() > 5.
+                if let (
+                    Some(current_window_id),
+                    Some(current_window_size),
+                    Some(target_window_size),
+                    Some(target_window_pos),
+                ) = (
+                    self.current_window_id,
+                    self.current_window_size,
+                    self.target_window_size,
+                    self.target_window_pos,
+                ) {
+                    if (current_window_size.width - target_window_size.width).abs() > 10.
+                        || (current_window_size.height - target_window_size.height).abs() > 5.
                     {
                         info!(
                             "current_window_size: {:?}, target_window_size: {:?}",
                             self.current_window_size, self.target_window_size
                         );
                         return Task::batch([
-                            window::move_to(
-                                self.current_window_id.unwrap(),
-                                self.target_window_pos.unwrap(),
-                            ),
-                            window::resize(
-                                self.current_window_id.unwrap(),
-                                self.target_window_size.unwrap(),
-                            ),
+                            window::move_to(current_window_id, target_window_pos),
+                            window::resize(current_window_id, target_window_size),
                         ]);
                     }
                 }
+
                 Task::none()
             }
 
@@ -565,6 +558,7 @@ impl IcedBar {
 
                 if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
                     self.layout_symbol = monitor_info.ltsymbol.clone();
+                    self.monitor_num = monitor_info.monitor_num;
 
                     let width = (monitor_info.monitor_width as f32
                         - 2.0 * monitor_info.border_w as f32)
@@ -577,8 +571,6 @@ impl IcedBar {
                             / self.scale_factor,
                     );
                     let window_size = Size::new(width, height);
-                    info!("window_pos: {:?}", window_pos);
-                    info!("window_size: {:?}", window_size);
                     self.target_window_pos = Some(window_pos);
                     self.target_window_size = Some(window_size);
 
@@ -591,8 +583,7 @@ impl IcedBar {
 
                 tasks.push(
                     window::get_size(self.current_window_id.unwrap())
-                        .map(Message::GetWindowSize)
-                        .chain(Task::perform(async move {}, |_| Message::ResizeWindowSize)),
+                        .map(Message::GetAndResizeWindowSize),
                 );
 
                 Task::batch(tasks)
