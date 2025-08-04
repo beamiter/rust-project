@@ -28,8 +28,8 @@ impl WorkspacePanel {
         let bold_thickness = 2.5;
         let light_thickness = 1.5;
         if let Some(ref message) = app_state.current_message {
-            tag_status_vec = message.monitor_info.tag_status_vec.clone();
-            layout_symbol = message.monitor_info.ltsymbol.clone();
+            tag_status_vec = message.monitor_info.tag_status_vec.to_vec();
+            layout_symbol = message.monitor_info.get_ltsymbol();
         }
         // Draw tag icons as buttons
         for (i, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {

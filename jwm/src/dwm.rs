@@ -6255,7 +6255,7 @@ impl Dwm {
             monitor_info_for_message.monitor_width = mon_borrow.w_w;
             monitor_info_for_message.monitor_height = mon_borrow.w_h;
             monitor_info_for_message.monitor_num = mon_borrow.num;
-            monitor_info_for_message.ltsymbol = mon_borrow.lt_symbol.clone();
+            monitor_info_for_message.set_ltsymbol(&mon_borrow.lt_symbol);
             monitor_info_for_message.border_w = Config::border_px as i32;
 
             let mut c_iter_opt = mon_borrow.clients.clone();
@@ -6304,14 +6304,14 @@ impl Dwm {
                 is_filled_tag_calculated,
                 is_occupied_tag,
             );
-            monitor_info_for_message.tag_status_vec.push(tag_status);
+            monitor_info_for_message.set_tag_status(i, tag_status);
         }
 
         let mut selected_client_name_for_bar = String::new();
         if let Some(ref selected_client_rc) = mon_rc.borrow().sel {
             selected_client_name_for_bar = selected_client_rc.borrow().name.clone();
         }
-        monitor_info_for_message.client_name = selected_client_name_for_bar;
+        monitor_info_for_message.set_client_name(&selected_client_name_for_bar);
         self.message.monitor_info = monitor_info_for_message;
     }
 }

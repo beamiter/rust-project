@@ -90,7 +90,7 @@ fn shared_memory_worker(
         warn!("No shared path provided, running without shared memory");
         None
     } else {
-        match SharedRingBuffer::open(&shared_path) {
+        match SharedRingBuffer::open(&shared_path, None) {
             Ok(shared_buffer) => {
                 info!("Successfully opened shared ring buffer: {}", shared_path);
                 Some(shared_buffer)
@@ -149,11 +149,11 @@ fn shared_memory_worker(
 
         // 处理共享内存消息
         if let Some(ref shared_buffer) = shared_buffer_opt {
-            match shared_buffer.try_read_latest_message::<SharedMessage>() {
+            match shared_buffer.try_read_latest_message() {
                 Ok(Some(message)) => {
                     consecutive_errors = 0; // 成功读取，重置错误计数
-                    if prev_timestamp != message.timestamp {
-                        prev_timestamp = message.timestamp;
+                    if prev_timestamp != message.timestamp.into() {
+                        prev_timestamp = message.timestamp.into();
                         if let Err(e) = message_sender.send(message) {
                             error!("Failed to send message: {}", e);
                             break;
