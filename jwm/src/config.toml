@@ -95,3 +95,83 @@ name = "egui_bar"
 tags_mask = 511  # (1 << 9) - 1
 is_floating = true
 monitor = 0
+
+# config.toml 中的鼠标绑定部分
+[mouse_bindings]
+
+[[mouse_bindings.buttons]]
+click_type = "ClkLtSymbol"
+modifier = []
+button = 1
+function = "setlayout"
+argument = 0
+
+[[mouse_bindings.buttons]]
+click_type = "ClkLtSymbol"
+modifier = []
+button = 3
+function = "setlayout"
+argument = "monocle"
+
+[[mouse_bindings.buttons]]
+click_type = "ClkWinTitle"
+modifier = []
+button = 2
+function = "zoom"
+argument = 0
+
+[[mouse_bindings.buttons]]
+click_type = "ClkStatusText"
+modifier = []
+button = 2
+function = "spawn"
+argument = ["x-terminal-emulator"]
+
+[[mouse_bindings.buttons]]
+click_type = "ClkClientWin"
+modifier = ["Mod1"]
+button = 1
+function = "movemouse"
+argument = 0
+
+[[mouse_bindings.buttons]]
+click_type = "ClkClientWin"
+modifier = ["Mod1"]
+button = 2
+function = "togglefloating"
+argument = 0
+
+[[mouse_bindings.buttons]]
+click_type = "ClkClientWin"
+modifier = ["Mod1"]
+button = 3
+function = "resizemouse"
+argument = 0
+
+[[mouse_bindings.buttons]]
+click_type = "ClkTagBar"
+modifier = []
+button = 1
+function = "view"
+argument = 0
+
+[[mouse_bindings.buttons]]
+click_type = "ClkTagBar"
+modifier = []
+button = 3
+function = "toggleview"
+argument = 0
+
+[[mouse_bindings.buttons]]
+click_type = "ClkTagBar"
+modifier = ["Mod1"]
+button = 1
+function = "tag"
+argument = 0
+
+[[mouse_bindings.buttons]]
+click_type = "ClkTagBar"
+modifier = ["Mod1"]
+button = 3
+function = "toggletag"
+argument = 0

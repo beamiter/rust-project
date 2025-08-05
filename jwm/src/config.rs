@@ -6,11 +6,18 @@ use std::path::Path;
 use x11::keysym::*;
 use x11::xlib::*;
 
-use crate::dwm;
-use crate::dwm::Button;
-use crate::dwm::Dwm;
-use crate::dwm::Key;
-use crate::dwm::Rule;
+use std::rc::Rc;
+
+use x11::{
+    keysym::{
+        XK_Page_Down, XK_Page_Up, XK_Return, XK_Tab, XK_b, XK_c, XK_comma, XK_d, XK_e, XK_f, XK_h,
+        XK_i, XK_j, XK_k, XK_l, XK_m, XK_o, XK_period, XK_q, XK_r, XK_space, XK_t, XK_0, XK_1,
+        XK_2, XK_3, XK_4, XK_5, XK_6, XK_7, XK_8, XK_9,
+    },
+    xlib::{Button1, Button2, Button3, ControlMask, Mod1Mask, ShiftMask},
+};
+
+use crate::dwm::{self, Button, Dwm, Key, Layout, Rule, CLICK};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,7 +38,6 @@ pub struct AppearanceConfig {
     pub snap: u32,
     pub dmenu_font: String,
     pub status_bar_pad: i32,
-    pub broken: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -147,12 +153,33 @@ impl Config {
         self.inner.appearance.snap
     }
 
+    pub fn status_bar_pad(&self) -> i32 {
+        self.inner.appearance.status_bar_pad
+    }
+
+    #[allow(dead_code)]
     pub fn dmenu_font(&self) -> &str {
         &self.inner.appearance.dmenu_font
     }
 
     pub fn status_bar_name(&self) -> &str {
         &self.inner.status_bar.name
+    }
+
+    pub fn status_bar_0(&self) -> &str {
+        &self.inner.status_bar.bar_0
+    }
+
+    pub fn status_bar_1(&self) -> &str {
+        &self.inner.status_bar.bar_1
+    }
+
+    pub fn colors(&self) -> &ColorsConfig {
+        &self.inner.colors
+    }
+
+    pub fn behavior(&self) -> &BehaviorConfig {
+        &self.inner.behavior
     }
 
     pub fn m_fact(&self) -> f32 {
@@ -189,24 +216,15 @@ impl Config {
         keys
     }
 
-    pub fn get_buttons(&self) -> Vec<Button> {
-        self.inner
-            .mouse_bindings
-            .buttons
-            .iter()
-            .filter_map(|btn| self.convert_button_config(btn))
-            .collect()
-    }
-
     pub fn get_rules(&self) -> Vec<Rule> {
         self.inner
             .rules
             .iter()
             .map(|rule| {
                 Rule::new(
-                    &rule.class,
-                    &rule.instance,
-                    &rule.name,
+                    rule.class.clone(),
+                    rule.instance.clone(),
+                    rule.name.clone(),
                     rule.tags_mask,
                     rule.is_floating,
                     rule.monitor,
@@ -244,6 +262,299 @@ impl Config {
             .unwrap_or_else(|| vec!["x-terminal-emulator".to_string()])
     }
 
+    fn convert_button_config(&self, btn_config: &ButtonConfig) -> Option<Button> {
+        let click_type = self.parse_click_type(&btn_config.click_type)?;
+        let modifiers = self.parse_modifiers(&btn_config.modifier);
+        let button = btn_config.button;
+        let function = self.parse_function(&btn_config.function)?;
+        let arg = self.convert_argument(&btn_config.argument);
+
+        Some(Button::new(
+            click_type,
+            modifiers,
+            button,
+            Some(function),
+            arg,
+        ))
+    }
+
+    fn parse_click_type(&self, click_type: &str) -> Option<u32> {
+        match click_type {
+            "ClkLtSymbol" => Some(CLICK::ClkLtSymbol as u32),
+            "ClkWinTitle" => Some(CLICK::ClkWinTitle as u32),
+            "ClkStatusText" => Some(CLICK::ClkStatusText as u32),
+            "ClkClientWin" => Some(CLICK::ClkClientWin as u32),
+            "ClkTagBar" => Some(CLICK::ClkTagBar as u32),
+            "ClkRootWin" => Some(CLICK::ClkRootWin as u32),
+            _ => {
+                eprintln!("Unknown click type: {}", click_type);
+                None
+            }
+        }
+    }
+
+    // 扩展 parse_function 以支持更多函数
+    fn parse_function(&self, func_name: &str) -> Option<fn(&mut Dwm, *const dwm::Arg)> {
+        match func_name {
+            // 窗口管理
+            "spawn" => Some(Dwm::spawn),
+            "focusstack" => Some(Dwm::focusstack),
+            "focusmon" => Some(Dwm::focusmon),
+            "quit" => Some(Dwm::quit),
+            "killclient" => Some(Dwm::killclient),
+            "zoom" => Some(Dwm::zoom),
+
+            // 布局相关
+            "setlayout" => Some(Dwm::setlayout),
+            "togglefloating" => Some(Dwm::togglefloating),
+            "togglefullscr" => Some(Dwm::togglefullscr),
+            "setmfact" => Some(Dwm::setmfact),
+            "setcfact" => Some(Dwm::setcfact),
+            "incnmaster" => Some(Dwm::incnmaster),
+            "movestack" => Some(Dwm::movestack),
+
+            // 标签相关
+            "view" => Some(Dwm::view),
+            "tag" => Some(Dwm::tag),
+            "toggleview" => Some(Dwm::toggleview),
+            "toggletag" => Some(Dwm::toggletag),
+            "tagmon" => Some(Dwm::tagmon),
+            "loopview" => Some(Dwm::loopview),
+
+            // 鼠标相关
+            "movemouse" => Some(Dwm::movemouse),
+            "resizemouse" => Some(Dwm::resizemouse),
+
+            _ => {
+                eprintln!("Unknown function: {}", func_name);
+                None
+            }
+        }
+    }
+
+    // 扩展 parse_keysym 以支持更多按键
+    fn parse_keysym(&self, key: &str) -> Option<u64> {
+        match key {
+            // 特殊键
+            "Return" => Some(XK_Return.into()),
+            "Tab" => Some(XK_Tab.into()),
+            "space" => Some(XK_space.into()),
+            "Page_Up" => Some(XK_Page_Up.into()),
+            "Page_Down" => Some(XK_Page_Down.into()),
+            "comma" => Some(XK_comma.into()),
+            "period" => Some(XK_period.into()),
+
+            // 字母键
+            "a" => Some(XK_a.into()),
+            "b" => Some(XK_b.into()),
+            "c" => Some(XK_c.into()),
+            "d" => Some(XK_d.into()),
+            "e" => Some(XK_e.into()),
+            "f" => Some(XK_f.into()),
+            "g" => Some(XK_g.into()),
+            "h" => Some(XK_h.into()),
+            "i" => Some(XK_i.into()),
+            "j" => Some(XK_j.into()),
+            "k" => Some(XK_k.into()),
+            "l" => Some(XK_l.into()),
+            "m" => Some(XK_m.into()),
+            "n" => Some(XK_n.into()),
+            "o" => Some(XK_o.into()),
+            "p" => Some(XK_p.into()),
+            "q" => Some(XK_q.into()),
+            "r" => Some(XK_r.into()),
+            "s" => Some(XK_s.into()),
+            "t" => Some(XK_t.into()),
+            "u" => Some(XK_u.into()),
+            "v" => Some(XK_v.into()),
+            "w" => Some(XK_w.into()),
+            "x" => Some(XK_x.into()),
+            "y" => Some(XK_y.into()),
+            "z" => Some(XK_z.into()),
+
+            // 数字键
+            "0" => Some(XK_0.into()),
+            "1" => Some(XK_1.into()),
+            "2" => Some(XK_2.into()),
+            "3" => Some(XK_3.into()),
+            "4" => Some(XK_4.into()),
+            "5" => Some(XK_5.into()),
+            "6" => Some(XK_6.into()),
+            "7" => Some(XK_7.into()),
+            "8" => Some(XK_8.into()),
+            "9" => Some(XK_9.into()),
+
+            // 功能键
+            "F1" => Some(XK_F1.into()),
+            "F2" => Some(XK_F2.into()),
+            "F3" => Some(XK_F3.into()),
+            "F4" => Some(XK_F4.into()),
+            "F5" => Some(XK_F5.into()),
+            "F6" => Some(XK_F6.into()),
+            "F7" => Some(XK_F7.into()),
+            "F8" => Some(XK_F8.into()),
+            "F9" => Some(XK_F9.into()),
+            "F10" => Some(XK_F10.into()),
+            "F11" => Some(XK_F11.into()),
+            "F12" => Some(XK_F12.into()),
+
+            // 方向键
+            "Left" => Some(XK_Left.into()),
+            "Right" => Some(XK_Right.into()),
+            "Up" => Some(XK_Up.into()),
+            "Down" => Some(XK_Down.into()),
+
+            // 其他常用键
+            "Escape" => Some(XK_Escape.into()),
+            "BackSpace" => Some(XK_BackSpace.into()),
+            "Delete" => Some(XK_Delete.into()),
+            "Home" => Some(XK_Home.into()),
+            "End" => Some(XK_End.into()),
+
+            _ => {
+                eprintln!("Unknown key: {}", key);
+                None
+            }
+        }
+    }
+
+    // 扩展 parse_modifiers 以支持更多修饰键
+    fn parse_modifiers(&self, modifiers: &[String]) -> u32 {
+        let mut mask = 0;
+        for modifier in modifiers {
+            mask |= match modifier.as_str() {
+                "Mod1" | "Alt" => Mod1Mask,
+                "Mod2" => Mod2Mask,
+                "Mod3" => Mod3Mask,
+                "Mod4" | "Super" | "Win" => Mod4Mask,
+                "Mod5" => Mod5Mask,
+                "Control" | "Ctrl" => ControlMask,
+                "Shift" => ShiftMask,
+                "Lock" | "CapsLock" => LockMask,
+                _ => {
+                    eprintln!("Unknown modifier: {}", modifier);
+                    0
+                }
+            };
+        }
+        mask
+    }
+
+    // 扩展 convert_argument 以支持布局参数
+    fn convert_argument(&self, arg: &ArgumentConfig) -> dwm::Arg {
+        match arg {
+            ArgumentConfig::Int(i) => dwm::Arg::I(*i),
+            ArgumentConfig::UInt(u) => dwm::Arg::Ui(*u),
+            ArgumentConfig::Float(f) => dwm::Arg::F(*f),
+            ArgumentConfig::StringVec(v) => dwm::Arg::V(v.clone()),
+            ArgumentConfig::String(s) => {
+                // 特殊处理布局字符串
+                match s.as_str() {
+                    "tile" => dwm::Arg::Lt(Rc::new(Layout::try_from(0).unwrap())),
+                    "float" => dwm::Arg::Lt(Rc::new(Layout::try_from(1).unwrap())),
+                    "monocle" => dwm::Arg::Lt(Rc::new(Layout::try_from(2).unwrap())),
+                    _ => dwm::Arg::V(vec![s.clone()]),
+                }
+            }
+        }
+    }
+
+    // 生成默认鼠标绑定的辅助方法
+    fn get_default_buttons(&self) -> Vec<ButtonConfig> {
+        vec![
+            ButtonConfig {
+                click_type: "ClkLtSymbol".to_string(),
+                modifier: vec![],
+                button: Button1,
+                function: "setlayout".to_string(),
+                argument: ArgumentConfig::UInt(0),
+            },
+            ButtonConfig {
+                click_type: "ClkLtSymbol".to_string(),
+                modifier: vec![],
+                button: Button3,
+                function: "setlayout".to_string(),
+                argument: ArgumentConfig::String("monocle".to_string()),
+            },
+            ButtonConfig {
+                click_type: "ClkWinTitle".to_string(),
+                modifier: vec![],
+                button: Button2,
+                function: "zoom".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            ButtonConfig {
+                click_type: "ClkStatusText".to_string(),
+                modifier: vec![],
+                button: Button2,
+                function: "spawn".to_string(),
+                argument: ArgumentConfig::StringVec(self.get_termcmd()),
+            },
+            ButtonConfig {
+                click_type: "ClkClientWin".to_string(),
+                modifier: vec![self.inner.keybindings.modkey.clone()],
+                button: Button1,
+                function: "movemouse".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            ButtonConfig {
+                click_type: "ClkClientWin".to_string(),
+                modifier: vec![self.inner.keybindings.modkey.clone()],
+                button: Button2,
+                function: "togglefloating".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            ButtonConfig {
+                click_type: "ClkClientWin".to_string(),
+                modifier: vec![self.inner.keybindings.modkey.clone()],
+                button: Button3,
+                function: "resizemouse".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            ButtonConfig {
+                click_type: "ClkTagBar".to_string(),
+                modifier: vec![],
+                button: Button1,
+                function: "view".to_string(),
+                argument: ArgumentConfig::UInt(0),
+            },
+            ButtonConfig {
+                click_type: "ClkTagBar".to_string(),
+                modifier: vec![],
+                button: Button3,
+                function: "toggleview".to_string(),
+                argument: ArgumentConfig::UInt(0),
+            },
+            ButtonConfig {
+                click_type: "ClkTagBar".to_string(),
+                modifier: vec![self.inner.keybindings.modkey.clone()],
+                button: Button1,
+                function: "tag".to_string(),
+                argument: ArgumentConfig::UInt(0),
+            },
+            ButtonConfig {
+                click_type: "ClkTagBar".to_string(),
+                modifier: vec![self.inner.keybindings.modkey.clone()],
+                button: Button3,
+                function: "toggletag".to_string(),
+                argument: ArgumentConfig::UInt(0),
+            },
+        ]
+    }
+
+    pub fn get_buttons(&self) -> Vec<Button> {
+        let button_configs = if self.inner.mouse_bindings.buttons.is_empty() {
+            self.get_default_buttons()
+        } else {
+            self.inner.mouse_bindings.buttons.clone()
+        };
+
+        button_configs
+            .iter()
+            .filter_map(|btn| self.convert_button_config(btn))
+            .collect()
+    }
+
     // 私有辅助方法
     fn convert_key_config(&self, key_config: &KeyConfig) -> Option<Key> {
         let modifiers = self.parse_modifiers(&key_config.modifier);
@@ -252,52 +563,6 @@ impl Config {
         let arg = self.convert_argument(&key_config.argument);
 
         Some(Key::new(modifiers, keysym, Some(function), arg))
-    }
-
-    fn parse_modifiers(&self, modifiers: &[String]) -> u32 {
-        let mut mask = 0;
-        for modifier in modifiers {
-            mask |= match modifier.as_str() {
-                "Mod1" => Mod1Mask,
-                "Mod4" => Mod4Mask,
-                "Control" => ControlMask,
-                "Shift" => ShiftMask,
-                _ => 0,
-            };
-        }
-        mask
-    }
-
-    fn parse_keysym(&self, key: &str) -> Option<u64> {
-        match key {
-            "Return" => Some(XK_Return),
-            "Tab" => Some(XK_Tab),
-            "space" => Some(XK_space),
-            "j" => Some(XK_j),
-            "k" => Some(XK_k),
-            // 添加更多键映射...
-            _ => None,
-        }
-    }
-
-    fn parse_function(&self, func_name: &str) -> Option<fn(&dwm::Arg)> {
-        match func_name {
-            "spawn" => Some(Dwm::spawn),
-            "focusstack" => Some(Dwm::focusstack),
-            "quit" => Some(Dwm::quit),
-            // 添加更多函数映射...
-            _ => None,
-        }
-    }
-
-    fn convert_argument(&self, arg: &ArgumentConfig) -> dwm::Arg {
-        match arg {
-            ArgumentConfig::Int(i) => dwm::Arg::I(*i),
-            ArgumentConfig::UInt(u) => dwm::Arg::Ui(*u),
-            ArgumentConfig::Float(f) => dwm::Arg::F(*f),
-            ArgumentConfig::StringVec(v) => dwm::Arg::V(v.clone()),
-            ArgumentConfig::String(s) => dwm::Arg::V(vec![s.clone()]),
-        }
     }
 
     fn generate_tag_keys(&self, tag: usize) -> Vec<Key> {
@@ -317,22 +582,22 @@ impl Config {
         let modkey = self.parse_modifiers(&[self.inner.keybindings.modkey.clone()]);
 
         vec![
-            Key::new(modkey, key, Some(Dwm::view), dwm::Arg::Ui(1 << tag)),
+            Key::new(modkey, key.into(), Some(Dwm::view), dwm::Arg::Ui(1 << tag)),
             Key::new(
                 modkey | ControlMask,
-                key,
+                key.into(),
                 Some(Dwm::toggleview),
                 dwm::Arg::Ui(1 << tag),
             ),
             Key::new(
                 modkey | ShiftMask,
-                key,
+                key.into(),
                 Some(Dwm::tag),
                 dwm::Arg::Ui(1 << tag),
             ),
             Key::new(
                 modkey | ControlMask | ShiftMask,
-                key,
+                key.into(),
                 Some(Dwm::toggletag),
                 dwm::Arg::Ui(1 << tag),
             ),
@@ -350,7 +615,6 @@ impl Default for Config {
                     snap: 32,
                     dmenu_font: "SauceCodePro Nerd Font Regular 11".to_string(),
                     status_bar_pad: 5,
-                    broken: "broken".to_string(),
                 },
                 behavior: BehaviorConfig {
                     focus_follows_new_window: false,
@@ -365,7 +629,11 @@ impl Default for Config {
                 },
                 colors: ColorsConfig {
                     dark_sea_green1: "#afffd7".to_string(),
-                    // 其他颜色...
+                    dark_sea_green2: "#afffaf".to_string(),
+                    pale_turquoise1: "#afffff".to_string(),
+                    light_sky_blue1: "#afd7ff".to_string(),
+                    grey84: "#d7d7d7".to_string(),
+                    cyan: "#00ffd7".to_string(),
                     black: "#000000".to_string(),
                     white: "#ffffff".to_string(),
                     transparent: 0,
@@ -389,10 +657,30 @@ impl Default for Config {
     }
 }
 
+use std::fmt;
+
 #[derive(Debug)]
 pub enum ConfigError {
     Io(std::io::Error),
     Parse(toml::de::Error),
+}
+
+impl fmt::Display for ConfigError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ConfigError::Io(err) => write!(f, "IO error: {}", err),
+            ConfigError::Parse(err) => write!(f, "Parse error: {}", err),
+        }
+    }
+}
+
+impl std::error::Error for ConfigError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            ConfigError::Io(err) => Some(err),
+            ConfigError::Parse(err) => Some(err),
+        }
+    }
 }
 
 impl From<std::io::Error> for ConfigError {

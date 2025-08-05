@@ -13,7 +13,7 @@ use x11::xlib::{XCloseDisplay, XOpenDisplay, XSupportsLocale};
 mod config;
 mod drw;
 mod dwm;
-mod icon_gallery;
+// mod icon_gallery;
 mod miscellaneous;
 mod terminal_prober;
 mod xproto;

@@ -70,7 +70,7 @@ use x11::xlib::{
 
 use std::cmp::{max, min};
 
-use crate::config::Config;
+use crate::config::CONFIG;
 use crate::drw::{Cur, Drw};
 use crate::xproto::{
     IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
@@ -302,29 +302,29 @@ pub struct Pertag {
     // previous tag
     pub prev_tag: usize,
     // number of windows in master area
-    pub n_masters: [u32; Config::tags_length + 1],
+    pub n_masters: Vec<u32>,
     // mfacts per tag
-    pub m_facts: [f32; Config::tags_length + 1],
+    pub m_facts: Vec<f32>,
     // selected layouts
-    pub sel_lts: [usize; Config::tags_length + 1],
+    pub sel_lts: Vec<usize>,
     // matrix of tags and layouts indexes
-    lt_idxs: [[Option<Rc<Layout>>; 2]; Config::tags_length + 1],
+    lt_idxs: Vec<Vec<Option<Rc<Layout>>>>,
     // display bar for the current tag
-    pub show_bars: [bool; Config::tags_length + 1],
+    pub show_bars: Vec<bool>,
     // selected client
-    pub sel: [Option<Rc<RefCell<Client>>>; Config::tags_length + 1],
+    pub sel: Vec<Option<Rc<RefCell<Client>>>>,
 }
 impl Pertag {
     pub fn new() -> Self {
         Self {
             cur_tag: 0,
             prev_tag: 0,
-            n_masters: [0; Config::tags_length + 1],
-            m_facts: [0.; Config::tags_length + 1],
-            sel_lts: [0; Config::tags_length + 1],
-            lt_idxs: unsafe { zeroed() },
-            show_bars: [false; Config::tags_length + 1],
-            sel: unsafe { zeroed() },
+            n_masters: vec![0; CONFIG.tags_length() + 1],
+            m_facts: vec![0.; CONFIG.tags_length() + 1],
+            sel_lts: vec![0; CONFIG.tags_length() + 1],
+            lt_idxs: vec![vec![None; 2]; CONFIG.tags_length() + 1],
+            show_bars: vec![false; CONFIG.tags_length() + 1],
+            sel: vec![None; CONFIG.tags_length() + 1],
         }
     }
 }
@@ -609,11 +609,12 @@ impl Client {
     }
 
     pub fn is_status_bar(&self) -> bool {
-        return ((self.name == Config::status_bar_name)
-            || (self.name == Config::status_bar_0)
-            || (self.name == Config::status_bar_1))
-            && ((self.class == Config::status_bar_0 && self.instance == Config::status_bar_0)
-                || (self.class == Config::status_bar_1 && self.instance == Config::status_bar_1));
+        return ((self.name == CONFIG.status_bar_name())
+            || (self.name == CONFIG.status_bar_0())
+            || (self.name == CONFIG.status_bar_1()))
+            && ((self.class == CONFIG.status_bar_0() && self.instance == CONFIG.status_bar_0())
+                || (self.class == CONFIG.status_bar_1()
+                    && self.instance == CONFIG.status_bar_1()));
     }
 }
 
@@ -826,14 +827,35 @@ impl Dwm {
     pub fn new(sender: Sender<u8>) -> Self {
         let theme_manager = ThemeManager::new(
             ColorScheme::new(
-                Drw::drw_clr_create_from_hex(Config::col_DarkSeaGreen1, Config::OPAQUE).unwrap(),
-                Drw::drw_clr_create_from_hex(Config::col_LightSkyBlue1, Config::OPAQUE).unwrap(),
-                Drw::drw_clr_create_from_hex(Config::col_Grey84, Config::OPAQUE).unwrap(),
+                Drw::drw_clr_create_from_hex(
+                    &CONFIG.colors().dark_sea_green1,
+                    CONFIG.colors().opaque,
+                )
+                .unwrap(),
+                Drw::drw_clr_create_from_hex(
+                    &CONFIG.colors().light_sky_blue1,
+                    CONFIG.colors().opaque,
+                )
+                .unwrap(),
+                Drw::drw_clr_create_from_hex(
+                    &CONFIG.colors().light_sky_blue1,
+                    CONFIG.colors().opaque,
+                )
+                .unwrap(),
             ),
             ColorScheme::new(
-                Drw::drw_clr_create_from_hex(Config::col_DarkSeaGreen2, Config::OPAQUE).unwrap(),
-                Drw::drw_clr_create_from_hex(Config::col_PaleTurquoise1, Config::OPAQUE).unwrap(),
-                Drw::drw_clr_create_from_hex(Config::col_cyan, Config::OPAQUE).unwrap(),
+                Drw::drw_clr_create_from_hex(
+                    &CONFIG.colors().dark_sea_green2,
+                    CONFIG.colors().opaque,
+                )
+                .unwrap(),
+                Drw::drw_clr_create_from_hex(
+                    &CONFIG.colors().pale_turquoise1,
+                    CONFIG.colors().opaque,
+                )
+                .unwrap(),
+                Drw::drw_clr_create_from_hex(&CONFIG.colors().cyan, CONFIG.colors().opaque)
+                    .unwrap(),
             ),
         );
         Dwm {
@@ -910,18 +932,18 @@ impl Dwm {
             XGetClassHint(self.dpy, c.win, &mut ch);
             c.class = if !ch.res_class.is_null() {
                 let c_str = CStr::from_ptr(ch.res_class);
-                c_str.to_str().unwrap_or(Config::broken).to_string()
+                c_str.to_str().unwrap_or_default().to_string()
             } else {
-                Config::broken.to_string()
+                String::new()
             };
             c.instance = if !ch.res_name.is_null() {
                 let c_str = CStr::from_ptr(ch.res_name);
-                c_str.to_str().unwrap_or(Config::broken).to_string()
+                c_str.to_str().unwrap_or_default().to_string()
             } else {
-                Config::broken.to_string()
+                String::new()
             };
 
-            for r in &*Config::rules {
+            for r in &CONFIG.get_rules() {
                 if r.name.is_empty() && r.class.is_empty() && r.instance.is_empty() {
                     continue;
                 }
@@ -954,7 +976,7 @@ impl Dwm {
             if !ch.res_name.is_null() {
                 XFree(ch.res_name as *mut _);
             }
-            let condition = c.tags & Config::tagmask;
+            let condition = c.tags & CONFIG.tagmask(); 
             c.tags = if condition > 0 {
                 condition
             } else {
@@ -1091,7 +1113,7 @@ impl Dwm {
 
         let is_floating = { c.as_ref().borrow().is_floating };
 
-        if Config::resize_hints || is_floating {
+        if CONFIG.behavior().resize_hints || is_floating {
             if !c.as_ref().borrow().hints_valid {
                 // Check immutable borrow first
                 self.updatesizehints(c); // This will mutably borrow internally
@@ -1707,8 +1729,8 @@ impl Dwm {
         let mut m: Monitor = Monitor::new();
         m.tag_set[0] = 1;
         m.tag_set[1] = 1;
-        m.m_fact = Config::m_fact;
-        m.n_master = Config::n_master;
+        m.m_fact = CONFIG.m_fact();
+        m.n_master = CONFIG.n_master();
         m.lt[0] = Rc::new(Layout::try_from(0).unwrap()).clone();
         m.lt[1] = Rc::new(Layout::try_from(1).unwrap()).clone();
         m.lt_symbol = m.lt[0].symbol().to_string();
@@ -1718,7 +1740,7 @@ impl Dwm {
         ref_pertag.prev_tag = 1;
         let default_layout_0 = m.lt[0].clone();
         let default_layout_1 = m.lt[1].clone();
-        for i in 0..=Config::tags_length {
+        for i in 0..=CONFIG.tags_length() {
             ref_pertag.n_masters[i] = m.n_master;
             ref_pertag.m_facts[i] = m.m_fact;
 
@@ -1951,9 +1973,9 @@ impl Dwm {
 
     fn monitor_to_bar_name(num: i32) -> String {
         match num {
-            0 => Config::status_bar_0.to_string(),
-            1 => Config::status_bar_1.to_string(),
-            _ => Config::broken.to_string(),
+            0 => CONFIG.status_bar_0().to_string(),
+            1 => CONFIG.status_bar_1().to_string(),
+            _ => String::new(),
         }
     }
 
@@ -2017,13 +2039,13 @@ impl Dwm {
                     nixgl_command
                 );
                 command = Command::new(&nixgl_command);
-                command.arg(Config::status_bar_name);
+                command.arg(CONFIG.status_bar_name());
             }
             // 这段代码只有在编译时 *没有* 启用 nixgl feature 时才会存在
             #[cfg(not(feature = "nixgl"))]
             {
                 info!("   -> [feature=nixgl] disabled. Launching status bar directly.");
-                command = Command::new(Config::status_bar_name);
+                command = Command::new(CONFIG.status_bar_name());
             }
             if let Ok(child) = command
                 .arg0(&Self::monitor_to_bar_name(num))
@@ -2532,22 +2554,23 @@ impl Dwm {
                 XAllowEvents(self.dpy, ReplayPointer, CurrentTime);
                 click = CLICK::ClkClientWin;
             }
-            for i in 0..Config::buttons.len() {
-                if click as u32 == Config::buttons[i].click
-                    && Config::buttons[i].func.is_some()
-                    && Config::buttons[i].button == ev.button
+            let buttons = CONFIG.get_buttons();
+            for i in 0..buttons.len() {
+                if click as u32 == buttons[i].click
+                    && buttons[i].func.is_some()
+                    && buttons[i].button == ev.button
                     // 清理（移除NumLock, CapsLock等）后的修饰键掩码与事件中的修饰键状态匹配
-                    && self.CLEANMASK(Config::buttons[i].mask) == self.CLEANMASK(ev.state)
+                    && self.CLEANMASK(buttons[i].mask) == self.CLEANMASK(ev.state)
                 {
-                    if let Some(ref func) = Config::buttons[i].func {
+                    if let Some(ref func) = buttons[i].func {
                         info!(
                             "[buttonpress] click: {}, button: {}, mask: {}",
-                            Config::buttons[i].click,
-                            Config::buttons[i].button,
-                            Config::buttons[i].mask
+                            buttons[i].click,
+                            buttons[i].button,
+                            buttons[i].mask
                         );
                         info!("[buttonpress] use button arg");
-                        func(self, &Config::buttons[i].arg);
+                        func(self, &buttons[i].arg);
                         break;
                     }
                 }
@@ -2579,7 +2602,7 @@ impl Dwm {
 
             let mut mut_arg: Arg = (*arg).clone();
             if let Arg::V(ref mut v) = mut_arg {
-                if *v == *Config::dmenucmd {
+                if *v == *CONFIG.get_dmenucmd() {
                     let tmp =
                         (b'0' + self.sel_mon.as_ref().unwrap().borrow_mut().num as u8) as char;
                     let tmp = tmp.to_string();
@@ -2865,7 +2888,7 @@ impl Dwm {
         unsafe {
             if let Arg::Ui(ui) = *arg {
                 let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-                let target_tag = ui & Config::tagmask;
+                let target_tag = ui & CONFIG.tagmask();
                 if let Some(ref sel_opt) = sel {
                     if target_tag > 0 {
                         sel_opt.borrow_mut().tags = target_tag;
@@ -2913,7 +2936,7 @@ impl Dwm {
                 let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
                 if sel_mon_mut.sel.is_none()
                     || (sel_mon_mut.sel.as_ref().unwrap().borrow_mut().is_fullscreen
-                        && Config::lock_fullscreen)
+                        && CONFIG.behavior().lock_fullscreen)
                 {
                     return;
                 }
@@ -3382,7 +3405,7 @@ impl Dwm {
             } else {
                 return;
             };
-            let target_tag = ui & Config::tagmask;
+            let target_tag = ui & CONFIG.tagmask();
             let cur_tag;
             {
                 let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
@@ -3458,7 +3481,7 @@ impl Dwm {
                 {
                     let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
                     sel_tags = sel_mon_mut.sel_tags;
-                    newtagset = sel_mon_mut.tag_set[sel_tags] ^ (ui & Config::tagmask);
+                    newtagset = sel_mon_mut.tag_set[sel_tags] ^ (ui & CONFIG.tagmask());
                 }
                 if newtagset > 0 {
                     {
@@ -3530,7 +3553,7 @@ impl Dwm {
                 return;
             }
             if let Arg::Ui(ui) = *arg {
-                let newtags = sel.as_ref().unwrap().borrow_mut().tags ^ (ui & Config::tagmask);
+                let newtags = sel.as_ref().unwrap().borrow_mut().tags ^ (ui & CONFIG.tagmask());
                 if newtags > 0 {
                     sel.as_ref().unwrap().borrow_mut().tags = newtags;
                     self.setclienttagprop(sel.as_ref().unwrap());
@@ -4072,20 +4095,20 @@ impl Dwm {
                         let client_total_width = { c_rc.borrow().width() }; // 获取窗口总宽度 (含边框)
                         let client_total_height = { c_rc.borrow().height() }; // 获取窗口总高度 (含边框)
 
-                        if (mon_wx - new_window_x).abs() < Config::snap as i32 {
+                        if (mon_wx - new_window_x).abs() < CONFIG.snap() as i32 {
                             // 吸附到左边缘
                             new_window_x = mon_wx;
                         } else if ((mon_wx + mon_ww) - (new_window_x + client_total_width)).abs()
-                            < Config::snap as i32
+                            < CONFIG.snap() as i32
                         {
                             // 吸附到右边缘
                             new_window_x = mon_wx + mon_ww - client_total_width;
                         }
-                        if (mon_wy - new_window_y).abs() < Config::snap as i32 {
+                        if (mon_wy - new_window_y).abs() < CONFIG.snap() as i32 {
                             // 吸附到上边缘
                             new_window_y = mon_wy;
                         } else if ((mon_wy + mon_wh) - (new_window_y + client_total_height)).abs()
-                            < Config::snap as i32
+                            < CONFIG.snap() as i32
                         {
                             // 吸附到下边缘
                             new_window_y = mon_wy + mon_wh - client_total_height;
@@ -4102,8 +4125,8 @@ impl Dwm {
                         };
 
                         if !is_floating && current_layout_is_tile // 如果当前是平铺布局中的非浮动窗口
-                        && ((new_window_x - client_current_x).abs() > Config::snap as i32 // 且 X 或 Y 方向移动超过阈值
-                            || (new_window_y - client_current_y).abs() > Config::snap as i32)
+                        && ((new_window_x - client_current_x).abs() > CONFIG.snap() as i32 // 且 X 或 Y 方向移动超过阈值
+                            || (new_window_y - client_current_y).abs() > CONFIG.snap() as i32)
                         {
                             self.togglefloating(std::ptr::null()); // 将其切换为浮动 (null_mut() 作为参数)
                         }
@@ -4309,8 +4332,8 @@ impl Dwm {
 
                         if !is_floating
                             && current_layout_is_tile
-                            && ((new_width - current_client_w).abs() > Config::snap as i32
-                                || (new_height - current_client_h).abs() > Config::snap as i32)
+                            && ((new_width - current_client_w).abs() > CONFIG.snap() as i32
+                                || (new_height - current_client_h).abs() > CONFIG.snap() as i32)
                         {
                             self.togglefloating(std::ptr::null_mut()); // null_mut() 作为参数
                         }
@@ -4507,7 +4530,7 @@ impl Dwm {
                 );
             }
 
-            for button_config in Config::buttons.iter() {
+            for button_config in CONFIG.get_buttons().iter() {
                 // 使用迭代器
                 if button_config.click == CLICK::ClkClientWin as u32 {
                     for &modifier_combo in modifiers_to_try.iter() {
@@ -4572,8 +4595,8 @@ impl Dwm {
 
             // 3. 遍历所有可能的物理键码 (keycode)
             for keycode_val in min_keycode..=max_keycode {
-                // 4. 遍历 Config.rs 中定义的所有键盘快捷键绑定 (Config::keys)
-                for key_config in Config::keys.iter() {
+                // 4. 遍历 CONFIG.rs 中定义的所有键盘快捷键绑定 (keys)
+                for key_config in CONFIG.get_keys().iter() {
                     // 使用迭代器
                     // 获取当前物理键码 keycode_val 对应的第一个 Keysym
                     // (k - start) * skip 逻辑在C中用于访问二维数组，这里是 (keycode_val - min_keycode) * keysyms_per_keycode
@@ -4899,13 +4922,14 @@ impl Dwm {
                 keysym,
                 self.CLEANMASK(ev.state)
             );
-            for i in 0..Config::keys.len() {
-                if keysym == Config::keys[i].keysym
-                    && self.CLEANMASK(Config::keys[i].mod0) == self.CLEANMASK(ev.state)
-                    && Config::keys[i].func.is_some()
+            let keys = CONFIG.get_keys();
+            for i in 0..keys.len() {
+                if keysym == keys[i].keysym
+                    && self.CLEANMASK(keys[i].mod0) == self.CLEANMASK(ev.state)
+                    && keys[i].func.is_some()
                 {
-                    info!("[keypress] i: {}, arg: {:?}", i, Config::keys[i].arg);
-                    Config::keys[i].func.unwrap()(self, &Config::keys[i].arg);
+                    info!("[keypress] i: {}, arg: {:?}", i, keys[i].arg);
+                    keys[i].func.unwrap()(self, &keys[i].arg);
                 }
             }
         }
@@ -4940,14 +4964,14 @@ impl Dwm {
                 self.updatetitle(&mut client_mut);
                 #[cfg(any(feature = "nixgl", feature = "tauri_bar"))]
                 {
-                    if client_mut.name == Config::status_bar_name {
+                    if client_mut.name == CONFIG.status_bar_name() {
                         let mut instance_name = String::new();
                         for &tmp_num in self.status_bar_child.keys() {
                             if !self.status_bar_clients.contains_key(&tmp_num) {
                                 instance_name = match tmp_num {
-                                    0 => Config::status_bar_0.to_string(),
-                                    1 => Config::status_bar_1.to_string(),
-                                    _ => Config::status_bar_name.to_string(),
+                                    0 => CONFIG::status_bar_0.to_string(),
+                                    1 => CONFIG::status_bar_1.to_string(),
+                                    _ => CONFIG.status_bar_name().to_string(),
                                 };
                             }
                         }
@@ -4984,7 +5008,7 @@ impl Dwm {
             // 设置边框
             {
                 let mut client_mut = client_rc.borrow_mut();
-                client_mut.border_w = Config::border_px as i32;
+                client_mut.border_w = CONFIG.border_px() as i32;
                 window_changes.border_width = client_mut.border_w;
             }
 
@@ -5158,7 +5182,7 @@ impl Dwm {
         }
 
         // 根据配置决定是否自动切换到新窗口的显示器
-        if Config::focus_follows_new_window {
+        if CONFIG.behavior().focus_follows_new_window {
             let client_monitor = client_rc.borrow().mon.clone();
             if let Some(new_mon) = client_monitor {
                 if !Rc::ptr_eq(&new_mon, self.sel_mon.as_ref().unwrap()) {
@@ -5232,8 +5256,8 @@ impl Dwm {
                 client_mut.mon = self.get_monitor_by_id(monitor_id);
                 client_mut.never_focus = true;
                 client_mut.is_floating = true;
-                client_mut.tags = Config::tagmask; // 在所有标签可见
-                client_mut.border_w = Config::border_px as i32;
+                client_mut.tags = CONFIG.tagmask(); // 在所有标签可见
+                client_mut.border_w = CONFIG.border_px() as i32;
 
                 // 调整状态栏位置（通常在顶部）
                 self.position_statusbar(&mut client_mut, monitor_id);
@@ -5265,7 +5289,7 @@ impl Dwm {
         info!("[determine_statusbar_monitor]: {}", client);
         if let Some(suffix) = client
             .name
-            .strip_prefix(&format!("{}_", Config::status_bar_name))
+            .strip_prefix(&format!("{}_", CONFIG.status_bar_name()))
         {
             if let Ok(monitor_id) = suffix.parse::<i32>() {
                 return monitor_id;
@@ -5273,7 +5297,7 @@ impl Dwm {
         }
         if let Some(suffix) = client
             .class
-            .strip_prefix(&format!("{}_", Config::status_bar_name))
+            .strip_prefix(&format!("{}_", CONFIG.status_bar_name()))
         {
             if let Ok(monitor_id) = suffix.parse::<i32>() {
                 return monitor_id;
@@ -5281,7 +5305,7 @@ impl Dwm {
         }
         if let Some(suffix) = client
             .instance
-            .strip_prefix(&format!("{}_", Config::status_bar_name))
+            .strip_prefix(&format!("{}_", CONFIG.status_bar_name()))
         {
             if let Ok(monitor_id) = suffix.parse::<i32>() {
                 return monitor_id;
@@ -5391,13 +5415,13 @@ impl Dwm {
 
         if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
             let statusbar_borrow = statusbar.borrow();
-            let offset = statusbar_borrow.h + Config::status_bar_pad;
+            let offset = statusbar_borrow.h + CONFIG.status_bar_pad();
             info!(
                 "[client_y_offset] Monitor {}: offset = {} (statusbar_h: {} + pad: {})",
                 monitor_id,
                 offset,
                 statusbar_borrow.h,
-                Config::status_bar_pad
+                CONFIG.status_bar_pad()
             );
             return offset;
         }
@@ -5863,7 +5887,7 @@ impl Dwm {
             // 如果需要手动删除系统共享内存对象
             #[cfg(unix)]
             {
-                let shmem_name = format!("{}_{}", Config::status_bar_name, monitor_id);
+                let shmem_name = format!("{}_{}", CONFIG.status_bar_name(), monitor_id);
                 if let Ok(c_name) = std::ffi::CString::new(shmem_name) {
                     unsafe {
                         let result = libc::shm_unlink(c_name.as_ptr());
@@ -5971,7 +5995,7 @@ impl Dwm {
         unsafe {
             let mut wc: XWindowChanges = zeroed();
 
-            for i in 0..=Config::tags_length {
+            for i in 0..=CONFIG.tags_length() {
                 let sel_i = client_rc
                     .borrow()
                     .mon
@@ -6328,9 +6352,6 @@ impl Dwm {
         if !self.gettextprop(c.win, self.net_atom[NET::NetWMName as usize], &mut c.name) {
             self.gettextprop(c.win, XA_WM_NAME, &mut c.name);
         }
-        if c.name.is_empty() {
-            c.name = Config::broken.to_string();
-        }
     }
 
     pub fn update_bar_message_for_monitor(&mut self, m_opt: Option<Rc<RefCell<Monitor>>>) {
@@ -6354,7 +6375,7 @@ impl Dwm {
             monitor_info_for_message.monitor_height = mon_borrow.w_h;
             monitor_info_for_message.monitor_num = mon_borrow.num;
             monitor_info_for_message.set_ltsymbol(&mon_borrow.lt_symbol);
-            monitor_info_for_message.border_w = Config::border_px as i32;
+            monitor_info_for_message.border_w = CONFIG.border_px() as i32;
 
             let mut c_iter_opt = mon_borrow.clients.clone();
             while let Some(ref client_rc_iter) = c_iter_opt.clone() {
@@ -6367,7 +6388,7 @@ impl Dwm {
             }
         }
 
-        for i in 0..Config::tags_length {
+        for i in 0..CONFIG.tags_length() {
             let tag_bit = 1 << i;
             // is_filled_tag 的正确计算方式 (与你之前版本类似，但确保变量名一致和借用正确)
             let is_filled_tag_calculated: bool; // 声明变量
