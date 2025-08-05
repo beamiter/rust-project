@@ -15,7 +15,7 @@ use shared_structures::CommandType;
 use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 use std::cell::RefCell;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::ffi::c_char;
 use std::ffi::{CStr, CString};
 use std::fmt;
@@ -696,6 +696,8 @@ pub struct Dwm {
     // 状态栏专用管理
     pub status_bar_clients: HashMap<i32, Rc<RefCell<Client>>>, // monitor_id -> statusbar_client
     pub status_bar_windows: HashMap<Window, i32>,              // window_id -> monitor_id (快速查找)
+
+    pub pending_bar_updates: HashSet<i32>,
 }
 
 impl Dwm {
@@ -748,6 +750,21 @@ impl Dwm {
             message: SharedMessage::default(),
             status_bar_clients: HashMap::new(),
             status_bar_windows: HashMap::new(),
+            pending_bar_updates: HashSet::new(),
+        }
+    }
+
+    fn mark_bar_update_needed(&mut self, monitor_id: Option<i32>) {
+        if let Some(id) = monitor_id {
+            self.pending_bar_updates.insert(id);
+        } else {
+            // 如果没有指定monitor，标记所有monitor
+            let mut m = self.mons.clone();
+            while let Some(ref m_opt) = m {
+                self.pending_bar_updates.insert(m_opt.borrow().num);
+                let next = m_opt.borrow().next.clone();
+                m = next;
+            }
         }
     }
 
@@ -1910,10 +1927,10 @@ impl Dwm {
         }
     }
 
-    pub fn drawbar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
+    pub fn UpdateBarMessage(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
         self.update_bar_message_for_monitor(m);
         let num = self.message.monitor_info.monitor_num;
-        // info!("[drawbar] num: {}", num);
+
         let shared_path = format!("/dev/shm/monitor_{}", num);
         if !self.status_bar_shmem.contains_key(&num) {
             let ring_buffer = match SharedRingBuffer::open(&shared_path, None) {
@@ -1925,9 +1942,11 @@ impl Dwm {
             };
             self.status_bar_shmem.insert(num, ring_buffer);
         }
+        self.ensure_bar_is_running(num, shared_path.as_str());
+
+        // info!("[drawbar] num: {}", num);
         // info!("[drawbar] message: {:?}", self.message);
         let _ = self.write_message(num, &self.message.clone());
-        self.ensure_bar_is_running(num, shared_path.as_str());
     }
 
     pub fn restack(&mut self, mon_rc_opt: Option<Rc<RefCell<Monitor>>>) {
@@ -1936,7 +1955,7 @@ impl Dwm {
             Some(monitor) => monitor,
             None => return,
         };
-        self.drawbar(Some(mon_rc.clone()));
+        self.mark_bar_update_needed(Some(mon_rc.borrow().num));
 
         unsafe {
             let mon_borrow = mon_rc.borrow();
@@ -1975,6 +1994,23 @@ impl Dwm {
         }
     }
 
+    fn flush_pending_bar_updates(&mut self) {
+        if self.pending_bar_updates.is_empty() {
+            return;
+        }
+        info!(
+            "[flush_pending_bar_updates] Updating {} monitors",
+            self.pending_bar_updates.len()
+        );
+        for monitor_id in self.pending_bar_updates.clone() {
+            if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+                self.UpdateBarMessage(Some(monitor));
+            }
+        }
+
+        self.pending_bar_updates.clear();
+    }
+
     pub fn run(&mut self) {
         unsafe {
             let mut ev: XEvent = zeroed();
@@ -1983,16 +2019,22 @@ impl Dwm {
             let mut i: u64 = 0;
             info!("Starting event loop with X11 fd: {}", x11_fd);
             while self.running.load(Ordering::SeqCst) {
+                let mut events_processed = false;
                 // 处理所有挂起的X11事件
                 while XPending(self.dpy) > 0 {
                     XNextEvent(self.dpy, &mut ev);
                     i = i.wrapping_add(1);
-                    // info!("running frame: {}, handler type: {}", i, ev.type_);
                     self.handler(ev.type_, &mut ev);
+                    events_processed = true;
                 }
 
                 // 处理来自status bar的命令
                 self.process_commands_from_status_bar();
+
+                // ✨ 在事件循环结束后，批量更新状态栏
+                if events_processed || !self.pending_bar_updates.is_empty() {
+                    self.flush_pending_bar_updates();
+                }
 
                 // 设置select参数
                 let mut read_fds: fd_set = std::mem::zeroed();
@@ -2001,6 +2043,7 @@ impl Dwm {
 
                 let mut timeout = timeval {
                     tv_sec: 0,
+
                     tv_usec: 10000, // 10.000ms for ~100 FPS
                 };
 
@@ -2019,11 +2062,13 @@ impl Dwm {
                         break;
                     }
                     0 => {
-                        // 超时，继续循环处理命令
+                        // 超时，检查是否有挂起的更新
+                        if !self.pending_bar_updates.is_empty() {
+                            self.flush_pending_bar_updates();
+                        }
                         continue;
                     }
                     _ => {
-                        // 有X11事件可读，在下次循环中处理
                         if FD_ISSET(x11_fd, &read_fds) {
                             // X11事件就绪，下次循环会处理
                         }
@@ -3079,7 +3124,12 @@ impl Dwm {
             if sel_is_some {
                 self.arrange(self.sel_mon.clone());
             } else {
-                self.drawbar(self.sel_mon.clone());
+                let mon_num = if let Some(sel_mon_ref) = self.sel_mon.as_ref() {
+                    Some(sel_mon_ref.borrow().num)
+                } else {
+                    None
+                };
+                self.mark_bar_update_needed(mon_num);
             }
         }
     }
@@ -3754,7 +3804,7 @@ impl Dwm {
                     XA_WM_HINTS => {
                         self.updatewmhints(&client_rc);
                         // WM_HINTS 改变可能影响紧急状态，需要重绘状态栏
-                        self.drawbars();
+                        self.mark_bar_update_needed(None);
                     }
                     _ => {}
                 }
@@ -3778,7 +3828,9 @@ impl Dwm {
                         }
                     };
                     if is_selected_on_mon {
-                        self.drawbar(mon_opt);
+                        if let Some(ref mon) = mon_opt {
+                            self.mark_bar_update_needed(Some(mon.borrow().num));
+                        }
                     }
                 }
                 if ev.atom == self.net_atom[NET::NetWMWindowType as usize] {
@@ -4505,16 +4557,6 @@ impl Dwm {
         }
     }
 
-    pub fn drawbars(&mut self) {
-        info!("[drawbars]");
-        let mut m = self.mons.clone();
-        while let Some(ref m_opt) = m {
-            self.drawbar(m.clone());
-            let next = m_opt.borrow_mut().next.clone();
-            m = next;
-        }
-    }
-
     pub fn enternotify(&mut self, e: *mut XEvent) {
         // info!("[enternotify]"); // 日志
         unsafe {
@@ -4592,10 +4634,12 @@ impl Dwm {
         // info!("[expose]");
         unsafe {
             let ev = (*e).expose;
-            let m = self.wintomon(ev.window);
+            if ev.count != 0 {
+                return;
+            }
 
-            if ev.count == 0 && m.is_some() {
-                self.drawbar(m);
+            if let Some(m_ref) = self.wintomon(ev.window).as_ref() {
+                self.mark_bar_update_needed(Some(m_ref.borrow().num));
             }
         }
     }
@@ -4663,13 +4707,14 @@ impl Dwm {
                     self.net_atom[NET::NetActiveWindow as usize],
                 );
             }
-            {
-                let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
+            if let Some(sel_mon_opt) = self.sel_mon.as_mut() {
+                let mut sel_mon_mut = sel_mon_opt.borrow_mut();
                 sel_mon_mut.sel = c_opt.clone();
                 let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
                 sel_mon_mut.pertag.as_mut().unwrap().sel[cur_tag] = c_opt.clone();
             }
-            self.drawbars();
+
+            self.mark_bar_update_needed(None);
         }
     }
 
@@ -6116,11 +6161,7 @@ impl Dwm {
 
             // --- 6. 如果配置发生了变化，更新 DWM 的选中显示器 ---
             if dirty {
-                // self.selmon = self.mons.clone(); // 将 selmon 重置为链表头 (通常是主显示器)
-                // dwm.c 的逻辑是根据根窗口上鼠标指针的位置来确定 selmon
-                self.sel_mon = self.wintomon(self.root); // 更符合 dwm.c 的行为
-                                                         // 如果 selmon 仍然是 None (例如，所有 monitor 都被移除了且 wintomon(root) 也找不到)
-                                                         // 则尝试设为第一个 monitor (如果还存在的话)
+                self.sel_mon = self.wintomon(self.root);
                 if self.sel_mon.is_none() && self.mons.is_some() {
                     self.sel_mon = self.mons.clone();
                 }
