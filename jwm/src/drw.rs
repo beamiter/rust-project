@@ -48,6 +48,32 @@ impl Drw {
         return drw;
     }
 
+    pub fn drw_clr_create_direct(&mut self, r: u8, g: u8, b: u8, alpha: u8) -> Option<Rc<Clr>> {
+        unsafe {
+            let mut clr: Clr = std::mem::zeroed();
+            // 手动构造像素值 (ARGB格式)
+            clr.pixel =
+                ((alpha as u64) << 24) | ((r as u64) << 16) | ((g as u64) << 8) | (b as u64);
+            // 设置其他字段
+            clr.color.red = (r as u16) << 8;
+            clr.color.green = (g as u16) << 8;
+            clr.color.blue = (b as u16) << 8;
+            clr.color.alpha = (alpha as u16) << 8;
+            Some(Rc::new(clr))
+        }
+    }
+
+    pub fn drw_clr_create_from_hex(&mut self, hex_color: &str, alpha: u8) -> Option<Rc<Clr>> {
+        // 解析 "#ff0000" 格式
+        if hex_color.starts_with('#') && hex_color.len() == 7 {
+            let r = u8::from_str_radix(&hex_color[1..3], 16).ok()?;
+            let g = u8::from_str_radix(&hex_color[3..5], 16).ok()?;
+            let b = u8::from_str_radix(&hex_color[5..7], 16).ok()?;
+            return self.drw_clr_create_direct(r, g, b, alpha);
+        }
+        None
+    }
+
     pub fn drw_clr_create(&mut self, clrname: &str, alpha: u8) -> Option<Rc<Clr>> {
         if clrname.is_empty() {
             return None;

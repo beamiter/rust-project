@@ -66,7 +66,7 @@ impl Config {
     pub const col_gray2: &str = "#444444";
     pub const col_gray3: &str = "#bbbbbb";
     pub const col_gray4: &str = "#eeeeee";
-    pub const col_cyan: &str = "#005577";
+    pub const col_cyan: &str = "#00ffd7";
     pub const col_black: &str = "#000000";
     pub const col_red: &str = "#ff0000";
     pub const col_yellow: &str = "#ffff00";
@@ -82,33 +82,12 @@ impl Config {
     pub const center_small_windows: bool = true;
     pub const small_window_threshold: (i32, i32) = (400, 300); // (width, height)
 
-    pub const colors: [&[&'static str; 3]; 10] = [
+    pub const colors: [&[&'static str; 3]; 2] = [
         // fg | bg | border
         &[Self::col_gray3, Self::col_gray1, Self::col_gray2],
         &[Self::col_gray4, Self::col_cyan, Self::col_cyan],
-        &["#cde6c7", "#224b8f", "#000000"], // Statubar right {text, background, not used but cannot be
-        // empty}
-        &["#ea66a6", "#94d6da", "#000000"], // Tagbar left selected {text, background, not used but cannot be
-        // empty}
-        &["#c85d44", "#7bbfea", "#000000"], // Tagbar left unselected {text, background, not used but cannot be
-        // empty}
-        &["#ffffff", "#9b95c9", "#000000"], // infobar middle selected {text, background, not used but cannot be
-        // empty}
-        &["#78cdd1", "#74787c", "#000000"], // infobar middle unselected {text, background, not used but cannot be
-        // empty}
-        &[Self::col_gray3, Self::col_gray1, Self::col_gray2],
-        &[Self::col_black, Self::col_yellow, Self::col_red],
-        &[Self::col_white, Self::col_red, Self::col_red],
     ];
-    pub const alphas: [&[u8; 3]; 10] = [
-        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
-        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
-        &[Self::OPAQUE, Self::TRANSPARENT, Self::border_alpha],
-        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
-        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
-        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
-        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
-        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
+    pub const alphas: [&[u8; 3]; 2] = [
         &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
         &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
     ];
