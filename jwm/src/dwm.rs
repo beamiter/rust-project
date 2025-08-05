@@ -826,13 +826,13 @@ impl Dwm {
     pub fn new(sender: Sender<u8>) -> Self {
         let theme_manager = ThemeManager::new(
             ColorScheme::new(
-                Drw::drw_clr_create_from_hex(Config::col_gray3, Config::OPAQUE).unwrap(),
-                Drw::drw_clr_create_from_hex(Config::col_gray1, Config::OPAQUE).unwrap(),
-                Drw::drw_clr_create_from_hex(Config::col_gray2, Config::OPAQUE).unwrap(),
+                Drw::drw_clr_create_from_hex(Config::col_DarkSeaGreen1, Config::OPAQUE).unwrap(),
+                Drw::drw_clr_create_from_hex(Config::col_LightSkyBlue1, Config::OPAQUE).unwrap(),
+                Drw::drw_clr_create_from_hex(Config::col_Grey84, Config::OPAQUE).unwrap(),
             ),
             ColorScheme::new(
-                Drw::drw_clr_create_from_hex(Config::col_gray4, Config::OPAQUE).unwrap(),
-                Drw::drw_clr_create_from_hex(Config::col_gray2, Config::OPAQUE).unwrap(),
+                Drw::drw_clr_create_from_hex(Config::col_DarkSeaGreen2, Config::OPAQUE).unwrap(),
+                Drw::drw_clr_create_from_hex(Config::col_PaleTurquoise1, Config::OPAQUE).unwrap(),
                 Drw::drw_clr_create_from_hex(Config::col_cyan, Config::OPAQUE).unwrap(),
             ),
         );

@@ -89,6 +89,4 @@ impl Drw {
             XFreeCursor(self.dpy, (*cursor).cursor);
         }
     }
-
-    // Drawing functions.
 }

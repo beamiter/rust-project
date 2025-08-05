@@ -61,17 +61,18 @@ impl Config {
         }
     }
     pub const broken: &str = "broken";
+    // https://www.ditig.com/256-colors-cheat-sheet
     pub const dmenu_font: &str = "SauceCodePro Nerd Font Regular 11";
-    pub const col_gray1: &str = "#222222";
-    pub const col_gray2: &str = "#444444";
-    pub const col_gray3: &str = "#bbbbbb";
-    pub const col_gray4: &str = "#eeeeee";
+    pub const col_DarkSeaGreen1: &str = "#afffd7";
+    pub const col_DarkSeaGreen2: &str = "#afffaf";
+    pub const col_PaleTurquoise1: &str = "#afffff";
+    pub const col_LightSkyBlue1: &str = "#afd7ff";
+    pub const col_Grey84: &str = "#d7d7d7";
     pub const col_cyan: &str = "#00ffd7";
+    pub const col_white: &str = "#ffffff";
+    pub const col_black: &str = "#000000";
     pub const TRANSPARENT: u8 = 0x00u8;
     pub const OPAQUE: u8 = 0xffu8;
-    pub const HALF_OPAQUE: u8 = 0xa0u8;
-    pub const bar_alpha: u8 = 0xd0u8;
-    pub const border_alpha: u8 = Self::OPAQUE;
     pub const status_bar_pad: i32 = 5; // 状态栏下方的间距
     pub const focus_follows_new_window: bool = false;
 
@@ -146,13 +147,13 @@ impl Config {
             "-fn".to_string(),
             Self::dmenu_font.to_string(),
             "-nb".to_string(),
-            Self::col_gray1.to_string(),
+            Self::col_LightSkyBlue1.to_string(),
             "-nf".to_string(),
-            Self::col_gray3.to_string(),
+            Self::col_PaleTurquoise1.to_string(),
             "-sb".to_string(),
-            Self::col_cyan.to_string(),
+            Self::col_black.to_string(),
             "-sf".to_string(),
-            Self::col_gray4.to_string(),
+            Self::col_Grey84.to_string(),
             "-b".to_string(),
         ]
     });
