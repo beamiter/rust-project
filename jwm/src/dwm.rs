@@ -1795,11 +1795,10 @@ impl Dwm {
             // Assuming get_mut
             match ring_buffer.try_write_message(&message) {
                 Ok(true) => {
-                    // (TODO).
                     if let Some(statusbar) = self.status_bar_clients.get(&num) {
                         info!("statusbar: {}", statusbar.borrow());
                     }
-                    info!("[write_message] {:?}", message);
+                    // info!("[write_message] {:?}", message);
                     Ok(()) // Message written successfully
                 }
                 Ok(false) => {
@@ -1916,7 +1915,7 @@ impl Dwm {
     pub fn drawbar(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
         self.update_bar_message_for_monitor(m);
         let num = self.message.monitor_info.monitor_num;
-        info!("[drawbar] num: {}", num);
+        // info!("[drawbar] num: {}", num);
         let shared_path = format!("/dev/shm/monitor_{}", num);
         if !self.status_bar_shmem.contains_key(&num) {
             let ring_buffer = match SharedRingBuffer::open(&shared_path, None) {
@@ -4488,7 +4487,7 @@ impl Dwm {
     }
 
     pub fn setfocus(&mut self, c: &Rc<RefCell<Client>>) {
-        info!("[setfocus]");
+        // info!("[setfocus]");
         unsafe {
             let mut c = c.borrow_mut();
             if !c.never_focus {
@@ -4604,7 +4603,7 @@ impl Dwm {
     }
 
     pub fn focus(&mut self, mut c_opt: Option<Rc<RefCell<Client>>>) {
-        info!("[focus]");
+        // info!("[focus]");
         unsafe {
             {
                 // 如果传入的是状态栏客户端，忽略并寻找合适的替代
@@ -5106,6 +5105,8 @@ impl Dwm {
 
             // 确保状态栏位于最上层
             XRaiseWindow(self.dpy, client_rc.borrow().win);
+
+            self.arrange(None);
 
             info!(
                 "[manage_statusbar] Successfully managed statusbar on monitor {}",
@@ -6235,8 +6236,7 @@ impl Dwm {
     }
 
     pub fn update_bar_message_for_monitor(&mut self, m_opt: Option<Rc<RefCell<Monitor>>>) {
-        info!("[update_bar_message_for_monitor]");
-
+        // info!("[update_bar_message_for_monitor]");
         if m_opt.is_none() {
             error!("[update_bar_message_for_monitor] Monitor option is None, cannot update bar message.");
             return;
@@ -6249,7 +6249,7 @@ impl Dwm {
         let mut urgent_tags_mask: u32 = 0;
         {
             let mon_borrow = mon_rc.borrow();
-            info!("[update_bar_message_for_monitor], {}", mon_borrow);
+            // info!("[update_bar_message_for_monitor], {}", mon_borrow);
             monitor_info_for_message.monitor_x = mon_borrow.w_x;
             monitor_info_for_message.monitor_y = mon_borrow.w_y;
             monitor_info_for_message.monitor_width = mon_borrow.w_w;
@@ -6271,7 +6271,6 @@ impl Dwm {
 
         for i in 0..Config::tags_length {
             let tag_bit = 1 << i;
-
             // is_filled_tag 的正确计算方式 (与你之前版本类似，但确保变量名一致和借用正确)
             let is_filled_tag_calculated: bool; // 声明变量
             {

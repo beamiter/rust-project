@@ -249,7 +249,7 @@ impl IcedBar {
                         "Failed to open shared ring buffer: {}, attempting to create new one",
                         e
                     );
-                    match SharedRingBuffer::create(&shared_path, None, None, None) {
+                    match SharedRingBuffer::create(&shared_path, None, None) {
                         Ok(shared_buffer) => {
                             info!("Created new shared ring buffer: {}", shared_path);
                             Some(shared_buffer)
@@ -358,10 +358,10 @@ impl IcedBar {
                             {
                                 Ok(true) => {
                                     if let Ok(Some(message)) =
-                                        buffer_clone.try_read_latest_message::<SharedMessage>()
+                                        buffer_clone.try_read_latest_message()
                                     {
-                                        if prev_timestamp != message.timestamp {
-                                            prev_timestamp = message.timestamp;
+                                        if prev_timestamp != message.timestamp.into() {
+                                            prev_timestamp = message.timestamp.into();
                                             debug!(
                                                 "[notifier] Received State: {}",
                                                 message.timestamp
@@ -557,7 +557,7 @@ impl IcedBar {
                 self.monitor_info_opt = Some(message.monitor_info);
 
                 if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
-                    self.layout_symbol = monitor_info.ltsymbol.clone();
+                    self.layout_symbol = monitor_info.get_ltsymbol();
                     self.monitor_num = monitor_info.monitor_num;
 
                     let width = (monitor_info.monitor_width as f32
