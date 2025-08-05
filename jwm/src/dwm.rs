@@ -701,9 +701,9 @@ impl fmt::Display for Monitor {
 
 #[derive(Debug, Clone)]
 pub struct Rule {
-    pub class: &'static str,
-    pub instance: &'static str,
-    pub name: &'static str,
+    pub class: String,
+    pub instance: String,
+    pub name: String,
     pub tags: usize,
     pub is_floating: bool,
     pub monitor: i32,
@@ -711,9 +711,9 @@ pub struct Rule {
 impl Rule {
     #[allow(unused)]
     pub fn new(
-        class: &'static str,
-        instance: &'static str,
-        name: &'static str,
+        class: String,
+        instance: String,
+        name: String,
         tags: usize,
         is_floating: bool,
         monitor: i32,

@@ -1,459 +1,411 @@
-#![allow(non_upper_case_globals)]
-#![allow(non_snake_case)]
-#![allow(unused_mut)]
-#![allow(unused)]
-
-use cfg_if::cfg_if;
-use rand::Rng;
-use std::{rc::Rc, sync::RwLock};
-
+// config.rs
 use once_cell::sync::Lazy;
-use x11::{
-    keysym::{
-        XK_Page_Down, XK_Page_Up, XK_Return, XK_Tab, XK_b, XK_c, XK_comma, XK_d, XK_e, XK_f, XK_h,
-        XK_i, XK_j, XK_k, XK_l, XK_m, XK_o, XK_period, XK_q, XK_r, XK_space, XK_t, XK_0, XK_1,
-        XK_2, XK_3, XK_4, XK_5, XK_6, XK_7, XK_8, XK_9,
-    },
-    xlib::{Button1, Button2, Button3, ControlMask, Mod1Mask, ShiftMask},
-};
+use serde::{Deserialize, Serialize};
+use std::fs;
+use std::path::Path;
+use x11::keysym::*;
+use x11::xlib::*;
 
-use crate::{
-    dwm::{self, Button, Dwm, Key, Layout, Rule, CLICK},
-    icon_gallery::{generate_random_tags, ICON_GALLERY},
-    terminal_prober::ADVANCED_TERMINAL_PROBER,
-};
+use crate::dwm;
+use crate::dwm::Button;
+use crate::dwm::Dwm;
+use crate::dwm::Key;
+use crate::dwm::Rule;
+use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
-pub struct Config {}
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TomlConfig {
+    pub appearance: AppearanceConfig,
+    pub behavior: BehaviorConfig,
+    pub status_bar: StatusBarConfig,
+    pub colors: ColorsConfig,
+    pub keybindings: KeyBindingsConfig,
+    pub mouse_bindings: MouseBindingsConfig,
+    pub rules: Vec<RuleConfig>,
+    pub layout: LayoutConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AppearanceConfig {
+    pub border_px: u32,
+    pub snap: u32,
+    pub dmenu_font: String,
+    pub status_bar_pad: i32,
+    pub broken: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BehaviorConfig {
+    pub focus_follows_new_window: bool,
+    pub resize_hints: bool,
+    pub lock_fullscreen: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StatusBarConfig {
+    pub name: String,
+    pub bar_0: String,
+    pub bar_1: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ColorsConfig {
+    pub dark_sea_green1: String,
+    pub dark_sea_green2: String,
+    pub pale_turquoise1: String,
+    pub light_sky_blue1: String,
+    pub grey84: String,
+    pub cyan: String,
+    pub white: String,
+    pub black: String,
+    pub transparent: u8,
+    pub opaque: u8,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LayoutConfig {
+    pub m_fact: f32,
+    pub n_master: u32,
+    pub tags_length: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyBindingsConfig {
+    pub modkey: String, // "Mod1", "Mod4", etc.
+    pub keys: Vec<KeyConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct KeyConfig {
+    pub modifier: Vec<String>, // ["Mod1", "Shift"]
+    pub key: String,           // "Return", "j", "k", etc.
+    pub function: String,      // "spawn", "focusstack", etc.
+    pub argument: ArgumentConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ArgumentConfig {
+    Int(i32),
+    UInt(u32),
+    Float(f32),
+    String(String),
+    StringVec(Vec<String>),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MouseBindingsConfig {
+    pub buttons: Vec<ButtonConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ButtonConfig {
+    pub click_type: String, // "ClkLtSymbol", "ClkWinTitle", etc.
+    pub modifier: Vec<String>,
+    pub button: u32, // 1, 2, 3
+    pub function: String,
+    pub argument: ArgumentConfig,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RuleConfig {
+    pub class: String,
+    pub instance: String,
+    pub name: String,
+    pub tags_mask: usize,
+    pub is_floating: bool,
+    pub monitor: i32,
+}
+
+pub struct Config {
+    inner: TomlConfig,
+}
+
 impl Config {
-    // border pixel of windows
-    pub const border_px: u32 = 3;
-    // snap pixel
-    pub const snap: u32 = 32;
-    cfg_if! {
-        if #[cfg(feature = "dioxus_bar")] {
-            pub const status_bar_name: &str = "dioxus_bar";
-            pub const status_bar_0: &str = "dioxus_bar_0";
-            pub const status_bar_1: &str = "dioxus_bar_1";
-        } else if #[cfg(feature = "egui_bar")] {
-            pub const status_bar_name: &str = "egui_bar";
-            pub const status_bar_0: &str = "egui_bar_0";
-            pub const status_bar_1: &str = "egui_bar_1";
-        } else if #[cfg(feature = "iced_bar")] {
-            pub const status_bar_name: &str = "iced_bar";
-            pub const status_bar_0: &str = "iced_bar_0";
-            pub const status_bar_1: &str = "iced_bar_1";
-        } else if #[cfg(feature = "gtk_bar")] {
-            pub const status_bar_name: &str = "gtk_bar";
-            pub const status_bar_0: &str = "gtk_bar_0";
-            pub const status_bar_1: &str = "gtk_bar_1";
-        } else if #[cfg(feature = "relm_bar")] {
-            pub const status_bar_name: &str = "relm_bar";
-            pub const status_bar_0: &str = "relm_bar_0";
-            pub const status_bar_1: &str = "relm_bar_1";
-        } else if #[cfg(feature = "tauri_bar")] {
-            pub const status_bar_name: &str = "tauri_bar";
-            pub const status_bar_0: &str = "tauri_bar_0";
-            pub const status_bar_1: &str = "tauri_bar_1";
-        } else {
-            pub const status_bar_name: &str = "egui_bar";
-            pub const status_bar_0: &str = "egui_bar_0";
-            pub const status_bar_1: &str = "egui_bar_1";
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
+        let content = fs::read_to_string(path)?;
+        let config: TomlConfig = toml::from_str(&content)?;
+        Ok(Self { inner: config })
+    }
+
+    pub fn load_default() -> Self {
+        // 如果配置文件不存在，使用默认配置
+        let default_config_path = dirs::config_dir()
+            .unwrap_or_else(|| std::env::current_dir().unwrap())
+            .join("dwm")
+            .join("config.toml");
+
+        Self::load_from_file(&default_config_path).unwrap_or_else(|_| Self::default())
+    }
+
+    // 访问器方法
+    pub fn border_px(&self) -> u32 {
+        self.inner.appearance.border_px
+    }
+
+    pub fn snap(&self) -> u32 {
+        self.inner.appearance.snap
+    }
+
+    pub fn dmenu_font(&self) -> &str {
+        &self.inner.appearance.dmenu_font
+    }
+
+    pub fn status_bar_name(&self) -> &str {
+        &self.inner.status_bar.name
+    }
+
+    pub fn m_fact(&self) -> f32 {
+        self.inner.layout.m_fact
+    }
+
+    pub fn n_master(&self) -> u32 {
+        self.inner.layout.n_master
+    }
+
+    pub fn tags_length(&self) -> usize {
+        self.inner.layout.tags_length
+    }
+
+    pub fn tagmask(&self) -> u32 {
+        (1 << self.tags_length()) - 1
+    }
+
+    // 转换方法
+    pub fn get_keys(&self) -> Vec<Key> {
+        let mut keys = Vec::new();
+
+        for key_config in &self.inner.keybindings.keys {
+            if let Some(key) = self.convert_key_config(key_config) {
+                keys.push(key);
+            }
         }
-    }
-    pub const broken: &str = "broken";
-    // https://www.ditig.com/256-colors-cheat-sheet
-    pub const dmenu_font: &str = "SauceCodePro Nerd Font Regular 11";
-    pub const col_DarkSeaGreen1: &str = "#afffd7";
-    pub const col_DarkSeaGreen2: &str = "#afffaf";
-    pub const col_PaleTurquoise1: &str = "#afffff";
-    pub const col_LightSkyBlue1: &str = "#afd7ff";
-    pub const col_Grey84: &str = "#d7d7d7";
-    pub const col_cyan: &str = "#00ffd7";
-    pub const col_white: &str = "#ffffff";
-    pub const col_black: &str = "#000000";
-    pub const TRANSPARENT: u8 = 0x00u8;
-    pub const OPAQUE: u8 = 0xffu8;
-    pub const status_bar_pad: i32 = 5; // 状态栏下方的间距
-    pub const focus_follows_new_window: bool = false;
 
-    pub const m_fact: f32 = 0.55;
-    pub const n_master: u32 = 1;
-    pub const resize_hints: bool = true;
-    pub const lock_fullscreen: bool = true;
+        // 添加标签键
+        for i in 0..self.tags_length() {
+            keys.extend(self.generate_tag_keys(i));
+        }
 
-    pub const rules: Lazy<Vec<Rule>> = Lazy::new(|| {
-        vec![
-            // class | instance | name | tags mask | isfloating | monitor
-            Rule::new(Config::broken, Config::broken, Config::broken, 0, true, -1),
-            Rule::new(
-                Config::status_bar_0,
-                Config::status_bar_0,
-                Config::status_bar_name,
-                Self::tagmask as usize, // 设置为全标签掩码
-                true,
-                0,
-            ),
-            Rule::new(
-                Config::status_bar_1,
-                Config::status_bar_1,
-                Config::status_bar_name,
-                Self::tagmask as usize, // 设置为全标签掩码
-                true,
-                1,
-            ),
-        ]
-    });
-
-    // https://symbl.cc/en/
-    pub const tags_length: usize = 9;
-    pub const tagmask: u32 = (1 << Self::tags_length) - 1;
-
-    fn TAGKEYS(KEY: u32, TAG: i32) -> Vec<Key> {
-        vec![
-            Key::new(
-                Self::MODKEY,
-                KEY.into(),
-                Some(Dwm::view),
-                dwm::Arg::Ui(1 << TAG),
-            ),
-            Key::new(
-                Self::MODKEY | ControlMask,
-                KEY.into(),
-                Some(Dwm::toggleview),
-                dwm::Arg::Ui(1 << TAG),
-            ),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                KEY.into(),
-                Some(Dwm::tag),
-                dwm::Arg::Ui(1 << TAG),
-            ),
-            Key::new(
-                Self::MODKEY | ControlMask | ShiftMask,
-                KEY.into(),
-                Some(Dwm::toggletag),
-                dwm::Arg::Ui(1 << TAG),
-            ),
-        ]
+        keys
     }
 
-    pub const MODKEY: u32 = Mod1Mask;
-    // dmenu_run -m 0 -fn "monospace:size=10" -nb "#222222" -nf "#bbbbbb" -sb "#005577" -sf "#eeeeee"
-    pub const dmenucmd: Lazy<Vec<String>> = Lazy::new(|| {
-        vec![
-            "dmenu_run".to_string(),
-            "-m".to_string(),
-            "0".to_string(),
-            "-fn".to_string(),
-            Self::dmenu_font.to_string(),
-            "-nb".to_string(),
-            Self::col_LightSkyBlue1.to_string(),
-            "-nf".to_string(),
-            Self::col_PaleTurquoise1.to_string(),
-            "-sb".to_string(),
-            Self::col_black.to_string(),
-            "-sf".to_string(),
-            Self::col_Grey84.to_string(),
-            "-b".to_string(),
-        ]
-    });
-    // pub const termcmd: Lazy<Vec<String>> = Lazy::new(|| vec!["terminator".to_string()]);
-    // 兼容原有接口
-    pub const termcmd: Lazy<Vec<String>> = Lazy::new(|| {
+    pub fn get_buttons(&self) -> Vec<Button> {
+        self.inner
+            .mouse_bindings
+            .buttons
+            .iter()
+            .filter_map(|btn| self.convert_button_config(btn))
+            .collect()
+    }
+
+    pub fn get_rules(&self) -> Vec<Rule> {
+        self.inner
+            .rules
+            .iter()
+            .map(|rule| {
+                Rule::new(
+                    &rule.class,
+                    &rule.instance,
+                    &rule.name,
+                    rule.tags_mask,
+                    rule.is_floating,
+                    rule.monitor,
+                )
+            })
+            .collect()
+    }
+
+    pub fn get_dmenucmd(&self) -> Vec<String> {
+        // 从配置中查找 dmenu 命令，或使用默认值
+        self.inner
+            .keybindings
+            .keys
+            .iter()
+            .find(|k| k.function == "spawn" && k.key == "e")
+            .and_then(|k| match &k.argument {
+                ArgumentConfig::StringVec(cmd) => Some(cmd.clone()),
+                _ => None,
+            })
+            .unwrap_or_else(|| {
+                vec![
+                    "dmenu_run".to_string(),
+                    "-m".to_string(),
+                    "0".to_string(),
+                    // 其他默认参数...
+                ]
+            })
+    }
+
+    pub fn get_termcmd(&self) -> Vec<String> {
+        // 类似地从配置中获取终端命令
         ADVANCED_TERMINAL_PROBER
             .get_available_terminal()
             .map(|config| vec![config.command.clone()])
             .unwrap_or_else(|| vec!["x-terminal-emulator".to_string()])
-    });
+    }
 
-    pub const keys: Lazy<Vec<Key>> = Lazy::new(|| {
-        let mut m = vec![
-            // modifier | key | function | argument
-            Key::new(
-                Self::MODKEY,
-                XK_e.into(),
-                Some(Dwm::spawn),
-                dwm::Arg::V(Self::dmenucmd.to_vec()),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_r.into(),
-                Some(Dwm::spawn),
-                dwm::Arg::V(Self::dmenucmd.clone()),
-            ),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                XK_Return.into(),
-                Some(Dwm::spawn),
-                dwm::Arg::V(Self::termcmd.clone()),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_j.into(),
-                Some(Dwm::focusstack),
-                dwm::Arg::I(1),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_k.into(),
-                Some(Dwm::focusstack),
-                dwm::Arg::I(-1),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_i.into(),
-                Some(Dwm::incnmaster),
-                dwm::Arg::I(1),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_d.into(),
-                Some(Dwm::incnmaster),
-                dwm::Arg::I(-1),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_h.into(),
-                Some(Dwm::setmfact),
-                dwm::Arg::F(-0.025),
-            ),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                XK_h.into(),
-                Some(Dwm::setcfact),
-                dwm::Arg::F(0.2),
-            ),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                XK_j.into(),
-                Some(Dwm::movestack),
-                dwm::Arg::I(1),
-            ),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                XK_k.into(),
-                Some(Dwm::movestack),
-                dwm::Arg::I(-1),
-            ),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                XK_l.into(),
-                Some(Dwm::setcfact),
-                dwm::Arg::F(-0.2),
-            ),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                XK_o.into(),
-                Some(Dwm::setcfact),
-                dwm::Arg::F(0.0),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_l.into(),
-                Some(Dwm::setmfact),
-                dwm::Arg::F(0.025),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_Return.into(),
-                Some(Dwm::zoom),
-                dwm::Arg::I(0),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_Tab.into(),
-                Some(Dwm::view),
-                dwm::Arg::Ui(0),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_Page_Up.into(),
-                Some(Dwm::loopview),
-                dwm::Arg::I(-1),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_Page_Down.into(),
-                Some(Dwm::loopview),
-                dwm::Arg::I(1),
-            ),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                XK_c.into(),
-                Some(Dwm::killclient),
-                dwm::Arg::I(0),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_t.into(),
-                Some(Dwm::setlayout),
-                dwm::Arg::Lt(Rc::new(Layout::try_from(0).unwrap())),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_f.into(),
-                Some(Dwm::setlayout),
-                dwm::Arg::Lt(Rc::new(Layout::try_from(1).unwrap())),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_m.into(),
-                Some(Dwm::setlayout),
-                dwm::Arg::Lt(Rc::new(Layout::try_from(2).unwrap())),
-            ),
-            // For toggle layout.
-            Key::new(
-                Self::MODKEY,
-                XK_space.into(),
-                Some(Dwm::setlayout),
-                dwm::Arg::Ui(0),
-            ),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                XK_space.into(),
-                Some(Dwm::togglefloating),
-                dwm::Arg::I(0),
-            ),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                XK_f.into(),
-                Some(Dwm::togglefullscr),
-                dwm::Arg::I(0),
-            ),
-            Key::new(Self::MODKEY, XK_0.into(), Some(Dwm::view), dwm::Arg::Ui(!0)),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                XK_0.into(),
-                Some(Dwm::tag),
-                dwm::Arg::Ui(!0),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_comma.into(),
-                Some(Dwm::focusmon),
-                dwm::Arg::I(-1),
-            ),
-            Key::new(
-                Self::MODKEY,
-                XK_period.into(),
-                Some(Dwm::focusmon),
-                dwm::Arg::I(1),
-            ),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                XK_comma.into(),
-                Some(Dwm::tagmon),
-                dwm::Arg::I(-1),
-            ),
-            Key::new(
-                Self::MODKEY | ShiftMask,
-                XK_period.into(),
-                Some(Dwm::tagmon),
-                dwm::Arg::I(1),
-            ),
-        ];
-        m.extend(Self::TAGKEYS(XK_1, 0));
-        m.extend(Self::TAGKEYS(XK_2, 1));
-        m.extend(Self::TAGKEYS(XK_3, 2));
-        m.extend(Self::TAGKEYS(XK_4, 3));
-        m.extend(Self::TAGKEYS(XK_5, 4));
-        m.extend(Self::TAGKEYS(XK_6, 5));
-        m.extend(Self::TAGKEYS(XK_7, 6));
-        m.extend(Self::TAGKEYS(XK_8, 7));
-        m.extend(Self::TAGKEYS(XK_9, 8));
-        m.push(Key::new(
-            Self::MODKEY | ShiftMask,
-            XK_q.into(),
-            Some(Dwm::quit),
-            dwm::Arg::I(0),
-        ));
-        m
-    });
+    // 私有辅助方法
+    fn convert_key_config(&self, key_config: &KeyConfig) -> Option<Key> {
+        let modifiers = self.parse_modifiers(&key_config.modifier);
+        let keysym = self.parse_keysym(&key_config.key)?;
+        let function = self.parse_function(&key_config.function)?;
+        let arg = self.convert_argument(&key_config.argument);
 
-    // Button1: 鼠标左键
-    // Button2: 鼠标中键（通常是滚轮按下的动作）
-    // Button3: 鼠标右键
-    // Button4: 向上滚动滚轮
-    // Button5: 向下滚动滚轮
-    pub const buttons: Lazy<Vec<Button>> = Lazy::new(|| {
+        Some(Key::new(modifiers, keysym, Some(function), arg))
+    }
+
+    fn parse_modifiers(&self, modifiers: &[String]) -> u32 {
+        let mut mask = 0;
+        for modifier in modifiers {
+            mask |= match modifier.as_str() {
+                "Mod1" => Mod1Mask,
+                "Mod4" => Mod4Mask,
+                "Control" => ControlMask,
+                "Shift" => ShiftMask,
+                _ => 0,
+            };
+        }
+        mask
+    }
+
+    fn parse_keysym(&self, key: &str) -> Option<u64> {
+        match key {
+            "Return" => Some(XK_Return),
+            "Tab" => Some(XK_Tab),
+            "space" => Some(XK_space),
+            "j" => Some(XK_j),
+            "k" => Some(XK_k),
+            // 添加更多键映射...
+            _ => None,
+        }
+    }
+
+    fn parse_function(&self, func_name: &str) -> Option<fn(&dwm::Arg)> {
+        match func_name {
+            "spawn" => Some(Dwm::spawn),
+            "focusstack" => Some(Dwm::focusstack),
+            "quit" => Some(Dwm::quit),
+            // 添加更多函数映射...
+            _ => None,
+        }
+    }
+
+    fn convert_argument(&self, arg: &ArgumentConfig) -> dwm::Arg {
+        match arg {
+            ArgumentConfig::Int(i) => dwm::Arg::I(*i),
+            ArgumentConfig::UInt(u) => dwm::Arg::Ui(*u),
+            ArgumentConfig::Float(f) => dwm::Arg::F(*f),
+            ArgumentConfig::StringVec(v) => dwm::Arg::V(v.clone()),
+            ArgumentConfig::String(s) => dwm::Arg::V(vec![s.clone()]),
+        }
+    }
+
+    fn generate_tag_keys(&self, tag: usize) -> Vec<Key> {
+        let key = match tag {
+            0 => XK_1,
+            1 => XK_2,
+            2 => XK_3,
+            3 => XK_4,
+            4 => XK_5,
+            5 => XK_6,
+            6 => XK_7,
+            7 => XK_8,
+            8 => XK_9,
+            _ => return vec![],
+        };
+
+        let modkey = self.parse_modifiers(&[self.inner.keybindings.modkey.clone()]);
+
         vec![
-            Button::new(
-                CLICK::ClkLtSymbol as u32,
-                0,
-                Button1,
-                Some(Dwm::setlayout),
-                dwm::Arg::Ui(0),
-            ),
-            Button::new(
-                CLICK::ClkLtSymbol as u32,
-                0,
-                Button3,
-                Some(Dwm::setlayout),
-                dwm::Arg::Lt(Rc::new(Layout::try_from(2).unwrap())),
-            ),
-            Button::new(
-                CLICK::ClkWinTitle as u32,
-                0,
-                Button2,
-                Some(Dwm::zoom),
-                dwm::Arg::I(0),
-            ),
-            Button::new(
-                CLICK::ClkStatusText as u32,
-                0,
-                Button2,
-                Some(Dwm::spawn),
-                dwm::Arg::V(Self::termcmd.clone()),
-            ),
-            Button::new(
-                CLICK::ClkClientWin as u32,
-                Self::MODKEY,
-                Button1,
-                Some(Dwm::movemouse),
-                dwm::Arg::I(0),
-            ),
-            Button::new(
-                CLICK::ClkClientWin as u32,
-                Self::MODKEY,
-                Button2,
-                Some(Dwm::togglefloating),
-                dwm::Arg::I(0),
-            ),
-            Button::new(
-                CLICK::ClkClientWin as u32,
-                Self::MODKEY,
-                Button3,
-                Some(Dwm::resizemouse),
-                dwm::Arg::I(0),
-            ),
-            Button::new(
-                CLICK::ClkTagBar as u32,
-                0,
-                Button1,
-                Some(Dwm::view),
-                dwm::Arg::Ui(0),
-            ),
-            Button::new(
-                CLICK::ClkTagBar as u32,
-                0,
-                Button3,
+            Key::new(modkey, key, Some(Dwm::view), dwm::Arg::Ui(1 << tag)),
+            Key::new(
+                modkey | ControlMask,
+                key,
                 Some(Dwm::toggleview),
-                dwm::Arg::Ui(0),
+                dwm::Arg::Ui(1 << tag),
             ),
-            Button::new(
-                CLICK::ClkTagBar as u32,
-                Self::MODKEY,
-                Button1,
+            Key::new(
+                modkey | ShiftMask,
+                key,
                 Some(Dwm::tag),
-                dwm::Arg::Ui(0),
+                dwm::Arg::Ui(1 << tag),
             ),
-            Button::new(
-                CLICK::ClkTagBar as u32,
-                Self::MODKEY,
-                Button3,
+            Key::new(
+                modkey | ControlMask | ShiftMask,
+                key,
                 Some(Dwm::toggletag),
-                dwm::Arg::Ui(0),
+                dwm::Arg::Ui(1 << tag),
             ),
         ]
-    });
+    }
 }
+
+impl Default for Config {
+    fn default() -> Self {
+        // 返回硬编码的默认配置，与原来的 Config 保持一致
+        Self {
+            inner: TomlConfig {
+                appearance: AppearanceConfig {
+                    border_px: 3,
+                    snap: 32,
+                    dmenu_font: "SauceCodePro Nerd Font Regular 11".to_string(),
+                    status_bar_pad: 5,
+                    broken: "broken".to_string(),
+                },
+                behavior: BehaviorConfig {
+                    focus_follows_new_window: false,
+                    resize_hints: true,
+                    lock_fullscreen: true,
+                },
+                // 其他默认值...
+                status_bar: StatusBarConfig {
+                    name: "egui_bar".to_string(),
+                    bar_0: "egui_bar_0".to_string(),
+                    bar_1: "egui_bar_1".to_string(),
+                },
+                colors: ColorsConfig {
+                    dark_sea_green1: "#afffd7".to_string(),
+                    // 其他颜色...
+                    black: "#000000".to_string(),
+                    white: "#ffffff".to_string(),
+                    transparent: 0,
+                    opaque: 255,
+                },
+                layout: LayoutConfig {
+                    m_fact: 0.55,
+                    n_master: 1,
+                    tags_length: 9,
+                },
+                keybindings: KeyBindingsConfig {
+                    modkey: "Mod1".to_string(),
+                    keys: vec![], // 将在运行时填充
+                },
+                mouse_bindings: MouseBindingsConfig {
+                    buttons: vec![], // 将在运行时填充
+                },
+                rules: vec![], // 将在运行时填充
+            },
+        }
+    }
+}
+
+#[derive(Debug)]
+pub enum ConfigError {
+    Io(std::io::Error),
+    Parse(toml::de::Error),
+}
+
+impl From<std::io::Error> for ConfigError {
+    fn from(err: std::io::Error) -> Self {
+        ConfigError::Io(err)
+    }
+}
+
+impl From<toml::de::Error> for ConfigError {
+    fn from(err: toml::de::Error) -> Self {
+        ConfigError::Parse(err)
+    }
+}
+
+// 全局配置实例
+pub static CONFIG: Lazy<Config> = Lazy::new(|| Config::load_default());
