@@ -1481,13 +1481,11 @@ impl Dwm {
             // 重要：当状态栏大小变化时，需要更新工作区域并重新排列其他窗口
             if needs_workarea_update {
                 info!("[handle_statusbar_configure_request] Updating workarea due to statusbar geometry change");
-                // (TODO): Fix bug here.
-                // self.update_monitor_workarea(monitor_id);
-                //
-                // // 重新排列该显示器上的其他客户端
-                // if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-                //     self.arrange(Some(monitor));
-                // }
+
+                // 重新排列该显示器上的其他客户端
+                if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+                    self.arrange(Some(monitor));
+                }
             }
         } else {
             error!(
@@ -5106,8 +5104,6 @@ impl Dwm {
             // 确保状态栏位于最上层
             XRaiseWindow(self.dpy, client_rc.borrow().win);
 
-            self.arrange(None);
-
             info!(
                 "[manage_statusbar] Successfully managed statusbar on monitor {}",
                 monitor_id
@@ -5180,49 +5176,6 @@ impl Dwm {
         }
     }
 
-    // 更新显示器工作区域
-    #[allow(dead_code)]
-    fn update_monitor_workarea(&mut self, monitor_id: i32) {
-        if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-            let mut monitor_mut = monitor.borrow_mut();
-            if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
-                let statusbar_borrow = statusbar.borrow();
-                // 根据状态栏的实际位置和大小重新计算工作区域
-                let statusbar_bottom = statusbar_borrow.y + statusbar_borrow.h;
-                let available_height = monitor_mut.m_h - (statusbar_bottom - monitor_mut.m_y);
-                // 更新工作区域
-                let old_workarea = (
-                    monitor_mut.w_x,
-                    monitor_mut.w_y,
-                    monitor_mut.w_w,
-                    monitor_mut.w_h,
-                );
-                monitor_mut.w_x = monitor_mut.m_x;
-                monitor_mut.w_y = statusbar_bottom + Config::status_bar_pad;
-                monitor_mut.w_w = monitor_mut.m_w;
-                monitor_mut.w_h = available_height - Config::status_bar_pad;
-                // 确保工作区域不会变成负数或过小
-                if monitor_mut.w_h < 50 {
-                    monitor_mut.w_h = 50;
-                    info!("[update_monitor_workarea] Limited minimum workarea height to 50px");
-                }
-                info!(
-                    "[update_monitor_workarea] Monitor {} workarea: {:?} -> ({}, {}, {}, {}) (statusbar: {}x{}+{}+{})",
-                    monitor_id, old_workarea,
-                    monitor_mut.w_x, monitor_mut.w_y, monitor_mut.w_w, monitor_mut.w_h,
-                    statusbar_borrow.w, statusbar_borrow.h, statusbar_borrow.x, statusbar_borrow.y
-                );
-            } else {
-                // 没有状态栏时，工作区域等于显示器区域
-                monitor_mut.w_x = monitor_mut.m_x;
-                monitor_mut.w_y = monitor_mut.m_y;
-                monitor_mut.w_w = monitor_mut.m_w;
-                monitor_mut.w_h = monitor_mut.m_h;
-                info!("[update_monitor_workarea] No statusbar for monitor {}, workarea = monitor area", monitor_id);
-            }
-        }
-    }
-
     // 实时同步状态栏几何信息
     #[allow(dead_code)]
     pub fn sync_statusbar_geometry(&mut self, monitor_id: i32) -> bool {
@@ -5277,15 +5230,15 @@ impl Dwm {
         false
     }
 
-    pub fn client_y_offset(&self, m: &Monitor) -> i32 {
+    pub fn client_y_offset(&mut self, m: &Monitor) -> i32 {
         let monitor_id = m.num;
         // 同步状态栏几何信息
-        // if self.sync_statusbar_geometry(monitor_id) {
-        //     info!(
-        //         "[client_y_offset] Synced statusbar geometry for monitor {}",
-        //         monitor_id
-        //     );
-        // }
+        if self.sync_statusbar_geometry(monitor_id) {
+            info!(
+                "[client_y_offset] Synced statusbar geometry for monitor {}",
+                monitor_id
+            );
+        }
 
         if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
             let statusbar_borrow = statusbar.borrow();
