@@ -30,6 +30,7 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 use std::{os::raw::c_long, usize};
+use x11::xft::XftColor;
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
 use x11::xlib::{XConfigureRequestEvent, XFlush};
 use x11::xlib::{XConnectionNumber, XPending};
@@ -70,7 +71,7 @@ use x11::xlib::{
 use std::cmp::{max, min};
 
 use crate::config::Config;
-use crate::drw::{Clr, Cur, Drw};
+use crate::drw::{Cur, Drw};
 use crate::xproto::{
     IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
     X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8,
@@ -91,9 +92,109 @@ pub enum CUR {
 
 #[repr(C)]
 #[derive(Debug, Clone)]
-pub enum SCHEME {
-    SchemeNorm = 0,
-    SchemeSel = 1,
+pub struct ColorScheme {
+    pub fg: XftColor,     // 前景色
+    pub bg: XftColor,     // 背景色
+    pub border: XftColor, // 边框色
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemeType {
+    Norm = 0, // 普通状态
+    Sel = 1,  // 选中状态
+}
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct ThemeManager {
+    pub norm: ColorScheme, // 普通状态的颜色方案
+    pub sel: ColorScheme,  // 选中状态的颜色方案
+}
+
+#[allow(dead_code)]
+impl ColorScheme {
+    /// 创建新的颜色方案
+    pub fn new(fg: XftColor, bg: XftColor, border: XftColor) -> Self {
+        Self { fg, bg, border }
+    }
+
+    /// 获取前景色
+    pub fn foreground(&self) -> &XftColor {
+        &self.fg
+    }
+
+    /// 获取背景色
+    pub fn background(&self) -> &XftColor {
+        &self.bg
+    }
+
+    /// 获取边框色
+    pub fn border_color(&self) -> &XftColor {
+        &self.border
+    }
+
+    /// 设置前景色
+    pub fn set_foreground(&mut self, color: XftColor) {
+        self.fg = color;
+    }
+
+    /// 设置背景色
+    pub fn set_background(&mut self, color: XftColor) {
+        self.bg = color;
+    }
+
+    /// 设置边框色
+    pub fn set_border(&mut self, color: XftColor) {
+        self.border = color;
+    }
+}
+
+#[allow(dead_code)]
+impl ThemeManager {
+    /// 创建新的主题管理器
+    pub fn new(norm: ColorScheme, sel: ColorScheme) -> Self {
+        Self { norm, sel }
+    }
+
+    /// 根据方案类型获取颜色方案
+    pub fn get_scheme(&self, scheme_type: SchemeType) -> &ColorScheme {
+        match scheme_type {
+            SchemeType::Norm => &self.norm,
+            SchemeType::Sel => &self.sel,
+        }
+    }
+
+    /// 获取可变颜色方案
+    pub fn get_scheme_mut(&mut self, scheme_type: SchemeType) -> &mut ColorScheme {
+        match scheme_type {
+            SchemeType::Norm => &mut self.norm,
+            SchemeType::Sel => &mut self.sel,
+        }
+    }
+
+    /// 获取指定方案的前景色
+    pub fn get_fg(&self, scheme_type: SchemeType) -> &XftColor {
+        self.get_scheme(scheme_type).foreground()
+    }
+
+    /// 获取指定方案的背景色
+    pub fn get_bg(&self, scheme_type: SchemeType) -> &XftColor {
+        self.get_scheme(scheme_type).background()
+    }
+
+    /// 获取指定方案的边框色
+    pub fn get_border(&self, scheme_type: SchemeType) -> &XftColor {
+        self.get_scheme(scheme_type).border_color()
+    }
+
+    /// 设置整个颜色方案
+    pub fn set_scheme(&mut self, scheme_type: SchemeType, color_scheme: ColorScheme) {
+        match scheme_type {
+            SchemeType::Norm => self.norm = color_scheme,
+            SchemeType::Sel => self.sel = color_scheme,
+        }
+    }
 }
 
 #[repr(C)]
@@ -677,7 +778,7 @@ pub struct Dwm {
     pub net_atom: [Atom; NET::NetLast as usize],
     pub running: AtomicBool,
     pub cursor: [Option<Box<Cur>>; CUR::CurLast as usize],
-    pub scheme: Vec<Vec<Option<Rc<Clr>>>>,
+    pub theme_manager: ThemeManager,
     pub dpy: *mut Display,
     pub drw: Option<Box<Drw>>,
     pub mons: Option<Rc<RefCell<Monitor>>>,
@@ -723,6 +824,18 @@ impl Dwm {
         }
     }
     pub fn new(sender: Sender<u8>) -> Self {
+        let theme_manager = ThemeManager::new(
+            ColorScheme::new(
+                Drw::drw_clr_create_from_hex(Config::col_gray3, Config::OPAQUE).unwrap(),
+                Drw::drw_clr_create_from_hex(Config::col_gray1, Config::OPAQUE).unwrap(),
+                Drw::drw_clr_create_from_hex(Config::col_gray2, Config::OPAQUE).unwrap(),
+            ),
+            ColorScheme::new(
+                Drw::drw_clr_create_from_hex(Config::col_gray4, Config::OPAQUE).unwrap(),
+                Drw::drw_clr_create_from_hex(Config::col_gray2, Config::OPAQUE).unwrap(),
+                Drw::drw_clr_create_from_hex(Config::col_cyan, Config::OPAQUE).unwrap(),
+            ),
+        );
         Dwm {
             stext_max_len: 512,
             screen: 0,
@@ -733,7 +846,7 @@ impl Dwm {
             net_atom: [0; NET::NetLast as usize],
             running: AtomicBool::new(true),
             cursor: [const { None }; CUR::CurLast as usize],
-            scheme: vec![],
+            theme_manager,
             dpy: null_mut(),
             drw: None,
             mons: None,
@@ -3525,15 +3638,6 @@ impl Dwm {
                 .unwrap()
                 .as_mut()
                 .drw_cur_create(XC_fleur as i32);
-            // init appearance
-            self.scheme = vec![vec![]; Config::colors.len()];
-            for i in 0..Config::colors.len() {
-                self.scheme[i] = self
-                    .drw
-                    .as_mut()
-                    .unwrap()
-                    .drw_scm_create(Config::colors[i], &Config::alphas[i]);
-            }
             // supporting window fot NetWMCheck
             self.wm_check_win = XCreateSimpleWindow(self.dpy, self.root, 0, 0, 1, 1, 0, 0, 0);
             XChangeProperty(
@@ -4693,9 +4797,9 @@ impl Dwm {
                 XSetWindowBorder(
                     self.dpy,
                     c_rc.borrow().win,
-                    self.scheme[SCHEME::SchemeSel as usize][2]
-                        .as_ref()
-                        .unwrap()
+                    self.theme_manager
+                        .get_scheme(SchemeType::Sel)
+                        .border_color()
                         .pixel,
                 );
                 self.setfocus(&c_rc);
@@ -4728,9 +4832,9 @@ impl Dwm {
             XSetWindowBorder(
                 self.dpy,
                 c.as_ref().unwrap().borrow_mut().win,
-                self.scheme[SCHEME::SchemeNorm as usize][2]
-                    .as_ref()
-                    .unwrap()
+                self.theme_manager
+                    .get_scheme(SchemeType::Norm)
+                    .border_color()
                     .pixel,
             );
             if setfocus {
@@ -4891,9 +4995,9 @@ impl Dwm {
             XSetWindowBorder(
                 self.dpy,
                 win,
-                self.scheme[SCHEME::SchemeNorm as usize][2]
-                    .as_ref()
-                    .unwrap()
+                self.theme_manager
+                    .get_scheme(SchemeType::Norm)
+                    .border_color()
                     .pixel,
             );
 
@@ -5197,7 +5301,7 @@ impl Dwm {
             client_mut.w = monitor_borrow.m_w;
             // 高度由 status bar 自己决定，或使用默认值
             if client_mut.h <= 0 {
-                client_mut.h = Config::bar_height.unwrap_or(30);
+                client_mut.h = 30;
             }
             info!(
                 "[position_statusbar] Positioned at ({}, {}) {}x{}",

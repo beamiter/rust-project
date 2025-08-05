@@ -26,7 +26,7 @@ use crate::{
 pub struct Config {}
 impl Config {
     // border pixel of windows
-    pub const border_px: u32 = 5;
+    pub const border_px: u32 = 3;
     // snap pixel
     pub const snap: u32 = 32;
     cfg_if! {
@@ -67,30 +67,13 @@ impl Config {
     pub const col_gray3: &str = "#bbbbbb";
     pub const col_gray4: &str = "#eeeeee";
     pub const col_cyan: &str = "#00ffd7";
-    pub const col_black: &str = "#000000";
-    pub const col_red: &str = "#ff0000";
-    pub const col_yellow: &str = "#ffff00";
-    pub const col_white: &str = "#ffffff";
     pub const TRANSPARENT: u8 = 0x00u8;
     pub const OPAQUE: u8 = 0xffu8;
     pub const HALF_OPAQUE: u8 = 0xa0u8;
     pub const bar_alpha: u8 = 0xd0u8;
     pub const border_alpha: u8 = Self::OPAQUE;
-    pub const bar_height: Option<i32> = Some(30); // 默认状态栏高度
     pub const status_bar_pad: i32 = 5; // 状态栏下方的间距
     pub const focus_follows_new_window: bool = false;
-    pub const center_small_windows: bool = true;
-    pub const small_window_threshold: (i32, i32) = (400, 300); // (width, height)
-
-    pub const colors: [&[&'static str; 3]; 2] = [
-        // fg | bg | border
-        &[Self::col_gray3, Self::col_gray1, Self::col_gray2],
-        &[Self::col_gray4, Self::col_cyan, Self::col_cyan],
-    ];
-    pub const alphas: [&[u8; 3]; 2] = [
-        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
-        &[Self::OPAQUE, Self::bar_alpha, Self::border_alpha],
-    ];
 
     pub const m_fact: f32 = 0.55;
     pub const n_master: u32 = 1;
