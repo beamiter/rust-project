@@ -263,7 +263,7 @@ impl Config {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
                 key: "Return".to_string(),
                 function: "spawn".to_string(),
-                argument: ArgumentConfig::StringVec(vec!["x-terminal-emulator".to_string()]),
+                argument: ArgumentConfig::StringVec(Self::get_termcmd()),
             },
             // 窗口焦点控制
             KeyConfig {
@@ -484,7 +484,7 @@ impl Config {
                 modifier: vec![],
                 button: Button2,
                 function: "spawn".to_string(),
-                argument: ArgumentConfig::StringVec(vec!["x-terminal-emulator".to_string()]),
+                argument: ArgumentConfig::StringVec(Self::get_termcmd()),
             },
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
@@ -694,12 +694,15 @@ impl Config {
             })
     }
 
-    pub fn get_termcmd(&self) -> Vec<String> {
+    pub fn get_termcmd() -> Vec<String> {
         // 类似地从配置中获取终端命令
         ADVANCED_TERMINAL_PROBER
             .get_available_terminal()
             .map(|config| vec![config.command.clone()])
-            .unwrap_or_else(|| vec!["x-terminal-emulator".to_string()])
+            .unwrap_or_else(|| {
+                println!("terminator fallback");
+                vec!["x-terminal-emulator".to_string()]
+            })
     }
 
     fn convert_button_config(&self, btn_config: &ButtonConfig) -> Option<Button> {
@@ -928,7 +931,7 @@ impl Config {
                 modifier: vec![],
                 button: Button2,
                 function: "spawn".to_string(),
-                argument: ArgumentConfig::StringVec(self.get_termcmd()),
+                argument: ArgumentConfig::StringVec(Self::get_termcmd()),
             },
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),

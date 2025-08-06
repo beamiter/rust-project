@@ -90,6 +90,7 @@ impl AdvancedTerminalProber {
         for terminal_name in &self.priority_order {
             if let Some(config) = self.configs.get(terminal_name) {
                 if self.is_command_available(&config.command) {
+                    println!("[get_available_terminal] {:?}", config);
                     return Some(config);
                 }
             }
