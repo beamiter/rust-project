@@ -549,22 +549,6 @@ impl Config {
                 is_floating: true,
                 monitor: -1,
             },
-            RuleConfig {
-                class: STATUS_BAR_0.to_string(),
-                instance: STATUS_BAR_0.to_string(),
-                name: STATUS_BAR_NAME.to_string(),
-                tags_mask: 511, // (1 << 9) - 1 = 511，即全标签掩码
-                is_floating: true,
-                monitor: 0,
-            },
-            RuleConfig {
-                class: STATUS_BAR_1.to_string(),
-                instance: STATUS_BAR_1.to_string(),
-                name: STATUS_BAR_NAME.to_string(),
-                tags_mask: 511, // (1 << 9) - 1 = 511，即全标签掩码
-                is_floating: true,
-                monitor: 1,
-            },
         ]
     }
 

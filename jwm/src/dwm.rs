@@ -3567,7 +3567,6 @@ impl Dwm {
     pub fn quit(&mut self, _arg: *const Arg) {
         // info!("[quit]");
         self.running.store(false, Ordering::SeqCst);
-        CONFIG.save_default().unwrap();
         let _ = self.sender.send(0);
     }
 
