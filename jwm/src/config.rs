@@ -6,6 +6,7 @@ use std::path::Path;
 use x11::keysym::*;
 use x11::xlib::*;
 
+use std::fmt;
 use std::rc::Rc;
 
 use x11::{
@@ -127,7 +128,412 @@ pub struct Config {
     inner: TomlConfig,
 }
 
+impl Default for Config {
+    fn default() -> Self {
+        Self {
+            inner: TomlConfig {
+                appearance: AppearanceConfig {
+                    border_px: 3,
+                    snap: 32,
+                    dmenu_font: "SauceCodePro Nerd Font Regular 11".to_string(),
+                    status_bar_pad: 5,
+                },
+                behavior: BehaviorConfig {
+                    focus_follows_new_window: false,
+                    resize_hints: true,
+                    lock_fullscreen: true,
+                },
+                status_bar: StatusBarConfig {
+                    name: "egui_bar".to_string(),
+                    bar_0: "egui_bar_0".to_string(),
+                    bar_1: "egui_bar_1".to_string(),
+                },
+                colors: ColorsConfig {
+                    dark_sea_green1: "#afffd7".to_string(),
+                    dark_sea_green2: "#afffaf".to_string(),
+                    pale_turquoise1: "#afffff".to_string(),
+                    light_sky_blue1: "#afd7ff".to_string(),
+                    grey84: "#d7d7d7".to_string(),
+                    cyan: "#00ffd7".to_string(),
+                    black: "#000000".to_string(),
+                    white: "#ffffff".to_string(),
+                    transparent: 0,
+                    opaque: 255,
+                },
+                layout: LayoutConfig {
+                    m_fact: 0.55,
+                    n_master: 1,
+                    tags_length: 9,
+                },
+                keybindings: KeyBindingsConfig {
+                    modkey: "Mod1".to_string(),
+                    keys: Self::get_default_keys(),
+                },
+                mouse_bindings: MouseBindingsConfig {
+                    buttons: Self::get_default_button_configs(),
+                },
+                rules: Self::get_default_rules(),
+            },
+        }
+    }
+}
+
 impl Config {
+    // 获取默认按键绑定
+    fn get_default_keys() -> Vec<KeyConfig> {
+        vec![
+            // 应用启动
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "e".to_string(),
+                function: "spawn".to_string(),
+                argument: ArgumentConfig::StringVec(vec![
+                    "dmenu_run".to_string(),
+                    "-m".to_string(),
+                    "0".to_string(),
+                    "-fn".to_string(),
+                    "SauceCodePro Nerd Font Regular 11".to_string(),
+                    "-nb".to_string(),
+                    "#afd7ff".to_string(),
+                    "-nf".to_string(),
+                    "#afffff".to_string(),
+                    "-sb".to_string(),
+                    "#000000".to_string(),
+                    "-sf".to_string(),
+                    "#d7d7d7".to_string(),
+                    "-b".to_string(),
+                ]),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "r".to_string(),
+                function: "spawn".to_string(),
+                argument: ArgumentConfig::StringVec(vec![
+                    "dmenu_run".to_string(),
+                    "-m".to_string(),
+                    "0".to_string(),
+                    "-fn".to_string(),
+                    "SauceCodePro Nerd Font Regular 11".to_string(),
+                    "-nb".to_string(),
+                    "#afd7ff".to_string(),
+                    "-nf".to_string(),
+                    "#afffff".to_string(),
+                    "-sb".to_string(),
+                    "#000000".to_string(),
+                    "-sf".to_string(),
+                    "#d7d7d7".to_string(),
+                    "-b".to_string(),
+                ]),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "Return".to_string(),
+                function: "spawn".to_string(),
+                argument: ArgumentConfig::StringVec(vec!["x-terminal-emulator".to_string()]),
+            },
+            // 窗口焦点控制
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "j".to_string(),
+                function: "focusstack".to_string(),
+                argument: ArgumentConfig::Int(1),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "k".to_string(),
+                function: "focusstack".to_string(),
+                argument: ArgumentConfig::Int(-1),
+            },
+            // 主窗口数量控制
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "i".to_string(),
+                function: "incnmaster".to_string(),
+                argument: ArgumentConfig::Int(1),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "d".to_string(),
+                function: "incnmaster".to_string(),
+                argument: ArgumentConfig::Int(-1),
+            },
+            // 窗口大小调整
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "h".to_string(),
+                function: "setmfact".to_string(),
+                argument: ArgumentConfig::Float(-0.025),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "l".to_string(),
+                function: "setmfact".to_string(),
+                argument: ArgumentConfig::Float(0.025),
+            },
+            // 客户端高度调整
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "h".to_string(),
+                function: "setcfact".to_string(),
+                argument: ArgumentConfig::Float(0.2),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "l".to_string(),
+                function: "setcfact".to_string(),
+                argument: ArgumentConfig::Float(-0.2),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "o".to_string(),
+                function: "setcfact".to_string(),
+                argument: ArgumentConfig::Float(0.0),
+            },
+            // 窗口移动
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "j".to_string(),
+                function: "movestack".to_string(),
+                argument: ArgumentConfig::Int(1),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "k".to_string(),
+                function: "movestack".to_string(),
+                argument: ArgumentConfig::Int(-1),
+            },
+            // 主窗口切换
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "Return".to_string(),
+                function: "zoom".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            // 标签切换
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "Tab".to_string(),
+                function: "view".to_string(),
+                argument: ArgumentConfig::UInt(0),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "Page_Up".to_string(),
+                function: "loopview".to_string(),
+                argument: ArgumentConfig::Int(-1),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "Page_Down".to_string(),
+                function: "loopview".to_string(),
+                argument: ArgumentConfig::Int(1),
+            },
+            // 窗口关闭
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "c".to_string(),
+                function: "killclient".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            // 布局切换
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "t".to_string(),
+                function: "setlayout".to_string(),
+                argument: ArgumentConfig::String("tile".to_string()),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "f".to_string(),
+                function: "setlayout".to_string(),
+                argument: ArgumentConfig::String("float".to_string()),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "m".to_string(),
+                function: "setlayout".to_string(),
+                argument: ArgumentConfig::String("monocle".to_string()),
+            },
+            // 布局切换
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "space".to_string(),
+                function: "setlayout".to_string(),
+                argument: ArgumentConfig::UInt(0),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "space".to_string(),
+                function: "togglefloating".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "f".to_string(),
+                function: "togglefullscr".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            // 全标签视图
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "0".to_string(),
+                function: "view".to_string(),
+                argument: ArgumentConfig::UInt(!0), // 所有标签
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "0".to_string(),
+                function: "tag".to_string(),
+                argument: ArgumentConfig::UInt(!0), // 所有标签
+            },
+            // 显示器切换
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "comma".to_string(),
+                function: "focusmon".to_string(),
+                argument: ArgumentConfig::Int(-1),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "period".to_string(),
+                function: "focusmon".to_string(),
+                argument: ArgumentConfig::Int(1),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "comma".to_string(),
+                function: "tagmon".to_string(),
+                argument: ArgumentConfig::Int(-1),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "period".to_string(),
+                function: "tagmon".to_string(),
+                argument: ArgumentConfig::Int(1),
+            },
+            // 退出
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "q".to_string(),
+                function: "quit".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+        ]
+    }
+
+    // 获取默认鼠标绑定配置
+    fn get_default_button_configs() -> Vec<ButtonConfig> {
+        vec![
+            ButtonConfig {
+                click_type: "ClkLtSymbol".to_string(),
+                modifier: vec![],
+                button: Button1,
+                function: "setlayout".to_string(),
+                argument: ArgumentConfig::UInt(0),
+            },
+            ButtonConfig {
+                click_type: "ClkLtSymbol".to_string(),
+                modifier: vec![],
+                button: Button3,
+                function: "setlayout".to_string(),
+                argument: ArgumentConfig::String("monocle".to_string()),
+            },
+            ButtonConfig {
+                click_type: "ClkWinTitle".to_string(),
+                modifier: vec![],
+                button: Button2,
+                function: "zoom".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            ButtonConfig {
+                click_type: "ClkStatusText".to_string(),
+                modifier: vec![],
+                button: Button2,
+                function: "spawn".to_string(),
+                argument: ArgumentConfig::StringVec(vec!["x-terminal-emulator".to_string()]),
+            },
+            ButtonConfig {
+                click_type: "ClkClientWin".to_string(),
+                modifier: vec!["Mod1".to_string()],
+                button: Button1,
+                function: "movemouse".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            ButtonConfig {
+                click_type: "ClkClientWin".to_string(),
+                modifier: vec!["Mod1".to_string()],
+                button: Button2,
+                function: "togglefloating".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            ButtonConfig {
+                click_type: "ClkClientWin".to_string(),
+                modifier: vec!["Mod1".to_string()],
+                button: Button3,
+                function: "resizemouse".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            ButtonConfig {
+                click_type: "ClkTagBar".to_string(),
+                modifier: vec![],
+                button: Button1,
+                function: "view".to_string(),
+                argument: ArgumentConfig::UInt(0),
+            },
+            ButtonConfig {
+                click_type: "ClkTagBar".to_string(),
+                modifier: vec![],
+                button: Button3,
+                function: "toggleview".to_string(),
+                argument: ArgumentConfig::UInt(0),
+            },
+            ButtonConfig {
+                click_type: "ClkTagBar".to_string(),
+                modifier: vec!["Mod1".to_string()],
+                button: Button1,
+                function: "tag".to_string(),
+                argument: ArgumentConfig::UInt(0),
+            },
+            ButtonConfig {
+                click_type: "ClkTagBar".to_string(),
+                modifier: vec!["Mod1".to_string()],
+                button: Button3,
+                function: "toggletag".to_string(),
+                argument: ArgumentConfig::UInt(0),
+            },
+        ]
+    }
+
+    // 获取默认规则
+    fn get_default_rules() -> Vec<RuleConfig> {
+        vec![
+            RuleConfig {
+                class: "broken".to_string(),
+                instance: "broken".to_string(),
+                name: "broken".to_string(),
+                tags_mask: 0,
+                is_floating: true,
+                monitor: -1,
+            },
+            RuleConfig {
+                class: "egui_bar_0".to_string(),
+                instance: "egui_bar_0".to_string(),
+                name: "egui_bar".to_string(),
+                tags_mask: 511, // (1 << 9) - 1 = 511，即全标签掩码
+                is_floating: true,
+                monitor: 0,
+            },
+            RuleConfig {
+                class: "egui_bar_1".to_string(),
+                instance: "egui_bar_1".to_string(),
+                name: "egui_bar".to_string(),
+                tags_mask: 511, // (1 << 9) - 1 = 511，即全标签掩码
+                is_floating: true,
+                monitor: 1,
+            },
+        ]
+    }
+
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
         let content = fs::read_to_string(path)?;
         let config: TomlConfig = toml::from_str(&content)?;
@@ -604,60 +1010,6 @@ impl Config {
         ]
     }
 }
-
-impl Default for Config {
-    fn default() -> Self {
-        // 返回硬编码的默认配置，与原来的 Config 保持一致
-        Self {
-            inner: TomlConfig {
-                appearance: AppearanceConfig {
-                    border_px: 3,
-                    snap: 32,
-                    dmenu_font: "SauceCodePro Nerd Font Regular 11".to_string(),
-                    status_bar_pad: 5,
-                },
-                behavior: BehaviorConfig {
-                    focus_follows_new_window: false,
-                    resize_hints: true,
-                    lock_fullscreen: true,
-                },
-                // 其他默认值...
-                status_bar: StatusBarConfig {
-                    name: "egui_bar".to_string(),
-                    bar_0: "egui_bar_0".to_string(),
-                    bar_1: "egui_bar_1".to_string(),
-                },
-                colors: ColorsConfig {
-                    dark_sea_green1: "#afffd7".to_string(),
-                    dark_sea_green2: "#afffaf".to_string(),
-                    pale_turquoise1: "#afffff".to_string(),
-                    light_sky_blue1: "#afd7ff".to_string(),
-                    grey84: "#d7d7d7".to_string(),
-                    cyan: "#00ffd7".to_string(),
-                    black: "#000000".to_string(),
-                    white: "#ffffff".to_string(),
-                    transparent: 0,
-                    opaque: 255,
-                },
-                layout: LayoutConfig {
-                    m_fact: 0.55,
-                    n_master: 1,
-                    tags_length: 9,
-                },
-                keybindings: KeyBindingsConfig {
-                    modkey: "Mod1".to_string(),
-                    keys: vec![], // 将在运行时填充
-                },
-                mouse_bindings: MouseBindingsConfig {
-                    buttons: vec![], // 将在运行时填充
-                },
-                rules: vec![], // 将在运行时填充
-            },
-        }
-    }
-}
-
-use std::fmt;
 
 #[derive(Debug)]
 pub enum ConfigError {
