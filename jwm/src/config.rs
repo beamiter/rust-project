@@ -1,4 +1,5 @@
 // config.rs
+use cfg_if::cfg_if;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -20,6 +21,38 @@ use x11::{
 
 use crate::dwm::{self, Button, Dwm, Key, Layout, Rule, CLICK};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
+
+cfg_if! {
+    if #[cfg(feature = "dioxus_bar")] {
+        pub const STATUS_BAR_NAME: &str = "dioxus_bar";
+        pub const STATUS_BAR_0: &str = "dioxus_bar_0";
+        pub const STATUS_BAR_1: &str = "dioxus_bar_1";
+    } else if #[cfg(feature = "egui_bar")] {
+        pub const STATUS_BAR_NAME: &str = "egui_bar";
+        pub const STATUS_BAR_0: &str = "egui_bar_0";
+        pub const STATUS_BAR_1: &str = "egui_bar_1";
+    } else if #[cfg(feature = "iced_bar")] {
+        pub const STATUS_BAR_NAME: &str = "iced_bar";
+        pub const STATUS_BAR_0: &str = "iced_bar_0";
+        pub const STATUS_BAR_1: &str = "iced_bar_1";
+    } else if #[cfg(feature = "gtk_bar")] {
+        pub const STATUS_BAR_NAME: &str = "gtk_bar";
+        pub const STATUS_BAR_0: &str = "gtk_bar_0";
+        pub const STATUS_BAR_1: &str = "gtk_bar_1";
+    } else if #[cfg(feature = "relm_bar")] {
+        pub const STATUS_BAR_NAME: &str = "relm_bar";
+        pub const STATUS_BAR_0: &str = "relm_bar_0";
+        pub const STATUS_BAR_1: &str = "relm_bar_1";
+    } else if #[cfg(feature = "tauri_bar")] {
+        pub const STATUS_BAR_NAME: &str = "tauri_bar";
+        pub const STATUS_BAR_0: &str = "tauri_bar_0";
+        pub const STATUS_BAR_1: &str = "tauri_bar_1";
+    } else {
+        pub const STATUS_BAR_NAME: &str = "egui_bar";
+        pub const STATUS_BAR_0: &str = "egui_bar_0";
+        pub const STATUS_BAR_1: &str = "egui_bar_1";
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TomlConfig {
@@ -144,9 +177,9 @@ impl Default for Config {
                     lock_fullscreen: true,
                 },
                 status_bar: StatusBarConfig {
-                    name: "egui_bar".to_string(),
-                    bar_0: "egui_bar_0".to_string(),
-                    bar_1: "egui_bar_1".to_string(),
+                    name: STATUS_BAR_NAME.to_string(),
+                    bar_0: STATUS_BAR_0.to_string(),
+                    bar_1: STATUS_BAR_1.to_string(),
                 },
                 colors: ColorsConfig {
                     dark_sea_green1: "#afffd7".to_string(),
@@ -178,6 +211,7 @@ impl Default for Config {
     }
 }
 
+#[allow(dead_code)]
 impl Config {
     // 获取默认按键绑定
     fn get_default_keys() -> Vec<KeyConfig> {
@@ -516,17 +550,17 @@ impl Config {
                 monitor: -1,
             },
             RuleConfig {
-                class: "egui_bar_0".to_string(),
-                instance: "egui_bar_0".to_string(),
-                name: "egui_bar".to_string(),
+                class: STATUS_BAR_0.to_string(),
+                instance: STATUS_BAR_0.to_string(),
+                name: STATUS_BAR_NAME.to_string(),
                 tags_mask: 511, // (1 << 9) - 1 = 511，即全标签掩码
                 is_floating: true,
                 monitor: 0,
             },
             RuleConfig {
-                class: "egui_bar_1".to_string(),
-                instance: "egui_bar_1".to_string(),
-                name: "egui_bar".to_string(),
+                class: STATUS_BAR_1.to_string(),
+                instance: STATUS_BAR_1.to_string(),
+                name: STATUS_BAR_NAME.to_string(),
                 tags_mask: 511, // (1 << 9) - 1 = 511，即全标签掩码
                 is_floating: true,
                 monitor: 1,
@@ -1009,12 +1043,116 @@ impl Config {
             ),
         ]
     }
+
+    /// 保存当前配置到指定文件
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
+        let toml_string =
+            toml::to_string_pretty(&self.inner).map_err(|e| ConfigError::Serialize(e))?;
+
+        // 确保目录存在
+        if let Some(parent) = path.as_ref().parent() {
+            fs::create_dir_all(parent)?;
+        }
+
+        fs::write(path, toml_string)?;
+        Ok(())
+    }
+
+    /// 保存配置到默认位置
+    pub fn save_default(&self) -> Result<(), ConfigError> {
+        let config_path = Self::get_default_config_path();
+        self.save_to_file(config_path)
+    }
+
+    /// 获取默认配置文件路径
+    pub fn get_default_config_path() -> std::path::PathBuf {
+        dirs::config_dir()
+            .unwrap_or_else(|| std::env::current_dir().unwrap())
+            .join("dwm")
+            .join("config.toml")
+    }
+
+    /// 生成配置文件模板并保存
+    pub fn generate_template<P: AsRef<Path>>(path: P) -> Result<(), ConfigError> {
+        let default_config = Self::default();
+        default_config.save_to_file(path)
+    }
+
+    /// 备份当前配置文件
+    pub fn backup_config<P: AsRef<Path>>(
+        original_path: P,
+    ) -> Result<std::path::PathBuf, ConfigError> {
+        let original = original_path.as_ref();
+        let backup_path = original.with_extension("toml.backup");
+
+        if original.exists() {
+            fs::copy(original, &backup_path)?;
+        }
+
+        Ok(backup_path)
+    }
+
+    /// 从备份恢复配置文件
+    pub fn restore_from_backup<P: AsRef<Path>>(
+        backup_path: P,
+        target_path: P,
+    ) -> Result<(), ConfigError> {
+        let backup = backup_path.as_ref();
+        let target = target_path.as_ref();
+
+        if !backup.exists() {
+            return Err(ConfigError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "Backup file not found",
+            )));
+        }
+
+        fs::copy(backup, target)?;
+        Ok(())
+    }
+
+    /// 验证配置文件是否有效
+    pub fn validate_config_file<P: AsRef<Path>>(path: P) -> Result<(), ConfigError> {
+        let content = fs::read_to_string(path)?;
+        let _config: TomlConfig = toml::from_str(&content)?;
+        Ok(())
+    }
+
+    /// 合并配置（用于部分更新）
+    pub fn merge_config(&mut self, other: TomlConfig) {
+        // 这里可以实现选择性合并逻辑
+        self.inner = other;
+    }
+
+    /// 重新加载配置文件
+    pub fn reload(&mut self) -> Result<(), ConfigError> {
+        let config_path = Self::get_default_config_path();
+        if config_path.exists() {
+            let new_config = Self::load_from_file(&config_path)?;
+            self.inner = new_config.inner;
+        }
+        Ok(())
+    }
+
+    /// 检查配置文件是否存在
+    pub fn config_exists() -> bool {
+        Self::get_default_config_path().exists()
+    }
+
+    /// 获取配置文件的最后修改时间
+    pub fn get_config_modified_time() -> Result<std::time::SystemTime, ConfigError> {
+        let config_path = Self::get_default_config_path();
+        let metadata = fs::metadata(config_path)?;
+        Ok(metadata.modified()?)
+    }
 }
 
+// 完整的 ConfigError 定义和 From trait 实现
 #[derive(Debug)]
 pub enum ConfigError {
     Io(std::io::Error),
     Parse(toml::de::Error),
+    Serialize(toml::ser::Error),
 }
 
 impl fmt::Display for ConfigError {
@@ -1022,6 +1160,7 @@ impl fmt::Display for ConfigError {
         match self {
             ConfigError::Io(err) => write!(f, "IO error: {}", err),
             ConfigError::Parse(err) => write!(f, "Parse error: {}", err),
+            ConfigError::Serialize(err) => write!(f, "Serialize error: {}", err),
         }
     }
 }
@@ -1031,10 +1170,12 @@ impl std::error::Error for ConfigError {
         match self {
             ConfigError::Io(err) => Some(err),
             ConfigError::Parse(err) => Some(err),
+            ConfigError::Serialize(err) => Some(err),
         }
     }
 }
 
+// 添加缺失的 From trait 实现
 impl From<std::io::Error> for ConfigError {
     fn from(err: std::io::Error) -> Self {
         ConfigError::Io(err)
@@ -1047,5 +1188,42 @@ impl From<toml::de::Error> for ConfigError {
     }
 }
 
+impl From<toml::ser::Error> for ConfigError {
+    fn from(err: toml::ser::Error) -> Self {
+        ConfigError::Serialize(err)
+    }
+}
+
 // 全局配置实例
-pub static CONFIG: Lazy<Config> = Lazy::new(|| Config::load_default());
+pub static CONFIG: Lazy<Config> = Lazy::new(|| {
+    // 加载配置
+    let config = Config::load_default();
+
+    // 生成配置文件模板（如果不存在）
+    if !Config::config_exists() {
+        Config::generate_template(Config::get_default_config_path()).unwrap();
+        println!(
+            "Generated default config file at: {:?}",
+            Config::get_default_config_path()
+        );
+    }
+
+    // Usage test case:
+    // // 备份现有配置
+    // let backup_path = Config::backup_config(Config::get_default_config_path()).unwrap();
+    // println!("Backup created at: {:?}", backup_path);
+    //
+    // // 保存当前配置
+    // config.save_default().unwrap();
+    // println!("Configuration saved successfully!");
+    //
+    // // 验证配置文件
+    // Config::validate_config_file(Config::get_default_config_path()).unwrap();
+    // println!("Configuration file is valid!");
+    //
+    // // 重新加载配置
+    // config.reload().unwrap();
+    println!("Configuration reloaded!");
+
+    return config;
+});
