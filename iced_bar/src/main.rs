@@ -147,6 +147,7 @@ fn main() -> iced::Result {
         .window_size(Size::from([800., 40.]))
         .subscription(IcedBar::subscription)
         .title("iced_bar")
+        .scale_factor(IcedBar::scale_factor)
         // .style(IcedBar::style)
         .theme(|_| Theme::Light)
         .run()
@@ -620,6 +621,10 @@ impl IcedBar {
         }
     }
 
+    fn scale_factor(&self) -> f64 {
+        1.0
+    }
+
     fn monitor_num_to_icon(monitor_num: u8) -> &'static str {
         match monitor_num {
             0 => "🥇",
@@ -686,32 +691,31 @@ impl IcedBar {
 
         let cyan = Color::from_rgb(0.0, 1.0, 1.0); // 青色
         let dark_orange = Color::from_rgb(1.0, 0.5, 0.0); // 深橙色
-        let screenshot_text =
-            container(text(format!(" s {:.2} ", self.scale_factor.to_string())).center())
-                .center_y(Length::Fill)
-                .style(move |_theme: &Theme| {
-                    if self.is_hovered {
-                        container::Style {
-                            text_color: Some(dark_orange),
-                            border: Border {
-                                radius: border::radius(2.0),
-                                ..Default::default()
-                            },
-                            background: Some(Background::Color(cyan)),
+        let screenshot_text = container(text(format!(" s {:.2} ", self.scale_factor)).center())
+            .center_y(Length::Fill)
+            .style(move |_theme: &Theme| {
+                if self.is_hovered {
+                    container::Style {
+                        text_color: Some(dark_orange),
+                        border: Border {
+                            radius: border::radius(2.0),
                             ..Default::default()
-                        }
-                    } else {
-                        container::Style {
-                            border: Border {
-                                color: Color::WHITE,
-                                width: 0.5,
-                                radius: border::radius(2.0),
-                            },
-                            ..Default::default()
-                        }
+                        },
+                        background: Some(Background::Color(cyan)),
+                        ..Default::default()
                     }
-                })
-                .padding(0.0);
+                } else {
+                    container::Style {
+                        border: Border {
+                            color: Color::WHITE,
+                            width: 0.5,
+                            radius: border::radius(2.0),
+                        },
+                        ..Default::default()
+                    }
+                }
+            })
+            .padding(0.0);
 
         let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
         let cpu_average = if let Some(snapshot) = self.system_monitor.get_snapshot() {
