@@ -77,7 +77,7 @@ fn shared_memory_worker(
         warn!("No shared path provided, running without shared memory");
         None
     } else {
-        match SharedRingBuffer::open(&shared_path) {
+        match SharedRingBuffer::open(&shared_path, None) {
             Ok(shared_buffer) => {
                 info!("Successfully opened shared ring buffer: {}", shared_path);
                 Some(shared_buffer)
@@ -135,13 +135,13 @@ fn shared_memory_worker(
         }
 
         if let Some(ref shared_buffer) = shared_buffer_opt {
-            match shared_buffer.try_read_latest_message::<SharedMessage>() {
+            match shared_buffer.try_read_latest_message() {
                 Ok(Some(message)) => {
                     consecutive_errors = 0;
                     last_message_read = Instant::now();
 
-                    if prev_timestamp != message.timestamp {
-                        prev_timestamp = message.timestamp;
+                    if prev_timestamp != message.timestamp.into() {
+                        prev_timestamp = message.timestamp.into();
                         if let Err(e) = message_sender.send(message) {
                             error!("Failed to send message: {}", e);
                             break;
@@ -731,7 +731,7 @@ fn App() -> Element {
 
                         let monitor_info = shared_message.monitor_info;
                         layout_symbol.set(
-                            monitor_info.ltsymbol.clone()
+                            monitor_info.get_ltsymbol()
                                 + format!(" s: {:.2}", scale_factor).as_str()
                                 + format!(", m: {}", monitor_info.monitor_num).as_str(),
                         );
