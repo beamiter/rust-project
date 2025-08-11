@@ -634,7 +634,7 @@ impl IcedBar {
         }
     }
 
-    fn view_work_space(&self) -> Element<Message> {
+    fn view_work_space(&self) -> Element<'_, Message> {
         tab_buttons! {
             self;
             button0[0],
@@ -772,7 +772,7 @@ impl IcedBar {
         work_space_row.into()
     }
 
-    fn view_under_line(&self) -> Element<Message> {
+    fn view_under_line(&self) -> Element<'_, Message> {
         // 创建下划线行
         let mut underline_row = Row::new().spacing(Self::TAB_SPACING);
         for (index, _) in self.tabs.iter().enumerate() {
@@ -920,7 +920,7 @@ impl IcedBar {
         underline_row.into()
     }
 
-    fn view(&self) -> Element<Message> {
+    fn view(&self) -> Element<'_, Message> {
         // info!("view");
         // let work_space_row = self.view_work_space().explain(Color::from_rgb(1., 0., 1.));
         let work_space_row = self.view_work_space();
