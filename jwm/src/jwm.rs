@@ -4951,8 +4951,8 @@ impl Jwm {
                         for &tmp_num in self.status_bar_child.keys() {
                             if !self.status_bar_clients.contains_key(&tmp_num) {
                                 instance_name = match tmp_num {
-                                    0 => CONFIG::status_bar_0.to_string(),
-                                    1 => CONFIG::status_bar_1.to_string(),
+                                    0 => CONFIG.status_bar_0().to_string(),
+                                    1 => CONFIG.status_bar_1().to_string(),
                                     _ => CONFIG.status_bar_name().to_string(),
                                 };
                             }
