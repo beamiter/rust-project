@@ -1,8 +1,8 @@
 // use bar::StatusBar;
 use chrono::prelude::*;
 use coredump::register_panic_handler;
-use dwm::Dwm;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+use jwm::Jwm;
 use libc::{setlocale, LC_CTYPE};
 use log::info;
 use std::sync::mpsc;
@@ -12,7 +12,7 @@ use x11::xlib::{XCloseDisplay, XOpenDisplay, XSupportsLocale};
 
 mod config;
 mod drw;
-mod dwm;
+mod jwm;
 // mod icon_gallery;
 mod miscellaneous;
 mod terminal_prober;
@@ -37,7 +37,7 @@ fn main() {
     miscellaneous::init_auto_start();
     let (tx, rx) = mpsc::channel();
 
-    let mut dwm = Dwm::new(tx);
+    let mut jwm = Jwm::new(tx);
 
     let status_update_thread = thread::spawn(move || {
         // let mut status_bar = StatusBar::new();
@@ -101,24 +101,24 @@ fn main() {
         if setlocale(LC_CTYPE, c_string.as_ptr()).is_null() || XSupportsLocale() <= 0 {
             eprintln!("warning: no locale support");
         }
-        dwm.dpy = XOpenDisplay(null_mut());
-        if dwm.dpy.is_null() {
+        jwm.dpy = XOpenDisplay(null_mut());
+        if jwm.dpy.is_null() {
             eprintln!("jwm: cannot open display");
             exit(1);
         }
         info!("[main] main begin");
         info!("[main] checkotherwm");
-        dwm.checkotherwm();
+        jwm.checkotherwm();
         info!("[main] setup");
-        dwm.setup();
+        jwm.setup();
         info!("[main] scan");
-        dwm.scan();
+        jwm.scan();
         info!("[main] run");
-        dwm.run();
+        jwm.run();
         info!("[main] cleanup");
-        dwm.cleanup();
+        jwm.cleanup();
         info!("[main] XCloseDisplay");
-        XCloseDisplay(dwm.dpy);
+        XCloseDisplay(jwm.dpy);
         info!("[main] end");
     }
 

@@ -249,7 +249,7 @@ pub struct Button {
     pub click: u32,
     pub mask: u32,
     pub button: u32,
-    pub func: Option<fn(&mut Dwm, *const Arg)>,
+    pub func: Option<fn(&mut Jwm, *const Arg)>,
     pub arg: Arg,
 }
 impl Button {
@@ -258,7 +258,7 @@ impl Button {
         click: u32,
         mask: u32,
         button: u32,
-        func: Option<fn(&mut Dwm, *const Arg)>,
+        func: Option<fn(&mut Jwm, *const Arg)>,
         arg: Arg,
     ) -> Self {
         Self {
@@ -275,7 +275,7 @@ impl Button {
 pub struct Key {
     pub mod0: u32,
     pub keysym: KeySym,
-    pub func: Option<fn(&mut Dwm, *const Arg)>,
+    pub func: Option<fn(&mut Jwm, *const Arg)>,
     pub arg: Arg,
 }
 impl Key {
@@ -283,7 +283,7 @@ impl Key {
     pub fn new(
         mod0: u32,
         keysym: KeySym,
-        func: Option<fn(&mut Dwm, *const Arg)>,
+        func: Option<fn(&mut Jwm, *const Arg)>,
         arg: Arg,
     ) -> Self {
         Self {
@@ -769,7 +769,7 @@ pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
     0
 }
 
-pub struct Dwm {
+pub struct Jwm {
     pub stext_max_len: usize,
     pub screen: i32,
     pub s_w: i32,
@@ -802,7 +802,7 @@ pub struct Dwm {
     pub pending_bar_updates: HashSet<i32>,
 }
 
-impl Dwm {
+impl Jwm {
     fn handler(&mut self, key: i32, e: *mut XEvent) {
         match key {
             ButtonPress => self.buttonpress(e),
@@ -858,7 +858,7 @@ impl Dwm {
                     .unwrap(),
             ),
         );
-        Dwm {
+        Jwm {
             stext_max_len: 512,
             screen: 0,
             s_w: 0,
@@ -976,7 +976,7 @@ impl Dwm {
             if !ch.res_name.is_null() {
                 XFree(ch.res_name as *mut _);
             }
-            let condition = c.tags & CONFIG.tagmask(); 
+            let condition = c.tags & CONFIG.tagmask();
             c.tags = if condition > 0 {
                 condition
             } else {
@@ -1242,7 +1242,7 @@ impl Dwm {
         } else {
             let mut m = self.mons.clone();
             while let Some(ref m_opt) = m {
-                if Dwm::are_equal_rc(&m_opt.borrow_mut().next, &mon) {
+                if Jwm::are_equal_rc(&m_opt.borrow_mut().next, &mon) {
                     break;
                 }
                 let next = m_opt.borrow_mut().next.clone();
@@ -2565,9 +2565,7 @@ impl Dwm {
                     if let Some(ref func) = buttons[i].func {
                         info!(
                             "[buttonpress] click: {}, button: {}, mask: {}",
-                            buttons[i].click,
-                            buttons[i].button,
-                            buttons[i].mask
+                            buttons[i].click, buttons[i].button, buttons[i].mask
                         );
                         info!("[buttonpress] use button arg");
                         func(self, &buttons[i].arg);
@@ -3804,7 +3802,6 @@ impl Dwm {
                 // For safety, one might consider checking name_prop.value != null and XFreeing it.
                 // However, typical Xlib examples free only on success.
                 if !name_prop.value.is_null() {
-                    // dwm.c does this
                     XFree(name_prop.value as *mut _);
                 }
                 return false;
@@ -3841,7 +3838,6 @@ impl Dwm {
                             // 转换为 &str 失败 (例如，XA_STRING 内容不是有效的 UTF-8)
                             info!("[gettextprop] text from XA_STRING to_str error: {:?}", e);
                             // 此时 text 仍然是空字符串
-                            // dwm.c 可能会尝试使用 strncpy，这里我们选择返回 false 或空字符串
                             // return false; // 或者让 text 为空并返回 true，取决于期望行为
                         }
                     }
@@ -3997,7 +3993,7 @@ impl Dwm {
             };
 
             // 4. 抓取鼠标指针 (XGrabPointer)
-            //   这使得 DWM 在接下来的鼠标事件中独占鼠标输入，直到释放。
+            //   这使得 JWM 在接下来的鼠标事件中独占鼠标输入，直到释放。
             if XGrabPointer(
                 self.dpy,                                                    // X Display 连接
                 self.root,        // 抓取事件的窗口 (根窗口)
@@ -4042,7 +4038,7 @@ impl Dwm {
 
                 match ev.type_ {
                     ConfigureRequest | Expose | MapRequest => {
-                        // 如果在拖动过程中收到其他重要事件，交给 DWM 的主事件处理器处理
+                        // 如果在拖动过程中收到其他重要事件，交给 JWM 的主事件处理器处理
                         self.handler(ev.type_, &mut ev);
                     }
                     MotionNotify => {
@@ -4069,7 +4065,6 @@ impl Dwm {
                         //    新坐标 = 窗口原始坐标 + (当前鼠标根坐标 - 初始鼠标根坐标)
                         //    ev.motion.x 和 ev.motion.y 是事件发生时鼠标相对于事件窗口的坐标。
                         //    但由于我们是在根窗口抓取的，ev.motion.x_root 和 ev.motion.y_root 才是鼠标相对于根的坐标。
-                        //    原始 dwm.c 使用的是 ev.x_root 和 ev.y_root。
                         //    这里代码使用的是 ev.motion.x 和 ev.motion.y，这通常是相对于事件窗口的。
                         //    如果 grab 是在 root 上，那么 ev.motion.x 和 ev.motion.y 也是相对于 root 的。
                         //    我们假设 ev.motion.x/y 就是相对于 root 的，或者 getrootptr 获得的 x/y 是对应的。
@@ -4286,9 +4281,6 @@ impl Dwm {
                         // -2*border_width 是因为我们计算的是内容区尺寸。
 
                         // c. 获取当前显示器工作区信息和客户端在其显示器上的信息
-                        //    (这部分检查逻辑在原始 dwm.c resizemouse 中没有，
-                        //     它通常依赖 resize 函数内部的大小提示和边界限制。
-                        //     但如果需要更精细的控制或不同的吸附逻辑，可以在这里添加。)
                         // let (mon_wx_of_client, mon_wy_of_client) = {
                         //     let c_borrow = c_rc.borrow();
                         //     let client_mon_borrow = c_borrow.mon.as_ref().unwrap().borrow();
@@ -4466,8 +4458,6 @@ impl Dwm {
                         // （假设 Num_Lock 只会映射到一个修饰符位，或者我们只关心第一个找到的）
                         // XFreeModifiermap(modmap_ptr); // 需要在找到后就释放，或者在函数末尾统一释放
                         // return; // 如果只找第一个，找到就返回
-                        // dwm.c 的逻辑是找到就设置并继续，但实际上应该只会设置一次，因为一个键通常只对应一个修饰符角色
-                        // 但为了安全，如果 numlockmask 已被设置，可以 break 内部循环或外部循环
                         break; // 假设一个键只映射到一个修饰符类型的一个槽位，或者我们只取第一个
                     }
                 }
@@ -4542,7 +4532,7 @@ impl Dwm {
                             False,
                             BUTTONMASK as u32,
                             GrabModeAsync,
-                            GrabModeAsync, // dwm.c 通常两个都是 GrabModeAsync
+                            GrabModeAsync,
                             0,
                             0,
                         );
@@ -4615,9 +4605,6 @@ impl Dwm {
                                 key_config.mod0 | modifier_combo, // modifiers: 配置的掩码 + 额外修饰符
                                 self.root,                        // grab_window: 根窗口
                                 True, // owner_events: True, 如果其他窗口也选了这个事件，它们也会收到
-                                // dwm.c 中通常是 True，表示事件也传递给焦点窗口（如果它也选了这个事件）
-                                // 但对于全局快捷键，窗口管理器通常希望独占处理。
-                                // 如果设为 False，则只有 DWM 收到。
                                 GrabModeAsync, // pointer_mode
                                 GrabModeAsync, // keyboard_mode
                             );
@@ -4710,13 +4697,8 @@ impl Dwm {
             // 常规的 enternotify 处理
 
             // 2. 确定事件相关的客户端 (c) 和显示器 (m)
-            let client_rc_opt = self.wintoclient(ev.window); // 尝试将事件窗口 ID 转换为 DWM 管理的 Client
+            let client_rc_opt = self.wintoclient(ev.window); // 尝试将事件窗口 ID 转换为 JWM 管理的 Client
             let monitor_rc_opt = if let Some(ref c_rc) = client_rc_opt {
-                // 如果是已管理的客户端窗口
-                // 获取该客户端所在的显示器
-                // 注意：这里使用了 borrow_mut()，如果只是读取 mon，borrow() 更合适。
-                // 假设后续操作可能需要修改 Monitor，或者为了与 DWM C 代码风格一致。
-                // 实际上，如果只是读取 mon，应该用 borrow()。
                 c_rc.borrow().mon.clone() // 克隆 Option<Rc<RefCell<Monitor>>>
             } else {
                 // 如果事件窗口不是已管理的客户端 (例如，是根窗口)
@@ -4735,14 +4717,14 @@ impl Dwm {
             // .unwrap() 可能 panic
 
             if !is_on_selected_monitor {
-                // 如果鼠标进入的显示器不是当前 DWM 选中的显示器
+                // 如果鼠标进入的显示器不是当前 JWM 选中的显示器
                 let previously_selected_client_opt = {
                     // 获取旧选中显示器上的选中客户端
                     let selmon_borrow = self.sel_mon.as_ref().unwrap().borrow();
                     selmon_borrow.sel.clone()
                 };
                 self.unfocus(previously_selected_client_opt, true); // 从旧显示器的选中客户端上移除焦点 (视觉上)，并将 X 焦点设回根
-                self.sel_mon = Some(current_event_monitor_rc.clone()); // 更新 DWM 的选中显示器为当前事件发生的显示器
+                self.sel_mon = Some(current_event_monitor_rc.clone()); // 更新 JWM 的选中显示器为当前事件发生的显示器
                                                                        // .clone() 是克隆 Rc
             }
 
@@ -6111,15 +6093,15 @@ impl Dwm {
                 }
                 let num_effective_screens = unique_screens_info.len() as i32; // 实际有效的、不重复的屏幕数量
 
-                // b. 获取当前 DWM 内部管理的 Monitor 数量 (current_num_monitors)
+                // b. 获取当前 JWM 内部管理的 Monitor 数量 (current_num_monitors)
                 let mut current_num_monitors = 0;
-                let mut m_iter = self.mons.clone(); // 从 DWM 的 Monitor 链表头开始
+                let mut m_iter = self.mons.clone(); // 从 JWM 的 Monitor 链表头开始
                 while let Some(ref mon_rc) = m_iter.clone() {
                     current_num_monitors += 1;
                     m_iter = mon_rc.borrow().next.clone(); // 移动到下一个 (不可变借用)
                 }
 
-                // c. 如果检测到的有效屏幕数量 (num_effective_screens) 多于 DWM 当前管理的 Monitor 数量，
+                // c. 如果检测到的有效屏幕数量 (num_effective_screens) 多于 JWM 当前管理的 Monitor 数量，
                 //    则创建新的 Monitor 对象。
                 if num_effective_screens > current_num_monitors {
                     dirty = true; // 配置已改变
@@ -6143,7 +6125,7 @@ impl Dwm {
                 }
 
                 // d. 更新现有 Monitor 的几何信息，并根据 Xinerama 信息调整
-                m_iter = self.mons.clone(); // 重新从头开始遍历 DWM 的 Monitor 链表
+                m_iter = self.mons.clone(); // 重新从头开始遍历 JWM 的 Monitor 链表
                 for i in 0..num_effective_screens as usize {
                     if m_iter.is_none() {
                         break;
@@ -6190,7 +6172,7 @@ impl Dwm {
                     m_iter = mon_rc.borrow().next.clone(); // 移动到下一个 Monitor
                 }
 
-                // e. 如果 DWM 当前管理的 Monitor 数量多于检测到的有效屏幕数量，
+                // e. 如果 JWM 当前管理的 Monitor 数量多于检测到的有效屏幕数量，
                 //    则移除多余的 Monitor，并将其上的客户端移到第一个 Monitor。
                 for _ in num_effective_screens..current_num_monitors {
                     dirty = true; // 配置已改变
@@ -6204,8 +6186,8 @@ impl Dwm {
                         let mut client_iter_opt = mon_to_remove.borrow_mut().clients.take(); // 取出其所有 clients
                         while let Some(client_rc) = client_iter_opt {
                             // 如果没有其他 monitor，这些 client 实际上无处可去，
-                            // 除非 DWM 退出或有一个默认的 fallback 行为。
-                            // dwm.c 会将它们移到第一个 monitor，但这里没有第一个 monitor 了。
+                            // 除非 JWM 退出或有一个默认的 fallback 行为。
+                            // JWM.c 会将它们移到第一个 monitor，但这里没有第一个 monitor 了。
                             // 这里简化为直接 unmanage，或者可以尝试隐藏它们。
                             // 此处简单地让它们随着 mon_to_remove 的 drop 而被处理（如果 Client 的 Drop 正确）
                             // 或者将它们标记为不可见/无 monitor。
@@ -6287,7 +6269,7 @@ impl Dwm {
                 }
             }
 
-            // --- 6. 如果配置发生了变化，更新 DWM 的选中显示器 ---
+            // --- 6. 如果配置发生了变化，更新 JWM 的选中显示器 ---
             if dirty {
                 self.sel_mon = self.wintomon(self.root);
                 if self.sel_mon.is_none() && self.mons.is_some() {
@@ -6405,7 +6387,7 @@ impl Dwm {
                         false // 当前 monitor 不是全局选中的 monitor
                     }
                 } else {
-                    false // DWM 根本没有全局选中的 monitor
+                    false // JWM 根本没有全局选中的 monitor
                 };
             }
             let m_borrow_for_tagset = mon_rc.borrow(); // 再次不可变借用 m_rc 来获取 tagset 信息

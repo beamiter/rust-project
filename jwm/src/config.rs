@@ -19,7 +19,7 @@ use x11::{
     xlib::{Button1, Button2, Button3, ControlMask, Mod1Mask, ShiftMask},
 };
 
-use crate::dwm::{self, Button, Dwm, Key, Layout, Rule, CLICK};
+use crate::jwm::{self, Button, Jwm, Key, Layout, Rule, CLICK};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
 cfg_if! {
@@ -540,16 +540,14 @@ impl Config {
 
     // 获取默认规则
     fn get_default_rules() -> Vec<RuleConfig> {
-        vec![
-            RuleConfig {
-                class: "broken".to_string(),
-                instance: "broken".to_string(),
-                name: "broken".to_string(),
-                tags_mask: 0,
-                is_floating: true,
-                monitor: -1,
-            },
-        ]
+        vec![RuleConfig {
+            class: "broken".to_string(),
+            instance: "broken".to_string(),
+            name: "broken".to_string(),
+            tags_mask: 0,
+            is_floating: true,
+            monitor: -1,
+        }]
     }
 
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
@@ -562,7 +560,7 @@ impl Config {
         // 如果配置文件不存在，使用默认配置
         let default_config_path = dirs::config_dir()
             .unwrap_or_else(|| std::env::current_dir().unwrap())
-            .join("dwm")
+            .join("jwm")
             .join("config.toml");
 
         Self::load_from_file(&default_config_path).unwrap_or_else(|_| Self::default())
@@ -721,36 +719,36 @@ impl Config {
     }
 
     // 扩展 parse_function 以支持更多函数
-    fn parse_function(&self, func_name: &str) -> Option<fn(&mut Dwm, *const dwm::Arg)> {
+    fn parse_function(&self, func_name: &str) -> Option<fn(&mut Jwm, *const jwm::Arg)> {
         match func_name {
             // 窗口管理
-            "spawn" => Some(Dwm::spawn),
-            "focusstack" => Some(Dwm::focusstack),
-            "focusmon" => Some(Dwm::focusmon),
-            "quit" => Some(Dwm::quit),
-            "killclient" => Some(Dwm::killclient),
-            "zoom" => Some(Dwm::zoom),
+            "spawn" => Some(Jwm::spawn),
+            "focusstack" => Some(Jwm::focusstack),
+            "focusmon" => Some(Jwm::focusmon),
+            "quit" => Some(Jwm::quit),
+            "killclient" => Some(Jwm::killclient),
+            "zoom" => Some(Jwm::zoom),
 
             // 布局相关
-            "setlayout" => Some(Dwm::setlayout),
-            "togglefloating" => Some(Dwm::togglefloating),
-            "togglefullscr" => Some(Dwm::togglefullscr),
-            "setmfact" => Some(Dwm::setmfact),
-            "setcfact" => Some(Dwm::setcfact),
-            "incnmaster" => Some(Dwm::incnmaster),
-            "movestack" => Some(Dwm::movestack),
+            "setlayout" => Some(Jwm::setlayout),
+            "togglefloating" => Some(Jwm::togglefloating),
+            "togglefullscr" => Some(Jwm::togglefullscr),
+            "setmfact" => Some(Jwm::setmfact),
+            "setcfact" => Some(Jwm::setcfact),
+            "incnmaster" => Some(Jwm::incnmaster),
+            "movestack" => Some(Jwm::movestack),
 
             // 标签相关
-            "view" => Some(Dwm::view),
-            "tag" => Some(Dwm::tag),
-            "toggleview" => Some(Dwm::toggleview),
-            "toggletag" => Some(Dwm::toggletag),
-            "tagmon" => Some(Dwm::tagmon),
-            "loopview" => Some(Dwm::loopview),
+            "view" => Some(Jwm::view),
+            "tag" => Some(Jwm::tag),
+            "toggleview" => Some(Jwm::toggleview),
+            "toggletag" => Some(Jwm::toggletag),
+            "tagmon" => Some(Jwm::tagmon),
+            "loopview" => Some(Jwm::loopview),
 
             // 鼠标相关
-            "movemouse" => Some(Dwm::movemouse),
-            "resizemouse" => Some(Dwm::resizemouse),
+            "movemouse" => Some(Jwm::movemouse),
+            "resizemouse" => Some(Jwm::resizemouse),
 
             _ => {
                 eprintln!("Unknown function: {}", func_name);
@@ -868,19 +866,19 @@ impl Config {
     }
 
     // 扩展 convert_argument 以支持布局参数
-    fn convert_argument(&self, arg: &ArgumentConfig) -> dwm::Arg {
+    fn convert_argument(&self, arg: &ArgumentConfig) -> jwm::Arg {
         match arg {
-            ArgumentConfig::Int(i) => dwm::Arg::I(*i),
-            ArgumentConfig::UInt(u) => dwm::Arg::Ui(*u),
-            ArgumentConfig::Float(f) => dwm::Arg::F(*f),
-            ArgumentConfig::StringVec(v) => dwm::Arg::V(v.clone()),
+            ArgumentConfig::Int(i) => jwm::Arg::I(*i),
+            ArgumentConfig::UInt(u) => jwm::Arg::Ui(*u),
+            ArgumentConfig::Float(f) => jwm::Arg::F(*f),
+            ArgumentConfig::StringVec(v) => jwm::Arg::V(v.clone()),
             ArgumentConfig::String(s) => {
                 // 特殊处理布局字符串
                 match s.as_str() {
-                    "tile" => dwm::Arg::Lt(Rc::new(Layout::try_from(0).unwrap())),
-                    "float" => dwm::Arg::Lt(Rc::new(Layout::try_from(1).unwrap())),
-                    "monocle" => dwm::Arg::Lt(Rc::new(Layout::try_from(2).unwrap())),
-                    _ => dwm::Arg::V(vec![s.clone()]),
+                    "tile" => jwm::Arg::Lt(Rc::new(Layout::try_from(0).unwrap())),
+                    "float" => jwm::Arg::Lt(Rc::new(Layout::try_from(1).unwrap())),
+                    "monocle" => jwm::Arg::Lt(Rc::new(Layout::try_from(2).unwrap())),
+                    _ => jwm::Arg::V(vec![s.clone()]),
                 }
             }
         }
@@ -1009,24 +1007,24 @@ impl Config {
         let modkey = self.parse_modifiers(&[self.inner.keybindings.modkey.clone()]);
 
         vec![
-            Key::new(modkey, key.into(), Some(Dwm::view), dwm::Arg::Ui(1 << tag)),
+            Key::new(modkey, key.into(), Some(Jwm::view), jwm::Arg::Ui(1 << tag)),
             Key::new(
                 modkey | ControlMask,
                 key.into(),
-                Some(Dwm::toggleview),
-                dwm::Arg::Ui(1 << tag),
+                Some(Jwm::toggleview),
+                jwm::Arg::Ui(1 << tag),
             ),
             Key::new(
                 modkey | ShiftMask,
                 key.into(),
-                Some(Dwm::tag),
-                dwm::Arg::Ui(1 << tag),
+                Some(Jwm::tag),
+                jwm::Arg::Ui(1 << tag),
             ),
             Key::new(
                 modkey | ControlMask | ShiftMask,
                 key.into(),
-                Some(Dwm::toggletag),
-                dwm::Arg::Ui(1 << tag),
+                Some(Jwm::toggletag),
+                jwm::Arg::Ui(1 << tag),
             ),
         ]
     }
@@ -1055,7 +1053,7 @@ impl Config {
     pub fn get_default_config_path() -> std::path::PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| std::env::current_dir().unwrap())
-            .join("dwm")
+            .join("jwm")
             .join("config.toml")
     }
 
