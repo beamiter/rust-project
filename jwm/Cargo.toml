@@ -36,7 +36,7 @@ rand = "0.8.5"
 regex = "1.11.0"
 serde = { version = "1.0.217", features = ["derive"] }
 shared_memory = "0.12.4"
-shared_structures = { version = "0.1.0", path = "../shared_structures" }
+shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
 sysinfo = "0.32.0"
 toml = "0.9.5"
 x11 = { version = "2.21.0", features = ["all"] }

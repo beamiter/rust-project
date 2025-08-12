@@ -8,13 +8,12 @@ use egui::Label;
 use egui::Sense;
 use egui::{Align, Color32, FontFamily, FontId, Layout, Margin, TextStyle, Vec2};
 use egui_plot::{Line, Plot, PlotPoints};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::collections::BTreeMap;
 use std::process::Command;
-use std::sync::{mpsc, Arc, Mutex, Once};
-use std::thread;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::{Arc, Mutex, Once};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use egui::{Button, Stroke, StrokeKind};
 use shared_structures::CommandType;
@@ -72,30 +71,20 @@ impl EguiBarApp {
         // Configure text styles
         Self::configure_text_styles(&cc.egui_ctx);
 
-        // Create communication channels
-        let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
-        let (heartbeat_sender, heartbeat_receiver) = mpsc::channel();
-
         // 启动消息处理线程
         let shared_state_clone = Arc::clone(&shared_state);
         let egui_ctx_clone = cc.egui_ctx.clone();
-        thread::spawn(move || {
-            Self::message_handler_thread(message_receiver, shared_state_clone, egui_ctx_clone);
-        });
-
         let shared_path_clone = shared_path.clone();
-        thread::spawn(move || {
-            Self::shared_memory_worker(shared_path_clone, message_sender, heartbeat_sender)
-        });
 
-        // Start heartbeat monitor
-        thread::spawn(move || Self::heartbeat_monitor(heartbeat_receiver));
+        // 启动异步任务
+        tokio::spawn(async move {
+            Self::shared_memory_worker(shared_path_clone, shared_state_clone, egui_ctx_clone).await;
+        });
 
         // 启动定时更新线程
-        let shared_state_clone = Arc::clone(&shared_state);
         let egui_ctx_clone = cc.egui_ctx.clone();
-        thread::spawn(move || {
-            Self::periodic_update_thread(shared_state_clone, egui_ctx_clone);
+        tokio::spawn(async move {
+            Self::periodic_update_task(egui_ctx_clone).await;
         });
 
         let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
@@ -134,33 +123,12 @@ impl EguiBarApp {
         })
     }
 
-    /// Monitor heartbeat from background thread
-    fn heartbeat_monitor(heartbeat_receiver: mpsc::Receiver<()>) {
-        info!("Starting heartbeat monitor");
-
-        loop {
-            match heartbeat_receiver.recv_timeout(Duration::from_secs(5)) {
-                Ok(_) => {
-                    // Heartbeat received, continue
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {
-                    error!("Shared memory thread heartbeat timeout");
-                    std::process::exit(1);
-                }
-                Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    error!("Shared memory thread disconnected");
-                    std::process::exit(1);
-                }
-            }
-        }
-    }
-
-    fn shared_memory_worker(
+    async fn shared_memory_worker(
         shared_path: String,
-        message_sender: mpsc::Sender<SharedMessage>,
-        heartbeat_sender: mpsc::Sender<()>,
+        shared_state: Arc<Mutex<SharedAppState>>,
+        egui_ctx: egui::Context,
     ) {
-        info!("Starting shared memory worker thread");
+        info!("Starting shared memory worker task");
 
         // 尝试打开或创建共享环形缓冲区
         let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
@@ -196,113 +164,58 @@ impl EguiBarApp {
             .unwrap()
             .as_millis();
 
-        let mut frame_count: u128 = 0;
-        let mut consecutive_errors = 0;
-
-        loop {
-            // 发送心跳信号
-            if heartbeat_sender.send(()).is_err() {
-                warn!("Heartbeat receiver disconnected");
-                break;
-            }
-
-            // 处理共享内存消息
-            if let Some(ref shared_buffer) = shared_buffer_opt {
-                match shared_buffer.try_read_latest_message() {
-                    Ok(Some(message)) => {
-                        consecutive_errors = 0; // 成功读取，重置错误计数
-                        if prev_timestamp != message.timestamp.into() {
-                            prev_timestamp = message.timestamp.into();
-                            if let Err(e) = message_sender.send(message) {
-                                error!("Failed to send message: {}", e);
-                                break;
+        if let Some(ref shared_buffer) = shared_buffer_opt {
+            loop {
+                match shared_buffer.wait_for_message(Some(std::time::Duration::from_secs(2))) {
+                    Ok(true) => {
+                        if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
+                            if prev_timestamp != message.timestamp.into() {
+                                prev_timestamp = message.timestamp.into();
+                                if let Ok(mut state) = shared_state.lock() {
+                                    let need_update = state
+                                        .current_message
+                                        .as_ref()
+                                        .map(|m| m.timestamp != message.timestamp)
+                                        .unwrap_or(true);
+                                    if need_update {
+                                        info!("current_message: {:?}", message);
+                                        state.current_message = Some(message);
+                                        state.last_update = Instant::now();
+                                        egui_ctx.request_repaint_after(
+                                            std::time::Duration::from_millis(1),
+                                        );
+                                    }
+                                } else {
+                                    warn!("Failed to lock shared state for message update");
+                                }
                             }
                         }
                     }
-                    Ok(None) => {
-                        // 没有新消息，这是正常的
-                        consecutive_errors = 0;
-                    }
+                    Ok(false) => debug!("[notifier] Wait for message timed out."),
                     Err(e) => {
-                        consecutive_errors += 1;
-                        if frame_count % 1000 == 0 || consecutive_errors == 1 {
-                            error!(
-                                "Ring buffer read error: {}. Buffer state: available={}",
-                                e,
-                                shared_buffer.available_messages(),
-                            );
-                        }
-
-                        // 如果连续错误过多，尝试重置读取位置
-                        if consecutive_errors > 10 {
-                            warn!("Too many consecutive errors, resetting read index");
-                            consecutive_errors = 0;
-                        }
+                        error!("[notifier] Wait for message failed: {}", e);
+                        break;
                     }
                 }
             }
-
-            frame_count = frame_count.wrapping_add(1);
-            thread::sleep(Duration::from_millis(10));
         }
 
-        info!("Shared memory worker thread exiting");
-    }
-
-    /// 消息处理线程
-    fn message_handler_thread(
-        message_receiver: mpsc::Receiver<SharedMessage>,
-        shared_state: Arc<Mutex<SharedAppState>>,
-        egui_ctx: egui::Context,
-    ) {
-        info!("Starting message handler thread");
-
-        // 设置 panic 钩子
-        let default_hook = std::panic::take_hook();
-        std::panic::set_hook(Box::new(move |panic_info| {
-            error!("Message handler thread panicked: {}", panic_info);
-            default_hook(panic_info);
-        }));
-
-        loop {
-            match message_receiver.recv() {
-                Ok(message) => {
-                    info!("Received message: {:?}", message);
-                    // 更新共享状态
-                    if let Ok(mut state) = shared_state.lock() {
-                        let need_update = state
-                            .current_message
-                            .as_ref()
-                            .map(|m| m.timestamp != message.timestamp)
-                            .unwrap_or(true);
-                        if need_update {
-                            state.current_message = Some(message);
-                            state.last_update = Instant::now();
-                            egui_ctx.request_repaint_after(Duration::from_millis(1));
-                        }
-                    } else {
-                        warn!("Failed to lock shared state for message update");
-                    }
-                }
-                Err(e) => {
-                    error!("Message receiver error: {}", e);
-                    break;
-                }
-            }
-        }
-        info!("Message handler thread exiting");
+        info!("Shared memory worker task exiting");
     }
 
     /// 定时更新线程（每秒更新时间显示等）
-    fn periodic_update_thread(_shared_state: Arc<Mutex<SharedAppState>>, egui_ctx: egui::Context) {
-        info!("Starting periodic update thread");
+    async fn periodic_update_task(egui_ctx: egui::Context) {
+        info!("Starting periodic update task");
         let mut last_second = chrono::Local::now().timestamp();
+        // 创建定时器，每500ms执行一次
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(500));
         loop {
-            thread::sleep(Duration::from_millis(500));
+            // 异步等待下一个定时器周期
+            interval.tick().await;
             let current_second = chrono::Local::now().timestamp();
             if current_second != last_second {
                 last_second = current_second;
-                egui_ctx.request_repaint_after(Duration::from_millis(1));
+                egui_ctx.request_repaint_after(std::time::Duration::from_millis(1));
             }
         }
     }
@@ -1522,7 +1435,7 @@ impl eframe::App for EguiBarApp {
 
         if self.state.ui_state.need_resize {
             info!("request for resize");
-            ctx.request_repaint_after(Duration::from_millis(1));
+            ctx.request_repaint_after(std::time::Duration::from_millis(1));
         }
     }
 }

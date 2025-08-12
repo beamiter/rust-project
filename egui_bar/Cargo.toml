@@ -12,7 +12,7 @@ sysinfo = "0.30"
 alsa = "0.7"
 
 # 异步和并发
-tokio = { version = "1.0", features = ["rt-multi-thread", "time", "sync"], optional = true }
+# tokio = { version = "1.0", features = ["rt-multi-thread", "time", "sync"], optional = true }
 
 # 序列化
 serde = { version = "1.0", features = ["derive"] }
@@ -39,14 +39,10 @@ battery = "0.7.8"
 egui_extras = { version = "0.31.1", features = ["all_loaders"] }
 image = "0.25.6"
 once = "0.3.4"
-
-[dev-dependencies]
-tokio-test = "0.4"
+tokio = { version = "1.47.1", features = ["full"] }
 
 [features]
 default = []
-async = ["tokio"]
-tokio = ["dep:tokio"]
 
 debug_mode = []
 

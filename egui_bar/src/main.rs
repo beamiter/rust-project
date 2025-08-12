@@ -8,7 +8,8 @@ use std::env;
 use std::path::Path;
 
 /// Application entry point
-fn main() -> eframe::Result<()> {
+#[tokio::main]
+async fn main() -> eframe::Result<()> {
     // Parse command line arguments
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
