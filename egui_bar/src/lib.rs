@@ -8,7 +8,6 @@ pub mod egui_bar_app;
 pub mod audio_manager;
 pub mod constants;
 pub mod system_monitor;
-pub mod ui;
 pub mod error;
 pub mod metrics;
 

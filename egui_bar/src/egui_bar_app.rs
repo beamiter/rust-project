@@ -2,18 +2,22 @@
 
 use crate::constants::ui;
 use crate::constants::{colors, icons};
-use crate::ui::controller_info::ControllerInfoPanel;
-use crate::ui::{DebugDisplayWindow, SystemInfoPanel, WorkspacePanel};
 use crate::{AppState, Result};
 use eframe::egui;
 use egui::Label;
+use egui::Sense;
 use egui::{Align, Color32, FontFamily, FontId, Layout, Margin, TextStyle, Vec2};
+use egui_plot::{Line, Plot, PlotPoints};
 use log::{error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::collections::BTreeMap;
+use std::process::Command;
 use std::sync::{mpsc, Arc, Mutex, Once};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
+use egui::{Button, Stroke, StrokeKind};
+use shared_structures::CommandType;
 
 static START: Once = Once::new();
 
@@ -41,14 +45,9 @@ pub struct EguiBarApp {
     /// 线程间共享状态
     shared_state: Arc<Mutex<SharedAppState>>,
 
-    /// UI components
-    debug_display_window: DebugDisplayWindow,
+    color_cache: Vec<Color32>,
 
-    system_info_panel: SystemInfoPanel,
-    controller_info_panel: ControllerInfoPanel,
-    workspace_panel: WorkspacePanel,
-
-    command_sender: mpsc::Sender<SharedCommand>,
+    shared_buffer_opt: Option<SharedRingBuffer>,
 }
 
 impl EguiBarApp {
@@ -75,7 +74,6 @@ impl EguiBarApp {
 
         // Create communication channels
         let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
-        let (command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
         let (heartbeat_sender, heartbeat_receiver) = mpsc::channel();
 
         // 启动消息处理线程
@@ -87,12 +85,7 @@ impl EguiBarApp {
 
         let shared_path_clone = shared_path.clone();
         thread::spawn(move || {
-            Self::shared_memory_worker(
-                shared_path_clone,
-                message_sender,
-                heartbeat_sender,
-                command_receiver,
-            )
+            Self::shared_memory_worker(shared_path_clone, message_sender, heartbeat_sender)
         });
 
         // Start heartbeat monitor
@@ -105,14 +98,39 @@ impl EguiBarApp {
             Self::periodic_update_thread(shared_state_clone, egui_ctx_clone);
         });
 
+        let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
+            warn!("No shared path provided, running without shared memory");
+            None
+        } else {
+            match SharedRingBuffer::open(&shared_path, None) {
+                Ok(shared_buffer) => {
+                    info!("Successfully opened shared ring buffer: {}", shared_path);
+                    Some(shared_buffer)
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to open shared ring buffer: {}, attempting to create new one",
+                        e
+                    );
+                    match SharedRingBuffer::create(&shared_path, None, None) {
+                        Ok(shared_buffer) => {
+                            info!("Created new shared ring buffer: {}", shared_path);
+                            Some(shared_buffer)
+                        }
+                        Err(create_err) => {
+                            error!("Failed to create shared ring buffer: {}", create_err);
+                            None
+                        }
+                    }
+                }
+            }
+        };
+
         Ok(Self {
             state,
             shared_state,
-            debug_display_window: DebugDisplayWindow::new(),
-            system_info_panel: SystemInfoPanel::new(),
-            controller_info_panel: ControllerInfoPanel::new(),
-            workspace_panel: WorkspacePanel::new(),
-            command_sender,
+            color_cache: Vec::new(),
+            shared_buffer_opt,
         })
     }
 
@@ -141,7 +159,6 @@ impl EguiBarApp {
         shared_path: String,
         message_sender: mpsc::Sender<SharedMessage>,
         heartbeat_sender: mpsc::Sender<()>,
-        command_receiver: mpsc::Receiver<SharedCommand>,
     ) {
         info!("Starting shared memory worker thread");
 
@@ -187,24 +204,6 @@ impl EguiBarApp {
             if heartbeat_sender.send(()).is_err() {
                 warn!("Heartbeat receiver disconnected");
                 break;
-            }
-
-            // 处理发送到共享内存的命令
-            while let Ok(cmd) = command_receiver.try_recv() {
-                info!("Receive command: {:?} in channel", cmd);
-                if let Some(ref shared_buffer) = shared_buffer_opt {
-                    match shared_buffer.send_command(cmd) {
-                        Ok(true) => {
-                            info!("Sent command: {:?} by shared_buffer", cmd);
-                        }
-                        Ok(false) => {
-                            warn!("Command buffer full, command dropped");
-                        }
-                        Err(e) => {
-                            error!("Failed to send command: {}", e);
-                        }
-                    }
-                }
             }
 
             // 处理共享内存消息
@@ -545,17 +544,15 @@ impl EguiBarApp {
 
         ui.horizontal_centered(|ui| {
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                self.workspace_panel
-                    .draw(ui, &mut self.state, &self.command_sender);
+                self.draw_workspace_panel(ui);
             });
 
             ui.columns(2, |ui| {
                 ui[0].with_layout(Layout::left_to_right(Align::Center), |_ui| {});
 
                 ui[1].with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    self.controller_info_panel.draw(ui, &mut self.state);
-                    // ui.separator();
-                    self.system_info_panel.draw(ui, &self.state);
+                    self.draw_controller_info_panel(ui);
+                    self.draw_system_info_panel(ui);
                 });
             });
         });
@@ -789,6 +786,690 @@ impl EguiBarApp {
             )));
         });
     }
+
+    /// Draw volume control window, returns true if window was closed
+    pub fn draw_debug_display_window(&mut self, ctx: &egui::Context) {
+        if !self.state.ui_state.show_debug_window {
+            return;
+        }
+
+        let mut window_open = true;
+
+        egui::Window::new("🐛 调试信息")
+            .collapsible(false)
+            .resizable(true)
+            .default_width(400.0)
+            .default_height(300.0)
+            .open(&mut window_open)
+            .show(ctx, |ui| {
+                ui.label("📊 性能指标");
+                ui.horizontal(|ui| {
+                    ui.label("FPS:");
+                    ui.label(
+                        egui::RichText::new(format!(
+                            "{:.1}",
+                            self.state.performance_metrics.average_fps()
+                        ))
+                        .color(colors::GREEN),
+                    );
+                });
+                ui.horizontal(|ui| {
+                    ui.label("帧时间:");
+                    ui.label(format!(
+                        "{:.2}ms",
+                        self.state.performance_metrics.average_frame_time_ms()
+                    ));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("渲染时间:");
+                    ui.label(format!(
+                        "{:.2}ms",
+                        self.state.performance_metrics.average_render_time_ms()
+                    ));
+                });
+
+                ui.separator();
+
+                ui.label("💻 系统状态");
+                if let Some(snapshot) = self.state.system_monitor.get_snapshot() {
+                    ui.horizontal(|ui| {
+                        ui.label("CPU:");
+                        let cpu_color = if snapshot.cpu_average > 80.0 {
+                            colors::ERROR
+                        } else if snapshot.cpu_average > 60.0 {
+                            colors::WARNING
+                        } else {
+                            colors::SUCCESS
+                        };
+                        ui.label(
+                            egui::RichText::new(format!("{:.1}%", snapshot.cpu_average))
+                                .color(cpu_color),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("内存:");
+                        let mem_color = if snapshot.memory_usage_percent > 80.0 {
+                            colors::ERROR
+                        } else if snapshot.memory_usage_percent > 60.0 {
+                            colors::WARNING
+                        } else {
+                            colors::SUCCESS
+                        };
+                        ui.label(
+                            egui::RichText::new(format!("{:.1}%", snapshot.memory_usage_percent))
+                                .color(mem_color),
+                        );
+                    });
+                    ui.horizontal(|ui| {
+                        ui.label("运行时间:");
+                        ui.label(self.state.system_monitor.get_uptime_string());
+                    });
+                }
+
+                ui.separator();
+
+                ui.label("🔊 音频系统");
+                let stats = self.state.audio_manager.get_stats();
+                ui.horizontal(|ui| {
+                    ui.label("设备数量:");
+                    ui.label(format!("{}", stats.total_devices));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("可控音量:");
+                    ui.label(format!("{}", stats.devices_with_volume));
+                });
+                ui.horizontal(|ui| {
+                    ui.label("已静音:");
+                    ui.label(format!("{}", stats.muted_devices));
+                });
+
+                ui.separator();
+
+                // 操作按钮
+                ui.horizontal(|ui| {
+                    if ui.small_button("🔄 刷新音频").clicked() {
+                        if let Err(e) = self.state.audio_manager.refresh_devices() {
+                            error!("Failed to refresh audio devices: {}", e);
+                        }
+                    }
+
+                    ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                        if ui.small_button("❌ 关闭").clicked() {
+                            self.state.ui_state.toggle_debug_window();
+                        }
+                    });
+                });
+            });
+
+        if !window_open || ctx.input(|i| i.viewport().close_requested()) {
+            self.state.ui_state.toggle_debug_window();
+        }
+    }
+
+    /// Draw workspace information
+    pub fn draw_workspace_panel(&mut self, ui: &mut egui::Ui) {
+        let mut tag_status_vec = Vec::new();
+        let mut layout_symbol = String::from(" ? ");
+        let bold_thickness = 2.5;
+        let light_thickness = 1.5;
+        if let Some(ref message) = self.state.current_message {
+            tag_status_vec = message.monitor_info.tag_status_vec.to_vec();
+            layout_symbol = message.monitor_info.get_ltsymbol();
+        }
+        // Draw tag icons as buttons
+        for (i, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {
+            let tag_color = colors::TAG_COLORS[i];
+            let tag_bit = 1 << i;
+            // 构建基础文本样式
+            let mut rich_text = egui::RichText::new(tag_icon).monospace();
+            // 设置工具提示文本
+            let mut tooltip = format!("标签 {}", i + 1);
+            // 根据状态设置样式
+            if let Some(tag_status) = tag_status_vec.get(i) {
+                if tag_status.is_filled {
+                    tooltip.push_str(" (有窗口)");
+                }
+                // is_selected: 当前标签标记
+                if tag_status.is_selected {
+                    tooltip.push_str(" (当前)");
+                }
+                // is_urg: 紧急状态标记
+                if tag_status.is_urg {
+                    tooltip.push_str(" (紧急)");
+                }
+            }
+            // 绘制各种装饰效果
+            let mut is_urg = false;
+            let mut is_filled = false;
+            let mut is_selected = false;
+            if let Some(tag_status) = tag_status_vec.get(i) {
+                if tag_status.is_urg {
+                    is_urg = true;
+                    rich_text = rich_text.background_color(Color32::RED);
+                } else if tag_status.is_filled {
+                    is_filled = true;
+                    let bg_color = Color32::from_rgba_premultiplied(
+                        tag_color.r(),
+                        tag_color.g(),
+                        tag_color.b(),
+                        255,
+                    );
+                    rich_text = rich_text.background_color(bg_color);
+                } else if tag_status.is_selected {
+                    is_selected = true;
+                    let bg_color = Color32::from_rgba_premultiplied(
+                        tag_color.r(),
+                        tag_color.g(),
+                        tag_color.b(),
+                        210,
+                    );
+                    rich_text = rich_text.background_color(bg_color);
+                } else if tag_status.is_occ {
+                    let bg_color = Color32::from_rgba_premultiplied(
+                        tag_color.r(),
+                        tag_color.g(),
+                        tag_color.b(),
+                        180,
+                    );
+                    rich_text = rich_text.background_color(bg_color);
+                } else {
+                    rich_text = rich_text.background_color(Color32::TRANSPARENT);
+                }
+            }
+
+            let label_response = ui.add(Button::new(rich_text).min_size(Vec2::new(36., 24.)));
+            let rect = label_response.rect;
+            self.state.ui_state.button_height = rect.height();
+            if is_urg {
+                ui.painter().rect_stroke(
+                    rect,
+                    1.0,
+                    Stroke::new(bold_thickness, colors::VIOLET),
+                    StrokeKind::Outside,
+                );
+            } else if is_filled {
+                ui.painter().rect_stroke(
+                    rect,
+                    1.0,
+                    Stroke::new(bold_thickness, tag_color),
+                    StrokeKind::Outside,
+                );
+            } else if is_selected {
+                ui.painter().rect_stroke(
+                    rect,
+                    1.0,
+                    Stroke::new(light_thickness, tag_color),
+                    StrokeKind::Outside,
+                );
+            }
+            // 处理交互事件
+            self.handle_tag_interactions(&label_response, tag_bit, i);
+
+            // 悬停效果和工具提示
+            if label_response.hovered() {
+                ui.painter().rect_stroke(
+                    rect.expand(1.0),
+                    1.0,
+                    Stroke::new(bold_thickness, tag_color),
+                    StrokeKind::Outside,
+                );
+                label_response.on_hover_text(tooltip);
+            }
+        }
+
+        self.render_layout_section(ui, &layout_symbol);
+    }
+    // 提取交互处理逻辑到单独函数
+    fn handle_tag_interactions(
+        &self,
+        label_response: &egui::Response,
+        tag_bit: u32,
+        tag_index: usize,
+    ) {
+        // 左键点击 - ViewTag 命令
+        if label_response.clicked() {
+            info!("{} clicked", tag_bit);
+            self.send_tag_command(tag_bit, tag_index, true);
+        }
+
+        // 右键点击 - ToggleTag 命令
+        if label_response.secondary_clicked() {
+            info!("{} secondary_clicked", tag_bit);
+            self.send_tag_command(tag_bit, tag_index, false);
+        }
+    }
+
+    // 提取命令发送逻辑
+    fn send_tag_command(&self, tag_bit: u32, _tag_index: usize, is_view: bool) {
+        if let Some(ref message) = self.state.current_message {
+            let monitor_id = message.monitor_info.monitor_num;
+
+            let command = if is_view {
+                SharedCommand::view_tag(tag_bit, monitor_id)
+            } else {
+                SharedCommand::toggle_tag(tag_bit, monitor_id)
+            };
+
+            if let Some(shared_buffer) = &self.shared_buffer_opt {
+                match shared_buffer.send_command(command) {
+                    Ok(true) => {
+                        info!("Sent command: {:?} by shared_buffer", command);
+                    }
+                    Ok(false) => {
+                        warn!("Command buffer full, command dropped");
+                    }
+                    Err(e) => {
+                        error!("Failed to send command: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    fn send_layout_command(&mut self, layout_index: u32) {
+        if let Some(ref message) = self.state.current_message {
+            let monitor_id = message.monitor_info.monitor_num;
+            let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
+
+            if let Some(shared_buffer) = &self.shared_buffer_opt {
+                match shared_buffer.send_command(command) {
+                    Ok(true) => {
+                        info!("Sent command: {:?} by shared_buffer", command);
+                    }
+                    Ok(false) => {
+                        warn!("Command buffer full, command dropped");
+                    }
+                    Err(e) => {
+                        error!("Failed to send command: {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    fn render_layout_section(&mut self, ui: &mut egui::Ui, layout_symbol: &str) {
+        ui.separator();
+        // 主布局按钮
+        let main_layout_button = ui.add(
+            egui::Button::new(egui::RichText::new(layout_symbol).color(
+                if self.state.layout_selector_open {
+                    colors::SUCCESS
+                } else {
+                    colors::ERROR
+                },
+            ))
+            .small(),
+        );
+
+        // 处理主布局按钮点击
+        if main_layout_button.clicked() {
+            info!("Layout button clicked, toggling selector");
+            self.state.layout_selector_open = !self.state.layout_selector_open;
+        }
+
+        // 如果选择器是展开的，显示布局选项
+        if self.state.layout_selector_open {
+            ui.separator();
+
+            // 水平显示所有布局选项
+            for layout in self.state.available_layouts.clone() {
+                let is_current = layout.symbol == layout_symbol;
+
+                let layout_option_button = ui.add(
+                    egui::Button::new(egui::RichText::new(&layout.symbol).color(if is_current {
+                        colors::SUCCESS
+                    } else {
+                        colors::ROYALBLUE
+                    }))
+                    .small()
+                    .selected(is_current),
+                );
+
+                // 处理布局选项点击
+                if layout_option_button.clicked() && !is_current {
+                    info!("Layout option clicked: {} ({})", layout.name, layout.symbol);
+                    self.send_layout_command(layout.index);
+
+                    // 选择后关闭选择器
+                    self.state.layout_selector_open = false;
+                }
+
+                // 添加工具提示
+                let hover_text = format!("点击切换布局: {}", layout.name);
+                layout_option_button.on_hover_text(hover_text);
+            }
+        }
+    }
+
+    fn draw_battery_info(&self, ui: &mut egui::Ui) {
+        if let Some(snapshot) = self.state.system_monitor.get_snapshot() {
+            // 获取电池电量百分比
+            let battery_percent = snapshot.battery_percent;
+            let is_charging = snapshot.is_charging;
+
+            // 根据电量选择颜色
+            let battery_color = match battery_percent {
+                p if p > 50.0 => colors::BATTERY_HIGH,   // 高电量 - 绿色
+                p if p > 20.0 => colors::BATTERY_MEDIUM, // 中电量 - 黄色
+                _ => colors::BATTERY_LOW,                // 低电量 - 红色
+            };
+
+            // 显示电池图标和电量
+            let battery_icon = if is_charging {
+                "🔌" // 充电图标
+            } else {
+                match battery_percent {
+                    p if p > 75.0 => "🔋", // 满电池
+                    p if p > 50.0 => "🔋", // 高电量
+                    p if p > 25.0 => "🪫", // 中电量
+                    _ => "🪫",             // 低电量
+                }
+            };
+
+            // 显示电池图标
+            ui.label(egui::RichText::new(battery_icon).color(battery_color));
+
+            // 显示电量百分比
+            ui.label(egui::RichText::new(format!("{:.0}%", battery_percent)).color(battery_color));
+
+            // 低电量警告
+            if battery_percent < 0.2 * 100.0 && !is_charging {
+                ui.label(egui::RichText::new("⚠️").color(colors::WARNING));
+            }
+
+            // 充电指示
+            if is_charging {
+                ui.label(egui::RichText::new("⚡").color(colors::CHARGING));
+            }
+        } else {
+            // 无法获取电池信息时显示
+            ui.label(egui::RichText::new("❓").color(colors::UNAVAILABLE));
+        }
+    }
+
+    /// Draw volume control button
+    fn draw_volume_button(&mut self, ui: &mut egui::Ui) {
+        let (volume_icon, tooltip) = if let Some(device) = self.state.get_master_audio_device() {
+            let icon = if device.is_muted || device.volume == 0 {
+                icons::VOLUME_MUTED
+            } else if device.volume < 30 {
+                icons::VOLUME_LOW
+            } else if device.volume < 70 {
+                icons::VOLUME_MEDIUM
+            } else {
+                icons::VOLUME_HIGH
+            };
+
+            let tooltip = format!(
+                "{}：{}%{}",
+                device.description,
+                device.volume,
+                if device.is_muted { " (已静音)" } else { "" }
+            );
+
+            (icon, tooltip)
+        } else {
+            (icons::VOLUME_MUTED, "无音频设备".to_string())
+        };
+
+        let label_response = ui.add(Button::new(volume_icon));
+        if label_response.clicked() {
+            self.state.ui_state.toggle_volume_window();
+        }
+
+        label_response.on_hover_text(tooltip);
+    }
+
+    /// Draw debug control button
+    fn draw_debug_button(&mut self, ui: &mut egui::Ui) {
+        let (debug_icon, tooltip) = if self.state.ui_state.show_debug_window {
+            ("󰱭", "关闭调试窗口") // 激活状态的图标和提示
+        } else {
+            ("🔍", "打开调试窗口") // 默认状态的图标和提示
+        };
+
+        let label_response = ui.add(Button::new(debug_icon).sense(Sense::click()));
+        if label_response.clicked() {
+            self.state.ui_state.toggle_debug_window();
+        }
+
+        // 添加详细的悬停提示信息
+        let _detailed_tooltip = format!(
+            "{}\n📊 性能: {:.1} FPS\n🧵 线程: {} 个活跃\n💾 内存: {:.1}%\n🖥️ CPU: {:.1}%",
+            tooltip,
+            self.state.performance_metrics.average_fps(),
+            2, // 消息处理线程 + 定时更新线程
+            self.state
+                .system_monitor
+                .get_snapshot()
+                .map(|s| s.memory_usage_percent)
+                .unwrap_or(0.0),
+            self.state
+                .system_monitor
+                .get_snapshot()
+                .map(|s| s.cpu_average)
+                .unwrap_or(0.0)
+        );
+
+        // label_response.on_hover_text(detailed_tooltip);
+    }
+
+    /// Draw time display
+    fn draw_time_display(&mut self, ui: &mut egui::Ui) {
+        let format_str = if self.state.ui_state.show_seconds {
+            "%Y-%m-%d %H:%M:%S"
+        } else {
+            "%Y-%m-%d %H:%M"
+        };
+
+        let current_time = chrono::Local::now().format(format_str).to_string();
+
+        if ui
+            .selectable_label(
+                true,
+                egui::RichText::new(current_time)
+                    .color(colors::GREEN)
+                    .small(),
+            )
+            .clicked()
+        {
+            self.state.ui_state.toggle_time_format();
+        }
+    }
+
+    fn draw_screenshot_button(&mut self, ui: &mut egui::Ui) {
+        let label_response = ui.add(Button::new(format!(
+            "{} {:.2}",
+            icons::SCREENSHOT_ICON,
+            self.state.ui_state.scale_factor
+        )));
+
+        if label_response.clicked() {
+            let _ = Command::new("flameshot").arg("gui").spawn();
+        }
+    }
+
+    fn draw_monitor_number(&mut self, ui: &mut egui::Ui) {
+        if let Some(ref message) = self.state.current_message {
+            let monitor_num = (message.monitor_info.monitor_num as usize).min(1);
+            ui.add(Label::new(
+                egui::RichText::new(format!("{}", icons::MONITOR_NUMBERS[monitor_num])).strong(),
+            ));
+        }
+    }
+
+    /// Draw constoller information panel
+    pub fn draw_controller_info_panel(&mut self, ui: &mut egui::Ui) {
+        // Battery info
+        self.draw_battery_info(ui);
+
+        // Volume button
+        self.draw_volume_button(ui);
+
+        // Debug button
+        self.draw_debug_button(ui);
+
+        // Time display
+        self.draw_time_display(ui);
+
+        // Screenshot button
+        self.draw_screenshot_button(ui);
+
+        // Monitor number
+        self.draw_monitor_number(ui);
+    }
+
+    /// Draw system information panel
+    pub fn draw_system_info_panel(&mut self, ui: &mut egui::Ui) {
+        // Ensure color cache is initialized
+        self.ensure_color_cache();
+
+        // Memory information
+        self.draw_memory_info(ui);
+
+        // CPU chart
+        self.draw_cpu_chart(ui);
+    }
+
+    fn draw_memory_info(&self, ui: &mut egui::Ui) {
+        let (available_gb, used_gb) = self.state.get_memory_display_info();
+
+        // Available memory
+        ui.label(
+            egui::RichText::new(format!("{:.1}G", available_gb)).color(colors::MEMORY_AVAILABLE),
+        );
+
+        // Used memory
+        ui.label(egui::RichText::new(format!("{:.1}G", used_gb)).color(colors::MEMORY_USED));
+
+        // Memory warning indicator
+        if let Some(snapshot) = self.state.system_monitor.get_snapshot() {
+            if snapshot.memory_usage_percent > 0.8 * 100.0 {
+                ui.label("⚠️");
+            }
+        }
+        ui.separator();
+    }
+
+    fn draw_cpu_chart(&mut self, ui: &mut egui::Ui) {
+        // Reset button
+        let reset_view = ui.add(Button::new("🔄"));
+
+        // CPU usage indicator
+        if let Some(snapshot) = self.state.system_monitor.get_snapshot() {
+            let cpu_color = self.get_cpu_color(snapshot.cpu_average as f64 / 100.0);
+            ui.label(
+                egui::RichText::new(format!("{}%", snapshot.cpu_average as i32)).color(cpu_color),
+            );
+
+            // CPU warning indicator
+            if snapshot.cpu_average > 0.8 * 100.0 {
+                ui.label(egui::RichText::new("🔥").color(colors::WARNING));
+            }
+        }
+
+        let cpu_data = self.state.get_cpu_chart_data();
+        if cpu_data.is_empty() {
+            return;
+        }
+
+        let available_width = ui.available_width();
+        let chart_height = ui.available_height();
+        let chart_width = available_width;
+
+        let mut plot = Plot::new("cpu_usage_chart")
+            .include_y(0.0)
+            .include_y(1.2)
+            .x_axis_formatter(|_, _| String::new())
+            .y_axis_formatter(|_, _| String::new())
+            .show_axes([false, false])
+            .show_background(false)
+            .width(chart_width)
+            .height(chart_height);
+        if reset_view.clicked() {
+            plot = plot.reset();
+        }
+
+        plot.show(ui, |plot_ui| {
+            // Create plot points for all CPU cores
+            let plot_points: Vec<[f64; 2]> = cpu_data
+                .iter()
+                .enumerate()
+                .map(|(i, &usage)| [i as f64, usage])
+                .collect();
+
+            if !plot_points.is_empty() {
+                let line = Line::new("CPU Usage", PlotPoints::from(plot_points))
+                    .color(self.get_average_cpu_color(&cpu_data))
+                    .width(1.0);
+                plot_ui.line(line);
+
+                // Draw individual CPU core points with different colors
+                for (core_idx, &usage) in cpu_data.iter().enumerate() {
+                    let color = self.get_cpu_color(usage);
+                    let points = vec![[core_idx as f64, usage]];
+
+                    let core_point = egui_plot::Points::new(
+                        format!("Core {}", core_idx),
+                        PlotPoints::from(points),
+                    )
+                    .color(color)
+                    .radius(2.0)
+                    .shape(egui_plot::MarkerShape::Circle);
+
+                    plot_ui.points(core_point);
+                }
+
+                // Draw average line if we have multiple cores
+                if cpu_data.len() > 1 {
+                    let avg_usage = cpu_data.iter().sum::<f64>() / cpu_data.len() as f64;
+                    let avg_points: Vec<[f64; 2]> =
+                        (0..cpu_data.len()).map(|i| [i as f64, avg_usage]).collect();
+
+                    let avg_line = Line::new("Average", PlotPoints::from(avg_points))
+                        .color(Color32::WHITE)
+                        .width(1.0)
+                        .style(egui_plot::LineStyle::Dashed { length: 5.0 });
+
+                    plot_ui.line(avg_line);
+                }
+            }
+        });
+    }
+
+    fn get_cpu_color(&self, usage: f64) -> Color32 {
+        let usage = usage.clamp(0.0, 1.0);
+
+        if usage < 0.3 {
+            colors::CPU_LOW
+        } else if usage < 0.6 {
+            colors::CPU_MEDIUM
+        } else if usage < 0.8 {
+            colors::CPU_HIGH
+        } else {
+            colors::CPU_CRITICAL
+        }
+    }
+
+    fn get_average_cpu_color(&self, cpu_data: &[f64]) -> Color32 {
+        if cpu_data.is_empty() {
+            return colors::CPU_LOW;
+        }
+
+        let avg_usage = cpu_data.iter().sum::<f64>() / cpu_data.len() as f64;
+        self.get_cpu_color(avg_usage)
+    }
+
+    fn ensure_color_cache(&mut self) {
+        if self.color_cache.is_empty() {
+            self.color_cache = (0..=100)
+                .map(|i| {
+                    let usage = i as f64 / 100.0;
+                    self.get_cpu_color(usage)
+                })
+                .collect();
+        }
+    }
 }
 
 impl eframe::App for EguiBarApp {
@@ -833,7 +1514,7 @@ impl eframe::App for EguiBarApp {
                 self.draw_volume_control_window(ctx);
 
                 // Draw debug display window
-                self.debug_display_window.draw(ctx, &mut self.state);
+                self.draw_debug_display_window(ctx);
 
                 // Adjust window if needed
                 self.adjust_window(ctx, ui);
