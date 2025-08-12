@@ -1,59 +1,37 @@
 use std::hint;
 use std::io::{Error, ErrorKind, Result};
 use std::mem::size_of;
-use std::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, AtomicU64, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+#[cfg(feature = "use-eventfd")]
 use nix::poll::{poll, PollFd, PollFlags};
+#[cfg(feature = "use-eventfd")]
 use nix::sys::eventfd::EventFd;
+#[cfg(feature = "use-eventfd")]
 use nix::unistd;
+#[cfg(feature = "use-eventfd")]
 use std::os::unix::io::{AsRawFd, BorrowedFd};
+#[cfg(feature = "use-eventfd")]
+use std::sync::atomic::AtomicI32;
 
-use shared_memory::{Shmem, ShmemConf};
+#[cfg(feature = "use-semaphore")]
+use libc::{sem_destroy, sem_init, sem_post, sem_t, sem_timedwait, sem_wait};
 
 use crate::shared_message::{SharedCommand, SharedMessage};
+use shared_memory::{Shmem, ShmemConf};
 
-#[repr(C, align(128))]
-#[derive(Debug)]
-struct RingBufferHeader {
-    magic: AtomicU64,
-    version: AtomicU64,
-    write_idx: AtomicU32,
-    read_idx: AtomicU32,
-    buffer_size: u32,
-    message_size: u32,
-    last_timestamp: AtomicU64,
-    message_event_fd: AtomicI32,
-    command_event_fd: AtomicI32,
-    cmd_write_idx: AtomicU32,
-    cmd_read_idx: AtomicU32,
-    // 新增：标记是否已经被销毁
-    is_destroyed: AtomicBool,
-}
+// =============================================================================
+// 条件编译的同步原语定义
+// =============================================================================
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy)]
-struct MessageSlot {
-    timestamp: u64,
-    checksum: u32,
-    _padding: u32,
-    message: SharedMessage,
-}
-
-const RING_BUFFER_MAGIC: u64 = 0x52494E47_42554646;
-const RING_BUFFER_VERSION: u64 = 4;
-const DEFAULT_BUFFER_SIZE: usize = 16;
-const CMD_BUFFER_SIZE: usize = 16;
-const BUFFER_MASK: u32 = (DEFAULT_BUFFER_SIZE as u32) - 1;
-const CMD_BUFFER_MASK: u32 = (CMD_BUFFER_SIZE as u32) - 1;
-const DEFAULT_ADAPTIVE_POLL_SPINS: u32 = 4000;
-
-// 使用 Arc 来管理 EventFd 的生命周期
+#[cfg(feature = "use-eventfd")]
 struct EventFdWrapper {
     event_fd: EventFd,
 }
 
+#[cfg(feature = "use-eventfd")]
 impl EventFdWrapper {
     fn new() -> Result<Self> {
         Ok(Self {
@@ -88,15 +66,213 @@ impl EventFdWrapper {
     }
 }
 
+#[cfg(feature = "use-semaphore")]
+struct SemaphoreWrapper {
+    sem: *mut sem_t,
+    _owned: bool,
+}
+
+#[cfg(feature = "use-semaphore")]
+unsafe impl Send for SemaphoreWrapper {}
+#[cfg(feature = "use-semaphore")]
+unsafe impl Sync for SemaphoreWrapper {}
+
+#[cfg(feature = "use-semaphore")]
+impl SemaphoreWrapper {
+    #[allow(dead_code)]
+    fn new() -> Result<Self> {
+        let sem = unsafe {
+            let sem_ptr = libc::malloc(size_of::<sem_t>()) as *mut sem_t;
+            if sem_ptr.is_null() {
+                return Err(Error::new(
+                    ErrorKind::OutOfMemory,
+                    "Failed to allocate semaphore",
+                ));
+            }
+
+            // 初始化为进程间共享信号量，初始值为0
+            if sem_init(sem_ptr, 1, 0) != 0 {
+                libc::free(sem_ptr as *mut libc::c_void);
+                return Err(Error::last_os_error());
+            }
+
+            sem_ptr
+        };
+
+        Ok(Self { sem, _owned: true })
+    }
+
+    fn from_shared(sem_ptr: *mut sem_t) -> Self {
+        Self {
+            sem: sem_ptr,
+            _owned: false,
+        }
+    }
+
+    #[allow(dead_code)]
+    fn as_ptr(&self) -> *mut sem_t {
+        self.sem
+    }
+
+    fn signal(&self) -> Result<()> {
+        unsafe {
+            if sem_post(self.sem) != 0 {
+                let err = Error::last_os_error();
+                // EOVERFLOW 表示信号量值已达到最大值，可以忽略
+                if err.raw_os_error() == Some(libc::EOVERFLOW) {
+                    return Ok(());
+                }
+                return Err(err);
+            }
+        }
+        Ok(())
+    }
+
+    fn wait_timeout(&self, timeout: Option<Duration>) -> Result<bool> {
+        unsafe {
+            match timeout {
+                Some(duration) => {
+                    let deadline = SystemTime::now() + duration;
+                    let deadline_since_epoch = deadline
+                        .duration_since(UNIX_EPOCH)
+                        .map_err(|_| Error::new(ErrorKind::InvalidInput, "Invalid time"))?;
+
+                    let ts = libc::timespec {
+                        tv_sec: deadline_since_epoch.as_secs() as libc::time_t,
+                        tv_nsec: deadline_since_epoch.subsec_nanos() as libc::c_long,
+                    };
+
+                    let result = sem_timedwait(self.sem, &ts);
+                    if result == 0 {
+                        Ok(true)
+                    } else {
+                        let err = Error::last_os_error();
+                        match err.raw_os_error() {
+                            Some(libc::ETIMEDOUT) => Ok(false),
+                            Some(libc::EINTR) => Ok(false), // 被中断，视为超时
+                            _ => Err(err),
+                        }
+                    }
+                }
+                None => {
+                    if sem_wait(self.sem) == 0 {
+                        Ok(true)
+                    } else {
+                        let err = Error::last_os_error();
+                        if err.raw_os_error() == Some(libc::EINTR) {
+                            Ok(false) // 被中断，返回false让调用者重试
+                        } else {
+                            Err(err)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+#[cfg(feature = "use-semaphore")]
+impl Drop for SemaphoreWrapper {
+    fn drop(&mut self) {
+        if self._owned && !self.sem.is_null() {
+            unsafe {
+                sem_destroy(self.sem);
+                libc::free(self.sem as *mut libc::c_void);
+            }
+        }
+    }
+}
+
+// =============================================================================
+// 条件编译类型别名
+// =============================================================================
+
+#[cfg(feature = "use-eventfd")]
+type SyncPrimitive = Arc<EventFdWrapper>;
+#[cfg(feature = "use-semaphore")]
+type SyncPrimitive = Arc<SemaphoreWrapper>;
+
+// =============================================================================
+// 条件编译的 Header 结构
+// =============================================================================
+
+#[cfg(feature = "use-eventfd")]
+#[repr(C, align(128))]
+#[derive(Debug)]
+struct RingBufferHeader {
+    magic: AtomicU64,
+    version: AtomicU64,
+    write_idx: AtomicU32,
+    read_idx: AtomicU32,
+    buffer_size: u32,
+    message_size: u32,
+    last_timestamp: AtomicU64,
+    message_event_fd: AtomicI32,
+    command_event_fd: AtomicI32,
+    cmd_write_idx: AtomicU32,
+    cmd_read_idx: AtomicU32,
+    is_destroyed: AtomicBool,
+}
+
+#[cfg(feature = "use-semaphore")]
+#[repr(C, align(128))]
+#[derive(Debug)]
+struct RingBufferHeader {
+    magic: AtomicU64,
+    version: AtomicU64,
+    write_idx: AtomicU32,
+    read_idx: AtomicU32,
+    buffer_size: u32,
+    message_size: u32,
+    last_timestamp: AtomicU64,
+    // 直接嵌入信号量到共享内存中
+    message_sem: sem_t,
+    command_sem: sem_t,
+    cmd_write_idx: AtomicU32,
+    cmd_read_idx: AtomicU32,
+    is_destroyed: AtomicBool,
+    _padding: [u8; 8], // 确保对齐
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
+struct MessageSlot {
+    timestamp: u64,
+    checksum: u32,
+    _padding: u32,
+    message: SharedMessage,
+}
+
+const RING_BUFFER_MAGIC: u64 = 0x52494E47_42554646;
+const RING_BUFFER_VERSION: u64 = 5; // 增加版本号表示支持两种模式
+const DEFAULT_BUFFER_SIZE: usize = 16;
+const CMD_BUFFER_SIZE: usize = 16;
+const BUFFER_MASK: u32 = (DEFAULT_BUFFER_SIZE as u32) - 1;
+const CMD_BUFFER_MASK: u32 = (CMD_BUFFER_SIZE as u32) - 1;
+const DEFAULT_ADAPTIVE_POLL_SPINS: u32 = 4000;
+
+// =============================================================================
+// 主要结构体
+// =============================================================================
+
 pub struct SharedRingBuffer {
     shmem: Shmem,
     header: *mut RingBufferHeader,
     message_slots: *mut MessageSlot,
     cmd_buffer_start: *mut SharedCommand,
     is_creator: bool,
-    // 使用 Arc 来管理 EventFd 生命周期
-    message_event_fd: Option<Arc<EventFdWrapper>>,
-    command_event_fd: Option<Arc<EventFdWrapper>>,
+
+    // 条件编译的同步原语
+    #[cfg(feature = "use-eventfd")]
+    message_event_fd: Option<SyncPrimitive>,
+    #[cfg(feature = "use-eventfd")]
+    command_event_fd: Option<SyncPrimitive>,
+
+    #[cfg(feature = "use-semaphore")]
+    message_sem: Option<SyncPrimitive>,
+    #[cfg(feature = "use-semaphore")]
+    command_sem: Option<SyncPrimitive>,
+
     adaptive_poll_spins: u32,
 }
 
@@ -140,14 +316,52 @@ impl SharedRingBuffer {
             .create()
             .map_err(|e| Error::new(ErrorKind::Other, format!("Failed to create shmem: {}", e)))?;
 
-        // 创建 EventFd 包装器
-        let message_efd = Arc::new(EventFdWrapper::new()?);
-        let command_efd = Arc::new(EventFdWrapper::new()?);
-
         let header = shmem.as_ptr() as *mut RingBufferHeader;
         let message_slots = unsafe { shmem.as_ptr().add(messages_offset) as *mut MessageSlot };
         let cmd_buffer_start = unsafe { shmem.as_ptr().add(commands_offset) as *mut SharedCommand };
 
+        // 条件编译：创建同步原语
+        #[cfg(feature = "use-eventfd")]
+        let (message_sync, command_sync) = {
+            let message_efd = Arc::new(EventFdWrapper::new()?);
+            let command_efd = Arc::new(EventFdWrapper::new()?);
+
+            // 初始化header
+            unsafe {
+                (*header)
+                    .message_event_fd
+                    .store(message_efd.as_raw_fd(), Ordering::Release);
+                (*header)
+                    .command_event_fd
+                    .store(command_efd.as_raw_fd(), Ordering::Release);
+            }
+
+            (Some(message_efd), Some(command_efd))
+        };
+
+        #[cfg(feature = "use-semaphore")]
+        let (message_sync, command_sync) = {
+            // 初始化共享内存中的信号量
+            unsafe {
+                let message_sem_ptr = &mut (*header).message_sem as *mut sem_t;
+                let command_sem_ptr = &mut (*header).command_sem as *mut sem_t;
+
+                if sem_init(message_sem_ptr, 1, 0) != 0 {
+                    return Err(Error::last_os_error());
+                }
+                if sem_init(command_sem_ptr, 1, 0) != 0 {
+                    sem_destroy(message_sem_ptr);
+                    return Err(Error::last_os_error());
+                }
+
+                let message_wrapper = Arc::new(SemaphoreWrapper::from_shared(message_sem_ptr));
+                let command_wrapper = Arc::new(SemaphoreWrapper::from_shared(command_sem_ptr));
+
+                (Some(message_wrapper), Some(command_wrapper))
+            }
+        };
+
+        // 初始化通用header字段
         unsafe {
             (*header).magic.store(RING_BUFFER_MAGIC, Ordering::Release);
             (*header)
@@ -161,12 +375,6 @@ impl SharedRingBuffer {
             (*header).cmd_write_idx.store(0, Ordering::Release);
             (*header).cmd_read_idx.store(0, Ordering::Release);
             (*header).is_destroyed.store(false, Ordering::Release);
-            (*header)
-                .message_event_fd
-                .store(message_efd.as_raw_fd(), Ordering::Release);
-            (*header)
-                .command_event_fd
-                .store(command_efd.as_raw_fd(), Ordering::Release);
         }
 
         Ok(Self {
@@ -175,8 +383,17 @@ impl SharedRingBuffer {
             message_slots,
             cmd_buffer_start,
             is_creator: true,
-            message_event_fd: Some(message_efd),
-            command_event_fd: Some(command_efd),
+
+            #[cfg(feature = "use-eventfd")]
+            message_event_fd: message_sync,
+            #[cfg(feature = "use-eventfd")]
+            command_event_fd: command_sync,
+
+            #[cfg(feature = "use-semaphore")]
+            message_sem: message_sync,
+            #[cfg(feature = "use-semaphore")]
+            command_sem: command_sync,
+
             adaptive_poll_spins,
         })
     }
@@ -213,14 +430,40 @@ impl SharedRingBuffer {
         let message_slots = unsafe { shmem.as_ptr().add(messages_offset) as *mut MessageSlot };
         let cmd_buffer_start = unsafe { shmem.as_ptr().add(commands_offset) as *mut SharedCommand };
 
+        // 条件编译：连接到现有同步原语
+        #[cfg(feature = "use-eventfd")]
+        let (message_sync, command_sync) = (None, None); // 非创建者不拥有EventFd
+
+        #[cfg(feature = "use-semaphore")]
+        let (message_sync, command_sync) = {
+            unsafe {
+                let message_sem_ptr = &mut (*header).message_sem as *mut sem_t;
+                let command_sem_ptr = &mut (*header).command_sem as *mut sem_t;
+
+                let message_wrapper = Arc::new(SemaphoreWrapper::from_shared(message_sem_ptr));
+                let command_wrapper = Arc::new(SemaphoreWrapper::from_shared(command_sem_ptr));
+
+                (Some(message_wrapper), Some(command_wrapper))
+            }
+        };
+
         Ok(Self {
             shmem,
             header,
             message_slots,
             cmd_buffer_start,
             is_creator: false,
-            message_event_fd: None, // 非创建者不拥有 EventFd
-            command_event_fd: None,
+
+            #[cfg(feature = "use-eventfd")]
+            message_event_fd: message_sync,
+            #[cfg(feature = "use-eventfd")]
+            command_event_fd: command_sync,
+
+            #[cfg(feature = "use-semaphore")]
+            message_sem: message_sync,
+            #[cfg(feature = "use-semaphore")]
+            command_sem: command_sync,
+
             adaptive_poll_spins: adaptive_poll_spins.unwrap_or(DEFAULT_ADAPTIVE_POLL_SPINS),
         })
     }
@@ -376,14 +619,14 @@ impl SharedRingBuffer {
         if self.is_destroyed() {
             return Ok(false);
         }
-        self.wait_on_fd_safe(true, timeout, || self.has_message())
+        self.wait_with_adaptive_polling(true, timeout, || self.has_message())
     }
 
     pub fn wait_for_command(&self, timeout: Option<Duration>) -> Result<bool> {
         if self.is_destroyed() {
             return Ok(false);
         }
-        self.wait_on_fd_safe(false, timeout, || self.has_command())
+        self.wait_with_adaptive_polling(false, timeout, || self.has_command())
     }
 
     pub fn has_command(&self) -> bool {
@@ -419,14 +662,14 @@ impl SharedRingBuffer {
         }
     }
 
-    // 安全的等待方法
-    fn wait_on_fd_safe(
+    // 统一的等待方法，处理两种同步原语
+    fn wait_with_adaptive_polling(
         &self,
         is_message: bool,
         timeout: Option<Duration>,
         has_data: impl Fn() -> bool,
     ) -> Result<bool> {
-        // 1. 自适应轮询
+        // 1. 自适应轮询阶段
         for _ in 0..self.adaptive_poll_spins {
             if has_data() || self.is_destroyed() {
                 return Ok(has_data());
@@ -438,7 +681,26 @@ impl SharedRingBuffer {
             return Ok(has_data());
         }
 
-        // 2. 获取文件描述符
+        // 2. 阻塞等待阶段 - 条件编译
+        #[cfg(feature = "use-eventfd")]
+        {
+            self.wait_on_eventfd(is_message, timeout, has_data)
+        }
+
+        #[cfg(feature = "use-semaphore")]
+        {
+            self.wait_on_semaphore(is_message, timeout, has_data)
+        }
+    }
+
+    // EventFd 等待实现
+    #[cfg(feature = "use-eventfd")]
+    fn wait_on_eventfd(
+        &self,
+        is_message: bool,
+        timeout: Option<Duration>,
+        has_data: impl Fn() -> bool,
+    ) -> Result<bool> {
         let fd = unsafe {
             if is_message {
                 (*self.header).message_event_fd.load(Ordering::Acquire)
@@ -451,7 +713,6 @@ impl SharedRingBuffer {
             return Ok(has_data());
         }
 
-        // 3. 使用 poll 等待
         let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
         let poll_fd = PollFd::new(borrowed_fd, PollFlags::POLLIN);
         let timeout_ms = timeout.map_or(0, |d| d.as_millis() as i32);
@@ -462,28 +723,77 @@ impl SharedRingBuffer {
                     return Ok(has_data());
                 }
 
-                // 尝试清除信号，但不要在失败时崩溃
                 let mut buf = [0u8; 8];
                 let _ = unistd::read(borrowed_fd, &mut buf);
                 Ok(true)
             }
-            Err(_) => Ok(has_data()), // poll 失败时返回当前状态
+            Err(_) => Ok(has_data()),
         }
     }
 
-    fn signal_message_event(&self) -> Result<()> {
-        if let Some(ref efd) = self.message_event_fd {
-            efd.signal()
+    // Semaphore 等待实现
+    #[cfg(feature = "use-semaphore")]
+    fn wait_on_semaphore(
+        &self,
+        is_message: bool,
+        timeout: Option<Duration>,
+        has_data: impl Fn() -> bool,
+    ) -> Result<bool> {
+        let sem = if is_message {
+            &self.message_sem
         } else {
-            Ok(()) // 非创建者无需发送信号
+            &self.command_sem
+        };
+
+        if let Some(sem) = sem {
+            match sem.wait_timeout(timeout) {
+                Ok(true) => Ok(true),
+                Ok(false) => Ok(has_data()), // 超时或被中断
+                Err(_) => Ok(has_data()),    // 错误时返回当前状态
+            }
+        } else {
+            Ok(has_data())
+        }
+    }
+
+    // 条件编译的信号发送
+    fn signal_message_event(&self) -> Result<()> {
+        #[cfg(feature = "use-eventfd")]
+        {
+            if let Some(ref efd) = self.message_event_fd {
+                efd.signal()
+            } else {
+                Ok(())
+            }
+        }
+
+        #[cfg(feature = "use-semaphore")]
+        {
+            if let Some(ref sem) = self.message_sem {
+                sem.signal()
+            } else {
+                Ok(())
+            }
         }
     }
 
     fn signal_command_event(&self) -> Result<()> {
-        if let Some(ref efd) = self.command_event_fd {
-            efd.signal()
-        } else {
-            Ok(()) // 非创建者无需发送信号
+        #[cfg(feature = "use-eventfd")]
+        {
+            if let Some(ref efd) = self.command_event_fd {
+                efd.signal()
+            } else {
+                Ok(())
+            }
+        }
+
+        #[cfg(feature = "use-semaphore")]
+        {
+            if let Some(ref sem) = self.command_sem {
+                sem.signal()
+            } else {
+                Ok(())
+            }
         }
     }
 }
@@ -498,9 +808,23 @@ impl Drop for SharedRingBuffer {
                 (*self.header).is_destroyed.store(true, Ordering::Release);
             }
 
-            // EventFd 会在 Arc 引用计数为 0 时自动清理
-            self.message_event_fd = None;
-            self.command_event_fd = None;
+            // 条件编译的清理
+            #[cfg(feature = "use-eventfd")]
+            {
+                self.message_event_fd = None;
+                self.command_event_fd = None;
+            }
+
+            #[cfg(feature = "use-semaphore")]
+            {
+                // 销毁共享内存中的信号量
+                unsafe {
+                    sem_destroy(&mut (*self.header).message_sem);
+                    sem_destroy(&mut (*self.header).command_sem);
+                }
+                self.message_sem = None;
+                self.command_sem = None;
+            }
 
             // 删除共享内存文件
             if let Some(path) = self.shmem.get_flink_path() {
@@ -519,116 +843,76 @@ fn calculate_checksum(data: &[u8]) -> u32 {
     data.iter().fold(0u32, |sum, &b| sum.wrapping_add(b as u32))
 }
 
+// =============================================================================
+// 测试代码
+// =============================================================================
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::shared_message::SharedMessage;
-    use std::thread;
 
     #[test]
-    fn test_alignment_calculation() {
-        assert_eq!(align_up(1, 4), 4);
-        assert_eq!(align_up(4, 4), 4);
-        assert_eq!(align_up(5, 4), 8);
-        assert_eq!(align_up(7, 8), 8);
-        assert_eq!(align_up(9, 8), 16);
-    }
+    fn test_conditional_compilation() {
+        println!(
+            "Testing with feature: {}",
+            if cfg!(feature = "use-semaphore") {
+                "semaphore"
+            } else {
+                "eventfd"
+            }
+        );
 
-    #[test]
-    fn test_direct_memory_communication() {
-        let shared_path = "/tmp/test_fixed_buffer";
+        let shared_path = "/tmp/test_conditional_buffer";
         let _ = std::fs::remove_file(shared_path);
 
-        let jwm_buffer = SharedRingBuffer::create(shared_path, None, Some(5000)).unwrap();
-        println!("[JWM] SharedRingBuffer created at '{}'", shared_path);
+        let buffer = SharedRingBuffer::create(shared_path, None, Some(100)).unwrap();
 
-        let egui_thread = thread::spawn(move || {
-            let egui_buffer = SharedRingBuffer::open(shared_path, None).unwrap();
-            println!("[EGUI] Opened SharedRingBuffer.");
+        // 基本功能测试
+        let mut message = SharedMessage::default();
+        message.get_monitor_info_mut().monitor_num = 42;
 
-            for i in 1..=5 {
-                println!("\n[EGUI] Waiting for new message... (timeout 2s)");
-                match egui_buffer.wait_for_message(Some(Duration::from_secs(2))) {
-                    Ok(true) => {
-                        println!("[EGUI] Event received! Reading message(s).");
-                        if let Ok(Some(message)) = egui_buffer.try_read_latest_message() {
-                            println!(
-                                "[EGUI] Received State: client_name = '{}'",
-                                message.get_monitor_info().get_client_name()
-                            );
-                            thread::sleep(Duration::from_millis(10));
-                        }
-                        let command = SharedCommand::view_tag(1 << (i % 9), 0);
-                        println!("[EGUI] Sending command to switch to tag {}", i % 9 + 1);
-                        if let Err(e) = egui_buffer.send_command(command) {
-                            eprintln!("[EGUI] Failed to send command: {}", e);
-                        }
-                    }
-                    Ok(false) => println!("[EGUI] Wait for message timed out."),
-                    Err(e) => {
-                        eprintln!("[EGUI] Wait for message failed: {}", e);
-                        break;
-                    }
-                }
-            }
-        });
+        assert!(buffer.try_write_message(&message).unwrap());
+        assert!(buffer.has_message());
 
-        for i in 0..5 {
-            thread::sleep(Duration::from_millis(300));
-            let mut message = SharedMessage::default();
-            message.get_monitor_info_mut().monitor_num = 1;
-            message
-                .get_monitor_info_mut()
-                .set_client_name(&format!("window-{}", i));
-            println!(
-                "\n[JWM] Writing state for '{}'",
-                message.get_monitor_info().get_client_name()
-            );
-            if let Err(e) = jwm_buffer.try_write_message(&message) {
-                eprintln!("[JWM] Failed to write message: {}", e);
-            }
+        let received = buffer.try_read_latest_message().unwrap().unwrap();
+        assert_eq!(received.get_monitor_info().monitor_num, 42);
 
-            println!("[JWM] Checking for commands... (timeout 10ms)");
-            match jwm_buffer.wait_for_command(Some(Duration::from_millis(10))) {
-                Ok(true) => {
-                    println!("[JWM] Command event received! Processing command(s).");
-                    while let Some(cmd) = jwm_buffer.receive_command() {
-                        println!(
-                            "[JWM] Processed Command: type={:?}, param={}",
-                            cmd.get_command_type(),
-                            cmd.get_parameter()
-                        );
-                        if let crate::shared_message::CommandType::ViewTag = cmd.get_command_type()
-                        {
-                            println!(
-                                "[JWM] ACTION: Switched to tag {}",
-                                cmd.get_parameter().trailing_zeros() + 1
-                            );
-                        }
-                    }
-                }
-                Ok(false) => {}
-                Err(e) => eprintln!("[JWM] Wait for command failed: {}", e),
-            }
-        }
-
-        egui_thread.join().unwrap();
-        println!("[JWM] EGUI thread finished. Test complete.");
+        println!("Conditional compilation test passed!");
     }
 
     #[test]
-    fn test_message_size_and_layout() {
-        println!("MessageSlot size: {}", size_of::<MessageSlot>());
-        println!("MessageSlot align: {}", std::mem::align_of::<MessageSlot>());
-        println!("SharedMessage size: {}", size_of::<SharedMessage>());
-        println!("SharedCommand size: {}", size_of::<SharedCommand>());
+    fn test_performance_comparison() {
+        use std::time::Instant;
 
-        // 验证结构体是按预期对齐的
-        assert!(size_of::<MessageSlot>() >= size_of::<SharedMessage>());
+        let iterations = 1000;
+        let shared_path = "/tmp/perf_test_buffer";
+        let _ = std::fs::remove_file(shared_path);
 
-        // 验证对齐是合理的
-        assert!(std::mem::align_of::<MessageSlot>() >= std::mem::align_of::<u64>());
-        assert!(std::mem::align_of::<SharedCommand>() >= std::mem::align_of::<u64>());
+        let buffer = SharedRingBuffer::create(shared_path, None, Some(0)).unwrap();
+
+        let start = Instant::now();
+        for i in 0..iterations {
+            let mut message = SharedMessage::default();
+            message.get_monitor_info_mut().monitor_num = i;
+            buffer.try_write_message(&message).unwrap();
+
+            let _ = buffer.try_read_latest_message().unwrap();
+        }
+        let duration = start.elapsed();
+
+        println!(
+            "Feature: {}",
+            if cfg!(feature = "use-semaphore") {
+                "semaphore"
+            } else {
+                "eventfd"
+            }
+        );
+        println!("Time for {} iterations: {:?}", iterations, duration);
+        println!(
+            "Average per operation: {:?}",
+            duration / iterations.try_into().unwrap()
+        );
     }
 }
