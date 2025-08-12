@@ -29,7 +29,7 @@ chrono = { version = "0.4", features = ["serde"] }
 font-kit = "0.11"
 
 # 共享内存（原项目依赖）
-shared_structures = { path = "../shared_structures" }
+shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
 egui = "0.31.1"
 egui_plot = "0.32.1"
 eframe = { version = "0.31.1", features = ["persistence"] }
