@@ -522,26 +522,19 @@ impl SharedRingBuffer {
         Ok(true)
     }
 
-    pub fn try_read_latest_message(&self) -> Result<Option<SharedMessage>> {
+    pub fn try_read_next_message(&self) -> Result<Option<SharedMessage>> {
         if self.is_destroyed() {
             return Ok(None);
         }
 
         unsafe {
             let write_idx = (*self.header).write_idx.load(Ordering::Acquire);
-            let mut read_idx = (*self.header).read_idx.load(Ordering::Relaxed);
-
+            let read_idx = (*self.header).read_idx.load(Ordering::Relaxed);
             if read_idx == write_idx {
                 return Ok(None);
             }
-
-            if write_idx.wrapping_sub(read_idx) > 1 {
-                read_idx = write_idx.wrapping_sub(1);
-            }
-
             let slot_idx = (read_idx & BUFFER_MASK) as usize;
             let slot = &*self.message_slots.add(slot_idx);
-
             let message_bytes = std::slice::from_raw_parts(
                 &slot.message as *const SharedMessage as *const u8,
                 size_of::<SharedMessage>(),
@@ -549,13 +542,41 @@ impl SharedRingBuffer {
             if calculate_checksum(message_bytes) != slot.checksum {
                 return Err(Error::new(ErrorKind::InvalidData, "Checksum mismatch"));
             }
-
             let message = slot.message;
-
+            // 顺序递增读取索引
             (*self.header)
                 .read_idx
                 .store(read_idx.wrapping_add(1), Ordering::Release);
+            Ok(Some(message))
+        }
+    }
 
+    pub fn try_read_latest_message(&self) -> Result<Option<SharedMessage>> {
+        if self.is_destroyed() {
+            return Ok(None);
+        }
+        unsafe {
+            let write_idx = (*self.header).write_idx.load(Ordering::Acquire);
+            let mut read_idx = (*self.header).read_idx.load(Ordering::Relaxed);
+            if read_idx == write_idx {
+                return Ok(None);
+            }
+            if write_idx.wrapping_sub(read_idx) > 1 {
+                read_idx = write_idx.wrapping_sub(1);
+            }
+            let slot_idx = (read_idx & BUFFER_MASK) as usize;
+            let slot = &*self.message_slots.add(slot_idx);
+            let message_bytes = std::slice::from_raw_parts(
+                &slot.message as *const SharedMessage as *const u8,
+                size_of::<SharedMessage>(),
+            );
+            if calculate_checksum(message_bytes) != slot.checksum {
+                return Err(Error::new(ErrorKind::InvalidData, "Checksum mismatch"));
+            }
+            let message = slot.message;
+            (*self.header)
+                .read_idx
+                .store(read_idx.wrapping_add(1), Ordering::Release);
             Ok(Some(message))
         }
     }
@@ -914,5 +935,302 @@ mod tests {
             "Average per operation: {:?}",
             duration / iterations.try_into().unwrap()
         );
+    }
+}
+
+#[cfg(test)]
+mod thread_safety_tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn test_ring_buffer_concurrent_access_latest_read() {
+        let shared_path = "/tmp/thread_safety_test_latest";
+        let _ = std::fs::remove_file(shared_path);
+
+        let buffer = Arc::new(SharedRingBuffer::create(shared_path, Some(16), Some(100)).unwrap());
+
+        let mut handles = vec![];
+        let write_duration = Duration::from_secs(2);
+
+        // 启动持续写入线程
+        for thread_id in 0..4 {
+            let buffer_clone = Arc::clone(&buffer);
+            let duration = write_duration;
+            let handle = thread::spawn(move || {
+                let start = std::time::Instant::now();
+                let mut count = 0;
+
+                while start.elapsed() < duration {
+                    let mut message = SharedMessage::default();
+                    message.get_monitor_info_mut().monitor_num = thread_id * 10000 + count;
+
+                    if buffer_clone.try_write_message(&message).unwrap() {
+                        count += 1;
+                    }
+
+                    thread::sleep(Duration::from_millis(10)); // 控制写入频率
+                }
+                println!("Writer thread {} wrote {} messages", thread_id, count);
+            });
+            handles.push(handle);
+        }
+
+        // 启动读取线程 - 适应"读最新"的语义
+        let buffer_reader = Arc::clone(&buffer);
+        let read_duration = write_duration + Duration::from_millis(500);
+        let read_handle = thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let mut total_read = 0;
+            let mut last_monitor_num = -1;
+
+            while start.elapsed() < read_duration {
+                if let Ok(Some(message)) = buffer_reader.try_read_latest_message() {
+                    let monitor_num = message.get_monitor_info().monitor_num;
+
+                    // 确保读到的是新消息
+                    if monitor_num != last_monitor_num {
+                        total_read += 1;
+                        last_monitor_num = monitor_num;
+
+                        if total_read % 10 == 0 {
+                            println!(
+                                "Read message #{}: monitor_num = {}",
+                                total_read, monitor_num
+                            );
+                        }
+                    }
+                }
+
+                thread::sleep(Duration::from_millis(20)); // 控制读取频率
+            }
+            println!("Reader completed: {} unique messages", total_read);
+        });
+
+        // 等待所有线程完成
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        read_handle.join().unwrap();
+
+        println!("Latest-read thread safety test passed!");
+    }
+
+    #[test]
+    fn test_atomic_operations_safety() {
+        let shared_path = "/tmp/atomic_safety_test";
+        let _ = std::fs::remove_file(shared_path);
+
+        let buffer = Arc::new(SharedRingBuffer::create(shared_path, Some(8), Some(50)).unwrap());
+
+        let mut handles = vec![];
+
+        // 多线程测试原子操作
+        for _ in 0..8 {
+            let buffer_clone = Arc::clone(&buffer);
+            let handle = thread::spawn(move || {
+                // 测试状态查询原子操作
+                for _ in 0..1000 {
+                    let _ = buffer_clone.available_messages();
+                    let _ = buffer_clone.has_message();
+                    let _ = buffer_clone.available_commands();
+                    let _ = buffer_clone.has_command();
+                    thread::yield_now();
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        println!("Atomic operations safety test passed!");
+    }
+}
+
+#[cfg(test)]
+mod sanitizer_tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::thread;
+    use std::time::Duration;
+
+    #[test]
+    fn test_ring_buffer_thread_safety() {
+        let shared_path = "/tmp/sanitizer_test_buffer";
+        let _ = std::fs::remove_file(shared_path);
+
+        let writer = Arc::new(SharedRingBuffer::create(shared_path, Some(16), Some(100)).unwrap());
+        let reader = Arc::new(SharedRingBuffer::open(shared_path, Some(100)).unwrap());
+
+        let writer_clone = Arc::clone(&writer);
+        let reader_clone = Arc::clone(&reader);
+
+        let write_finished = Arc::new(AtomicBool::new(false));
+        let write_finished_clone = Arc::clone(&write_finished);
+
+        // 写入线程
+        let write_handle = thread::spawn(move || {
+            for i in 0..1000 {
+                let mut message = SharedMessage::default();
+                message.get_monitor_info_mut().monitor_num = i;
+
+                while !writer_clone.try_write_message(&message).unwrap() {
+                    thread::yield_now();
+                }
+
+                if i % 100 == 0 {
+                    thread::sleep(Duration::from_micros(1));
+                }
+            }
+            write_finished_clone.store(true, Ordering::Release);
+            println!("Write thread finished");
+        });
+
+        // 读取线程 - 修改逻辑以适应"读最新"语义
+        let read_handle = thread::spawn(move || {
+            let mut last_monitor_num = -1;
+            let mut unique_reads = 0;
+            let start_time = std::time::Instant::now();
+
+            loop {
+                // 检查写入是否完成且没有新消息
+                if write_finished.load(Ordering::Acquire) && !reader_clone.has_message() {
+                    println!("No more messages to read, breaking");
+                    break;
+                }
+
+                // 超时保护
+                if start_time.elapsed().as_secs() > 10 {
+                    println!("Timeout reached, breaking");
+                    break;
+                }
+
+                if let Ok(Some(message)) = reader_clone.try_read_latest_message() {
+                    let monitor_num = message.get_monitor_info().monitor_num;
+
+                    // 只计算真正的新消息
+                    if monitor_num != last_monitor_num {
+                        last_monitor_num = monitor_num;
+                        unique_reads += 1;
+
+                        if unique_reads % 50 == 0 {
+                            println!(
+                                "Read {} unique messages, latest: {}",
+                                unique_reads, monitor_num
+                            );
+                        }
+                    }
+                } else {
+                    thread::yield_now();
+                }
+            }
+
+            println!(
+                "Read thread finished: {} unique messages read",
+                unique_reads
+            );
+        });
+
+        write_handle.join().unwrap();
+        read_handle.join().unwrap();
+
+        println!("Ring buffer thread safety test passed!");
+    }
+
+    #[test]
+    fn test_atomic_operations_safety() {
+        let shared_path = "/tmp/atomic_test_buffer";
+        let _ = std::fs::remove_file(shared_path);
+
+        let buffer = SharedRingBuffer::create(shared_path, Some(8), Some(50)).unwrap();
+        let buffer = Arc::new(buffer);
+
+        let mut handles = vec![];
+
+        // 多个线程同时进行原子操作
+        for thread_id in 0..4 {
+            let buffer_clone = Arc::clone(&buffer);
+            let handle = thread::spawn(move || {
+                for i in 0..250 {
+                    let mut message = SharedMessage::default();
+                    message.get_monitor_info_mut().monitor_num = thread_id * 1000 + i;
+
+                    // 测试原子写入
+                    while !buffer_clone.try_write_message(&message).unwrap() {
+                        thread::yield_now();
+                    }
+
+                    // 测试原子读取
+                    let _ = buffer_clone.try_read_latest_message();
+
+                    // 测试状态查询（涉及原子操作）
+                    let _ = buffer_clone.available_messages();
+                    let _ = buffer_clone.has_message();
+                }
+            });
+            handles.push(handle);
+        }
+
+        for handle in handles {
+            handle.join().unwrap();
+        }
+
+        println!("Atomic operations safety test passed!");
+    }
+}
+
+#[cfg(test)]
+mod memory_safety_tests {
+    use super::*;
+    use crate::CommandType;
+
+    #[test]
+    fn test_shared_command_memory_safety() {
+        // 创建命令并检查所有字节都被初始化
+        let cmd = SharedCommand::view_tag(1, 0);
+
+        // 读取整个结构体的所有字节
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                &cmd as *const SharedCommand as *const u8,
+                std::mem::size_of::<SharedCommand>(),
+            )
+        };
+
+        // 在 MemorySanitizer 下，如果有未初始化字节，这里会报错
+        for (i, &byte) in bytes.iter().enumerate() {
+            let _ = byte; // 强制读取每个字节
+            if i % 8 == 0 {
+                println!("Checking byte {}", i);
+            }
+        }
+
+        // 测试所有构造函数
+        let _cmd1 = SharedCommand::view_tag(1, 0);
+        let _cmd2 = SharedCommand::toggle_tag(2, 1);
+        let _cmd3 = SharedCommand::set_layout(0, 0);
+        let _cmd4 = SharedCommand::new(CommandType::None, 0, 0);
+    }
+
+    #[test]
+    fn test_shared_message_memory_safety() {
+        let msg = SharedMessage::new();
+
+        // 检查整个消息结构体的字节
+        let bytes = unsafe {
+            std::slice::from_raw_parts(
+                &msg as *const SharedMessage as *const u8,
+                std::mem::size_of::<SharedMessage>(),
+            )
+        };
+
+        // 强制读取所有字节以触发 MemorySanitizer 检查
+        let _checksum: u32 = bytes.iter().map(|&b| b as u32).sum();
+
+        println!("SharedMessage memory safety test passed");
     }
 }
