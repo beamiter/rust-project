@@ -265,6 +265,12 @@ impl Config {
                 function: "spawn".to_string(),
                 argument: ArgumentConfig::StringVec(Self::get_termcmd()),
             },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "b".to_string(),
+                function: "togglebar".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
             // 窗口焦点控制
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
@@ -733,6 +739,7 @@ impl Config {
             "setlayout" => Some(Jwm::setlayout),
             "togglefloating" => Some(Jwm::togglefloating),
             "togglefullscr" => Some(Jwm::togglefullscr),
+            "togglebar" => Some(Jwm::togglebar),
             "setmfact" => Some(Jwm::setmfact),
             "setcfact" => Some(Jwm::setcfact),
             "incnmaster" => Some(Jwm::incnmaster),

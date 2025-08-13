@@ -794,6 +794,7 @@ pub struct Jwm {
     pub status_bar_shmem: HashMap<i32, SharedRingBuffer>,
     pub status_bar_child: HashMap<i32, Child>,
     pub message: SharedMessage,
+    pub show_bar: bool,
 
     // 状态栏专用管理
     pub status_bar_clients: HashMap<i32, Rc<RefCell<Client>>>, // monitor_id -> statusbar_client
@@ -880,6 +881,7 @@ impl Jwm {
             depth: 0,
             color_map: 0,
             sender,
+            show_bar: true,
             status_bar_shmem: HashMap::new(),
             status_bar_child: HashMap::new(),
             message: SharedMessage::default(),
@@ -3006,6 +3008,22 @@ impl Jwm {
             if c.is_some() {
                 self.focus(c);
                 self.restack(self.sel_mon.clone());
+            }
+        }
+    }
+
+    pub fn togglebar(&mut self, arg: *const Arg) {
+        info!("[togglebar]");
+        unsafe {
+            if let Arg::I(_) = *arg {
+                self.show_bar = !self.show_bar;
+                let mon_num = if let Some(sel_mon_ref) = self.sel_mon.as_ref() {
+                    Some(sel_mon_ref.borrow().num)
+                } else {
+                    None
+                };
+                info!("[togglebar] {}", self.show_bar);
+                self.mark_bar_update_needed(mon_num);
             }
         }
     }
@@ -5405,7 +5423,7 @@ impl Jwm {
                 statusbar_borrow.h,
                 CONFIG.status_bar_pad()
             );
-            return offset;
+            return offset.max(0);
         }
 
         0
@@ -6352,7 +6370,8 @@ impl Jwm {
             let mon_borrow = mon_rc.borrow();
             // info!("[update_bar_message_for_monitor], {}", mon_borrow);
             monitor_info_for_message.monitor_x = mon_borrow.w_x;
-            monitor_info_for_message.monitor_y = mon_borrow.w_y;
+            let offscreen_offset = if self.show_bar { 0 } else { -1000 };
+            monitor_info_for_message.monitor_y = mon_borrow.w_y + offscreen_offset;
             monitor_info_for_message.monitor_width = mon_borrow.w_w;
             monitor_info_for_message.monitor_height = mon_borrow.w_h;
             monitor_info_for_message.monitor_num = mon_borrow.num;
