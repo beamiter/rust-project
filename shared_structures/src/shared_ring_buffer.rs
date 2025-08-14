@@ -272,6 +272,37 @@ unsafe impl Send for SharedRingBuffer {}
 unsafe impl Sync for SharedRingBuffer {}
 
 impl SharedRingBuffer {
+    pub fn create_shared_ring_buffer(shared_path: &String) -> Option<SharedRingBuffer> {
+        let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
+            log::warn!("No shared path provided, running without shared memory");
+            None
+        } else {
+            match SharedRingBuffer::open(&shared_path, None) {
+                Ok(shared_buffer) => {
+                    log::info!("Successfully opened shared ring buffer: {}", shared_path);
+                    Some(shared_buffer)
+                }
+                Err(e) => {
+                    log::warn!(
+                        "Failed to open shared ring buffer: {}, attempting to create new one",
+                        e
+                    );
+                    match SharedRingBuffer::create(&shared_path, None, None) {
+                        Ok(shared_buffer) => {
+                            log::info!("Created new shared ring buffer: {}", shared_path);
+                            Some(shared_buffer)
+                        }
+                        Err(create_err) => {
+                            log::error!("Failed to create shared ring buffer: {}", create_err);
+                            None
+                        }
+                    }
+                }
+            }
+        };
+        return shared_buffer_opt;
+    }
+
     pub fn create(
         path: &str,
         buffer_size: Option<usize>,

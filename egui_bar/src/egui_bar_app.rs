@@ -87,33 +87,7 @@ impl EguiBarApp {
             Self::periodic_update_task(egui_ctx_clone).await;
         });
 
-        let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
-            warn!("No shared path provided, running without shared memory");
-            None
-        } else {
-            match SharedRingBuffer::open(&shared_path, None) {
-                Ok(shared_buffer) => {
-                    info!("Successfully opened shared ring buffer: {}", shared_path);
-                    Some(shared_buffer)
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to open shared ring buffer: {}, attempting to create new one",
-                        e
-                    );
-                    match SharedRingBuffer::create(&shared_path, None, None) {
-                        Ok(shared_buffer) => {
-                            info!("Created new shared ring buffer: {}", shared_path);
-                            Some(shared_buffer)
-                        }
-                        Err(create_err) => {
-                            error!("Failed to create shared ring buffer: {}", create_err);
-                            None
-                        }
-                    }
-                }
-            }
-        };
+        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(shared_path);
 
         Ok(Self {
             state,
@@ -131,34 +105,7 @@ impl EguiBarApp {
         info!("Starting shared memory worker task");
 
         // 尝试打开或创建共享环形缓冲区
-        let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
-            warn!("No shared path provided, running without shared memory");
-            None
-        } else {
-            match SharedRingBuffer::open(&shared_path, None) {
-                Ok(shared_buffer) => {
-                    info!("Successfully opened shared ring buffer: {}", shared_path);
-                    Some(shared_buffer)
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to open shared ring buffer: {}, attempting to create new one",
-                        e
-                    );
-                    match SharedRingBuffer::create(&shared_path, None, None) {
-                        Ok(shared_buffer) => {
-                            info!("Created new shared ring buffer: {}", shared_path);
-                            Some(shared_buffer)
-                        }
-                        Err(create_err) => {
-                            error!("Failed to create shared ring buffer: {}", create_err);
-                            None
-                        }
-                    }
-                }
-            }
-        };
-
+        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(shared_path);
         let mut prev_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

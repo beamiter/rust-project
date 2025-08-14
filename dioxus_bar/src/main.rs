@@ -66,11 +66,7 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 }
 
 // 优化的共享内存工作线程 - 降低CPU使用率
-fn shared_memory_worker(
-    shared_path: String,
-    message_sender: mpsc::Sender<SharedMessage>,
-    command_receiver: mpsc::Receiver<SharedCommand>,
-) {
+fn shared_memory_worker(shared_path: String, message_sender: mpsc::Sender<SharedMessage>) {
     info!("Starting shared memory worker thread");
 
     let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
@@ -115,25 +111,6 @@ fn shared_memory_worker(
     loop {
         let loop_start = Instant::now();
 
-        let mut has_commands = false;
-        while let Ok(cmd) = command_receiver.try_recv() {
-            has_commands = true;
-            info!("Receive command: {:?} in channel", cmd);
-            if let Some(ref shared_buffer) = shared_buffer_opt {
-                match shared_buffer.send_command(cmd) {
-                    Ok(true) => {
-                        info!("Sent command: {:?} by shared_buffer", cmd);
-                    }
-                    Ok(false) => {
-                        warn!("Command buffer full, command dropped");
-                    }
-                    Err(e) => {
-                        error!("Failed to send command: {}", e);
-                    }
-                }
-            }
-        }
-
         if let Some(ref shared_buffer) = shared_buffer_opt {
             match shared_buffer.try_read_latest_message() {
                 Ok(Some(message)) => {
@@ -171,7 +148,7 @@ fn shared_memory_worker(
         }
 
         let mut sleep_duration = POLL_INTERVAL;
-        if !has_commands && last_message_read.elapsed() > MAX_IDLE_TIME {
+        if last_message_read.elapsed() > MAX_IDLE_TIME {
             sleep_duration = Duration::from_millis(10);
         }
 
@@ -185,30 +162,28 @@ fn shared_memory_worker(
 }
 
 fn send_tag_command(
-    command_sender: &mpsc::Sender<SharedCommand>,
+    shared_buffer_opt: &Option<SharedRingBuffer>,
     monitor_id: i32,
     active_tab: usize,
     is_view: bool,
 ) {
     let tag_bit = 1 << active_tab;
-    let command = if is_view {
+    let cmd = if is_view {
         SharedCommand::view_tag(tag_bit, monitor_id)
     } else {
         SharedCommand::toggle_tag(tag_bit, monitor_id)
     };
-
-    match command_sender.send(command) {
-        Ok(_) => {
-            let action = if is_view { "ViewTag" } else { "ToggleTag" };
-            log::info!(
-                "Sent {} command for tag {} in channel",
-                action,
-                active_tab + 1
-            );
-        }
-        Err(e) => {
-            let action = if is_view { "ViewTag" } else { "ToggleTag" };
-            log::error!("Failed to send {} command: {}", action, e);
+    if let Some(shared_buffer) = shared_buffer_opt {
+        match shared_buffer.send_command(cmd) {
+            Ok(true) => {
+                info!("Sent command: {:?} by shared_buffer", cmd);
+            }
+            Ok(false) => {
+                warn!("Command buffer full, command dropped");
+            }
+            Err(e) => {
+                error!("Failed to send command: {}", e);
+            }
         }
     }
 }
@@ -572,33 +547,8 @@ fn TimeDisplay(show_seconds: bool) -> Element {
 
 #[component]
 fn App() -> Element {
-    // 在组件初始化时立即检查窗口状态
-    use_effect(move || {
-        info!("=== App Component Initialization ===");
-        // 立即检查窗口状态
-        spawn(async move {
-            tokio::time::sleep(Duration::from_millis(10)).await; // 等待一小段时间
-            let window = use_window();
-            let scale_factor = window.scale_factor();
-            let inner_size = window.inner_size();
-            let pos = window.outer_position().unwrap_or_default();
-            info!(
-                "App init - Inner size: {}x{}",
-                inner_size.width, inner_size.height
-            );
-            info!("App init - Position: ({}, {})", pos.x, pos.y);
-            info!("App init - Scale factor: {}", scale_factor);
-            info!("App init - Is decorated: {}", window.is_decorated());
-            info!("App init - Is resizable: {}", window.is_resizable());
-            info!("App init - Is maximized: {}", window.is_maximized());
-            // 计算逻辑大小
-            let logical_width = inner_size.width as f64 / scale_factor;
-            let logical_height = inner_size.height as f64 / scale_factor;
-            info!(
-                "App init - Logical size: {:.1}x{:.1}",
-                logical_width, logical_height
-            );
-        });
+    let shared_path = std::env::args().nth(1).unwrap_or_else(|| {
+        std::env::var("SHARED_MEMORY_PATH").unwrap_or_else(|_| "/dev/shm/monitor_0".to_string())
     });
 
     // 按钮状态数组
@@ -609,7 +559,11 @@ fn App() -> Element {
     let mut pressed_button = use_signal(|| None::<usize>);
     let mut monitor_num = use_signal(|| None::<i32>);
     let mut layout_symbol = use_signal(|| " ? ".to_string());
-    let mut command_sender = use_signal(|| None::<mpsc::Sender<SharedCommand>>);
+    let mut shared_buffer = use_signal(|| None::<SharedRingBuffer>);
+    let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
+    if shared_buffer_opt.is_some() {
+        shared_buffer.set(shared_buffer_opt);
+    }
 
     // 系统信息监控（保持原有逻辑）
     use_effect(move || {
@@ -643,18 +597,12 @@ fn App() -> Element {
     // 共享内存通信逻辑
     use_effect(move || {
         let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
-        let (command_sender_in, command_receiver) = mpsc::channel::<SharedCommand>();
-        command_sender.set(Some(command_sender_in));
-
-        let shared_path = std::env::args().nth(1).unwrap_or_else(|| {
-            std::env::var("SHARED_MEMORY_PATH").unwrap_or_else(|_| "/dev/shm/monitor_0".to_string())
-        });
 
         info!("Using shared memory path: {}", shared_path);
 
         let shared_path_clone = shared_path.clone();
         thread::spawn(move || {
-            shared_memory_worker(shared_path_clone, message_sender, command_receiver);
+            shared_memory_worker(shared_path_clone, message_sender);
         });
 
         spawn(async move {
@@ -773,9 +721,8 @@ fn App() -> Element {
         info!("Button {} released", index);
         pressed_button.set(None);
         if let Some(monitor_num) = monitor_num() {
-            if let Some(command_sender) = command_sender() {
-                send_tag_command(&command_sender, monitor_num, index, true);
-            }
+            let shared_buffer_opt = shared_buffer.read();
+            send_tag_command(&shared_buffer_opt, monitor_num, index, true);
         }
     };
 
