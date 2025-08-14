@@ -13,7 +13,6 @@ use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::{
     env,
     process::Command,
-    sync::mpsc,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -66,7 +65,10 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 }
 
 // 优化的共享内存工作线程 - 降低CPU使用率
-fn shared_memory_worker(shared_path: String, message_sender: mpsc::Sender<SharedMessage>) {
+fn shared_memory_worker(
+    shared_path: String,
+    message_sender: tokio::sync::mpsc::Sender<SharedMessage>,
+) {
     info!("Starting shared memory worker thread");
     let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
     let mut prev_timestamp = SystemTime::now()
@@ -80,7 +82,7 @@ fn shared_memory_worker(shared_path: String, message_sender: mpsc::Sender<Shared
                     if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
                         if prev_timestamp != message.timestamp.into() {
                             prev_timestamp = message.timestamp.into();
-                            if let Err(e) = message_sender.send(message) {
+                            if let Err(e) = message_sender.blocking_send(message) {
                                 error!("Failed to send message: {}", e);
                                 break;
                             }
@@ -507,11 +509,9 @@ fn App() -> Element {
     use_effect(move || {
         spawn(async move {
             let (sys_sender, sys_receiver) = std::sync::mpsc::channel();
-
             thread::spawn(move || {
                 let mut monitor = SystemMonitor::new(30);
                 monitor.set_update_interval(Duration::from_millis(2000));
-
                 loop {
                     monitor.update_if_needed();
                     if let Some(snapshot) = monitor.get_snapshot() {
@@ -522,7 +522,6 @@ fn App() -> Element {
                     thread::sleep(Duration::from_millis(500));
                 }
             });
-
             loop {
                 if let Ok(snapshot) = sys_receiver.try_recv() {
                     system_snapshot.set(Some(snapshot));
@@ -534,7 +533,8 @@ fn App() -> Element {
 
     // 共享内存通信逻辑
     use_effect(move || {
-        let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
+        let (message_sender, mut message_receiver) =
+            tokio::sync::mpsc::channel::<SharedMessage>(100);
         info!("Using shared memory path: {}", shared_path);
         let shared_path_clone = shared_path.clone();
         thread::spawn(move || {
@@ -542,100 +542,86 @@ fn App() -> Element {
         });
 
         spawn(async move {
-            let mut interval = tokio::time::interval(Duration::from_millis(20));
             // 获取窗口控制句柄
             let window = use_window();
             let scale_factor = window.scale_factor();
             let mut prev_show_bar = true;
-            loop {
-                interval.tick().await;
-                let mut latest_message = None;
-                let mut message_count = 0;
-                while let Ok(message) = message_receiver.try_recv() {
-                    latest_message = Some(message);
-                    message_count += 1;
-                    if message_count >= 5 {
-                        break;
+
+            // 异步等待消息，无需轮询
+            while let Some(shared_message) = message_receiver.recv().await {
+                let mut new_states = vec![ButtonStateData::default(); BUTTONS.len()];
+                let monitor_info = shared_message.monitor_info;
+                layout_symbol.set(
+                    monitor_info.get_ltsymbol()
+                        + format!(" s: {:.2}", scale_factor).as_str()
+                        + format!(", m: {}", monitor_info.monitor_num).as_str(),
+                );
+                monitor_num.set(Some(monitor_info.monitor_num));
+
+                // 更新按钮状态
+                let mut current_active_index = 0;
+                for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
+                    if index < new_states.len() {
+                        new_states[index] = ButtonStateData {
+                            is_filtered: tag_status.is_filled,
+                            is_selected: tag_status.is_selected,
+                            is_urg: tag_status.is_urg,
+                            is_occ: tag_status.is_occ,
+                        };
+                        if tag_status.is_filled {
+                            current_active_index = index;
+                        }
                     }
                 }
-                if let Some(shared_message) = latest_message {
-                    let now = Instant::now();
-                    if now.duration_since(last_update()) >= Duration::from_millis(20) {
-                        let mut new_states = vec![ButtonStateData::default(); BUTTONS.len()];
-                        let monitor_info = shared_message.monitor_info;
-                        layout_symbol.set(
-                            monitor_info.get_ltsymbol()
-                                + format!(" s: {:.2}", scale_factor).as_str()
-                                + format!(", m: {}", monitor_info.monitor_num).as_str(),
-                        );
-                        monitor_num.set(Some(monitor_info.monitor_num));
+                let show_bar = *monitor_info
+                    .show_bars
+                    .get(current_active_index)
+                    .unwrap_or(&true);
 
-                        // 更新按钮状态
-                        let mut current_active_index = 0;
-                        for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
-                            if index < new_states.len() {
-                                new_states[index] = ButtonStateData {
-                                    is_filtered: tag_status.is_filled,
-                                    is_selected: tag_status.is_selected,
-                                    is_urg: tag_status.is_urg,
-                                    is_occ: tag_status.is_occ,
-                                };
-                                if tag_status.is_filled {
-                                    current_active_index = index;
-                                }
-                            }
-                        }
-                        let show_bar = *monitor_info
-                            .show_bars
-                            .get(current_active_index)
-                            .unwrap_or(&true);
+                // 调整前状态
+                let before_size = window.inner_size();
+                let before_pos = window.outer_position().unwrap_or_default();
+                let target_x = monitor_info.monitor_x;
+                let target_y = monitor_info.monitor_y;
+                let target_width = monitor_info.monitor_width;
+                let target_height: i32 = 42;
+                // 检查是否需要调整窗口
+                if (before_pos.x - target_x).abs() > 100
+                    || (before_pos.y - target_y).abs() > 100
+                    || (before_size.width as i32 - monitor_info.monitor_width).abs() > 10
+                    || (before_size.height as i32 - target_height).abs() > 10
+                    || (prev_show_bar != show_bar)
+                {
+                    info!(
+                        "Before: size={}x{}, pos=({}, {})",
+                        before_size.width, before_size.height, before_pos.x, before_pos.y
+                    );
+                    info!(
+                        "Target: size={}x{}, pos=({}, {})",
+                        target_width, target_height, target_x, target_y
+                    );
+                    window.set_outer_position(LogicalPosition::new(
+                        target_x as f64,
+                        target_y as f64 + if show_bar { 0.0 } else { -1000.0 },
+                    ));
+                    window.set_inner_size(LogicalSize::new(
+                        target_width as f64,
+                        target_height as f64,
+                    ));
+                    // 在窗口调整代码中添加更详细的调试信息
+                    info!("=== Window Adjustment Debug ===");
+                    info!("Window decorations: {}", window.is_decorated());
+                    info!("Window resizable: {}", window.is_resizable());
+                    info!("Window maximized: {}", window.is_maximized());
+                    info!("Window minimized: {}", window.is_minimized());
+                    info!("Scale factor: {}", window.scale_factor());
+                }
+                prev_show_bar = show_bar;
 
-                        // 调整前状态
-                        let before_size = window.inner_size();
-                        let before_pos = window.outer_position().unwrap_or_default();
-                        let target_x = monitor_info.monitor_x;
-                        let target_y = monitor_info.monitor_y;
-                        let target_width = monitor_info.monitor_width;
-                        let target_height: i32 = 42;
-                        // 检查是否需要调整窗口
-                        if (before_pos.x - target_x).abs() > 100
-                            || (before_pos.y - target_y).abs() > 100
-                            || (before_size.width as i32 - monitor_info.monitor_width).abs() > 10
-                            || (before_size.height as i32 - target_height).abs() > 10
-                            || (prev_show_bar != show_bar)
-                        {
-                            info!(
-                                "Before: size={}x{}, pos=({}, {})",
-                                before_size.width, before_size.height, before_pos.x, before_pos.y
-                            );
-                            info!(
-                                "Target: size={}x{}, pos=({}, {})",
-                                target_width, target_height, target_x, target_y
-                            );
-                            window.set_outer_position(LogicalPosition::new(
-                                target_x as f64,
-                                target_y as f64 + if show_bar { 0.0 } else { -1000.0 },
-                            ));
-                            window.set_inner_size(LogicalSize::new(
-                                target_width as f64,
-                                target_height as f64,
-                            ));
-                            // 在窗口调整代码中添加更详细的调试信息
-                            info!("=== Window Adjustment Debug ===");
-                            info!("Window decorations: {}", window.is_decorated());
-                            info!("Window resizable: {}", window.is_resizable());
-                            info!("Window maximized: {}", window.is_maximized());
-                            info!("Window minimized: {}", window.is_minimized());
-                            info!("Scale factor: {}", window.scale_factor());
-                        }
-                        prev_show_bar = show_bar;
-
-                        let need_update_button_states = { *button_states.read() != new_states };
-                        if need_update_button_states {
-                            button_states.set(new_states);
-                            last_update.set(now);
-                        }
-                    }
+                let need_update_button_states = { *button_states.read() != new_states };
+                if need_update_button_states {
+                    button_states.set(new_states);
+                    last_update.set(Instant::now());
                 }
             }
         });
