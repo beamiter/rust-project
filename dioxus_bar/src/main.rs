@@ -580,13 +580,11 @@ fn App() -> Element {
             tokio::time::sleep(Duration::from_millis(10)).await; // 等待一小段时间
             let window = use_window();
             let scale_factor = window.scale_factor();
-            let size = window.inner_size();
-            let outer_size = window.outer_size();
+            let inner_size = window.inner_size();
             let pos = window.outer_position().unwrap_or_default();
-            info!("App init - Inner size: {}x{}", size.width, size.height);
             info!(
-                "App init - Outer size: {}x{}",
-                outer_size.width, outer_size.height
+                "App init - Inner size: {}x{}",
+                inner_size.width, inner_size.height
             );
             info!("App init - Position: ({}, {})", pos.x, pos.y);
             info!("App init - Scale factor: {}", scale_factor);
@@ -594,18 +592,14 @@ fn App() -> Element {
             info!("App init - Is resizable: {}", window.is_resizable());
             info!("App init - Is maximized: {}", window.is_maximized());
             // 计算逻辑大小
-            let logical_width = size.width as f64 / scale_factor;
-            let logical_height = size.height as f64 / scale_factor;
+            let logical_width = inner_size.width as f64 / scale_factor;
+            let logical_height = inner_size.height as f64 / scale_factor;
             info!(
                 "App init - Logical size: {:.1}x{:.1}",
                 logical_width, logical_height
             );
         });
     });
-
-    // 获取窗口控制句柄
-    let window = use_window();
-    let scale_factor = window.scale_factor();
 
     // 按钮状态数组
     let mut button_states = use_signal(|| vec![ButtonStateData::default(); BUTTONS.len()]);
@@ -616,48 +610,6 @@ fn App() -> Element {
     let mut monitor_num = use_signal(|| None::<i32>);
     let mut layout_symbol = use_signal(|| " ? ".to_string());
     let mut command_sender = use_signal(|| None::<mpsc::Sender<SharedCommand>>);
-
-    // 使用 Signal 来触发窗口调整
-    let mut window_adjustment_trigger = use_signal(|| None::<[f32; 4]>);
-
-    // 窗口调整 effect - 独立的 effect 监听调整触发器
-    use_effect(move || {
-        if let Some(geometry) = window_adjustment_trigger() {
-            let [x, y, width, _height] = geometry;
-            // 在窗口调整代码中添加更详细的调试信息
-            info!("=== Window Adjustment Debug ===");
-            info!("Target: x={}, y={}, width={}", x, y, width);
-            info!("Window decorations: {}", window.is_decorated());
-            info!("Window resizable: {}", window.is_resizable());
-            info!("Window maximized: {}", window.is_maximized());
-            info!("Window minimized: {}", window.is_minimized());
-            info!("Scale factor: {}", window.scale_factor());
-
-            // 调整前状态
-            let before_size = window.inner_size();
-            let before_pos = window.outer_position().unwrap_or_default();
-            info!(
-                "Before: size={}x{}, pos=({}, {})",
-                before_size.width, before_size.height, before_pos.x, before_pos.y
-            );
-
-            // 执行调整
-            window.set_outer_position(LogicalPosition::new(x as f64, y as f64));
-            window.set_inner_size(LogicalSize::new(width as f64, 42.0));
-
-            let after_size = window.inner_size();
-            let after_pos = window.outer_position().unwrap_or_default();
-            info!(
-                "After: size={}x{}, pos=({}, {})",
-                after_size.width, after_size.height, after_pos.x, after_pos.y
-            );
-
-            // 清除触发器
-            window_adjustment_trigger.set(None);
-        } else {
-            info!("window adjstment idle");
-        }
-    });
 
     // 系统信息监控（保持原有逻辑）
     use_effect(move || {
@@ -707,7 +659,9 @@ fn App() -> Element {
 
         spawn(async move {
             let mut interval = tokio::time::interval(Duration::from_millis(20));
-            let mut should_adjust_window = true;
+            // 获取窗口控制句柄
+            let window = use_window();
+            let scale_factor = window.scale_factor();
 
             loop {
                 interval.tick().await;
@@ -736,25 +690,43 @@ fn App() -> Element {
                                 + format!(", m: {}", monitor_info.monitor_num).as_str(),
                         );
                         monitor_num.set(Some(monitor_info.monitor_num));
-                        let new_monitor_geometry = [
-                            monitor_info.monitor_x as f32,
-                            monitor_info.monitor_y as f32,
-                            monitor_info.monitor_width as f32,
-                            monitor_info.monitor_height as f32,
-                        ];
 
+                        // 调整前状态
+                        let before_size = window.inner_size();
+                        let before_pos = window.outer_position().unwrap_or_default();
+                        let target_x = monitor_info.monitor_x;
+                        let target_y = monitor_info.monitor_y;
+                        let target_width = monitor_info.monitor_width;
+                        let target_height: i32 = 42;
                         // 检查是否需要调整窗口
-                        if let Some(current_geometry) = window_adjustment_trigger() {
-                            if current_geometry == new_monitor_geometry {
-                                should_adjust_window = false;
-                            }
-                        }
-
-                        if should_adjust_window {
-                            should_adjust_window = false;
-                            // 触发窗口调整
-                            window_adjustment_trigger.set(Some(new_monitor_geometry));
-                            info!("Triggering window adjustment: {:?}", new_monitor_geometry);
+                        if (before_pos.x - target_x).abs() > 100
+                            || (before_pos.y - target_y).abs() > 100
+                            || (before_size.width as i32 - monitor_info.monitor_width).abs() > 10
+                            || (before_size.height as i32 - target_height).abs() > 10
+                        {
+                            info!(
+                                "Before: size={}x{}, pos=({}, {})",
+                                before_size.width, before_size.height, before_pos.x, before_pos.y
+                            );
+                            info!(
+                                "Target: size={}x{}, pos=({}, {})",
+                                target_width, target_height, target_x, target_y
+                            );
+                            window.set_outer_position(LogicalPosition::new(
+                                target_x as f64,
+                                target_y as f64,
+                            ));
+                            window.set_inner_size(LogicalSize::new(
+                                target_width as f64,
+                                target_height as f64,
+                            ));
+                            // 在窗口调整代码中添加更详细的调试信息
+                            info!("=== Window Adjustment Debug ===");
+                            info!("Window decorations: {}", window.is_decorated());
+                            info!("Window resizable: {}", window.is_resizable());
+                            info!("Window maximized: {}", window.is_maximized());
+                            info!("Window minimized: {}", window.is_minimized());
+                            info!("Scale factor: {}", window.scale_factor());
                         }
 
                         // 更新按钮状态

@@ -5415,7 +5415,7 @@ impl Jwm {
 
         if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
             let statusbar_borrow = statusbar.borrow();
-            let offset = statusbar_borrow.h + CONFIG.status_bar_pad();
+            let offset = statusbar_borrow.y + statusbar_borrow.h + CONFIG.status_bar_pad();
             info!(
                 "[client_y_offset] Monitor {}: offset = {} (statusbar_h: {} + pad: {})",
                 monitor_id,
