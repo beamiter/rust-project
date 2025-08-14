@@ -48,13 +48,11 @@ pub struct MonitorInfo {
     pub monitor_x: i32,
     pub monitor_y: i32,
     pub border_w: i32,
-    pub showbar: bool,
-    // 在 bool 后添加填充以对齐到 4 字节边界
-    _padding1: [u8; 3],
     // 固定大小的数组
     pub tag_status_vec: [TagStatus; MAX_TAGS],
     pub client_name: [u8; MAX_CLIENT_NAME_LEN],
     pub ltsymbol: [u8; MAX_LT_SYMBOL_LEN],
+    pub show_bars: [bool; MAX_TAGS],
 }
 
 impl Default for MonitorInfo {
@@ -62,15 +60,14 @@ impl Default for MonitorInfo {
         Self {
             client_name: [0; MAX_CLIENT_NAME_LEN],
             tag_status_vec: [TagStatus::default(); MAX_TAGS],
+            show_bars: [true; MAX_TAGS],
             monitor_num: 0,
             monitor_width: 0,
             monitor_height: 0,
             monitor_x: 0,
             monitor_y: 0,
-            showbar: false,
             ltsymbol: [0; MAX_LT_SYMBOL_LEN],
             border_w: 0,
-            _padding1: [0; 3],
         }
     }
 }
@@ -129,6 +126,20 @@ impl MonitorInfo {
     pub fn get_tag_status(&self, index: usize) -> Option<TagStatus> {
         if index < MAX_TAGS {
             Some(self.tag_status_vec[index])
+        } else {
+            None
+        }
+    }
+
+    pub fn set_show_bars(&mut self, index: usize, show_bar: bool) {
+        if index < MAX_TAGS {
+            self.show_bars[index] = show_bar;
+        }
+    }
+
+    pub fn get_show_bars(&self, index: usize) -> Option<bool> {
+        if index < MAX_TAGS {
+            Some(self.show_bars[index])
         } else {
             None
         }

@@ -323,7 +323,7 @@ impl Pertag {
             m_facts: vec![0.; CONFIG.tags_length() + 1],
             sel_lts: vec![0; CONFIG.tags_length() + 1],
             lt_idxs: vec![vec![None; 2]; CONFIG.tags_length() + 1],
-            show_bars: vec![false; CONFIG.tags_length() + 1],
+            show_bars: vec![true; CONFIG.tags_length() + 1],
             sel: vec![None; CONFIG.tags_length() + 1],
         }
     }
@@ -794,7 +794,6 @@ pub struct Jwm {
     pub status_bar_shmem: HashMap<i32, SharedRingBuffer>,
     pub status_bar_child: HashMap<i32, Child>,
     pub message: SharedMessage,
-    pub show_bar: bool,
 
     // 状态栏专用管理
     pub status_bar_clients: HashMap<i32, Rc<RefCell<Client>>>, // monitor_id -> statusbar_client
@@ -881,7 +880,6 @@ impl Jwm {
             depth: 0,
             color_map: 0,
             sender,
-            show_bar: true,
             status_bar_shmem: HashMap::new(),
             status_bar_child: HashMap::new(),
             message: SharedMessage::default(),
@@ -3016,14 +3014,21 @@ impl Jwm {
         info!("[togglebar]");
         unsafe {
             if let Arg::I(_) = *arg {
-                self.show_bar = !self.show_bar;
-                let mon_num = if let Some(sel_mon_ref) = self.sel_mon.as_ref() {
-                    Some(sel_mon_ref.borrow().num)
-                } else {
-                    None
-                };
-                info!("[togglebar] {}", self.show_bar);
-                self.mark_bar_update_needed(mon_num);
+                let mut monitor_num = None;
+                if let Some(sel_mon_ref) = self.sel_mon.as_ref() {
+                    let mut sel_mon_borrow_mut = sel_mon_ref.borrow_mut();
+                    if let Some(pertag_mut) = sel_mon_borrow_mut.pertag.as_mut() {
+                        let cur_tag = pertag_mut.cur_tag;
+                        if let Some(show_bar) = pertag_mut.show_bars.get_mut(cur_tag) {
+                            *show_bar = !(*show_bar);
+                            info!("[togglebar] {}", show_bar);
+                            monitor_num = Some(sel_mon_borrow_mut.num);
+                        }
+                    }
+                }
+                if monitor_num.is_some() {
+                    self.mark_bar_update_needed(monitor_num);
+                }
             }
         }
     }
@@ -6370,8 +6375,7 @@ impl Jwm {
             let mon_borrow = mon_rc.borrow();
             // info!("[update_bar_message_for_monitor], {}", mon_borrow);
             monitor_info_for_message.monitor_x = mon_borrow.w_x;
-            let offscreen_offset = if self.show_bar { 0 } else { -1000 };
-            monitor_info_for_message.monitor_y = mon_borrow.w_y + offscreen_offset;
+            monitor_info_for_message.monitor_y = mon_borrow.w_y;
             monitor_info_for_message.monitor_width = mon_borrow.w_w;
             monitor_info_for_message.monitor_height = mon_borrow.w_h;
             monitor_info_for_message.monitor_num = mon_borrow.num;
@@ -6409,8 +6413,8 @@ impl Jwm {
                     false // JWM 根本没有全局选中的 monitor
                 };
             }
-            let m_borrow_for_tagset = mon_rc.borrow(); // 再次不可变借用 m_rc 来获取 tagset 信息
-            let active_tagset_for_mon = m_borrow_for_tagset.tag_set[m_borrow_for_tagset.sel_tags];
+            let mon_borrow = mon_rc.borrow(); // 再次不可变借用 m_rc 来获取 tagset 信息
+            let active_tagset_for_mon = mon_borrow.tag_set[mon_borrow.sel_tags];
             // drop(m_borrow_for_tagset); // 可选，如果下面不再需要
 
             let is_selected_tag = (active_tagset_for_mon & tag_bit) != 0;
@@ -6424,6 +6428,14 @@ impl Jwm {
                 is_occupied_tag,
             );
             monitor_info_for_message.set_tag_status(i, tag_status);
+            let show_bar = mon_borrow
+                .pertag
+                .as_ref()
+                .unwrap()
+                .show_bars
+                .get(i + 1)
+                .unwrap_or(&true);
+            monitor_info_for_message.set_show_bars(i, *show_bar);
         }
 
         let mut selected_client_name_for_bar = String::new();
