@@ -87,7 +87,7 @@ impl EguiBarApp {
             Self::periodic_update_task(egui_ctx_clone).await;
         });
 
-        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(shared_path);
+        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
 
         Ok(Self {
             state,
@@ -105,7 +105,7 @@ impl EguiBarApp {
         info!("Starting shared memory worker task");
 
         // 尝试打开或创建共享环形缓冲区
-        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(shared_path);
+        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
         let mut prev_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()

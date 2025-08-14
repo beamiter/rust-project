@@ -8,7 +8,7 @@ use dioxus::{
     prelude::*,
 };
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-use log::{error, info, warn};
+use log::{debug, error, info, warn};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::{
     env,
@@ -68,97 +68,35 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 // 优化的共享内存工作线程 - 降低CPU使用率
 fn shared_memory_worker(shared_path: String, message_sender: mpsc::Sender<SharedMessage>) {
     info!("Starting shared memory worker thread");
-
-    let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
-        warn!("No shared path provided, running without shared memory");
-        None
-    } else {
-        match SharedRingBuffer::open(&shared_path, None) {
-            Ok(shared_buffer) => {
-                info!("Successfully opened shared ring buffer: {}", shared_path);
-                Some(shared_buffer)
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to open shared ring buffer: {}, attempting to create new one",
-                    e
-                );
-                match SharedRingBuffer::create(&shared_path, None, None) {
-                    Ok(shared_buffer) => {
-                        info!("Created new shared ring buffer: {}", shared_path);
-                        Some(shared_buffer)
-                    }
-                    Err(create_err) => {
-                        error!("Failed to create shared ring buffer: {}", create_err);
-                        None
-                    }
-                }
-            }
-        }
-    };
-
+    let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
     let mut prev_timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-
-    let mut consecutive_errors = 0;
-    let mut last_message_read = Instant::now();
-
-    const POLL_INTERVAL: Duration = Duration::from_millis(5);
-    const MAX_IDLE_TIME: Duration = Duration::from_secs(1);
-
-    loop {
-        let loop_start = Instant::now();
-
-        if let Some(ref shared_buffer) = shared_buffer_opt {
-            match shared_buffer.try_read_latest_message() {
-                Ok(Some(message)) => {
-                    consecutive_errors = 0;
-                    last_message_read = Instant::now();
-
-                    if prev_timestamp != message.timestamp.into() {
-                        prev_timestamp = message.timestamp.into();
-                        if let Err(e) = message_sender.send(message) {
-                            error!("Failed to send message: {}", e);
-                            break;
+    if let Some(ref shared_buffer) = shared_buffer_opt {
+        loop {
+            match shared_buffer.wait_for_message(Some(std::time::Duration::from_secs(2))) {
+                Ok(true) => {
+                    if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
+                        if prev_timestamp != message.timestamp.into() {
+                            prev_timestamp = message.timestamp.into();
+                            if let Err(e) = message_sender.send(message) {
+                                error!("Failed to send message: {}", e);
+                                break;
+                            }
                         }
                     }
                 }
-                Ok(_) => {
-                    consecutive_errors = 0;
-                }
+                Ok(false) => debug!("[notifier] Wait for message timed out."),
                 Err(e) => {
-                    consecutive_errors += 1;
-                    if consecutive_errors == 1 || consecutive_errors % 50 == 0 {
-                        error!(
-                            "Ring buffer read error ({}): {}. Buffer state: available={}",
-                            consecutive_errors,
-                            e,
-                            shared_buffer.available_messages(),
-                        );
-                    }
-
-                    if consecutive_errors > 50 {
-                        warn!("Too many consecutive errors, resetting read index");
-                        consecutive_errors = 0;
-                    }
+                    error!("[notifier] Wait for message failed: {}", e);
+                    break;
                 }
             }
         }
-
-        let mut sleep_duration = POLL_INTERVAL;
-        if last_message_read.elapsed() > MAX_IDLE_TIME {
-            sleep_duration = Duration::from_millis(10);
-        }
-
-        let elapsed = loop_start.elapsed();
-        if elapsed < sleep_duration {
-            thread::sleep(sleep_duration - elapsed);
-        }
     }
 
-    info!("Shared memory worker thread exiting");
+    info!("Shared memory worker task exiting");
 }
 
 fn send_tag_command(
@@ -559,10 +497,10 @@ fn App() -> Element {
     let mut pressed_button = use_signal(|| None::<usize>);
     let mut monitor_num = use_signal(|| None::<i32>);
     let mut layout_symbol = use_signal(|| " ? ".to_string());
-    let mut shared_buffer = use_signal(|| None::<SharedRingBuffer>);
+    let mut shared_buffer_sig = use_signal(|| None::<SharedRingBuffer>);
     let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
     if shared_buffer_opt.is_some() {
-        shared_buffer.set(shared_buffer_opt);
+        shared_buffer_sig.set(shared_buffer_opt);
     }
 
     // 系统信息监控（保持原有逻辑）
@@ -597,9 +535,7 @@ fn App() -> Element {
     // 共享内存通信逻辑
     use_effect(move || {
         let (message_sender, message_receiver) = mpsc::channel::<SharedMessage>();
-
         info!("Using shared memory path: {}", shared_path);
-
         let shared_path_clone = shared_path.clone();
         thread::spawn(move || {
             shared_memory_worker(shared_path_clone, message_sender);
@@ -610,14 +546,11 @@ fn App() -> Element {
             // 获取窗口控制句柄
             let window = use_window();
             let scale_factor = window.scale_factor();
-
             let mut prev_show_bar = true;
             loop {
                 interval.tick().await;
-
                 let mut latest_message = None;
                 let mut message_count = 0;
-
                 while let Ok(message) = message_receiver.try_recv() {
                     latest_message = Some(message);
                     message_count += 1;
@@ -625,13 +558,10 @@ fn App() -> Element {
                         break;
                     }
                 }
-
                 if let Some(shared_message) = latest_message {
                     let now = Instant::now();
-
                     if now.duration_since(last_update()) >= Duration::from_millis(20) {
                         let mut new_states = vec![ButtonStateData::default(); BUTTONS.len()];
-
                         let monitor_info = shared_message.monitor_info;
                         layout_symbol.set(
                             monitor_info.get_ltsymbol()
@@ -721,7 +651,7 @@ fn App() -> Element {
         info!("Button {} released", index);
         pressed_button.set(None);
         if let Some(monitor_num) = monitor_num() {
-            let shared_buffer_opt = shared_buffer.read();
+            let shared_buffer_opt = shared_buffer_sig.read();
             send_tag_command(&shared_buffer_opt, monitor_num, index, true);
         }
     };
