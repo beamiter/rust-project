@@ -17,7 +17,7 @@ fn main() {
     let (tx, rx) = mpsc::channel();
 
     let mut jwm = Jwm::new(tx);
-    if jwm.dpy.is_null() {
+    if jwm.x11_dpy.is_null() {
         eprintln!("jwm: cannot open display");
         exit(1);
     }
@@ -96,7 +96,7 @@ fn main() {
         info!("[main] cleanup");
         jwm.cleanup();
         info!("[main] XCloseDisplay");
-        XCloseDisplay(jwm.dpy);
+        XCloseDisplay(jwm.x11_dpy);
         info!("[main] end");
     }
 
