@@ -6,38 +6,21 @@ use jwm::Jwm;
 use libc::{setlocale, LC_CTYPE};
 use log::info;
 use std::sync::mpsc;
-use std::{ffi::CString, process::exit, ptr::null_mut};
+use std::{ffi::CString, process::exit};
 use std::{thread, time::Duration};
-use x11::xlib::{XCloseDisplay, XOpenDisplay, XSupportsLocale};
-
-mod config;
-mod drw;
-mod jwm;
-// mod icon_gallery;
-mod miscellaneous;
-mod terminal_prober;
-mod xproto;
-
-// Xnest and Xephyr is all you need!
-// Xnest:
-// Xnest :2 -geometry 1024x768 &
-// export DISPLAY=:2
-// exec jwm
-
-// Xephyr:
-// Xephyr :2 -screen 1024x768 &
-// DISPLAY=:2 jwm
-
-// For dual monitor:
-// xrandr --output HDMI-1 --rotate normal --left-of eDP-1 --auto &
+use x11::xlib::{XCloseDisplay, XSupportsLocale};
 
 fn main() {
     let _ = register_panic_handler();
-    miscellaneous::init_auto_command();
-    miscellaneous::init_auto_start();
+    jwm::miscellaneous::init_auto_command();
+    jwm::miscellaneous::init_auto_start();
     let (tx, rx) = mpsc::channel();
 
     let mut jwm = Jwm::new(tx);
+    if jwm.dpy.is_null() {
+        eprintln!("jwm: cannot open display");
+        exit(1);
+    }
 
     let status_update_thread = thread::spawn(move || {
         // let mut status_bar = StatusBar::new();
@@ -100,11 +83,6 @@ fn main() {
         let c_string = CString::new("").unwrap();
         if setlocale(LC_CTYPE, c_string.as_ptr()).is_null() || XSupportsLocale() <= 0 {
             eprintln!("warning: no locale support");
-        }
-        jwm.dpy = XOpenDisplay(null_mut());
-        if jwm.dpy.is_null() {
-            eprintln!("jwm: cannot open display");
-            exit(1);
         }
         info!("[main] main begin");
         info!("[main] checkotherwm");

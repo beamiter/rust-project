@@ -32,7 +32,7 @@ use std::time::{Duration, Instant};
 use std::{os::raw::c_long, usize};
 use x11::xft::XftColor;
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
-use x11::xlib::{XConfigureRequestEvent, XFlush};
+use x11::xlib::{XConfigureRequestEvent, XFlush, XOpenDisplay};
 use x11::xlib::{XConnectionNumber, XPending};
 use x11::xlib::{XFreeStringList, XSetClassHint};
 use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
@@ -72,6 +72,7 @@ use std::cmp::{max, min};
 
 use crate::config::CONFIG;
 use crate::drw::{Cur, Drw};
+use crate::xcb_conn::XcbConnection;
 use crate::xproto::{
     IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
     X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8,
@@ -800,6 +801,9 @@ pub struct Jwm {
     pub status_bar_windows: HashMap<Window, i32>,              // window_id -> monitor_id (快速查找)
 
     pub pending_bar_updates: HashSet<i32>,
+
+    pub xcb_conn: Option<XcbConnection>,
+    pub xcb_root: Option<xcb::x::Window>,
 }
 
 impl Jwm {
@@ -858,23 +862,34 @@ impl Jwm {
                     .unwrap(),
             ),
         );
+        let dpy = unsafe { XOpenDisplay(null_mut()) };
+        let screen = unsafe { XDefaultScreen(dpy) };
+        let s_w = unsafe { XDisplayWidth(dpy, screen) };
+        let s_h = unsafe { XDisplayHeight(dpy, screen) };
+        let root = unsafe { XRootWindow(dpy, screen) };
+        let xcb_conn = XcbConnection::connect().ok();
+        let xcb_root = xcb_conn.as_ref().map(|c| {
+            let setup = c.connection().get_setup();
+            let screen = setup.roots().nth(c.screen_num() as usize).unwrap();
+            screen.root()
+        });
         Jwm {
             stext_max_len: 512,
-            screen: 0,
-            s_w: 0,
-            s_h: 0,
+            screen,
+            s_w,
+            s_h,
             numlock_mask: 0,
             wm_atom: [0; WM::WMLast as usize],
             net_atom: [0; NET::NetLast as usize],
             running: AtomicBool::new(true),
             cursor: [const { None }; CUR::CurLast as usize],
             theme_manager,
-            dpy: null_mut(),
+            dpy,
             drw: None,
             mons: None,
             motion_mon: None,
             sel_mon: None,
-            root: 0,
+            root,
             wm_check_win: 0,
             visual: null_mut(),
             depth: 0,
@@ -886,6 +901,9 @@ impl Jwm {
             status_bar_clients: HashMap::new(),
             status_bar_windows: HashMap::new(),
             pending_bar_updates: HashSet::new(),
+
+            xcb_conn,
+            xcb_root,
         }
     }
 
@@ -3606,10 +3624,6 @@ impl Jwm {
             while waitpid(-1, null_mut(), WNOHANG) > 0 {}
 
             // init screen
-            self.screen = XDefaultScreen(self.dpy);
-            self.s_w = XDisplayWidth(self.dpy, self.screen);
-            self.s_h = XDisplayHeight(self.dpy, self.screen);
-            self.root = XRootWindow(self.dpy, self.screen);
             self.xinitvisual();
             self.drw = Some(Box::new(Drw::drw_create(
                 self.dpy,
