@@ -60,8 +60,8 @@ use x11::xlib::{
     XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty,
     XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XInternAtom, XKeycodeToKeysym,
     XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow,
-    XNextEvent, XQueryPointer, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow,
-    XSelectInput, XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints,
+    XNextEvent, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput,
+    XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints,
     XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey,
     XUngrabPointer, XUngrabServer, XUrgencyHint, XVisualInfo, XWarpPointer, XWindowAttributes,
     XWindowChanges, CWX, CWY, XA_ATOM, XA_CARDINAL, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME,
@@ -72,12 +72,14 @@ use std::cmp::{max, min};
 
 use crate::config::CONFIG;
 use crate::drw::{Cur, Drw};
-use crate::xcb_conn::XcbConnection;
+use crate::xcb_conn::{AtomCache, XcbConnection};
 use crate::xproto::{
     IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
     X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8,
     X_SetInputFocus,
 };
+use xcb::{x, Error};
+use xcb::{Connection, Xid};
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
 pub const MOUSEMASK: c_long = BUTTONMASK | PointerMotionMask;
@@ -776,8 +778,6 @@ pub struct Jwm {
     pub s_w: i32,
     pub s_h: i32,
     pub numlock_mask: u32,
-    pub wm_atom: [Atom; WM::WMLast as usize],
-    pub net_atom: [Atom; NET::NetLast as usize],
     pub running: AtomicBool,
     pub cursor: [Option<Box<Cur>>; CUR::CurLast as usize],
     pub theme_manager: ThemeManager,
@@ -802,8 +802,9 @@ pub struct Jwm {
 
     pub pending_bar_updates: HashSet<i32>,
 
-    pub xcb_conn: Option<XcbConnection>,
-    pub xcb_root: Option<xcb::x::Window>,
+    pub xcb_conn: XcbConnection,
+    pub xcb_root: xcb::x::Window,
+    pub atoms: AtomCache,
 }
 
 impl Jwm {
@@ -867,20 +868,17 @@ impl Jwm {
         let s_w = unsafe { XDisplayWidth(dpy, screen) };
         let s_h = unsafe { XDisplayHeight(dpy, screen) };
         let root = unsafe { XRootWindow(dpy, screen) };
-        let xcb_conn = XcbConnection::connect().ok();
-        let xcb_root = xcb_conn.as_ref().map(|c| {
-            let setup = c.connection().get_setup();
-            let screen = setup.roots().nth(c.screen_num() as usize).unwrap();
-            screen.root()
-        });
+        let xcb_conn = XcbConnection::connect().ok().unwrap();
+        let atoms = AtomCache::new(xcb_conn.connection());
+        let setup = xcb_conn.connection().get_setup();
+        let screen = setup.roots().nth(xcb_conn.screen_num() as usize).unwrap();
+        let xcb_root = screen.root();
         Jwm {
             stext_max_len: 512,
             screen,
             s_w,
             s_h,
             numlock_mask: 0,
-            wm_atom: [0; WM::WMLast as usize],
-            net_atom: [0; NET::NetLast as usize],
             running: AtomicBool::new(true),
             cursor: [const { None }; CUR::CurLast as usize],
             theme_manager,
@@ -904,6 +902,7 @@ impl Jwm {
 
             xcb_conn,
             xcb_root,
+            atoms,
         }
     }
 
@@ -1639,7 +1638,7 @@ impl Jwm {
                     XConfigureWindow(self.dpy, ev.window, ev.value_mask as u32, &mut wc);
 
                     // 确保状态栏始终在最上层
-                    XRaiseWindow(self.dpy, statusbar_mut.win);
+                    // XRaiseWindow(self.dpy, statusbar_mut.win);
                 }
 
                 // 发送确认配置事件给 status bar
@@ -2445,17 +2444,13 @@ impl Jwm {
         return atom;
     }
 
-    pub fn getrootptr(&mut self, x: &mut i32, y: &mut i32) -> i32 {
-        // info!("[getrootptr]");
-        let mut di0: i32 = 0;
-        let mut di1: i32 = 0;
-        let mut dui: u32 = 0;
-        unsafe {
-            let mut dummy: Window = zeroed();
-            return XQueryPointer(
-                self.dpy, self.root, &mut dummy, &mut dummy, x, y, &mut di0, &mut di1, &mut dui,
-            );
-        }
+    pub fn getrootptr(&mut self) -> Result<(i32, i32), Error> {
+        let conn = self.xcb_conn.as_ref().unwrap().connection();
+        let cookie = conn.send_request(&x::QueryPointer {
+            window: self.xcb_root.unwrap(),
+        });
+        let reply = conn.wait_for_reply(cookie)?;
+        Ok((reply.root_x() as i32, reply.root_y() as i32))
     }
 
     pub fn getstate(&mut self, w: Window) -> i64 {
@@ -2536,10 +2531,10 @@ impl Jwm {
 
     pub fn wintomon(&mut self, w: Window) -> Option<Rc<RefCell<Monitor>>> {
         // info!("[wintomon]");
-        let mut x: i32 = 0;
-        let mut y: i32 = 0;
-        if w == self.root && self.getrootptr(&mut x, &mut y) > 0 {
-            return self.recttomon(x, y, 1, 1);
+        if w == self.root {
+            if let Ok((x, y)) = self.getrootptr() {
+                return self.recttomon(x, y, 1, 1);
+            }
         }
         let c = self.wintoclient(w);
         if let Some(ref client_opt) = c {
@@ -3609,6 +3604,111 @@ impl Jwm {
         let _ = self.sender.send(0);
     }
 
+    /// 将字符串转换为 X11 Atom
+    /// 返回 0 表示失败（与 XInternAtom 一致）
+    pub fn intern_atom(conn: &Connection, name: &str) -> x::Atom {
+        let cookie = conn.send_request(&x::InternAtom {
+            only_if_exists: false,
+            name: name.as_bytes(),
+        });
+
+        match conn.wait_for_reply(cookie) {
+            Ok(reply) => reply.atom(),
+            Err(e) => {
+                error!("Failed to intern atom '{}': {:?}", name, e);
+                x::Atom::none()
+            }
+        }
+    }
+
+    pub fn setup_ewmh(&mut self) {
+        let conn = self.xcb_conn.connection();
+        let screen = conn
+            .get_setup()
+            .roots()
+            .nth(self.xcb_conn.screen_num() as usize)
+            .unwrap();
+
+        // --- 1. 创建 _NET_SUPPORTING_WM_CHECK 窗口 ---
+        let window: x::Window = conn.generate_id();
+        self.wm_check_win = window.resource_id().into();
+
+        let cookie = conn.send_request_checked(&x::CreateWindow {
+            depth: x::COPY_FROM_PARENT as u8,
+            wid: window,
+            parent: screen.root(),
+            x: 0,
+            y: 0,
+            width: 1,
+            height: 1,
+            border_width: 0,
+            class: x::WindowClass::InputOutput,
+            visual: screen.root_visual(),
+            // this list must be in same order than `Cw` enum order
+            value_list: &[
+                x::Cw::BackPixel(screen.white_pixel()),
+                x::Cw::EventMask(x::EventMask::EXPOSURE | x::EventMask::KEY_PRESS),
+            ],
+        });
+        // We now check if the window creation worked.
+        // A cookie can't be cloned; it is moved to the function.
+        conn.check_request(cookie).unwrap();
+
+        // --- 2. 设置 _NET_SUPPORTING_WM_CHECK 窗口的属性 ---
+
+        // _NET_SUPPORTING_WM_CHECK = wm_check_win (Atom 类型 WINDOW)
+        let cookie = conn.send_request_checked(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window,
+            property: self.atoms.net_wm_check,
+            r#type: x::ATOM_WINDOW,
+            data: &[window],
+        });
+        conn.check_request(cookie).unwrap();
+
+        // _NET_WM_NAME = "jwm" (UTF-8)
+        let cookie = conn.send_request_checked(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window,
+            property: x::ATOM_WM_NAME,
+            r#type: x::ATOM_STRING,
+            data: b"jwm",
+        });
+        conn.check_request(cookie).unwrap();
+
+        // --- 4. 声明支持的 EWMH 属性 (_NET_SUPPORTED) ---
+        let supported_atoms = [
+            self.atoms.net_active_window,
+            self.atoms.net_supported,
+            self.atoms.net_wm_name,
+            self.atoms.net_wm_state,
+            self.atoms.net_wm_check,
+            self.atoms.net_wm_fullscreen,
+            self.atoms.net_wm_window_type,
+            self.atoms.net_wm_window_type_dialog,
+            self.atoms.net_client_list,
+            self.atoms.net_client_info,
+        ];
+
+        xcb::x::change_property(
+            conn,
+            xcb::x::PropMode::Replace,
+            self.xcb_root,
+            self.atoms.net_supported,
+            xcb::x::ATOM_ATOM,
+            32,
+            &supported_atoms,
+        );
+
+        // --- 5. 清除 _NET_CLIENT_LIST 和 _NET_CLIENT_INFO ---
+        // 相当于 XDeleteProperty
+        xcb::x::delete_property(conn, self.xcb_root, self.atoms.net_client_list);
+        xcb::x::delete_property(conn, self.xcb_root, self.atoms.net_client_info);
+
+        // --- 6. 刷新请求 ---
+        let _ = conn.flush();
+    }
+
     pub fn setup(&mut self) {
         // info!("[setup]");
         unsafe {
@@ -3635,47 +3735,6 @@ impl Jwm {
             // init atoms
             let mut c_string = CString::new("UTF8_STRING").expect("fail to convert");
             let utf8string = XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("WM_PROTOCOLS").expect("fail to convert");
-            self.wm_atom[WM::WMProtocols as usize] =
-                XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("WM_DELETE_WINDOW").expect("fail to convert");
-            self.wm_atom[WM::WMDelete as usize] = XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("WM_STATE").expect("fail to convert");
-            self.wm_atom[WM::WMState as usize] = XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("WM_TAKE_FOCUS").expect("fail to convert");
-            self.wm_atom[WM::WMTakeFocus as usize] =
-                XInternAtom(self.dpy, c_string.as_ptr(), False);
-
-            c_string = CString::new("_NET_ACTIVE_WINDOW").expect("fail to convert");
-            self.net_atom[NET::NetActiveWindow as usize] =
-                XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("_NET_SUPPORTED").expect("fail to convert");
-            self.net_atom[NET::NetSupported as usize] =
-                XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("_NET_WM_NAME").expect("fail to convert");
-            self.net_atom[NET::NetWMName as usize] =
-                XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("_NET_WM_STATE").expect("fail to convert");
-            self.net_atom[NET::NetWMState as usize] =
-                XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("_NET_SUPPORTING_WM_CHECK").expect("fail to convert");
-            self.net_atom[NET::NetWMCheck as usize] =
-                XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("_NET_WM_STATE_FULLSCREEN").expect("fail to convert");
-            self.net_atom[NET::NetWMFullscreen as usize] =
-                XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("_NET_WM_WINDOW_TYPE").expect("fail to convert");
-            self.net_atom[NET::NetWMWindowType as usize] =
-                XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("_NET_WM_WINDOW_TYPE_DIALOG").expect("fail to convert");
-            self.net_atom[NET::NetWMWindowTypeDialog as usize] =
-                XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("_NET_CLIENT_LIST").expect("fail to convert");
-            self.net_atom[NET::NetClientList as usize] =
-                XInternAtom(self.dpy, c_string.as_ptr(), False);
-            c_string = CString::new("_NET_CLIENT_INFO").expect("fail to convert");
-            self.net_atom[NET::NetClientInfo as usize] =
-                XInternAtom(self.dpy, c_string.as_ptr(), False);
 
             // init cursors
             self.cursor[CUR::CurNormal as usize] = self
@@ -4048,20 +4107,17 @@ impl Jwm {
             }
 
             // 5. 获取鼠标初始位置
-            let mut initial_mouse_root_x: i32 = 0; // 鼠标相对于根窗口的初始 X 坐标
-            let mut initial_mouse_root_y: i32 = 0; // 鼠标相对于根窗口的初始 Y 坐标
             let mut last_motion_time: Time = 0; // 上一次处理 MotionNotify 事件的时间 (用于节流)
-
-            // getrootptr 获取鼠标指针相对于根窗口的当前坐标，并存入 initial_mouse_root_x, initial_mouse_root_y
-            if self.getrootptr(&mut initial_mouse_root_x, &mut initial_mouse_root_y) <= 0 {
+                                                // getrootptr 获取鼠标指针相对于根窗口的当前坐标，并存入 initial_mouse_root_x, initial_mouse_root_y
+            let (initial_mouse_root_x, initial_mouse_root_y) = if let Ok((x, y)) = self.getrootptr()
+            {
+                info!("[movemouse] initial mouse (root): x={}, y={}", x, y);
+                (x, y)
+            } else {
                 // 如果获取失败 (例如指针不在屏幕上)
                 XUngrabPointer(self.dpy, CurrentTime); // 释放鼠标抓取
                 return;
-            }
-            info!(
-                "[movemouse] initial mouse (root): x={}, y={}",
-                initial_mouse_root_x, initial_mouse_root_y
-            );
+            };
 
             // 6. 进入鼠标移动事件循环
             let mut ev: XEvent = zeroed();
@@ -5294,7 +5350,7 @@ impl Jwm {
             XMapWindow(self.dpy, client_rc.borrow().win);
 
             // 确保状态栏位于最上层
-            XRaiseWindow(self.dpy, client_rc.borrow().win);
+            // XRaiseWindow(self.dpy, client_rc.borrow().win);
 
             info!(
                 "[manage_statusbar] Successfully managed statusbar on monitor {}",
