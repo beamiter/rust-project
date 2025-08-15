@@ -53,19 +53,18 @@ use x11::xlib::{
     SubstructureNotifyMask, SubstructureRedirectMask, Success, Time, True, TrueColor, UnmapNotify,
     Visual, VisualClassMask, VisualDepthMask, VisualScreenMask, Window, XAllowEvents,
     XChangeProperty, XChangeWindowAttributes, XCheckMaskEvent, XClassHint, XConfigureEvent,
-    XConfigureWindow, XCreateColormap, XCreateSimpleWindow, XDefaultColormap, XDefaultDepth,
-    XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDeleteProperty, XDestroyWindow,
-    XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap,
-    XGetClassHint, XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetVisualInfo,
-    XGetWMHints, XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty,
-    XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XInternAtom, XKeycodeToKeysym,
-    XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow,
-    XNextEvent, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput,
-    XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints,
-    XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey,
-    XUngrabPointer, XUngrabServer, XUrgencyHint, XVisualInfo, XWarpPointer, XWindowAttributes,
-    XWindowChanges, CWX, CWY, XA_ATOM, XA_CARDINAL, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME,
-    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XConfigureWindow, XCreateColormap, XDefaultColormap, XDefaultDepth, XDefaultRootWindow,
+    XDefaultScreen, XDefaultVisual, XDestroyWindow, XDisplayHeight, XDisplayKeycodes,
+    XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap, XGetClassHint,
+    XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetVisualInfo, XGetWMHints,
+    XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton,
+    XGrabKey, XGrabPointer, XGrabServer, XInternAtom, XKeycodeToKeysym, XKeysymToKeycode,
+    XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryTree,
+    XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent,
+    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes,
+    XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer,
+    XUrgencyHint, XVisualInfo, XWarpPointer, XWindowAttributes, XWindowChanges, CWX, CWY, XA_ATOM,
+    XA_CARDINAL, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -871,8 +870,8 @@ impl Jwm {
         let xcb_conn = XcbConnection::connect().ok().unwrap();
         let atoms = AtomCache::new(xcb_conn.connection());
         let setup = xcb_conn.connection().get_setup();
-        let screen = setup.roots().nth(xcb_conn.screen_num() as usize).unwrap();
-        let xcb_root = screen.root();
+        let xcb_screen = setup.roots().nth(xcb_conn.screen_num() as usize).unwrap();
+        let xcb_root = xcb_screen.root();
         Jwm {
             stext_max_len: 512,
             screen,
@@ -1243,11 +1242,14 @@ impl Jwm {
                 RevertToPointerRoot,
                 CurrentTime,
             );
-            XDeleteProperty(
-                self.dpy,
-                self.root,
-                self.net_atom[NET::NetActiveWindow as usize],
-            );
+            let cookie = self
+                .xcb_conn
+                .connection()
+                .send_request_checked(&x::DeleteProperty {
+                    window: self.xcb_root,
+                    property: self.atoms.net_active_window,
+                });
+            self.xcb_conn.connection().check_request(cookie).unwrap();
         }
     }
 
@@ -1279,9 +1281,9 @@ impl Jwm {
                 return;
             }
             let c = c.as_ref().unwrap();
-            if cme.message_type == self.net_atom[NET::NetWMState as usize] {
-                if cme.data.get_long(1) == self.net_atom[NET::NetWMFullscreen as usize] as i64
-                    || cme.data.get_long(2) == self.net_atom[NET::NetWMFullscreen as usize] as i64
+            if cme.message_type == self.atoms.net_wm_state.resource_id().into() {
+                if cme.data.get_long(1) == self.atoms.net_wm_fullscreen.resource_id().into()
+                    || cme.data.get_long(2) == self.atoms.net_wm_fullscreen.resource_id().into()
                 {
                     // NET_WM_STATE_ADD
                     // NET_WM_STATE_TOGGLE
@@ -1290,7 +1292,7 @@ impl Jwm {
                         cme.data.get_long(0) == 1 || (cme.data.get_long(0) == 2 && !isfullscreen);
                     self.setfullscreen(c, fullscreen);
                 }
-            } else if cme.message_type == self.net_atom[NET::NetActiveWindow as usize] {
+            } else if cme.message_type == self.atoms.net_active_window.resource_id().into() {
                 let is_urgent = { c.borrow_mut().is_urgent };
                 let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
                 if !Self::are_equal_rc(&Some(c.clone()), &sel) && !is_urgent {
@@ -1362,16 +1364,17 @@ impl Jwm {
             let isfullscreen = { c.borrow_mut().is_fullscreen };
             let win = { c.borrow_mut().win };
             if fullscreen && !isfullscreen {
-                XChangeProperty(
-                    self.dpy,
-                    win,
-                    self.net_atom[NET::NetWMState as usize],
-                    XA_ATOM,
-                    32,
-                    PropModeReplace,
-                    self.net_atom.as_ptr().add(NET::NetWMFullscreen as usize) as *const _,
-                    1,
-                );
+                // (TODO)
+                // XChangeProperty(
+                //     self.dpy,
+                //     win,
+                //     self.net_atom[NET::NetWMState as usize],
+                //     XA_ATOM,
+                //     32,
+                //     PropModeReplace,
+                //     self.net_atom.as_ptr().add(NET::NetWMFullscreen as usize) as *const _,
+                //     1,
+                // );
                 {
                     let mut c = c.borrow_mut();
                     c.is_fullscreen = true;
@@ -1392,7 +1395,7 @@ impl Jwm {
                 XChangeProperty(
                     self.dpy,
                     win,
-                    self.net_atom[NET::NetWMState as usize],
+                    self.atoms.net_wm_state.resource_id().into(),
                     XA_ATOM,
                     32,
                     PropModeReplace,
@@ -2445,9 +2448,9 @@ impl Jwm {
     }
 
     pub fn getrootptr(&mut self) -> Result<(i32, i32), Error> {
-        let conn = self.xcb_conn.as_ref().unwrap().connection();
+        let conn = self.xcb_conn.connection();
         let cookie = conn.send_request(&x::QueryPointer {
-            window: self.xcb_root.unwrap(),
+            window: self.xcb_root,
         });
         let reply = conn.wait_for_reply(cookie)?;
         Ok((reply.root_x() as i32, reply.root_y() as i32))
@@ -2465,11 +2468,11 @@ impl Jwm {
             if XGetWindowProperty(
                 self.dpy,
                 w,
-                self.wm_atom[WM::WMState as usize],
+                self.atoms.wm_state.resource_id().into(),
                 0,
                 2,
                 False,
-                self.wm_atom[WM::WMState as usize],
+                self.atoms.wm_state.resource_id().into(),
                 &mut real,
                 &mut format,
                 &mut n,
@@ -3670,9 +3673,18 @@ impl Jwm {
         let cookie = conn.send_request_checked(&x::ChangeProperty {
             mode: x::PropMode::Replace,
             window,
-            property: x::ATOM_WM_NAME,
+            property: self.atoms.net_wm_name,
             r#type: x::ATOM_STRING,
             data: b"jwm",
+        });
+        conn.check_request(cookie).unwrap();
+
+        let cookie = conn.send_request_checked(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window: screen.root(),
+            property: self.atoms.net_wm_check,
+            r#type: x::ATOM_WINDOW,
+            data: &[window],
         });
         conn.check_request(cookie).unwrap();
 
@@ -3690,20 +3702,26 @@ impl Jwm {
             self.atoms.net_client_info,
         ];
 
-        xcb::x::change_property(
-            conn,
-            xcb::x::PropMode::Replace,
-            self.xcb_root,
-            self.atoms.net_supported,
-            xcb::x::ATOM_ATOM,
-            32,
-            &supported_atoms,
-        );
+        let cookie = conn.send_request_checked(&x::ChangeProperty {
+            mode: x::PropMode::Replace,
+            window: screen.root(),
+            property: self.atoms.net_supported,
+            r#type: x::ATOM_ATOM,
+            data: &supported_atoms,
+        });
+        conn.check_request(cookie).unwrap();
 
         // --- 5. 清除 _NET_CLIENT_LIST 和 _NET_CLIENT_INFO ---
-        // 相当于 XDeleteProperty
-        xcb::x::delete_property(conn, self.xcb_root, self.atoms.net_client_list);
-        xcb::x::delete_property(conn, self.xcb_root, self.atoms.net_client_info);
+        let cookie = conn.send_request_checked(&x::DeleteProperty {
+            window: screen.root(),
+            property: self.atoms.net_client_list,
+        });
+        conn.check_request(cookie).unwrap();
+        let cookie = conn.send_request_checked(&x::DeleteProperty {
+            window: screen.root(),
+            property: self.atoms.net_client_info,
+        });
+        conn.check_request(cookie).unwrap();
 
         // --- 6. 刷新请求 ---
         let _ = conn.flush();
@@ -3755,60 +3773,8 @@ impl Jwm {
                 .unwrap()
                 .as_mut()
                 .drw_cur_create(XC_fleur as i32);
-            // supporting window fot NetWMCheck
-            self.wm_check_win = XCreateSimpleWindow(self.dpy, self.root, 0, 0, 1, 1, 0, 0, 0);
-            XChangeProperty(
-                self.dpy,
-                self.wm_check_win,
-                self.net_atom[NET::NetWMCheck as usize],
-                XA_WINDOW,
-                32,
-                PropModeReplace,
-                &mut self.wm_check_win as *mut u64 as *const _,
-                1,
-            );
-            c_string = CString::new("jwm").unwrap();
-            XChangeProperty(
-                self.dpy,
-                self.wm_check_win,
-                self.net_atom[NET::NetWMName as usize],
-                utf8string,
-                8,
-                PropModeReplace,
-                c_string.as_ptr() as *const _,
-                1,
-            );
-            XChangeProperty(
-                self.dpy,
-                self.root,
-                self.net_atom[NET::NetWMCheck as usize],
-                XA_WINDOW,
-                32,
-                PropModeReplace,
-                &mut self.wm_check_win as *mut u64 as *const _,
-                1,
-            );
-            // EWMH support per view
-            XChangeProperty(
-                self.dpy,
-                self.root,
-                self.net_atom[NET::NetSupported as usize],
-                XA_ATOM,
-                32,
-                PropModeReplace,
-                self.net_atom.as_ptr() as *const _,
-                NET::NetLast as i32,
-            );
-            XDeleteProperty(
-                self.dpy,
-                self.root,
-                self.net_atom[NET::NetClientList as usize],
-            );
-            XDeleteProperty(
-                self.dpy,
-                self.root,
-                self.net_atom[NET::NetClientInfo as usize],
-            );
+            self.setup_ewmh();
+
             // select events
             wa.cursor = self.cursor[CUR::CurNormal as usize]
                 .as_ref()
@@ -3841,7 +3807,7 @@ impl Jwm {
             info!("[killclient] {}", sel.as_ref().unwrap().borrow());
             if !self.sendevent(
                 &mut sel.as_ref().unwrap().borrow_mut(),
-                self.wm_atom[WM::WMDelete as usize],
+                self.atoms.wm_delete_window.resource_id().into(),
             ) {
                 XGrabServer(self.dpy);
                 XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
@@ -4027,7 +3993,7 @@ impl Jwm {
                     }
                     _ => {}
                 }
-                if ev.atom == XA_WM_NAME || ev.atom == self.net_atom[NET::NetWMName as usize] {
+                if ev.atom == XA_WM_NAME || ev.atom == self.atoms.net_wm_name.resource_id().into() {
                     self.updatetitle(&mut client_rc.borrow_mut());
                     // 如果这个改变了标题的窗口，正好是其所在显示器上当前选中的窗口
                     let (is_selected_on_mon, mon_opt) = {
@@ -4052,7 +4018,7 @@ impl Jwm {
                         }
                     }
                 }
-                if ev.atom == self.net_atom[NET::NetWMWindowType as usize] {
+                if ev.atom == self.atoms.net_wm_window_type.resource_id().into() {
                     self.updatewindowtype(&client_rc);
                 }
             }
@@ -4575,7 +4541,7 @@ impl Jwm {
             XChangeProperty(
                 self.dpy,
                 client_mut.win,
-                self.net_atom[NET::NetClientInfo as usize],
+                self.atoms.net_client_info.resource_id().into(),
                 XA_CARDINAL,
                 32,
                 PropModeReplace,
@@ -4733,7 +4699,7 @@ impl Jwm {
             if exists {
                 ev.type_ = ClientMessage;
                 ev.client_message.window = client_mut.win;
-                ev.client_message.message_type = self.wm_atom[WM::WMProtocols as usize];
+                ev.client_message.message_type = self.atoms.wm_protocols.resource_id().into();
                 ev.client_message.format = 32;
                 ev.client_message.data.as_longs_mut()[0] = proto as i64;
                 ev.client_message.data.as_longs_mut()[1] = CurrentTime as i64;
@@ -4752,7 +4718,7 @@ impl Jwm {
                 XChangeProperty(
                     self.dpy,
                     self.root,
-                    self.net_atom[NET::NetActiveWindow as usize],
+                    self.atoms.net_active_window.resource_id().into(),
                     XA_WINDOW,
                     32,
                     PropModeReplace,
@@ -4760,7 +4726,7 @@ impl Jwm {
                     1,
                 );
             }
-            self.sendevent(&mut c, self.wm_atom[WM::WMTakeFocus as usize]);
+            self.sendevent(&mut c, self.atoms.wm_take_focus.resource_id().into());
         }
     }
 
@@ -4903,11 +4869,14 @@ impl Jwm {
                 self.setfocus(&c_rc);
             } else {
                 XSetInputFocus(self.dpy, self.root, RevertToPointerRoot, CurrentTime);
-                XDeleteProperty(
-                    self.dpy,
-                    self.root,
-                    self.net_atom[NET::NetActiveWindow as usize],
-                );
+                let cookie = self
+                    .xcb_conn
+                    .connection()
+                    .send_request_checked(&x::DeleteProperty {
+                        window: self.xcb_root,
+                        property: self.atoms.net_active_window,
+                    });
+                self.xcb_conn.connection().check_request(cookie).unwrap();
             }
             if let Some(sel_mon_opt) = self.sel_mon.as_mut() {
                 let mut sel_mon_mut = sel_mon_opt.borrow_mut();
@@ -4937,11 +4906,14 @@ impl Jwm {
             );
             if setfocus {
                 XSetInputFocus(self.dpy, self.root, RevertToPointerRoot, CurrentTime);
-                XDeleteProperty(
-                    self.dpy,
-                    self.root,
-                    self.net_atom[NET::NetActiveWindow as usize],
-                );
+                let cookie = self
+                    .xcb_conn
+                    .connection()
+                    .send_request_checked(&x::DeleteProperty {
+                        window: self.xcb_root,
+                        property: self.atoms.net_active_window,
+                    });
+                self.xcb_conn.connection().check_request(cookie).unwrap();
             }
         }
     }
@@ -4977,8 +4949,8 @@ impl Jwm {
             XChangeProperty(
                 self.dpy,
                 win,
-                self.wm_atom[WM::WMState as usize],
-                self.wm_atom[WM::WMState as usize],
+                self.atoms.wm_state.resource_id().into(),
+                self.atoms.wm_state.resource_id().into(),
                 32,
                 PropModeReplace,
                 data_to_set.as_ptr() as *const u8,
@@ -5147,7 +5119,7 @@ impl Jwm {
             XChangeProperty(
                 self.dpy,
                 self.root,
-                self.net_atom[NET::NetClientList as usize],
+                self.atoms.net_client_list.resource_id().into(),
                 XA_WINDOW,
                 32,
                 PropModeAppend, // 追加到现有列表
@@ -5166,11 +5138,14 @@ impl Jwm {
     fn update_net_client_list(&mut self) {
         unsafe {
             // 清空现有列表
-            XDeleteProperty(
-                self.dpy,
-                self.root,
-                self.net_atom[NET::NetClientList as usize],
-            );
+            let cookie = self
+                .xcb_conn
+                .connection()
+                .send_request_checked(&x::DeleteProperty {
+                    window: self.xcb_root,
+                    property: self.atoms.net_client_list,
+                });
+            self.xcb_conn.connection().check_request(cookie).unwrap();
 
             // 重新构建列表
             let mut m = self.mons.clone();
@@ -5180,7 +5155,7 @@ impl Jwm {
                     XChangeProperty(
                         self.dpy,
                         self.root,
-                        self.net_atom[NET::NetClientList as usize],
+                        self.atoms.net_client_list.resource_id().into(),
                         XA_WINDOW,
                         32,
                         PropModeAppend,
@@ -6379,14 +6354,14 @@ impl Jwm {
         let wtype;
         {
             let c = &mut *c.borrow_mut();
-            state = self.getatomprop(c, self.net_atom[NET::NetWMState as usize]);
-            wtype = self.getatomprop(c, self.net_atom[NET::NetWMWindowType as usize]);
+            state = self.getatomprop(c, self.atoms.net_wm_state.resource_id().into());
+            wtype = self.getatomprop(c, self.atoms.net_wm_window_type.resource_id().into());
         }
 
-        if state == self.net_atom[NET::NetWMFullscreen as usize] {
+        if state == self.atoms.net_wm_fullscreen.resource_id().into() {
             self.setfullscreen(c, true);
         }
-        if wtype == self.net_atom[NET::NetWMWindowTypeDialog as usize] {
+        if wtype == self.atoms.net_wm_window_type_dialog.resource_id().into() {
             let c = &mut *c.borrow_mut();
             c.is_floating = true;
         }
@@ -6424,7 +6399,11 @@ impl Jwm {
 
     pub fn updatetitle(&mut self, c: &mut Client) {
         // info!("[updatetitle]");
-        if !self.gettextprop(c.win, self.net_atom[NET::NetWMName as usize], &mut c.name) {
+        if !self.gettextprop(
+            c.win,
+            self.atoms.net_wm_name.resource_id().into(),
+            &mut c.name,
+        ) {
             self.gettextprop(c.win, XA_WM_NAME, &mut c.name);
         }
     }
