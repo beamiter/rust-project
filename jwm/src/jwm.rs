@@ -37,6 +37,7 @@ use x11::xlib::{XConnectionNumber, XPending};
 use x11::xlib::{XFreeStringList, XSetClassHint};
 use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
 use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
+use xcb::x::GetWindowAttributesReply;
 
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
@@ -4883,14 +4884,10 @@ impl Jwm {
                     RevertToPointerRoot,
                     CurrentTime,
                 );
-                let cookie = self
-                    .xcb_conn
-                    .connection()
-                    .send_request_checked(&x::DeleteProperty {
-                        window: self.xcb_root,
-                        property: self.atoms.net_active_window,
-                    });
-                self.xcb_conn.connection().check_request(cookie).unwrap();
+                let _ = self.xcb_conn.connection().send_request(&x::DeleteProperty {
+                    window: self.xcb_root,
+                    property: self.atoms.net_active_window,
+                });
             }
             if let Some(sel_mon_opt) = self.sel_mon.as_mut() {
                 let mut sel_mon_mut = sel_mon_opt.borrow_mut();
@@ -5157,14 +5154,10 @@ impl Jwm {
     fn update_net_client_list(&mut self) {
         unsafe {
             // 清空现有列表
-            let cookie = self
-                .xcb_conn
-                .connection()
-                .send_request_checked(&x::DeleteProperty {
-                    window: self.xcb_root,
-                    property: self.atoms.net_client_list,
-                });
-            self.xcb_conn.connection().check_request(cookie).unwrap();
+            let _ = self.xcb_conn.connection().send_request(&x::DeleteProperty {
+                window: self.xcb_root,
+                property: self.atoms.net_client_list,
+            });
 
             // 重新构建列表
             let mut m = self.mons.clone();
@@ -5420,69 +5413,8 @@ impl Jwm {
         }
     }
 
-    // 实时同步状态栏几何信息
-    #[allow(dead_code)]
-    pub fn sync_statusbar_geometry(&mut self, monitor_id: i32) -> bool {
-        if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
-            unsafe {
-                let win = statusbar.borrow().win;
-                let mut wa: XWindowAttributes = std::mem::zeroed();
-
-                // 从 X11 获取实际的窗口几何信息
-                if XGetWindowAttributes(self.x11_dpy, win, &mut wa) > 0 {
-                    let mut statusbar_mut = statusbar.borrow_mut();
-                    let mut changed = false;
-
-                    // 比较并更新几何信息
-                    if statusbar_mut.x != wa.x {
-                        info!(
-                            "[sync_statusbar_geometry] X: {} -> {}",
-                            statusbar_mut.x, wa.x
-                        );
-                        statusbar_mut.x = wa.x;
-                        changed = true;
-                    }
-                    if statusbar_mut.y != wa.y {
-                        info!(
-                            "[sync_statusbar_geometry] Y: {} -> {}",
-                            statusbar_mut.y, wa.y
-                        );
-                        statusbar_mut.y = wa.y;
-                        changed = true;
-                    }
-                    if statusbar_mut.w != wa.width {
-                        info!(
-                            "[sync_statusbar_geometry] W: {} -> {}",
-                            statusbar_mut.w, wa.width
-                        );
-                        statusbar_mut.w = wa.width;
-                        changed = true;
-                    }
-                    if statusbar_mut.h != wa.height {
-                        info!(
-                            "[sync_statusbar_geometry] H: {} -> {}",
-                            statusbar_mut.h, wa.height
-                        );
-                        statusbar_mut.h = wa.height;
-                        changed = true;
-                    }
-
-                    return changed;
-                }
-            }
-        }
-        false
-    }
-
     pub fn client_y_offset(&mut self, m: &Monitor) -> i32 {
         let monitor_id = m.num;
-        // 同步状态栏几何信息
-        if self.sync_statusbar_geometry(monitor_id) {
-            info!(
-                "[client_y_offset] Synced statusbar geometry for monitor {}",
-                monitor_id
-            );
-        }
 
         if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
             let statusbar_borrow = statusbar.borrow();
@@ -5586,8 +5518,8 @@ impl Jwm {
             let name_cstring = CString::new(res_name)
                 .map_err(|e| format!("Invalid name string '{}': {}", res_name, e))?;
             // 检查窗口是否有效
-            let mut window_attrs: XWindowAttributes = std::mem::zeroed();
-            if XGetWindowAttributes(self.x11_dpy, client_mut.win, &mut window_attrs) == 0 {
+            let window_attr = self.get_window_attributes_xcb(x::Window::new(client_mut.win as u32));
+            if window_attr.is_err() {
                 return Err(format!("Window 0x{:x} is not valid", client_mut.win));
             }
             // 创建 XClassHint 结构
@@ -5669,18 +5601,33 @@ impl Jwm {
         }
     }
 
+    pub fn get_window_attributes_xcb(
+        &self,
+        window: x::Window,
+    ) -> Result<GetWindowAttributesReply, Error> {
+        let conn = self.xcb_conn.connection();
+        // 1. 发送 GetWindowAttributes 请求
+        let cookie = conn.send_request(&x::GetWindowAttributes { window });
+        // 2. 等待并获取回复
+        // wait_for_reply 会阻塞，直到收到回复或发生 I/O 错误
+        let reply = conn.wait_for_reply(cookie)?;
+        return Ok(reply);
+    }
+
     pub fn maprequest(&mut self, e: *mut XEvent) {
         // info!("[maprequest]");
         unsafe {
             let ev = (*e).map_request;
             let mut wa: XWindowAttributes = zeroed();
-            if XGetWindowAttributes(self.x11_dpy, ev.window, addr_of_mut!(wa)) <= 0
-                || wa.override_redirect > 0
+            if let Ok(window_attr) =
+                self.get_window_attributes_xcb(x::Window::new(ev.window as u32))
             {
-                return;
-            }
-            if self.wintoclient(ev.window).is_none() {
-                self.manage(ev.window, addr_of_mut!(wa));
+                if window_attr.override_redirect() {
+                    return;
+                }
+                if self.wintoclient(ev.window).is_none() {
+                    self.manage(ev.window, addr_of_mut!(wa));
+                }
             }
         }
     }
