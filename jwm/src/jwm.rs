@@ -53,25 +53,24 @@ use x11::xlib::{
     CWBorderWidth, CWCursor, CWEventMask, CWHeight, CWSibling, CWStackMode, CWWidth, ClientMessage,
     Colormap, ConfigureNotify, ConfigureRequest, CurrentTime, DestroyAll, DestroyNotify, Display,
     EnterNotify, EnterWindowMask, Expose, ExposureMask, False, FocusChangeMask, FocusIn,
-    GrabModeAsync, GrabModeSync, GrabSuccess, InputHint, IsViewable, KeyPress, KeySym,
-    LeaveWindowMask, LockMask, MapRequest, MappingKeyboard, MappingNotify, MotionNotify,
-    NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc,
-    PSize, PointerMotionMask, PointerRoot, PropertyChangeMask, PropertyDelete, PropertyNotify,
+    GrabModeAsync, GrabModeSync, GrabSuccess, IsViewable, KeyPress, KeySym, LeaveWindowMask,
+    LockMask, MapRequest, MappingKeyboard, MappingNotify, MotionNotify, NoEventMask,
+    NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize,
+    PointerMotionMask, PointerRoot, PropertyChangeMask, PropertyDelete, PropertyNotify,
     ReplayPointer, RevertToPointerRoot, StructureNotifyMask, SubstructureNotifyMask,
     SubstructureRedirectMask, Success, Time, True, TrueColor, UnmapNotify, Visual, VisualClassMask,
     VisualDepthMask, VisualScreenMask, XAllowEvents, XChangeWindowAttributes, XCheckMaskEvent,
     XClassHint, XConfigureEvent, XConfigureWindow, XCreateColormap, XDefaultColormap,
     XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDestroyWindow,
     XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap,
-    XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetVisualInfo, XGetWMHints,
+    XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetVisualInfo,
     XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGrabButton, XGrabKey, XGrabPointer,
     XGrabServer, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent,
     XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping,
     XRootWindow, XSelectInput, XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus,
-    XSetWMHints, XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XUngrabButton,
-    XUngrabKey, XUngrabPointer, XUngrabServer, XUrgencyHint, XVisualInfo, XWarpPointer,
-    XWindowAttributes, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS,
-    XA_WM_TRANSIENT_FOR,
+    XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey,
+    XUngrabPointer, XUngrabServer, XVisualInfo, XWarpPointer, XWindowAttributes, XWindowChanges,
+    CWX, CWY, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -1455,23 +1454,92 @@ impl Jwm {
         }
     }
 
-    pub fn seturgent(&mut self, c_rc: &Rc<RefCell<Client>>, urg: bool) {
-        // info!("[seturgent]");
-        unsafe {
+    /// 设置窗口的 urgent 状态（XUrgencyHint）
+    pub fn seturgent(&self, c_rc: &Rc<RefCell<Client>>, urg: bool) {
+        {
             c_rc.borrow_mut().is_urgent = urg;
-            let win = c_rc.borrow().win;
-            let wmh = XGetWMHints(self.x11_dpy, win.into());
-            if wmh.is_null() {
+        }
+        let win = c_rc.borrow().win;
+        // 1. 先读取现有的 WM_HINTS 属性
+        let cookie = match self.x11rb_conn.get_property(
+            false, // delete: 不删除
+            win,   // window
+            AtomEnum::WM_HINTS,
+            AtomEnum::CARDINAL, // type: 期望 CARDINAL（实际是位图）
+            0,                  // long_offset
+            20,                 // 足够读取所有字段（flags + 数据）
+        ) {
+            Ok(cookie) => cookie,
+            Err(_) => {
+                error!("seturgent: failed to send get_property request for WM_HINTS");
                 return;
             }
-            (*wmh).flags = if urg {
-                (*wmh).flags | XUrgencyHint
-            } else {
-                (*wmh).flags & !XUrgencyHint
-            };
-            XSetWMHints(self.x11_dpy, win.into(), wmh);
-            XFree(wmh as *mut _);
+        };
+        let reply = match cookie.reply() {
+            Ok(reply) => reply,
+            Err(_) => {
+                // 属性不存在，我们视为 flags = 0
+                debug!("WM_HINTS not set, treating as zero");
+                return self.send_wm_hints_with_flags(win, if urg { 256 } else { 0 });
+                // 256 = XUrgencyHint
+            }
+        };
+        // 2. 解析 flags（第一个 u32）
+        let mut values = reply.value32().unwrap();
+        let mut flags = match values.next() {
+            Some(f) => f,
+            None => {
+                debug!("WM_HINTS has no data");
+                return self.send_wm_hints_with_flags(win, if urg { 256 } else { 0 });
+            }
+        };
+
+        // 3. 修改 XUrgencyHint 位（第 9 位，值为 256）
+        const X_URGENCY_HINT: u32 = 1 << 8; // 256
+        if urg {
+            flags |= X_URGENCY_HINT;
+        } else {
+            flags &= !X_URGENCY_HINT;
         }
+        // 4. 重新设置 WM_HINTS 属性
+        self.send_wm_hints_with_flags(win, flags);
+    }
+
+    /// 辅助函数：通过 `_NET_WM_STATE` 或直接设置 `WM_HINTS`
+    /// 这里我们选择直接使用 `change_property` 设置 `WM_HINTS`
+    fn send_wm_hints_with_flags(&self, window: u32, flags: u32) {
+        // 构造属性值：flags + 其余字段保持原样（这里我们只设置 flags）
+        // 如果你需要保留其他字段（如 input, initial_state 等），需从原 reply 中复制
+        let data: [u32; 1] = [flags]; // 至少写入 flags
+        use x11rb::wrapper::ConnectionExt;
+        let _ = self
+            .x11rb_conn
+            .change_property32(
+                PropMode::REPLACE,
+                window,
+                AtomEnum::WM_HINTS,
+                AtomEnum::CARDINAL,
+                &data,
+            )
+            .and_then(|_| self.x11rb_conn.flush());
+    }
+
+    #[allow(dead_code)]
+    fn send_wm_hints_with_flags_vec(&self, window: u32, flags: u32, rest: Vec<u32>) {
+        let mut data = Vec::with_capacity(rest.len() + 1);
+        data.push(flags);
+        data.extend(rest);
+        use x11rb::wrapper::ConnectionExt;
+        let _ = self
+            .x11rb_conn
+            .change_property32(
+                PropMode::REPLACE,
+                window,
+                AtomEnum::WM_HINTS,
+                AtomEnum::CARDINAL,
+                &data,
+            )
+            .and_then(|_| self.x11rb_conn.flush());
     }
 
     pub fn showhide(&mut self, client_opt: Option<Rc<RefCell<Client>>>) {
@@ -6295,33 +6363,96 @@ impl Jwm {
         }
     }
 
-    pub fn updatewmhints(&mut self, client_rc: &Rc<RefCell<Client>>) {
-        // info!("[updatewmhints]");
-        unsafe {
-            let mut client_mut = client_rc.borrow_mut();
-            let wmh = XGetWMHints(self.x11_dpy, client_mut.win.into());
-            if !wmh.is_null() {
-                let sel_mon_borrow = self.sel_mon.as_ref().unwrap().borrow();
-                if sel_mon_borrow.sel.is_some()
-                    && Rc::ptr_eq(client_rc, sel_mon_borrow.sel.as_ref().unwrap())
-                    && ((*wmh).flags & XUrgencyHint) > 0
-                {
-                    (*wmh).flags &= !XUrgencyHint;
-                    XSetWMHints(self.x11_dpy, client_mut.win.into(), wmh);
-                } else {
-                    client_mut.is_urgent = if (*wmh).flags & XUrgencyHint > 0 {
-                        true
-                    } else {
-                        false
-                    };
-                }
-                if (*wmh).flags & InputHint > 0 {
-                    client_mut.never_focus = (*wmh).input <= 0;
-                } else {
-                    client_mut.never_focus = false;
-                }
-                XFree(wmh as *mut _);
+    /// 更新客户端的 WM_HINTS 状态：urgent 和 never_focus
+    pub fn updatewmhints(&self, client_rc: &Rc<RefCell<Client>>) {
+        let win = client_rc.borrow().win;
+        // 1. 读取 WM_HINTS 属性
+        let cookie = match self.x11rb_conn.get_property(
+            false, // delete: 不删除
+            win,   // window
+            AtomEnum::WM_HINTS,
+            AtomEnum::CARDINAL, // type: 期望 CARDINAL（实际是位图）
+            0,                  // long_offset
+            20,                 // length
+        ) {
+            Ok(cookie) => cookie,
+            Err(_) => {
+                debug!("updatewmhints: failed to send get_property request");
+                return;
             }
+        };
+
+        let reply = match cookie.reply() {
+            Ok(reply) => reply,
+            Err(_) => {
+                // 属性不存在或无效
+                return;
+            }
+        };
+
+        // 2. 解析 flags（第一个 u32）
+        let mut values = reply.value32().into_iter().flatten();
+        let flags = match values.next() {
+            Some(f) => f,
+            None => return, // 无数据
+        };
+
+        // 3. 检查是否为当前选中窗口
+        let is_focused = {
+            if let Some(ref sel_mon) = self.sel_mon {
+                let sel_mon_borrow = sel_mon.borrow();
+                if let Some(ref sel) = sel_mon_borrow.sel {
+                    Rc::ptr_eq(client_rc, sel)
+                } else {
+                    false
+                }
+            } else {
+                false
+            }
+        };
+
+        const X_URGENCY_HINT: u32 = 1 << 8;
+        const INPUT_HINT: u32 = 1 << 0;
+
+        // 4. 处理 XUrgencyHint
+        if (flags & X_URGENCY_HINT) != 0 {
+            if is_focused {
+                // 如果是当前选中窗口，清除 urgency hint
+                let new_flags = flags & !X_URGENCY_HINT;
+                let mut data: Vec<u32> = vec![new_flags];
+                data.extend(&mut values); // 保留其余字段
+
+                use x11rb::wrapper::ConnectionExt;
+                let _ = self
+                    .x11rb_conn
+                    .change_property32(
+                        PropMode::REPLACE,
+                        win,
+                        AtomEnum::WM_HINTS,
+                        AtomEnum::CARDINAL, // type: 期望 CARDINAL（实际是位图）
+                        &data,
+                    )
+                    .and_then(|_| self.x11rb_conn.flush());
+            } else {
+                // 否则标记为 urgent
+                client_rc.borrow_mut().is_urgent = true;
+            }
+        } else {
+            // 没有 urgency hint
+            client_rc.borrow_mut().is_urgent = false;
+        }
+
+        // 5. 处理 InputHint
+        if (flags & INPUT_HINT) != 0 {
+            // InputHint 存在，检查 input 字段
+            let input = match values.next() {
+                Some(i) => i as i32,
+                None => return,
+            };
+            client_rc.borrow_mut().never_focus = input <= 0;
+        } else {
+            // InputHint 不存在，可聚焦
+            client_rc.borrow_mut().never_focus = false;
         }
     }
 
