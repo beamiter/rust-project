@@ -1,5 +1,4 @@
 pub mod config;
-pub mod drw;
 pub mod jwm;
 pub mod miscellaneous;
 pub mod terminal_prober;

@@ -40,7 +40,7 @@ use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::protocol::render::PictType;
 use x11rb::protocol::xproto::{
-    Atom, AtomEnum, Colormap, ColormapAlloc, ConnectionExt, CreateWindowAux, EventMask,
+    Atom, AtomEnum, Colormap, ColormapAlloc, ConnectionExt, CreateWindowAux, Cursor, EventMask,
     GetGeometryReply, GetWindowAttributesReply, MapState, PropMode, VisualClass, Visualid, Window,
     WindowClass,
 };
@@ -74,7 +74,6 @@ use x11::xlib::{
 use std::cmp::{max, min};
 
 use crate::config::CONFIG;
-use crate::drw::{Cur, Drw};
 use crate::xcb_util::Atoms;
 use crate::xproto::{
     IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
@@ -762,9 +761,8 @@ pub struct Jwm {
     pub s_h: i32,
     pub numlock_mask: u32,
     pub running: AtomicBool,
-    pub cursor: [Option<Box<Cur>>; CUR::CurLast as usize],
+    pub cursor: [Option<Cursor>; CUR::CurLast as usize],
     pub theme_manager: ThemeManager,
-    pub drw: Option<Box<Drw>>,
     pub mons: Option<Rc<RefCell<Monitor>>>,
     pub motion_mon: Option<Rc<RefCell<Monitor>>>,
     pub sel_mon: Option<Rc<RefCell<Monitor>>>,
@@ -793,6 +791,32 @@ pub struct Jwm {
 }
 
 impl Jwm {
+    pub fn drw_clr_create_direct(r: u8, g: u8, b: u8, alpha: u8) -> Option<XftColor> {
+        unsafe {
+            let mut xcolor: XftColor = std::mem::zeroed();
+            // 手动构造像素值 (ARGB格式)
+            xcolor.pixel =
+                ((alpha as u64) << 24) | ((r as u64) << 16) | ((g as u64) << 8) | (b as u64);
+            // 设置其他字段
+            xcolor.color.red = (r as u16) << 8;
+            xcolor.color.green = (g as u16) << 8;
+            xcolor.color.blue = (b as u16) << 8;
+            xcolor.color.alpha = (alpha as u16) << 8;
+            Some(xcolor)
+        }
+    }
+
+    pub fn drw_clr_create_from_hex(hex_color: &str, alpha: u8) -> Option<XftColor> {
+        // 解析 "#ff0000" 格式
+        if hex_color.starts_with('#') && hex_color.len() == 7 {
+            let r = u8::from_str_radix(&hex_color[1..3], 16).ok()?;
+            let g = u8::from_str_radix(&hex_color[3..5], 16).ok()?;
+            let b = u8::from_str_radix(&hex_color[5..7], 16).ok()?;
+            return Self::drw_clr_create_direct(r, g, b, alpha);
+        }
+        None
+    }
+
     fn handler(&mut self, key: i32, e: *mut XEvent) {
         match key {
             ButtonPress => self.buttonpress(e),
@@ -817,34 +841,34 @@ impl Jwm {
     pub fn new(sender: Sender<u8>) -> Self {
         let theme_manager = ThemeManager::new(
             ColorScheme::new(
-                Drw::drw_clr_create_from_hex(
+                Self::drw_clr_create_from_hex(
                     &CONFIG.colors().dark_sea_green1,
                     CONFIG.colors().opaque,
                 )
                 .unwrap(),
-                Drw::drw_clr_create_from_hex(
+                Self::drw_clr_create_from_hex(
                     &CONFIG.colors().light_sky_blue1,
                     CONFIG.colors().opaque,
                 )
                 .unwrap(),
-                Drw::drw_clr_create_from_hex(
+                Self::drw_clr_create_from_hex(
                     &CONFIG.colors().light_sky_blue1,
                     CONFIG.colors().opaque,
                 )
                 .unwrap(),
             ),
             ColorScheme::new(
-                Drw::drw_clr_create_from_hex(
+                Self::drw_clr_create_from_hex(
                     &CONFIG.colors().dark_sea_green2,
                     CONFIG.colors().opaque,
                 )
                 .unwrap(),
-                Drw::drw_clr_create_from_hex(
+                Self::drw_clr_create_from_hex(
                     &CONFIG.colors().pale_turquoise1,
                     CONFIG.colors().opaque,
                 )
                 .unwrap(),
-                Drw::drw_clr_create_from_hex(&CONFIG.colors().cyan, CONFIG.colors().opaque)
+                Self::drw_clr_create_from_hex(&CONFIG.colors().cyan, CONFIG.colors().opaque)
                     .unwrap(),
             ),
         );
@@ -868,7 +892,6 @@ impl Jwm {
             cursor: [const { None }; CUR::CurLast as usize],
             theme_manager,
             x11_dpy: dpy,
-            drw: None,
             mons: None,
             motion_mon: None,
             sel_mon: None,
@@ -1224,13 +1247,6 @@ impl Jwm {
             XUngrabKey(self.x11_dpy, AnyKey, AnyModifier, self.x11_root.into());
             while self.mons.is_some() {
                 self.cleanupmon(self.mons.clone());
-            }
-            for i in 0..CUR::CurLast as usize {
-                self.drw
-                    .as_mut()
-                    .unwrap()
-                    .as_mut()
-                    .drw_cur_free(self.cursor[i].as_mut().unwrap().as_mut());
             }
             XDestroyWindow(self.x11_dpy, self.wm_check_win.into());
             XSync(self.x11_dpy, False);
@@ -3787,6 +3803,14 @@ impl Jwm {
         Ok(())
     }
 
+    fn create_glyph_cursor<C: Connection>(conn: &C, shape: u16) -> Result<u32, ReplyOrIdError> {
+        let font = conn.generate_id()?;
+        conn.open_font(font, b"cursor")?;
+        let cursor = conn.generate_id()?;
+        conn.create_glyph_cursor(cursor, font, font, shape, shape + 1, 0, 0, 0, 0, 0, 0)?;
+        Ok(cursor)
+    }
+
     pub fn setup(&mut self) {
         // info!("[setup]");
         unsafe {
@@ -3803,37 +3827,21 @@ impl Jwm {
 
             // init screen
             let _ = self.xinit_visual();
-            self.drw = Some(Box::new(Drw::drw_create(self.x11_dpy)));
             // info!("[setup] updategeom");
             self.updategeom();
 
             let _ = self.setup_ewmh();
 
             // init cursors
-            self.cursor[CUR::CurNormal as usize] = self
-                .drw
-                .as_mut()
-                .unwrap()
-                .as_mut()
-                .drw_cur_create(XC_left_ptr as i32);
-            self.cursor[CUR::CurResize as usize] = self
-                .drw
-                .as_mut()
-                .unwrap()
-                .as_mut()
-                .drw_cur_create(XC_sizing as i32);
-            self.cursor[CUR::CurMove as usize] = self
-                .drw
-                .as_mut()
-                .unwrap()
-                .as_mut()
-                .drw_cur_create(XC_fleur as i32);
+            self.cursor[CUR::CurNormal as usize] =
+                Self::create_glyph_cursor(&self.x11rb_conn, XC_left_ptr as u16).ok();
+            self.cursor[CUR::CurResize as usize] =
+                Self::create_glyph_cursor(&self.x11rb_conn, XC_sizing as u16).ok();
+            self.cursor[CUR::CurMove as usize] =
+                Self::create_glyph_cursor(&self.x11rb_conn, XC_fleur as u16).ok();
 
             // select events
-            wa.cursor = self.cursor[CUR::CurNormal as usize]
-                .as_ref()
-                .unwrap()
-                .cursor;
+            wa.cursor = self.cursor[CUR::CurNormal as usize].unwrap().into();
             wa.event_mask = SubstructureRedirectMask
                 | SubstructureNotifyMask
                 | ButtonPressMask
@@ -4149,15 +4157,15 @@ impl Jwm {
             // 4. 抓取鼠标指针 (XGrabPointer)
             //   这使得 JWM 在接下来的鼠标事件中独占鼠标输入，直到释放。
             if XGrabPointer(
-                self.x11_dpy,                                                // X Display 连接
-                self.x11_root.into(), // 抓取事件的窗口 (根窗口)
-                False,                // owner_events: False 表示事件报告给抓取窗口 (root)
-                MOUSEMASK as u32,     // event_mask: 我们关心的鼠标事件 (移动、按钮释放)
-                GrabModeAsync,        // pointer_mode: 异步指针模式
-                GrabModeAsync,        // keyboard_mode: 异步键盘模式 (通常与指针模式一致)
-                0,                    // confine_to: 不限制鼠标移动范围 (0 表示不限制)
-                self.cursor[CUR::CurMove as usize].as_ref().unwrap().cursor, // cursor: 设置为移动光标样式
-                CurrentTime,                                                 // time: 当前时间
+                self.x11_dpy,                                       // X Display 连接
+                self.x11_root.into(),                               // 抓取事件的窗口 (根窗口)
+                False,            // owner_events: False 表示事件报告给抓取窗口 (root)
+                MOUSEMASK as u32, // event_mask: 我们关心的鼠标事件 (移动、按钮释放)
+                GrabModeAsync,    // pointer_mode: 异步指针模式
+                GrabModeAsync,    // keyboard_mode: 异步键盘模式 (通常与指针模式一致)
+                0,                // confine_to: 不限制鼠标移动范围 (0 表示不限制)
+                self.cursor[CUR::CurMove as usize].unwrap().into(), // cursor: 设置为移动光标样式
+                CurrentTime,      // time: 当前时间
             ) != GrabSuccess
             {
                 // 如果抓取失败 (例如其他程序已抓取)，则返回
@@ -4358,10 +4366,7 @@ impl Jwm {
                 GrabModeAsync,    // pointer_mode
                 GrabModeAsync,    // keyboard_mode
                 0,                // confine_to: 不限制范围
-                self.cursor[CUR::CurResize as usize]
-                    .as_ref()
-                    .unwrap()
-                    .cursor, // 使用调整大小光标
+                self.cursor[CUR::CurResize as usize].unwrap().into(), // 使用调整大小光标
                 CurrentTime,
             ) != GrabSuccess
             {
