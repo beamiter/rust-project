@@ -37,8 +37,9 @@ shared_structures = { path = "../shared_structures", features = ["use-semaphore"
 sysinfo = "0.32.0"
 toml = "0.9.5"
 x11 = { version = "2.21.0", features = ["all"] }
-xcb = "1.5.0"
-xcb-util = { version = "0.4.0", features = ["ewmh", "icccm", "shm"] }
+x11rb = "0.13.1"
+x11rb-protocol = "0.13.1"
+xcb = "1.6.0"
 yeslogic-fontconfig-sys = "6.0.0"
 
 [build-dependencies]
