@@ -19,12 +19,11 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::c_char;
 use std::ffi::{CStr, CString};
 use std::fmt;
-use std::io::Error;
 use std::mem::transmute;
 use std::mem::zeroed;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
-use std::ptr::{addr_of_mut, null, null_mut};
+use std::ptr::{addr_of_mut, null_mut};
 use std::rc::Rc;
 use std::str::FromStr; // 用于从字符串解析 // 用于格式化输出，如 Display trait
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -39,10 +38,10 @@ use x11::xlib::{XFreeStringList, XSetClassHint};
 use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
 use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
 use x11rb::connection::Connection;
-use x11rb::errors::{ReplyError, ReplyOrIdError};
+use x11rb::errors::ReplyError;
 use x11rb::protocol::xproto::{
     Atom, AtomEnum, ConnectionExt, CreateWindowAux, EventMask, GetWindowAttributesReply, PropMode,
-    TranslateCoordinatesReply, Window, WindowClass,
+    Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::COPY_DEPTH_FROM_PARENT;
@@ -65,14 +64,14 @@ use x11::xlib::{
     XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDestroyWindow,
     XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap,
     XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetVisualInfo, XGetWMHints,
-    XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton,
-    XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym, XKeysymToKeycode, XKillClient,
-    XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryTree, XRaiseWindow,
-    XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetCloseDownMode,
-    XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes, XSetWindowBorder,
-    XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer, XUrgencyHint,
-    XVisualInfo, XWarpPointer, XWindowAttributes, XWindowChanges, CWX, CWY, XA_ATOM, XA_WM_HINTS,
-    XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGrabButton, XGrabKey, XGrabPointer,
+    XGrabServer, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent,
+    XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping,
+    XRootWindow, XSelectInput, XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus,
+    XSetWMHints, XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XUngrabButton,
+    XUngrabKey, XUngrabPointer, XUngrabServer, XUrgencyHint, XVisualInfo, XWarpPointer,
+    XWindowAttributes, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS,
+    XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -1279,7 +1278,7 @@ impl Jwm {
                     let isfullscreen = { c.borrow_mut().is_fullscreen };
                     let fullscreen =
                         cme.data.get_long(0) == 1 || (cme.data.get_long(0) == 2 && !isfullscreen);
-                    self.setfullscreen(c, fullscreen);
+                    let _ = self.setfullscreen(c, fullscreen);
                 }
             } else if cme.message_type == self.atoms._NET_ACTIVE_WINDOW.into() {
                 let is_urgent = { c.borrow_mut().is_urgent };
@@ -2882,7 +2881,7 @@ impl Jwm {
             let ev = (*e).focus_change;
             if let Some(sel) = sel.as_ref() {
                 if ev.window != sel.borrow().win.into() {
-                    self.setfocus(sel);
+                    let _ = self.setfocus(sel);
                 }
             }
         }
@@ -2918,7 +2917,7 @@ impl Jwm {
                 if let Some(ref sel_opt) = sel {
                     if target_tag > 0 {
                         sel_opt.borrow_mut().tags = target_tag;
-                        self.setclienttagprop(sel_opt);
+                        let _ = self.setclienttagprop(sel_opt);
                         self.focus(None);
                         self.arrange(self.sel_mon.clone());
                     }
@@ -3590,7 +3589,7 @@ impl Jwm {
                 return;
             }
             let isfullscreen = { sel.as_ref().unwrap().borrow_mut().is_fullscreen };
-            self.setfullscreen(sel.as_ref().unwrap(), !isfullscreen);
+            let _ = self.setfullscreen(sel.as_ref().unwrap(), !isfullscreen);
         }
     }
 
@@ -3605,7 +3604,7 @@ impl Jwm {
                 let newtags = sel.as_ref().unwrap().borrow_mut().tags ^ (ui & CONFIG.tagmask());
                 if newtags > 0 {
                     sel.as_ref().unwrap().borrow_mut().tags = newtags;
-                    self.setclienttagprop(sel.as_ref().unwrap());
+                    let _ = self.setclienttagprop(sel.as_ref().unwrap());
                     self.focus(None);
                     self.arrange(self.sel_mon.clone());
                 }
@@ -3692,13 +3691,15 @@ impl Jwm {
         )?;
 
         // --- 5. 清除 _NET_CLIENT_LIST 和 _NET_CLIENT_INFO ---
-        self.x11rb_conn
+        let _ = self
+            .x11rb_conn
             .delete_property(x11rb_screen.root, self.atoms._NET_CLIENT_LIST);
-        self.x11rb_conn
+        let _ = self
+            .x11rb_conn
             .delete_property(x11rb_screen.root, self.atoms._NET_CLIENT_INFO);
 
         // --- 6. 刷新请求 ---
-        self.x11rb_conn.flush();
+        let _ = self.x11rb_conn.flush();
         Ok(())
     }
 
@@ -3726,7 +3727,7 @@ impl Jwm {
             // info!("[setup] updategeom");
             self.updategeom();
 
-            self.setup_ewmh();
+            let _ = self.setup_ewmh();
 
             // init cursors
             self.cursor[CUR::CurNormal as usize] = self
@@ -4867,7 +4868,7 @@ impl Jwm {
                         .border_color()
                         .pixel,
                 );
-                self.setfocus(&c_rc);
+                let _ = self.setfocus(&c_rc);
             } else {
                 XSetInputFocus(
                     self.x11_dpy,
@@ -4875,7 +4876,8 @@ impl Jwm {
                     RevertToPointerRoot,
                     CurrentTime,
                 );
-                self.x11rb_conn
+                let _ = self
+                    .x11rb_conn
                     .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW);
             }
             if let Some(sel_mon_opt) = self.sel_mon.as_mut() {
@@ -4911,7 +4913,8 @@ impl Jwm {
                     RevertToPointerRoot,
                     CurrentTime,
                 );
-                self.x11rb_conn
+                let _ = self
+                    .x11rb_conn
                     .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW);
             }
         }
@@ -4935,7 +4938,7 @@ impl Jwm {
         };
         self.attach(c.clone());
         self.attachstack(c.clone());
-        self.setclienttagprop(c.as_ref().unwrap());
+        let _ = self.setclienttagprop(c.as_ref().unwrap());
         self.focus(None);
         self.arrange(None);
     }
@@ -5097,7 +5100,7 @@ impl Jwm {
             }
 
             // 设置客户端的 WM_STATE 为 NormalState
-            self.setclientstate(client_rc, NormalState as i64);
+            let _ = self.setclientstate(client_rc, NormalState as i64);
 
             info!("[setup_client_window] Window setup completed for {}", win);
         }
@@ -5145,7 +5148,8 @@ impl Jwm {
     fn update_net_client_list(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         use x11rb::wrapper::ConnectionExt;
         // 清空现有列表
-        self.x11rb_conn
+        let _ = self
+            .x11rb_conn
             .delete_property(self.x11rb_root, self.atoms._NET_CLIENT_LIST);
 
         // 重新构建列表
@@ -5286,9 +5290,9 @@ impl Jwm {
         self.attach(Some(client_rc.clone()));
         self.attachstack(Some(client_rc.clone()));
         // 注册事件和抓取按钮
-        self.register_client_events(&client_rc);
+        let _ = self.register_client_events(&client_rc);
         // 更新客户端列表
-        self.update_net_client_list();
+        let _ = self.update_net_client_list();
         // 映射窗口
         unsafe {
             XMapWindow(self.x11_dpy, client_rc.borrow().win.into());
@@ -5580,6 +5584,7 @@ impl Jwm {
         }
     }
 
+    #[allow(dead_code)]
     fn get_and_query_window_geom<C: Connection>(
         conn: &C,
         win: Window,
@@ -6006,13 +6011,13 @@ impl Jwm {
                 // restore border.
                 XConfigureWindow(self.x11_dpy, win.into(), CWBorderWidth as u32, &mut wc);
                 XUngrabButton(self.x11_dpy, AnyButton as u32, AnyModifier, win.into());
-                self.setclientstate(client_rc, WithdrawnState as i64);
+                let _ = self.setclientstate(client_rc, WithdrawnState as i64);
                 XSync(self.x11_dpy, False);
                 XSetErrorHandler(Some(transmute(xerror as *const ())));
                 XUngrabServer(self.x11_dpy);
             }
             self.focus(None);
-            self.update_net_client_list();
+            let _ = self.update_net_client_list();
             self.arrange(client_rc.borrow().mon.clone());
         }
     }
@@ -6024,7 +6029,7 @@ impl Jwm {
             let c = self.wintoclient(ev.window as u32);
             if c.is_some() {
                 if ev.send_event > 0 {
-                    self.setclientstate(c.as_ref().unwrap(), WithdrawnState as i64);
+                    let _ = self.setclientstate(c.as_ref().unwrap(), WithdrawnState as i64);
                 } else {
                     self.unmanage(c, false);
                 }
@@ -6282,7 +6287,7 @@ impl Jwm {
         }
 
         if state == self.atoms._NET_WM_STATE_FULLSCREEN.into() {
-            self.setfullscreen(c, true);
+            let _ = self.setfullscreen(c, true);
         }
         if wtype == self.atoms._NET_WM_WINDOW_TYPE_DIALOG.into() {
             let c = &mut *c.borrow_mut();
