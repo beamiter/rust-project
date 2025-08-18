@@ -23,7 +23,7 @@ use std::mem::transmute;
 use std::mem::zeroed;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
-use std::ptr::{addr_of_mut, null_mut};
+use std::ptr::null_mut;
 use std::rc::Rc;
 use std::str::FromStr; // 用于从字符串解析 // 用于格式化输出，如 Display trait
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -40,8 +40,8 @@ use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
 use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::protocol::xproto::{
-    Atom, AtomEnum, ConnectionExt, CreateWindowAux, EventMask, GetWindowAttributesReply, MapState,
-    PropMode, Window, WindowClass,
+    Atom, AtomEnum, ConnectionExt, CreateWindowAux, EventMask, GetGeometryReply,
+    GetWindowAttributesReply, MapState, PropMode, Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::COPY_DEPTH_FROM_PARENT;
@@ -69,8 +69,8 @@ use x11::xlib::{
     XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput,
     XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWindowAttributes,
     XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer,
-    XVisualInfo, XWarpPointer, XWindowAttributes, XWindowChanges, CWX, CWY, XA_WM_HINTS,
-    XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XVisualInfo, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
+    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -116,6 +116,14 @@ pub enum SchemeType {
 pub struct ThemeManager {
     pub norm: ColorScheme, // 普通状态的颜色方案
     pub sel: ColorScheme,  // 选中状态的颜色方案
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct WindowGeom {
+    pub x: u16,
+    pub y: u16,
+    pub width: u16,
+    pub height: u16,
 }
 
 #[allow(dead_code)]
@@ -2357,24 +2365,22 @@ impl Jwm {
             let trans = self.get_transient_for(win);
             cookies.push((win, attr, geom, trans));
         }
-        for (win, attr, _geom, trans) in &cookies {
+        for (win, attr, geom, trans) in &cookies {
             if attr.override_redirect || trans.is_some() {
                 continue;
             }
             if attr.map_state == MapState::VIEWABLE || self.get_wm_state(*win) == IconicState as i64
             {
-                // (TODO)
-                self.manage(*win, null_mut());
+                self.manage(*win, geom);
             }
         }
-        for (win, attr, _geom, trans) in &cookies {
+        for (win, attr, geom, trans) in &cookies {
             {
                 if trans.is_some() {
                     if attr.map_state == MapState::VIEWABLE
                         || self.get_wm_state(*win) == IconicState as i64
                     {
-                        // (TODO)
-                        self.manage(*win, null_mut());
+                        self.manage(*win, geom);
                     }
                 }
             }
@@ -5066,69 +5072,65 @@ impl Jwm {
         }
     }
 
-    pub fn manage(&mut self, w: Window, wa_ptr: *mut XWindowAttributes) {
+    pub fn manage(&mut self, w: Window, geom: &GetGeometryReply) {
         // info!("[manage]"); // 日志
-
         // --- 1. 创建新的 Client 对象 ---
         let client_rc_opt: Option<Rc<RefCell<Client>>> = Some(Rc::new(RefCell::new(Client::new())));
         let client_rc = client_rc_opt.as_ref().unwrap();
-        unsafe {
-            let window_attributes = &*wa_ptr;
-            // --- 2. 初始化 Client 结构体的基本属性 ---
-            {
-                let mut client_mut = client_rc.borrow_mut();
-                // 设置窗口 ID
-                client_mut.win = w;
-                // 从传入的 XWindowAttributes 中获取初始的几何信息和边框宽度
-                client_mut.x = window_attributes.x;
-                client_mut.old_x = window_attributes.x;
-                client_mut.y = window_attributes.y;
-                client_mut.old_y = window_attributes.y;
-                client_mut.w = window_attributes.width;
-                client_mut.old_w = window_attributes.width;
-                client_mut.h = window_attributes.height;
-                client_mut.old_h = window_attributes.height;
-                client_mut.old_border_w = window_attributes.border_width;
-                client_mut.client_fact = 1.0;
+        // --- 2. 初始化 Client 结构体的基本属性 ---
+        {
+            let mut client_mut = client_rc.borrow_mut();
+            // 设置窗口 ID
+            client_mut.win = w;
+            // 从传入的 XWindowAttributes 中获取初始的几何信息和边框宽度
+            client_mut.x = geom.x.into();
+            client_mut.old_x = geom.x.into();
+            client_mut.y = geom.y.into();
+            client_mut.old_y = geom.y.into();
+            client_mut.w = geom.width.into();
+            client_mut.old_w = geom.width.into();
+            client_mut.h = geom.height.into();
+            client_mut.old_h = geom.height.into();
+            client_mut.old_border_w = geom.border_width.into();
+            client_mut.client_fact = 1.0;
 
-                // 获取并设置窗口标题
-                self.updatetitle(&mut client_mut);
-                #[cfg(any(feature = "nixgl", feature = "tauri_bar"))]
-                {
-                    if client_mut.name == CONFIG.status_bar_name() {
-                        let mut instance_name = String::new();
-                        for &tmp_num in self.status_bar_child.keys() {
-                            if !self.status_bar_clients.contains_key(&tmp_num) {
-                                instance_name = match tmp_num {
-                                    0 => CONFIG.status_bar_0().to_string(),
-                                    1 => CONFIG.status_bar_1().to_string(),
-                                    _ => CONFIG.status_bar_name().to_string(),
-                                };
-                            }
-                        }
-                        if !instance_name.is_empty() {
-                            let _ = self.set_class_info(
-                                &mut client_mut,
-                                instance_name.as_str(),
-                                instance_name.as_str(),
-                            );
+            // 获取并设置窗口标题
+            self.updatetitle(&mut client_mut);
+            #[cfg(any(feature = "nixgl", feature = "tauri_bar"))]
+            {
+                if client_mut.name == CONFIG.status_bar_name() {
+                    let mut instance_name = String::new();
+                    for &tmp_num in self.status_bar_child.keys() {
+                        if !self.status_bar_clients.contains_key(&tmp_num) {
+                            instance_name = match tmp_num {
+                                0 => CONFIG.status_bar_0().to_string(),
+                                1 => CONFIG.status_bar_1().to_string(),
+                                _ => CONFIG.status_bar_name().to_string(),
+                            };
                         }
                     }
-                }
-                self.update_class_info(&mut client_mut);
-                info!("[manage] {}", client_mut);
-
-                if client_mut.is_status_bar() {
-                    drop(client_mut);
-                    info!("[manage] Detected status bar, managing as statusbar");
-                    self.manage_statusbar(client_rc, wa_ptr);
-                    return; // 直接返回，不执行常规管理流程
+                    if !instance_name.is_empty() {
+                        let _ = self.set_class_info(
+                            &mut client_mut,
+                            instance_name.as_str(),
+                            instance_name.as_str(),
+                        );
+                    }
                 }
             }
+            self.update_class_info(&mut client_mut);
+            info!("[manage] {}", client_mut);
 
-            // 常规客户端管理流程
-            self.manage_regular_client(client_rc, wa_ptr);
+            if client_mut.is_status_bar() {
+                drop(client_mut);
+                info!("[manage] Detected status bar, managing as statusbar");
+                self.manage_statusbar(client_rc);
+                return; // 直接返回，不执行常规管理流程
+            }
         }
+
+        // 常规客户端管理流程
+        self.manage_regular_client(client_rc);
     }
 
     fn setup_client_window(&mut self, client_rc: &Rc<RefCell<Client>>) {
@@ -5331,11 +5333,7 @@ impl Jwm {
     }
 
     // 分离出来的常规客户端管理
-    fn manage_regular_client(
-        &mut self,
-        client_rc: &Rc<RefCell<Client>>,
-        _: *mut XWindowAttributes,
-    ) {
+    fn manage_regular_client(&mut self, client_rc: &Rc<RefCell<Client>>) {
         // 处理 WM_TRANSIENT_FOR
         let transient_for_win: Window = 0;
         unsafe {
@@ -5382,7 +5380,7 @@ impl Jwm {
         self.handle_new_client_focus(&client_rc);
     }
 
-    fn manage_statusbar(&mut self, client_rc: &Rc<RefCell<Client>>, _: *mut XWindowAttributes) {
+    fn manage_statusbar(&mut self, client_rc: &Rc<RefCell<Client>>) {
         unsafe {
             // 确定状态栏所属的显示器
             let monitor_id;
@@ -5665,15 +5663,14 @@ impl Jwm {
         }
     }
 
-    #[allow(dead_code)]
     fn get_and_query_window_geom<C: Connection>(
         conn: &C,
         win: Window,
-    ) -> Result<Vec<u16>, ReplyError> {
+    ) -> Result<GetGeometryReply, ReplyError> {
         let geom = conn.get_geometry(win)?;
         let tree = conn.query_tree(win)?;
 
-        let geom = geom.reply()?;
+        let mut geom = geom.reply()?;
         let tree = tree.reply()?;
 
         let trans = conn
@@ -5681,13 +5678,9 @@ impl Jwm {
             .reply()?;
 
         // the translated coordinates are in trans.dst_x and trans.dst_y
-
-        Ok(vec![
-            trans.dst_x as u16,
-            trans.dst_y as u16,
-            geom.width,
-            geom.height,
-        ])
+        geom.x = trans.dst_x;
+        geom.y = trans.dst_y;
+        Ok(geom)
     }
 
     pub fn get_window_attributes(
@@ -5702,13 +5695,14 @@ impl Jwm {
         // info!("[maprequest]");
         unsafe {
             let ev = (*e).map_request;
-            let mut wa: XWindowAttributes = zeroed();
             if let Ok(window_attr) = self.get_window_attributes(ev.window as u32) {
                 if window_attr.override_redirect {
                     return;
                 }
                 if self.wintoclient(ev.window as u32).is_none() {
-                    self.manage(ev.window as u32, addr_of_mut!(wa));
+                    let geom = Self::get_and_query_window_geom(&self.x11rb_conn, ev.window as u32)
+                        .unwrap();
+                    self.manage(ev.window as u32, &geom);
                 }
             }
         }
