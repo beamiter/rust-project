@@ -36,41 +36,39 @@ use x11::xlib::{XConfigureRequestEvent, XFlush, XOpenDisplay};
 use x11::xlib::{XConnectionNumber, XPending};
 use x11::xlib::{XFreeStringList, XSetClassHint};
 use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
-use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
 use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
+use x11rb::protocol::render::PictType;
 use x11rb::protocol::xproto::{
-    Atom, AtomEnum, ConnectionExt, CreateWindowAux, EventMask, GetGeometryReply,
-    GetWindowAttributesReply, MapState, PropMode, Window, WindowClass,
+    Atom, AtomEnum, Colormap, ColormapAlloc, ConnectionExt, CreateWindowAux, EventMask,
+    GetGeometryReply, GetWindowAttributesReply, MapState, PropMode, VisualClass, Visualid, Window,
+    WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::COPY_DEPTH_FROM_PARENT;
 
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
-    AllocNone, AnyButton, AnyKey, AnyModifier, BadAccess, BadDrawable, BadLength, BadMatch,
-    BadWindow, Below, ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask,
-    CWBorderWidth, CWCursor, CWEventMask, CWHeight, CWSibling, CWStackMode, CWWidth, ClientMessage,
-    Colormap, ConfigureNotify, ConfigureRequest, CurrentTime, DestroyAll, DestroyNotify, Display,
-    EnterNotify, EnterWindowMask, Expose, ExposureMask, False, FocusChangeMask, FocusIn,
-    GrabModeAsync, GrabModeSync, GrabSuccess, KeyPress, KeySym, LeaveWindowMask, LockMask,
-    MapRequest, MappingKeyboard, MappingNotify, MotionNotify, NoEventMask, NotifyInferior,
-    NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask,
-    PointerRoot, PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer,
-    RevertToPointerRoot, StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask,
-    Success, Time, True, TrueColor, UnmapNotify, Visual, VisualClassMask, VisualDepthMask,
-    VisualScreenMask, XAllowEvents, XChangeWindowAttributes, XCheckMaskEvent, XClassHint,
-    XConfigureEvent, XConfigureWindow, XCreateColormap, XDefaultColormap, XDefaultDepth,
-    XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDestroyWindow, XDisplayHeight,
-    XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap,
-    XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetVisualInfo,
-    XGetWMNormalHints, XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
-    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow,
-    XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput,
-    XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWindowAttributes,
-    XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer,
-    XVisualInfo, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
-    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    AnyButton, AnyKey, AnyModifier, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow, Below,
+    ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBorderWidth, CWCursor,
+    CWEventMask, CWHeight, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify,
+    ConfigureRequest, CurrentTime, DestroyAll, DestroyNotify, Display, EnterNotify,
+    EnterWindowMask, Expose, ExposureMask, False, FocusChangeMask, FocusIn, GrabModeAsync,
+    GrabModeSync, GrabSuccess, KeyPress, KeySym, LeaveWindowMask, LockMask, MapRequest,
+    MappingKeyboard, MappingNotify, MotionNotify, NoEventMask, NotifyInferior, NotifyNormal,
+    PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask, PointerRoot,
+    PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer, RevertToPointerRoot,
+    StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask, Success, Time, True,
+    UnmapNotify, XAllowEvents, XChangeWindowAttributes, XCheckMaskEvent, XClassHint,
+    XConfigureEvent, XConfigureWindow, XDefaultRootWindow, XDefaultScreen, XDestroyWindow,
+    XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap,
+    XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetWMNormalHints,
+    XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym,
+    XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow,
+    XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent,
+    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWindowAttributes, XSetWindowBorder,
+    XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer, XWarpPointer,
+    XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -771,8 +769,8 @@ pub struct Jwm {
     pub motion_mon: Option<Rc<RefCell<Monitor>>>,
     pub sel_mon: Option<Rc<RefCell<Monitor>>>,
     pub wm_check_win: Window,
-    pub visual: *mut Visual,
-    pub depth: i32,
+    pub visual_id: Visualid,
+    pub depth: u8,
     pub color_map: Colormap,
     pub sender: Sender<u8>,
     pub status_bar_shmem: HashMap<i32, SharedRingBuffer>,
@@ -876,7 +874,7 @@ impl Jwm {
             sel_mon: None,
             x11_root: root as u32,
             wm_check_win: 0,
-            visual: null_mut(),
+            visual_id: 0,
             depth: 0,
             color_map: 0,
             sender,
@@ -2722,37 +2720,58 @@ impl Jwm {
         }
     }
 
-    pub fn xinitvisual(&mut self) {
-        unsafe {
-            let mut tpl: XVisualInfo = zeroed();
-            tpl.screen = self.screen;
-            tpl.depth = 32;
-            tpl.class = TrueColor;
-            let masks = VisualScreenMask | VisualDepthMask | VisualClassMask;
+    fn xinit_visual(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // Open the connection to the X server. Use the DISPLAY environment variable.
+        let x11rb_screen = &self.x11rb_conn.setup().roots[self.x11rb_screen_num];
+        use x11rb::protocol::render::ConnectionExt;
 
-            let mut nitems: i32 = 0;
-            let infos = XGetVisualInfo(self.x11_dpy, masks, &mut tpl, &mut nitems);
-            self.visual = null_mut();
-            for i in 0..nitems {
-                let fmt =
-                    XRenderFindVisualFormat(self.x11_dpy, (*infos.wrapping_add(i as usize)).visual);
-                if (*fmt).type_ == PictTypeDirect && (*fmt).direct.alphaMask > 0 {
-                    self.visual = (*infos.wrapping_add(i as usize)).visual;
-                    self.depth = (*infos.wrapping_add(i as usize)).depth;
-                    self.color_map =
-                        XCreateColormap(self.x11_dpy, self.x11_root.into(), self.visual, AllocNone);
-                    break;
+        for depth in &x11rb_screen.allowed_depths {
+            if depth.depth != 32 {
+                continue;
+            }
+            for visualtype in &depth.visuals {
+                if visualtype.visual_id == x11rb_screen.root_visual {
+                    println!("Found: {:?}", visualtype);
+                }
+                if visualtype.class != VisualClass::TRUE_COLOR {
+                    continue;
+                }
+
+                let format_cookie = self.x11rb_conn.render_query_pict_formats()?;
+                let format_reply = format_cookie.reply()?;
+                if let Some(visual_format) = format_reply.formats.iter().find(|fmt| {
+                    fmt.id == visualtype.visual_id
+                        || (fmt.type_ == PictType::DIRECT
+                            && fmt.direct.red_mask > 0
+                            && fmt.direct.green_mask > 0
+                            && fmt.direct.blue_mask > 0
+                            && fmt.direct.alpha_mask > 0)
+                }) {
+                    self.visual_id = visual_format.id;
+                    self.depth = visual_format.depth;
+                    let colormap_id = self.x11rb_conn.generate_id()?;
+                    self.x11rb_conn.create_colormap(
+                        ColormapAlloc::NONE,
+                        colormap_id,
+                        self.x11rb_root,
+                        visual_format.id,
+                    )?;
+                    self.color_map = colormap_id.into();
+                    let _rep = self
+                        .x11rb_conn
+                        .alloc_color(colormap_id, 65535, 0, 0)?
+                        .reply()?;
+                    info!("[xinit_visual] Found 32-bit ARGB visual with alpha channel. VisualID: 0x{:x}, ColormapID: 0x{:x}",
+                          self.visual_id, self.color_map);
+                    return Ok(());
                 }
             }
-
-            XFree(infos as *mut _);
-
-            if self.visual.is_null() {
-                self.visual = XDefaultVisual(self.x11_dpy, self.screen);
-                self.depth = XDefaultDepth(self.x11_dpy, self.screen);
-                self.color_map = XDefaultColormap(self.x11_dpy, self.screen);
-            }
         }
+        info!("[xinitvisual_x11rb] No 32-bit ARGB visual found. Falling back to default.");
+        self.visual_id = x11rb_screen.root_visual;
+        self.depth = x11rb_screen.root_depth;
+        self.color_map = x11rb_screen.default_colormap.into();
+        Ok(())
     }
 
     pub fn tile(&mut self, mon_rc: &Rc<RefCell<Monitor>>) {
@@ -3783,12 +3802,8 @@ impl Jwm {
             while waitpid(-1, null_mut(), WNOHANG) > 0 {}
 
             // init screen
-            self.xinitvisual();
-            self.drw = Some(Box::new(Drw::drw_create(
-                self.x11_dpy,
-                self.visual,
-                self.color_map,
-            )));
+            let _ = self.xinit_visual();
+            self.drw = Some(Box::new(Drw::drw_create(self.x11_dpy)));
             // info!("[setup] updategeom");
             self.updategeom();
 
@@ -6374,6 +6389,7 @@ impl Jwm {
     pub fn updatewmhints(&self, client_rc: &Rc<RefCell<Client>>) {
         let win = client_rc.borrow().win;
         // 1. 读取 WM_HINTS 属性
+        use x11rb::protocol::xproto::ConnectionExt;
         let cookie = match self.x11rb_conn.get_property(
             false, // delete: 不删除
             win,   // window

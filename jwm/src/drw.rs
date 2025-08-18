@@ -10,7 +10,7 @@ use std::{i32, ptr::null_mut, u32};
 // If you use Pango however, Unicode will work great and this includes flag emojis.
 use x11::{
     xft::XftColor,
-    xlib::{self, Colormap, Cursor, Visual, XCreateFontCursor, XFreeCursor},
+    xlib::{self, Cursor, XCreateFontCursor, XFreeCursor},
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -26,22 +26,14 @@ impl Cur {
 #[derive(Debug, Clone)]
 pub struct Drw {
     pub dpy: *mut xlib::Display,
-    visual: *mut Visual,
-    cmap: Colormap,
 }
 impl Drw {
     pub fn new() -> Self {
-        Drw {
-            dpy: null_mut(),
-            visual: null_mut(),
-            cmap: 0,
-        }
+        Drw { dpy: null_mut() }
     }
-    pub fn drw_create(dpy: *mut xlib::Display, visual: *mut Visual, cmap: Colormap) -> Self {
+    pub fn drw_create(dpy: *mut xlib::Display) -> Self {
         let mut drw = Drw::new();
         drw.dpy = dpy;
-        drw.visual = visual;
-        drw.cmap = cmap;
         return drw;
     }
 
