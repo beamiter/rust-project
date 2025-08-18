@@ -1485,7 +1485,11 @@ impl Jwm {
             }
         };
         // 2. 解析 flags（第一个 u32）
-        let mut values = reply.value32().unwrap();
+        let mut values = if let Some(values) = reply.value32() {
+            values
+        } else {
+            return;
+        };
         let mut flags = match values.next() {
             Some(f) => f,
             None => {
@@ -2491,13 +2495,14 @@ impl Jwm {
             Ok(reply) => reply,
             Err(_) => return 0, // 无回复或属性不存在
         };
-        if reply.value32().is_none() {
+        let mut values = if let Some(values) = reply.value32() {
+            values
+        } else {
             return 0;
-        }
+        };
 
         // 提取第一个 Atom 值（32 位）
-        let mut iter = reply.value32().unwrap();
-        iter.next().unwrap_or(0)
+        values.next().unwrap_or(0)
     }
 
     pub fn getrootptr(&mut self) -> Result<(i32, i32), ReplyError> {
@@ -2538,13 +2543,14 @@ impl Jwm {
         if reply.format != 32 {
             return -1;
         }
-        if reply.value32().is_none() {
+        let mut values = if let Some(values) = reply.value32() {
+            values
+        } else {
             return -1;
-        }
+        };
 
         // 提取第一个值（state）
-        let mut iter = reply.value32().unwrap();
-        let state = match iter.next() {
+        let state = match values.next() {
             Some(s) => s as i64,
             None => return -1, // 空数据
         };
@@ -4011,7 +4017,11 @@ impl Jwm {
             )
             .ok()?;
         let reply = cookie.reply().ok()?;
-        let mut values = reply.value32().unwrap();
+        let mut values = if let Some(values) = reply.value32() {
+            values
+        } else {
+            return None;
+        };
         values.next().map(|w| w as u32).filter(|&w| w != 0)
     }
 
