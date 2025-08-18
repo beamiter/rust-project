@@ -4,7 +4,7 @@ pub mod jwm;
 pub mod miscellaneous;
 pub mod terminal_prober;
 pub mod xproto;
-pub mod xcb_conn;
+pub mod xcb_util;
 
 pub use jwm::Jwm;
 

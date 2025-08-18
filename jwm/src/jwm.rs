@@ -19,6 +19,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::c_char;
 use std::ffi::{CStr, CString};
 use std::fmt;
+use std::io::Error;
 use std::mem::transmute;
 use std::mem::zeroed;
 use std::os::unix::process::CommandExt;
@@ -38,13 +39,17 @@ use x11::xlib::{XFreeStringList, XSetClassHint};
 use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
 use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::{Atom, AtomEnum, ConnectionExt, Window};
+use x11rb::errors::{ReplyError, ReplyOrIdError};
+use x11rb::protocol::xproto::{
+    Atom, AtomEnum, ConnectionExt, CreateWindowAux, EventMask, GetWindowAttributesReply, PropMode,
+    TranslateCoordinatesReply, Window, WindowClass,
+};
 use x11rb::rust_connection::RustConnection;
-use x11rb_protocol::protocol::xproto;
+use x11rb::COPY_DEPTH_FROM_PARENT;
 
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
-    AllocNone, AnyButton, AnyKey, AnyModifier, Atom, BadAccess, BadDrawable, BadLength, BadMatch,
+    AllocNone, AnyButton, AnyKey, AnyModifier, BadAccess, BadDrawable, BadLength, BadMatch,
     BadWindow, Below, ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask,
     CWBorderWidth, CWCursor, CWEventMask, CWHeight, CWSibling, CWStackMode, CWWidth, ClientMessage,
     Colormap, ConfigureNotify, ConfigureRequest, CurrentTime, DestroyAll, DestroyNotify, Display,
@@ -52,29 +57,29 @@ use x11::xlib::{
     GrabModeAsync, GrabModeSync, GrabSuccess, InputHint, IsViewable, KeyPress, KeySym,
     LeaveWindowMask, LockMask, MapRequest, MappingKeyboard, MappingNotify, MotionNotify,
     NoEventMask, NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc,
-    PSize, PointerMotionMask, PointerRoot, PropModeAppend, PropModeReplace, PropertyChangeMask,
-    PropertyDelete, PropertyNotify, ReplayPointer, RevertToPointerRoot, StructureNotifyMask,
-    SubstructureNotifyMask, SubstructureRedirectMask, Success, Time, True, TrueColor, UnmapNotify,
-    Visual, VisualClassMask, VisualDepthMask, VisualScreenMask, XAllowEvents, XChangeProperty,
-    XChangeWindowAttributes, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
-    XCreateColormap, XDefaultColormap, XDefaultDepth, XDefaultRootWindow, XDefaultScreen,
-    XDefaultVisual, XDestroyWindow, XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent,
-    XEvent, XFree, XFreeModifiermap, XGetKeyboardMapping, XGetModifierMapping,
-    XGetTransientForHint, XGetVisualInfo, XGetWMHints, XGetWMNormalHints, XGetWMProtocols,
-    XGetWindowAttributes, XGetWindowProperty, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
-    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow,
-    XMoveWindow, XNextEvent, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow,
-    XSelectInput, XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWMHints,
-    XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey,
-    XUngrabPointer, XUngrabServer, XUrgencyHint, XVisualInfo, XWarpPointer, XWindowAttributes,
-    XWindowChanges, CWX, CWY, XA_ATOM, XA_CARDINAL, XA_WINDOW, XA_WM_HINTS, XA_WM_NAME,
-    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    PSize, PointerMotionMask, PointerRoot, PropertyChangeMask, PropertyDelete, PropertyNotify,
+    ReplayPointer, RevertToPointerRoot, StructureNotifyMask, SubstructureNotifyMask,
+    SubstructureRedirectMask, Success, Time, True, TrueColor, UnmapNotify, Visual, VisualClassMask,
+    VisualDepthMask, VisualScreenMask, XAllowEvents, XChangeWindowAttributes, XCheckMaskEvent,
+    XClassHint, XConfigureEvent, XConfigureWindow, XCreateColormap, XDefaultColormap,
+    XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDestroyWindow,
+    XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap,
+    XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetVisualInfo, XGetWMHints,
+    XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGetWindowProperty, XGrabButton,
+    XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym, XKeysymToKeycode, XKillClient,
+    XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryTree, XRaiseWindow,
+    XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetCloseDownMode,
+    XSetErrorHandler, XSetInputFocus, XSetWMHints, XSetWindowAttributes, XSetWindowBorder,
+    XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer, XUrgencyHint,
+    XVisualInfo, XWarpPointer, XWindowAttributes, XWindowChanges, CWX, CWY, XA_ATOM, XA_WM_HINTS,
+    XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
 
 use crate::config::CONFIG;
 use crate::drw::{Cur, Drw};
+use crate::xcb_util::Atoms;
 use crate::xproto::{
     IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
     X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8,
@@ -779,7 +784,8 @@ pub struct Jwm {
 
     pub x11rb_conn: RustConnection,
     pub x11rb_root: x11rb_protocol::protocol::xproto::Window,
-    // pub atoms: AtomCache,
+    pub x11rb_screen_num: usize,
+    pub atoms: Atoms,
 }
 
 impl Jwm {
@@ -843,10 +849,10 @@ impl Jwm {
         let s_w = unsafe { XDisplayWidth(dpy, screen) };
         let s_h = unsafe { XDisplayHeight(dpy, screen) };
         let root = unsafe { XRootWindow(dpy, screen) };
-        let (x11rb_conn, screen_num) =
+        let (x11rb_conn, x11rb_screen_num) =
             x11rb::rust_connection::RustConnection::connect(None).unwrap();
-        // let atoms = AtomCache::new(xcb_conn.connection());
-        let x11rb_screen = &x11rb_conn.setup().roots[screen_num];
+        let atoms = Atoms::new(&x11rb_conn).unwrap().reply().unwrap();
+        let x11rb_screen = &x11rb_conn.setup().roots[x11rb_screen_num];
         let x11rb_root = x11rb_screen.root;
         Jwm {
             stext_max_len: 512,
@@ -877,7 +883,8 @@ impl Jwm {
 
             x11rb_conn,
             x11rb_root,
-            // atoms,
+            x11rb_screen_num,
+            atoms,
         }
     }
 
@@ -914,7 +921,7 @@ impl Jwm {
     }
 
     /// 获取窗口的 WM_CLASS（即类名和实例名）
-    pub fn get_wm_class(conn: &RustConnection, window: Window) -> Option<(String, String)> {
+    pub fn get_wm_class<C: Connection>(conn: &C, window: Window) -> Option<(String, String)> {
         // Get the WM_NAME property of the window
         let cookie = conn
             .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)
@@ -944,55 +951,53 @@ impl Jwm {
     // function declarations and implementations.
     pub fn applyrules(&mut self, c: &Rc<RefCell<Client>>) {
         info!("[applyrules]");
-        unsafe {
-            // rule matching
-            let mut c = c.borrow_mut();
-            c.is_floating = false;
-            if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, c.win as u32) {
-                c.instance = inst;
-                c.class = cls;
-                info!("instance: {}, class: {}", c.instance, c.class);
-            }
+        // rule matching
+        let mut c = c.borrow_mut();
+        c.is_floating = false;
+        if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, c.win as u32) {
+            c.instance = inst;
+            c.class = cls;
+            info!("instance: {}, class: {}", c.instance, c.class);
+        }
 
-            for r in &CONFIG.get_rules() {
-                if r.name.is_empty() && r.class.is_empty() && r.instance.is_empty() {
-                    continue;
-                }
-                if (r.name.is_empty() || c.name.find(&r.name).is_some())
-                    && (r.class.is_empty() || c.class.find(&r.class).is_some())
-                    && (r.instance.is_empty() || c.instance.find(&r.instance).is_some())
-                {
-                    info!(
+        for r in &CONFIG.get_rules() {
+            if r.name.is_empty() && r.class.is_empty() && r.instance.is_empty() {
+                continue;
+            }
+            if (r.name.is_empty() || c.name.find(&r.name).is_some())
+                && (r.class.is_empty() || c.class.find(&r.class).is_some())
+                && (r.instance.is_empty() || c.instance.find(&r.instance).is_some())
+            {
+                info!(
                         "[############################### applyrules] class: {}, instance: {}, name: {}",
                         c.class, c.instance, c.name
                     );
-                    c.is_floating = r.is_floating;
-                    c.tags |= r.tags as u32;
-                    let mut m = self.mons.clone();
-                    while let Some(ref m_opt) = m {
-                        if m_opt.borrow_mut().num == r.monitor {
-                            break;
-                        }
-                        let next = m_opt.borrow_mut().next.clone();
-                        m = next;
+                c.is_floating = r.is_floating;
+                c.tags |= r.tags as u32;
+                let mut m = self.mons.clone();
+                while let Some(ref m_opt) = m {
+                    if m_opt.borrow_mut().num == r.monitor {
+                        break;
                     }
-                    if m.is_some() {
-                        c.mon = m.clone();
-                    }
+                    let next = m_opt.borrow_mut().next.clone();
+                    m = next;
+                }
+                if m.is_some() {
+                    c.mon = m.clone();
                 }
             }
-            let condition = c.tags & CONFIG.tagmask();
-            c.tags = if condition > 0 {
-                condition
-            } else {
-                let sel_tags = c.mon.as_ref().unwrap().borrow().sel_tags;
-                c.mon.as_ref().unwrap().borrow().tag_set[sel_tags]
-            };
-            info!(
-                "[applyrules] class: {}, instance: {}, name: {}, tags: {}",
-                c.class, c.instance, c.name, c.tags
-            );
         }
+        let condition = c.tags & CONFIG.tagmask();
+        c.tags = if condition > 0 {
+            condition
+        } else {
+            let sel_tags = c.mon.as_ref().unwrap().borrow().sel_tags;
+            c.mon.as_ref().unwrap().borrow().tag_set[sel_tags]
+        };
+        info!(
+            "[applyrules] class: {}, instance: {}, name: {}, tags: {}",
+            c.class, c.instance, c.name, c.tags
+        );
     }
 
     pub fn updatesizehints(&mut self, c: &Rc<RefCell<Client>>) {
@@ -1231,9 +1236,9 @@ impl Jwm {
                 RevertToPointerRoot,
                 CurrentTime,
             );
-            let cookie = self
+            let _ = self
                 .x11rb_conn
-                .delete_property(self.x11rb_root, self.atoms.net_active_window);
+                .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW);
         }
     }
 
@@ -1265,9 +1270,9 @@ impl Jwm {
                 return;
             }
             let c = c.as_ref().unwrap();
-            if cme.message_type == self.atoms.net_wm_state.resource_id().into() {
-                if cme.data.get_long(1) == self.atoms.net_wm_fullscreen.resource_id().into()
-                    || cme.data.get_long(2) == self.atoms.net_wm_fullscreen.resource_id().into()
+            if cme.message_type == self.atoms._NET_WM_STATE.into() {
+                if cme.data.get_long(1) == self.atoms._NET_WM_STATE_FULLSCREEN.into()
+                    || cme.data.get_long(2) == self.atoms._NET_WM_STATE_FULLSCREEN.into()
                 {
                     // NET_WM_STATE_ADD
                     // NET_WM_STATE_TOGGLE
@@ -1276,7 +1281,7 @@ impl Jwm {
                         cme.data.get_long(0) == 1 || (cme.data.get_long(0) == 2 && !isfullscreen);
                     self.setfullscreen(c, fullscreen);
                 }
-            } else if cme.message_type == self.atoms.net_active_window.resource_id().into() {
+            } else if cme.message_type == self.atoms._NET_ACTIVE_WINDOW.into() {
                 let is_urgent = { c.borrow_mut().is_urgent };
                 let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
                 if !Self::are_equal_rc(&Some(c.clone()), &sel) && !is_urgent {
@@ -1342,23 +1347,24 @@ impl Jwm {
         }
     }
 
-    pub fn setfullscreen(&mut self, c: &Rc<RefCell<Client>>, fullscreen: bool) {
+    pub fn setfullscreen(
+        &mut self,
+        c: &Rc<RefCell<Client>>,
+        fullscreen: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[setfullscreen]");
+        use x11rb::wrapper::ConnectionExt;
         unsafe {
             let isfullscreen = { c.borrow_mut().is_fullscreen };
             let win = { c.borrow_mut().win };
             if fullscreen && !isfullscreen {
-                // (TODO)
-                // XChangeProperty(
-                //     self.dpy,
-                //     win,
-                //     self.net_atom[NET::NetWMState as usize],
-                //     XA_ATOM,
-                //     32,
-                //     PropModeReplace,
-                //     self.net_atom.as_ptr().add(NET::NetWMFullscreen as usize) as *const _,
-                //     1,
-                // );
+                self.x11rb_conn.change_property32(
+                    PropMode::REPLACE,
+                    win,
+                    self.atoms._NET_WM_STATE,
+                    AtomEnum::ATOM,
+                    &[self.atoms._NET_WM_STATE_FULLSCREEN],
+                )?;
                 {
                     let mut c = c.borrow_mut();
                     c.is_fullscreen = true;
@@ -1376,16 +1382,13 @@ impl Jwm {
                 // Raise the window to the top of the stacking order
                 XRaiseWindow(self.x11_dpy, win.into());
             } else if !fullscreen && isfullscreen {
-                XChangeProperty(
-                    self.x11_dpy,
-                    win.into(),
-                    self.atoms.net_wm_state.resource_id().into(),
-                    XA_ATOM,
-                    32,
-                    PropModeReplace,
-                    null(),
-                    0,
-                );
+                self.x11rb_conn.change_property32(
+                    PropMode::REPLACE,
+                    win,
+                    self.atoms._NET_WM_STATE,
+                    AtomEnum::ATOM,
+                    &[],
+                )?;
                 {
                     let mut c = c.borrow_mut();
                     c.is_fullscreen = false;
@@ -1406,6 +1409,7 @@ impl Jwm {
                 self.arrange(mon);
             }
         }
+        Ok(())
     }
 
     pub fn resizeclient(&mut self, c: &mut Client, x: i32, y: i32, w: i32, h: i32) {
@@ -2297,7 +2301,7 @@ impl Jwm {
                         continue;
                     }
                     if wa.map_state == IsViewable
-                        || self.getstate((*wins.add(i)) as u32) == IconicState as i64
+                        || self.get_wm_state((*wins.add(i)) as u32) == IconicState as i64
                     {
                         self.manage((*wins.add(i)) as u32, &mut wa);
                     }
@@ -2310,7 +2314,7 @@ impl Jwm {
                     }
                     if XGetTransientForHint(self.x11_dpy, *wins.add(i), &mut d1) > 0
                         && (wa.map_state == IsViewable
-                            || self.getstate((*wins.add(i)) as u32) == IconicState as i64)
+                            || self.get_wm_state((*wins.add(i)) as u32) == IconicState as i64)
                     {
                         self.manage((*wins.add(i)) as u32, &mut wa);
                     }
@@ -2412,79 +2416,89 @@ impl Jwm {
         );
     }
 
-    pub fn getatomprop(&mut self, c: &mut Client, prop: Atom) -> u64 {
-        // info!("[getatomprop]");
-        let mut di = 0;
-        let mut dl0: u64 = 0;
-        let mut dl1: u64 = 0;
-        let mut da: u64 = 0;
-        let mut atom: Atom = 0;
-        let mut p: *mut u8 = null_mut();
-        unsafe {
-            if XGetWindowProperty(
-                self.x11_dpy,
-                c.win.into(),
-                prop.into(),
-                0,
-                size_of::<Atom>() as i64,
-                False,
-                XA_ATOM,
-                &mut da,
-                &mut di,
-                &mut dl0,
-                &mut dl1,
-                &mut p,
-            ) == Success as i32
-                && !p.is_null()
-            {
-                atom = *(p as *const Atom);
-                XFree(p as *mut _);
-            }
+    /// 从窗口属性中读取一个 Atom 值
+
+    /// 如果失败或属性不存在，返回 0
+
+    pub fn getatomprop(&self, c: &Client, prop: Atom) -> Atom {
+        // 发送 GetProperty 请求
+        let cookie = match self.x11rb_conn.get_property(
+            false,          // delete: 是否删除属性（false）
+            c.win,          // window
+            prop,           // property
+            AtomEnum::ATOM, // req_type: 期望的类型（Atom）
+            0,              // long_offset
+            1,              // long_length (最多读取 1 个 Atom)
+        ) {
+            Ok(cookie) => cookie,
+            Err(_) => return 0, // 请求发送失败
+        };
+
+        // 等待回复
+        let reply = match cookie.reply() {
+            Ok(reply) => reply,
+            Err(_) => return 0, // 无回复或属性不存在
+        };
+        if reply.value32().is_none() {
+            return 0;
         }
-        return atom.into();
+
+        // 提取第一个 Atom 值（32 位）
+        let mut iter = reply.value32().unwrap();
+        iter.next().unwrap_or(0)
     }
 
-    pub fn getrootptr(&mut self) -> Result<(i32, i32), Error> {
-        let conn = self.x11rb_conn.connection();
-        let cookie = conn.send_request(&x::QueryPointer {
-            window: self.x11rb_root,
-        });
-        let reply = conn.wait_for_reply(cookie)?;
-        Ok((reply.root_x() as i32, reply.root_y() as i32))
+    pub fn getrootptr(&mut self) -> Result<(i32, i32), ReplyError> {
+        let cookie = self.x11rb_conn.query_pointer(self.x11rb_root)?;
+        let reply = cookie.reply()?;
+        Ok((reply.root_x as i32, reply.root_y as i32))
     }
 
-    pub fn getstate(&mut self, w: Window) -> i64 {
-        // info!("[getstate]");
-        let mut format: i32 = 0;
-        let mut result: i64 = -1;
-        let mut p: *mut u8 = null_mut();
-        let mut n: u64 = 0;
-        let mut extra: u64 = 0;
-        let mut real: u64 = 0;
-        unsafe {
-            if XGetWindowProperty(
-                self.x11_dpy,
-                w.into(),
-                self.atoms.wm_state.resource_id().into(),
-                0,
-                2,
-                False,
-                self.atoms.wm_state.resource_id().into(),
-                &mut real,
-                &mut format,
-                &mut n,
-                &mut extra,
-                &mut p,
-            ) != Success as i32
-            {
+    /// 获取窗口的 WM_STATE 状态
+    /// 返回值：1 = NormalState, 3 = IconicState, -1 = 失败
+    pub fn get_wm_state(&self, window: u32) -> i64 {
+        // 发送 GetProperty 请求
+        let cookie = match self.x11rb_conn.get_property(
+            false,               // delete: 不删除属性
+            window,              // window
+            self.atoms.WM_STATE, // property: _NET_WM_STATE
+            self.atoms.WM_STATE, // type: 期望类型也是 WM_STATE
+            0,                   // long_offset
+            2,                   // long_length: 最多读取 2 个 32-bit 值
+        ) {
+            Ok(cookie) => cookie,
+            Err(_) => {
+                error!("get_wm_state: failed to send get_property request");
                 return -1;
             }
-            if n != 0 {
-                result = *(p as *const i32) as i64;
+        };
+
+        // 等待回复
+        let reply = match cookie.reply() {
+            Ok(reply) => reply,
+            Err(_) => {
+                // 属性不存在或类型不匹配
+                return -1;
             }
-            XFree(p as *mut _);
+        };
+
+        // 检查格式是否为 32 位
+        if reply.format != 32 {
+            return -1;
         }
-        return result;
+        if reply.value32().is_none() {
+            return -1;
+        }
+
+        // 提取第一个值（state）
+        let mut iter = reply.value32().unwrap();
+        let state = match iter.next() {
+            Some(s) => s as i64,
+            None => return -1, // 空数据
+        };
+        // 可选：第二个值是 icon_window，我们不使用
+        // let _icon_window = iter.next();
+        state
     }
 
     pub fn recttomon(&mut self, x: i32, y: i32, w: i32, h: i32) -> Option<Rc<RefCell<Monitor>>> {
@@ -3605,123 +3619,87 @@ impl Jwm {
         let _ = self.sender.send(0);
     }
 
-    /// 将字符串转换为 X11 Atom
-    /// 返回 0 表示失败（与 XInternAtom 一致）
-    pub fn intern_atom(conn: &Connection, name: &str) -> x::Atom {
-        let cookie = conn.send_request(&x::InternAtom {
-            only_if_exists: false,
-            name: name.as_bytes(),
-        });
-
-        match conn.wait_for_reply(cookie) {
-            Ok(reply) => reply.atom(),
-            Err(e) => {
-                error!("Failed to intern atom '{}'", name);
-            }
-        }
-    }
-
-    pub fn setup_ewmh(&mut self) {
-        let conn = self.x11rb_conn.connection();
-        let screen = conn
-            .get_setup()
-            .roots()
-            .nth(self.x11rb_conn.screen_num() as usize)
-            .unwrap();
-
+    pub fn setup_ewmh(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // --- 1. 创建 _NET_SUPPORTING_WM_CHECK 窗口 ---
-        let window: x::Window = conn.generate_id();
-        self.wm_check_win = window.resource_id().into();
-
-        let cookie = conn.send_request_checked(&x::CreateWindow {
-            depth: x::COPY_FROM_PARENT as u8,
-            wid: window,
-            parent: screen.root(),
-            x: 0,
-            y: 0,
-            width: 1,
-            height: 1,
-            border_width: 0,
-            class: x::WindowClass::InputOutput,
-            visual: screen.root_visual(),
-            // this list must be in same order than `Cw` enum order
-            value_list: &[
-                x::Cw::BackPixel(screen.white_pixel()),
-                x::Cw::EventMask(x::EventMask::EXPOSURE | x::EventMask::KEY_PRESS),
-            ],
-        });
-        // We now check if the window creation worked.
-        // A cookie can't be cloned; it is moved to the function.
-        conn.check_request(cookie).unwrap();
+        let frame_win = self.x11rb_conn.generate_id()?;
+        let x11rb_screen = &self.x11rb_conn.setup().roots[self.x11rb_screen_num];
+        self.wm_check_win = frame_win;
+        let win_aux = CreateWindowAux::new()
+            .event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS)
+            .background_pixel(x11rb_screen.white_pixel);
+        self.x11rb_conn.create_window(
+            COPY_DEPTH_FROM_PARENT,
+            frame_win,
+            x11rb_screen.root,
+            0,
+            0,
+            1,
+            1,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &win_aux,
+        )?;
 
         // --- 2. 设置 _NET_SUPPORTING_WM_CHECK 窗口的属性 ---
 
         // _NET_SUPPORTING_WM_CHECK = wm_check_win (Atom 类型 WINDOW)
-        let cookie = conn.send_request_checked(&x::ChangeProperty {
-            mode: x::PropMode::Replace,
-            window,
-            property: self.atoms.net_wm_check,
-            r#type: x::ATOM_WINDOW,
-            data: &[window],
-        });
-        conn.check_request(cookie).unwrap();
+        use x11rb::wrapper::ConnectionExt;
+        self.x11rb_conn.change_property32(
+            PropMode::REPLACE,
+            frame_win,
+            self.atoms._NET_SUPPORTING_WM_CHECK,
+            AtomEnum::WINDOW,
+            &[frame_win],
+        )?;
 
         // _NET_WM_NAME = "jwm" (UTF-8)
-        let cookie = conn.send_request_checked(&x::ChangeProperty {
-            mode: x::PropMode::Replace,
-            window,
-            property: self.atoms.net_wm_name,
-            r#type: x::ATOM_STRING,
-            data: b"jwm",
-        });
-        conn.check_request(cookie).unwrap();
+        self.x11rb_conn.change_property8(
+            PropMode::REPLACE,
+            frame_win,
+            AtomEnum::WM_NAME,
+            AtomEnum::STRING,
+            b"jwm",
+        )?;
 
-        let cookie = conn.send_request_checked(&x::ChangeProperty {
-            mode: x::PropMode::Replace,
-            window: screen.root(),
-            property: self.atoms.net_wm_check,
-            r#type: x::ATOM_WINDOW,
-            data: &[window],
-        });
-        conn.check_request(cookie).unwrap();
+        self.x11rb_conn.change_property32(
+            PropMode::REPLACE,
+            x11rb_screen.root,
+            self.atoms._NET_SUPPORTING_WM_CHECK,
+            AtomEnum::WINDOW,
+            &[frame_win],
+        )?;
 
         // --- 4. 声明支持的 EWMH 属性 (_NET_SUPPORTED) ---
         let supported_atoms = [
-            self.atoms.net_active_window,
-            self.atoms.net_supported,
-            self.atoms.net_wm_name,
-            self.atoms.net_wm_state,
-            self.atoms.net_wm_check,
-            self.atoms.net_wm_fullscreen,
-            self.atoms.net_wm_window_type,
-            self.atoms.net_wm_window_type_dialog,
-            self.atoms.net_client_list,
-            self.atoms.net_client_info,
+            self.atoms._NET_ACTIVE_WINDOW,
+            self.atoms._NET_SUPPORTED,
+            self.atoms._NET_WM_NAME,
+            self.atoms._NET_WM_STATE,
+            self.atoms._NET_SUPPORTING_WM_CHECK,
+            self.atoms._NET_WM_STATE_FULLSCREEN,
+            self.atoms._NET_WM_WINDOW_TYPE,
+            self.atoms._NET_WM_WINDOW_TYPE_DIALOG,
+            self.atoms._NET_CLIENT_LIST,
+            self.atoms._NET_CLIENT_INFO,
         ];
-
-        let cookie = conn.send_request_checked(&x::ChangeProperty {
-            mode: x::PropMode::Replace,
-            window: screen.root(),
-            property: self.atoms.net_supported,
-            r#type: x::ATOM_ATOM,
-            data: &supported_atoms,
-        });
-        conn.check_request(cookie).unwrap();
+        self.x11rb_conn.change_property32(
+            PropMode::REPLACE,
+            x11rb_screen.root,
+            self.atoms._NET_SUPPORTED,
+            AtomEnum::ATOM,
+            &supported_atoms,
+        )?;
 
         // --- 5. 清除 _NET_CLIENT_LIST 和 _NET_CLIENT_INFO ---
-        let cookie = conn.send_request_checked(&x::DeleteProperty {
-            window: screen.root(),
-            property: self.atoms.net_client_list,
-        });
-        conn.check_request(cookie).unwrap();
-        let cookie = conn.send_request_checked(&x::DeleteProperty {
-            window: screen.root(),
-            property: self.atoms.net_client_info,
-        });
-        conn.check_request(cookie).unwrap();
+        self.x11rb_conn
+            .delete_property(x11rb_screen.root, self.atoms._NET_CLIENT_LIST);
+        self.x11rb_conn
+            .delete_property(x11rb_screen.root, self.atoms._NET_CLIENT_INFO);
 
         // --- 6. 刷新请求 ---
-        let _ = conn.flush();
+        self.x11rb_conn.flush();
+        Ok(())
     }
 
     pub fn setup(&mut self) {
@@ -3783,7 +3761,12 @@ impl Jwm {
                 | LeaveWindowMask
                 | StructureNotifyMask
                 | PropertyChangeMask;
-            XChangeWindowAttributes(self.x11_dpy, self.x11_root.into(), CWEventMask | CWCursor, &mut wa);
+            XChangeWindowAttributes(
+                self.x11_dpy,
+                self.x11_root.into(),
+                CWEventMask | CWCursor,
+                &mut wa,
+            );
             XSelectInput(self.x11_dpy, self.x11_root.into(), wa.event_mask);
             // info!("[setup] grabkeys");
             self.grabkeys();
@@ -3802,7 +3785,7 @@ impl Jwm {
             info!("[killclient] {}", sel.as_ref().unwrap().borrow());
             if !self.sendevent(
                 &mut sel.as_ref().unwrap().borrow_mut(),
-                self.atoms.wm_delete_window.resource_id().into(),
+                self.atoms.WM_DELETE_WINDOW,
             ) {
                 XGrabServer(self.x11_dpy);
                 XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
@@ -3853,7 +3836,8 @@ impl Jwm {
             // XGetTextProperty 用于获取指定窗口 w 的文本属性 (由 atom 标识，如 XA_WM_NAME)
             // 结果存储在 name_prop 中。
             // 如果失败或属性为空 (name_prop.nitems <= 0)，则返回 false。
-            if XGetTextProperty(self.x11_dpy, w.into(), &mut name_prop, atom.into()) <= 0 || name_prop.nitems == 0
+            if XGetTextProperty(self.x11_dpy, w.into(), &mut name_prop, atom.into()) <= 0
+                || name_prop.nitems == 0
             {
                 // XFree on name_prop.value might be needed here if XGetTextProperty allocated it
                 // even on failure, though docs suggest only on success.
@@ -3963,20 +3947,24 @@ impl Jwm {
         // info!("[propertynotify]");
         unsafe {
             let ev = (*e).property;
-            if ev.window == self.x11_root && ev.atom == XA_WM_NAME {
+            if ev.window == self.x11_root.into() && ev.atom == XA_WM_NAME {
             } else if ev.state == PropertyDelete {
                 // ignore
                 return;
-            } else if let Some(client_rc) = self.wintoclient(ev.window) {
+            } else if let Some(client_rc) = self.wintoclient(ev.window as u32) {
                 match ev.atom {
                     XA_WM_TRANSIENT_FOR => {
                         let mut client_borrowd = client_rc.borrow_mut();
-                        let mut trans: Window = 0;
+                        let mut trans: u64 = 0;
                         if !client_borrowd.is_floating
-                            && XGetTransientForHint(self.x11_dpy, client_borrowd.win, &mut trans)
-                                > 0
+                            && XGetTransientForHint(
+                                self.x11_dpy,
+                                client_borrowd.win.into(),
+                                &mut trans,
+                            ) > 0
                             && {
-                                client_borrowd.is_floating = self.wintoclient(trans).is_some();
+                                client_borrowd.is_floating =
+                                    self.wintoclient(trans as u32).is_some();
                                 client_borrowd.is_floating
                             }
                         {
@@ -3994,7 +3982,7 @@ impl Jwm {
                     }
                     _ => {}
                 }
-                if ev.atom == XA_WM_NAME || ev.atom == self.atoms.net_wm_name.resource_id().into() {
+                if ev.atom == XA_WM_NAME || ev.atom == self.atoms._NET_WM_NAME.into() {
                     self.updatetitle(&mut client_rc.borrow_mut());
                     // 如果这个改变了标题的窗口，正好是其所在显示器上当前选中的窗口
                     let (is_selected_on_mon, mon_opt) = {
@@ -4019,7 +4007,7 @@ impl Jwm {
                         }
                     }
                 }
-                if ev.atom == self.atoms.net_wm_window_type.resource_id().into() {
+                if ev.atom == self.atoms._NET_WM_WINDOW_TYPE.into() {
                     self.updatewindowtype(&client_rc);
                 }
             }
@@ -4059,12 +4047,12 @@ impl Jwm {
             //   这使得 JWM 在接下来的鼠标事件中独占鼠标输入，直到释放。
             if XGrabPointer(
                 self.x11_dpy,                                                // X Display 连接
-                self.x11_root,    // 抓取事件的窗口 (根窗口)
-                False,            // owner_events: False 表示事件报告给抓取窗口 (root)
-                MOUSEMASK as u32, // event_mask: 我们关心的鼠标事件 (移动、按钮释放)
-                GrabModeAsync,    // pointer_mode: 异步指针模式
-                GrabModeAsync,    // keyboard_mode: 异步键盘模式 (通常与指针模式一致)
-                0,                // confine_to: 不限制鼠标移动范围 (0 表示不限制)
+                self.x11_root.into(), // 抓取事件的窗口 (根窗口)
+                False,                // owner_events: False 表示事件报告给抓取窗口 (root)
+                MOUSEMASK as u32,     // event_mask: 我们关心的鼠标事件 (移动、按钮释放)
+                GrabModeAsync,        // pointer_mode: 异步指针模式
+                GrabModeAsync,        // keyboard_mode: 异步键盘模式 (通常与指针模式一致)
+                0,                    // confine_to: 不限制鼠标移动范围 (0 表示不限制)
                 self.cursor[CUR::CurMove as usize].as_ref().unwrap().cursor, // cursor: 设置为移动光标样式
                 CurrentTime,                                                 // time: 当前时间
             ) != GrabSuccess
@@ -4261,7 +4249,7 @@ impl Jwm {
             // 4. 抓取鼠标指针 (XGrabPointer)
             if XGrabPointer(
                 self.x11_dpy,
-                self.x11_root,
+                self.x11_root.into(),
                 False,
                 MOUSEMASK as u32, // event_mask: 关心的鼠标事件
                 GrabModeAsync,    // pointer_mode
@@ -4285,8 +4273,8 @@ impl Jwm {
             };
             XWarpPointer(
                 self.x11_dpy,
-                0,                // src_w: source window (0 for root relative to itself)
-                client_window_id, // dest_w: destination window (the client window)
+                0,                       // src_w: source window (0 for root relative to itself)
+                client_window_id.into(), // dest_w: destination window (the client window)
                 0,
                 0,
                 0,
@@ -4421,7 +4409,7 @@ impl Jwm {
             XWarpPointer(
                 self.x11_dpy,
                 0,
-                final_client_win,
+                final_client_win.into(),
                 0,
                 0,
                 0,
@@ -4532,24 +4520,24 @@ impl Jwm {
         }
     }
 
-    pub fn setclienttagprop(&mut self, c: &Rc<RefCell<Client>>) {
+    pub fn setclienttagprop(
+        &mut self,
+        c: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let client_mut = c.borrow();
         let data: [u32; 2] = [
             client_mut.tags,
             client_mut.mon.as_ref().unwrap().borrow().num as u32,
         ];
-        unsafe {
-            XChangeProperty(
-                self.x11_dpy,
-                client_mut.win,
-                self.atoms.net_client_info.resource_id().into(),
-                XA_CARDINAL,
-                32,
-                PropModeReplace,
-                data.as_ptr() as *const u8,
-                2,
-            );
-        }
+        use x11rb::wrapper::ConnectionExt;
+        self.x11rb_conn.change_property32(
+            PropMode::REPLACE,
+            client_mut.win,
+            self.atoms._NET_CLIENT_INFO,
+            AtomEnum::CARDINAL,
+            &data,
+        )?;
+        Ok(())
     }
 
     pub fn grabbuttons(&mut self, client_opt: Option<Rc<RefCell<Client>>>, focused: bool) {
@@ -4563,14 +4551,19 @@ impl Jwm {
         unsafe {
             let modifiers_to_try = [0, LockMask, self.numlock_mask, self.numlock_mask | LockMask];
 
-            XUngrabButton(self.x11_dpy, AnyButton as u32, AnyModifier, client_win_id);
+            XUngrabButton(
+                self.x11_dpy,
+                AnyButton as u32,
+                AnyModifier,
+                client_win_id.into(),
+            );
 
             if !focused {
                 XGrabButton(
                     self.x11_dpy,
                     AnyButton as u32,
                     AnyModifier,
-                    client_win_id,
+                    client_win_id.into(),
                     False,
                     BUTTONMASK as u32,
                     GrabModeSync,
@@ -4588,7 +4581,7 @@ impl Jwm {
                             self.x11_dpy,
                             button_config.button,
                             button_config.mask | modifier_combo,
-                            client_win_id,
+                            client_win_id.into(),
                             False,
                             BUTTONMASK as u32,
                             GrabModeAsync,
@@ -4613,9 +4606,9 @@ impl Jwm {
             // 1. 取消之前对根窗口所有按键的任何抓取
             XUngrabKey(
                 self.x11_dpy,
-                AnyKey,        // AnyKey: 通配符，表示所有键盘按键
-                AnyModifier,   // AnyModifier: 通配符，表示任何修饰键组合
-                self.x11_root, // target_window: 根窗口 (全局快捷键通常在根窗口上抓取)
+                AnyKey,               // AnyKey: 通配符，表示所有键盘按键
+                AnyModifier,          // AnyModifier: 通配符，表示任何修饰键组合
+                self.x11_root.into(), // target_window: 根窗口 (全局快捷键通常在根窗口上抓取)
             );
 
             // 2. 获取当前键盘映射信息
@@ -4663,7 +4656,7 @@ impl Jwm {
                                 self.x11_dpy,
                                 keycode_val,                      // keycode: 当前物理键码
                                 key_config.mod0 | modifier_combo, // modifiers: 配置的掩码 + 额外修饰符
-                                self.x11_root,                    // grab_window: 根窗口
+                                self.x11_root.into(),             // grab_window: 根窗口
                                 True, // owner_events: True, 如果其他窗口也选了这个事件，它们也会收到
                                 GrabModeAsync, // pointer_mode
                                 GrabModeAsync, // keyboard_mode
@@ -4680,18 +4673,18 @@ impl Jwm {
 
     pub fn sendevent(&mut self, client_mut: &mut Client, proto: Atom) -> bool {
         info!("[sendevent] {}", client_mut);
-        let mut protocols: *mut Atom = null_mut();
+        let mut protocols: *mut u64 = null_mut();
         let mut n: i32 = 0;
         let mut exists: bool = false;
         unsafe {
             let mut ev: XEvent = zeroed();
-            if XGetWMProtocols(self.x11_dpy, client_mut.win, &mut protocols, &mut n) > 0 {
+            if XGetWMProtocols(self.x11_dpy, client_mut.win.into(), &mut protocols, &mut n) > 0 {
                 while !exists && {
                     n -= 1;
                     n
                 } > 0
                 {
-                    exists = *protocols.add(n as usize) == proto;
+                    exists = *protocols.add(n as usize) == proto.into();
                 }
                 if !protocols.is_null() {
                     XFree(protocols as *mut _);
@@ -4699,35 +4692,40 @@ impl Jwm {
             }
             if exists {
                 ev.type_ = ClientMessage;
-                ev.client_message.window = client_mut.win;
-                ev.client_message.message_type = self.atoms.wm_protocols.resource_id().into();
+                ev.client_message.window = client_mut.win.into();
+                ev.client_message.message_type = self.atoms.WM_PROTOCOLS.into();
                 ev.client_message.format = 32;
                 ev.client_message.data.as_longs_mut()[0] = proto as i64;
                 ev.client_message.data.as_longs_mut()[1] = CurrentTime as i64;
-                XSendEvent(self.x11_dpy, client_mut.win, False, NoEventMask, &mut ev);
+                XSendEvent(
+                    self.x11_dpy,
+                    client_mut.win.into(),
+                    False,
+                    NoEventMask,
+                    &mut ev,
+                );
             }
         }
         return exists;
     }
 
-    pub fn setfocus(&mut self, c: &Rc<RefCell<Client>>) {
+    pub fn setfocus(&mut self, c: &Rc<RefCell<Client>>) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[setfocus]");
         unsafe {
             let mut c = c.borrow_mut();
             if !c.never_focus {
-                XSetInputFocus(self.x11_dpy, c.win, RevertToPointerRoot, CurrentTime);
-                XChangeProperty(
-                    self.x11_dpy,
-                    self.x11_root,
-                    self.atoms.net_active_window.resource_id().into(),
-                    XA_WINDOW,
-                    32,
-                    PropModeReplace,
-                    &mut c.win as *const u64 as *const _,
-                    1,
-                );
+                XSetInputFocus(self.x11_dpy, c.win.into(), RevertToPointerRoot, CurrentTime);
+                use x11rb::wrapper::ConnectionExt;
+                self.x11rb_conn.change_property32(
+                    PropMode::REPLACE,
+                    self.x11rb_root,
+                    self.atoms._NET_ACTIVE_WINDOW,
+                    AtomEnum::WINDOW,
+                    &[c.win],
+                )?;
             }
-            self.sendevent(&mut c, self.atoms.wm_take_focus.resource_id().into());
+            self.sendevent(&mut c, self.atoms.WM_TAKE_FOCUS);
+            Ok(())
         }
     }
 
@@ -4738,13 +4736,13 @@ impl Jwm {
             let ev = (*e).crossing; // 获取 CrossingEvent (EnterNotify 和 LeaveNotify 共用)
 
             if (ev.mode != NotifyNormal || ev.detail == NotifyInferior)
-                && ev.window != self.x11_root
+                && ev.window != self.x11_root.into()
             {
                 return;
             }
 
             // 检查是否进入状态栏
-            if let Some(&monitor_id) = self.status_bar_windows.get(&ev.window) {
+            if let Some(&monitor_id) = self.status_bar_windows.get(&(ev.window as u32)) {
                 // 状态栏不改变焦点，但可能需要切换显示器
                 if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
                     if !Rc::ptr_eq(&monitor, self.sel_mon.as_ref().unwrap()) {
@@ -4759,12 +4757,12 @@ impl Jwm {
             // 常规的 enternotify 处理
 
             // 2. 确定事件相关的客户端 (c) 和显示器 (m)
-            let client_rc_opt = self.wintoclient(ev.window); // 尝试将事件窗口 ID 转换为 JWM 管理的 Client
+            let client_rc_opt = self.wintoclient(ev.window as u32); // 尝试将事件窗口 ID 转换为 JWM 管理的 Client
             let monitor_rc_opt = if let Some(ref c_rc) = client_rc_opt {
                 c_rc.borrow().mon.clone() // 克隆 Option<Rc<RefCell<Monitor>>>
             } else {
                 // 如果事件窗口不是已管理的客户端 (例如，是根窗口)
-                self.wintomon(ev.window) // 则尝试根据窗口 ID (可能是根窗口) 确定其所在的显示器
+                self.wintomon(ev.window as u32) // 则尝试根据窗口 ID (可能是根窗口) 确定其所在的显示器
             };
 
             // 如果无法确定显示器 (例如，wintomon 返回 None)，则不处理
@@ -4809,7 +4807,7 @@ impl Jwm {
                 return;
             }
 
-            if let Some(m_ref) = self.wintomon(ev.window).as_ref() {
+            if let Some(m_ref) = self.wintomon(ev.window as u32).as_ref() {
                 self.mark_bar_update_needed(Some(m_ref.borrow().num));
             }
         }
@@ -4863,7 +4861,7 @@ impl Jwm {
                 self.grabbuttons(Some(c_rc.clone()), true);
                 XSetWindowBorder(
                     self.x11_dpy,
-                    c_rc.borrow().win,
+                    c_rc.borrow().win.into(),
                     self.theme_manager
                         .get_scheme(SchemeType::Sel)
                         .border_color()
@@ -4873,17 +4871,12 @@ impl Jwm {
             } else {
                 XSetInputFocus(
                     self.x11_dpy,
-                    self.x11_root,
+                    self.x11_root.into(),
                     RevertToPointerRoot,
                     CurrentTime,
                 );
-                let _ = self
-                    .x11rb_conn
-                    .connection()
-                    .send_request(&x::DeleteProperty {
-                        window: self.x11rb_root,
-                        property: self.atoms.net_active_window,
-                    });
+                self.x11rb_conn
+                    .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW);
             }
             if let Some(sel_mon_opt) = self.sel_mon.as_mut() {
                 let mut sel_mon_mut = sel_mon_opt.borrow_mut();
@@ -4905,7 +4898,7 @@ impl Jwm {
         unsafe {
             XSetWindowBorder(
                 self.x11_dpy,
-                c.as_ref().unwrap().borrow_mut().win,
+                c.as_ref().unwrap().borrow_mut().win.into(),
                 self.theme_manager
                     .get_scheme(SchemeType::Norm)
                     .border_color()
@@ -4914,18 +4907,12 @@ impl Jwm {
             if setfocus {
                 XSetInputFocus(
                     self.x11_dpy,
-                    self.x11_root,
+                    self.x11_root.into(),
                     RevertToPointerRoot,
                     CurrentTime,
                 );
-                let cookie =
-                    self.x11rb_conn
-                        .connection()
-                        .send_request_checked(&x::DeleteProperty {
-                            window: self.x11rb_root,
-                            property: self.atoms.net_active_window,
-                        });
-                self.x11rb_conn.connection().check_request(cookie).unwrap();
+                self.x11rb_conn
+                    .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW);
             }
         }
     }
@@ -4953,22 +4940,23 @@ impl Jwm {
         self.arrange(None);
     }
 
-    pub fn setclientstate(&mut self, c: &Rc<RefCell<Client>>, state: i64) {
+    pub fn setclientstate(
+        &mut self,
+        c: &Rc<RefCell<Client>>,
+        state: i64,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[setclientstate]");
-        unsafe {
-            let data_to_set: [i64; 2] = [state, 0]; // 0 代表 None (无图标窗口)
-            let win = c.borrow().win;
-            XChangeProperty(
-                self.x11_dpy,
-                win,
-                self.atoms.wm_state.resource_id().into(),
-                self.atoms.wm_state.resource_id().into(),
-                32,
-                PropModeReplace,
-                data_to_set.as_ptr() as *const u8,
-                2,
-            );
-        }
+        let data_to_set: [u32; 2] = [state as u32, 0]; // 0 代表 None (无图标窗口)
+        let win = c.borrow().win;
+        use x11rb::wrapper::ConnectionExt;
+        self.x11rb_conn.change_property32(
+            PropMode::REPLACE,
+            win,
+            self.atoms.WM_STATE,
+            self.atoms.WM_STATE,
+            &data_to_set,
+        )?;
+        Ok(())
     }
 
     pub fn keypress(&mut self, e: *mut XEvent) {
@@ -5072,12 +5060,17 @@ impl Jwm {
             }
 
             // 应用边框宽度到实际窗口
-            XConfigureWindow(self.x11_dpy, win, CWBorderWidth as u32, &mut window_changes);
+            XConfigureWindow(
+                self.x11_dpy,
+                win.into(),
+                CWBorderWidth as u32,
+                &mut window_changes,
+            );
 
             // 设置边框颜色为"正常"状态的颜色
             XSetWindowBorder(
                 self.x11_dpy,
-                win,
+                win.into(),
                 self.theme_manager
                     .get_scheme(SchemeType::Norm)
                     .border_color()
@@ -5095,7 +5088,7 @@ impl Jwm {
                 let client_borrow = client_rc.borrow();
                 XMoveResizeWindow(
                     self.x11_dpy,
-                    win,
+                    win.into(),
                     client_borrow.x + 2 * self.s_w, // 移到屏幕外
                     client_borrow.y,
                     client_borrow.w as u32,
@@ -5110,14 +5103,17 @@ impl Jwm {
         }
     }
 
-    fn register_client_events(&mut self, client_rc: &Rc<RefCell<Client>>) {
+    fn register_client_events(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
             let win = client_rc.borrow().win;
 
             // 为窗口选择要监听的事件
             XSelectInput(
                 self.x11_dpy,
-                win,
+                win.into(),
                 EnterWindowMask |        // 鼠标进入窗口
                 FocusChangeMask |        // 焦点变化
                 PropertyChangeMask |     // 窗口属性变化
@@ -5128,60 +5124,51 @@ impl Jwm {
             self.grabbuttons(Some(client_rc.clone()), false); // false 表示窗口初始不是焦点
 
             // 更新 EWMH _NET_CLIENT_LIST 属性
-            XChangeProperty(
-                self.x11_dpy,
-                self.x11_root,
-                self.atoms.net_client_list.resource_id().into(),
-                XA_WINDOW,
-                32,
-                PropModeAppend, // 追加到现有列表
-                &client_rc.borrow().win as *const Window as *const _,
-                1,
-            );
+            use x11rb::wrapper::ConnectionExt;
+            self.x11rb_conn.change_property32(
+                PropMode::APPEND,
+                self.x11rb_root,
+                self.atoms._NET_CLIENT_LIST,
+                AtomEnum::WINDOW,
+                &[client_rc.borrow().win],
+            )?;
 
             info!(
                 "[register_client_events] Events registered for window {}",
                 win
             );
         }
+        Ok(())
     }
 
     // 更新完整的客户端列表（在需要时调用）
-    fn update_net_client_list(&mut self) {
-        unsafe {
-            // 清空现有列表
-            let _ = self
-                .x11rb_conn
-                .connection()
-                .send_request(&x::DeleteProperty {
-                    window: self.x11rb_root,
-                    property: self.atoms.net_client_list,
-                });
+    fn update_net_client_list(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        use x11rb::wrapper::ConnectionExt;
+        // 清空现有列表
+        self.x11rb_conn
+            .delete_property(self.x11rb_root, self.atoms._NET_CLIENT_LIST);
 
-            // 重新构建列表
-            let mut m = self.mons.clone();
-            while let Some(ref m_opt) = m {
-                let mut c = m_opt.borrow().clients.clone();
-                while let Some(ref client_opt) = c {
-                    XChangeProperty(
-                        self.x11_dpy,
-                        self.x11_root,
-                        self.atoms.net_client_list.resource_id().into(),
-                        XA_WINDOW,
-                        32,
-                        PropModeAppend,
-                        &client_opt.borrow().win as *const Window as *const _,
-                        1,
-                    );
-                    let next = client_opt.borrow().next.clone();
-                    c = next;
-                }
-                let next = m_opt.borrow().next.clone();
-                m = next;
+        // 重新构建列表
+        let mut m = self.mons.clone();
+        while let Some(ref m_opt) = m {
+            let mut c = m_opt.borrow().clients.clone();
+            while let Some(ref client_opt) = c {
+                self.x11rb_conn.change_property32(
+                    PropMode::APPEND,
+                    self.x11rb_root,
+                    self.atoms._NET_CLIENT_LIST,
+                    AtomEnum::WINDOW,
+                    &[client_opt.borrow().win],
+                )?;
+                let next = client_opt.borrow().next.clone();
+                c = next;
             }
-
-            info!("[update_net_client_list] Updated _NET_CLIENT_LIST");
+            let next = m_opt.borrow().next.clone();
+            m = next;
         }
+
+        info!("[update_net_client_list] Updated _NET_CLIENT_LIST");
+        Ok(())
     }
 
     fn handle_new_client_focus(&mut self, client_rc: &Rc<RefCell<Client>>) {
@@ -5265,10 +5252,13 @@ impl Jwm {
         _: *mut XWindowAttributes,
     ) {
         // 处理 WM_TRANSIENT_FOR
-        let mut transient_for_win: Window = 0;
+        let transient_for_win: Window = 0;
         unsafe {
-            if XGetTransientForHint(self.x11_dpy, client_rc.borrow().win, &mut transient_for_win)
-                > 0
+            if XGetTransientForHint(
+                self.x11_dpy,
+                client_rc.borrow().win.into(),
+                &mut transient_for_win.into(),
+            ) > 0
             {
                 if let Some(temp_transient_client) = self.wintoclient(transient_for_win) {
                     let mut client_mut = client_rc.borrow_mut();
@@ -5301,7 +5291,7 @@ impl Jwm {
         self.update_net_client_list();
         // 映射窗口
         unsafe {
-            XMapWindow(self.x11_dpy, client_rc.borrow().win);
+            XMapWindow(self.x11_dpy, client_rc.borrow().win.into());
         }
         // 处理焦点
         self.handle_new_client_focus(&client_rc);
@@ -5335,7 +5325,7 @@ impl Jwm {
                 .insert(client_rc.borrow().win, monitor_id);
 
             // 映射状态栏窗口
-            XMapWindow(self.x11_dpy, client_rc.borrow().win);
+            XMapWindow(self.x11_dpy, client_rc.borrow().win.into());
 
             // 确保状态栏位于最上层
             // XRaiseWindow(self.dpy, client_rc.borrow().win);
@@ -5404,7 +5394,7 @@ impl Jwm {
             // 状态栏只需要监听结构变化和属性变化
             XSelectInput(
                 self.x11_dpy,
-                win,
+                win.into(),
                 StructureNotifyMask | PropertyChangeMask | EnterWindowMask,
             );
             // 发送配置通知
@@ -5517,7 +5507,7 @@ impl Jwm {
             let name_cstring = CString::new(res_name)
                 .map_err(|e| format!("Invalid name string '{}': {}", res_name, e))?;
             // 检查窗口是否有效
-            let window_attr = self.get_window_attributes_xcb(x::Window::new(client_mut.win as u32));
+            let window_attr = self.get_window_attributes(client_mut.win as u32);
             if window_attr.is_err() {
                 return Err(format!("Window 0x{:x} is not valid", client_mut.win));
             }
@@ -5526,7 +5516,7 @@ impl Jwm {
             ch.res_class = class_cstring.as_ptr() as *mut _;
             ch.res_name = name_cstring.as_ptr() as *mut _;
             // 设置窗口的 class hint
-            let result = XSetClassHint(self.x11_dpy, client_mut.win, &mut ch);
+            let result = XSetClassHint(self.x11_dpy, client_mut.win.into(), &mut ch);
             if result != 0 {
                 info!(
                 "[set_class_info] Successfully set class: '{}', instance: '{}' for window 0x{:x}",
@@ -5557,35 +5547,25 @@ impl Jwm {
         expected_class: &str,
         expected_instance: &str,
     ) {
-        unsafe {
-            if let Some((inst, cls)) = Self::get_wm_class(
-                self.x11rb_conn.connection(),
-                x::Window::new(client.win as u32),
-            ) {
-                if cls == expected_class && inst == expected_instance {
-                    info!("[verify_class_info_set] Verification successful");
-                } else {
-                    warn!(
+        if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, client.win as u32) {
+            if cls == expected_class && inst == expected_instance {
+                info!("[verify_class_info_set] Verification successful");
+            } else {
+                warn!(
                     "[verify_class_info_set] Verification failed. Expected: class='{}', instance='{}'. Actual: class='{}', instance='{}'",
                     expected_class, expected_instance, cls, inst
                 );
-                }
-            } else {
-                warn!("[verify_class_info_set] Failed to get class hint for verification");
             }
+        } else {
+            warn!("[verify_class_info_set] Failed to get class hint for verification");
         }
     }
 
     // 更新窗口类信息
     fn update_class_info(&mut self, client_mut: &mut Client) {
-        unsafe {
-            if let Some((inst, cls)) = Self::get_wm_class(
-                self.x11rb_conn.connection(),
-                x::Window::new(client_mut.win as u32),
-            ) {
-                client_mut.instance = inst;
-                client_mut.class = cls;
-            }
+        if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, client_mut.win as u32) {
+            client_mut.instance = inst;
+            client_mut.class = cls;
         }
     }
 
@@ -5600,17 +5580,36 @@ impl Jwm {
         }
     }
 
-    pub fn get_window_attributes_xcb(
+    fn get_and_query_window_geom<C: Connection>(
+        conn: &C,
+        win: Window,
+    ) -> Result<Vec<u16>, ReplyError> {
+        let geom = conn.get_geometry(win)?;
+        let tree = conn.query_tree(win)?;
+
+        let geom = geom.reply()?;
+        let tree = tree.reply()?;
+
+        let trans = conn
+            .translate_coordinates(win, tree.parent, geom.x, geom.y)?
+            .reply()?;
+
+        // the translated coordinates are in trans.dst_x and trans.dst_y
+
+        Ok(vec![
+            trans.dst_x as u16,
+            trans.dst_y as u16,
+            geom.width,
+            geom.height,
+        ])
+    }
+
+    pub fn get_window_attributes(
         &self,
-        window: x::Window,
-    ) -> Result<GetWindowAttributesReply, Error> {
-        let conn = self.x11rb_conn.connection();
-        // 1. 发送 GetWindowAttributes 请求
-        let cookie = conn.send_request(&x::GetWindowAttributes { window });
-        // 2. 等待并获取回复
-        // wait_for_reply 会阻塞，直到收到回复或发生 I/O 错误
-        let reply = conn.wait_for_reply(cookie)?;
-        return Ok(reply);
+        window: Window,
+    ) -> Result<GetWindowAttributesReply, ReplyError> {
+        let geom = self.x11rb_conn.get_window_attributes(window)?.reply()?;
+        return Ok(geom);
     }
 
     pub fn maprequest(&mut self, e: *mut XEvent) {
@@ -5618,14 +5617,12 @@ impl Jwm {
         unsafe {
             let ev = (*e).map_request;
             let mut wa: XWindowAttributes = zeroed();
-            if let Ok(window_attr) =
-                self.get_window_attributes_xcb(x::Window::new(ev.window as u32))
-            {
-                if window_attr.override_redirect() {
+            if let Ok(window_attr) = self.get_window_attributes(ev.window as u32) {
+                if window_attr.override_redirect {
                     return;
                 }
-                if self.wintoclient(ev.window).is_none() {
-                    self.manage(ev.window, addr_of_mut!(wa));
+                if self.wintoclient(ev.window as u32).is_none() {
+                    self.manage(ev.window as u32, addr_of_mut!(wa));
                 }
             }
         }
@@ -5697,7 +5694,7 @@ impl Jwm {
         // info!("[motionnotify]");
         unsafe {
             let ev = (*e).motion;
-            if ev.window != self.x11_root {
+            if ev.window != self.x11_root.into() {
                 return;
             }
             let m = self.recttomon(ev.x_root, ev.y_root, 1, 1);
@@ -5737,7 +5734,7 @@ impl Jwm {
 
             if !destroyed {
                 unsafe {
-                    XSelectInput(self.x11_dpy, win, NoEventMask);
+                    XSelectInput(self.x11_dpy, win.into(), NoEventMask);
                 }
             }
 
@@ -6005,10 +6002,10 @@ impl Jwm {
                 // avoid race conditions.
                 XGrabServer(self.x11_dpy);
                 XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
-                XSelectInput(self.x11_dpy, win, NoEventMask);
+                XSelectInput(self.x11_dpy, win.into(), NoEventMask);
                 // restore border.
-                XConfigureWindow(self.x11_dpy, win, CWBorderWidth as u32, &mut wc);
-                XUngrabButton(self.x11_dpy, AnyButton as u32, AnyModifier, win);
+                XConfigureWindow(self.x11_dpy, win.into(), CWBorderWidth as u32, &mut wc);
+                XUngrabButton(self.x11_dpy, AnyButton as u32, AnyModifier, win.into());
                 self.setclientstate(client_rc, WithdrawnState as i64);
                 XSync(self.x11_dpy, False);
                 XSetErrorHandler(Some(transmute(xerror as *const ())));
@@ -6024,7 +6021,7 @@ impl Jwm {
         // info!("[unmapnotify]");
         unsafe {
             let ev = (*e).unmap;
-            let c = self.wintoclient(ev.window);
+            let c = self.wintoclient(ev.window as u32);
             if c.is_some() {
                 if ev.send_event > 0 {
                     self.setclientstate(c.as_ref().unwrap(), WithdrawnState as i64);
@@ -6280,14 +6277,14 @@ impl Jwm {
         let wtype;
         {
             let c = &mut *c.borrow_mut();
-            state = self.getatomprop(c, self.atoms.net_wm_state.resource_id().into());
-            wtype = self.getatomprop(c, self.atoms.net_wm_window_type.resource_id().into());
+            state = self.getatomprop(c, self.atoms._NET_WM_STATE.into());
+            wtype = self.getatomprop(c, self.atoms._NET_WM_WINDOW_TYPE.into());
         }
 
-        if state == self.atoms.net_wm_fullscreen.resource_id().into() {
+        if state == self.atoms._NET_WM_STATE_FULLSCREEN.into() {
             self.setfullscreen(c, true);
         }
-        if wtype == self.atoms.net_wm_window_type_dialog.resource_id().into() {
+        if wtype == self.atoms._NET_WM_WINDOW_TYPE_DIALOG.into() {
             let c = &mut *c.borrow_mut();
             c.is_floating = true;
         }
@@ -6297,7 +6294,7 @@ impl Jwm {
         // info!("[updatewmhints]");
         unsafe {
             let mut client_mut = client_rc.borrow_mut();
-            let wmh = XGetWMHints(self.x11_dpy, client_mut.win);
+            let wmh = XGetWMHints(self.x11_dpy, client_mut.win.into());
             if !wmh.is_null() {
                 let sel_mon_borrow = self.sel_mon.as_ref().unwrap().borrow();
                 if sel_mon_borrow.sel.is_some()
@@ -6305,7 +6302,7 @@ impl Jwm {
                     && ((*wmh).flags & XUrgencyHint) > 0
                 {
                     (*wmh).flags &= !XUrgencyHint;
-                    XSetWMHints(self.x11_dpy, client_mut.win, wmh);
+                    XSetWMHints(self.x11_dpy, client_mut.win.into(), wmh);
                 } else {
                     client_mut.is_urgent = if (*wmh).flags & XUrgencyHint > 0 {
                         true
@@ -6325,12 +6322,8 @@ impl Jwm {
 
     pub fn updatetitle(&mut self, c: &mut Client) {
         // info!("[updatetitle]");
-        if !self.gettextprop(
-            c.win,
-            self.atoms.net_wm_name.resource_id().into(),
-            &mut c.name,
-        ) {
-            self.gettextprop(c.win, XA_WM_NAME, &mut c.name);
+        if !self.gettextprop(c.win, self.atoms._NET_WM_NAME.into(), &mut c.name) {
+            self.gettextprop(c.win, XA_WM_NAME as u32, &mut c.name);
         }
     }
 
