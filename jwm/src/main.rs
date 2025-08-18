@@ -90,7 +90,7 @@ fn main() {
         info!("[main] setup");
         jwm.setup();
         info!("[main] scan");
-        jwm.scan();
+        let _ = jwm.scan();
         info!("[main] run");
         jwm.run();
         info!("[main] cleanup");

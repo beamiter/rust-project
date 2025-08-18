@@ -5,6 +5,7 @@ x11rb::atom_manager! {
         WM_DELETE_WINDOW,
         WM_STATE,
         WM_TAKE_FOCUS,
+        WM_TRANSIENT_FOR,
 
         _NET_ACTIVE_WINDOW,
         _NET_SUPPORTED,

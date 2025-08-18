@@ -38,10 +38,10 @@ use x11::xlib::{XFreeStringList, XSetClassHint};
 use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
 use x11::xrender::{PictTypeDirect, XRenderFindVisualFormat};
 use x11rb::connection::Connection;
-use x11rb::errors::ReplyError;
+use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::protocol::xproto::{
-    Atom, AtomEnum, ConnectionExt, CreateWindowAux, EventMask, GetWindowAttributesReply, PropMode,
-    Window, WindowClass,
+    Atom, AtomEnum, ConnectionExt, CreateWindowAux, EventMask, GetWindowAttributesReply, MapState,
+    PropMode, Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::COPY_DEPTH_FROM_PARENT;
@@ -53,24 +53,24 @@ use x11::xlib::{
     CWBorderWidth, CWCursor, CWEventMask, CWHeight, CWSibling, CWStackMode, CWWidth, ClientMessage,
     Colormap, ConfigureNotify, ConfigureRequest, CurrentTime, DestroyAll, DestroyNotify, Display,
     EnterNotify, EnterWindowMask, Expose, ExposureMask, False, FocusChangeMask, FocusIn,
-    GrabModeAsync, GrabModeSync, GrabSuccess, IsViewable, KeyPress, KeySym, LeaveWindowMask,
-    LockMask, MapRequest, MappingKeyboard, MappingNotify, MotionNotify, NoEventMask,
-    NotifyInferior, NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize,
-    PointerMotionMask, PointerRoot, PropertyChangeMask, PropertyDelete, PropertyNotify,
-    ReplayPointer, RevertToPointerRoot, StructureNotifyMask, SubstructureNotifyMask,
-    SubstructureRedirectMask, Success, Time, True, TrueColor, UnmapNotify, Visual, VisualClassMask,
-    VisualDepthMask, VisualScreenMask, XAllowEvents, XChangeWindowAttributes, XCheckMaskEvent,
-    XClassHint, XConfigureEvent, XConfigureWindow, XCreateColormap, XDefaultColormap,
-    XDefaultDepth, XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDestroyWindow,
-    XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap,
+    GrabModeAsync, GrabModeSync, GrabSuccess, KeyPress, KeySym, LeaveWindowMask, LockMask,
+    MapRequest, MappingKeyboard, MappingNotify, MotionNotify, NoEventMask, NotifyInferior,
+    NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask,
+    PointerRoot, PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer,
+    RevertToPointerRoot, StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask,
+    Success, Time, True, TrueColor, UnmapNotify, Visual, VisualClassMask, VisualDepthMask,
+    VisualScreenMask, XAllowEvents, XChangeWindowAttributes, XCheckMaskEvent, XClassHint,
+    XConfigureEvent, XConfigureWindow, XCreateColormap, XDefaultColormap, XDefaultDepth,
+    XDefaultRootWindow, XDefaultScreen, XDefaultVisual, XDestroyWindow, XDisplayHeight,
+    XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap,
     XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetVisualInfo,
-    XGetWMNormalHints, XGetWMProtocols, XGetWindowAttributes, XGrabButton, XGrabKey, XGrabPointer,
-    XGrabServer, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent,
-    XMoveResizeWindow, XMoveWindow, XNextEvent, XQueryTree, XRaiseWindow, XRefreshKeyboardMapping,
-    XRootWindow, XSelectInput, XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus,
-    XSetWindowAttributes, XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey,
-    XUngrabPointer, XUngrabServer, XVisualInfo, XWarpPointer, XWindowAttributes, XWindowChanges,
-    CWX, CWY, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XGetWMNormalHints, XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
+    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow,
+    XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput,
+    XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWindowAttributes,
+    XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer,
+    XVisualInfo, XWarpPointer, XWindowAttributes, XWindowChanges, CWX, CWY, XA_WM_HINTS,
+    XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -2343,54 +2343,39 @@ impl Jwm {
         }
     }
 
-    pub fn scan(&mut self) {
+    pub fn scan(&mut self) -> Result<(), ReplyOrIdError> {
         // info!("[scan]");
-        let mut num: u32 = 0;
-        let mut d1: u64 = 0;
-        let mut d2: u64 = 0;
-        let mut wins: *mut u64 = null_mut();
-        unsafe {
-            let mut wa: XWindowAttributes = zeroed();
-            if XQueryTree(
-                self.x11_dpy,
-                self.x11_root.into(),
-                &mut d1,
-                &mut d2,
-                &mut wins,
-                &mut num,
-            ) > 0
-            {
-                for i in 0..num as usize {
-                    if XGetWindowAttributes(self.x11_dpy, *wins.add(i), &mut wa) <= 0
-                        || wa.override_redirect > 0
-                        || XGetTransientForHint(self.x11_dpy, *wins.add(i), &mut d1) > 0
-                    {
-                        continue;
-                    }
-                    if wa.map_state == IsViewable
-                        || self.get_wm_state((*wins.add(i)) as u32) == IconicState as i64
-                    {
-                        self.manage((*wins.add(i)) as u32, &mut wa);
-                    }
-                }
-                for i in 0..num as usize {
-                    // now the transients
-                    // 目的是确保在管理一个瞬态窗口（如对话框）之前，它的主窗口（WM_TRANSIENT_FOR 指向的窗口）已经被窗口管理器处理了
-                    if XGetWindowAttributes(self.x11_dpy, *wins.add(i), &mut wa) <= 0 {
-                        continue;
-                    }
-                    if XGetTransientForHint(self.x11_dpy, *wins.add(i), &mut d1) > 0
-                        && (wa.map_state == IsViewable
-                            || self.get_wm_state((*wins.add(i)) as u32) == IconicState as i64)
-                    {
-                        self.manage((*wins.add(i)) as u32, &mut wa);
-                    }
-                }
+        let tree_reply = self.x11rb_conn.query_tree(self.x11rb_root)?.reply()?;
+        let mut cookies = Vec::with_capacity(tree_reply.children.len());
+        for win in tree_reply.children {
+            let attr = self.get_window_attributes(win)?;
+            let geom = Self::get_and_query_window_geom(&self.x11rb_conn, win)?;
+            let trans = self.get_transient_for(win);
+            cookies.push((win, attr, geom, trans));
+        }
+        for (win, attr, _geom, trans) in &cookies {
+            if attr.override_redirect || trans.is_some() {
+                continue;
             }
-            if !wins.is_null() {
-                XFree(wins as *mut _);
+            if attr.map_state == MapState::VIEWABLE || self.get_wm_state(*win) == IconicState as i64
+            {
+                // (TODO)
+                self.manage(*win, null_mut());
             }
         }
+        for (win, attr, _geom, trans) in &cookies {
+            {
+                if trans.is_some() {
+                    if attr.map_state == MapState::VIEWABLE
+                        || self.get_wm_state(*win) == IconicState as i64
+                    {
+                        // (TODO)
+                        self.manage(*win, null_mut());
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 
     pub fn arrange(&mut self, m_target: Option<Rc<RefCell<Monitor>>>) {
@@ -4010,6 +3995,24 @@ impl Jwm {
 
             return true; // 表示尝试获取属性的操作已完成（不一定文本转换成功）
         }
+    }
+
+    /// 获取窗口的 transient_for 窗口，如果存在且有效
+    pub fn get_transient_for(&self, window: Window) -> Option<u32> {
+        let cookie = self
+            .x11rb_conn
+            .get_property(
+                false,
+                window,
+                self.atoms.WM_TRANSIENT_FOR,
+                AtomEnum::WINDOW,
+                0,
+                1,
+            )
+            .ok()?;
+        let reply = cookie.reply().ok()?;
+        let mut values = reply.value32().unwrap();
+        values.next().map(|w| w as u32).filter(|&w| w != 0)
     }
 
     pub fn propertynotify(&mut self, e: *mut XEvent) {
