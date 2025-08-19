@@ -40,7 +40,7 @@ use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::protocol::render::PictType;
 use x11rb::protocol::xproto::{
-    Atom, AtomEnum, Colormap, ColormapAlloc, ConnectionExt, CreateWindowAux, Cursor, EventMask,
+    Atom, AtomEnum, Colormap, ColormapAlloc, ConnectionExt, CreateWindowAux, EventMask,
     GetGeometryReply, GetWindowAttributesReply, MapState, PropMode, VisualClass, Visualid, Window,
     WindowClass,
 };
@@ -74,24 +74,14 @@ use x11::xlib::{
 use std::cmp::{max, min};
 
 use crate::config::CONFIG;
-use crate::xcb_util::Atoms;
+use crate::xcb_util::{test_all_cursors, Atoms, CursorManager};
 use crate::xproto::{
-    IconicState, NormalState, WithdrawnState, XC_fleur, XC_left_ptr, XC_sizing, X_ConfigureWindow,
-    X_CopyArea, X_GrabButton, X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8,
-    X_SetInputFocus,
+    IconicState, NormalState, WithdrawnState, X_ConfigureWindow, X_CopyArea, X_GrabButton,
+    X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8, X_SetInputFocus,
 };
 
 pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
 pub const MOUSEMASK: c_long = BUTTONMASK | PointerMotionMask;
-
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub enum CUR {
-    CurNormal = 0,
-    CurResize = 1,
-    CurMove = 2,
-    CurLast = 3,
-}
 
 #[repr(C)]
 #[derive(Debug, Clone)]
@@ -761,7 +751,7 @@ pub struct Jwm {
     pub s_h: i32,
     pub numlock_mask: u32,
     pub running: AtomicBool,
-    pub cursor: [Option<Cursor>; CUR::CurLast as usize],
+    pub cursor_manager: CursorManager,
     pub theme_manager: ThemeManager,
     pub mons: Option<Rc<RefCell<Monitor>>>,
     pub motion_mon: Option<Rc<RefCell<Monitor>>>,
@@ -880,8 +870,10 @@ impl Jwm {
         let (x11rb_conn, x11rb_screen_num) =
             x11rb::rust_connection::RustConnection::connect(None).unwrap();
         let atoms = Atoms::new(&x11rb_conn).unwrap().reply().unwrap();
+        let _ = test_all_cursors(&x11rb_conn);
         let x11rb_screen = &x11rb_conn.setup().roots[x11rb_screen_num];
         let x11rb_root = x11rb_screen.root;
+        let cursor_manager = CursorManager::new(&x11rb_conn).unwrap();
         Jwm {
             stext_max_len: 512,
             screen,
@@ -889,8 +881,8 @@ impl Jwm {
             s_h,
             numlock_mask: 0,
             running: AtomicBool::new(true),
-            cursor: [const { None }; CUR::CurLast as usize],
             theme_manager,
+            cursor_manager,
             x11_dpy: dpy,
             mons: None,
             motion_mon: None,
@@ -3803,18 +3795,9 @@ impl Jwm {
         Ok(())
     }
 
-    fn create_glyph_cursor<C: Connection>(conn: &C, shape: u16) -> Result<u32, ReplyOrIdError> {
-        let font = conn.generate_id()?;
-        conn.open_font(font, b"cursor")?;
-        let cursor = conn.generate_id()?;
-        conn.create_glyph_cursor(cursor, font, font, shape, shape + 1, 0, 0, 0, 0, 0, 0)?;
-        Ok(cursor)
-    }
-
     pub fn setup(&mut self) {
         // info!("[setup]");
         unsafe {
-            let mut wa: XSetWindowAttributes = zeroed();
             let mut sa: sigaction = zeroed();
             //do not transform children into zombies whien they terminate
             sigemptyset(&mut sa.sa_mask);
@@ -3833,15 +3816,14 @@ impl Jwm {
             let _ = self.setup_ewmh();
 
             // init cursors
-            self.cursor[CUR::CurNormal as usize] =
-                Self::create_glyph_cursor(&self.x11rb_conn, XC_left_ptr as u16).ok();
-            self.cursor[CUR::CurResize as usize] =
-                Self::create_glyph_cursor(&self.x11rb_conn, XC_sizing as u16).ok();
-            self.cursor[CUR::CurMove as usize] =
-                Self::create_glyph_cursor(&self.x11rb_conn, XC_fleur as u16).ok();
 
             // select events
-            wa.cursor = self.cursor[CUR::CurNormal as usize].unwrap().into();
+            let mut wa: XSetWindowAttributes = zeroed();
+            wa.cursor = self
+                .cursor_manager
+                .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::LeftPtr)
+                .unwrap()
+                .into();
             wa.event_mask = SubstructureRedirectMask
                 | SubstructureNotifyMask
                 | ButtonPressMask
@@ -4157,15 +4139,18 @@ impl Jwm {
             // 4. 抓取鼠标指针 (XGrabPointer)
             //   这使得 JWM 在接下来的鼠标事件中独占鼠标输入，直到释放。
             if XGrabPointer(
-                self.x11_dpy,                                       // X Display 连接
-                self.x11_root.into(),                               // 抓取事件的窗口 (根窗口)
-                False,            // owner_events: False 表示事件报告给抓取窗口 (root)
-                MOUSEMASK as u32, // event_mask: 我们关心的鼠标事件 (移动、按钮释放)
-                GrabModeAsync,    // pointer_mode: 异步指针模式
-                GrabModeAsync,    // keyboard_mode: 异步键盘模式 (通常与指针模式一致)
-                0,                // confine_to: 不限制鼠标移动范围 (0 表示不限制)
-                self.cursor[CUR::CurMove as usize].unwrap().into(), // cursor: 设置为移动光标样式
-                CurrentTime,      // time: 当前时间
+                self.x11_dpy,         // X Display 连接
+                self.x11_root.into(), // 抓取事件的窗口 (根窗口)
+                False,                // owner_events: False 表示事件报告给抓取窗口 (root)
+                MOUSEMASK as u32,     // event_mask: 我们关心的鼠标事件 (移动、按钮释放)
+                GrabModeAsync,        // pointer_mode: 异步指针模式
+                GrabModeAsync,        // keyboard_mode: 异步键盘模式 (通常与指针模式一致)
+                0,                    // confine_to: 不限制鼠标移动范围 (0 表示不限制)
+                self.cursor_manager
+                    .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Sizing)
+                    .unwrap()
+                    .into(), // cursor: 设置为移动光标样式
+                CurrentTime,          // time: 当前时间
             ) != GrabSuccess
             {
                 // 如果抓取失败 (例如其他程序已抓取)，则返回
@@ -4366,7 +4351,10 @@ impl Jwm {
                 GrabModeAsync,    // pointer_mode
                 GrabModeAsync,    // keyboard_mode
                 0,                // confine_to: 不限制范围
-                self.cursor[CUR::CurResize as usize].unwrap().into(), // 使用调整大小光标
+                self.cursor_manager
+                    .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Fleur)
+                    .unwrap()
+                    .into(), // cursor: 设置为移动光标样式
                 CurrentTime,
             ) != GrabSuccess
             {
