@@ -59,15 +59,15 @@ use x11::xlib::{
     PointerRoot, PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer,
     RevertToPointerRoot, StructureNotifyMask, SubstructureRedirectMask, Success, Time, True,
     UnmapNotify, XAllowEvents, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
-    XDefaultRootWindow, XDefaultScreen, XDestroyWindow, XDisplayHeight, XDisplayKeycodes,
-    XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap, XGetKeyboardMapping,
-    XGetModifierMapping, XGetTransientForHint, XGetWMNormalHints, XGetWMProtocols, XGrabButton,
-    XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym, XKeysymToKeycode, XKillClient,
-    XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XRaiseWindow,
-    XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetCloseDownMode,
-    XSetErrorHandler, XSetInputFocus, XSetWindowBorder, XSizeHints, XSync, XUngrabButton,
-    XUngrabKey, XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS,
-    XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XDefaultScreen, XDestroyWindow, XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent,
+    XEvent, XFree, XFreeModifiermap, XGetKeyboardMapping, XGetModifierMapping,
+    XGetTransientForHint, XGetWMNormalHints, XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer,
+    XGrabServer, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent,
+    XMoveResizeWindow, XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow,
+    XSelectInput, XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus,
+    XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer,
+    XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS,
+    XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -2675,11 +2675,7 @@ impl Jwm {
         unsafe {
             _ = XSetErrorHandler(Some(transmute(xerrorstart as *const ())));
             // this causes an error if some other window manager is running.
-            XSelectInput(
-                self.x11_dpy,
-                XDefaultRootWindow(self.x11_dpy),
-                SubstructureRedirectMask,
-            );
+            XSelectInput(self.x11_dpy, self.x11_root.into(), SubstructureRedirectMask);
             XSync(self.x11_dpy, False);
             // Attention what transmut does is great;
             XSetErrorHandler(Some(transmute(xerror as *const ())));
