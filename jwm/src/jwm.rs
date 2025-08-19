@@ -41,9 +41,10 @@ use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::properties::WmSizeHints;
 use x11rb::protocol::render::PictType;
 use x11rb::protocol::xproto::{
-    self, Atom, AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, Colormap, ColormapAlloc,
-    ConfigureNotifyEvent, ConnectionExt, CreateWindowAux, EventMask, GetGeometryReply,
-    GetWindowAttributesReply, MapState, PropMode, VisualClass, Visualid, Window, WindowClass,
+    self, allow_events, Allow, Atom, AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent,
+    Colormap, ColormapAlloc, ConfigureNotifyEvent, ConnectionExt, CreateWindowAux, EventMask,
+    GetGeometryReply, GetWindowAttributesReply, MapState, PropMode, VisualClass, Visualid, Window,
+    WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::COPY_DEPTH_FROM_PARENT;
@@ -57,15 +58,14 @@ use x11::xlib::{
     FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess, KeyPress, KeySym, LockMask,
     MapRequest, MappingKeyboard, MappingNotify, MotionNotify, NoEventMask, NotifyInferior,
     NotifyNormal, PointerMotionMask, PointerRoot, PropertyChangeMask, PropertyDelete,
-    PropertyNotify, ReplayPointer, RevertToPointerRoot, StructureNotifyMask,
-    SubstructureRedirectMask, Success, Time, True, UnmapNotify, XAllowEvents, XCheckMaskEvent,
-    XClassHint, XConfigureWindow, XDestroyWindow, XDisplayKeycodes, XErrorEvent, XEvent, XFree,
-    XFreeModifiermap, XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint,
-    XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym,
-    XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow,
-    XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSetCloseDownMode,
-    XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey, XUngrabPointer,
-    XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
+    PropertyNotify, RevertToPointerRoot, StructureNotifyMask, SubstructureRedirectMask, Success,
+    Time, True, UnmapNotify, XClassHint, XConfigureWindow, XDestroyWindow, XDisplayKeycodes,
+    XErrorEvent, XEvent, XFree, XFreeModifiermap, XGetKeyboardMapping, XGetModifierMapping,
+    XGetTransientForHint, XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
+    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow,
+    XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput,
+    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey,
+    XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
     XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
@@ -2204,9 +2204,34 @@ impl Jwm {
                 client_rc_opt = next;
             }
             XSync(self.x11_dpy, 0);
-            let mut ev: XEvent = zeroed();
-            while XCheckMaskEvent(self.x11_dpy, EnterWindowMask, &mut ev) > 0 {}
+            self.flush_enter_events();
         }
+    }
+
+    pub fn flush_enter_events(&self) {
+        loop {
+            match self.x11rb_conn.poll_for_event() {
+                Ok(Some(event)) => {
+                    if EventMask::from(event.response_type()) == EventMask::ENTER_WINDOW {
+                        continue;
+                    } else {
+                        // (TODO): need to store the event?
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    break;
+                }
+                Err(e) => {
+                    eprintln!("Error polling for event: {:?}", e);
+                    break;
+                }
+            }
+        }
+
+        self.x11rb_conn
+            .flush()
+            .expect("Failed to flush X11 connection");
     }
 
     fn flush_pending_bar_updates(&mut self) {
@@ -2630,7 +2655,7 @@ impl Jwm {
             } {
                 self.focus(c);
                 self.restack(self.sel_mon.clone());
-                XAllowEvents(self.x11_dpy, ReplayPointer, CurrentTime);
+                allow_events(&self.x11rb_conn, Allow::REPLAY_POINTER, 0u32).unwrap();
                 click = CLICK::ClkClientWin;
             }
             let buttons = CONFIG.get_buttons();
@@ -4497,8 +4522,7 @@ impl Jwm {
             XUngrabPointer(self.x11_dpy, CurrentTime);
 
             // 10. 清理可能由于 XWarpPointer 产生的多余 EnterNotify 事件
-            //     (dwp.c 中的做法，确保焦点状态正确)
-            while XCheckMaskEvent(self.x11_dpy, EnterWindowMask, &mut ev) > 0 {}
+            self.flush_enter_events();
 
             // 11. 检查窗口调整大小后是否跨越了显示器边界 (通常调整大小不改变显示器)
             //     但这部分逻辑与 movemouse 类似，以防万一或特殊情况。
