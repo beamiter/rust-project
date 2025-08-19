@@ -1616,12 +1616,6 @@ impl Jwm {
                 if let Some(&monitor_id) = self.status_bar_windows.get(&(ev.window as u32)) {
                     info!("[configurerequest] statusbar on monitor {}", monitor_id);
                     self.handle_statusbar_configure_request(monitor_id, &ev);
-                    // let mut wc: XWindowChanges = std::mem::zeroed();
-                    // wc.x = ev.x;
-                    // wc.y = ev.y;
-                    // wc.width = ev.width;
-                    // wc.height = ev.height;
-                    // XConfigureWindow(self.dpy, ev.window, ev.value_mask as u32, &mut wc);
                 } else {
                     // 常规客户端的配置请求处理
                     self.handle_regular_configure_request(&client_rc, &ev);
@@ -4888,6 +4882,16 @@ impl Jwm {
             }
         }
     }
+    pub fn set_window_border_width(
+        &self,
+        window: u32,
+        border_width: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let aux = x11rb::protocol::xproto::ConfigureWindowAux::new().border_width(border_width);
+        self.x11rb_conn.configure_window(window, &aux)?;
+        self.x11rb_conn.flush()?; // 确保请求立即发送
+        Ok(())
+    }
 
     pub fn focus(&mut self, mut c_opt: Option<Rc<RefCell<Client>>>) {
         // info!("[focus]");
@@ -5131,15 +5135,8 @@ impl Jwm {
                 let mut client_mut = client_rc.borrow_mut();
                 client_mut.border_w = CONFIG.border_px() as i32;
                 window_changes.border_width = client_mut.border_w;
+                let _ = self.set_window_border_width(win, client_mut.border_w as u32);
             }
-
-            // 应用边框宽度到实际窗口
-            XConfigureWindow(
-                self.x11_dpy,
-                win.into(),
-                CWBorderWidth as u32,
-                &mut window_changes,
-            );
 
             // 设置边框颜色为"正常"状态的颜色
             XSetWindowBorder(
@@ -6072,7 +6069,7 @@ impl Jwm {
                 XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
                 XSelectInput(self.x11_dpy, win.into(), NoEventMask);
                 // restore border.
-                XConfigureWindow(self.x11_dpy, win.into(), CWBorderWidth as u32, &mut wc);
+                let _ = self.set_window_border_width(win, oldbw as u32);
                 XUngrabButton(self.x11_dpy, AnyButton as u32, AnyModifier, win.into());
                 let _ = self.setclientstate(client_rc, WithdrawnState as i64);
                 XSync(self.x11_dpy, False);
