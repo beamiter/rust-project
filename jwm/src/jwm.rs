@@ -17,7 +17,7 @@ use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus}
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
 use std::ffi::c_char;
-use std::ffi::{CStr, CString};
+use std::ffi::CStr;
 use std::fmt;
 use std::mem::transmute;
 use std::mem::zeroed;
@@ -32,9 +32,9 @@ use std::time::{Duration, Instant};
 use std::{os::raw::c_long, usize};
 use x11::xft::XftColor;
 use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
-use x11::xlib::{XConfigureRequestEvent, XFlush, XOpenDisplay};
+use x11::xlib::XFreeStringList;
+use x11::xlib::{XConfigureRequestEvent, XOpenDisplay};
 use x11::xlib::{XConnectionNumber, XPending};
-use x11::xlib::{XFreeStringList, XSetClassHint};
 use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
 use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
@@ -60,10 +60,10 @@ use x11::xlib::{
     MapRequest, MappingKeyboard, MappingNotify, MotionNotify, NoEventMask, NotifyInferior,
     NotifyNormal, PointerMotionMask, PointerRoot, PropertyChangeMask, PropertyDelete,
     PropertyNotify, RevertToPointerRoot, StructureNotifyMask, SubstructureRedirectMask, Success,
-    Time, True, UnmapNotify, XClassHint, XConfigureWindow, XDestroyWindow, XDisplayKeycodes,
-    XErrorEvent, XEvent, XFree, XGetKeyboardMapping, XGetTransientForHint, XGetWMProtocols,
-    XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym, XKillClient, XMapWindow,
-    XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping,
+    Time, True, UnmapNotify, XConfigureWindow, XDestroyWindow, XDisplayKeycodes, XErrorEvent,
+    XEvent, XFree, XGetKeyboardMapping, XGetTransientForHint, XGetWMProtocols, XGrabButton,
+    XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym, XKillClient, XMapWindow, XMaskEvent,
+    XMoveResizeWindow, XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping,
     XSelectInput, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton,
     XUngrabKey, XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS,
     XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
@@ -5616,42 +5616,41 @@ impl Jwm {
         if res_class.is_empty() && res_name.is_empty() {
             return Err("Both class and name cannot be empty".to_string());
         }
-        unsafe {
-            let class_cstring = CString::new(res_class)
-                .map_err(|e| format!("Invalid class string '{}': {}", res_class, e))?;
-            let name_cstring = CString::new(res_name)
-                .map_err(|e| format!("Invalid name string '{}': {}", res_name, e))?;
-            // 检查窗口是否有效
-            let window_attr = self.get_window_attributes(client_mut.win as u32);
-            if window_attr.is_err() {
-                return Err(format!("Window 0x{:x} is not valid", client_mut.win));
-            }
-            // 创建 XClassHint 结构
-            let mut ch: XClassHint = std::mem::zeroed();
-            ch.res_class = class_cstring.as_ptr() as *mut _;
-            ch.res_name = name_cstring.as_ptr() as *mut _;
-            // 设置窗口的 class hint
-            let result = XSetClassHint(self.x11_dpy, client_mut.win.into(), &mut ch);
-            if result != 0 {
-                info!(
-                "[set_class_info] Successfully set class: '{}', instance: '{}' for window 0x{:x}",
-                res_class, res_name, client_mut.win
-            );
-                // 更新客户端的本地记录
-                client_mut.class = res_class.to_string();
-                client_mut.instance = res_name.to_string();
-                // 刷新X服务器
-                XFlush(self.x11_dpy);
-                // 验证设置是否成功
-                self.verify_class_info_set(client_mut, res_class, res_name);
-                Ok(())
-            } else {
-                Err(format!(
-                    "XSetClassHint failed for window 0x{:x}",
-                    client_mut.win
-                ))
-            }
+        // 检查窗口是否存在
+        if self
+            .x11rb_conn
+            .get_geometry(client_mut.win)
+            .and_then(|c| Ok(c.reply()))
+            .is_err()
+        {
+            return Err(format!("Invalid window: 0x{:x}", client_mut.win));
         }
+        let mut data = Vec::with_capacity(res_name.len() + res_class.len() + 2);
+        data.extend_from_slice(res_name.as_bytes());
+        data.push(0);
+        data.extend_from_slice(res_class.as_bytes());
+        data.push(0);
+        use x11rb::wrapper::ConnectionExt;
+        self.x11rb_conn
+            .change_property8(
+                PropMode::REPLACE,
+                client_mut.win,
+                AtomEnum::WM_CLASS,
+                AtomEnum::STRING,
+                &data,
+            )
+            .map_err(|e| format!("X11 error: {}", e))?;
+        self.x11rb_conn
+            .flush()
+            .map_err(|e| format!("Flush error: {}", e))?;
+        client_mut.class = res_class.to_string();
+        client_mut.instance = res_name.to_string();
+        info!(
+            "[set_class_info] Set class='{}', instance='{}' for window 0x{:x}",
+            res_class, res_name, client_mut.win
+        );
+        self.verify_class_info_set(client_mut, res_class, res_name);
+        Ok(())
     }
 
     // 验证设置是否成功的辅助函数
