@@ -40,9 +40,9 @@ use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::protocol::render::PictType;
 use x11rb::protocol::xproto::{
-    Atom, AtomEnum, Colormap, ColormapAlloc, ConnectionExt, CreateWindowAux, EventMask,
-    GetGeometryReply, GetWindowAttributesReply, MapState, PropMode, VisualClass, Visualid, Window,
-    WindowClass,
+    Atom, AtomEnum, ChangeWindowAttributesAux, Colormap, ColormapAlloc, ConnectionExt,
+    CreateWindowAux, EventMask, GetGeometryReply, GetWindowAttributesReply, MapState, PropMode,
+    VisualClass, Visualid, Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::COPY_DEPTH_FROM_PARENT;
@@ -50,25 +50,24 @@ use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
     AnyButton, AnyKey, AnyModifier, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow, Below,
-    ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBorderWidth, CWCursor,
-    CWEventMask, CWHeight, CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify,
-    ConfigureRequest, CurrentTime, DestroyAll, DestroyNotify, Display, EnterNotify,
-    EnterWindowMask, Expose, ExposureMask, False, FocusChangeMask, FocusIn, GrabModeAsync,
-    GrabModeSync, GrabSuccess, KeyPress, KeySym, LeaveWindowMask, LockMask, MapRequest,
-    MappingKeyboard, MappingNotify, MotionNotify, NoEventMask, NotifyInferior, NotifyNormal,
-    PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask, PointerRoot,
-    PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer, RevertToPointerRoot,
-    StructureNotifyMask, SubstructureNotifyMask, SubstructureRedirectMask, Success, Time, True,
-    UnmapNotify, XAllowEvents, XChangeWindowAttributes, XCheckMaskEvent, XClassHint,
-    XConfigureEvent, XConfigureWindow, XDefaultRootWindow, XDefaultScreen, XDestroyWindow,
-    XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap,
-    XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetWMNormalHints,
-    XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym,
-    XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow,
-    XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent,
-    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWindowAttributes, XSetWindowBorder,
-    XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer, XWarpPointer,
-    XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBorderWidth, CWHeight,
+    CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify, ConfigureRequest, CurrentTime,
+    DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose, ExposureMask, False,
+    FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess, KeyPress, KeySym, LockMask,
+    MapRequest, MappingKeyboard, MappingNotify, MotionNotify, NoEventMask, NotifyInferior,
+    NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask,
+    PointerRoot, PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer,
+    RevertToPointerRoot, StructureNotifyMask, SubstructureRedirectMask, Success, Time, True,
+    UnmapNotify, XAllowEvents, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
+    XDefaultRootWindow, XDefaultScreen, XDestroyWindow, XDisplayHeight, XDisplayKeycodes,
+    XDisplayWidth, XErrorEvent, XEvent, XFree, XFreeModifiermap, XGetKeyboardMapping,
+    XGetModifierMapping, XGetTransientForHint, XGetWMNormalHints, XGetWMProtocols, XGrabButton,
+    XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym, XKeysymToKeycode, XKillClient,
+    XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XRaiseWindow,
+    XRefreshKeyboardMapping, XRootWindow, XSelectInput, XSendEvent, XSetCloseDownMode,
+    XSetErrorHandler, XSetInputFocus, XSetWindowBorder, XSizeHints, XSync, XUngrabButton,
+    XUngrabKey, XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS,
+    XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -3815,30 +3814,27 @@ impl Jwm {
 
             let _ = self.setup_ewmh();
 
-            // init cursors
-
             // select events
-            let mut wa: XSetWindowAttributes = zeroed();
-            wa.cursor = self
-                .cursor_manager
-                .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::LeftPtr)
-                .unwrap()
-                .into();
-            wa.event_mask = SubstructureRedirectMask
-                | SubstructureNotifyMask
-                | ButtonPressMask
-                | PointerMotionMask
-                | EnterWindowMask
-                | LeaveWindowMask
-                | StructureNotifyMask
-                | PropertyChangeMask;
-            XChangeWindowAttributes(
-                self.x11_dpy,
-                self.x11_root.into(),
-                CWEventMask | CWCursor,
-                &mut wa,
-            );
-            XSelectInput(self.x11_dpy, self.x11_root.into(), wa.event_mask);
+            let aux = ChangeWindowAttributesAux::new()
+                .event_mask(
+                    EventMask::SUBSTRUCTURE_REDIRECT
+                        | EventMask::STRUCTURE_NOTIFY
+                        | EventMask::BUTTON_PRESS
+                        | EventMask::POINTER_MOTION
+                        | EventMask::ENTER_WINDOW
+                        | EventMask::LEAVE_WINDOW
+                        | EventMask::STRUCTURE_NOTIFY
+                        | EventMask::PROPERTY_CHANGE,
+                )
+                .cursor(
+                    self.cursor_manager
+                        .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::LeftPtr)
+                        .unwrap(),
+                );
+            self.x11rb_conn
+                .change_window_attributes(self.x11rb_root, &aux)
+                .unwrap();
+
             // info!("[setup] grabkeys");
             self.grabkeys();
             // info!("[setup] focus");
