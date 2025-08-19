@@ -38,6 +38,7 @@ use x11::xlib::{XFreeStringList, XSetClassHint};
 use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
 use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
+use x11rb::properties::WmSizeHints;
 use x11rb::protocol::render::PictType;
 use x11rb::protocol::xproto::{
     Atom, AtomEnum, ChangeWindowAttributesAux, Colormap, ColormapAlloc, ConnectionExt,
@@ -55,16 +56,15 @@ use x11::xlib::{
     DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose, ExposureMask, False,
     FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess, KeyPress, KeySym, LockMask,
     MapRequest, MappingKeyboard, MappingNotify, MotionNotify, NoEventMask, NotifyInferior,
-    NotifyNormal, PAspect, PBaseSize, PMaxSize, PMinSize, PResizeInc, PSize, PointerMotionMask,
-    PointerRoot, PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer,
-    RevertToPointerRoot, StructureNotifyMask, SubstructureRedirectMask, Success, Time, True,
-    UnmapNotify, XAllowEvents, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
-    XDestroyWindow, XDisplayKeycodes, XErrorEvent, XEvent, XFree, XFreeModifiermap,
-    XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetWMNormalHints,
-    XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym,
-    XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow,
-    XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSendEvent, XSetCloseDownMode,
-    XSetErrorHandler, XSetInputFocus, XSetWindowBorder, XSizeHints, XSync, XUngrabButton,
+    NotifyNormal, PointerMotionMask, PointerRoot, PropertyChangeMask, PropertyDelete,
+    PropertyNotify, ReplayPointer, RevertToPointerRoot, StructureNotifyMask,
+    SubstructureRedirectMask, Success, Time, True, UnmapNotify, XAllowEvents, XCheckMaskEvent,
+    XClassHint, XConfigureEvent, XConfigureWindow, XDestroyWindow, XDisplayKeycodes, XErrorEvent,
+    XEvent, XFree, XFreeModifiermap, XGetKeyboardMapping, XGetModifierMapping,
+    XGetTransientForHint, XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
+    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow,
+    XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSendEvent,
+    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWindowBorder, XSync, XUngrabButton,
     XUngrabKey, XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS,
     XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
@@ -859,6 +859,7 @@ impl Jwm {
             ),
         );
         let dpy = unsafe { XOpenDisplay(null_mut()) };
+
         let (x11rb_conn, x11rb_screen_num) =
             x11rb::rust_connection::RustConnection::connect(None).unwrap();
         let atoms = Atoms::new(&x11rb_conn).unwrap().reply().unwrap();
@@ -1011,61 +1012,51 @@ impl Jwm {
         );
     }
 
-    pub fn updatesizehints(&mut self, c: &Rc<RefCell<Client>>) {
-        // info!("[updatesizehints]");
-        let mut c = c.as_ref().borrow_mut();
-        unsafe {
-            let mut size: XSizeHints = zeroed();
+    pub fn updatesizehints(
+        &mut self,
+        c: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 获取 WM_NORMAL_HINTS
+        let reply =
+            match WmSizeHints::get_normal_hints(&self.x11rb_conn, c.borrow().win)?.reply()? {
+                Some(reply) => reply,
+                None => {
+                    // 没有 WM_NORMAL_HINTS 属性，使用默认值
+                    let mut c_mut = c.borrow_mut();
+                    c_mut.hints_valid = false;
+                    return Ok(());
+                }
+            };
 
-            let mut msize: i64 = 0;
-            if XGetWMNormalHints(self.x11_dpy, c.win.into(), &mut size, &mut msize) <= 0 {
-                size.flags = PSize;
-            }
-            if size.flags & PBaseSize > 0 {
-                c.base_w = size.base_width;
-                c.base_h = size.base_height;
-            } else if size.flags & PMinSize > 0 {
-                c.base_w = size.min_width;
-                c.base_h = size.min_height;
-            } else {
-                c.base_w = 0;
-                c.base_h = 0;
-            }
-            if size.flags & PResizeInc > 0 {
-                c.inc_w = size.width_inc;
-                c.inc_h = size.height_inc;
-            } else {
-                c.inc_w = 0;
-                c.inc_h = 0;
-            }
-            if size.flags & PMaxSize > 0 {
-                c.max_w = size.max_width;
-                c.max_h = size.max_height;
-            } else {
-                c.max_w = 0;
-                c.max_h = 0;
-            }
-            if size.flags & PMinSize > 0 {
-                c.min_w = size.min_width;
-                c.min_h = size.min_height;
-            } else if size.flags & PBaseSize > 0 {
-                c.min_w = size.base_width;
-                c.min_h = size.base_height;
-            } else {
-                c.min_w = 0;
-                c.min_h = 0;
-            }
-            if size.flags & PAspect > 0 {
-                c.min_a = size.min_aspect.y as f32 / size.min_aspect.x as f32;
-                c.max_a = size.max_aspect.x as f32 / size.max_aspect.y as f32;
-            } else {
-                c.max_a = 0.;
-                c.min_a = 0.;
-            }
-            c.is_fixed =
-                (c.max_w > 0) && (c.max_h > 0) && (c.max_w == c.min_w) && (c.max_h == c.min_h);
-            c.hints_valid = true;
+        let mut c_mut = c.borrow_mut();
+        if let Some((w, h)) = reply.base_size {
+            c_mut.base_w = w;
+            c_mut.base_h = h;
         }
+        if let Some((w, h)) = reply.size_increment {
+            c_mut.inc_w = w;
+            c_mut.inc_h = h;
+        }
+        if let Some((w, h)) = reply.max_size {
+            c_mut.max_w = w;
+            c_mut.max_h = h;
+        }
+        if let Some((w, h)) = reply.min_size {
+            c_mut.min_w = w;
+            c_mut.min_h = h;
+        }
+        if let Some((min_aspect, max_aspect)) = reply.aspect {
+            c_mut.min_a = min_aspect.numerator as f32 / min_aspect.denominator as f32;
+            c_mut.max_a = max_aspect.numerator as f32 / max_aspect.denominator as f32;
+        }
+        c_mut.is_fixed = (c_mut.max_w > 0)
+            && (c_mut.max_h > 0)
+            && (c_mut.max_w == c_mut.min_w)
+            && (c_mut.max_h == c_mut.min_h);
+
+        c_mut.hints_valid = true;
+
+        Ok(())
     }
 
     pub fn applysizehints(
@@ -1137,7 +1128,7 @@ impl Jwm {
         if CONFIG.behavior().resize_hints || is_floating {
             if !c.as_ref().borrow().hints_valid {
                 // Check immutable borrow first
-                self.updatesizehints(c); // This will mutably borrow internally
+                let _ = self.updatesizehints(c); // This will mutably borrow internally
             }
 
             let cc = c.as_ref().borrow(); // Re-borrow (immutable) after potential updatesizehints
@@ -5360,7 +5351,7 @@ impl Jwm {
         self.setup_client_window(&client_rc);
         // 更新各种提示
         self.updatewindowtype(&client_rc);
-        self.updatesizehints(&client_rc);
+        let _ = self.updatesizehints(&client_rc);
         self.updatewmhints(&client_rc);
         // 添加到管理链表
         self.attach(Some(client_rc.clone()));
