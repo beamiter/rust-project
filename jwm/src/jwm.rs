@@ -41,9 +41,9 @@ use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::properties::WmSizeHints;
 use x11rb::protocol::render::PictType;
 use x11rb::protocol::xproto::{
-    self, Atom, AtomEnum, ChangeWindowAttributesAux, Colormap, ColormapAlloc, ConfigureNotifyEvent,
-    ConnectionExt, CreateWindowAux, EventMask, GetGeometryReply, GetWindowAttributesReply,
-    MapState, PropMode, VisualClass, Visualid, Window, WindowClass,
+    self, Atom, AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent, Colormap, ColormapAlloc,
+    ConfigureNotifyEvent, ConnectionExt, CreateWindowAux, EventMask, GetGeometryReply,
+    GetWindowAttributesReply, MapState, PropMode, VisualClass, Visualid, Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::COPY_DEPTH_FROM_PARENT;
@@ -63,7 +63,7 @@ use x11::xlib::{
     XFreeModifiermap, XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint,
     XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym,
     XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow,
-    XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSendEvent, XSetCloseDownMode,
+    XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSetCloseDownMode,
     XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey, XUngrabPointer,
     XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
     XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
@@ -4752,7 +4752,6 @@ impl Jwm {
         let mut n: i32 = 0;
         let mut exists: bool = false;
         unsafe {
-            let mut ev: XEvent = zeroed();
             if XGetWMProtocols(self.x11_dpy, client_mut.win.into(), &mut protocols, &mut n) > 0 {
                 while !exists && {
                     n -= 1;
@@ -4766,19 +4765,15 @@ impl Jwm {
                 }
             }
             if exists {
-                ev.type_ = ClientMessage;
-                ev.client_message.window = client_mut.win.into();
-                ev.client_message.message_type = self.atoms.WM_PROTOCOLS.into();
-                ev.client_message.format = 32;
-                ev.client_message.data.as_longs_mut()[0] = proto as i64;
-                ev.client_message.data.as_longs_mut()[1] = CurrentTime as i64;
-                XSendEvent(
-                    self.x11_dpy,
-                    client_mut.win.into(),
-                    False,
-                    NoEventMask,
-                    &mut ev,
+                let event = ClientMessageEvent::new(
+                    32,
+                    client_mut.win,
+                    self.atoms.WM_PROTOCOLS,
+                    [proto, 0, 0, 0, 0],
                 );
+                self.x11rb_conn
+                    .send_event(false, client_mut.win, EventMask::NO_EVENT, event)
+                    .expect("failed to send event");
             }
         }
         return exists;
