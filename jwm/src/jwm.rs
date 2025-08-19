@@ -64,9 +64,9 @@ use x11::xlib::{
     XGetTransientForHint, XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
     XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow,
     XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSendEvent,
-    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSetWindowBorder, XSync, XUngrabButton,
-    XUngrabKey, XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS,
-    XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey,
+    XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
+    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -4893,6 +4893,18 @@ impl Jwm {
         Ok(())
     }
 
+    pub fn set_window_border_pixel(
+        &self,
+        window: u32,
+        border_pixel: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let aux =
+            x11rb::protocol::xproto::ChangeWindowAttributesAux::new().border_pixel(border_pixel);
+        self.x11rb_conn.change_window_attributes(window, &aux)?;
+        self.x11rb_conn.flush()?; // 确保请求立即发送
+        Ok(())
+    }
+
     pub fn focus(&mut self, mut c_opt: Option<Rc<RefCell<Client>>>) {
         // info!("[focus]");
         unsafe {
@@ -4939,13 +4951,12 @@ impl Jwm {
                 self.detachstack(Some(c_rc.clone()));
                 self.attachstack(Some(c_rc.clone()));
                 self.grabbuttons(Some(c_rc.clone()), true);
-                XSetWindowBorder(
-                    self.x11_dpy,
-                    c_rc.borrow().win.into(),
+                let _ = self.set_window_border_pixel(
+                    c_rc.borrow().win,
                     self.theme_manager
                         .get_scheme(SchemeType::Sel)
                         .border_color()
-                        .pixel,
+                        .pixel as u32,
                 );
                 let _ = self.setfocus(&c_rc);
             } else {
@@ -4977,13 +4988,12 @@ impl Jwm {
         }
         self.grabbuttons(c.clone(), false);
         unsafe {
-            XSetWindowBorder(
-                self.x11_dpy,
+            let _ = self.set_window_border_pixel(
                 c.as_ref().unwrap().borrow_mut().win.into(),
                 self.theme_manager
                     .get_scheme(SchemeType::Norm)
                     .border_color()
-                    .pixel,
+                    .pixel as u32,
             );
             if setfocus {
                 XSetInputFocus(
@@ -5139,13 +5149,12 @@ impl Jwm {
             }
 
             // 设置边框颜色为"正常"状态的颜色
-            XSetWindowBorder(
-                self.x11_dpy,
-                win.into(),
+            let _ = self.set_window_border_pixel(
+                win,
                 self.theme_manager
                     .get_scheme(SchemeType::Norm)
                     .border_color()
-                    .pixel,
+                    .pixel as u32,
             );
 
             // 发送 ConfigureNotify 事件给客户端
