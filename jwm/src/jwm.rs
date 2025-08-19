@@ -40,11 +40,12 @@ use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::properties::WmSizeHints;
 use x11rb::protocol::render::PictType;
+use x11rb::protocol::xinput::KeyCode;
 use x11rb::protocol::xproto::{
     self, allow_events, Allow, Atom, AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent,
     Colormap, ColormapAlloc, ConfigureNotifyEvent, ConnectionExt, CreateWindowAux, EventMask,
-    GetGeometryReply, GetWindowAttributesReply, MapState, PropMode, VisualClass, Visualid, Window,
-    WindowClass,
+    GetGeometryReply, GetWindowAttributesReply, Keysym, MapState, PropMode, VisualClass, Visualid,
+    Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::COPY_DEPTH_FROM_PARENT;
@@ -60,13 +61,12 @@ use x11::xlib::{
     NotifyNormal, PointerMotionMask, PointerRoot, PropertyChangeMask, PropertyDelete,
     PropertyNotify, RevertToPointerRoot, StructureNotifyMask, SubstructureRedirectMask, Success,
     Time, True, UnmapNotify, XClassHint, XConfigureWindow, XDestroyWindow, XDisplayKeycodes,
-    XErrorEvent, XEvent, XFree, XFreeModifiermap, XGetKeyboardMapping, XGetModifierMapping,
-    XGetTransientForHint, XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
-    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow,
-    XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput,
-    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey,
-    XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
-    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XErrorEvent, XEvent, XFree, XGetKeyboardMapping, XGetTransientForHint, XGetWMProtocols,
+    XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym, XKillClient, XMapWindow,
+    XMaskEvent, XMoveResizeWindow, XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping,
+    XSelectInput, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton,
+    XUngrabKey, XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS,
+    XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -4550,73 +4550,86 @@ impl Jwm {
         }
     }
 
-    pub fn updatenumlockmask(&mut self) {
-        // info!("[updatenumlockmask]"); // 日志记录，已注释
-        unsafe {
-            // unsafe 块，因为直接与 Xlib C API 交互，处理裸指针
-            // 1. 初始化 numlockmask 为 0
-            self.numlock_mask = 0; // 这个掩码将用于存储 Num_Lock 键对应的修饰符位
+    /// 使用 x11rb 更新 Num_Lock 键的修饰符掩码
+    pub fn update_num_lock_mask(&mut self) -> Result<(), ReplyOrIdError> {
+        // 1. 初始化 numlockmask 为 0
+        self.numlock_mask = 0;
 
-            // 2. 获取当前的修饰键映射
-            // XGetModifierMapping 返回一个指向 XModifierKeymap 结构体的指针。
-            // 这个结构体描述了哪些物理键码 (keycode) 被映射为哪些修饰符 (Shift, Lock, Control, Mod1-Mod5)。
-            let modmap_ptr = XGetModifierMapping(self.x11_dpy);
-            // modmap_ptr 是 *mut XModifierKeymap
-
-            if modmap_ptr.is_null() {
-                // 防御性检查，虽然 XGetModifierMapping 通常会返回有效指针
-                error!("[updatenumlockmask] XGetModifierMapping returned null pointer!");
-                return;
-            }
-            let modmap_ref = &*modmap_ptr; // 将裸指针转换为引用，方便访问其字段
-
-            // 3. 遍历修饰键映射表
-            // XModifierKeymap 结构中的 modifiermap 字段是一个 KeyCode 数组。
-            // 这个数组的组织方式是：
-            // - 总共有 8 种修饰符 (Shift, Lock, Control, Mod1, Mod2, Mod3, Mod4, Mod5)。
-            // - 每种修饰符可以由多个物理键触发 (由 max_keypermod 指定，例如 CapsLock 和 ShiftLock 都可能触发 Lock 修饰符)。
-            // - 数组的布局是：
-            //   [Shift的键码1, Shift的键码2, ..., Shift的键码N,
-            //    Lock的键码1,  Lock的键码2,  ..., Lock的键码N,
-            //    ...
-            //    Mod5的键码1,  Mod5的键码2,  ..., Mod5的键码N]
-            //   其中 N 是 max_keypermod。
-
-            for i in 0..8 {
-                // 遍历 8 种修饰符 (索引 0 到 7)
-                for j in 0..modmap_ref.max_keypermod {
-                    // 遍历每种修饰符可能对应的物理键码
-                    // 计算当前键码在 modifiermap 数组中的索引
-                    let keycode_index = (i * modmap_ref.max_keypermod + j) as usize;
-                    // 获取该索引处的键码值
-                    let current_keycode = *modmap_ref.modifiermap.add(keycode_index);
-                    // 使用 .add(index) 进行指针运算，然后解引用 * 来获取值。
-                    // wrapping_add 在原始代码中是为了防止溢出，但对于 usize 索引通常用 .add()。
-
-                    // 将 XK_Num_Lock (Keysym) 转换为对应的键码 (KeyCode)
-                    let num_lock_keycode = XKeysymToKeycode(self.x11_dpy, XK_Num_Lock as u64);
-
-                    // 如果当前修饰键映射表中的键码等于 Num_Lock 键的键码，
-                    // 并且该键码不为0 (0 表示该槽位未使用)
-                    if current_keycode != 0 && current_keycode == num_lock_keycode {
-                        // 则说明第 i 个修饰符位 (1 << i) 对应于 Num_Lock 键
-                        self.numlock_mask = 1 << i;
-                        // 找到了 Num_Lock 对应的修饰符位，可以提前退出循环
-                        // （假设 Num_Lock 只会映射到一个修饰符位，或者我们只关心第一个找到的）
-                        // XFreeModifiermap(modmap_ptr); // 需要在找到后就释放，或者在函数末尾统一释放
-                        // return; // 如果只找第一个，找到就返回
-                        break; // 假设一个键只映射到一个修饰符类型的一个槽位，或者我们只取第一个
-                    }
+        // 2. 找到 Num_Lock 键对应的 KeyCode
+        let num_lock_keysym = XK_Num_Lock;
+        let num_lock_keycode =
+            match Self::find_keycode_for_keysym(&self.x11rb_conn, num_lock_keysym)? {
+                Some(kc) => kc,
+                None => {
+                    // 如果键盘上没有 Num_Lock 键，直接返回
+                    error!("[updatenumlockmask] warning: Could not find a keycode for Num_Lock");
+                    return Ok(());
                 }
-                if self.numlock_mask != 0 {
-                    // 如果在内层循环中已经找到了 numlockmask
-                    break; // 也可以跳出外层循环
-                }
-            }
+            };
 
-            // 4. 释放由 XGetModifierMapping 分配的内存
-            XFreeModifiermap(modmap_ptr);
+        // 3. 获取当前的修饰键映射
+        // conn.get_modifier_mapping() 发送请求，.reply()? 等待并解析回复。
+        // 这个调用是异步的，但在 .reply() 这里会阻塞等待结果。
+        let modmap = self.x11rb_conn.get_modifier_mapping()?.reply()?;
+
+        // 4. 遍历修饰键映射表 (安全且符合 Rust 习惯的方式)
+        // `modmap.keycodes` 是一个 Vec<Keycode>，我们可以用安全的迭代器来处理。
+        // info!(
+        //     "[updatenumlockmask] keycodes {:?}, length {:?}, sequence {:?}, num_lock_keycode: {}",
+        //     modmap.keycodes, modmap.length, modmap.sequence, num_lock_keycode
+        // );
+        for (index, &keycode) in modmap.keycodes.iter().enumerate() {
+            // `keycode` 是映射到某个修饰符的物理键码
+            if keycode == num_lock_keycode {
+                // 计算当前 keycode 属于哪个修饰符组 (0-7)
+                let modifier_index = index as u32 / modmap.length;
+                // info!(
+                //     "[updatenumlockmask] index: {}, modifier_index: {}",
+                //     index, modifier_index
+                // );
+
+                // 计算掩码 (1 << modifier_index)，并转换为 x11rb 的 ModMask 类型
+                // ModMask 在 xproto 中是 u16 的类型别名
+                self.numlock_mask = 1 << modifier_index;
+
+                break;
+            }
         }
+        Ok(())
+    }
+
+    /// 一个辅助函数，用于根据 Keysym (如 XK_Num_Lock) 查找其对应的 Keycode。
+    fn find_keycode_for_keysym(
+        conn: &impl Connection,
+        target_keysym: Keysym,
+    ) -> Result<Option<KeyCode>, ReplyOrIdError> {
+        // 获取整个键盘的映射信息
+        let setup = conn.setup();
+        let mapping = conn
+            .get_keyboard_mapping(
+                setup.min_keycode,
+                (setup.max_keycode - setup.min_keycode) + 1,
+            )?
+            .reply()?;
+        // info!(
+        //     "[find_keycode_for_keysym] setup: {}, {}, mapping: {}, {}",
+        //     setup.min_keycode, setup.max_keycode, mapping.sequence, mapping.keysyms_per_keycode
+        // );
+
+        // 遍历每个 Keycode
+        for (keycode_offset, keysyms_for_keycode) in mapping.keysyms.iter().enumerate() {
+            // info!(
+            //     "[find_keycode_for_keysym] keycode_offset: {}, keysyms_for_keycode: {}",
+            //     keycode_offset, keysyms_for_keycode
+            // );
+            // `keysyms_for_keycode` 是一个 Vec<KEYSYM>，包含了该键码在不同状态下（如按下、Shift+按下）的符号
+            if *keysyms_for_keycode == target_keysym {
+                let keycode = (setup.min_keycode + keycode_offset as u8) as KeyCode;
+                return Ok(Some(keycode));
+            }
+        }
+
+        Ok(None)
     }
 
     pub fn setclienttagprop(
@@ -4640,7 +4653,7 @@ impl Jwm {
     }
 
     pub fn grabbuttons(&mut self, client_opt: Option<Rc<RefCell<Client>>>, focused: bool) {
-        self.updatenumlockmask();
+        let _ = self.update_num_lock_mask();
         let client_win_id = match client_opt.as_ref() {
             // 获取窗口 ID，只需不可变借用
             Some(c_rc) => c_rc.borrow().win,
@@ -4695,8 +4708,9 @@ impl Jwm {
     }
 
     pub fn grabkeys(&mut self) {
-        // info!("[grabkeys]"); // 日志
-        self.updatenumlockmask(); // 更新 NumLock 修饰键掩码
+        info!("[grabkeys]"); // 日志
+        let _ = self.update_num_lock_mask(); // 更新 NumLock 修饰键掩码
+        info!("[grabkeys] {}", self.numlock_mask);
         unsafe {
             // unsafe 块
             // 准备修饰键组合，与 grabbuttons 中类似
