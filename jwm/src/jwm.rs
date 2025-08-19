@@ -41,9 +41,9 @@ use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::properties::WmSizeHints;
 use x11rb::protocol::render::PictType;
 use x11rb::protocol::xproto::{
-    Atom, AtomEnum, ChangeWindowAttributesAux, Colormap, ColormapAlloc, ConnectionExt,
-    CreateWindowAux, EventMask, GetGeometryReply, GetWindowAttributesReply, MapState, PropMode,
-    VisualClass, Visualid, Window, WindowClass,
+    self, Atom, AtomEnum, ChangeWindowAttributesAux, Colormap, ColormapAlloc, ConfigureNotifyEvent,
+    ConnectionExt, CreateWindowAux, EventMask, GetGeometryReply, GetWindowAttributesReply,
+    MapState, PropMode, VisualClass, Visualid, Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::COPY_DEPTH_FROM_PARENT;
@@ -59,13 +59,13 @@ use x11::xlib::{
     NotifyNormal, PointerMotionMask, PointerRoot, PropertyChangeMask, PropertyDelete,
     PropertyNotify, ReplayPointer, RevertToPointerRoot, StructureNotifyMask,
     SubstructureRedirectMask, Success, Time, True, UnmapNotify, XAllowEvents, XCheckMaskEvent,
-    XClassHint, XConfigureEvent, XConfigureWindow, XDestroyWindow, XDisplayKeycodes, XErrorEvent,
-    XEvent, XFree, XFreeModifiermap, XGetKeyboardMapping, XGetModifierMapping,
-    XGetTransientForHint, XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
-    XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow,
-    XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSendEvent,
-    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey,
-    XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
+    XClassHint, XConfigureWindow, XDestroyWindow, XDisplayKeycodes, XErrorEvent, XEvent, XFree,
+    XFreeModifiermap, XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint,
+    XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym,
+    XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow,
+    XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSendEvent, XSetCloseDownMode,
+    XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey, XUngrabPointer,
+    XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
     XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
@@ -1322,24 +1322,29 @@ impl Jwm {
     }
 
     pub fn configure(&self, c: &mut Client) {
-        // info!("[configure]");
-        unsafe {
-            let mut ce: XConfigureEvent = zeroed();
+        let event = ConfigureNotifyEvent {
+            event: c.win,
+            window: c.win,
+            x: c.x as i16,
+            y: c.y as i16,
+            width: c.w as u16,
+            height: c.h as u16,
+            border_width: c.border_w as u16,
+            above_sibling: 0, // None 表示 above = 0 / no sibling
+            override_redirect: false,
+            response_type: xproto::CONFIGURE_NOTIFY_EVENT,
+            sequence: 0,
+        };
 
-            ce.type_ = ConfigureNotify;
-            ce.display = self.x11_dpy;
-            ce.event = c.win.into();
-            ce.window = c.win.into();
-            ce.x = c.x;
-            ce.y = c.y;
-            ce.width = c.w;
-            ce.height = c.h;
-            ce.border_width = c.border_w;
-            ce.above = 0;
-            ce.override_redirect = 0;
-            let mut xe = XEvent { configure: ce };
-            XSendEvent(self.x11_dpy, c.win.into(), 0, StructureNotifyMask, &mut xe);
-        }
+        // 使用 SendEvent 发送事件
+        self.x11rb_conn
+            .send_event(false, c.win, EventMask::STRUCTURE_NOTIFY, event)
+            .expect("Failed to send ConfigureNotify event");
+
+        // 如果需要立即发送，调用 flush
+        self.x11rb_conn
+            .flush()
+            .expect("Failed to flush X11 connection");
     }
 
     pub fn setfullscreen(
