@@ -59,15 +59,14 @@ use x11::xlib::{
     PointerRoot, PropertyChangeMask, PropertyDelete, PropertyNotify, ReplayPointer,
     RevertToPointerRoot, StructureNotifyMask, SubstructureRedirectMask, Success, Time, True,
     UnmapNotify, XAllowEvents, XCheckMaskEvent, XClassHint, XConfigureEvent, XConfigureWindow,
-    XDefaultScreen, XDestroyWindow, XDisplayHeight, XDisplayKeycodes, XDisplayWidth, XErrorEvent,
-    XEvent, XFree, XFreeModifiermap, XGetKeyboardMapping, XGetModifierMapping,
-    XGetTransientForHint, XGetWMNormalHints, XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer,
-    XGrabServer, XKeycodeToKeysym, XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent,
-    XMoveResizeWindow, XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XRootWindow,
-    XSelectInput, XSendEvent, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus,
-    XSetWindowBorder, XSizeHints, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer,
-    XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS,
-    XA_WM_TRANSIENT_FOR,
+    XDestroyWindow, XDisplayKeycodes, XErrorEvent, XEvent, XFree, XFreeModifiermap,
+    XGetKeyboardMapping, XGetModifierMapping, XGetTransientForHint, XGetWMNormalHints,
+    XGetWMProtocols, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym,
+    XKeysymToKeycode, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow,
+    XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSendEvent, XSetCloseDownMode,
+    XSetErrorHandler, XSetInputFocus, XSetWindowBorder, XSizeHints, XSync, XUngrabButton,
+    XUngrabKey, XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS,
+    XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -770,10 +769,9 @@ pub struct Jwm {
     pub pending_bar_updates: HashSet<i32>,
 
     pub x11_dpy: *mut Display,
-    pub x11_root: Window,
 
     pub x11rb_conn: RustConnection,
-    pub x11rb_root: x11rb_protocol::protocol::xproto::Window,
+    pub x11rb_root: Window,
     pub x11rb_screen_num: usize,
     pub atoms: Atoms,
 }
@@ -861,15 +859,13 @@ impl Jwm {
             ),
         );
         let dpy = unsafe { XOpenDisplay(null_mut()) };
-        let screen = unsafe { XDefaultScreen(dpy) };
-        let s_w = unsafe { XDisplayWidth(dpy, screen) };
-        let s_h = unsafe { XDisplayHeight(dpy, screen) };
-        let root = unsafe { XRootWindow(dpy, screen) };
         let (x11rb_conn, x11rb_screen_num) =
             x11rb::rust_connection::RustConnection::connect(None).unwrap();
         let atoms = Atoms::new(&x11rb_conn).unwrap().reply().unwrap();
         let _ = test_all_cursors(&x11rb_conn);
         let x11rb_screen = &x11rb_conn.setup().roots[x11rb_screen_num];
+        let s_w = x11rb_screen.width_in_pixels.into();
+        let s_h = x11rb_screen.height_in_pixels.into();
         let x11rb_root = x11rb_screen.root;
         let cursor_manager = CursorManager::new(&x11rb_conn).unwrap();
         Jwm {
@@ -884,7 +880,6 @@ impl Jwm {
             mons: None,
             motion_mon: None,
             sel_mon: None,
-            x11_root: root as u32,
             wm_check_win: 0,
             visual_id: 0,
             depth: 0,
@@ -1233,7 +1228,7 @@ impl Jwm {
                 let next = { m_opt.borrow_mut().next.clone() };
                 m = next;
             }
-            XUngrabKey(self.x11_dpy, AnyKey, AnyModifier, self.x11_root.into());
+            XUngrabKey(self.x11_dpy, AnyKey, AnyModifier, self.x11rb_root.into());
             while self.mons.is_some() {
                 self.cleanupmon(self.mons.clone());
             }
@@ -1304,7 +1299,7 @@ impl Jwm {
         // info!("[configurenotify]");
         unsafe {
             let ev = (*e).configure;
-            if ev.window == self.x11_root.into() {
+            if ev.window == self.x11rb_root.into() {
                 let dirty = self.s_w != ev.width || self.s_h != ev.height;
                 self.s_w = ev.width;
                 self.s_h = ev.height;
@@ -2612,7 +2607,7 @@ impl Jwm {
 
     pub fn wintomon(&mut self, w: Window) -> Option<Rc<RefCell<Monitor>>> {
         // info!("[wintomon]");
-        if w == self.x11_root {
+        if w == self.x11rb_root {
             if let Ok((x, y)) = self.getrootptr() {
                 return self.recttomon(x, y, 1, 1);
             }
@@ -2675,7 +2670,11 @@ impl Jwm {
         unsafe {
             _ = XSetErrorHandler(Some(transmute(xerrorstart as *const ())));
             // this causes an error if some other window manager is running.
-            XSelectInput(self.x11_dpy, self.x11_root.into(), SubstructureRedirectMask);
+            XSelectInput(
+                self.x11_dpy,
+                self.x11rb_root.into(),
+                SubstructureRedirectMask,
+            );
             XSync(self.x11_dpy, False);
             // Attention what transmut does is great;
             XSetErrorHandler(Some(transmute(xerror as *const ())));
@@ -4030,7 +4029,7 @@ impl Jwm {
         // info!("[propertynotify]");
         unsafe {
             let ev = (*e).property;
-            if ev.window == self.x11_root.into() && ev.atom == XA_WM_NAME {
+            if ev.window == self.x11rb_root.into() && ev.atom == XA_WM_NAME {
             } else if ev.state == PropertyDelete {
                 // ignore
                 return;
@@ -4129,18 +4128,18 @@ impl Jwm {
             // 4. 抓取鼠标指针 (XGrabPointer)
             //   这使得 JWM 在接下来的鼠标事件中独占鼠标输入，直到释放。
             if XGrabPointer(
-                self.x11_dpy,         // X Display 连接
-                self.x11_root.into(), // 抓取事件的窗口 (根窗口)
-                False,                // owner_events: False 表示事件报告给抓取窗口 (root)
-                MOUSEMASK as u32,     // event_mask: 我们关心的鼠标事件 (移动、按钮释放)
-                GrabModeAsync,        // pointer_mode: 异步指针模式
-                GrabModeAsync,        // keyboard_mode: 异步键盘模式 (通常与指针模式一致)
-                0,                    // confine_to: 不限制鼠标移动范围 (0 表示不限制)
+                self.x11_dpy,           // X Display 连接
+                self.x11rb_root.into(), // 抓取事件的窗口 (根窗口)
+                False,                  // owner_events: False 表示事件报告给抓取窗口 (root)
+                MOUSEMASK as u32,       // event_mask: 我们关心的鼠标事件 (移动、按钮释放)
+                GrabModeAsync,          // pointer_mode: 异步指针模式
+                GrabModeAsync,          // keyboard_mode: 异步键盘模式 (通常与指针模式一致)
+                0,                      // confine_to: 不限制鼠标移动范围 (0 表示不限制)
                 self.cursor_manager
                     .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Sizing)
                     .unwrap()
                     .into(), // cursor: 设置为移动光标样式
-                CurrentTime,          // time: 当前时间
+                CurrentTime,            // time: 当前时间
             ) != GrabSuccess
             {
                 // 如果抓取失败 (例如其他程序已抓取)，则返回
@@ -4335,7 +4334,7 @@ impl Jwm {
             // 4. 抓取鼠标指针 (XGrabPointer)
             if XGrabPointer(
                 self.x11_dpy,
-                self.x11_root.into(),
+                self.x11rb_root.into(),
                 False,
                 MOUSEMASK as u32, // event_mask: 关心的鼠标事件
                 GrabModeAsync,    // pointer_mode
@@ -4692,9 +4691,9 @@ impl Jwm {
             // 1. 取消之前对根窗口所有按键的任何抓取
             XUngrabKey(
                 self.x11_dpy,
-                AnyKey,               // AnyKey: 通配符，表示所有键盘按键
-                AnyModifier,          // AnyModifier: 通配符，表示任何修饰键组合
-                self.x11_root.into(), // target_window: 根窗口 (全局快捷键通常在根窗口上抓取)
+                AnyKey,                 // AnyKey: 通配符，表示所有键盘按键
+                AnyModifier,            // AnyModifier: 通配符，表示任何修饰键组合
+                self.x11rb_root.into(), // target_window: 根窗口 (全局快捷键通常在根窗口上抓取)
             );
 
             // 2. 获取当前键盘映射信息
@@ -4742,7 +4741,7 @@ impl Jwm {
                                 self.x11_dpy,
                                 keycode_val,                      // keycode: 当前物理键码
                                 key_config.mod0 | modifier_combo, // modifiers: 配置的掩码 + 额外修饰符
-                                self.x11_root.into(),             // grab_window: 根窗口
+                                self.x11rb_root.into(),           // grab_window: 根窗口
                                 True, // owner_events: True, 如果其他窗口也选了这个事件，它们也会收到
                                 GrabModeAsync, // pointer_mode
                                 GrabModeAsync, // keyboard_mode
@@ -4822,7 +4821,7 @@ impl Jwm {
             let ev = (*e).crossing; // 获取 CrossingEvent (EnterNotify 和 LeaveNotify 共用)
 
             if (ev.mode != NotifyNormal || ev.detail == NotifyInferior)
-                && ev.window != self.x11_root.into()
+                && ev.window != self.x11rb_root.into()
             {
                 return;
             }
@@ -4957,7 +4956,7 @@ impl Jwm {
             } else {
                 XSetInputFocus(
                     self.x11_dpy,
-                    self.x11_root.into(),
+                    self.x11rb_root.into(),
                     RevertToPointerRoot,
                     CurrentTime,
                 );
@@ -4994,7 +4993,7 @@ impl Jwm {
             if setfocus {
                 XSetInputFocus(
                     self.x11_dpy,
-                    self.x11_root.into(),
+                    self.x11rb_root.into(),
                     RevertToPointerRoot,
                     CurrentTime,
                 );
@@ -5772,7 +5771,7 @@ impl Jwm {
         // info!("[motionnotify]");
         unsafe {
             let ev = (*e).motion;
-            if ev.window != self.x11_root.into() {
+            if ev.window != self.x11rb_root.into() {
                 return;
             }
             let m = self.recttomon(ev.x_root, ev.y_root, 1, 1);
@@ -6340,7 +6339,7 @@ impl Jwm {
 
             // --- 6. 如果配置发生了变化，更新 JWM 的选中显示器 ---
             if dirty {
-                self.sel_mon = self.wintomon(self.x11_root);
+                self.sel_mon = self.wintomon(self.x11rb_root);
                 if self.sel_mon.is_none() && self.mons.is_some() {
                     self.sel_mon = self.mons.clone();
                 }
