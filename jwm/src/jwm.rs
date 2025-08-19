@@ -48,6 +48,7 @@ use x11rb::protocol::xproto::{
     Window, WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
+use x11rb::x11_utils::Serialize;
 use x11rb::COPY_DEPTH_FROM_PARENT;
 
 use x11::keysym::XK_Num_Lock;
@@ -61,12 +62,12 @@ use x11::xlib::{
     NotifyNormal, PointerMotionMask, PointerRoot, PropertyChangeMask, PropertyDelete,
     PropertyNotify, RevertToPointerRoot, StructureNotifyMask, SubstructureRedirectMask, Success,
     Time, True, UnmapNotify, XConfigureWindow, XDestroyWindow, XDisplayKeycodes, XErrorEvent,
-    XEvent, XFree, XGetKeyboardMapping, XGetTransientForHint, XGetWMProtocols, XGrabButton,
-    XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym, XKillClient, XMapWindow, XMaskEvent,
-    XMoveResizeWindow, XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping,
-    XSelectInput, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton,
-    XUngrabKey, XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS,
-    XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XEvent, XFree, XGetKeyboardMapping, XGetTransientForHint, XGrabButton, XGrabKey, XGrabPointer,
+    XGrabServer, XKeycodeToKeysym, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow,
+    XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput,
+    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey,
+    XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
+    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -4785,36 +4786,71 @@ impl Jwm {
     }
 
     pub fn sendevent(&mut self, client_mut: &mut Client, proto: Atom) -> bool {
-        info!("[sendevent] {}", client_mut);
-        let mut protocols: *mut u64 = null_mut();
-        let mut n: i32 = 0;
-        let mut exists: bool = false;
-        unsafe {
-            if XGetWMProtocols(self.x11_dpy, client_mut.win.into(), &mut protocols, &mut n) > 0 {
-                while !exists && {
-                    n -= 1;
-                    n
-                } > 0
-                {
-                    exists = *protocols.add(n as usize) == proto.into();
-                }
-                if !protocols.is_null() {
-                    XFree(protocols as *mut _);
-                }
-            }
-            if exists {
-                let event = ClientMessageEvent::new(
-                    32,
-                    client_mut.win,
-                    self.atoms.WM_PROTOCOLS,
-                    [proto, 0, 0, 0, 0],
+        info!(
+            "[sendevent] Sending protocol {:?} to window 0x{:x}",
+            proto, client_mut.win
+        );
+        // 1. 获取 WM_PROTOCOLS 属性
+        let cookie = self
+            .x11rb_conn
+            .get_property(
+                false,
+                client_mut.win,
+                self.atoms.WM_PROTOCOLS, // Atom for WM_PROTOCOLS
+                AtomEnum::ATOM,
+                0,
+                1024, // 足够大的长度
+            )
+            .unwrap();
+        let reply = match cookie.reply() {
+            Ok(reply) => reply,
+            Err(_) => {
+                warn!(
+                    "[sendevent] Failed to get WM_PROTOCOLS for window 0x{:x}",
+                    client_mut.win
                 );
-                self.x11rb_conn
-                    .send_event(false, client_mut.win, EventMask::NO_EVENT, event)
-                    .expect("failed to send event");
+                return false;
             }
+        };
+        // 2. 检查属性值中是否包含目标 proto
+        let protocols: Vec<Atom> = reply.value.as_slice().iter().map(|v| (*v).into()).collect();
+        let exists = protocols.contains(&proto);
+        if !exists {
+            info!(
+                "[sendevent] Protocol {:?} not supported by window 0x{:x}",
+                proto, client_mut.win
+            );
+            return false;
         }
-        return exists;
+        // 3. 构造 ClientMessageEvent
+        let event = ClientMessageEvent::new(
+            32,                      // format: 32 位
+            client_mut.win,          // window
+            self.atoms.WM_PROTOCOLS, // message_type
+            [proto, 0, 0, 0, 0],     // data.l[0] = protocol atom
+        );
+        // 4. 发送事件
+        let buffer = event.serialize();
+        let result = self.x11rb_conn.send_event(
+            false,
+            client_mut.win,
+            EventMask::NO_EVENT, // 不需要事件掩码（由接收方决定）
+            buffer,
+        );
+        if let Err(e) = result {
+            warn!("[sendevent] Failed to send event: {}", e);
+            return false;
+        }
+        // 5. flush（可选）
+        if let Err(e) = self.x11rb_conn.flush() {
+            warn!("[sendevent] Failed to flush connection: {}", e);
+            return false;
+        }
+        info!(
+            "[sendevent] Successfully sent protocol {:?} to window 0x{:x}",
+            proto, client_mut.win
+        );
+        true
     }
 
     pub fn setfocus(&mut self, c: &Rc<RefCell<Client>>) -> Result<(), Box<dyn std::error::Error>> {
