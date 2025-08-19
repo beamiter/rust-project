@@ -745,7 +745,6 @@ pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
 
 pub struct Jwm {
     pub stext_max_len: usize,
-    pub screen: i32,
     pub s_w: i32,
     pub s_h: i32,
     pub numlock_mask: u32,
@@ -875,7 +874,6 @@ impl Jwm {
         let cursor_manager = CursorManager::new(&x11rb_conn).unwrap();
         Jwm {
             stext_max_len: 512,
-            screen,
             s_w,
             s_h,
             numlock_mask: 0,
@@ -3807,7 +3805,7 @@ impl Jwm {
             // clean up any zombies (inherited from .xinitrc etc) immediately
             while waitpid(-1, null_mut(), WNOHANG) > 0 {}
 
-            // init screen
+            // init visual
             let _ = self.xinit_visual();
             // info!("[setup] updategeom");
             self.updategeom();
