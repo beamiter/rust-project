@@ -729,33 +729,33 @@ impl Config {
     fn parse_function(&self, func_name: &str) -> Option<WMFunc> {
         match func_name {
             // 窗口管理
-            // "spawn" => Some(Jwm::spawn),
-            // "focusstack" => Some(Jwm::focusstack),
-            // "focusmon" => Some(Jwm::focusmon),
-            // "quit" => Some(Jwm::quit),
-            // "killclient" => Some(Jwm::killclient),
-            // "zoom" => Some(Jwm::zoom),
-            //
-            // // 布局相关
-            // "setlayout" => Some(Jwm::setlayout),
-            // "togglefloating" => Some(Jwm::togglefloating),
-            // "togglefullscr" => Some(Jwm::togglefullscr),
-            // "togglebar" => Some(Jwm::togglebar),
-            // "setmfact" => Some(Jwm::setmfact),
-            // "setcfact" => Some(Jwm::setcfact),
-            // "incnmaster" => Some(Jwm::incnmaster),
-            // "movestack" => Some(Jwm::movestack),
-            //
-            // // 标签相关
-            // "view" => Some(Jwm::view),
-            // "tag" => Some(Jwm::tag),
-            // "toggleview" => Some(Jwm::toggleview),
-            // "toggletag" => Some(Jwm::toggletag),
-            // "tagmon" => Some(Jwm::tagmon),
-            // "loopview" => Some(Jwm::loopview),
-            //
-            // // 鼠标相关
-            // "movemouse" => Some(Jwm::movemouse),
+            "spawn" => Some(Jwm::spawn),
+            "focusstack" => Some(Jwm::focusstack),
+            "focusmon" => Some(Jwm::focusmon),
+            "quit" => Some(Jwm::quit),
+            "killclient" => Some(Jwm::killclient),
+            "zoom" => Some(Jwm::zoom),
+
+            // 布局相关
+            "setlayout" => Some(Jwm::setlayout),
+            "togglefloating" => Some(Jwm::togglefloating),
+            "togglefullscr" => Some(Jwm::togglefullscr),
+            "togglebar" => Some(Jwm::togglebar),
+            "setmfact" => Some(Jwm::setmfact),
+            "setcfact" => Some(Jwm::setcfact),
+            "incnmaster" => Some(Jwm::incnmaster),
+            "movestack" => Some(Jwm::movestack),
+
+            // 标签相关
+            "view" => Some(Jwm::view),
+            "tag" => Some(Jwm::tag),
+            "toggleview" => Some(Jwm::toggleview),
+            "toggletag" => Some(Jwm::toggletag),
+            "tagmon" => Some(Jwm::tagmon),
+            "loopview" => Some(Jwm::loopview),
+
+            // 鼠标相关
+            "movemouse" => Some(Jwm::movemouse),
             "resizemouse" => Some(Jwm::resizemouse),
 
             _ => {

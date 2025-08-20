@@ -57,7 +57,7 @@ use x11::xlib::{
     XEvent, XFree, XGetKeyboardMapping, XGetTransientForHint, XGrabButton, XGrabKey, XGrabPointer,
     XGrabServer, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XSelectInput,
     XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey,
-    XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, XA_WM_NAME,
+    XUngrabPointer, XUngrabServer, XWindowChanges, XA_WM_NAME,
 };
 
 use std::cmp::{max, min};
@@ -218,13 +218,7 @@ pub struct Button {
 }
 impl Button {
     #[allow(unused)]
-    pub fn new(
-        click: u32,
-        mask: u32,
-        button: u32,
-        func: Option<WMFunc>,
-        arg: Arg,
-    ) -> Self {
+    pub fn new(click: u32, mask: u32, button: u32, func: Option<WMFunc>, arg: Arg) -> Self {
         Self {
             click,
             mask,
@@ -245,12 +239,7 @@ pub struct Key {
 }
 impl Key {
     #[allow(unused)]
-    pub fn new(
-        mod0: u32,
-        keysym: KeySym,
-        func: Option<WMFunc>,
-        arg: Arg,
-    ) -> Self {
+    pub fn new(mod0: u32, keysym: KeySym, func: Option<WMFunc>, arg: Arg) -> Self {
         Self {
             mod0,
             keysym,
@@ -1204,7 +1193,7 @@ impl Jwm {
         drop(self.sender.clone());
         let mut a: Arg = Arg::Ui(!0);
         unsafe {
-            self.view(&mut a);
+            let _ = self.view(&mut a);
             let mut m = self.mons.clone();
             while let Some(ref m_opt) = m {
                 let mut stack_iter: Option<Rc<RefCell<Client>>>;
@@ -2089,10 +2078,10 @@ impl Jwm {
         }
     }
 
-    pub fn dirtomon(&mut self, dir: i32) -> Option<Rc<RefCell<Monitor>>> {
+    pub fn dirtomon(&mut self, dir: &i32) -> Option<Rc<RefCell<Monitor>>> {
         let selected_monitor = self.sel_mon.as_ref()?; // Return None if selmon is None
         let monitors_head = self.mons.as_ref()?; // Return None if mons is None
-        if dir > 0 {
+        if *dir > 0 {
             // Next monitor
             let next_mon = selected_monitor.borrow().next.clone();
             return next_mon.or_else(|| self.mons.clone()); // If next is None, loop to head
@@ -2468,7 +2457,7 @@ impl Jwm {
                         cmd.parameter
                     );
                     let arg = Arg::Ui(cmd.parameter);
-                    self.view(&arg);
+                    let _ = self.view(&arg);
                 }
                 CommandType::ToggleTag => {
                     // 切换标签
@@ -2477,7 +2466,7 @@ impl Jwm {
                         cmd.parameter
                     );
                     let arg = Arg::Ui(cmd.parameter);
-                    self.toggletag(&arg);
+                    let _ = self.toggletag(&arg);
                 }
                 CommandType::SetLayout => {
                     // 设置布局
@@ -2486,7 +2475,7 @@ impl Jwm {
                         cmd.parameter
                     );
                     let arg = Arg::Lt(Rc::new(Layout::try_from(cmd.parameter as u8).unwrap()));
-                    self.setlayout(&arg);
+                    let _ = self.setlayout(&arg);
                 }
                 CommandType::None => {}
             }
@@ -2801,7 +2790,7 @@ impl Jwm {
                         button_config.click, button_config.button, button_config.mask
                     );
                     info!("[buttonpress] use button arg");
-                    func(self, &button_config.arg);
+                    let _ = func(self, &button_config.arg);
                     break;
                 }
             }
@@ -2827,12 +2816,12 @@ impl Jwm {
         }
     }
 
-    pub fn spawn(&mut self, arg: *const Arg) {
+    pub fn spawn(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         info!("[spawn]");
         unsafe {
             let mut sa: sigaction = zeroed();
 
-            let mut mut_arg: Arg = (*arg).clone();
+            let mut mut_arg: Arg = arg.clone();
             if let Arg::V(ref mut v) = mut_arg {
                 if *v == *CONFIG.get_dmenucmd() {
                     let tmp =
@@ -2863,6 +2852,7 @@ impl Jwm {
                 }
             }
         }
+        Ok(())
     }
 
     fn xinit_visual(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -3073,17 +3063,17 @@ impl Jwm {
         }
     }
 
-    pub fn togglefloating(&mut self, _arg: *const Arg) {
+    pub fn togglefloating(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[togglefloating]");
         if self.sel_mon.is_none() {
-            return;
+            return Ok(());
         }
         let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
         if let Some(ref sel_opt) = sel {
             // no support for fullscreen windows.
             let isfullscreen = { sel_opt.borrow_mut().is_fullscreen };
             if isfullscreen {
-                return;
+                return Ok(());
             }
             {
                 let mut sel_borrow = sel_opt.borrow_mut();
@@ -3098,9 +3088,8 @@ impl Jwm {
                 self.resize(sel_opt, x, y, w, h, false);
             }
             self.arrange(self.sel_mon.clone());
-        } else {
-            return;
         }
+        Ok(())
     }
 
     pub fn focusin(&mut self, e: &FocusInEvent) -> Result<(), Box<dyn std::error::Error>> {
@@ -3114,265 +3103,264 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn focusmon(&mut self, arg: *const Arg) {
+    pub fn focusmon(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[focusmon]");
-        unsafe {
-            if let Some(ref mons_opt) = self.mons {
-                if mons_opt.borrow_mut().next.is_none() {
-                    return;
-                }
-            }
-            if let Arg::I(i) = *arg {
-                let m = self.dirtomon(i);
-                if Rc::ptr_eq(m.as_ref().unwrap(), self.sel_mon.as_ref().unwrap()) {
-                    return;
-                }
-                let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-                self.unfocus(sel, false);
-                self.sel_mon = m;
-                self.focus(None);
+        if let Some(ref mons_opt) = self.mons {
+            if mons_opt.borrow_mut().next.is_none() {
+                return Ok(());
             }
         }
+        if let Arg::I(i) = arg {
+            let m = self.dirtomon(i);
+            if Rc::ptr_eq(m.as_ref().unwrap(), self.sel_mon.as_ref().unwrap()) {
+                return Ok(());
+            }
+            let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
+            self.unfocus(sel, false);
+            self.sel_mon = m;
+            self.focus(None);
+        }
+        Ok(())
     }
 
-    pub fn tag(&mut self, arg: *const Arg) {
+    pub fn tag(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[tag]");
-        unsafe {
-            if let Arg::Ui(ui) = *arg {
-                let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-                let target_tag = ui & CONFIG.tagmask();
-                if let Some(ref sel_opt) = sel {
-                    if target_tag > 0 {
-                        sel_opt.borrow_mut().tags = target_tag;
-                        let _ = self.setclienttagprop(sel_opt);
-                        self.focus(None);
-                        self.arrange(self.sel_mon.clone());
-                    }
+        if let Arg::Ui(ui) = *arg {
+            let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
+            let target_tag = ui & CONFIG.tagmask();
+            if let Some(ref sel_opt) = sel {
+                if target_tag > 0 {
+                    sel_opt.borrow_mut().tags = target_tag;
+                    let _ = self.setclienttagprop(sel_opt);
+                    self.focus(None);
+                    self.arrange(self.sel_mon.clone());
                 }
             }
         }
+        Ok(())
     }
 
-    pub fn tagmon(&mut self, arg: *const Arg) {
+    pub fn tagmon(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[tagmon]");
-        unsafe {
-            if let Some(ref selmon_opt) = self.sel_mon {
-                if selmon_opt.borrow_mut().sel.is_none() {
-                    return;
-                }
-            } else {
-                return;
+        if let Some(ref selmon_opt) = self.sel_mon {
+            if selmon_opt.borrow_mut().sel.is_none() {
+                return Ok(());
             }
-            if let Some(ref mons_opt) = self.mons {
-                if mons_opt.borrow_mut().next.is_none() {
-                    return;
-                }
-            } else {
-                return;
+        } else {
+            return Ok(());
+        }
+        if let Some(ref mons_opt) = self.mons {
+            if mons_opt.borrow_mut().next.is_none() {
+                return Ok(());
             }
-            if let Arg::I(i) = *arg {
-                let selmon_clone = self.sel_mon.clone();
-                if let Some(ref selmon_opt) = selmon_clone {
-                    let dir_i_mon = self.dirtomon(i);
-                    let sel = { selmon_opt.borrow_mut().sel.clone() };
-                    self.sendmon(sel, dir_i_mon);
-                }
+        } else {
+            return Ok(());
+        }
+        if let Arg::I(i) = *arg {
+            let selmon_clone = self.sel_mon.clone();
+            if let Some(ref selmon_opt) = selmon_clone {
+                let dir_i_mon = self.dirtomon(&i);
+                let sel = { selmon_opt.borrow_mut().sel.clone() };
+                self.sendmon(sel, dir_i_mon);
             }
         }
+        Ok(())
     }
 
-    pub fn focusstack(&mut self, arg: *const Arg) {
+    pub fn focusstack(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[focusstack]");
-        unsafe {
+        {
+            let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+            if sel_mon_mut.sel.is_none()
+                || (sel_mon_mut.sel.as_ref().unwrap().borrow_mut().is_fullscreen
+                    && CONFIG.behavior().lock_fullscreen)
             {
-                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                if sel_mon_mut.sel.is_none()
-                    || (sel_mon_mut.sel.as_ref().unwrap().borrow_mut().is_fullscreen
-                        && CONFIG.behavior().lock_fullscreen)
-                {
-                    return;
+                return Ok(());
+            }
+        }
+        let mut c: Option<Rc<RefCell<Client>>> = None;
+        let i = if let Arg::I(i) = *arg { i } else { 0 };
+        if i == 0 {
+            return Ok(());
+        }
+        if i > 0 {
+            c = {
+                self.sel_mon
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .sel
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .next
+                    .clone()
+            };
+            while let Some(ref client_opt) = c {
+                if client_opt.borrow().isvisible() {
+                    break;
                 }
+                let next = client_opt.borrow().next.clone();
+                c = next;
             }
-            let mut c: Option<Rc<RefCell<Client>>> = None;
-            let i = if let Arg::I(i) = *arg { i } else { 0 };
-            if i == 0 {
-                return;
-            }
-            if i > 0 {
+            if c.is_none() {
                 c = {
-                    self.sel_mon
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .sel
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .next
-                        .clone()
+                    let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                    sel_mon_mut.clients.clone()
                 };
                 while let Some(ref client_opt) = c {
-                    if client_opt.borrow().isvisible() {
+                    if client_opt.borrow_mut().isvisible() {
                         break;
                     }
-                    let next = client_opt.borrow().next.clone();
+                    let next = client_opt.borrow_mut().next.clone();
+                    c = next;
+                }
+            }
+        } else {
+            if let Some(ref selmon_opt) = self.sel_mon {
+                let (mut cl, sel) = {
+                    let sel_mon_mut = selmon_opt.borrow_mut();
+                    (sel_mon_mut.clients.clone(), sel_mon_mut.sel.clone())
+                };
+                while !Self::are_equal_rc(&cl, &sel) {
+                    if let Some(ref cl_opt) = cl {
+                        if cl_opt.borrow_mut().isvisible() {
+                            c = cl.clone();
+                        }
+                        let next = cl_opt.borrow_mut().next.clone();
+                        cl = next;
+                    }
+                }
+                if c.is_none() {
+                    while let Some(ref cl_opt) = cl {
+                        if cl_opt.borrow_mut().isvisible() {
+                            c = cl.clone();
+                        }
+                        let next = cl_opt.borrow_mut().next.clone();
+                        cl = next;
+                    }
+                }
+            }
+        }
+        if c.is_some() {
+            self.focus(c);
+            let _ = self.restack(self.sel_mon.clone());
+        }
+        Ok(())
+    }
+
+    pub fn togglebar(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[togglebar]");
+        if let Arg::I(_) = arg {
+            let mut monitor_num = None;
+            if let Some(sel_mon_ref) = self.sel_mon.as_ref() {
+                let mut sel_mon_borrow_mut = sel_mon_ref.borrow_mut();
+                if let Some(pertag_mut) = sel_mon_borrow_mut.pertag.as_mut() {
+                    let cur_tag = pertag_mut.cur_tag;
+                    if let Some(show_bar) = pertag_mut.show_bars.get_mut(cur_tag) {
+                        *show_bar = !(*show_bar);
+                        info!("[togglebar] {}", show_bar);
+                        monitor_num = Some(sel_mon_borrow_mut.num);
+                    }
+                }
+            }
+            if monitor_num.is_some() {
+                self.mark_bar_update_needed(monitor_num);
+            }
+        }
+        Ok(())
+    }
+
+    pub fn incnmaster(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+        // info!("[incnmaster]");
+        if let Arg::I(i) = *arg {
+            let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
+            let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+            sel_mon_mut.pertag.as_mut().unwrap().n_masters[cur_tag] =
+                0.max(sel_mon_mut.n_master as i32 + i) as u32;
+
+            sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
+        }
+        self.arrange(self.sel_mon.clone());
+        Ok(())
+    }
+
+    pub fn setcfact(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+        // info!("[setcfact]");
+        let c = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
+        if c.is_none() {
+            return Ok(());
+        }
+        if let Arg::F(f0) = *arg {
+            let mut f = f0 + c.as_ref().unwrap().borrow().client_fact;
+            if f0.abs() < 0.0001 {
+                f = 1.0;
+            } else if f < 0.25 || f > 4.0 {
+                return Ok(());
+            }
+            c.as_ref().unwrap().borrow_mut().client_fact = f;
+            self.arrange(self.sel_mon.clone());
+        }
+        Ok(())
+    }
+
+    pub fn movestack(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+        let mut c: Option<Rc<RefCell<Client>>> = None;
+        let mut i: Option<Rc<RefCell<Client>>>;
+        let mut p: Option<Rc<RefCell<Client>>> = None;
+        let mut pc: Option<Rc<RefCell<Client>>> = None;
+        if let Arg::I(arg_i) = arg {
+            if arg_i > &0 {
+                // Find the client after selmon->sel
+                c = self
+                    .sel_mon
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .sel
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .next
+                    .clone();
+                while c.is_some() {
+                    let isvisible = c.as_ref().unwrap().borrow_mut().isvisible();
+                    let is_floating = c.as_ref().unwrap().borrow_mut().is_floating;
+                    let condition = !isvisible || is_floating;
+                    if !condition {
+                        break;
+                    }
+                    let next = c.as_ref().unwrap().borrow_mut().next.clone();
                     c = next;
                 }
                 if c.is_none() {
-                    c = {
-                        let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                        sel_mon_mut.clients.clone()
-                    };
-                    while let Some(ref client_opt) = c {
-                        if client_opt.borrow_mut().isvisible() {
-                            break;
-                        }
-                        let next = client_opt.borrow_mut().next.clone();
-                        c = next;
+                    c = self.sel_mon.as_ref().unwrap().borrow_mut().clients.clone();
+                }
+                while c.is_some() {
+                    let isvisible = c.as_ref().unwrap().borrow_mut().isvisible();
+                    let is_floating = c.as_ref().unwrap().borrow_mut().is_floating;
+                    let condition = !isvisible || is_floating;
+                    if !condition {
+                        break;
                     }
+                    let next = c.as_ref().unwrap().borrow_mut().next.clone();
+                    c = next;
                 }
             } else {
-                if let Some(ref selmon_opt) = self.sel_mon {
-                    let (mut cl, sel) = {
-                        let sel_mon_mut = selmon_opt.borrow_mut();
-                        (sel_mon_mut.clients.clone(), sel_mon_mut.sel.clone())
-                    };
-                    while !Self::are_equal_rc(&cl, &sel) {
-                        if let Some(ref cl_opt) = cl {
-                            if cl_opt.borrow_mut().isvisible() {
-                                c = cl.clone();
-                            }
-                            let next = cl_opt.borrow_mut().next.clone();
-                            cl = next;
-                        }
+                // Find the client before selmon->sel
+                i = self.sel_mon.as_ref().unwrap().borrow_mut().clients.clone();
+                let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
+                while !Self::are_equal_rc(&i, &sel) {
+                    let isvisible = i.as_ref().unwrap().borrow_mut().isvisible();
+                    let is_floating = i.as_ref().unwrap().borrow_mut().is_floating;
+                    if isvisible && !is_floating {
+                        c = i.clone();
                     }
-                    if c.is_none() {
-                        while let Some(ref cl_opt) = cl {
-                            if cl_opt.borrow_mut().isvisible() {
-                                c = cl.clone();
-                            }
-                            let next = cl_opt.borrow_mut().next.clone();
-                            cl = next;
-                        }
-                    }
+                    let next = i.as_ref().unwrap().borrow_mut().next.clone();
+                    i = next;
                 }
-            }
-            if c.is_some() {
-                self.focus(c);
-                let _ = self.restack(self.sel_mon.clone());
-            }
-        }
-    }
-
-    pub fn togglebar(&mut self, arg: *const Arg) {
-        info!("[togglebar]");
-        unsafe {
-            if let Arg::I(_) = *arg {
-                let mut monitor_num = None;
-                if let Some(sel_mon_ref) = self.sel_mon.as_ref() {
-                    let mut sel_mon_borrow_mut = sel_mon_ref.borrow_mut();
-                    if let Some(pertag_mut) = sel_mon_borrow_mut.pertag.as_mut() {
-                        let cur_tag = pertag_mut.cur_tag;
-                        if let Some(show_bar) = pertag_mut.show_bars.get_mut(cur_tag) {
-                            *show_bar = !(*show_bar);
-                            info!("[togglebar] {}", show_bar);
-                            monitor_num = Some(sel_mon_borrow_mut.num);
-                        }
-                    }
-                }
-                if monitor_num.is_some() {
-                    self.mark_bar_update_needed(monitor_num);
-                }
-            }
-        }
-    }
-
-    pub fn incnmaster(&mut self, arg: *const Arg) {
-        // info!("[incnmaster]");
-        unsafe {
-            if let Arg::I(i) = *arg {
-                let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-                let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                sel_mon_mut.pertag.as_mut().unwrap().n_masters[cur_tag] =
-                    0.max(sel_mon_mut.n_master as i32 + i) as u32;
-
-                sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
-            }
-            self.arrange(self.sel_mon.clone());
-        }
-    }
-
-    pub fn setcfact(&mut self, arg: *const Arg) {
-        // info!("[setcfact]");
-        if arg.is_null() {
-            return;
-        }
-        unsafe {
-            let c = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
-            if c.is_none() {
-                return;
-            }
-            if let Arg::F(f0) = *arg {
-                let mut f = f0 + c.as_ref().unwrap().borrow().client_fact;
-                if f0.abs() < 0.0001 {
-                    f = 1.0;
-                } else if f < 0.25 || f > 4.0 {
-                    return;
-                }
-                c.as_ref().unwrap().borrow_mut().client_fact = f;
-                self.arrange(self.sel_mon.clone());
-            }
-        }
-    }
-
-    pub fn movestack(&mut self, arg: *const Arg) {
-        unsafe {
-            let mut c: Option<Rc<RefCell<Client>>> = None;
-            let mut i: Option<Rc<RefCell<Client>>>;
-            let mut p: Option<Rc<RefCell<Client>>> = None;
-            let mut pc: Option<Rc<RefCell<Client>>> = None;
-            if let Arg::I(arg_i) = *arg {
-                if arg_i > 0 {
-                    // Find the client after selmon->sel
-                    c = self
-                        .sel_mon
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .sel
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .next
-                        .clone();
-                    while c.is_some() {
-                        let isvisible = c.as_ref().unwrap().borrow_mut().isvisible();
-                        let is_floating = c.as_ref().unwrap().borrow_mut().is_floating;
-                        let condition = !isvisible || is_floating;
-                        if !condition {
-                            break;
-                        }
-                        let next = c.as_ref().unwrap().borrow_mut().next.clone();
-                        c = next;
-                    }
-                    if c.is_none() {
-                        c = self.sel_mon.as_ref().unwrap().borrow_mut().clients.clone();
-                    }
-                    while c.is_some() {
-                        let isvisible = c.as_ref().unwrap().borrow_mut().isvisible();
-                        let is_floating = c.as_ref().unwrap().borrow_mut().is_floating;
-                        let condition = !isvisible || is_floating;
-                        if !condition {
-                            break;
-                        }
-                        let next = c.as_ref().unwrap().borrow_mut().next.clone();
-                        c = next;
-                    }
-                } else {
-                    // Find the client before selmon->sel
-                    i = self.sel_mon.as_ref().unwrap().borrow_mut().clients.clone();
-                    let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-                    while !Self::are_equal_rc(&i, &sel) {
+                if c.is_none() {
+                    while i.is_some() {
                         let isvisible = i.as_ref().unwrap().borrow_mut().isvisible();
                         let is_floating = i.as_ref().unwrap().borrow_mut().is_floating;
                         if isvisible && !is_floating {
@@ -3381,171 +3369,153 @@ impl Jwm {
                         let next = i.as_ref().unwrap().borrow_mut().next.clone();
                         i = next;
                     }
-                    if c.is_none() {
-                        while i.is_some() {
-                            let isvisible = i.as_ref().unwrap().borrow_mut().isvisible();
-                            let is_floating = i.as_ref().unwrap().borrow_mut().is_floating;
-                            if isvisible && !is_floating {
-                                c = i.clone();
-                            }
-                            let next = i.as_ref().unwrap().borrow_mut().next.clone();
-                            i = next;
-                        }
-                    }
                 }
-                // Find the client before selmon->sel and c
-                i = self.sel_mon.as_ref().unwrap().borrow_mut().clients.clone();
-                let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
-                while i.is_some() && (p.is_none() || pc.is_none()) {
-                    let next = i.as_ref().unwrap().borrow_mut().next.clone();
-                    if next.is_some() && sel.is_some() && Self::are_equal_rc(&next, &sel) {
-                        p = i.clone();
-                    }
-                    if next.is_some() && c.is_some() && Self::are_equal_rc(&next, &c) {
-                        pc = i.clone();
-                    }
-                    i = next;
-                }
-                // Swap c and selmon->sel selmon->clietns in the selmon->clients list
-                if c.is_some() && sel.is_some() && !Self::are_equal_rc(&c, &sel) {
-                    let sel_next = self
-                        .sel_mon
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .sel
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .next
-                        .clone();
-                    let temp =
-                        if sel_next.is_some() && c.is_some() && Self::are_equal_rc(&sel_next, &c) {
-                            self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone()
-                        } else {
-                            sel_next
-                        };
-                    let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
-                    let c_next = c.as_ref().unwrap().borrow_mut().next.clone();
-                    self.sel_mon
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .sel
-                        .as_ref()
-                        .unwrap()
-                        .borrow_mut()
-                        .next =
-                        if c_next.is_some() && sel.is_some() && Self::are_equal_rc(&c_next, &sel) {
-                            c.clone()
-                        } else {
-                            c_next
-                        };
-                    c.as_ref().unwrap().borrow_mut().next = temp;
-
-                    if p.is_some() && !Self::are_equal_rc(&p, &c) {
-                        p.as_ref().unwrap().borrow_mut().next = c.clone();
-                    }
-                    if pc.is_some() {
-                        let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
-                        if !Self::are_equal_rc(&pc, &sel) {
-                            pc.as_ref().unwrap().borrow_mut().next = sel;
-                        }
-                    }
-
-                    let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
-                    let clients = self.sel_mon.as_ref().unwrap().borrow_mut().clients.clone();
-                    if Self::are_equal_rc(&sel, &clients) {
-                        self.sel_mon.as_ref().unwrap().borrow_mut().clients = c;
-                    } else if Self::are_equal_rc(&c, &clients) {
-                        self.sel_mon.as_ref().unwrap().borrow_mut().clients = sel;
-                    }
-
-                    self.arrange(self.sel_mon.clone());
-                }
-            } else {
-                return;
             }
-        }
-    }
-
-    pub fn setmfact(&mut self, arg: *const Arg) {
-        // info!("[setmfact]");
-        unsafe {
-            if arg.is_null() {
-                return;
+            // Find the client before selmon->sel and c
+            i = self.sel_mon.as_ref().unwrap().borrow_mut().clients.clone();
+            let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
+            while i.is_some() && (p.is_none() || pc.is_none()) {
+                let next = i.as_ref().unwrap().borrow_mut().next.clone();
+                if next.is_some() && sel.is_some() && Self::are_equal_rc(&next, &sel) {
+                    p = i.clone();
+                }
+                if next.is_some() && c.is_some() && Self::are_equal_rc(&next, &c) {
+                    pc = i.clone();
+                }
+                i = next;
             }
-            if let Arg::F(f) = *arg {
-                let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-                let f = if f < 1.0 {
-                    f + sel_mon_mut.m_fact
+            // Swap c and selmon->sel selmon->clietns in the selmon->clients list
+            if c.is_some() && sel.is_some() && !Self::are_equal_rc(&c, &sel) {
+                let sel_next = self
+                    .sel_mon
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .sel
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .next
+                    .clone();
+                let temp = if sel_next.is_some() && c.is_some() && Self::are_equal_rc(&sel_next, &c)
+                {
+                    self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone()
                 } else {
-                    f - 1.0
+                    sel_next
                 };
-                if f < 0.05 || f > 0.95 {
-                    return;
-                }
-                let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                sel_mon_mut.pertag.as_mut().unwrap().m_facts[cur_tag] = f;
-                sel_mon_mut.m_fact = sel_mon_mut.pertag.as_mut().unwrap().m_facts[cur_tag];
-            }
-            self.arrange(self.sel_mon.clone());
-        }
-    }
-
-    pub fn setlayout(&mut self, arg: *const Arg) {
-        info!("[setlayout]");
-        if arg.is_null() {
-            return;
-        }
-        unsafe {
-            let sel_is_some;
-            match *arg {
-                Arg::Lt(ref lt) => {
-                    let sel_mon_layout_type = {
-                        let sel_mon = self.sel_mon.as_ref().unwrap().borrow();
-                        sel_mon.lt[sel_mon.sel_lt].layout_type().to_string()
-                    };
-                    if lt.layout_type() == sel_mon_layout_type {
-                        let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                        let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                        sel_mon_mut.pertag.as_mut().unwrap().sel_lts[cur_tag] ^= 1;
-                        sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
+                let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
+                let c_next = c.as_ref().unwrap().borrow_mut().next.clone();
+                self.sel_mon
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .sel
+                    .as_ref()
+                    .unwrap()
+                    .borrow_mut()
+                    .next =
+                    if c_next.is_some() && sel.is_some() && Self::are_equal_rc(&c_next, &sel) {
+                        c.clone()
                     } else {
-                        let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                        let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                        let sel_lt = sel_mon_mut.sel_lt;
-                        sel_mon_mut.pertag.as_mut().unwrap().lt_idxs[cur_tag][sel_lt] =
-                            Some(lt.clone());
-                        sel_mon_mut.lt[sel_lt] = lt.clone();
+                        c_next
+                    };
+                c.as_ref().unwrap().borrow_mut().next = temp;
+
+                if p.is_some() && !Self::are_equal_rc(&p, &c) {
+                    p.as_ref().unwrap().borrow_mut().next = c.clone();
+                }
+                if pc.is_some() {
+                    let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
+                    if !Self::are_equal_rc(&pc, &sel) {
+                        pc.as_ref().unwrap().borrow_mut().next = sel;
                     }
                 }
-                _ => {
+
+                let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
+                let clients = self.sel_mon.as_ref().unwrap().borrow_mut().clients.clone();
+                if Self::are_equal_rc(&sel, &clients) {
+                    self.sel_mon.as_ref().unwrap().borrow_mut().clients = c;
+                } else if Self::are_equal_rc(&c, &clients) {
+                    self.sel_mon.as_ref().unwrap().borrow_mut().clients = sel;
+                }
+
+                self.arrange(self.sel_mon.clone());
+            }
+        } else {
+            return Ok(());
+        }
+        Ok(())
+    }
+
+    pub fn setmfact(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+        // info!("[setmfact]");
+        if let Arg::F(f) = arg {
+            let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
+            let f = if f < &1.0 {
+                f + sel_mon_mut.m_fact
+            } else {
+                f - 1.0
+            };
+            if f < 0.05 || f > 0.95 {
+                return Ok(());
+            }
+            let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+            sel_mon_mut.pertag.as_mut().unwrap().m_facts[cur_tag] = f;
+            sel_mon_mut.m_fact = sel_mon_mut.pertag.as_mut().unwrap().m_facts[cur_tag];
+        }
+        self.arrange(self.sel_mon.clone());
+        Ok(())
+    }
+
+    pub fn setlayout(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[setlayout]");
+        let sel_is_some;
+        match *arg {
+            Arg::Lt(ref lt) => {
+                let sel_mon_layout_type = {
+                    let sel_mon = self.sel_mon.as_ref().unwrap().borrow();
+                    sel_mon.lt[sel_mon.sel_lt].layout_type().to_string()
+                };
+                if lt.layout_type() == sel_mon_layout_type {
                     let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
                     let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
                     sel_mon_mut.pertag.as_mut().unwrap().sel_lts[cur_tag] ^= 1;
                     sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
+                } else {
+                    let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                    let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                    let sel_lt = sel_mon_mut.sel_lt;
+                    sel_mon_mut.pertag.as_mut().unwrap().lt_idxs[cur_tag][sel_lt] =
+                        Some(lt.clone());
+                    sel_mon_mut.lt[sel_lt] = lt.clone();
                 }
             }
-            {
+            _ => {
                 let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                sel_mon_mut.lt_symbol = sel_mon_mut.lt[sel_mon_mut.sel_lt].symbol().to_string();
-                sel_is_some = sel_mon_mut.sel.is_some();
-            }
-            if sel_is_some {
-                self.arrange(self.sel_mon.clone());
-            } else {
-                let mon_num = if let Some(sel_mon_ref) = self.sel_mon.as_ref() {
-                    Some(sel_mon_ref.borrow().num)
-                } else {
-                    None
-                };
-                self.mark_bar_update_needed(mon_num);
+                let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                sel_mon_mut.pertag.as_mut().unwrap().sel_lts[cur_tag] ^= 1;
+                sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
             }
         }
+        {
+            let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+            sel_mon_mut.lt_symbol = sel_mon_mut.lt[sel_mon_mut.sel_lt].symbol().to_string();
+            sel_is_some = sel_mon_mut.sel.is_some();
+        }
+        if sel_is_some {
+            self.arrange(self.sel_mon.clone());
+        } else {
+            let mon_num = if let Some(sel_mon_ref) = self.sel_mon.as_ref() {
+                Some(sel_mon_ref.borrow().num)
+            } else {
+                None
+            };
+            self.mark_bar_update_needed(mon_num);
+        }
+        Ok(())
     }
 
-    pub fn zoom(&mut self, _arg: *const Arg) {
+    pub fn zoom(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[zoom]");
         let mut c;
         let sel_c;
@@ -3554,7 +3524,7 @@ impl Jwm {
             let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
             c = sel_mon_mut.sel.clone();
             if c.is_none() || c.as_ref().unwrap().borrow().is_floating {
-                return;
+                return Ok(());
             }
             sel_c = sel_mon_mut.clients.clone();
         }
@@ -3565,284 +3535,280 @@ impl Jwm {
             let next = self.nexttiled(c.as_ref().unwrap().borrow().next.clone());
             c = next;
             if c.is_none() {
-                return;
+                return Ok(());
             }
         }
         self.pop(c);
+        Ok(())
     }
 
-    pub fn loopview(&mut self, arg: *const Arg) {
+    pub fn loopview(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[loopview]");
-        unsafe {
-            let direction = if let Arg::I(val) = *arg {
-                val
+        let direction = if let Arg::I(val) = arg {
+            val
+        } else {
+            return Ok(());
+        };
+        if direction == &0 {
+            return Ok(());
+        }
+        let next_tag;
+        let current_tag;
+        let cur_tag;
+        {
+            let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
+            current_tag = sel_mon_mut.tag_set[sel_mon_mut.sel_tags];
+            // 找到当前tag的位置
+            let current_tag_index = if current_tag == 0 {
+                0 // 如果当前没有选中的tag，从第一个开始
             } else {
-                return;
+                current_tag.trailing_zeros() as usize
             };
-            if direction == 0 {
-                return;
+            // 计算下一个tag的索引（假设支持9个tag，即1-9）
+            let max_tags = 9;
+            let next_tag_index = if direction > &0 {
+                // 向前循环：1>2>3>...>9>1
+                (current_tag_index + 1) % max_tags
+            } else {
+                // 向后循环：1>9>8>...>2>1
+                if current_tag_index == 0 {
+                    max_tags - 1
+                } else {
+                    current_tag_index - 1
+                }
+            };
+            // 将索引转换为tag位掩码
+            next_tag = 1 << next_tag_index;
+            info!(
+                "[loopview] current_tag: {}, next_tag: {}, direction: {}",
+                current_tag, next_tag, direction
+            );
+        }
+        // 如果下一个tag和当前tag相同，不需要切换
+        {
+            let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
+            if next_tag == sel_mon_mut.tag_set[sel_mon_mut.sel_tags] {
+                return Ok(());
             }
-            let next_tag;
-            let current_tag;
-            let cur_tag;
-            {
-                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
-                current_tag = sel_mon_mut.tag_set[sel_mon_mut.sel_tags];
-                // 找到当前tag的位置
-                let current_tag_index = if current_tag == 0 {
-                    0 // 如果当前没有选中的tag，从第一个开始
-                } else {
-                    current_tag.trailing_zeros() as usize
-                };
-                // 计算下一个tag的索引（假设支持9个tag，即1-9）
-                let max_tags = 9;
-                let next_tag_index = if direction > 0 {
-                    // 向前循环：1>2>3>...>9>1
-                    (current_tag_index + 1) % max_tags
-                } else {
-                    // 向后循环：1>9>8>...>2>1
-                    if current_tag_index == 0 {
-                        max_tags - 1
-                    } else {
-                        current_tag_index - 1
-                    }
-                };
-                // 将索引转换为tag位掩码
-                next_tag = 1 << next_tag_index;
+        }
+        {
+            let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+            // 切换sel tagset
+            info!("[loopview] sel_tags: {}", sel_mon_mut.sel_tags);
+            sel_mon_mut.sel_tags ^= 1;
+            info!("[loopview] sel_tags: {}", sel_mon_mut.sel_tags);
+            // 设置新的tag
+            let sel_tags = sel_mon_mut.sel_tags;
+            sel_mon_mut.tag_set[sel_tags] = next_tag;
+            // 更新pertag信息
+            if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
+                pertag.prev_tag = pertag.cur_tag;
+                // 计算新的当前tag索引
+                let i = next_tag.trailing_zeros() as usize;
+                pertag.cur_tag = i + 1;
+            }
+            if let Some(pertag) = sel_mon_mut.pertag.as_ref() {
                 info!(
-                    "[loopview] current_tag: {}, next_tag: {}, direction: {}",
-                    current_tag, next_tag, direction
+                    "[loopview] prevtag: {}, cur_tag: {}",
+                    pertag.prev_tag, pertag.cur_tag
                 );
             }
-            // 如果下一个tag和当前tag相同，不需要切换
-            {
-                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
-                if next_tag == sel_mon_mut.tag_set[sel_mon_mut.sel_tags] {
-                    return;
-                }
+            cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+        }
+        // 应用pertag设置
+        let sel_opt;
+        {
+            let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
+            sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
+            sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
+            sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
+            let sel_lt = sel_mon_mut.sel_lt;
+            sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag][sel_lt]
+                .clone()
+                .expect("None unwrap");
+            sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
+                [sel_lt ^ 1]
+                .clone()
+                .expect("None unwrap");
+            sel_opt = sel_mon_mut.pertag.as_ref().unwrap().sel[cur_tag].clone();
+            if sel_opt.is_some() {
+                info!("[loopview] sel_opt: {}", sel_opt.as_ref().unwrap().borrow());
             }
-            {
-                let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                // 切换sel tagset
-                info!("[loopview] sel_tags: {}", sel_mon_mut.sel_tags);
-                sel_mon_mut.sel_tags ^= 1;
-                info!("[loopview] sel_tags: {}", sel_mon_mut.sel_tags);
-                // 设置新的tag
+        };
+
+        self.focus(sel_opt);
+        self.arrange(self.sel_mon.clone());
+        Ok(())
+    }
+
+    pub fn view(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+        // info!("[view]");
+        let ui = if let Arg::Ui(val) = arg {
+            val
+        } else {
+            return Ok(());
+        };
+        let target_tag = ui & CONFIG.tagmask();
+        let cur_tag;
+        {
+            let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+            info!("[view] ui: {ui}, {target_tag}, {:?}", sel_mon_mut.tag_set);
+            if target_tag == sel_mon_mut.tag_set[sel_mon_mut.sel_tags] {
+                return Ok(());
+            }
+            // toggle sel tagset.
+            info!("[view] sel_tags: {}", sel_mon_mut.sel_tags);
+            sel_mon_mut.sel_tags ^= 1;
+            info!("[view] sel_tags: {}", sel_mon_mut.sel_tags);
+            if target_tag > 0 {
                 let sel_tags = sel_mon_mut.sel_tags;
-                sel_mon_mut.tag_set[sel_tags] = next_tag;
-                // 更新pertag信息
+                sel_mon_mut.tag_set[sel_tags] = target_tag;
                 if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
                     pertag.prev_tag = pertag.cur_tag;
-                    // 计算新的当前tag索引
-                    let i = next_tag.trailing_zeros() as usize;
-                    pertag.cur_tag = i + 1;
                 }
-                if let Some(pertag) = sel_mon_mut.pertag.as_ref() {
-                    info!(
-                        "[loopview] prevtag: {}, cur_tag: {}",
-                        pertag.prev_tag, pertag.cur_tag
-                    );
+                if *ui == !0 {
+                    // 会将tag_set设置为包含所有tag的值
+                    // 使用 curtag = 0 对应的配置
+                    sel_mon_mut.pertag.as_mut().unwrap().cur_tag = 0;
+                } else {
+                    let i = ui.trailing_zeros() as usize;
+                    sel_mon_mut.pertag.as_mut().unwrap().cur_tag = i + 1;
                 }
-                cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+            } else {
+                if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
+                    std::mem::swap(&mut pertag.prev_tag, &mut pertag.cur_tag);
+                }
             }
-            // 应用pertag设置
-            let sel_opt;
-            {
-                let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-                sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
-                sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
-                sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
-                let sel_lt = sel_mon_mut.sel_lt;
-                sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
-                    [sel_lt]
-                    .clone()
-                    .expect("None unwrap");
-                sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
-                    [sel_lt ^ 1]
-                    .clone()
-                    .expect("None unwrap");
-                sel_opt = sel_mon_mut.pertag.as_ref().unwrap().sel[cur_tag].clone();
-                if sel_opt.is_some() {
-                    info!("[loopview] sel_opt: {}", sel_opt.as_ref().unwrap().borrow());
-                }
-            };
-
-            self.focus(sel_opt);
-            self.arrange(self.sel_mon.clone());
+            if let Some(pertag) = &sel_mon_mut.pertag {
+                info!(
+                    "[view] prevtag: {}, cur_tag: {}",
+                    pertag.prev_tag, pertag.cur_tag
+                );
+            }
+            cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
         }
+        let sel_opt;
+        {
+            let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
+            sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
+            sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
+            sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
+            let sel_lt = sel_mon_mut.sel_lt;
+            sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag][sel_lt]
+                .clone()
+                .expect("None unwrap");
+            sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
+                [sel_lt ^ 1]
+                .clone()
+                .expect("None unwrap");
+            sel_opt = sel_mon_mut.pertag.as_ref().unwrap().sel[cur_tag].clone();
+            if sel_opt.is_some() {
+                info!("[view] sel_opt: {}", sel_opt.as_ref().unwrap().borrow());
+            }
+        };
+        self.focus(sel_opt);
+        self.arrange(self.sel_mon.clone());
+        Ok(())
     }
 
-    pub fn view(&mut self, arg: *const Arg) {
-        // info!("[view]");
-        unsafe {
-            let ui = if let Arg::Ui(val) = *arg {
-                val
-            } else {
-                return;
-            };
-            let target_tag = ui & CONFIG.tagmask();
-            let cur_tag;
+    pub fn toggleview(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[toggleview]");
+        if let Arg::Ui(ui) = *arg {
+            if self.sel_mon.is_none() {
+                return Ok(());
+            }
+            let sel_tags;
+            let newtagset;
             {
-                let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                info!("[view] ui: {ui}, {target_tag}, {:?}", sel_mon_mut.tag_set);
-                if target_tag == sel_mon_mut.tag_set[sel_mon_mut.sel_tags] {
-                    return;
-                }
-                // toggle sel tagset.
-                info!("[view] sel_tags: {}", sel_mon_mut.sel_tags);
-                sel_mon_mut.sel_tags ^= 1;
-                info!("[view] sel_tags: {}", sel_mon_mut.sel_tags);
-                if target_tag > 0 {
-                    let sel_tags = sel_mon_mut.sel_tags;
-                    sel_mon_mut.tag_set[sel_tags] = target_tag;
-                    if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
-                        pertag.prev_tag = pertag.cur_tag;
-                    }
-                    if ui == !0 {
-                        // 会将tag_set设置为包含所有tag的值
-                        // 使用 curtag = 0 对应的配置
+                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+                sel_tags = sel_mon_mut.sel_tags;
+                newtagset = sel_mon_mut.tag_set[sel_tags] ^ (ui & CONFIG.tagmask());
+            }
+            if newtagset > 0 {
+                {
+                    let mut selmon_clone = self.sel_mon.clone();
+                    let mut sel_mon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
+                    sel_mon_mut.tag_set[sel_tags] = newtagset;
+
+                    if newtagset == !0 {
+                        sel_mon_mut.pertag.as_mut().unwrap().prev_tag =
+                            sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
                         sel_mon_mut.pertag.as_mut().unwrap().cur_tag = 0;
-                    } else {
-                        let i = ui.trailing_zeros() as usize;
+                    }
+
+                    // test if the user did not select the same tag
+                    let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                    if newtagset & 1 << (cur_tag - 1) <= 0 {
+                        sel_mon_mut.pertag.as_mut().unwrap().prev_tag = cur_tag;
+                        let mut i = 0;
+                        loop {
+                            let condition = newtagset & 1 << i;
+                            if condition > 0 {
+                                break;
+                            }
+                            i += 1;
+                        }
                         sel_mon_mut.pertag.as_mut().unwrap().cur_tag = i + 1;
                     }
-                } else {
-                    if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
-                        std::mem::swap(&mut pertag.prev_tag, &mut pertag.cur_tag);
-                    }
-                }
-                if let Some(pertag) = &sel_mon_mut.pertag {
-                    info!(
-                        "[view] prevtag: {}, cur_tag: {}",
-                        pertag.prev_tag, pertag.cur_tag
-                    );
-                }
-                cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-            }
-            let sel_opt;
-            {
-                let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-                sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
-                sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
-                sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
-                let sel_lt = sel_mon_mut.sel_lt;
-                sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
-                    [sel_lt]
-                    .clone()
-                    .expect("None unwrap");
-                sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
-                    [sel_lt ^ 1]
-                    .clone()
-                    .expect("None unwrap");
-                sel_opt = sel_mon_mut.pertag.as_ref().unwrap().sel[cur_tag].clone();
-                if sel_opt.is_some() {
-                    info!("[view] sel_opt: {}", sel_opt.as_ref().unwrap().borrow());
-                }
-            };
-            self.focus(sel_opt);
-            self.arrange(self.sel_mon.clone());
-        }
-    }
 
-    pub fn toggleview(&mut self, arg: *const Arg) {
-        info!("[toggleview]");
-        unsafe {
-            if let Arg::Ui(ui) = *arg {
-                if self.sel_mon.is_none() {
-                    return;
+                    // apply settings for this view
+                    let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+                    sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
+                    sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
+                    sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
+                    let sel_lt = sel_mon_mut.sel_lt;
+                    sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
+                        [sel_lt]
+                        .clone()
+                        .expect("None unwrap");
+                    sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs
+                        [cur_tag][sel_lt ^ 1]
+                        .clone()
+                        .expect("None unwrap");
                 }
-                let sel_tags;
-                let newtagset;
-                {
-                    let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                    sel_tags = sel_mon_mut.sel_tags;
-                    newtagset = sel_mon_mut.tag_set[sel_tags] ^ (ui & CONFIG.tagmask());
-                }
-                if newtagset > 0 {
-                    {
-                        let mut selmon_clone = self.sel_mon.clone();
-                        let mut sel_mon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
-                        sel_mon_mut.tag_set[sel_tags] = newtagset;
-
-                        if newtagset == !0 {
-                            sel_mon_mut.pertag.as_mut().unwrap().prev_tag =
-                                sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                            sel_mon_mut.pertag.as_mut().unwrap().cur_tag = 0;
-                        }
-
-                        // test if the user did not select the same tag
-                        let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                        if newtagset & 1 << (cur_tag - 1) <= 0 {
-                            sel_mon_mut.pertag.as_mut().unwrap().prev_tag = cur_tag;
-                            let mut i = 0;
-                            loop {
-                                let condition = newtagset & 1 << i;
-                                if condition > 0 {
-                                    break;
-                                }
-                                i += 1;
-                            }
-                            sel_mon_mut.pertag.as_mut().unwrap().cur_tag = i + 1;
-                        }
-
-                        // apply settings for this view
-                        let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                        sel_mon_mut.n_master =
-                            sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
-                        sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
-                        sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
-                        let sel_lt = sel_mon_mut.sel_lt;
-                        sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs
-                            [cur_tag][sel_lt]
-                            .clone()
-                            .expect("None unwrap");
-                        sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs
-                            [cur_tag][sel_lt ^ 1]
-                            .clone()
-                            .expect("None unwrap");
-                    }
-                    self.focus(None);
-                    self.arrange(self.sel_mon.clone());
-                }
+                self.focus(None);
+                self.arrange(self.sel_mon.clone());
             }
         }
+        Ok(())
     }
 
-    pub fn togglefullscr(&mut self, _: *const Arg) {
+    pub fn togglefullscr(&mut self, _: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         info!("[togglefullscr]");
         if let Some(ref selmon_opt) = self.sel_mon {
             let sel = { selmon_opt.borrow_mut().sel.clone() };
             if sel.is_none() {
-                return;
+                return Ok(());
             }
             let isfullscreen = { sel.as_ref().unwrap().borrow_mut().is_fullscreen };
             let _ = self.setfullscreen(sel.as_ref().unwrap(), !isfullscreen);
         }
+        Ok(())
     }
 
-    pub fn toggletag(&mut self, arg: *const Arg) {
+    pub fn toggletag(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         info!("[toggletag]");
-        unsafe {
-            let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-            if sel.is_none() {
-                return;
-            }
-            if let Arg::Ui(ui) = *arg {
-                let newtags = sel.as_ref().unwrap().borrow_mut().tags ^ (ui & CONFIG.tagmask());
-                if newtags > 0 {
-                    sel.as_ref().unwrap().borrow_mut().tags = newtags;
-                    let _ = self.setclienttagprop(sel.as_ref().unwrap());
-                    self.focus(None);
-                    self.arrange(self.sel_mon.clone());
-                }
+        let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
+        if sel.is_none() {
+            return Ok(());
+        }
+        if let Arg::Ui(ui) = *arg {
+            let newtags = sel.as_ref().unwrap().borrow_mut().tags ^ (ui & CONFIG.tagmask());
+            if newtags > 0 {
+                sel.as_ref().unwrap().borrow_mut().tags = newtags;
+                let _ = self.setclienttagprop(sel.as_ref().unwrap());
+                self.focus(None);
+                self.arrange(self.sel_mon.clone());
             }
         }
+        Ok(())
     }
 
-    pub fn quit(&mut self, _arg: *const Arg) {
+    pub fn quit(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[quit]");
         self.running.store(false, Ordering::SeqCst);
         let _ = self.sender.send(0);
+        Ok(())
     }
 
     pub fn setup_ewmh(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -3978,12 +3944,12 @@ impl Jwm {
         }
     }
 
-    pub fn killclient(&mut self, _arg: *const Arg) {
+    pub fn killclient(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         info!("[killclient]");
         unsafe {
             let sel = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
             if sel.is_none() {
-                return;
+                return Ok(());
             }
             info!("[killclient] {}", sel.as_ref().unwrap().borrow());
             if !self.sendevent(
@@ -3999,6 +3965,7 @@ impl Jwm {
                 XUngrabServer(self.x11_dpy);
             }
         }
+        Ok(())
     }
 
     pub fn nexttiled(
@@ -4338,14 +4305,14 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn movemouse(&mut self, _arg: *const Arg) {
+    pub fn movemouse(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         info!("[movemouse]"); // 日志
         unsafe {
             // unsafe 块
             // 1. 获取当前选中的客户端 (c)
             let client_opt = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
             if client_opt.is_none() {
-                return;
+                return Ok(());
             } // 没有选中客户端则返回
             let c_rc = client_opt.as_ref().unwrap(); // c_rc 是 &Rc<RefCell<Client>>
 
@@ -4356,7 +4323,7 @@ impl Jwm {
             if c_rc.borrow().is_fullscreen {
                 // 如果窗口是全屏状态
                 // no support moving fullscreen windows by mouse
-                return; // 通常不允许通过鼠标移动全屏窗口
+                return Ok(());
             }
 
             // 3. 准备工作
@@ -4384,8 +4351,7 @@ impl Jwm {
                 CurrentTime,            // time: 当前时间
             ) != GrabSuccess
             {
-                // 如果抓取失败 (例如其他程序已抓取)，则返回
-                return;
+                return Ok(());
             }
 
             // 5. 获取鼠标初始位置
@@ -4398,7 +4364,7 @@ impl Jwm {
             } else {
                 // 如果获取失败 (例如指针不在屏幕上)
                 XUngrabPointer(self.x11_dpy, CurrentTime); // 释放鼠标抓取
-                return;
+                return Ok(());
             };
 
             // 6. 进入鼠标移动事件循环
@@ -4499,7 +4465,7 @@ impl Jwm {
                         && ((new_window_x - client_current_x).abs() > CONFIG.snap() as i32 // 且 X 或 Y 方向移动超过阈值
                             || (new_window_y - client_current_y).abs() > CONFIG.snap() as i32)
                         {
-                            self.togglefloating(std::ptr::null()); // 将其切换为浮动 (null_mut() 作为参数)
+                            self.togglefloating(&Arg::I(0))?;
                         }
 
                         // f. 如果窗口是浮动的或者当前布局是浮动布局，则实际调整窗口大小/位置
@@ -4546,6 +4512,7 @@ impl Jwm {
                 self.focus(None); // 在新显示器上重新设置焦点
             }
         }
+        Ok(())
     }
 
     pub fn resizemouse(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
@@ -4735,7 +4702,7 @@ impl Jwm {
                 || (new_height - current_h).abs() > snap_threshold
             {
                 debug!("Toggling to floating mode due to size change");
-                self.togglefloating(&Arg::Ui(0));
+                let _ = self.togglefloating(&Arg::Ui(0));
             }
         }
 
@@ -5465,7 +5432,7 @@ impl Jwm {
                     i, key_config.keysym, key_config.mod0, key_config.arg
                 );
                 if let Some(func) = key_config.func {
-                    func(self, &key_config.arg);
+                    let _ = func(self, &key_config.arg);
                     return Ok(true);
                 }
             }
