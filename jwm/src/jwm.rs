@@ -53,20 +53,20 @@ use x11rb::COPY_DEPTH_FROM_PARENT;
 
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
-    AnyButton, AnyKey, AnyModifier, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow, Below,
+    AnyButton, AnyKey, AnyModifier, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow,
     ButtonPress, ButtonPressMask, ButtonRelease, ButtonReleaseMask, CWBorderWidth, CWHeight,
-    CWSibling, CWStackMode, CWWidth, ClientMessage, ConfigureNotify, ConfigureRequest, CurrentTime,
-    DestroyAll, DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose, ExposureMask, False,
+    CWWidth, ClientMessage, ConfigureNotify, ConfigureRequest, CurrentTime, DestroyAll,
+    DestroyNotify, Display, EnterNotify, EnterWindowMask, Expose, ExposureMask, False,
     FocusChangeMask, FocusIn, GrabModeAsync, GrabModeSync, GrabSuccess, KeyPress, KeySym, LockMask,
     MapRequest, MappingKeyboard, MappingNotify, MotionNotify, NoEventMask, NotifyInferior,
     NotifyNormal, PointerMotionMask, PointerRoot, PropertyChangeMask, PropertyDelete,
     PropertyNotify, RevertToPointerRoot, StructureNotifyMask, SubstructureRedirectMask, Success,
-    Time, True, UnmapNotify, XConfigureWindow, XDestroyWindow, XDisplayKeycodes, XErrorEvent,
-    XEvent, XFree, XGetKeyboardMapping, XGetTransientForHint, XGrabButton, XGrabKey, XGrabPointer,
-    XGrabServer, XKeycodeToKeysym, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow,
-    XMoveWindow, XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput,
-    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey,
-    XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
+    Time, True, UnmapNotify, XDestroyWindow, XDisplayKeycodes, XErrorEvent, XEvent, XFree,
+    XGetKeyboardMapping, XGetTransientForHint, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
+    XKeycodeToKeysym, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow,
+    XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSetCloseDownMode,
+    XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey, XUngrabPointer,
+    XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
     XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
@@ -2172,7 +2172,6 @@ impl Jwm {
         let _ = self.write_message(num, &self.message.clone());
     }
 
-
     pub fn restack(
         &mut self,
         mon_rc_opt: Option<Rc<RefCell<Monitor>>>,
@@ -2462,7 +2461,7 @@ impl Jwm {
         for mon_rc in monitors_to_process {
             // Consume Vec or iterate by ref again
             self.arrangemon(&mon_rc);
-            self.restack(Some(mon_rc)); // Pass Some(mon_rc) to restack
+            let _ = self.restack(Some(mon_rc)); // Pass Some(mon_rc) to restack
         }
     }
 
@@ -2688,7 +2687,7 @@ impl Jwm {
                 c.is_some()
             } {
                 self.focus(c);
-                self.restack(self.sel_mon.clone());
+                let _ = self.restack(self.sel_mon.clone());
                 allow_events(&self.x11rb_conn, Allow::REPLAY_POINTER, 0u32).unwrap();
                 click = CLICK::ClkClientWin;
             }
@@ -3165,7 +3164,7 @@ impl Jwm {
             }
             if c.is_some() {
                 self.focus(c);
-                self.restack(self.sel_mon.clone());
+                let _ = self.restack(self.sel_mon.clone());
             }
         }
     }
@@ -4167,7 +4166,7 @@ impl Jwm {
             }
 
             // 3. 准备工作
-            self.restack(self.sel_mon.clone()); // 将当前选中窗口置于堆叠顶部 (视觉上)，并重绘状态栏
+            let _ = self.restack(self.sel_mon.clone()); // 将当前选中窗口置于堆叠顶部 (视觉上)，并重绘状态栏
             let (original_client_x, original_client_y) = {
                 // 保存窗口开始移动时的原始坐标
                 let c_borrow = c_rc.borrow();
@@ -4371,7 +4370,7 @@ impl Jwm {
             }
 
             // 3. 准备工作
-            self.restack(self.sel_mon.clone()); // 将当前选中窗口置于堆叠顶部，并重绘状态栏
+            let _ = self.restack(self.sel_mon.clone()); // 将当前选中窗口置于堆叠顶部，并重绘状态栏
 
             // 保存窗口开始调整大小时的原始左上角坐标 (用于计算新尺寸的基准)
             // 和边框宽度 (用于从鼠标坐标计算内容区尺寸)
