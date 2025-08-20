@@ -213,7 +213,7 @@ pub struct Button {
     pub click: u32,
     pub mask: u32,
     pub button: u32,
-    pub func: Option<fn(&mut Jwm, *const Arg)>,
+    pub func: Option<WMFunc>,
     pub arg: Arg,
 }
 impl Button {
@@ -222,7 +222,7 @@ impl Button {
         click: u32,
         mask: u32,
         button: u32,
-        func: Option<fn(&mut Jwm, *const Arg)>,
+        func: Option<WMFunc>,
         arg: Arg,
     ) -> Self {
         Self {
@@ -235,11 +235,12 @@ impl Button {
     }
 }
 
+pub type WMFunc = fn(&mut Jwm, &Arg) -> Result<(), Box<dyn std::error::Error>>;
 #[derive(Debug, Clone)]
 pub struct Key {
     pub mod0: u32,
     pub keysym: KeySym,
-    pub func: Option<fn(&mut Jwm, *const Arg)>,
+    pub func: Option<WMFunc>,
     pub arg: Arg,
 }
 impl Key {
@@ -247,7 +248,7 @@ impl Key {
     pub fn new(
         mod0: u32,
         keysym: KeySym,
-        func: Option<fn(&mut Jwm, *const Arg)>,
+        func: Option<WMFunc>,
         arg: Arg,
     ) -> Self {
         Self {
