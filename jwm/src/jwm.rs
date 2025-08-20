@@ -44,7 +44,7 @@ use x11rb::protocol::xinput::KeyCode;
 use x11rb::protocol::xproto::{
     self, allow_events, Allow, Atom, AtomEnum, ClientMessageEvent, Colormap, ColormapAlloc,
     ConfigureNotifyEvent, ConnectionExt, CreateWindowAux, EventMask, GetGeometryReply,
-    GetWindowAttributesReply, Keysym, MapState, PropMode, VisualClass, Visualid, Window,
+    GetWindowAttributesReply, Keysym, MapState, PropMode, StackMode, VisualClass, Visualid, Window,
     WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
@@ -1634,18 +1634,20 @@ impl Jwm {
                     self.handle_regular_configure_request(&client_rc, &ev);
                 }
             } else {
-                // 未管理的窗口
-                let mut wc: XWindowChanges = std::mem::zeroed();
-                wc.x = ev.x;
-                wc.y = ev.y;
-                wc.width = ev.width;
-                wc.height = ev.height;
-                wc.border_width = ev.border_width;
-                wc.sibling = ev.above;
-                wc.stack_mode = ev.detail;
-                XConfigureWindow(self.x11_dpy, ev.window, ev.value_mask as u32, &mut wc);
+                // 构建配置值向量
+                let values = xproto::ConfigureWindowAux::new()
+                    .x(ev.x)
+                    .y(ev.y)
+                    .width(ev.width as u32)
+                    .height(ev.height as u32)
+                    .sibling(Some(ev.above as u32))
+                    .stack_mode(Some(StackMode::from(ev.detail as u8)))
+                    .border_width(ev.border_width as u32);
+                // 发送配置窗口请求
+                self.x11rb_conn
+                    .configure_window(ev.window as u32, &values)
+                    .unwrap();
             }
-            XSync(self.x11_dpy, False);
         }
     }
 
@@ -1693,19 +1695,20 @@ impl Jwm {
             );
 
                 // 只是同意 status bar 的请求，允许它按照请求的大小进行配置
-                unsafe {
-                    let mut wc: XWindowChanges = std::mem::zeroed();
-                    wc.x = statusbar_mut.x;
-                    wc.y = statusbar_mut.y;
-                    wc.width = statusbar_mut.w;
-                    wc.height = statusbar_mut.h;
+                // 应用 status bar 请求的配置
+                // 构建配置值向量
+                let values = xproto::ConfigureWindowAux::new()
+                    .x(statusbar_mut.x)
+                    .y(statusbar_mut.y)
+                    .width(statusbar_mut.w as u32)
+                    .height(statusbar_mut.h as u32);
+                // 发送配置窗口请求
+                self.x11rb_conn
+                    .configure_window(ev.window as u32, &values)
+                    .unwrap();
 
-                    // 应用 status bar 请求的配置
-                    XConfigureWindow(self.x11_dpy, ev.window, ev.value_mask as u32, &mut wc);
-
-                    // 确保状态栏始终在最上层
-                    // XRaiseWindow(self.dpy, statusbar_mut.win);
-                }
+                // 确保状态栏始终在最上层
+                // XRaiseWindow(self.dpy, statusbar_mut.win);
 
                 // 发送确认配置事件给 status bar
                 self.configure(&mut statusbar_mut);
@@ -1729,14 +1732,16 @@ impl Jwm {
             );
 
             // 作为后备，直接应用配置请求
-            unsafe {
-                let mut wc: XWindowChanges = std::mem::zeroed();
-                wc.x = ev.x;
-                wc.y = ev.y;
-                wc.width = ev.width;
-                wc.height = ev.height;
-                XConfigureWindow(self.x11_dpy, ev.window, ev.value_mask as u32, &mut wc);
-            }
+            // 构建配置值向量
+            let values = xproto::ConfigureWindowAux::new()
+                .x(ev.x)
+                .y(ev.y)
+                .width(ev.width as u32)
+                .height(ev.height as u32);
+            // 发送配置窗口请求
+            self.x11rb_conn
+                .configure_window(ev.window as u32, &values)
+                .unwrap();
         }
     }
 
@@ -2167,53 +2172,74 @@ impl Jwm {
         let _ = self.write_message(num, &self.message.clone());
     }
 
-    pub fn restack(&mut self, mon_rc_opt: Option<Rc<RefCell<Monitor>>>) {
+
+    pub fn restack(
+        &mut self,
+        mon_rc_opt: Option<Rc<RefCell<Monitor>>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[restack]");
+
         let mon_rc = match mon_rc_opt {
             Some(monitor) => monitor,
-            None => return,
+            None => return Ok(()),
         };
         self.mark_bar_update_needed(Some(mon_rc.borrow().num));
-
-        unsafe {
-            let mon_borrow = mon_rc.borrow();
-            let mut wc: XWindowChanges = zeroed();
-            let sel = mon_borrow.sel.clone();
-            if sel.is_none() {
-                return;
+        let mon_borrow = mon_rc.borrow();
+        // 收集所有需要重新排列的窗口
+        let mut windows_to_restack = Vec::new();
+        // 1. 首先处理选中的浮动窗口
+        if let Some(ref sel) = mon_borrow.sel {
+            let sel_borrow = sel.borrow();
+            if sel_borrow.is_floating {
+                windows_to_restack.push((sel_borrow.win, StackMode::ABOVE, None));
             }
-            let is_floating = sel.as_ref().unwrap().borrow_mut().is_floating;
-            if is_floating {
-                let win = sel.as_ref().unwrap().borrow_mut().win;
-                XRaiseWindow(self.x11_dpy, win.into());
-            }
-            // 确保状态栏始终在最上方
-            let monitor_id = mon_borrow.num;
-            if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
-                XRaiseWindow(self.x11_dpy, statusbar.borrow().win.into());
-            }
-            wc.stack_mode = Below;
-            let mut client_rc_opt = mon_borrow.stack.clone();
-            while let Some(ref client_rc) = client_rc_opt.clone() {
-                let client_borrow = client_rc.borrow();
-                let is_floating = client_borrow.is_floating;
-                let isvisible = client_borrow.isvisible();
-                if !is_floating && isvisible {
-                    let win = client_borrow.win;
-                    XConfigureWindow(
-                        self.x11_dpy,
-                        win.into(),
-                        (CWSibling | CWStackMode) as u32,
-                        &mut wc,
-                    );
-                    wc.sibling = win.into();
-                }
-                let next = client_borrow.stack_next.clone();
-                client_rc_opt = next;
-            }
-            XSync(self.x11_dpy, 0);
-            self.flush_enter_events();
         }
+
+        // 2. 处理状态栏（确保在最顶层）
+        let monitor_id = mon_borrow.num;
+        if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
+            let statusbar_win = statusbar.borrow().win;
+            windows_to_restack.push((statusbar_win, StackMode::ABOVE, None));
+        }
+
+        // 3. 收集非浮动可见窗口
+        let mut non_floating_windows = Vec::new();
+        let mut client_rc_opt = mon_borrow.stack.clone();
+        while let Some(ref client_rc) = client_rc_opt.clone() {
+            let client_borrow = client_rc.borrow();
+            if !client_borrow.is_floating && client_borrow.isvisible() {
+                non_floating_windows.push(client_borrow.win);
+            }
+            let next = client_borrow.stack_next.clone();
+            client_rc_opt = next;
+        }
+
+        // 4. 按堆叠顺序排列非浮动窗口
+        for (i, &win) in non_floating_windows.iter().enumerate() {
+            let sibling = if i == 0 {
+                None
+            } else {
+                Some(non_floating_windows[i - 1])
+            };
+            windows_to_restack.push((win, StackMode::BELOW, sibling));
+        }
+
+        // 5. 批量执行所有窗口重排操作
+        for (window, stack_mode, sibling) in windows_to_restack {
+            let mut config = xproto::ConfigureWindowAux::new().stack_mode(stack_mode);
+            if let Some(sibling_win) = sibling {
+                config = config.sibling(sibling_win);
+            }
+            self.x11rb_conn.configure_window(window, &config)?;
+        }
+
+        // 6. 同步所有操作
+        self.x11rb_conn.flush()?;
+
+        // 7. 刷新进入事件
+        self.flush_enter_events();
+
+        Ok(())
     }
 
     pub fn flush_enter_events(&self) {
@@ -5219,14 +5245,11 @@ impl Jwm {
 
     fn setup_client_window(&mut self, client_rc: &Rc<RefCell<Client>>) {
         unsafe {
-            let mut window_changes: XWindowChanges = std::mem::zeroed();
             let win = client_rc.borrow().win;
-
             // 设置边框
             {
                 let mut client_mut = client_rc.borrow_mut();
                 client_mut.border_w = CONFIG.border_px() as i32;
-                window_changes.border_width = client_mut.border_w;
                 let _ = self.set_window_border_width(win, client_mut.border_w as u32);
             }
 
