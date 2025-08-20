@@ -10,7 +10,8 @@ use std::{ffi::CString, process::exit};
 use std::{thread, time::Duration};
 use x11::xlib::{XCloseDisplay, XSupportsLocale};
 
-fn main() {
+#[tokio::main]
+async fn main()-> Result<(), Box<dyn std::error::Error>> {
     let _ = register_panic_handler();
     jwm::miscellaneous::init_auto_command();
     jwm::miscellaneous::init_auto_start();
@@ -92,7 +93,7 @@ fn main() {
         info!("[main] scan");
         let _ = jwm.scan();
         info!("[main] run");
-        jwm.run();
+        jwm.run_async().await?;
         info!("[main] cleanup");
         jwm.cleanup();
         info!("[main] XCloseDisplay");
@@ -104,4 +105,6 @@ fn main() {
         Ok(_) => println!("Status update thread finished successfully."),
         Err(e) => eprintln!("Error joining status update thread: {:?}", e),
     }
+
+    Ok(())
 }
