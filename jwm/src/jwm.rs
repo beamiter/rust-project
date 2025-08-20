@@ -51,15 +51,13 @@ use x11::xlib::{
     AnyButton, AnyKey, AnyModifier, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow,
     ButtonPressMask, ButtonRelease, ButtonReleaseMask, ConfigureRequest, CurrentTime, DestroyAll,
     Display, EnterWindowMask, Expose, ExposureMask, False, FocusChangeMask, GrabModeAsync,
-    GrabModeSync, GrabSuccess, KeySym, LockMask, MapRequest, MappingKeyboard, MotionNotify,
-    NoEventMask, PointerMotionMask, PointerRoot, PropertyChangeMask, PropertyDelete,
-    RevertToPointerRoot, StructureNotifyMask, SubstructureRedirectMask, Success, Time, True,
-    XDestroyWindow, XDisplayKeycodes, XErrorEvent, XEvent, XFree, XGetKeyboardMapping,
-    XGetTransientForHint, XGrabButton, XGrabKey, XGrabPointer, XGrabServer, XKeycodeToKeysym,
-    XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XRefreshKeyboardMapping,
-    XSelectInput, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton,
-    XUngrabKey, XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, XA_WM_HINTS,
-    XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    GrabModeSync, GrabSuccess, KeySym, LockMask, MapRequest, MotionNotify, NoEventMask,
+    PointerMotionMask, PointerRoot, PropertyChangeMask, RevertToPointerRoot, StructureNotifyMask,
+    SubstructureRedirectMask, Success, Time, True, XDestroyWindow, XDisplayKeycodes, XErrorEvent,
+    XEvent, XFree, XGetKeyboardMapping, XGetTransientForHint, XGrabButton, XGrabKey, XGrabPointer,
+    XGrabServer, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XSelectInput,
+    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey,
+    XUngrabPointer, XUngrabServer, XWarpPointer, XWindowChanges, XA_WM_NAME,
 };
 
 use std::cmp::{max, min};
@@ -213,7 +211,7 @@ pub enum Arg {
 #[derive(Debug, Clone)]
 pub struct Button {
     pub click: u32,
-    pub mask: u16,
+    pub mask: u32,
     pub button: u32,
     pub func: Option<fn(&mut Jwm, *const Arg)>,
     pub arg: Arg,
@@ -222,7 +220,7 @@ impl Button {
     #[allow(unused)]
     pub fn new(
         click: u32,
-        mask: u16,
+        mask: u32,
         button: u32,
         func: Option<fn(&mut Jwm, *const Arg)>,
         arg: Arg,
@@ -809,13 +807,13 @@ impl Jwm {
             Event::Expose(e) => self.expose(&e)?,
             Event::FocusIn(e) => self.focusin(&e)?,
             Event::KeyPress(e) => self.keypress(&e)?,
-            Event::MappingNotify(e) => self.mappingnotify(&e),
-            Event::MapRequest(e) => self.maprequest(&e),
-            Event::MotionNotify(e) => self.motionnotify(&e),
-            Event::PropertyNotify(e) => self.propertynotify(&e),
-            Event::UnmapNotify(e) => self.unmapnotify(&e),
+            Event::MappingNotify(e) => self.mappingnotify(&e)?,
+            Event::MapRequest(e) => self.maprequest(&e)?,
+            Event::MotionNotify(e) => self.motionnotify(&e)?,
+            Event::PropertyNotify(e) => self.propertynotify(&e)?,
+            Event::UnmapNotify(e) => self.unmapnotify(&e)?,
             _ => {
-                // debug!("Unsupported event type: {:?}", std::mem::discriminant(&event));
+                debug!("Unsupported event type: {:?}", event);
             }
         }
         Ok(())
@@ -919,19 +917,9 @@ impl Jwm {
         }
     }
 
-    // fn CLEANMASK(&self, mask: u32) -> u32 {
-    //     mask & !(self.numlock_mask | LockMask)
-    //         & (x11::xlib::ShiftMask
-    //             | x11::xlib::ControlMask
-    //             | x11::xlib::Mod1Mask
-    //             | x11::xlib::Mod2Mask
-    //             | x11::xlib::Mod3Mask
-    //             | x11::xlib::Mod4Mask
-    //             | x11::xlib::Mod5Mask)
-    // }
-    fn CLEANMASK(&self, mask: u16) -> u16 {
+    fn clean_mask(&self, mask: u32) -> u32 {
         // 第一步：移除NumLock和CapsLock
-        let mask_without_locks = mask & !(self.numlock_mask as u16 | KeyButMask::LOCK.bits());
+        let mask_without_locks = mask & !(self.numlock_mask | KeyButMask::LOCK.bits() as u32);
         // 第二步：只保留真正的修饰键
         let modifier_mask = KeyButMask::SHIFT.bits()
             | KeyButMask::CONTROL.bits()
@@ -940,7 +928,7 @@ impl Jwm {
             | KeyButMask::MOD3.bits()
             | KeyButMask::MOD4.bits()
             | KeyButMask::MOD5.bits();
-        mask_without_locks & modifier_mask
+        mask_without_locks & modifier_mask as u32
     }
 
     /// 获取窗口的 WM_CLASS（即类名和实例名）
@@ -1407,7 +1395,7 @@ impl Jwm {
             let is_fullscreen = { client_rc.borrow().is_fullscreen };
             if is_fullscreen {
                 // 调整全屏客户端到新的显示器尺寸
-                self.resizeclient(
+                let _ = self.resizeclient(
                     &mut client_rc.borrow_mut(),
                     monitor_geometry.0,
                     monitor_geometry.1,
@@ -2413,7 +2401,7 @@ impl Jwm {
             // 处理所有挂起的X11事件
             while let Some(event) = self.x11rb_conn.poll_for_event()? {
                 event_count = event_count.wrapping_add(1);
-                self.handler(event);
+                let _ = self.handler(event);
                 events_processed = true;
             }
 
@@ -2804,7 +2792,7 @@ impl Jwm {
             if click as u32 == button_config.click
                 && button_config.func.is_some()
                 && button_config.button == e.detail as u32
-                && self.CLEANMASK(button_config.mask) == self.CLEANMASK(e.state.bits())
+                && self.clean_mask(button_config.mask) == self.clean_mask(e.state.bits().into())
             {
                 if let Some(ref func) = button_config.func {
                     info!(
@@ -4179,75 +4167,174 @@ impl Jwm {
         values.next().map(|w| w as u32).filter(|&w| w != 0)
     }
 
-    pub fn propertynotify(&mut self, e: *mut XEvent) {
+    pub fn propertynotify(
+        &mut self,
+        e: &PropertyNotifyEvent,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[propertynotify]");
-        unsafe {
-            let ev = (*e).property;
-            if ev.window == self.x11rb_root.into() && ev.atom == XA_WM_NAME {
-            } else if ev.state == PropertyDelete {
-                // ignore
-                return;
-            } else if let Some(client_rc) = self.wintoclient(ev.window as u32) {
-                match ev.atom {
-                    XA_WM_TRANSIENT_FOR => {
-                        let mut client_borrowd = client_rc.borrow_mut();
-                        let mut trans: u64 = 0;
-                        if !client_borrowd.is_floating
-                            && XGetTransientForHint(
-                                self.x11_dpy,
-                                client_borrowd.win.into(),
-                                &mut trans,
-                            ) > 0
-                            && {
-                                client_borrowd.is_floating =
-                                    self.wintoclient(trans as u32).is_some();
-                                client_borrowd.is_floating
-                            }
-                        {
-                            self.arrange(client_borrowd.mon.clone());
-                        }
-                    }
-                    XA_WM_NORMAL_HINTS => {
-                        let mut client_borrowd = client_rc.borrow_mut();
-                        client_borrowd.hints_valid = false;
-                    }
-                    XA_WM_HINTS => {
-                        self.updatewmhints(&client_rc);
-                        // WM_HINTS 改变可能影响紧急状态，需要重绘状态栏
-                        self.mark_bar_update_needed(None);
-                    }
-                    _ => {}
-                }
-                if ev.atom == XA_WM_NAME || ev.atom == self.atoms._NET_WM_NAME.into() {
-                    self.updatetitle(&mut client_rc.borrow_mut());
-                    // 如果这个改变了标题的窗口，正好是其所在显示器上当前选中的窗口
-                    let (is_selected_on_mon, mon_opt) = {
-                        let client_borrow_for_sel_check = client_rc.borrow(); // 不可变借用
-                        let mon_rc_opt = client_borrow_for_sel_check.mon.clone();
-                        if let Some(ref mon_rc_inner) = mon_rc_opt {
-                            let mon_borrow_for_sel_check = mon_rc_inner.borrow();
-                            (
-                                Self::are_equal_rc(
-                                    &mon_borrow_for_sel_check.sel,
-                                    &Some(client_rc.clone()),
-                                ),
-                                mon_rc_opt.clone(),
-                            )
-                        } else {
-                            (false, None)
-                        }
-                    };
-                    if is_selected_on_mon {
-                        if let Some(ref mon) = mon_opt {
-                            self.mark_bar_update_needed(Some(mon.borrow().num));
-                        }
-                    }
-                }
-                if ev.atom == self.atoms._NET_WM_WINDOW_TYPE.into() {
-                    self.updatewindowtype(&client_rc);
+        // 处理根窗口属性变更
+        if e.window == self.x11rb_root && e.atom == AtomEnum::WM_NAME.into() {
+            // 根窗口名称变更，通常不需要处理
+            debug!("Root window name property changed");
+            return Ok(());
+        }
+        // 忽略属性删除事件
+        if e.state == Property::DELETE {
+            debug!("Ignoring property delete event for window {}", e.window);
+            return Ok(());
+        }
+        // 处理客户端窗口属性变更
+        if let Some(client_rc) = self.wintoclient(e.window) {
+            self.handle_client_property_change(&client_rc, e)?;
+        } else {
+            debug!("Property change for unmanaged window: {}", e.window);
+        }
+
+        Ok(())
+    }
+
+    fn handle_client_property_change(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+        e: &PropertyNotifyEvent,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match e.atom {
+            atom if atom == self.atoms.WM_TRANSIENT_FOR => {
+                self.handle_transient_for_change(client_rc)?;
+            }
+            atom if atom == AtomEnum::WM_NORMAL_HINTS.into() => {
+                self.handle_normal_hints_change(client_rc)?;
+            }
+            atom if atom == AtomEnum::WM_HINTS.into() => {
+                self.handle_wm_hints_change(client_rc)?;
+            }
+            atom if atom == AtomEnum::WM_NAME.into() || atom == self.atoms._NET_WM_NAME => {
+                self.handle_title_change(client_rc)?;
+            }
+            atom if atom == self.atoms._NET_WM_WINDOW_TYPE => {
+                self.handle_window_type_change(client_rc)?;
+            }
+            _ => {
+                debug!("Unhandled property change: atom {}", e.atom);
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_transient_for_change(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut client = client_rc.borrow_mut();
+        if !client.is_floating {
+            // 获取transient_for属性
+            let transient_for = self.get_transient_for_hint(client.win)?;
+            if let Some(parent_window) = transient_for {
+                // 检查父窗口是否是我们管理的客户端
+                if self.wintoclient(parent_window).is_some() {
+                    client.is_floating = true;
+                    debug!(
+                        "Window {} became floating due to transient_for: {}",
+                        client.win, parent_window
+                    );
+                    // 重新排列布局
+                    let monitor = client.mon.clone();
+                    drop(client); // 释放借用
+                    self.arrange(monitor);
                 }
             }
         }
+        Ok(())
+    }
+
+    fn get_transient_for_hint(
+        &self,
+        window: Window,
+    ) -> Result<Option<Window>, Box<dyn std::error::Error>> {
+        let property = self
+            .x11rb_conn
+            .get_property(
+                false,
+                window,
+                self.atoms.WM_TRANSIENT_FOR,
+                AtomEnum::WINDOW,
+                0,
+                1,
+            )?
+            .reply()?;
+
+        if property.format == 32 && !property.value.is_empty() {
+            let transient_for = u32::from_ne_bytes([
+                property.value[0],
+                property.value[1],
+                property.value[2],
+                property.value[3],
+            ]);
+            Ok(Some(transient_for))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn handle_normal_hints_change(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut client = client_rc.borrow_mut();
+        client.hints_valid = false;
+        debug!(
+            "Normal hints changed for window {}, invalidating cache",
+            client.win
+        );
+        Ok(())
+    }
+
+    fn handle_wm_hints_change(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.updatewmhints(client_rc);
+        // WM_HINTS 改变可能影响紧急状态，需要重绘状态栏
+        self.mark_bar_update_needed(None);
+        debug!("WM hints updated for window {}", client_rc.borrow().win);
+        Ok(())
+    }
+
+    fn handle_title_change(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.updatetitle(&mut client_rc.borrow_mut());
+        // 检查是否需要更新状态栏
+        let should_update_bar = {
+            let client = client_rc.borrow();
+            if let Some(ref monitor) = client.mon {
+                let monitor_borrow = monitor.borrow();
+                Self::are_equal_rc(&monitor_borrow.sel, &Some(client_rc.clone()))
+            } else {
+                false
+            }
+        };
+        if should_update_bar {
+            let monitor_id = client_rc.borrow().mon.as_ref().unwrap().borrow().num;
+            self.mark_bar_update_needed(Some(monitor_id));
+
+            debug!(
+                "Title updated for selected window {}, updating status bar",
+                client_rc.borrow().win
+            );
+        }
+        Ok(())
+    }
+
+    fn handle_window_type_change(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.updatewindowtype(client_rc);
+        debug!("Window type updated for window {}", client_rc.borrow().win);
+        Ok(())
     }
 
     pub fn movemouse(&mut self, _arg: *const Arg) {
@@ -4326,7 +4413,8 @@ impl Jwm {
                 match ev.type_ {
                     ConfigureRequest | Expose | MapRequest => {
                         // 如果在拖动过程中收到其他重要事件，交给 JWM 的主事件处理器处理
-                        self.handler(ev.type_, &mut ev);
+                        // (TODO), fix here
+                        // self.handler(ev.type_, &mut ev);
                     }
                     MotionNotify => {
                         // 如果是鼠标移动事件
@@ -4537,7 +4625,8 @@ impl Jwm {
                 match ev.type_ {
                     ConfigureRequest | Expose | MapRequest => {
                         // 处理其他可能在调整大小过程中发生的重要窗口事件
-                        self.handler(ev.type_, &mut ev);
+                        // (TODO), fix lator
+                        // self.handler(ev.type_, &mut ev);
                     }
                     MotionNotify => {
                         // 如果是鼠标移动事件
@@ -5306,7 +5395,7 @@ impl Jwm {
             e.detail,
             keysym,
             e.state.bits(),
-            self.CLEANMASK(e.state.bits())
+            self.clean_mask(e.state.bits().into())
         );
         // 处理按键绑定
         if self.execute_key_binding(keysym, e.state)? {
@@ -5340,7 +5429,7 @@ impl Jwm {
         state: KeyButMask,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         let keys = CONFIG.get_keys();
-        let clean_state = self.CLEANMASK(state.bits());
+        let clean_state = self.clean_mask(state.bits().into());
         for (i, key_config) in keys.iter().enumerate() {
             if self.is_key_match(key_config, keysym, clean_state.into()) {
                 info!(
@@ -5358,7 +5447,7 @@ impl Jwm {
 
     fn is_key_match(&self, key_config: &Key, keysym: u32, clean_state: u32) -> bool {
         keysym == key_config.keysym as u32
-            && self.CLEANMASK(key_config.mod0 as u16).into() == clean_state
+            && self.clean_mask(key_config.mod0) == clean_state
             && key_config.func.is_some()
     }
 
@@ -5936,15 +6025,18 @@ impl Jwm {
         }
     }
 
-    pub fn mappingnotify(&mut self, e: *mut XEvent) {
+    pub fn mappingnotify(
+        &mut self,
+        e: &MappingNotifyEvent,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[mappingnotify]");
-        unsafe {
-            let mut ev = (*e).mapping;
-            XRefreshKeyboardMapping(&mut ev);
-            if ev.request == MappingKeyboard {
+        match e.request {
+            Mapping::KEYBOARD => {
                 self.grabkeys();
             }
+            _ => {}
         }
+        Ok(())
     }
 
     fn get_and_query_window_geom<C: Connection>(
@@ -5975,21 +6067,30 @@ impl Jwm {
         return Ok(geom);
     }
 
-    pub fn maprequest(&mut self, e: *mut XEvent) {
+    pub fn maprequest(&mut self, e: &MapRequestEvent) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[maprequest]");
-        unsafe {
-            let ev = (*e).map_request;
-            if let Ok(window_attr) = self.get_window_attributes(ev.window as u32) {
-                if window_attr.override_redirect {
-                    return;
-                }
-                if self.wintoclient(ev.window as u32).is_none() {
-                    let geom = Self::get_and_query_window_geom(&self.x11rb_conn, ev.window as u32)
-                        .unwrap();
-                    self.manage(ev.window as u32, &geom);
-                }
-            }
+        // 获取窗口属性
+        let window_attr = self.x11rb_conn.get_window_attributes(e.window)?.reply()?;
+        // 忽略设置了override_redirect的窗口
+        if window_attr.override_redirect {
+            debug!(
+                "Ignoring map request for override_redirect window: {}",
+                e.window
+            );
+            return Ok(());
         }
+        // 检查窗口是否已经被管理
+        if self.wintoclient(e.window).is_none() {
+            // 获取窗口几何信息并开始管理
+            let geom = Self::get_and_query_window_geom(&self.x11rb_conn, e.window)?;
+            self.manage(e.window, &geom);
+        } else {
+            debug!(
+                "Window {} is already managed, ignoring map request",
+                e.window
+            );
+        }
+        Ok(())
     }
 
     pub fn monocle(&mut self, mon_rc: &Rc<RefCell<Monitor>>) {
@@ -6054,23 +6155,46 @@ impl Jwm {
         }
     }
 
-    pub fn motionnotify(&mut self, e: *mut XEvent) {
+    pub fn motionnotify(
+        &mut self,
+        e: &MotionNotifyEvent,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[motionnotify]");
-        unsafe {
-            let ev = (*e).motion;
-            if ev.window != self.x11rb_root.into() {
-                return;
-            }
-            let m = self.recttomon(ev.x_root, ev.y_root, 1, 1);
-            if !Self::are_equal_rc(&m, &self.motion_mon) {
-                let selmon_mut_sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
-                self.unfocus(selmon_mut_sel, true);
-                self.sel_mon = m.clone();
-                self.focus(None);
-            }
-            self.motion_mon = m;
+        // 只处理根窗口上的鼠标移动事件
+        if e.event != self.x11rb_root {
+            return Ok(());
         }
+        // 根据鼠标位置确定当前显示器
+        let m = self.recttomon(e.root_x as i32, e.root_y as i32, 1, 1);
+        // 检查是否切换了显示器
+        if !Self::are_equal_rc(&m, &self.motion_mon) {
+            self.handle_monitor_switch(&m)?;
+        }
+        // 更新motion_mon
+        self.motion_mon = m;
+        Ok(())
     }
+
+    fn handle_monitor_switch(
+        &mut self,
+        new_monitor: &Option<Rc<RefCell<Monitor>>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 从当前选中显示器的选中客户端上移除焦点
+        let selmon_sel = self.sel_mon.as_ref().unwrap().borrow().sel.clone();
+        self.unfocus(selmon_sel, true);
+        // 切换到新显示器
+        self.sel_mon = new_monitor.clone();
+        // 在新显示器上设置焦点
+        self.focus(None);
+        if let Some(ref monitor) = new_monitor {
+            debug!(
+                "Switched to monitor {} via mouse motion",
+                monitor.borrow().num
+            );
+        }
+        Ok(())
+    }
+
     pub fn unmanage(&mut self, c: Option<Rc<RefCell<Client>>>, destroyed: bool) {
         let client_rc = match c {
             Some(c) => c,
@@ -6381,19 +6505,22 @@ impl Jwm {
         }
     }
 
-    pub fn unmapnotify(&mut self, e: *mut XEvent) {
+    pub fn unmapnotify(&mut self, e: &UnmapNotifyEvent) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[unmapnotify]");
-        unsafe {
-            let ev = (*e).unmap;
-            let c = self.wintoclient(ev.window as u32);
-            if c.is_some() {
-                if ev.send_event > 0 {
-                    let _ = self.setclientstate(c.as_ref().unwrap(), WithdrawnState as i64);
-                } else {
-                    self.unmanage(c, false);
-                }
+        if let Some(client_rc) = self.wintoclient(e.window) {
+            if e.from_configure {
+                // 这是由于配置请求导致的unmap（通常是合成窗口管理器）
+                debug!("Unmap from configure for window {}", e.window);
+                self.setclientstate(&client_rc, WithdrawnState as i64)?;
+            } else {
+                // 这是真正的窗口销毁或隐藏
+                debug!("Real unmap for window {}, unmanaging", e.window);
+                self.unmanage(Some(client_rc), false);
             }
+        } else {
+            debug!("Unmap event for unmanaged window: {}", e.window);
         }
+        Ok(())
     }
 
     pub fn isuniquegeom(
