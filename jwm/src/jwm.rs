@@ -64,10 +64,9 @@ use x11::xlib::{
     Time, True, UnmapNotify, XDestroyWindow, XDisplayKeycodes, XErrorEvent, XEvent, XFree,
     XGetKeyboardMapping, XGetTransientForHint, XGrabButton, XGrabKey, XGrabPointer, XGrabServer,
     XKeycodeToKeysym, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow,
-    XNextEvent, XRaiseWindow, XRefreshKeyboardMapping, XSelectInput, XSetCloseDownMode,
-    XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey, XUngrabPointer,
-    XUngrabServer, XWarpPointer, XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME,
-    XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
+    XNextEvent, XRefreshKeyboardMapping, XSelectInput, XSetCloseDownMode, XSetErrorHandler,
+    XSetInputFocus, XSync, XUngrabButton, XUngrabKey, XUngrabPointer, XUngrabServer, XWarpPointer,
+    XWindowChanges, CWX, CWY, XA_WM_HINTS, XA_WM_NAME, XA_WM_NORMAL_HINTS, XA_WM_TRANSIENT_FOR,
 };
 
 use std::cmp::{max, min};
@@ -1355,60 +1354,59 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[setfullscreen]");
         use x11rb::wrapper::ConnectionExt;
-        unsafe {
-            let isfullscreen = { c.borrow_mut().is_fullscreen };
-            let win = { c.borrow_mut().win };
-            if fullscreen && !isfullscreen {
-                self.x11rb_conn.change_property32(
-                    PropMode::REPLACE,
-                    win,
-                    self.atoms._NET_WM_STATE,
-                    AtomEnum::ATOM,
-                    &[self.atoms._NET_WM_STATE_FULLSCREEN],
-                )?;
-                {
-                    let mut c = c.borrow_mut();
-                    c.is_fullscreen = true;
-                    c.old_state = c.is_floating;
-                    c.old_border_w = c.border_w;
-                    c.border_w = 0;
-                    c.is_floating = true;
-                }
-                let (mx, my, mw, mh) = {
-                    let c_mon = &c.borrow().mon;
-                    let mon_mut = c_mon.as_ref().unwrap().borrow();
-                    (mon_mut.m_x, mon_mut.m_y, mon_mut.m_w, mon_mut.m_h)
-                };
-                let _ = self.resizeclient(&mut *c.borrow_mut(), mx, my, mw, mh);
-                // Raise the window to the top of the stacking order
-                XRaiseWindow(self.x11_dpy, win.into());
-            } else if !fullscreen && isfullscreen {
-                self.x11rb_conn.change_property32(
-                    PropMode::REPLACE,
-                    win,
-                    self.atoms._NET_WM_STATE,
-                    AtomEnum::ATOM,
-                    &[],
-                )?;
-                {
-                    let mut c = c.borrow_mut();
-                    c.is_fullscreen = false;
-                    c.is_floating = c.old_state;
-                    c.border_w = c.old_border_w;
-                    c.x = c.old_x;
-                    c.y = c.old_y;
-                    // println!("line: {}, {}", line!(), c.y);
-                    c.w = c.old_w;
-                    c.h = c.old_h;
-                }
-                {
-                    let mut c = c.borrow_mut();
-                    let (x, y, w, h) = (c.x, c.y, c.w, c.h);
-                    let _ = self.resizeclient(&mut *c, x, y, w, h);
-                }
-                let mon = { c.borrow_mut().mon.clone() };
-                self.arrange(mon);
+        let isfullscreen = { c.borrow_mut().is_fullscreen };
+        let win = { c.borrow_mut().win };
+        if fullscreen && !isfullscreen {
+            self.x11rb_conn.change_property32(
+                PropMode::REPLACE,
+                win,
+                self.atoms._NET_WM_STATE,
+                AtomEnum::ATOM,
+                &[self.atoms._NET_WM_STATE_FULLSCREEN],
+            )?;
+            {
+                let mut c = c.borrow_mut();
+                c.is_fullscreen = true;
+                c.old_state = c.is_floating;
+                c.old_border_w = c.border_w;
+                c.border_w = 0;
+                c.is_floating = true;
             }
+            let (mx, my, mw, mh) = {
+                let c_mon = &c.borrow().mon;
+                let mon_mut = c_mon.as_ref().unwrap().borrow();
+                (mon_mut.m_x, mon_mut.m_y, mon_mut.m_w, mon_mut.m_h)
+            };
+            let _ = self.resizeclient(&mut *c.borrow_mut(), mx, my, mw, mh);
+            // Raise the window to the top of the stacking order
+            let config = xproto::ConfigureWindowAux::new().stack_mode(StackMode::ABOVE);
+            self.x11rb_conn.configure_window(win, &config)?;
+        } else if !fullscreen && isfullscreen {
+            self.x11rb_conn.change_property32(
+                PropMode::REPLACE,
+                win,
+                self.atoms._NET_WM_STATE,
+                AtomEnum::ATOM,
+                &[],
+            )?;
+            {
+                let mut c = c.borrow_mut();
+                c.is_fullscreen = false;
+                c.is_floating = c.old_state;
+                c.border_w = c.old_border_w;
+                c.x = c.old_x;
+                c.y = c.old_y;
+                // println!("line: {}, {}", line!(), c.y);
+                c.w = c.old_w;
+                c.h = c.old_h;
+            }
+            {
+                let mut c = c.borrow_mut();
+                let (x, y, w, h) = (c.x, c.y, c.w, c.h);
+                let _ = self.resizeclient(&mut *c, x, y, w, h);
+            }
+            let mon = { c.borrow_mut().mon.clone() };
+            self.arrange(mon);
         }
         Ok(())
     }
