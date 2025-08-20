@@ -45,8 +45,8 @@ use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
     AnyKey, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow, ButtonPressMask,
     ButtonReleaseMask, Display, EnterWindowMask, KeySym, NoEventMask, PointerMotionMask,
-    PropertyChangeMask, StructureNotifyMask, Success, XErrorEvent, XFree, XGetTransientForHint,
-    XMapWindow, XMoveResizeWindow, XMoveWindow, XSelectInput, XA_WM_NAME,
+    PropertyChangeMask, StructureNotifyMask, Success, XErrorEvent, XFree, XMapWindow,
+    XMoveResizeWindow, XMoveWindow, XSelectInput, XA_WM_NAME,
 };
 
 use std::cmp::{max, min};
@@ -4553,35 +4553,6 @@ impl Jwm {
         Ok(())
     }
 
-    fn get_transient_for_hint(
-        &self,
-        window: Window,
-    ) -> Result<Option<Window>, Box<dyn std::error::Error>> {
-        let property = self
-            .x11rb_conn
-            .get_property(
-                false,
-                window,
-                self.atoms.WM_TRANSIENT_FOR,
-                AtomEnum::WINDOW,
-                0,
-                1,
-            )?
-            .reply()?;
-
-        if property.format == 32 && !property.value.is_empty() {
-            let transient_for = u32::from_ne_bytes([
-                property.value[0],
-                property.value[1],
-                property.value[2],
-                property.value[3],
-            ]);
-            Ok(Some(transient_for))
-        } else {
-            Ok(None)
-        }
-    }
-
     fn handle_normal_hints_change(
         &mut self,
         client_rc: &Rc<RefCell<Client>>,
@@ -5813,7 +5784,7 @@ impl Jwm {
         }
 
         // 常规客户端管理流程
-        self.manage_regular_client(client_rc);
+        let _ = self.manage_regular_client(client_rc);
     }
 
     fn setup_client_window(&mut self, client_rc: &Rc<RefCell<Client>>) {
@@ -5967,51 +5938,144 @@ impl Jwm {
     }
 
     // 分离出来的常规客户端管理
-    fn manage_regular_client(&mut self, client_rc: &Rc<RefCell<Client>>) {
+    fn manage_regular_client(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // 处理 WM_TRANSIENT_FOR
-        let transient_for_win: Window = 0;
-        unsafe {
-            if XGetTransientForHint(
-                self.x11_dpy,
-                client_rc.borrow().win.into(),
-                &mut transient_for_win.into(),
-            ) > 0
-            {
-                if let Some(temp_transient_client) = self.wintoclient(transient_for_win) {
+        self.handle_transient_for(&client_rc)?;
+
+        // 调整窗口位置
+        self.adjust_client_position(&client_rc);
+
+        // 设置窗口属性
+        self.setup_client_window(&client_rc);
+
+        // 更新各种提示
+        self.updatewindowtype(&client_rc);
+        self.updatesizehints(&client_rc)?;
+        self.updatewmhints(&client_rc);
+
+        // 添加到管理链表
+        self.attach(Some(client_rc.clone()));
+        self.attachstack(Some(client_rc.clone()));
+
+        // 注册事件和抓取按钮
+        self.register_client_events(&client_rc)?;
+
+        // 更新客户端列表
+        self.update_net_client_list()?;
+
+        // 映射窗口
+        self.map_client_window(&client_rc)?;
+
+        // 处理焦点
+        self.handle_new_client_focus(&client_rc);
+
+        Ok(())
+    }
+
+    fn handle_transient_for(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let win = client_rc.borrow().win;
+
+        // 使用 x11rb 获取 WM_TRANSIENT_FOR 属性
+        match self.get_transient_for_hint(win) {
+            Ok(Some(transient_for_win)) => {
+                // 找到 transient_for 窗口对应的客户端
+                if let Some(parent_client) = self.wintoclient(transient_for_win) {
                     let mut client_mut = client_rc.borrow_mut();
-                    let transient_main_client = temp_transient_client.borrow();
-                    client_mut.mon = transient_main_client.mon.clone();
-                    client_mut.tags = transient_main_client.tags;
+                    let parent_borrow = parent_client.borrow();
+                    client_mut.mon = parent_borrow.mon.clone();
+                    client_mut.tags = parent_borrow.tags;
+
+                    info!(
+                        "[handle_transient_for] Client {} is transient for {}",
+                        win, transient_for_win
+                    );
                 } else {
+                    // 父窗口不是我们管理的客户端
                     client_rc.borrow_mut().mon = self.sel_mon.clone();
                     self.applyrules(&client_rc);
                 }
-            } else {
+            }
+            Ok(None) => {
+                // 没有 WM_TRANSIENT_FOR 属性
+                client_rc.borrow_mut().mon = self.sel_mon.clone();
+                self.applyrules(&client_rc);
+            }
+            Err(e) => {
+                warn!(
+                    "[handle_transient_for] Failed to get transient_for hint: {:?}",
+                    e
+                );
+                // 失败时使用默认行为
                 client_rc.borrow_mut().mon = self.sel_mon.clone();
                 self.applyrules(&client_rc);
             }
         }
-        // 调整窗口位置
-        self.adjust_client_position(&client_rc);
-        // 设置窗口属性
-        self.setup_client_window(&client_rc);
-        // 更新各种提示
-        self.updatewindowtype(&client_rc);
-        let _ = self.updatesizehints(&client_rc);
-        self.updatewmhints(&client_rc);
-        // 添加到管理链表
-        self.attach(Some(client_rc.clone()));
-        self.attachstack(Some(client_rc.clone()));
-        // 注册事件和抓取按钮
-        let _ = self.register_client_events(&client_rc);
-        // 更新客户端列表
-        let _ = self.update_net_client_list();
-        // 映射窗口
-        unsafe {
-            XMapWindow(self.x11_dpy, client_rc.borrow().win.into());
+
+        Ok(())
+    }
+
+    fn get_transient_for_hint(
+        &self,
+        window: Window,
+    ) -> Result<Option<Window>, Box<dyn std::error::Error>> {
+        let cookie = self.x11rb_conn.get_property(
+            false,                       // delete
+            window,                      // window
+            self.atoms.WM_TRANSIENT_FOR, // property
+            AtomEnum::WINDOW,            // type
+            0,                           // long_offset
+            1,                           // long_length
+        )?;
+
+        let reply = cookie.reply()?;
+
+        if reply.format == 32 && reply.value.len() >= 4 {
+            // 解析 32位的窗口ID
+            let mut values = reply.value32().unwrap();
+            if let Some(transient_for) = values.next() {
+                if transient_for != 0 && transient_for != window {
+                    return Ok(Some(transient_for));
+                }
+            }
         }
-        // 处理焦点
-        self.handle_new_client_focus(&client_rc);
+
+        Ok(None)
+    }
+
+    fn map_client_window(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let win = client_rc.borrow().win;
+
+        match self.x11rb_conn.map_window(win) {
+            Ok(cookie) => {
+                // 检查映射是否成功
+                if let Err(e) = cookie.check() {
+                    error!("[map_client_window] Failed to map window {}: {:?}", win, e);
+                    return Err(e.into());
+                }
+            }
+            Err(e) => {
+                error!(
+                    "[map_client_window] Failed to send map_window request for {}: {:?}",
+                    win, e
+                );
+                return Err(e.into());
+            }
+        }
+
+        // 确保请求被发送
+        self.x11rb_conn.flush()?;
+
+        info!("[map_client_window] Successfully mapped window {}", win);
+        Ok(())
     }
 
     fn manage_statusbar(&mut self, client_rc: &Rc<RefCell<Client>>) {
