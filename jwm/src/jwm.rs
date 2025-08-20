@@ -1,7 +1,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
-use libc::{close, fork, setsid, sigaction, sigemptyset, SIGCHLD, SIG_DFL};
+use libc::{close, setsid, sigaction, sigemptyset, SIGCHLD, SIG_DFL};
 use log::info;
 use log::warn;
 use log::{debug, error};
@@ -12,10 +12,7 @@ use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
-use std::ffi::c_char;
-use std::ffi::CStr;
 use std::fmt;
-use std::mem::zeroed;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
 use std::ptr::null_mut;
@@ -26,10 +23,7 @@ use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 use std::{os::raw::c_long, usize};
 use x11::xft::XftColor;
-use x11::xlib::XConnectionNumber;
-use x11::xlib::XFreeStringList;
 use x11::xlib::XOpenDisplay;
-use x11::xlib::{XGetTextProperty, XTextProperty, XmbTextPropertyToTextList, XA_STRING};
 use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::properties::WmSizeHints;
@@ -44,9 +38,7 @@ use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
     AnyKey, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow, ButtonPressMask,
-    ButtonReleaseMask, Display, EnterWindowMask, KeySym, NoEventMask, PointerMotionMask,
-    PropertyChangeMask, StructureNotifyMask, Success, XErrorEvent, XFree, XMapWindow,
-    XMoveResizeWindow, XMoveWindow, XSelectInput, XA_WM_NAME,
+    ButtonReleaseMask, Display, KeySym, PointerMotionMask, XErrorEvent, XA_WM_NAME,
 };
 
 use std::cmp::{max, min};
@@ -1169,7 +1161,7 @@ impl Jwm {
         // 清理状态栏
         let statusbar_monitor_ids: Vec<i32> = self.status_bar_clients.keys().cloned().collect();
         for monitor_id in statusbar_monitor_ids {
-            self.unmanage_statusbar(monitor_id, false);
+            self.unmanage_statusbar(monitor_id, false)?;
         }
 
         // 常规清理逻辑
@@ -1878,66 +1870,90 @@ impl Jwm {
     }
 
     pub fn showhide(&mut self, client_opt: Option<Rc<RefCell<Client>>>) {
-        // info!("[showhide]");
         let client_rc = match client_opt {
             Some(c) => c,
             None => return,
         };
-        unsafe {
-            let isvisible = {
-                let client_borrow = client_rc.borrow();
-                client_borrow.isvisible()
-            };
-            if isvisible {
-                // show clients top down.
-                let is_floating;
-                let is_fullscreen;
-                {
-                    let client_borrow = client_rc.borrow();
-                    XMoveWindow(
-                        self.x11_dpy,
-                        client_borrow.win.into(),
-                        client_borrow.x,
-                        client_borrow.y,
-                    );
-                    is_floating = client_borrow.is_floating;
-                    is_fullscreen = client_borrow.is_fullscreen;
-                }
-                {
-                    if is_floating && !is_fullscreen {
-                        let (x, y, w, h) = {
-                            let client_borrow = client_rc.borrow();
-                            (
-                                client_borrow.x,
-                                client_borrow.y,
-                                client_borrow.w,
-                                client_borrow.h,
-                            )
-                        };
-                        self.resize(&client_rc, x, y, w, h, false);
-                    }
-                }
-                let snext = {
-                    let client_borrow = client_rc.borrow();
-                    client_borrow.stack_next.clone()
-                };
-                self.showhide(snext);
-            } else {
-                // hide clients bottom up.
-                let snext = {
-                    let client_borrow = client_rc.borrow();
-                    client_borrow.stack_next.clone()
-                };
-                self.showhide(snext);
-                let client_borrow = client_rc.borrow();
-                XMoveWindow(
-                    self.x11_dpy,
-                    client_borrow.win.into(),
-                    client_borrow.width() * -2,
-                    client_borrow.y,
-                );
-            }
+
+        let isvisible = {
+            let client_borrow = client_rc.borrow();
+            client_borrow.isvisible()
+        };
+
+        if isvisible {
+            // 显示客户端 - 从上到下
+            self.show_client(&client_rc);
+        } else {
+            // 隐藏客户端 - 从下到上
+            self.hide_client(&client_rc);
         }
+    }
+
+    fn show_client(&mut self, client_rc: &Rc<RefCell<Client>>) {
+        let (win, x, y, is_floating, is_fullscreen) = {
+            let client_borrow = client_rc.borrow();
+            (
+                client_borrow.win,
+                client_borrow.x,
+                client_borrow.y,
+                client_borrow.is_floating,
+                client_borrow.is_fullscreen,
+            )
+        };
+
+        // 移动窗口到可见位置
+        if let Err(e) = self.move_window(win, x, y) {
+            warn!("[show_client] Failed to move window {}: {:?}", win, e);
+        }
+
+        // 如果是浮动窗口且非全屏，调整大小
+        if is_floating && !is_fullscreen {
+            let (w, h) = {
+                let client_borrow = client_rc.borrow();
+                (client_borrow.w, client_borrow.h)
+            };
+            self.resize(client_rc, x, y, w, h, false);
+        }
+
+        // 递归处理下一个客户端
+        let snext = {
+            let client_borrow = client_rc.borrow();
+            client_borrow.stack_next.clone()
+        };
+        self.showhide(snext);
+    }
+
+    fn hide_client(&mut self, client_rc: &Rc<RefCell<Client>>) {
+        // 先递归处理下一个客户端（底部优先）
+        let snext = {
+            let client_borrow = client_rc.borrow();
+            client_borrow.stack_next.clone()
+        };
+        self.showhide(snext);
+
+        // 然后隐藏当前客户端
+        let (win, y, width) = {
+            let client_borrow = client_rc.borrow();
+            (client_borrow.win, client_borrow.y, client_borrow.width())
+        };
+
+        // 将窗口移动到屏幕外隐藏
+        let hidden_x = width * -2;
+        if let Err(e) = self.move_window(win, hidden_x, y) {
+            warn!("[hide_client] Failed to hide window {}: {:?}", win, e);
+        }
+    }
+
+    fn move_window(
+        &mut self,
+        win: Window,
+        x: i32,
+        y: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let aux = ConfigureWindowAux::new().x(x).y(y);
+
+        self.x11rb_conn.configure_window(win, &aux)?;
+        Ok(())
     }
 
     pub fn configurerequest(
@@ -3094,40 +3110,67 @@ impl Jwm {
 
     pub fn spawn(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         info!("[spawn]");
-        unsafe {
-            let mut sa: sigaction = zeroed();
 
-            let mut mut_arg: Arg = arg.clone();
-            if let Arg::V(ref mut v) = mut_arg {
-                if *v == *CONFIG.get_dmenucmd() {
-                    let tmp =
-                        (b'0' + self.sel_mon.as_ref().unwrap().borrow_mut().num as u8) as char;
-                    let tmp = tmp.to_string();
-                    info!(
-                        "[spawn] dmenumon tmp: {}, num: {}",
-                        tmp,
-                        self.sel_mon.as_ref().unwrap().borrow_mut().num
-                    );
-                    (*v)[2] = tmp;
-                }
-                if fork() == 0 {
-                    if !self.x11_dpy.is_null() {
-                        close(XConnectionNumber(self.x11_dpy));
-                    }
+        let mut mut_arg: Arg = arg.clone();
+        if let Arg::V(ref mut v) = mut_arg {
+            // 处理 dmenu 命令的特殊情况
+            if *v == *CONFIG.get_dmenucmd() {
+                let monitor_num = self.sel_mon.as_ref().unwrap().borrow().num;
+                let tmp = (b'0' + monitor_num as u8) as char;
+                let tmp = tmp.to_string();
+                info!("[spawn] dmenumon tmp: {}, num: {}", tmp, monitor_num);
+                (*v)[2] = tmp;
+            }
+
+            info!("[spawn] spawning command: {:?}", v);
+
+            // 使用 Rust 的 Command API，它会自动处理 fork/exec
+            let mut command = Command::new(&v[0]);
+            command.args(&v[1..]);
+
+            // 配置子进程
+            command
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::inherit())
+                .stderr(std::process::Stdio::inherit());
+
+            // 使用 pre_exec 来设置子进程环境
+            use std::os::unix::io::AsRawFd;
+            use std::os::unix::process::CommandExt;
+
+            let x11_fd = self.x11rb_conn.stream().as_raw_fd();
+
+            unsafe {
+                command.pre_exec(move || {
+                    // 关闭继承的 X11 连接
+                    close(x11_fd);
                     setsid();
 
+                    // 重置 SIGCHLD 信号处理
+                    let mut sa: sigaction = std::mem::zeroed();
                     sigemptyset(&mut sa.sa_mask);
                     sa.sa_flags = 0;
                     sa.sa_sigaction = SIG_DFL;
-                    sigaction(SIGCHLD, &sa, null_mut());
-
-                    info!("[spawn] arg v: {:?}", v);
-                    if let Err(val) = Command::new(&v[0]).args(&v[1..]).spawn() {
-                        info!("[spawn] Command exited with error {:?}", val);
-                    }
+                    sigaction(SIGCHLD, &sa, std::ptr::null_mut());
+                    Ok(())
+                });
+            }
+            // 启动子进程
+            match command.spawn() {
+                Ok(child) => {
+                    debug!(
+                        "[spawn] successfully spawned process with PID: {}",
+                        child.id()
+                    );
+                    // 不等待子进程，让它在后台运行
+                }
+                Err(e) => {
+                    error!("[spawn] failed to spawn command {:?}: {}", v, e);
+                    return Err(e.into());
                 }
             }
         }
+
         Ok(())
     }
 
@@ -4334,120 +4377,127 @@ impl Jwm {
     }
 
     pub fn gettextprop(&mut self, w: Window, atom: Atom, text: &mut String) -> bool {
-        // info!("[gettextprop]"); // 日志
-        unsafe {
-            // unsafe 块，因为直接与 Xlib C API 交互
-            let mut name_prop: XTextProperty = std::mem::zeroed(); // 初始化 XTextProperty 结构体
+        // 清空输出字符串
+        text.clear();
 
-            // 1. 获取窗口属性
-            // XGetTextProperty 用于获取指定窗口 w 的文本属性 (由 atom 标识，如 XA_WM_NAME)
-            // 结果存储在 name_prop 中。
-            // 如果失败或属性为空 (name_prop.nitems <= 0)，则返回 false。
-            if XGetTextProperty(self.x11_dpy, w.into(), &mut name_prop, atom.into()) <= 0
-                || name_prop.nitems == 0
-            {
-                // XFree on name_prop.value might be needed here if XGetTextProperty allocated it
-                // even on failure, though docs suggest only on success.
-                // For safety, one might consider checking name_prop.value != null and XFreeing it.
-                // However, typical Xlib examples free only on success.
-                if !name_prop.value.is_null() {
-                    XFree(name_prop.value as *mut _);
-                }
-                return false;
-            }
-
-            // 2. 清空输出字符串 text
-            *text = String::new(); // 或者 text.clear();
-
-            // 3. 根据属性编码处理文本
-            if name_prop.encoding == XA_STRING {
-                // 如果编码是 XA_STRING (通常是 Latin-1 或本地编码)
-                // XA_STRING 通常被认为是简单的 C 字符串 (null-terminated)
-                if !name_prop.value.is_null() {
-                    // 确保 value 指针有效
-                    let c_str_slice = CStr::from_ptr(name_prop.value as *const c_char);
-                    match c_str_slice.to_str() {
-                        // 尝试将其转换为 Rust 的 &str (UTF-8)
-                        Ok(val) => {
-                            // 成功转换为 &str，现在处理长度限制
-                            let mut tmp_string = val.to_string();
-                            let mut char_count = 0;
-                            let mut byte_truncate_at = tmp_string.len();
-                            for (idx, _) in tmp_string.char_indices() {
-                                if char_count >= self.stext_max_len {
-                                    byte_truncate_at = idx;
-                                    break;
-                                }
-                                char_count += 1;
-                            }
-                            tmp_string.truncate(byte_truncate_at);
-                            *text = tmp_string;
-                        }
-                        Err(e) => {
-                            // 转换为 &str 失败 (例如，XA_STRING 内容不是有效的 UTF-8)
-                            info!("[gettextprop] text from XA_STRING to_str error: {:?}", e);
-                            // 此时 text 仍然是空字符串
-                            // return false; // 或者让 text 为空并返回 true，取决于期望行为
-                        }
-                    }
-                }
-            } else {
-                // 如果编码不是 XA_STRING (通常意味着可能是 COMPOUND_TEXT 或其他需要转换的编码)
-                // 尝试使用 XmbTextPropertyToTextList 将 XTextProperty 转换为本地多字节字符串列表
-                // (通常是 UTF-8，如果 locale 设置正确的话)
-                let mut list_ptr: *mut *mut c_char = std::ptr::null_mut();
-                let mut count: i32 = 0;
-                // XmbTextPropertyToTextList 返回值 >= Success (0) 表示成功
-                if XmbTextPropertyToTextList(
-                    self.x11_dpy,
-                    &mut name_prop,
-                    &mut list_ptr,
-                    &mut count,
-                ) >= Success as i32
-                    && count > 0
-                    && !list_ptr.is_null()
-                    && !(*list_ptr).is_null()
-                // 确保列表和第一个元素有效
-                {
-                    // 通常我们只关心列表中的第一个字符串
-                    let c_str_slice = CStr::from_ptr(*list_ptr as *const c_char);
-                    match c_str_slice.to_str() {
-                        // 尝试转换为 Rust &str
-                        Ok(val) => {
-                            let mut tmp_string = val.to_string();
-                            let mut char_count = 0;
-                            let mut byte_truncate_at = tmp_string.len();
-                            for (idx, _) in tmp_string.char_indices() {
-                                if char_count >= self.stext_max_len {
-                                    byte_truncate_at = idx;
-                                    break;
-                                }
-                                char_count += 1;
-                            }
-                            tmp_string.truncate(byte_truncate_at);
-                            *text = tmp_string;
-                        }
-                        Err(e) => {
-                            info!("[gettextprop] text from XmbList to_str error: {:?}", e);
-                            return false;
-                        }
-                    }
-                    XFreeStringList(list_ptr); // 必须释放由 XmbTextPropertyToTextList 分配的列表
-                } else {
-                    // 转换失败
-                    info!("[gettextprop] XmbTextPropertyToTextList failed or returned empty list");
+        // 获取窗口属性
+        let property = match self.x11rb_conn.get_property(
+            false,         // delete: 不删除属性
+            w,             // window
+            atom,          // property
+            AtomEnum::ANY, // type: 接受任何类型
+            0,             // long_offset
+            u32::MAX,      // long_length: 读取全部内容
+        ) {
+            Ok(cookie) => match cookie.reply() {
+                Ok(prop) => prop,
+                Err(e) => {
+                    debug!("[gettextprop] Failed to get property reply: {:?}", e);
                     return false;
                 }
+            },
+            Err(e) => {
+                debug!("[gettextprop] Failed to send get_property request: {:?}", e);
+                return false;
             }
+        };
 
-            // 4. 释放 XTextProperty 中的 value 字段
-            // XGetTextProperty 会为 name_prop.value 分配内存，需要手动释放。
-            if !name_prop.value.is_null() {
-                XFree(name_prop.value as *mut _);
-            }
-
-            return true; // 表示尝试获取属性的操作已完成（不一定文本转换成功）
+        // 检查属性是否有效
+        if property.value.is_empty() {
+            debug!("[gettextprop] Property value is empty");
+            return false;
         }
+
+        // 根据属性类型和格式处理文本
+        match (property.type_, property.format) {
+            // UTF8_STRING 类型 (现代应用首选)
+            (type_, 8) if type_ == self.atoms.UTF8_STRING => {
+                match String::from_utf8(property.value) {
+                    Ok(utf8_string) => {
+                        *text = self.truncate_text(utf8_string);
+                        return true;
+                    }
+                    Err(e) => {
+                        debug!("[gettextprop] Invalid UTF-8 in UTF8_STRING: {:?}", e);
+                        return false;
+                    }
+                }
+            }
+
+            // STRING 类型 (传统的 Latin-1 编码)
+            (type_, 8) if type_ == AtomEnum::STRING.into() => {
+                // 尝试将 Latin-1 转换为 UTF-8
+                let latin1_string: String = property
+                    .value
+                    .iter()
+                    .map(|&b| b as char) // Latin-1 直接映射到 Unicode
+                    .collect();
+                *text = self.truncate_text(latin1_string);
+                return true;
+            }
+
+            // COMPOUND_TEXT 类型 (需要特殊处理)
+            (type_, 8) if type_ == self.atoms.COMPOUND_TEXT => {
+                // 对于 COMPOUND_TEXT，我们尝试简单的 UTF-8 解析
+                // 如果失败，回退到 Latin-1
+                match String::from_utf8(property.value.clone()) {
+                    Ok(utf8_string) => {
+                        *text = self.truncate_text(utf8_string);
+                        return true;
+                    }
+                    Err(_) => {
+                        // 回退到 Latin-1
+                        let latin1_string: String =
+                            property.value.iter().map(|&b| b as char).collect();
+                        *text = self.truncate_text(latin1_string);
+                        return true;
+                    }
+                }
+            }
+
+            // 其他类型，尝试作为原始字节处理
+            (_, 8) => {
+                match String::from_utf8(property.value.clone()) {
+                    Ok(utf8_string) => {
+                        *text = self.truncate_text(utf8_string);
+                        return true;
+                    }
+                    Err(_) => {
+                        // 回退到 Latin-1
+                        let latin1_string: String =
+                            property.value.iter().map(|&b| b as char).collect();
+                        *text = self.truncate_text(latin1_string);
+                        return true;
+                    }
+                }
+            }
+
+            // 非 8 位格式
+            _ => {
+                debug!(
+                    "[gettextprop] Unsupported property format: {}",
+                    property.format
+                );
+                return false;
+            }
+        }
+    }
+
+    fn truncate_text(&self, input: String) -> String {
+        let mut char_count = 0;
+        let mut byte_truncate_at = input.len();
+
+        for (idx, _) in input.char_indices() {
+            if char_count >= self.stext_max_len {
+                byte_truncate_at = idx;
+                break;
+            }
+            char_count += 1;
+        }
+
+        let mut result = input;
+        result.truncate(byte_truncate_at);
+        result
     }
 
     /// 获取窗口的 transient_for 窗口，如果存在且有效
@@ -5787,49 +5837,52 @@ impl Jwm {
         let _ = self.manage_regular_client(client_rc);
     }
 
-    fn setup_client_window(&mut self, client_rc: &Rc<RefCell<Client>>) {
-        unsafe {
-            let win = client_rc.borrow().win;
-            // 设置边框
-            {
-                let mut client_mut = client_rc.borrow_mut();
-                client_mut.border_w = CONFIG.border_px() as i32;
-                let _ = self.set_window_border_width(win, client_mut.border_w as u32);
-            }
+    fn setup_client_window(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let win = client_rc.borrow().win;
+        info!("[setup_client_window] Setting up window {}", win);
 
-            // 设置边框颜色为"正常"状态的颜色
-            let _ = self.set_window_border_pixel(
-                win,
-                self.theme_manager
-                    .get_scheme(SchemeType::Norm)
-                    .border_color()
-                    .pixel as u32,
-            );
-
-            // 发送 ConfigureNotify 事件给客户端
-            {
-                let mut client_mut = client_rc.borrow_mut();
-                let _ = self.configure(&mut client_mut);
-            }
-
-            // 设置窗口在屏幕外的临时位置（避免闪烁）
-            {
-                let client_borrow = client_rc.borrow();
-                XMoveResizeWindow(
-                    self.x11_dpy,
-                    win.into(),
-                    client_borrow.x + 2 * self.s_w, // 移到屏幕外
-                    client_borrow.y,
-                    client_borrow.w as u32,
-                    client_borrow.h as u32,
-                );
-            }
-
-            // 设置客户端的 WM_STATE 为 NormalState
-            let _ = self.setclientstate(client_rc, NormalState as i64);
-
-            info!("[setup_client_window] Window setup completed for {}", win);
+        // 1. 设置边框宽度
+        {
+            let mut client_mut = client_rc.borrow_mut();
+            client_mut.border_w = CONFIG.border_px() as i32;
+            self.set_window_border_width(win, client_mut.border_w as u32)?;
         }
+
+        // 2. 设置边框颜色为"正常"状态的颜色
+        let border_color = self.theme_manager.get_scheme(SchemeType::Norm).border.pixel;
+        self.set_window_border_pixel(win, border_color as u32)?;
+
+        // 3. 发送 ConfigureNotify 事件给客户端
+        {
+            let mut client_mut = client_rc.borrow_mut();
+            self.configure(&mut client_mut)?;
+        }
+
+        // 4. 设置窗口在屏幕外的临时位置（避免闪烁）
+        {
+            let client_borrow = client_rc.borrow();
+            let offscreen_x = client_borrow.x + 2 * self.s_w; // 移到屏幕外
+
+            let aux = ConfigureWindowAux::new()
+                .x(offscreen_x)
+                .y(client_borrow.y)
+                .width(client_borrow.w as u32)
+                .height(client_borrow.h as u32);
+
+            self.x11rb_conn.configure_window(win, &aux)?;
+        }
+
+        // 5. 设置客户端的 WM_STATE 为 NormalState
+        self.setclientstate(client_rc, NormalState as i64)?;
+
+        // 6. 同步所有操作
+        self.x11rb_conn.flush()?;
+
+        info!("[setup_client_window] Window setup completed for {}", win);
+        Ok(())
     }
 
     // 更新完整的客户端列表（在需要时调用）
@@ -5949,7 +6002,7 @@ impl Jwm {
         self.adjust_client_position(&client_rc);
 
         // 设置窗口属性
-        self.setup_client_window(&client_rc);
+        self.setup_client_window(&client_rc)?;
 
         // 更新各种提示
         self.updatewindowtype(&client_rc);
@@ -6079,43 +6132,46 @@ impl Jwm {
     }
 
     fn manage_statusbar(&mut self, client_rc: &Rc<RefCell<Client>>) {
-        unsafe {
-            // 确定状态栏所属的显示器
-            let monitor_id;
-            // 配置状态栏客户端
-            {
-                let mut client_mut = client_rc.borrow_mut();
-                monitor_id = self.determine_statusbar_monitor(&mut client_mut);
-                info!("[manage_statusbar] monitor_id: {}", monitor_id);
-                client_mut.mon = self.get_monitor_by_id(monitor_id);
-                client_mut.never_focus = true;
-                client_mut.is_floating = true;
-                client_mut.tags = CONFIG.tagmask(); // 在所有标签可见
-                client_mut.border_w = CONFIG.border_px() as i32;
+        // 确定状态栏所属的显示器
+        let monitor_id;
+        // 配置状态栏客户端
+        {
+            let mut client_mut = client_rc.borrow_mut();
+            monitor_id = self.determine_statusbar_monitor(&mut client_mut);
+            info!("[manage_statusbar] monitor_id: {}", monitor_id);
+            client_mut.mon = self.get_monitor_by_id(monitor_id);
+            client_mut.never_focus = true;
+            client_mut.is_floating = true;
+            client_mut.tags = CONFIG.tagmask(); // 在所有标签可见
+            client_mut.border_w = CONFIG.border_px() as i32;
 
-                // 调整状态栏位置（通常在顶部）
-                self.position_statusbar(&mut client_mut, monitor_id);
-                // 设置状态栏特有的窗口属性
-                self.setup_statusbar_window(&mut client_mut);
-            }
-
-            // 注册状态栏到管理映射中
-            self.status_bar_clients
-                .insert(monitor_id, client_rc.clone());
-            self.status_bar_windows
-                .insert(client_rc.borrow().win, monitor_id);
-
-            // 映射状态栏窗口
-            XMapWindow(self.x11_dpy, client_rc.borrow().win.into());
-
-            // 确保状态栏位于最上层
-            // XRaiseWindow(self.dpy, client_rc.borrow().win);
-
-            info!(
-                "[manage_statusbar] Successfully managed statusbar on monitor {}",
-                monitor_id
-            );
+            // 调整状态栏位置（通常在顶部）
+            self.position_statusbar(&mut client_mut, monitor_id);
+            // 设置状态栏特有的窗口属性
+            let _ = self.setup_statusbar_window(&mut client_mut);
         }
+
+        // 注册状态栏到管理映射中
+        self.status_bar_clients
+            .insert(monitor_id, client_rc.clone());
+        self.status_bar_windows
+            .insert(client_rc.borrow().win, monitor_id);
+
+        // 映射状态栏窗口 - 使用 x11rb 替代 XMapWindow
+        let win = client_rc.borrow().win;
+        if let Err(e) = self.x11rb_conn.map_window(win) {
+            error!(
+                "[manage_statusbar] Failed to map statusbar window {}: {:?}",
+                win, e
+            );
+        } else {
+            debug!("[manage_statusbar] Mapped statusbar window {}", win);
+        }
+
+        info!(
+            "[manage_statusbar] Successfully managed statusbar on monitor {}",
+            monitor_id
+        );
     }
 
     // 确定状态栏应该在哪个显示器
@@ -6169,18 +6225,29 @@ impl Jwm {
     }
 
     // 设置状态栏窗口属性
-    fn setup_statusbar_window(&mut self, client_mut: &mut Client) {
-        unsafe {
-            let win = client_mut.win;
-            // 状态栏只需要监听结构变化和属性变化
-            XSelectInput(
-                self.x11_dpy,
-                win.into(),
-                StructureNotifyMask | PropertyChangeMask | EnterWindowMask,
-            );
-            // 发送配置通知
-            let _ = self.configure(client_mut);
-        }
+    fn setup_statusbar_window(
+        &mut self,
+        client_mut: &mut Client,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let win = client_mut.win;
+        info!(
+            "[setup_statusbar_window] Setting up statusbar window {}",
+            win
+        );
+        // 设置状态栏窗口的事件监听
+        let aux = ChangeWindowAttributesAux::new().event_mask(
+            EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE | EventMask::ENTER_WINDOW,
+        );
+        self.x11rb_conn.change_window_attributes(win, &aux)?;
+        // 发送配置通知
+        self.configure(client_mut)?;
+        // 同步操作
+        self.x11rb_conn.flush()?;
+        info!(
+            "[setup_statusbar_window] Statusbar window setup completed for {}",
+            win
+        );
+        Ok(())
     }
 
     pub fn client_y_offset(&mut self, m: &Monitor) -> i32 {
@@ -6531,7 +6598,7 @@ impl Jwm {
         let win = client_rc.borrow().win;
         // 检查是否是状态栏
         if let Some(&monitor_id) = self.status_bar_windows.get(&win) {
-            self.unmanage_statusbar(monitor_id, destroyed);
+            self.unmanage_statusbar(monitor_id, destroyed)?;
             return Ok(());
         }
         // 常规客户端的 unmanage 逻辑
@@ -6539,52 +6606,91 @@ impl Jwm {
         Ok(())
     }
 
-    fn unmanage_statusbar(&mut self, monitor_id: i32, destroyed: bool) {
+    fn unmanage_statusbar(
+        &mut self,
+        monitor_id: i32,
+        destroyed: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         info!(
             "[unmanage_statusbar] Removing statusbar for monitor {}",
             monitor_id
         );
 
-        if let Some(statusbar) = self.status_bar_clients.remove(&monitor_id) {
-            let win = statusbar.borrow().win;
-            self.status_bar_windows.remove(&win);
-
-            if !destroyed {
-                unsafe {
-                    XSelectInput(self.x11_dpy, win.into(), NoEventMask);
-                }
-            }
-
-            // 恢复显示器工作区域
-            if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-                let mut monitor_mut = monitor.borrow_mut();
-                monitor_mut.w_y = monitor_mut.m_y;
-                monitor_mut.w_h = monitor_mut.m_h;
-            }
-
-            // 🚀 优化的资源清理顺序
-
-            // 1. 首先终止子进程
-            if let Err(e) = self.terminate_status_bar_process_safe(monitor_id) {
-                error!(
-                    "[unmanage_statusbar] Failed to terminate process for monitor {}: {}",
-                    monitor_id, e
+        let statusbar = match self.status_bar_clients.remove(&monitor_id) {
+            Some(bar) => bar,
+            None => {
+                warn!(
+                    "[unmanage_statusbar] No statusbar found for monitor {}",
+                    monitor_id
                 );
+                return Ok(());
             }
+        };
 
-            // 2. 然后清理共享内存
-            if let Err(e) = self.cleanup_shared_memory_safe(monitor_id) {
+        let win = statusbar.borrow().win;
+        self.status_bar_windows.remove(&win);
+
+        // 清理窗口状态（如果未被销毁）
+        if !destroyed {
+            self.cleanup_statusbar_window(win)?;
+        }
+
+        // 恢复显示器工作区域
+        if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+            let mut monitor_mut = monitor.borrow_mut();
+            monitor_mut.w_y = monitor_mut.m_y;
+            monitor_mut.w_h = monitor_mut.m_h;
+            info!(
+                "[unmanage_statusbar] Restored workarea for monitor {}",
+                monitor_id
+            );
+        }
+
+        // 按顺序清理资源
+        let cleanup_results = [
+            (
+                "terminate_process",
+                self.terminate_status_bar_process_safe(monitor_id),
+            ),
+            (
+                "cleanup_shared_memory",
+                self.cleanup_shared_memory_safe(monitor_id),
+            ),
+        ];
+
+        // 记录清理结果但不中断流程
+        for (operation, result) in cleanup_results.iter() {
+            if let Err(ref e) = result {
                 error!(
-                    "[unmanage_statusbar] Failed to cleanup shared memory for monitor {}: {}",
-                    monitor_id, e
+                    "[unmanage_statusbar] {} failed for monitor {}: {}",
+                    operation, monitor_id, e
                 );
-            }
-
-            // 3. 最后重新排列客户端
-            if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-                self.arrange(Some(monitor));
             }
         }
+
+        // 重新排列客户端
+        if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+            self.arrange(Some(monitor));
+        }
+
+        info!(
+            "[unmanage_statusbar] Successfully removed statusbar for monitor {}",
+            monitor_id
+        );
+        Ok(())
+    }
+
+    fn cleanup_statusbar_window(&mut self, win: Window) -> Result<(), Box<dyn std::error::Error>> {
+        // 清除事件监听
+        let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT);
+        self.x11rb_conn.change_window_attributes(win, &aux)?;
+        self.x11rb_conn.flush()?;
+
+        debug!(
+            "[cleanup_statusbar_window] Cleared events for statusbar window {}",
+            win
+        );
+        Ok(())
     }
 
     fn terminate_status_bar_process_safe(&mut self, monitor_id: i32) -> Result<(), String> {

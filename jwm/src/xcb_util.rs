@@ -23,6 +23,7 @@ x11rb::atom_manager! {
         _NET_CLIENT_INFO,
 
         UTF8_STRING,
+        COMPOUND_TEXT,
     }
 }
 
