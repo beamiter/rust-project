@@ -4547,235 +4547,262 @@ impl Jwm {
         }
     }
 
-    pub fn resizemouse(&mut self, _arg: *const Arg) {
+    pub fn resizemouse(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         info!("[resizemouse]");
-        unsafe {
-            // 1. 获取当前选中的客户端 (c)
-            let client_opt = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-            if client_opt.is_none() {
-                return; // 没有选中客户端则返回
+
+        // 1. 获取当前选中的客户端
+        let client_rc = match self.get_selected_client() {
+            Some(client) => client,
+            None => {
+                debug!("No selected client for resize");
+                return Ok(());
             }
-            let c_rc = client_opt.as_ref().unwrap(); // c_rc 是 &Rc<RefCell<Client>>
+        };
 
-            // 2. 全屏检查
-            if c_rc.borrow().is_fullscreen {
-                // no support resizing fullscreen windows by mouse
-                return; // 不允许通过鼠标调整全屏窗口大小
-            }
+        // 2. 全屏检查
+        if client_rc.borrow().is_fullscreen {
+            debug!("Cannot resize fullscreen window");
+            return Ok(());
+        }
 
-            // 3. 准备工作
-            let _ = self.restack(self.sel_mon.clone()); // 将当前选中窗口置于堆叠顶部，并重绘状态栏
+        // 3. 准备工作
+        self.restack(self.sel_mon.clone())?;
 
-            // 保存窗口开始调整大小时的原始左上角坐标 (用于计算新尺寸的基准)
-            // 和边框宽度 (用于从鼠标坐标计算内容区尺寸)
-            let (original_client_x, original_client_y, border_width, client_window_id) = {
-                let c_borrow = c_rc.borrow();
-                (c_borrow.x, c_borrow.y, c_borrow.border_w, c_borrow.win)
-            };
+        // 保存窗口开始调整大小时的信息
+        let (original_x, original_y, border_width, window_id, current_w, current_h) = {
+            let client = client_rc.borrow();
+            (
+                client.x,
+                client.y,
+                client.border_w,
+                client.win,
+                client.w,
+                client.h,
+            )
+        };
 
-            // 4. 抓取鼠标指针 (XGrabPointer)
-            if XGrabPointer(
-                self.x11_dpy,
-                self.x11rb_root.into(),
-                False,
-                MOUSEMASK as u32, // event_mask: 关心的鼠标事件
-                GrabModeAsync,    // pointer_mode
-                GrabModeAsync,    // keyboard_mode
-                0,                // confine_to: 不限制范围
-                self.cursor_manager
-                    .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Fleur)
-                    .unwrap()
-                    .into(), // cursor: 设置为移动光标样式
-                CurrentTime,
-            ) != GrabSuccess
-            {
-                return; // 抓取失败则返回
-            }
+        // 4. 抓取鼠标指针
+        let cursor = self
+            .cursor_manager
+            .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Sizing)
+            .unwrap();
+        let grab_reply = self
+            .x11rb_conn
+            .grab_pointer(
+                false,
+                self.x11rb_root,
+                EventMask::BUTTON_PRESS
+                    | EventMask::BUTTON_RELEASE
+                    | EventMask::POINTER_MOTION
+                    | EventMask::EXPOSURE,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+                0u32,
+                cursor,
+                0u32,
+            )?
+            .reply()?;
 
-            // 5. 将鼠标指针移动到窗口的右下角，为用户提供调整大小的起点
-            // 需要窗口当前的内容区宽高 w, h
-            let (current_w, current_h) = {
-                let c_borrow = c_rc.borrow();
-                (c_borrow.w, c_borrow.h)
-            };
-            XWarpPointer(
-                self.x11_dpy,
-                0,                       // src_w: source window (0 for root relative to itself)
-                client_window_id.into(), // dest_w: destination window (the client window)
-                0,
-                0,
-                0,
-                0, // src_x, src_y, src_width, src_height (not used when dest_w is set)
-                current_w + border_width - 1, // dest_x: 目标 X 坐标 (右下角内侧)
-                current_h + border_width - 1, // dest_y: 目标 Y 坐标 (右下角内侧)
-            );
+        if grab_reply.status != GrabStatus::SUCCESS {
+            debug!("Failed to grab pointer for resize");
+            return Ok(());
+        }
 
-            // 6. 初始化事件循环变量
-            let mut last_motion_time: Time = 0; // 上一次处理 MotionNotify 的时间
-            let mut ev: XEvent = zeroed(); // 用于存储事件
+        // 5. 将鼠标移动到窗口右下角
+        self.x11rb_conn.warp_pointer(
+            0u32,
+            window_id,
+            0,
+            0,
+            0,
+            0,
+            (current_w + border_width - 1) as i16,
+            (current_h + border_width - 1) as i16,
+        )?;
 
-            // 7. 进入鼠标调整大小事件循环
-            loop {
-                XMaskEvent(
-                    self.x11_dpy,
-                    MOUSEMASK | ExposureMask | SubstructureRedirectMask, // 监听的事件掩码
-                    &mut ev,
-                );
+        // 6. 进入调整大小循环
+        let result = self.resize_loop(&client_rc, original_x, original_y, border_width);
 
-                match ev.type_ {
-                    ConfigureRequest | Expose | MapRequest => {
-                        // 处理其他可能在调整大小过程中发生的重要窗口事件
-                        // (TODO), fix lator
-                        // self.handler(ev.type_, &mut ev);
-                    }
-                    MotionNotify => {
-                        // 如果是鼠标移动事件
-                        // a. 节流
-                        if ev.motion.time - last_motion_time <= (1000 / 60) {
-                            // 约 60 FPS
-                            continue;
-                        }
-                        last_motion_time = ev.motion.time;
+        // 7. 清理工作
+        self.cleanup_resize(window_id, border_width)?;
 
-                        // b. 计算新的内容区宽度 (new_width) 和高度 (new_height)
-                        //    基于鼠标当前位置 (相对于根窗口的 ev.motion.x_root, ev.motion.y_root)
-                        //    和窗口原始左上角坐标 (original_client_x, original_client_y)
-                        //    以及边框宽度。
-                        //    ev.motion.x/y 是相对于事件窗口的，这里我们假设事件窗口是根窗口（因为抓取时指定了root）
-                        //    或者直接使用 ev.motion.x_root, ev.motion.y_root 更明确。
-                        let current_mouse_root_x = ev.motion.x_root;
-                        let current_mouse_root_y = ev.motion.y_root;
+        result
+    }
 
-                        // let mut new_width =
-                        //     (current_mouse_root_x - original_client_x - 2 * border_width + 1)
-                        //         .max(1);
-                        // let mut new_height =
-                        //     (current_mouse_root_y - original_client_y - 2 * border_width + 1)
-                        //         .max(1);
-                        // .max(1) 确保宽高至少为1像素。
-                        // +1 是因为坐标是从0开始，而尺寸是从1开始。
-                        // -2*border_width 是因为我们计算的是内容区尺寸。
+    fn get_selected_client(&self) -> Option<Rc<RefCell<Client>>> {
+        self.sel_mon.as_ref()?.borrow().sel.clone()
+    }
 
-                        // c. 获取当前显示器工作区信息和客户端在其显示器上的信息
-                        // let (mon_wx_of_client, mon_wy_of_client) = {
-                        //     let c_borrow = c_rc.borrow();
-                        //     let client_mon_borrow = c_borrow.mon.as_ref().unwrap().borrow();
-                        //     (client_mon_borrow.wx, client_mon_borrow.wy)
-                        // };
-                        // let (selmon_wx, selmon_wy, selmon_ww, selmon_wh) = {
-                        //     let selmon_borrow = self.selmon.as_ref().unwrap().borrow();
-                        //     (
-                        //         selmon_borrow.wx,
-                        //         selmon_borrow.wy,
-                        //         selmon_borrow.ww,
-                        //         selmon_borrow.wh,
-                        //     )
-                        // };
+    fn resize_loop(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+        original_x: i32,
+        original_y: i32,
+        border_width: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut last_motion_time = 0u32;
 
-                        // d. (可选) 可以在这里添加对新尺寸的边界检查或吸附逻辑，
-                        //    例如，确保窗口的右下角不超过其所在显示器的边界。
-                        //    dwp.c 的 resizemouse 逻辑更简单，主要依赖 XWarpPointer 后的相对移动。
-                        //    它通常会将窗口的左上角固定，只调整右下角。
-                        //    如果你的 resize 函数会处理好边界，这里可以简化。
-                        //    我们暂时保持与 movemouse 类似的吸附检查，但作用于尺寸。
-                        //    不过，更常见的调整大小是固定左上角，拖动右下角。
-                        //    这里的 current_mouse_root_x - original_client_x 直接就是新宽度（内容区）
+        loop {
+            let event = self.x11rb_conn.wait_for_event()?;
 
-                        let new_width = (current_mouse_root_x - original_client_x)
-                            .max(1 + 2 * border_width)
-                            - 2 * border_width;
-                        let new_height = (current_mouse_root_y - original_client_y)
-                            .max(1 + 2 * border_width)
-                            - 2 * border_width;
-
-                        // e. 如果窗口是非浮动的，并且尺寸变化超过了吸附阈值，则将其切换为浮动状态
-                        let (is_floating, current_client_w, current_client_h) = {
-                            let c_borrow = c_rc.borrow();
-                            (c_borrow.is_floating, c_borrow.w, c_borrow.h)
-                        };
-                        let current_layout_is_tile = {
-                            let selmon_borrow = self.sel_mon.as_ref().unwrap().borrow();
-                            selmon_borrow.lt[selmon_borrow.sel_lt].is_tile()
-                        };
-
-                        if !is_floating
-                            && current_layout_is_tile
-                            && ((new_width - current_client_w).abs() > CONFIG.snap() as i32
-                                || (new_height - current_client_h).abs() > CONFIG.snap() as i32)
-                        {
-                            self.togglefloating(std::ptr::null_mut()); // null_mut() 作为参数
-                        }
-
-                        // f. 如果窗口是浮动的或者当前布局是浮动布局，则实际调整窗口大小
-                        //    注意：传递给 resize 的是窗口的原始 X, Y 坐标，以及新的宽度和高度。
-                        if !current_layout_is_tile || c_rc.borrow().is_floating {
-                            // 重新检查 is_floating
-                            self.resize(
-                                c_rc,
-                                original_client_x,
-                                original_client_y,
-                                new_width,
-                                new_height,
-                                true,
-                            );
-                        }
-                    }
-                    _ => {} // 忽略其他事件
+            match event {
+                Event::ConfigureRequest(e) => {
+                    self.configurerequest(&e)?;
                 }
-
-                // g. 如果收到鼠标按钮释放事件，则结束调整大小
-                if ev.type_ == ButtonRelease {
-                    break; // 跳出事件循环
+                Event::Expose(e) => {
+                    self.expose(&e)?;
                 }
-            } // loop 结束
+                Event::MapRequest(e) => {
+                    self.maprequest(&e)?;
+                }
+                Event::MotionNotify(e) => {
+                    // 节流处理
+                    if e.time.wrapping_sub(last_motion_time) <= 16 {
+                        // ~60 FPS
+                        continue;
+                    }
+                    last_motion_time = e.time;
 
-            // 8. 再次将鼠标指针定位到窗口右下角 (可选，为了视觉一致性)
-            let (final_client_w, final_client_h, final_border_width, final_client_win) = {
-                let c_borrow = c_rc.borrow();
-                (c_borrow.w, c_borrow.h, c_borrow.border_w, c_borrow.win)
-            };
-            XWarpPointer(
-                self.x11_dpy,
-                0,
-                final_client_win.into(),
-                0,
-                0,
-                0,
-                0,
-                final_client_w + final_border_width - 1,
-                final_client_h + final_border_width - 1,
+                    self.handle_resize_motion(client_rc, &e, original_x, original_y, border_width)?;
+                }
+                Event::ButtonRelease(_) => {
+                    debug!("Button released, ending resize");
+                    break;
+                }
+                _ => {
+                    // 忽略其他事件
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn handle_resize_motion(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+        e: &MotionNotifyEvent,
+        original_x: i32,
+        original_y: i32,
+        border_width: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 计算新的尺寸
+        let new_width =
+            ((e.root_x as i32 - original_x).max(1 + 2 * border_width) - 2 * border_width).max(1);
+        let new_height =
+            ((e.root_y as i32 - original_y).max(1 + 2 * border_width) - 2 * border_width).max(1);
+
+        // 检查是否需要切换到浮动模式
+        self.check_and_toggle_floating(client_rc, new_width, new_height)?;
+
+        // 如果是浮动窗口或浮动布局，执行调整大小
+        let should_resize = {
+            let client = client_rc.borrow();
+            let monitor = client.mon.as_ref().unwrap().borrow();
+            client.is_floating || !monitor.lt[monitor.sel_lt].is_tile()
+        };
+
+        if should_resize {
+            self.resize(
+                client_rc, original_x, original_y, new_width, new_height, true,
             );
+        }
 
-            // 9. 释放鼠标抓取
-            XUngrabPointer(self.x11_dpy, CurrentTime);
+        Ok(())
+    }
 
-            // 10. 清理可能由于 XWarpPointer 产生的多余 EnterNotify 事件
-            self.flush_enter_events();
+    fn check_and_toggle_floating(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+        new_width: i32,
+        new_height: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (is_floating, current_w, current_h, is_tile_layout) = {
+            let client = client_rc.borrow();
+            let monitor = client.mon.as_ref().unwrap().borrow();
+            (
+                client.is_floating,
+                client.w,
+                client.h,
+                monitor.lt[monitor.sel_lt].is_tile(),
+            )
+        };
 
-            // 11. 检查窗口调整大小后是否跨越了显示器边界 (通常调整大小不改变显示器)
-            //     但这部分逻辑与 movemouse 类似，以防万一或特殊情况。
-            //     对于 resizemouse，窗口的左上角通常是固定的，所以不太可能改变显示器。
-            //     但如果允许从左上角拖动来改变大小，则需要这个检查。
-            //     假设当前实现是固定左上角，拖动右下角。
-            let (final_x, final_y, final_w_after_resize, final_h_after_resize) = {
-                let c_borrow = c_rc.borrow();
-                (c_borrow.x, c_borrow.y, c_borrow.w, c_borrow.h)
-            };
-            let target_monitor_opt =
-                self.recttomon(final_x, final_y, final_w_after_resize, final_h_after_resize);
-
-            if target_monitor_opt.is_some()
-                && !Rc::ptr_eq(
-                    target_monitor_opt.as_ref().unwrap(),
-                    self.sel_mon.as_ref().unwrap(),
-                )
+        if !is_floating && is_tile_layout {
+            let snap_threshold = CONFIG.snap() as i32;
+            if (new_width - current_w).abs() > snap_threshold
+                || (new_height - current_h).abs() > snap_threshold
             {
-                // 理论上，如果只拖动右下角调整大小，这部分不太可能触发，除非resize逻辑中有特殊处理
-                self.sendmon(Some(c_rc.clone()), target_monitor_opt.clone());
-                self.sel_mon = target_monitor_opt;
+                debug!("Toggling to floating mode due to size change");
+                self.togglefloating(&Arg::Ui(0));
+            }
+        }
+
+        Ok(())
+    }
+
+    fn cleanup_resize(
+        &mut self,
+        window_id: Window,
+        border_width: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 将鼠标定位到最终位置
+        let (final_w, final_h) = {
+            let client = self.get_selected_client();
+            if let Some(ref client_rc) = client {
+                let c = client_rc.borrow();
+                (c.w, c.h)
+            } else {
+                return Ok(());
+            }
+        };
+
+        self.x11rb_conn.warp_pointer(
+            0u32,
+            window_id,
+            0,
+            0,
+            0,
+            0,
+            (final_w + border_width - 1) as i16,
+            (final_h + border_width - 1) as i16,
+        )?;
+
+        // 释放鼠标抓取
+        self.x11rb_conn.ungrab_pointer(0u32)?;
+
+        // 清理事件
+        self.flush_enter_events();
+
+        // 检查是否需要移动到不同的显示器
+        self.check_monitor_change_after_resize()?;
+
+        Ok(())
+    }
+
+    fn check_monitor_change_after_resize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let client_rc = match self.get_selected_client() {
+            Some(client) => client,
+            None => return Ok(()),
+        };
+
+        let (x, y, w, h) = {
+            let client = client_rc.borrow();
+            (client.x, client.y, client.w, client.h)
+        };
+
+        let target_monitor = self.recttomon(x, y, w, h);
+
+        if let Some(ref target_mon) = target_monitor {
+            if !Rc::ptr_eq(target_mon, self.sel_mon.as_ref().unwrap()) {
+                debug!("Moving client to different monitor after resize");
+                self.sendmon(Some(client_rc), target_monitor.clone());
+                self.sel_mon = target_monitor;
                 self.focus(None);
             }
         }
+
+        Ok(())
     }
 
     /// 使用 x11rb 更新 Num_Lock 键的修饰符掩码
