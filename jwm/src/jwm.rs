@@ -42,10 +42,10 @@ use x11rb::properties::WmSizeHints;
 use x11rb::protocol::render::PictType;
 use x11rb::protocol::xinput::KeyCode;
 use x11rb::protocol::xproto::{
-    self, allow_events, Allow, Atom, AtomEnum, ChangeWindowAttributesAux, ClientMessageEvent,
-    Colormap, ColormapAlloc, ConfigureNotifyEvent, ConnectionExt, CreateWindowAux, EventMask,
-    GetGeometryReply, GetWindowAttributesReply, Keysym, MapState, PropMode, VisualClass, Visualid,
-    Window, WindowClass,
+    self, allow_events, Allow, Atom, AtomEnum, ClientMessageEvent, Colormap, ColormapAlloc,
+    ConfigureNotifyEvent, ConnectionExt, CreateWindowAux, EventMask, GetGeometryReply,
+    GetWindowAttributesReply, Keysym, MapState, PropMode, VisualClass, Visualid, Window,
+    WindowClass,
 };
 use x11rb::rust_connection::RustConnection;
 use x11rb::x11_utils::Serialize;
@@ -1301,7 +1301,7 @@ impl Jwm {
                         let mut c = m_opt.borrow_mut().clients.clone();
                         while c.is_some() {
                             if c.as_ref().unwrap().borrow_mut().is_fullscreen {
-                                self.resizeclient(
+                                let _ = self.resizeclient(
                                     &mut *c.as_ref().unwrap().borrow_mut(),
                                     m_opt.borrow_mut().m_x,
                                     m_opt.borrow_mut().m_y,
@@ -1379,7 +1379,7 @@ impl Jwm {
                     let mon_mut = c_mon.as_ref().unwrap().borrow();
                     (mon_mut.m_x, mon_mut.m_y, mon_mut.m_w, mon_mut.m_h)
                 };
-                self.resizeclient(&mut *c.borrow_mut(), mx, my, mw, mh);
+                let _ = self.resizeclient(&mut *c.borrow_mut(), mx, my, mw, mh);
                 // Raise the window to the top of the stacking order
                 XRaiseWindow(self.x11_dpy, win.into());
             } else if !fullscreen && isfullscreen {
@@ -1404,7 +1404,7 @@ impl Jwm {
                 {
                     let mut c = c.borrow_mut();
                     let (x, y, w, h) = (c.x, c.y, c.w, c.h);
-                    self.resizeclient(&mut *c, x, y, w, h);
+                    let _ = self.resizeclient(&mut *c, x, y, w, h);
                 }
                 let mon = { c.borrow_mut().mon.clone() };
                 self.arrange(mon);
@@ -1413,33 +1413,40 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn resizeclient(&mut self, c: &mut Client, x: i32, y: i32, w: i32, h: i32) {
+    pub fn resizeclient(
+        &mut self,
+        c: &mut Client,
+        x: i32,
+        y: i32,
+        w: i32,
+        h: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[resizeclient] {x}, {y}, {w}, {h}");
-        unsafe {
-            let mut wc: XWindowChanges = zeroed();
-            c.old_x = c.x;
-            c.x = x;
-            wc.x = x;
-            c.old_y = c.y;
-            c.y = y;
-            // println!("line: {}, {}", line!(), c.y);
-            wc.y = y;
-            c.old_w = c.w;
-            c.w = w;
-            wc.width = w;
-            c.old_h = c.h;
-            c.h = h;
-            wc.height = h;
-            wc.border_width = c.border_w;
-            XConfigureWindow(
-                self.x11_dpy,
-                c.win.into(),
-                (CWX | CWY | CWWidth | CWHeight | CWBorderWidth) as u32,
-                &mut wc as *mut _,
-            );
-            self.configure(c);
-            XSync(self.x11_dpy, 0);
-        }
+        // 保存旧的位置和大小
+        c.old_x = c.x;
+        c.old_y = c.y;
+        c.old_w = c.w;
+        c.old_h = c.h;
+        // 更新新的位置和大小
+        c.x = x;
+        c.y = y;
+        c.w = w;
+        c.h = h;
+        // 构建配置值向量
+        let values = xproto::ConfigureWindowAux::new()
+            .x(x)
+            .y(y)
+            .width(w as u32)
+            .height(h as u32)
+            .border_width(c.border_w as u32);
+        // 发送配置窗口请求
+        self.x11rb_conn.configure_window(c.win, &values)?;
+        // 调用configure方法
+        self.configure(c);
+        // 同步连接（刷新所有待发送的请求）
+        self.x11rb_conn.flush()?;
+
+        Ok(())
     }
 
     pub fn resize(
@@ -1453,7 +1460,7 @@ impl Jwm {
     ) {
         // info!("[resize] {x}, {y}, {w}, {h}");
         if self.applysizehints(c, &mut x, &mut y, &mut w, &mut h, interact) {
-            self.resizeclient(&mut *c.borrow_mut(), x, y, w, h);
+            let _ = self.resizeclient(&mut *c.borrow_mut(), x, y, w, h);
         }
     }
 
@@ -3824,7 +3831,7 @@ impl Jwm {
             let _ = self.setup_ewmh();
 
             // select events
-            let aux = ChangeWindowAttributesAux::new()
+            let aux = xproto::ChangeWindowAttributesAux::new()
                 .event_mask(
                     EventMask::SUBSTRUCTURE_REDIRECT
                         | EventMask::STRUCTURE_NOTIFY
@@ -4552,6 +4559,7 @@ impl Jwm {
     }
 
     /// 使用 x11rb 更新 Num_Lock 键的修饰符掩码
+    // (TODO) fix bug here
     pub fn update_num_lock_mask(&mut self) -> Result<(), ReplyOrIdError> {
         // 1. 初始化 numlockmask 为 0
         self.numlock_mask = 0;
@@ -4596,6 +4604,7 @@ impl Jwm {
                 break;
             }
         }
+        self.numlock_mask = 1 << 4;
         Ok(())
     }
 
@@ -4961,7 +4970,7 @@ impl Jwm {
         window: u32,
         border_width: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let aux = x11rb::protocol::xproto::ConfigureWindowAux::new().border_width(border_width);
+        let aux = xproto::ConfigureWindowAux::new().border_width(border_width);
         self.x11rb_conn.configure_window(window, &aux)?;
         self.x11rb_conn.flush()?; // 确保请求立即发送
         Ok(())
@@ -4972,8 +4981,7 @@ impl Jwm {
         window: u32,
         border_pixel: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let aux =
-            x11rb::protocol::xproto::ChangeWindowAttributesAux::new().border_pixel(border_pixel);
+        let aux = xproto::ChangeWindowAttributesAux::new().border_pixel(border_pixel);
         self.x11rb_conn.change_window_attributes(window, &aux)?;
         self.x11rb_conn.flush()?; // 确保请求立即发送
         Ok(())
