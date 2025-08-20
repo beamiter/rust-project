@@ -49,15 +49,13 @@ use x11rb::COPY_DEPTH_FROM_PARENT;
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
     AnyButton, AnyKey, AnyModifier, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow,
-    ButtonPressMask, ButtonRelease, ButtonReleaseMask, ConfigureRequest, CurrentTime, DestroyAll,
-    Display, EnterWindowMask, Expose, ExposureMask, False, FocusChangeMask, GrabModeAsync,
-    GrabModeSync, GrabSuccess, KeySym, LockMask, MapRequest, MotionNotify, NoEventMask,
-    PointerMotionMask, PointerRoot, PropertyChangeMask, RevertToPointerRoot, StructureNotifyMask,
-    SubstructureRedirectMask, Success, Time, True, XDestroyWindow, XDisplayKeycodes, XErrorEvent,
-    XEvent, XFree, XGetKeyboardMapping, XGetTransientForHint, XGrabButton, XGrabKey, XGrabPointer,
-    XGrabServer, XKillClient, XMapWindow, XMaskEvent, XMoveResizeWindow, XMoveWindow, XSelectInput,
-    XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton, XUngrabKey,
-    XUngrabPointer, XUngrabServer, XWindowChanges, XA_WM_NAME,
+    ButtonPressMask, ButtonReleaseMask, CurrentTime, DestroyAll, Display, EnterWindowMask, False,
+    FocusChangeMask, GrabModeAsync, GrabModeSync, KeySym, LockMask, NoEventMask, PointerMotionMask,
+    PointerRoot, PropertyChangeMask, RevertToPointerRoot, StructureNotifyMask,
+    SubstructureRedirectMask, Success, True, XDestroyWindow, XDisplayKeycodes, XErrorEvent, XFree,
+    XGetKeyboardMapping, XGetTransientForHint, XGrabButton, XGrabKey, XGrabServer, XKillClient,
+    XMapWindow, XMoveResizeWindow, XMoveWindow, XSelectInput, XSetCloseDownMode, XSetErrorHandler,
+    XSetInputFocus, XSync, XUngrabButton, XUngrabKey, XUngrabServer, XWindowChanges, XA_WM_NAME,
 };
 
 use std::cmp::{max, min};
@@ -4306,212 +4304,275 @@ impl Jwm {
     }
 
     pub fn movemouse(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[movemouse]"); // 日志
-        unsafe {
-            // unsafe 块
-            // 1. 获取当前选中的客户端 (c)
-            let client_opt = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-            if client_opt.is_none() {
-                return Ok(());
-            } // 没有选中客户端则返回
-            let c_rc = client_opt.as_ref().unwrap(); // c_rc 是 &Rc<RefCell<Client>>
-
-            // 2. 日志记录和全屏检查
-            {
-                info!("[movemouse] {}", c_rc.borrow().name);
-            } // 记录要移动的窗口名
-            if c_rc.borrow().is_fullscreen {
-                // 如果窗口是全屏状态
-                // no support moving fullscreen windows by mouse
+        info!("[movemouse]");
+        // 1. 获取当前选中的客户端
+        let client_rc = match self.get_selected_client() {
+            Some(client) => client,
+            None => {
+                debug!("No selected client for move");
                 return Ok(());
             }
+        };
 
-            // 3. 准备工作
-            let _ = self.restack(self.sel_mon.clone()); // 将当前选中窗口置于堆叠顶部 (视觉上)，并重绘状态栏
-            let (original_client_x, original_client_y) = {
-                // 保存窗口开始移动时的原始坐标
-                let c_borrow = c_rc.borrow();
-                (c_borrow.x, c_borrow.y)
-            };
+        // 2. 全屏检查
+        if client_rc.borrow().is_fullscreen {
+            debug!("Cannot move fullscreen window");
+            return Ok(());
+        }
 
-            // 4. 抓取鼠标指针 (XGrabPointer)
-            //   这使得 JWM 在接下来的鼠标事件中独占鼠标输入，直到释放。
-            if XGrabPointer(
-                self.x11_dpy,           // X Display 连接
-                self.x11rb_root.into(), // 抓取事件的窗口 (根窗口)
-                False,                  // owner_events: False 表示事件报告给抓取窗口 (root)
-                MOUSEMASK as u32,       // event_mask: 我们关心的鼠标事件 (移动、按钮释放)
-                GrabModeAsync,          // pointer_mode: 异步指针模式
-                GrabModeAsync,          // keyboard_mode: 异步键盘模式 (通常与指针模式一致)
-                0,                      // confine_to: 不限制鼠标移动范围 (0 表示不限制)
-                self.cursor_manager
-                    .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Sizing)
-                    .unwrap()
-                    .into(), // cursor: 设置为移动光标样式
-                CurrentTime,            // time: 当前时间
-            ) != GrabSuccess
-            {
-                return Ok(());
-            }
+        // 3. 准备工作
+        self.restack(self.sel_mon.clone())?;
 
-            // 5. 获取鼠标初始位置
-            let mut last_motion_time: Time = 0; // 上一次处理 MotionNotify 事件的时间 (用于节流)
-                                                // getrootptr 获取鼠标指针相对于根窗口的当前坐标，并存入 initial_mouse_root_x, initial_mouse_root_y
-            let (initial_mouse_root_x, initial_mouse_root_y) = if let Ok((x, y)) = self.getrootptr()
-            {
-                info!("[movemouse] initial mouse (root): x={}, y={}", x, y);
-                (x, y)
-            } else {
-                // 如果获取失败 (例如指针不在屏幕上)
-                XUngrabPointer(self.x11_dpy, CurrentTime); // 释放鼠标抓取
-                return Ok(());
-            };
+        // 保存窗口开始移动时的信息
+        let (original_x, original_y, window_id) = {
+            let client = client_rc.borrow();
+            (client.x, client.y, client.win)
+        };
 
-            // 6. 进入鼠标移动事件循环
-            let mut ev: XEvent = zeroed();
-            loop {
-                // 等待并获取我们关心的鼠标事件、暴露事件或子窗口结构重定向事件
-                XMaskEvent(
-                    self.x11_dpy,
-                    MOUSEMASK | ExposureMask | SubstructureRedirectMask,
-                    &mut ev,
-                );
+        // 4. 抓取鼠标指针
+        let cursor = self
+            .cursor_manager
+            .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Sizing)?;
 
-                match ev.type_ {
-                    ConfigureRequest | Expose | MapRequest => {
-                        // 如果在拖动过程中收到其他重要事件，交给 JWM 的主事件处理器处理
-                        // (TODO), fix here
-                        // self.handler(ev.type_, &mut ev);
-                    }
-                    MotionNotify => {
-                        // 如果是鼠标移动事件
-                        // a. 节流：避免过于频繁地处理移动事件，大约每秒 60 次
-                        if ev.motion.time - last_motion_time <= (1000 / 60) {
-                            // 时间单位是毫秒
-                            continue;
-                        }
-                        last_motion_time = ev.motion.time;
+        let grab_reply = grab_pointer(
+            &self.x11rb_conn,
+            false,           // owner_events
+            self.x11rb_root, // grab_window
+            EventMask::BUTTON_PRESS
+                | EventMask::BUTTON_RELEASE
+                | EventMask::POINTER_MOTION
+                | EventMask::EXPOSURE, // event_mask
+            GrabMode::ASYNC, // pointer_mode
+            GrabMode::ASYNC, // keyboard_mode
+            0u32,            // confine_to
+            cursor,          // cursor
+            0u32,            // time
+        )?;
 
-                        // b. 获取当前显示器的工作区边界
-                        let (mon_wx, mon_wy, mon_ww, mon_wh) = {
-                            let selmon_borrow = self.sel_mon.as_ref().unwrap().borrow();
-                            (
-                                selmon_borrow.w_x,
-                                selmon_borrow.w_y,
-                                selmon_borrow.w_w,
-                                selmon_borrow.w_h,
-                            )
-                        };
+        let grab_reply = grab_reply.reply()?;
+        if grab_reply.status != GrabStatus::SUCCESS {
+            debug!("Failed to grab pointer for move");
+            return Ok(());
+        }
 
-                        // c. 计算窗口新的左上角坐标 (nx, ny)
-                        //    新坐标 = 窗口原始坐标 + (当前鼠标根坐标 - 初始鼠标根坐标)
-                        //    ev.motion.x 和 ev.motion.y 是事件发生时鼠标相对于事件窗口的坐标。
-                        //    但由于我们是在根窗口抓取的，ev.motion.x_root 和 ev.motion.y_root 才是鼠标相对于根的坐标。
-                        //    这里代码使用的是 ev.motion.x 和 ev.motion.y，这通常是相对于事件窗口的。
-                        //    如果 grab 是在 root 上，那么 ev.motion.x 和 ev.motion.y 也是相对于 root 的。
-                        //    我们假设 ev.motion.x/y 就是相对于 root 的，或者 getrootptr 获得的 x/y 是对应的。
-                        //    为了清晰，通常直接使用 ev.motion.x_root 和 ev.motion.y_root。
-                        //    根据你的 getrootptr 实现，x 和 y 是 initial_mouse_root_x/y。
-                        //    所以，新的鼠标位置是 ev.motion.x_root, ev.motion.y_root。
-                        //    位移 = (ev.motion.x_root - initial_mouse_root_x), (ev.motion.y_root - initial_mouse_root_y)
-                        //    因此，nx = original_client_x + (ev.motion.x_root - initial_mouse_root_x)
-                        //    ny = original_client_y + (ev.motion.y_root - initial_mouse_root_y)
-                        //    你代码中用的是 ev.motion.x 和 initial_mouse_root_x (来自 getrootptr)，这需要确认
-                        //    getrootptr 返回的 x,y 与 ev.motion.x_root,y_root 是否一致。
-                        //    假设 ev.motion.x 和 ev.motion.y 在这里是指针相对于根窗口的当前位置。
-                        //    或者更准确地说，是 ev.motion.x_root 和 ev.motion.y_root。
-                        //    当前代码：nx = original_client_x + (鼠标当前根X - 鼠标初始根X)
-                        let current_mouse_root_x = ev.motion.x_root; // 明确使用 x_root, y_root
-                        let current_mouse_root_y = ev.motion.y_root;
-                        let mut new_window_x =
-                            original_client_x + (current_mouse_root_x - initial_mouse_root_x);
-                        let mut new_window_y =
-                            original_client_y + (current_mouse_root_y - initial_mouse_root_y);
+        // 5. 获取鼠标初始位置
+        let query_reply = query_pointer(&self.x11rb_conn, self.x11rb_root)?.reply()?;
+        let (initial_mouse_x, initial_mouse_y) = (query_reply.root_x, query_reply.root_y);
+        info!(
+            "[movemouse] initial mouse (root): x={}, y={}",
+            initial_mouse_x, initial_mouse_y
+        );
 
-                        // d. 吸附到屏幕边缘 (Snap to screen edges)
-                        let client_total_width = { c_rc.borrow().width() }; // 获取窗口总宽度 (含边框)
-                        let client_total_height = { c_rc.borrow().height() }; // 获取窗口总高度 (含边框)
+        // 6. 进入移动循环
+        let result = self.move_loop(
+            &client_rc,
+            original_x,
+            original_y,
+            initial_mouse_x as u16,
+            initial_mouse_y as u16,
+        );
 
-                        if (mon_wx - new_window_x).abs() < CONFIG.snap() as i32 {
-                            // 吸附到左边缘
-                            new_window_x = mon_wx;
-                        } else if ((mon_wx + mon_ww) - (new_window_x + client_total_width)).abs()
-                            < CONFIG.snap() as i32
-                        {
-                            // 吸附到右边缘
-                            new_window_x = mon_wx + mon_ww - client_total_width;
-                        }
-                        if (mon_wy - new_window_y).abs() < CONFIG.snap() as i32 {
-                            // 吸附到上边缘
-                            new_window_y = mon_wy;
-                        } else if ((mon_wy + mon_wh) - (new_window_y + client_total_height)).abs()
-                            < CONFIG.snap() as i32
-                        {
-                            // 吸附到下边缘
-                            new_window_y = mon_wy + mon_wh - client_total_height;
-                        }
+        // 7. 清理工作
+        self.cleanup_move(window_id, &client_rc)?;
+        result
+    }
 
-                        // e. 如果窗口是非浮动的，并且移动距离超过了吸附阈值，则将其切换为浮动状态
-                        let (is_floating, client_current_x, client_current_y) = {
-                            let c_borrow = c_rc.borrow();
-                            (c_borrow.is_floating, c_borrow.x, c_borrow.y)
-                        };
-                        let current_layout_is_tile = {
-                            let selmon_borrow = self.sel_mon.as_ref().unwrap().borrow();
-                            selmon_borrow.lt[selmon_borrow.sel_lt].is_tile()
-                        };
+    fn move_loop(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+        original_x: i32,
+        original_y: i32,
+        initial_mouse_x: u16,
+        initial_mouse_y: u16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut last_motion_time = 0u32;
 
-                        if !is_floating && current_layout_is_tile // 如果当前是平铺布局中的非浮动窗口
-                        && ((new_window_x - client_current_x).abs() > CONFIG.snap() as i32 // 且 X 或 Y 方向移动超过阈值
-                            || (new_window_y - client_current_y).abs() > CONFIG.snap() as i32)
-                        {
-                            self.togglefloating(&Arg::I(0))?;
-                        }
+        loop {
+            let event = self.x11rb_conn.wait_for_event()?;
 
-                        // f. 如果窗口是浮动的或者当前布局是浮动布局，则实际调整窗口大小/位置
-                        let (window_w, window_h) = {
-                            // 获取窗口内容区的宽高
-                            let c_borrow = c_rc.borrow();
-                            (c_borrow.w, c_borrow.h)
-                        };
-                        if !current_layout_is_tile || c_rc.borrow().is_floating {
-                            // 重新检查 is_floating 因为 togglefloating 可能改变它
-                            self.resize(c_rc, new_window_x, new_window_y, window_w, window_h, true);
-                            // true 表示交互式调整
-                        }
-                    }
-                    _ => {} // 忽略其他类型的事件
+            match event {
+                Event::ConfigureRequest(e) => {
+                    self.configurerequest(&e)?;
                 }
-
-                // g. 如果收到鼠标按钮释放事件，则结束拖动
-                if ev.type_ == ButtonRelease {
-                    break; // 跳出事件循环
+                Event::Expose(e) => {
+                    self.expose(&e)?;
                 }
-            } // loop 结束
+                Event::MapRequest(e) => {
+                    self.maprequest(&e)?;
+                }
+                Event::MotionNotify(e) => {
+                    // 节流处理
+                    if e.time.wrapping_sub(last_motion_time) <= 16 {
+                        // ~60 FPS
+                        continue;
+                    }
+                    last_motion_time = e.time;
 
-            // 7. 释放鼠标抓取
-            XUngrabPointer(self.x11_dpy, CurrentTime);
-
-            // 8. 检查窗口移动后是否跨越了显示器边界
-            let (final_x, final_y, final_w, final_h) = {
-                let c_borrow = c_rc.borrow();
-                (c_borrow.x, c_borrow.y, c_borrow.w, c_borrow.h)
-            };
-            // 根据窗口最终位置的中心点或主要部分来确定其所属的显示器
-            let target_monitor_opt = self.recttomon(final_x, final_y, final_w, final_h);
-
-            // 如果窗口被移动到了不同的显示器
-            if target_monitor_opt.is_some()
-                && !Rc::ptr_eq(
-                    target_monitor_opt.as_ref().unwrap(),
-                    self.sel_mon.as_ref().unwrap(),
-                )
-            {
-                self.sendmon(Some(c_rc.clone()), target_monitor_opt.clone()); // 将窗口发送到新显示器
-                self.sel_mon = target_monitor_opt; // 更新当前选中的显示器
-                self.focus(None); // 在新显示器上重新设置焦点
+                    self.handle_move_motion(
+                        client_rc,
+                        &e,
+                        original_x,
+                        original_y,
+                        initial_mouse_x,
+                        initial_mouse_y,
+                    )?;
+                }
+                Event::ButtonRelease(_) => {
+                    debug!("Button released, ending move");
+                    break;
+                }
+                _ => {
+                    // 忽略其他事件
+                }
             }
         }
+
+        Ok(())
+    }
+
+    fn handle_move_motion(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+        e: &MotionNotifyEvent,
+        original_x: i32,
+        original_y: i32,
+        initial_mouse_x: u16,
+        initial_mouse_y: u16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 计算新的位置
+        let current_mouse_x = e.root_x;
+        let current_mouse_y = e.root_y;
+        let mut new_x = original_x + (current_mouse_x as i32 - initial_mouse_x as i32);
+        let mut new_y = original_y + (current_mouse_y as i32 - initial_mouse_y as i32);
+
+        // 获取显示器工作区边界
+        let (mon_wx, mon_wy, mon_ww, mon_wh) = {
+            let selmon_borrow = self.sel_mon.as_ref().unwrap().borrow();
+            (
+                selmon_borrow.w_x,
+                selmon_borrow.w_y,
+                selmon_borrow.w_w,
+                selmon_borrow.w_h,
+            )
+        };
+
+        // 应用边缘吸附
+        self.apply_edge_snapping(
+            client_rc, &mut new_x, &mut new_y, mon_wx, mon_wy, mon_ww, mon_wh,
+        )?;
+
+        // 检查是否需要切换到浮动模式
+        self.check_and_toggle_floating_for_move(client_rc, new_x, new_y)?;
+
+        // 如果是浮动窗口或浮动布局，执行移动
+        let should_move = {
+            let client = client_rc.borrow();
+            let monitor = client.mon.as_ref().unwrap().borrow();
+            client.is_floating || !monitor.lt[monitor.sel_lt].is_tile()
+        };
+
+        if should_move {
+            let (window_w, window_h) = {
+                let client = client_rc.borrow();
+                (client.w, client.h)
+            };
+            self.resize(client_rc, new_x, new_y, window_w, window_h, true);
+        }
+
+        Ok(())
+    }
+
+    fn apply_edge_snapping(
+        &self,
+        client_rc: &Rc<RefCell<Client>>,
+        new_x: &mut i32,
+        new_y: &mut i32,
+        mon_wx: i32,
+        mon_wy: i32,
+        mon_ww: i32,
+        mon_wh: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let client_total_width = { client_rc.borrow().width() };
+        let client_total_height = { client_rc.borrow().height() };
+        let snap_distance = CONFIG.snap() as i32;
+
+        // 吸附到左边缘
+        if (mon_wx - *new_x).abs() < snap_distance {
+            *new_x = mon_wx;
+        }
+        // 吸附到右边缘
+        else if ((mon_wx + mon_ww) - (*new_x + client_total_width)).abs() < snap_distance {
+            *new_x = mon_wx + mon_ww - client_total_width;
+        }
+
+        // 吸附到上边缘
+        if (mon_wy - *new_y).abs() < snap_distance {
+            *new_y = mon_wy;
+        }
+        // 吸附到下边缘
+        else if ((mon_wy + mon_wh) - (*new_y + client_total_height)).abs() < snap_distance {
+            *new_y = mon_wy + mon_wh - client_total_height;
+        }
+
+        Ok(())
+    }
+
+    fn check_and_toggle_floating_for_move(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+        new_x: i32,
+        new_y: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (is_floating, current_x, current_y) = {
+            let client = client_rc.borrow();
+            (client.is_floating, client.x, client.y)
+        };
+
+        let current_layout_is_tile = {
+            let selmon_borrow = self.sel_mon.as_ref().unwrap().borrow();
+            selmon_borrow.lt[selmon_borrow.sel_lt].is_tile()
+        };
+
+        // 如果窗口不是浮动的且当前是平铺布局，并且移动距离超过阈值
+        if !is_floating
+            && current_layout_is_tile
+            && ((new_x - current_x).abs() > CONFIG.snap() as i32
+                || (new_y - current_y).abs() > CONFIG.snap() as i32)
+        {
+            self.togglefloating(&Arg::I(0))?;
+        }
+
+        Ok(())
+    }
+
+    fn cleanup_move(
+        &mut self,
+        _window_id: Window,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 释放鼠标抓取
+        ungrab_pointer(&self.x11rb_conn, 0u32)?;
+        self.x11rb_conn.flush()?;
+
+        // 检查窗口移动后是否跨越了显示器边界
+        let (final_x, final_y, final_w, final_h) = {
+            let c_borrow = client_rc.borrow();
+            (c_borrow.x, c_borrow.y, c_borrow.w, c_borrow.h)
+        };
+
+        let target_monitor_opt = self.recttomon(final_x, final_y, final_w, final_h);
+
+        if target_monitor_opt.is_some()
+            && !Rc::ptr_eq(
+                target_monitor_opt.as_ref().unwrap(),
+                self.sel_mon.as_ref().unwrap(),
+            )
+        {
+            self.sendmon(Some(client_rc.clone()), target_monitor_opt.clone());
+            self.sel_mon = target_monitor_opt;
+            self.focus(None);
+        }
+
         Ok(())
     }
 
