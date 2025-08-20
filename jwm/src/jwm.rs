@@ -1,10 +1,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
-use libc::{
-    close, exit, fork, setsid, sigaction, sigemptyset, waitpid, SA_NOCLDSTOP, SA_NOCLDWAIT,
-    SA_RESTART, SIGCHLD, SIG_DFL, SIG_IGN, WNOHANG,
-};
+use libc::{close, exit, fork, setsid, sigaction, sigemptyset, SIGCHLD, SIG_DFL};
 use log::info;
 use log::warn;
 use log::{debug, error};
@@ -30,7 +27,6 @@ use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 use std::{os::raw::c_long, usize};
 use x11::xft::XftColor;
-use x11::xinerama::{XineramaIsActive, XineramaQueryScreens, XineramaScreenInfo};
 use x11::xlib::XConnectionNumber;
 use x11::xlib::XFreeStringList;
 use x11::xlib::XOpenDisplay;
@@ -50,12 +46,11 @@ use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
     AnyButton, AnyKey, AnyModifier, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow,
     ButtonPressMask, ButtonReleaseMask, CurrentTime, DestroyAll, Display, EnterWindowMask, False,
-    FocusChangeMask, GrabModeAsync, GrabModeSync, KeySym, LockMask, NoEventMask, PointerMotionMask,
-    PointerRoot, PropertyChangeMask, RevertToPointerRoot, StructureNotifyMask,
-    SubstructureRedirectMask, Success, True, XDestroyWindow, XDisplayKeycodes, XErrorEvent, XFree,
-    XGetKeyboardMapping, XGetTransientForHint, XGrabButton, XGrabKey, XGrabServer, XKillClient,
-    XMapWindow, XMoveResizeWindow, XMoveWindow, XSelectInput, XSetCloseDownMode, XSetErrorHandler,
-    XSetInputFocus, XSync, XUngrabButton, XUngrabKey, XUngrabServer, XWindowChanges, XA_WM_NAME,
+    KeySym, NoEventMask, PointerMotionMask, PointerRoot, PropertyChangeMask, RevertToPointerRoot,
+    StructureNotifyMask, SubstructureRedirectMask, Success, XDestroyWindow, XErrorEvent, XFree,
+    XGetTransientForHint, XGrabServer, XKillClient, XMapWindow, XMoveResizeWindow, XMoveWindow,
+    XSelectInput, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton,
+    XUngrabKey, XUngrabServer, XWindowChanges, XA_WM_NAME,
 };
 
 use std::cmp::{max, min};
@@ -1198,7 +1193,7 @@ impl Jwm {
                 loop {
                     stack_iter = m_opt.borrow_mut().stack.clone();
                     if let Some(client_rc) = stack_iter {
-                        self.unmanage(Some(client_rc), false);
+                        let _ = self.unmanage(Some(client_rc), false);
                     } else {
                         break;
                     }
@@ -1364,7 +1359,7 @@ impl Jwm {
             m = next;
         }
         // 重新聚焦和排列
-        self.focus(None);
+        let _ = self.focus(None);
         self.arrange(None);
         Ok(())
     }
@@ -1398,7 +1393,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn configure(&self, c: &mut Client) {
+    pub fn configure(&self, c: &mut Client) -> Result<(), Box<dyn std::error::Error>> {
         let event = ConfigureNotifyEvent {
             event: c.win,
             window: c.win,
@@ -1407,21 +1402,151 @@ impl Jwm {
             width: c.w as u16,
             height: c.h as u16,
             border_width: c.border_w as u16,
-            above_sibling: 0, // None 表示 above = 0 / no sibling
+            above_sibling: 0,
             override_redirect: false,
             response_type: CONFIGURE_NOTIFY_EVENT,
             sequence: 0,
         };
 
-        // 使用 SendEvent 发送事件
         self.x11rb_conn
-            .send_event(false, c.win, EventMask::STRUCTURE_NOTIFY, event)
-            .expect("Failed to send ConfigureNotify event");
+            .send_event(false, c.win, EventMask::STRUCTURE_NOTIFY, event)?;
+        self.x11rb_conn.flush()?;
+        Ok(())
+    }
 
-        // 如果需要立即发送，调用 flush
+    pub fn set_window_border_width(
+        &self,
+        window: u32,
+        border_width: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let aux = ConfigureWindowAux::new().border_width(border_width);
+        self.x11rb_conn.configure_window(window, &aux)?;
+        self.x11rb_conn.flush()?;
+        Ok(())
+    }
+
+    pub fn set_window_border_pixel(
+        &self,
+        window: u32,
+        border_pixel: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let aux = ChangeWindowAttributesAux::new().border_pixel(border_pixel);
+        self.x11rb_conn.change_window_attributes(window, &aux)?;
+        self.x11rb_conn.flush()?;
+        Ok(())
+    }
+
+    pub fn grabkeys(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[grabkeys]");
+        self.update_num_lock_mask()?;
+
+        let modifiers_to_try = [
+            0,
+            KeyButMask::LOCK.bits() as u32,
+            self.numlock_mask,
+            self.numlock_mask | KeyButMask::LOCK.bits() as u32,
+        ];
+
+        // 取消之前的按键抓取
         self.x11rb_conn
-            .flush()
-            .expect("Failed to flush X11 connection");
+            .ungrab_key(AnyKey as u8, self.x11rb_root, ModMask::ANY.into())?;
+
+        // 获取键盘映射
+        let setup = self.x11rb_conn.setup();
+        let mapping = self
+            .x11rb_conn
+            .get_keyboard_mapping(
+                setup.min_keycode,
+                (setup.max_keycode - setup.min_keycode) + 1,
+            )?
+            .reply()?;
+
+        // 遍历所有键码
+        for (keycode_offset, keysyms_for_keycode) in mapping
+            .keysyms
+            .chunks(mapping.keysyms_per_keycode as usize)
+            .enumerate()
+        {
+            let keycode = setup.min_keycode + keycode_offset as u8;
+
+            if let Some(&keysym) = keysyms_for_keycode.first() {
+                // 检查是否匹配配置中的按键
+                for key_config in CONFIG.get_keys().iter() {
+                    if key_config.keysym == keysym.into() {
+                        for &modifier_combo in modifiers_to_try.iter() {
+                            self.x11rb_conn.grab_key(
+                                false, // owner_events
+                                self.x11rb_root,
+                                ModMask::from((key_config.mod0 | modifier_combo) as u16),
+                                keycode,
+                                GrabMode::ASYNC,
+                                GrabMode::ASYNC,
+                            )?;
+                        }
+                    }
+                }
+            }
+        }
+
+        self.x11rb_conn.flush()?;
+        Ok(())
+    }
+
+    pub fn grabbuttons(
+        &mut self,
+        client_opt: Option<Rc<RefCell<Client>>>,
+        focused: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let client_win_id = match client_opt.as_ref() {
+            Some(c_rc) => c_rc.borrow().win,
+            None => return Ok(()),
+        };
+
+        let modifiers_to_try = [
+            0,
+            KeyButMask::LOCK.bits() as u32,
+            self.numlock_mask,
+            self.numlock_mask | KeyButMask::LOCK.bits() as u32,
+        ];
+
+        // 取消之前的按钮抓取
+        self.x11rb_conn
+            .ungrab_button(ButtonIndex::ANY, client_win_id, ModMask::ANY.into())?;
+
+        if !focused {
+            self.x11rb_conn.grab_button(
+                false, // owner_events
+                client_win_id,
+                (BUTTONMASK as u32).into(),
+                GrabMode::SYNC,
+                GrabMode::SYNC,
+                0u32, // confine_to
+                0u32, // cursor
+                ButtonIndex::ANY,
+                ModMask::ANY.into(),
+            )?;
+        }
+
+        for button_config in CONFIG.get_buttons().iter() {
+            if button_config.click == CLICK::ClkClientWin as u32 {
+                for &modifier_combo in modifiers_to_try.iter() {
+                    self.x11rb_conn.grab_button(
+                        false,
+                        client_win_id,
+                        (BUTTONMASK as u32).into(),
+                        GrabMode::ASYNC,
+                        GrabMode::ASYNC,
+                        0u32,
+                        0u32,
+                        ButtonIndex::from(button_config.button as u8),
+                        ModMask::from((button_config.mask | modifier_combo) as u16),
+                    )?;
+                }
+            }
+        }
+
+        self.x11rb_conn.flush()?;
+        Ok(())
     }
 
     pub fn setfullscreen(
@@ -1517,7 +1642,7 @@ impl Jwm {
         // 发送配置窗口请求
         self.x11rb_conn.configure_window(c.win, &values)?;
         // 调用configure方法
-        self.configure(c);
+        self.configure(c)?;
         // 同步连接（刷新所有待发送的请求）
         self.x11rb_conn.flush()?;
 
@@ -1776,7 +1901,7 @@ impl Jwm {
                 )?;
 
                 // 发送确认配置事件给 status bar
-                self.configure(&mut statusbar_mut);
+                self.configure(&mut statusbar_mut)?;
             }
             drop(statusbar_mut); // 释放借用
                                  // 重要：当状态栏大小变化时，需要更新工作区域并重新排列其他窗口
@@ -1850,7 +1975,7 @@ impl Jwm {
                     .value_mask
                     .contains(ConfigWindow::WIDTH | ConfigWindow::HEIGHT)
             {
-                self.configure(&mut client_mut);
+                self.configure(&mut client_mut)?;
             }
 
             let isvisible = client_mut.isvisible();
@@ -1866,7 +1991,7 @@ impl Jwm {
             }
         } else {
             // 平铺布局中的窗口，只允许有限的配置更改
-            self.configure(&mut client_mut);
+            self.configure(&mut client_mut)?;
         }
 
         Ok(())
@@ -1940,7 +2065,7 @@ impl Jwm {
         // info!("[destroynotify]");
         let c = self.wintoclient(e.window);
         if let Some(client_opt) = c {
-            self.unmanage(Some(client_opt), true);
+            self.unmanage(Some(client_opt), true)?;
         }
         Ok(())
     }
@@ -2757,15 +2882,15 @@ impl Jwm {
         let m = self.wintomon(e.event as u32);
         if m.is_some() && !Rc::ptr_eq(m.as_ref().unwrap(), self.sel_mon.as_ref().unwrap()) {
             let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
-            self.unfocus(sel, true);
+            self.unfocus(sel, true)?;
             self.sel_mon = m;
-            self.focus(None);
+            self.focus(None)?;
         }
 
         // 检查是否点击了客户端窗口
         c = self.wintoclient(e.event as u32);
         if c.is_some() {
-            self.focus(c);
+            self.focus(c)?;
             let _ = self.restack(self.sel_mon.clone());
 
             // 使用x11rb的allow_events
@@ -3114,9 +3239,9 @@ impl Jwm {
                 return Ok(());
             }
             let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-            self.unfocus(sel, false);
+            self.unfocus(sel, false)?;
             self.sel_mon = m;
-            self.focus(None);
+            self.focus(None)?;
         }
         Ok(())
     }
@@ -3130,7 +3255,7 @@ impl Jwm {
                 if target_tag > 0 {
                     sel_opt.borrow_mut().tags = target_tag;
                     let _ = self.setclienttagprop(sel_opt);
-                    self.focus(None);
+                    self.focus(None)?;
                     self.arrange(self.sel_mon.clone());
                 }
             }
@@ -3241,7 +3366,7 @@ impl Jwm {
             }
         }
         if c.is_some() {
-            self.focus(c);
+            self.focus(c)?;
             let _ = self.restack(self.sel_mon.clone());
         }
         Ok(())
@@ -3634,7 +3759,7 @@ impl Jwm {
             }
         };
 
-        self.focus(sel_opt);
+        self.focus(sel_opt)?;
         self.arrange(self.sel_mon.clone());
         Ok(())
     }
@@ -3704,7 +3829,7 @@ impl Jwm {
                 info!("[view] sel_opt: {}", sel_opt.as_ref().unwrap().borrow());
             }
         };
-        self.focus(sel_opt);
+        self.focus(sel_opt)?;
         self.arrange(self.sel_mon.clone());
         Ok(())
     }
@@ -3764,7 +3889,7 @@ impl Jwm {
                         .clone()
                         .expect("None unwrap");
                 }
-                self.focus(None);
+                self.focus(None)?;
                 self.arrange(self.sel_mon.clone());
             }
         }
@@ -3795,7 +3920,7 @@ impl Jwm {
             if newtags > 0 {
                 sel.as_ref().unwrap().borrow_mut().tags = newtags;
                 let _ = self.setclienttagprop(sel.as_ref().unwrap());
-                self.focus(None);
+                self.focus(None)?;
                 self.arrange(self.sel_mon.clone());
             }
         }
@@ -3894,52 +4019,81 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn setup(&mut self) {
-        // info!("[setup]");
-        unsafe {
-            let mut sa: sigaction = zeroed();
-            //do not transform children into zombies whien they terminate
-            sigemptyset(&mut sa.sa_mask);
-            sa.sa_flags = SA_NOCLDSTOP | SA_NOCLDWAIT | SA_RESTART;
-            sa.sa_sigaction = SIG_IGN;
-            sigaction(SIGCHLD, &sa, null_mut());
+    pub fn setup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[setup]");
 
-            // clean up any zombies (inherited from .xinitrc etc) immediately
-            while waitpid(-1, null_mut(), WNOHANG) > 0 {}
+        // 初始化视觉效果
+        self.xinit_visual()?;
 
-            // init visual
-            let _ = self.xinit_visual();
-            // info!("[setup] updategeom");
-            self.updategeom();
+        // 更新几何信息
+        self.updategeom();
 
-            let _ = self.setup_ewmh();
+        // 设置 EWMH
+        self.setup_ewmh()?;
 
-            // select events
-            let aux = ChangeWindowAttributesAux::new()
-                .event_mask(
-                    EventMask::SUBSTRUCTURE_REDIRECT
-                        | EventMask::STRUCTURE_NOTIFY
-                        | EventMask::BUTTON_PRESS
-                        | EventMask::POINTER_MOTION
-                        | EventMask::ENTER_WINDOW
-                        | EventMask::LEAVE_WINDOW
-                        | EventMask::STRUCTURE_NOTIFY
-                        | EventMask::PROPERTY_CHANGE,
-                )
-                .cursor(
-                    self.cursor_manager
-                        .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::LeftPtr)
-                        .unwrap(),
-                );
-            self.x11rb_conn
-                .change_window_attributes(self.x11rb_root, &aux)
-                .unwrap();
+        // 选择根窗口事件
+        let aux = ChangeWindowAttributesAux::new()
+            .event_mask(
+                EventMask::SUBSTRUCTURE_REDIRECT
+                    | EventMask::STRUCTURE_NOTIFY
+                    | EventMask::BUTTON_PRESS
+                    | EventMask::POINTER_MOTION
+                    | EventMask::ENTER_WINDOW
+                    | EventMask::LEAVE_WINDOW
+                    | EventMask::PROPERTY_CHANGE,
+            )
+            .cursor(
+                self.cursor_manager
+                    .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::LeftPtr)?,
+            );
 
-            // info!("[setup] grabkeys");
-            self.grabkeys();
-            // info!("[setup] focus");
-            self.focus(None);
-        }
+        self.x11rb_conn
+            .change_window_attributes(self.x11rb_root, &aux)?;
+
+        // 抓取按键
+        self.grabkeys()?;
+
+        // 设置焦点
+        self.focus(None)?;
+
+        self.x11rb_conn.flush()?;
+        Ok(())
+    }
+
+    fn register_client_events(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let win = client_rc.borrow().win;
+
+        // 选择窗口事件
+        let aux = ChangeWindowAttributesAux::new().event_mask(
+            EventMask::ENTER_WINDOW
+                | EventMask::FOCUS_CHANGE
+                | EventMask::PROPERTY_CHANGE
+                | EventMask::STRUCTURE_NOTIFY,
+        );
+
+        self.x11rb_conn.change_window_attributes(win, &aux)?;
+
+        // 抓取按钮
+        self.grabbuttons(Some(client_rc.clone()), false)?;
+
+        // 更新 EWMH _NET_CLIENT_LIST
+        use x11rb::wrapper::ConnectionExt;
+        self.x11rb_conn.change_property32(
+            PropMode::APPEND,
+            self.x11rb_root,
+            self.atoms._NET_CLIENT_LIST,
+            AtomEnum::WINDOW,
+            &[client_rc.borrow().win],
+        )?;
+
+        info!(
+            "[register_client_events] Events registered for window {}",
+            win
+        );
+        Ok(())
     }
 
     pub fn killclient(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
@@ -3989,7 +4143,7 @@ impl Jwm {
         // info!("[pop]");
         self.detach(c.clone());
         self.attach(c.clone());
-        self.focus(c.clone());
+        let _ = self.focus(c.clone());
         let mon = { c.as_ref().unwrap().borrow_mut().mon.clone() };
         self.arrange(mon);
     }
@@ -4570,7 +4724,7 @@ impl Jwm {
         {
             self.sendmon(Some(client_rc.clone()), target_monitor_opt.clone());
             self.sel_mon = target_monitor_opt;
-            self.focus(None);
+            self.focus(None)?;
         }
 
         Ok(())
@@ -4827,7 +4981,7 @@ impl Jwm {
                 debug!("Moving client to different monitor after resize");
                 self.sendmon(Some(client_rc), target_monitor.clone());
                 self.sel_mon = target_monitor;
-                self.focus(None);
+                self.focus(None)?;
             }
         }
 
@@ -4938,138 +5092,6 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn grabbuttons(&mut self, client_opt: Option<Rc<RefCell<Client>>>, focused: bool) {
-        let _ = self.update_num_lock_mask();
-        let client_win_id = match client_opt.as_ref() {
-            // 获取窗口 ID，只需不可变借用
-            Some(c_rc) => c_rc.borrow().win,
-            None => return, // 如果 client_opt 是 None，则直接返回
-        };
-
-        unsafe {
-            let modifiers_to_try = [0, LockMask, self.numlock_mask, self.numlock_mask | LockMask];
-
-            XUngrabButton(
-                self.x11_dpy,
-                AnyButton as u32,
-                AnyModifier,
-                client_win_id.into(),
-            );
-
-            if !focused {
-                XGrabButton(
-                    self.x11_dpy,
-                    AnyButton as u32,
-                    AnyModifier,
-                    client_win_id.into(),
-                    False,
-                    BUTTONMASK as u32,
-                    GrabModeSync,
-                    GrabModeSync,
-                    0,
-                    0,
-                );
-            }
-
-            for button_config in CONFIG.get_buttons().iter() {
-                // 使用迭代器
-                if button_config.click == CLICK::ClkClientWin as u32 {
-                    for &modifier_combo in modifiers_to_try.iter() {
-                        XGrabButton(
-                            self.x11_dpy,
-                            button_config.button,
-                            button_config.mask | modifier_combo,
-                            client_win_id.into(),
-                            False,
-                            BUTTONMASK as u32,
-                            GrabModeAsync,
-                            GrabModeAsync,
-                            0,
-                            0,
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    pub fn grabkeys(&mut self) {
-        info!("[grabkeys]"); // 日志
-        let _ = self.update_num_lock_mask(); // 更新 NumLock 修饰键掩码
-        info!("[grabkeys] {}", self.numlock_mask);
-        unsafe {
-            // unsafe 块
-            // 准备修饰键组合，与 grabbuttons 中类似
-            let modifiers_to_try = [0, LockMask, self.numlock_mask, self.numlock_mask | LockMask];
-
-            // 1. 取消之前对根窗口所有按键的任何抓取
-            XUngrabKey(
-                self.x11_dpy,
-                AnyKey,                 // AnyKey: 通配符，表示所有键盘按键
-                AnyModifier,            // AnyModifier: 通配符，表示任何修饰键组合
-                self.x11rb_root.into(), // target_window: 根窗口 (全局快捷键通常在根窗口上抓取)
-            );
-
-            // 2. 获取当前键盘映射信息
-            let mut min_keycode: i32 = 0; // 最小键码
-            let mut max_keycode: i32 = 0; // 最大键码
-            let mut keysyms_per_keycode: i32 = 0; // 每个键码通常关联的 Keysym 数量 (例如，区分大小写、Shift 等)
-
-            // 获取 X server 当前使用的键码范围
-            XDisplayKeycodes(self.x11_dpy, &mut min_keycode, &mut max_keycode);
-            // 获取从 min_keycode 到 max_keycode 的所有键码对应的 Keysym 映射表
-            // syms_ptr 是一个指向 Keysym 数组的指针。
-            // 数组的组织方式是：对于每个键码 k (从 min_keycode 开始)，
-            // 其对应的 Keysym 存储在 syms_ptr + (k - min_keycode) * keysyms_per_keycode 的位置。
-            // 我们通常只关心每个键码的第一个 Keysym (index 0)。
-            let syms_ptr = XGetKeyboardMapping(
-                self.x11_dpy,
-                min_keycode as u8,             // first_keycode_wanted
-                max_keycode - min_keycode + 1, // count: 要获取的键码数量
-                &mut keysyms_per_keycode,      // keysyms_per_keycode_return
-            );
-
-            if syms_ptr.is_null() {
-                // 如果获取映射失败
-                error!("[grabkeys] XGetKeyboardMapping returned null pointer!");
-                return;
-            }
-
-            // 3. 遍历所有可能的物理键码 (keycode)
-            for keycode_val in min_keycode..=max_keycode {
-                // 4. 遍历 CONFIG.rs 中定义的所有键盘快捷键绑定 (keys)
-                for key_config in CONFIG.get_keys().iter() {
-                    // 使用迭代器
-                    // 获取当前物理键码 keycode_val 对应的第一个 Keysym
-                    // (k - start) * skip 逻辑在C中用于访问二维数组，这里是 (keycode_val - min_keycode) * keysyms_per_keycode
-                    // 我们只关心第一个 Keysym，所以偏移量是 0
-                    let current_keysym =
-                        *syms_ptr.add(((keycode_val - min_keycode) * keysyms_per_keycode) as usize);
-                    //  wrapping_add 也是为了防止溢出，但对于 usize 索引，直接 .add() 更常见。
-
-                    // 如果当前物理键码对应的 Keysym 与配置中快捷键的 Keysym 匹配
-                    if key_config.keysym == current_keysym {
-                        // 则为这个快捷键抓取事件，并尝试所有修饰键组合
-                        for &modifier_combo in modifiers_to_try.iter() {
-                            XGrabKey(
-                                self.x11_dpy,
-                                keycode_val,                      // keycode: 当前物理键码
-                                key_config.mod0 | modifier_combo, // modifiers: 配置的掩码 + 额外修饰符
-                                self.x11rb_root.into(),           // grab_window: 根窗口
-                                True, // owner_events: True, 如果其他窗口也选了这个事件，它们也会收到
-                                GrabModeAsync, // pointer_mode
-                                GrabModeAsync, // keyboard_mode
-                            );
-                        }
-                    }
-                }
-            }
-
-            // 5. 释放由 XGetKeyboardMapping 分配的内存
-            XFree(syms_ptr as *mut _);
-        }
-    }
-
     pub fn sendevent(&mut self, client_mut: &mut Client, proto: Atom) -> bool {
         info!(
             "[sendevent] Sending protocol {:?} to window 0x{:x}",
@@ -5138,26 +5160,6 @@ impl Jwm {
         true
     }
 
-    pub fn setfocus(&mut self, c: &Rc<RefCell<Client>>) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[setfocus]");
-        unsafe {
-            let mut c = c.borrow_mut();
-            if !c.never_focus {
-                XSetInputFocus(self.x11_dpy, c.win.into(), RevertToPointerRoot, CurrentTime);
-                use x11rb::wrapper::ConnectionExt;
-                self.x11rb_conn.change_property32(
-                    PropMode::REPLACE,
-                    self.x11rb_root,
-                    self.atoms._NET_ACTIVE_WINDOW,
-                    AtomEnum::WINDOW,
-                    &[c.win],
-                )?;
-            }
-            self.sendevent(&mut c, self.atoms.WM_TAKE_FOCUS);
-            Ok(())
-        }
-    }
-
     pub fn enternotify(&mut self, e: &EnterNotifyEvent) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[enternotify]");
         // 过滤不需要处理的事件
@@ -5184,9 +5186,9 @@ impl Jwm {
             if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
                 if !Rc::ptr_eq(&monitor, self.sel_mon.as_ref().unwrap()) {
                     let sel = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
-                    self.unfocus(sel, true);
+                    self.unfocus(sel, true)?;
                     self.sel_mon = Some(monitor);
-                    self.focus(None);
+                    self.focus(None)?;
                 }
             }
             return Ok(true); // 已处理状态栏事件
@@ -5220,7 +5222,7 @@ impl Jwm {
         }
         // 处理客户端焦点切换
         if self.should_focus_client(&client_rc_opt, is_on_selected_monitor) {
-            self.focus(client_rc_opt);
+            let _ = self.focus(client_rc_opt);
         }
         Ok(())
     }
@@ -5235,7 +5237,7 @@ impl Jwm {
             selmon_borrow.sel.clone()
         };
         // 从旧显示器的选中客户端上移除焦点，并将X焦点设回根
-        self.unfocus(previously_selected_client_opt, true);
+        self.unfocus(previously_selected_client_opt, true)?;
         // 更新选中显示器为当前事件发生的显示器
         self.sel_mon = Some(target_monitor.clone());
         debug!("Switched to monitor {}", target_monitor.borrow().num);
@@ -5274,29 +5276,10 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn set_window_border_width(
-        &self,
-        window: u32,
-        border_width: u32,
+    pub fn focus(
+        &mut self,
+        mut c_opt: Option<Rc<RefCell<Client>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let aux = ConfigureWindowAux::new().border_width(border_width);
-        self.x11rb_conn.configure_window(window, &aux)?;
-        self.x11rb_conn.flush()?; // 确保请求立即发送
-        Ok(())
-    }
-
-    pub fn set_window_border_pixel(
-        &self,
-        window: u32,
-        border_pixel: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let aux = ChangeWindowAttributesAux::new().border_pixel(border_pixel);
-        self.x11rb_conn.change_window_attributes(window, &aux)?;
-        self.x11rb_conn.flush()?; // 确保请求立即发送
-        Ok(())
-    }
-
-    pub fn focus(&mut self, mut c_opt: Option<Rc<RefCell<Client>>>) {
         // info!("[focus]");
         unsafe {
             {
@@ -5326,7 +5309,7 @@ impl Jwm {
                 }
                 let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
                 if sel.is_some() && !Self::are_equal_rc(&sel, &c_opt) {
-                    self.unfocus(sel.clone(), false);
+                    self.unfocus(sel.clone(), false)?;
                 }
             }
             if let Some(c_rc) = c_opt.clone() {
@@ -5341,7 +5324,7 @@ impl Jwm {
                 }
                 self.detachstack(Some(c_rc.clone()));
                 self.attachstack(Some(c_rc.clone()));
-                self.grabbuttons(Some(c_rc.clone()), true);
+                self.grabbuttons(Some(c_rc.clone()), true)?;
                 let _ = self.set_window_border_pixel(
                     c_rc.borrow().win,
                     self.theme_manager
@@ -5370,34 +5353,61 @@ impl Jwm {
 
             self.mark_bar_update_needed(None);
         }
+        Ok(())
     }
 
-    pub fn unfocus(&mut self, c: Option<Rc<RefCell<Client>>>, setfocus: bool) {
-        // info!("[unfocus]");
+    pub fn setfocus(&mut self, c: &Rc<RefCell<Client>>) -> Result<(), Box<dyn std::error::Error>> {
+        let mut c_mut = c.borrow_mut();
+
+        if !c_mut.never_focus {
+            self.x11rb_conn.set_input_focus(
+                InputFocus::POINTER_ROOT,
+                c_mut.win,
+                0u32, // time
+            )?;
+
+            use x11rb::wrapper::ConnectionExt;
+            self.x11rb_conn.change_property32(
+                PropMode::REPLACE,
+                self.x11rb_root,
+                self.atoms._NET_ACTIVE_WINDOW,
+                AtomEnum::WINDOW,
+                &[c_mut.win],
+            )?;
+        }
+
+        self.sendevent(&mut c_mut, self.atoms.WM_TAKE_FOCUS);
+        self.x11rb_conn.flush()?;
+        Ok(())
+    }
+
+    pub fn unfocus(
+        &mut self,
+        c: Option<Rc<RefCell<Client>>>,
+        setfocus: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if c.is_none() {
-            return;
+            return Ok(());
         }
-        self.grabbuttons(c.clone(), false);
-        unsafe {
-            let _ = self.set_window_border_pixel(
-                c.as_ref().unwrap().borrow_mut().win.into(),
-                self.theme_manager
-                    .get_scheme(SchemeType::Norm)
-                    .border_color()
-                    .pixel as u32,
-            );
-            if setfocus {
-                XSetInputFocus(
-                    self.x11_dpy,
-                    self.x11rb_root.into(),
-                    RevertToPointerRoot,
-                    CurrentTime,
-                );
-                let _ = self
-                    .x11rb_conn
-                    .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW);
-            }
+
+        let client_rc = c.unwrap();
+        self.grabbuttons(Some(client_rc.clone()), false)?;
+
+        self.set_window_border_pixel(
+            client_rc.borrow().win,
+            self.theme_manager.get_scheme(SchemeType::Norm).border.pixel as u32,
+        )?;
+
+        if setfocus {
+            self.x11rb_conn
+                .set_input_focus(InputFocus::POINTER_ROOT, self.x11rb_root, 0u32)?;
+
+            self.x11rb_conn
+                .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW)?;
         }
+
+        self.x11rb_conn.flush()?;
+        Ok(())
     }
 
     pub fn sendmon(&mut self, c: Option<Rc<RefCell<Client>>>, m: Option<Rc<RefCell<Monitor>>>) {
@@ -5405,7 +5415,7 @@ impl Jwm {
         if Self::are_equal_rc(&c.as_ref().unwrap().borrow_mut().mon, &m) {
             return;
         }
-        self.unfocus(c.clone(), true);
+        let _ = self.unfocus(c.clone(), true);
         self.detach(c.clone());
         self.detachstack(c.clone());
         {
@@ -5419,7 +5429,7 @@ impl Jwm {
         self.attach(c.clone());
         self.attachstack(c.clone());
         let _ = self.setclienttagprop(c.as_ref().unwrap());
-        self.focus(None);
+        let _ = self.focus(None);
         self.arrange(None);
     }
 
@@ -5596,7 +5606,7 @@ impl Jwm {
             // 发送 ConfigureNotify 事件给客户端
             {
                 let mut client_mut = client_rc.borrow_mut();
-                self.configure(&mut client_mut);
+                let _ = self.configure(&mut client_mut);
             }
 
             // 设置窗口在屏幕外的临时位置（避免闪烁）
@@ -5617,44 +5627,6 @@ impl Jwm {
 
             info!("[setup_client_window] Window setup completed for {}", win);
         }
-    }
-
-    fn register_client_events(
-        &mut self,
-        client_rc: &Rc<RefCell<Client>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        unsafe {
-            let win = client_rc.borrow().win;
-
-            // 为窗口选择要监听的事件
-            XSelectInput(
-                self.x11_dpy,
-                win.into(),
-                EnterWindowMask |        // 鼠标进入窗口
-                FocusChangeMask |        // 焦点变化
-                PropertyChangeMask |     // 窗口属性变化
-                StructureNotifyMask, // 窗口结构变化（如被销毁、调整大小等）
-            );
-
-            // 为窗口抓取鼠标按钮事件（用于窗口管理操作）
-            self.grabbuttons(Some(client_rc.clone()), false); // false 表示窗口初始不是焦点
-
-            // 更新 EWMH _NET_CLIENT_LIST 属性
-            use x11rb::wrapper::ConnectionExt;
-            self.x11rb_conn.change_property32(
-                PropMode::APPEND,
-                self.x11rb_root,
-                self.atoms._NET_CLIENT_LIST,
-                AtomEnum::WINDOW,
-                &[client_rc.borrow().win],
-            )?;
-
-            info!(
-                "[register_client_events] Events registered for window {}",
-                win
-            );
-        }
-        Ok(())
     }
 
     // 更新完整的客户端列表（在需要时调用）
@@ -5705,7 +5677,7 @@ impl Jwm {
             // 取消当前选中窗口的焦点
             let prev_sel_opt = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
             if prev_sel_opt.is_some() {
-                self.unfocus(prev_sel_opt, false); // false: 不立即设置根窗口焦点
+                let _ = self.unfocus(prev_sel_opt, false); // false: 不立即设置根窗口焦点
                 info!("[handle_new_client_focus] Unfocused previous client");
             }
 
@@ -5721,14 +5693,14 @@ impl Jwm {
 
             // 设置焦点到新窗口（如果它不是 never_focus）
             if !client_rc.borrow().never_focus {
-                self.focus(Some(client_rc.clone()));
+                let _ = self.focus(Some(client_rc.clone()));
                 info!(
                     "[handle_new_client_focus] Focused new client: {}",
                     client_rc.borrow().name
                 );
             } else {
                 // 如果新窗口是 never_focus，重新评估焦点
-                self.focus(None);
+                let _ = self.focus(None);
                 info!("[handle_new_client_focus] New client is never_focus, re-evaluated focus");
             }
         } else {
@@ -5753,9 +5725,9 @@ impl Jwm {
                 if !Rc::ptr_eq(&new_mon, self.sel_mon.as_ref().unwrap()) {
                     // 切换到新窗口的显示器
                     let old_sel = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
-                    self.unfocus(old_sel, true);
+                    let _ = self.unfocus(old_sel, true);
                     self.sel_mon = Some(new_mon);
-                    self.focus(Some(client_rc.clone()));
+                    let _ = self.focus(Some(client_rc.clone()));
                     info!("[handle_new_client_focus] Switched to new window's monitor");
                 }
             }
@@ -5911,7 +5883,7 @@ impl Jwm {
                 StructureNotifyMask | PropertyChangeMask | EnterWindowMask,
             );
             // 发送配置通知
-            self.configure(client_mut);
+            let _ = self.configure(client_mut);
         }
     }
 
@@ -5978,7 +5950,7 @@ impl Jwm {
                     changed = true;
                 }
                 if changed {
-                    self.configure(&mut statusbar_mut);
+                    let _ = self.configure(&mut statusbar_mut);
                     drop(statusbar_mut);
                     drop(monitor_borrow);
                     info!(
@@ -6088,7 +6060,7 @@ impl Jwm {
         // info!("[mappingnotify]");
         match e.request {
             Mapping::KEYBOARD => {
-                self.grabkeys();
+                self.grabkeys()?;
             }
             _ => {}
         }
@@ -6237,11 +6209,11 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 从当前选中显示器的选中客户端上移除焦点
         let selmon_sel = self.sel_mon.as_ref().unwrap().borrow().sel.clone();
-        self.unfocus(selmon_sel, true);
+        self.unfocus(selmon_sel, true)?;
         // 切换到新显示器
         self.sel_mon = new_monitor.clone();
         // 在新显示器上设置焦点
-        self.focus(None);
+        self.focus(None)?;
         if let Some(ref monitor) = new_monitor {
             debug!(
                 "Switched to monitor {} via mouse motion",
@@ -6251,19 +6223,24 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn unmanage(&mut self, c: Option<Rc<RefCell<Client>>>, destroyed: bool) {
+    pub fn unmanage(
+        &mut self,
+        c: Option<Rc<RefCell<Client>>>,
+        destroyed: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let client_rc = match c {
             Some(c) => c,
-            None => return,
+            None => return Ok(()),
         };
         let win = client_rc.borrow().win;
         // 检查是否是状态栏
         if let Some(&monitor_id) = self.status_bar_windows.get(&win) {
             self.unmanage_statusbar(monitor_id, destroyed);
-            return;
+            return Ok(());
         }
         // 常规客户端的 unmanage 逻辑
-        self.unmanage_regular_client(&client_rc, destroyed);
+        self.unmanage_regular_client(&client_rc, destroyed)?;
+        Ok(())
     }
 
     fn unmanage_statusbar(&mut self, monitor_id: i32, destroyed: bool) {
@@ -6506,7 +6483,11 @@ impl Jwm {
         }
     }
 
-    pub fn unmanage_regular_client(&mut self, client_rc: &Rc<RefCell<Client>>, destroyed: bool) {
+    pub fn unmanage_regular_client(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+        destroyed: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[unmanage]");
         unsafe {
             let mut wc: XWindowChanges = zeroed();
@@ -6555,10 +6536,11 @@ impl Jwm {
                 XSetErrorHandler(Some(transmute(xerror as *const ())));
                 XUngrabServer(self.x11_dpy);
             }
-            self.focus(None);
+            self.focus(None)?;
             let _ = self.update_net_client_list();
             self.arrange(client_rc.borrow().mon.clone());
         }
+        Ok(())
     }
 
     pub fn unmapnotify(&mut self, e: &UnmapNotifyEvent) -> Result<(), Box<dyn std::error::Error>> {
@@ -6571,7 +6553,7 @@ impl Jwm {
             } else {
                 // 这是真正的窗口销毁或隐藏
                 debug!("Real unmap for window {}, unmanaging", e.window);
-                self.unmanage(Some(client_rc), false);
+                self.unmanage(Some(client_rc), false)?;
             }
         } else {
             debug!("Unmap event for unmanaged window: {}", e.window);
@@ -6579,243 +6561,235 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn isuniquegeom(
-        &mut self,
-        unique: &mut Vec<XineramaScreenInfo>,
-        info: *mut XineramaScreenInfo,
-    ) -> bool {
-        // info!("[isuniquegeom]");
-        unsafe {
-            for val in unique.iter().rev() {
-                if val.x_org == (*info).x_org
-                    && val.y_org == (*info).y_org
-                    && val.width == (*info).width
-                    && val.height == (*info).height
-                {
-                    return false;
+    pub fn updategeom(&mut self) -> bool {
+        info!("[updategeom]");
+        let dirty;
+
+        // 使用 RandR 扩展替代 Xinerama
+        match self.get_monitors_randr() {
+            Ok(monitors) => {
+                if monitors.is_empty() {
+                    // 回退到单显示器模式
+                    dirty = self.setup_single_monitor();
+                } else {
+                    dirty = self.setup_multiple_monitors(monitors);
                 }
             }
+            Err(_) => {
+                // RandR 不可用，使用单显示器模式
+                dirty = self.setup_single_monitor();
+            }
         }
-        return true;
+
+        if dirty {
+            self.sel_mon = self.wintomon(self.x11rb_root);
+            if self.sel_mon.is_none() && self.mons.is_some() {
+                self.sel_mon = self.mons.clone();
+            }
+        }
+
+        dirty
     }
 
-    pub fn updategeom(&mut self) -> bool {
-        // info!("[updategeom]"); // 日志
-        let mut dirty: bool = false; // 标记显示器配置是否发生了变化
-        unsafe {
-            // unsafe 块，因为大量使用 Xlib 调用和裸指针
-            let mut num_xinerama_screens: i32 = 0; // Xinerama 报告的屏幕数量
+    fn setup_multiple_monitors(&mut self, monitors: Vec<(i32, i32, i32, i32)>) -> bool {
+        let mut dirty = false;
+        let num_detected_monitors = monitors.len() as i32;
 
-            // --- 1. 检查 Xinerama 是否激活并获取屏幕信息 ---
-            if XineramaIsActive(self.x11_dpy) > 0 {
-                // 如果 Xinerama 扩展可用且激活
-                // info!("[updategeom] XineramaIsActive");
-                // 查询所有 Xinerama 屏幕的信息
-                let xinerama_info_ptr =
-                    XineramaQueryScreens(self.x11_dpy, &mut num_xinerama_screens);
-                // xinerama_info_ptr 是一个指向 XineramaScreenInfo 数组的指针
-                // num_xinerama_screens 会被设置为数组中元素的数量
+        // 计算当前已有的显示器数量
+        let mut current_num_monitors = 0;
+        let mut m_iter = self.mons.clone();
+        while let Some(ref mon_rc) = m_iter {
+            current_num_monitors += 1;
+            let next = mon_rc.borrow().next.clone();
+            m_iter = next;
+        }
 
-                // a. 过滤出唯一的屏幕几何区域
-                let mut unique_screens_info: Vec<XineramaScreenInfo> = vec![];
-                if !xinerama_info_ptr.is_null() {
-                    // 确保指针有效
-                    unique_screens_info.reserve(num_xinerama_screens as usize); // 预分配空间
-                    for i in 0..num_xinerama_screens as usize {
-                        // self.isuniquegeom 检查新的屏幕信息是否与已收集的唯一屏幕信息重复
-                        if self.isuniquegeom(&mut unique_screens_info, xinerama_info_ptr.add(i)) {
-                            unique_screens_info.push(*xinerama_info_ptr.add(i));
-                        }
+        // 如果检测到的显示器数量多于当前管理的数量，创建新的显示器
+        if num_detected_monitors > current_num_monitors {
+            dirty = true;
+            for _ in current_num_monitors..num_detected_monitors {
+                // 找到链表尾部并添加新显示器
+                if let Some(ref mons) = self.mons {
+                    let mut tail = mons.clone();
+                    while tail.borrow().next.is_some() {
+                        let next = tail.borrow().next.clone().unwrap();
+                        tail = next;
                     }
-                    XFree(xinerama_info_ptr as *mut _); // 释放 XineramaQueryScreens 分配的内存
-                }
-                let num_effective_screens = unique_screens_info.len() as i32; // 实际有效的、不重复的屏幕数量
-
-                // b. 获取当前 JWM 内部管理的 Monitor 数量 (current_num_monitors)
-                let mut current_num_monitors = 0;
-                let mut m_iter = self.mons.clone(); // 从 JWM 的 Monitor 链表头开始
-                while let Some(ref mon_rc) = m_iter.clone() {
-                    current_num_monitors += 1;
-                    m_iter = mon_rc.borrow().next.clone(); // 移动到下一个 (不可变借用)
-                }
-
-                // c. 如果检测到的有效屏幕数量 (num_effective_screens) 多于 JWM 当前管理的 Monitor 数量，
-                //    则创建新的 Monitor 对象。
-                if num_effective_screens > current_num_monitors {
-                    dirty = true; // 配置已改变
-                    for _ in current_num_monitors..num_effective_screens {
-                        // 找到当前 Monitor 链表的尾部
-                        let mut tail_mon_opt = self.mons.clone();
-                        if tail_mon_opt.is_some() {
-                            // 如果链表不为空
-                            while tail_mon_opt.as_ref().unwrap().borrow().next.is_some() {
-                                let next_mon = tail_mon_opt.as_ref().unwrap().borrow().next.clone();
-                                tail_mon_opt = next_mon;
-                            }
-                            // 在尾部添加新的 Monitor
-                            tail_mon_opt.as_mut().unwrap().borrow_mut().next =
-                                Some(Rc::new(RefCell::new(self.createmon())));
-                        } else {
-                            // 如果链表为空 (self.mons 是 None)
-                            self.mons = Some(Rc::new(RefCell::new(self.createmon())));
-                        }
-                    }
-                }
-
-                // d. 更新现有 Monitor 的几何信息，并根据 Xinerama 信息调整
-                m_iter = self.mons.clone(); // 重新从头开始遍历 JWM 的 Monitor 链表
-                for i in 0..num_effective_screens as usize {
-                    if m_iter.is_none() {
-                        break;
-                    } // 不应发生，因为上面已确保 Monitor 数量足够
-                    let mon_rc = m_iter.as_ref().unwrap().clone();
-
-                    // 比较当前 Monitor 的几何信息与 Xinerama 报告的第 i 个唯一屏幕信息
-                    let (current_mx, current_my, current_mw, current_mh) = {
-                        let mon_borrow = mon_rc.borrow();
-                        (
-                            mon_borrow.m_x,
-                            mon_borrow.m_y,
-                            mon_borrow.m_w,
-                            mon_borrow.m_h,
-                        )
-                    };
-                    let xinerama_screen = &unique_screens_info[i];
-
-                    // 如果 Monitor 是新创建的 (i >= current_num_monitors)，
-                    // 或者其几何信息与 Xinerama 报告的不符，则更新它。
-                    if i as i32 >= current_num_monitors
-                        || xinerama_screen.x_org as i32 != current_mx
-                        || xinerama_screen.y_org as i32 != current_my
-                        || xinerama_screen.width as i32 != current_mw
-                        || xinerama_screen.height as i32 != current_mh
-                    {
-                        dirty = true; // 配置已改变
-                        let mut mon_mut_borrow = mon_rc.borrow_mut(); // 可变借用以更新
-                        mon_mut_borrow.num = i as i32; // 设置显示器编号
-                                                       // mx, my: 物理屏幕左上角坐标
-                                                       // mw, mh: 物理屏幕宽高
-                                                       // wx, wy: 工作区左上角坐标 (初始等于物理屏幕坐标)
-                                                       // ww, wh: 工作区宽高 (初始等于物理屏幕宽高)
-                                                       //         后续 arrange 会根据状态栏调整工作区
-                        mon_mut_borrow.m_x = xinerama_screen.x_org as i32;
-                        mon_mut_borrow.w_x = xinerama_screen.x_org as i32;
-                        mon_mut_borrow.m_y = xinerama_screen.y_org as i32;
-                        mon_mut_borrow.w_y = xinerama_screen.y_org as i32;
-                        mon_mut_borrow.m_w = xinerama_screen.width as i32;
-                        mon_mut_borrow.w_w = xinerama_screen.width as i32;
-                        mon_mut_borrow.m_h = xinerama_screen.height as i32;
-                        mon_mut_borrow.w_h = xinerama_screen.height as i32;
-                    }
-                    m_iter = mon_rc.borrow().next.clone(); // 移动到下一个 Monitor
-                }
-
-                // e. 如果 JWM 当前管理的 Monitor 数量多于检测到的有效屏幕数量，
-                //    则移除多余的 Monitor，并将其上的客户端移到第一个 Monitor。
-                for _ in num_effective_screens..current_num_monitors {
-                    dirty = true; // 配置已改变
-                                  // 找到链表倒数第二个 Monitor (即要被移除的 Monitor 的前一个)
-                                  // 或者如果只有一个 Monitor 且 num_effective_screens 为0，则移除 self.mons
-                    if num_effective_screens == 0
-                        && Rc::ptr_eq(self.mons.as_ref().unwrap(), self.sel_mon.as_ref().unwrap())
-                    {
-                        // 特殊情况：没有有效屏幕了，但之前有一个选中的 monitor
-                        let mon_to_remove = self.mons.take().unwrap(); // 取出唯一的 monitor
-                        let mut client_iter_opt = mon_to_remove.borrow_mut().clients.take(); // 取出其所有 clients
-                        while let Some(client_rc) = client_iter_opt {
-                            // 如果没有其他 monitor，这些 client 实际上无处可去，
-                            // 除非 JWM 退出或有一个默认的 fallback 行为。
-                            // JWM.c 会将它们移到第一个 monitor，但这里没有第一个 monitor 了。
-                            // 这里简化为直接 unmanage，或者可以尝试隐藏它们。
-                            // 此处简单地让它们随着 mon_to_remove 的 drop 而被处理（如果 Client 的 Drop 正确）
-                            // 或者将它们标记为不可见/无 monitor。
-                            // 最安全的做法是先 unmanage 它们。
-                            let next_client = client_rc.borrow_mut().next.take();
-                            self.unmanage(Some(client_rc), false); // unmanage 会处理 focus 和 arrange
-                            client_iter_opt = next_client;
-                        }
-                        if Rc::ptr_eq(&mon_to_remove, self.sel_mon.as_ref().unwrap()) {
-                            self.sel_mon = None; // 没有可选的 monitor 了
-                        }
-                        break; // 已经处理完所有多余的 monitor (因为只有一个或没有了)
-                    }
-
-                    // 找到链表尾部的 Monitor (即最后一个要被移除的 Monitor)
-                    let mut current_iter = self.mons.clone();
-                    while current_iter.as_ref().unwrap().borrow().next.is_some() {
-                        let next_mon = current_iter.as_ref().unwrap().borrow().next.clone();
-                        current_iter = next_mon;
-                    }
-                    // current_iter 现在是最后一个 Monitor (要被移除的)
-
-                    if let Some(last_mon_rc) = current_iter {
-                        // 确认 last_mon_rc 存在
-                        // 将 last_mon_rc 上的所有客户端移动到第一个 Monitor (self.mons)
-                        let mut client_iter_opt = last_mon_rc.borrow_mut().clients.take(); // 取出所有客户端
-                        while let Some(client_rc) = client_iter_opt {
-                            let next_client_opt = client_rc.borrow_mut().next.take(); // 从旧链表断开
-                                                                                      // 更新客户端的 mon 和 tags
-                            {
-                                let mut client_mut = client_rc.borrow_mut();
-                                client_mut.mon = self.mons.clone(); // 指向第一个 monitor
-                                if let Some(ref first_mon_rc) = self.mons {
-                                    // 确保第一个 monitor 存在
-                                    let first_mon_borrow = first_mon_rc.borrow();
-                                    client_mut.tags =
-                                        first_mon_borrow.tag_set[first_mon_borrow.sel_tags];
-                                } else {
-                                    client_mut.tags = 1; // 回退到默认标签
-                                }
-                            }
-                            // 将客户端附加到第一个 Monitor 的管理列表
-                            self.attach(Some(client_rc.clone()));
-                            self.attachstack(Some(client_rc));
-                            client_iter_opt = next_client_opt;
-                        }
-
-                        // 如果被移除的 Monitor 是当前选中的 Monitor，则将 selmon 指向第一个 Monitor
-                        if Rc::ptr_eq(&last_mon_rc, self.sel_mon.as_ref().unwrap()) {
-                            self.sel_mon = self.mons.clone();
-                        }
-                        // 从链表中移除 last_mon_rc
-                        self.cleanupmon(Some(last_mon_rc)); // cleanupmon 会处理链表指针的断开
-                    }
-                }
-            } else {
-                // --- 如果 Xinerama 未激活，则使用单显示器模式 ---
-                dirty = true; // 假设可能需要更新 (例如从无到有，或尺寸变化)
-                if self.mons.is_none() {
-                    // 如果还没有 Monitor 对象
+                    tail.borrow_mut().next = Some(Rc::new(RefCell::new(self.createmon())));
+                } else {
                     self.mons = Some(Rc::new(RefCell::new(self.createmon())));
                 }
-                // 更新这个唯一的 Monitor 的几何信息为整个屏幕的大小
-                // （这里假设 self.sw, self.sh 是屏幕总尺寸）
-                if let Some(ref mon_rc) = self.mons {
-                    let mut mon_mut_borrow = mon_rc.borrow_mut();
-                    if mon_mut_borrow.m_w != self.s_w || mon_mut_borrow.m_h != self.s_h {
-                        dirty = true;
-                        mon_mut_borrow.num = 0; // 单显示器编号为0
-                        mon_mut_borrow.m_x = 0;
-                        mon_mut_borrow.w_x = 0;
-                        mon_mut_borrow.m_y = 0;
-                        mon_mut_borrow.w_y = 0;
-                        mon_mut_borrow.m_w = self.s_w;
-                        mon_mut_borrow.w_w = self.s_w;
-                        mon_mut_borrow.m_h = self.s_h;
-                        mon_mut_borrow.w_h = self.s_h;
+            }
+        }
+
+        // 更新现有显示器的几何信息
+        m_iter = self.mons.clone();
+        for (i, &(x, y, w, h)) in monitors.iter().enumerate() {
+            if let Some(mon_rc) = m_iter {
+                let mut mon = mon_rc.borrow_mut();
+
+                // 检查几何信息是否需要更新
+                if i as i32 >= current_num_monitors
+                    || mon.m_x != x
+                    || mon.m_y != y
+                    || mon.m_w != w
+                    || mon.m_h != h
+                {
+                    dirty = true;
+                    mon.num = i as i32;
+                    mon.m_x = x;
+                    mon.w_x = x;
+                    mon.m_y = y;
+                    mon.w_y = y;
+                    mon.m_w = w;
+                    mon.w_w = w;
+                    mon.m_h = h;
+                    mon.w_h = h;
+                }
+
+                let next = mon.next.clone();
+                m_iter = next;
+            } else {
+                break;
+            }
+        }
+
+        // 如果当前显示器数量多于检测到的数量，移除多余的显示器
+        if num_detected_monitors < current_num_monitors {
+            dirty = true;
+            self.remove_excess_monitors(num_detected_monitors, current_num_monitors);
+        }
+
+        dirty
+    }
+
+    fn remove_excess_monitors(&mut self, target_count: i32, current_count: i32) {
+        for _ in target_count..current_count {
+            // 找到最后一个显示器
+            let mut current = self.mons.clone();
+            let mut prev: Option<Rc<RefCell<Monitor>>> = None;
+
+            while let Some(ref mon_rc) = current {
+                if mon_rc.borrow().next.is_none() {
+                    // 找到了最后一个显示器
+                    break;
+                }
+                prev = current.clone();
+                let next = mon_rc.borrow().next.clone();
+                current = next;
+            }
+
+            if let Some(last_mon) = current {
+                // 将最后一个显示器上的客户端移到第一个显示器
+                self.move_clients_to_first_monitor(&last_mon);
+
+                // 如果被移除的是当前选中的显示器，切换到第一个
+                if let Some(ref sel_mon) = self.sel_mon {
+                    if Rc::ptr_eq(&last_mon, sel_mon) {
+                        self.sel_mon = self.mons.clone();
                     }
+                }
+
+                // 从链表中移除
+                if let Some(ref prev_mon) = prev {
+                    prev_mon.borrow_mut().next = None;
+                } else {
+                    // 移除的是第一个（也是唯一的）显示器
+                    self.mons = None;
+                }
+            }
+        }
+    }
+
+    fn move_clients_to_first_monitor(&mut self, from_monitor: &Rc<RefCell<Monitor>>) {
+        if self.mons.is_none() {
+            return;
+        }
+
+        let mut client_iter = from_monitor.borrow_mut().clients.take();
+
+        while let Some(client_rc) = client_iter {
+            let next_client = client_rc.borrow_mut().next.take();
+
+            // 更新客户端的显示器和标签
+            {
+                let mut client_mut = client_rc.borrow_mut();
+                client_mut.mon = self.mons.clone();
+
+                if let Some(ref first_mon) = self.mons {
+                    let first_mon_borrow = first_mon.borrow();
+                    client_mut.tags = first_mon_borrow.tag_set[first_mon_borrow.sel_tags];
+                } else {
+                    client_mut.tags = 1; // 默认标签
                 }
             }
 
-            // --- 6. 如果配置发生了变化，更新 JWM 的选中显示器 ---
-            if dirty {
-                self.sel_mon = self.wintomon(self.x11rb_root);
-                if self.sel_mon.is_none() && self.mons.is_some() {
-                    self.sel_mon = self.mons.clone();
-                }
-            }
-            return dirty; // 返回配置是否发生变化的标志
+            // 重新附加到第一个显示器
+            self.attach(Some(client_rc.clone()));
+            self.attachstack(Some(client_rc));
+
+            client_iter = next_client;
         }
+    }
+
+    fn get_monitors_randr(&self) -> Result<Vec<(i32, i32, i32, i32)>, Box<dyn std::error::Error>> {
+        use x11rb::protocol::randr::ConnectionExt;
+
+        // 首先检查 RandR 扩展是否可用
+        let version = self.x11rb_conn.randr_query_version(1, 2)?;
+        let _version_reply = version.reply()?;
+
+        let resources = self
+            .x11rb_conn
+            .randr_get_screen_resources(self.x11rb_root)?
+            .reply()?;
+        let mut monitors = Vec::new();
+
+        for crtc in resources.crtcs {
+            let crtc_info = self.x11rb_conn.randr_get_crtc_info(crtc, 0)?.reply()?;
+
+            if crtc_info.width > 0 && crtc_info.height > 0 {
+                monitors.push((
+                    crtc_info.x as i32,
+                    crtc_info.y as i32,
+                    crtc_info.width as i32,
+                    crtc_info.height as i32,
+                ));
+            }
+        }
+
+        // 去重，确保没有重复的几何区域
+        monitors.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+        monitors.dedup();
+
+        Ok(monitors)
+    }
+
+    fn setup_single_monitor(&mut self) -> bool {
+        let mut dirty = false;
+
+        if self.mons.is_none() {
+            self.mons = Some(Rc::new(RefCell::new(self.createmon())));
+            dirty = true;
+        }
+
+        if let Some(ref mon_rc) = self.mons {
+            let mut mon = mon_rc.borrow_mut();
+            if mon.m_w != self.s_w || mon.m_h != self.s_h {
+                dirty = true;
+                mon.num = 0;
+                mon.m_x = 0;
+                mon.w_x = 0;
+                mon.m_y = 0;
+                mon.w_y = 0;
+                mon.m_w = self.s_w;
+                mon.w_w = self.s_w;
+                mon.m_h = self.s_h;
+                mon.w_h = self.s_h;
+            }
+        }
+
+        dirty
     }
 
     pub fn updatewindowtype(&mut self, c: &Rc<RefCell<Client>>) {

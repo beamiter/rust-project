@@ -89,7 +89,7 @@ async fn main()-> Result<(), Box<dyn std::error::Error>> {
         info!("[main] checkotherwm");
         jwm.checkotherwm();
         info!("[main] setup");
-        jwm.setup();
+        jwm.setup()?;
         info!("[main] scan");
         let _ = jwm.scan();
         info!("[main] run");
