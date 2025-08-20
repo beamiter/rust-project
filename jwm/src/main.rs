@@ -87,7 +87,7 @@ async fn main()-> Result<(), Box<dyn std::error::Error>> {
         }
         info!("[main] main begin");
         info!("[main] checkotherwm");
-        jwm.checkotherwm();
+        jwm.checkotherwm()?;
         info!("[main] setup");
         jwm.setup()?;
         info!("[main] scan");
@@ -95,7 +95,7 @@ async fn main()-> Result<(), Box<dyn std::error::Error>> {
         info!("[main] run");
         jwm.run_async().await?;
         info!("[main] cleanup");
-        jwm.cleanup();
+        jwm.cleanup()?;
         info!("[main] XCloseDisplay");
         XCloseDisplay(jwm.x11_dpy);
         info!("[main] end");

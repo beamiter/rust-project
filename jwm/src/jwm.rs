@@ -1,7 +1,7 @@
 #![allow(non_upper_case_globals)]
 #![allow(non_snake_case)]
 
-use libc::{close, exit, fork, setsid, sigaction, sigemptyset, SIGCHLD, SIG_DFL};
+use libc::{close, fork, setsid, sigaction, sigemptyset, SIGCHLD, SIG_DFL};
 use log::info;
 use log::warn;
 use log::{debug, error};
@@ -15,7 +15,6 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::c_char;
 use std::ffi::CStr;
 use std::fmt;
-use std::mem::transmute;
 use std::mem::zeroed;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
@@ -44,13 +43,10 @@ use x11rb::COPY_DEPTH_FROM_PARENT;
 
 use x11::keysym::XK_Num_Lock;
 use x11::xlib::{
-    AnyButton, AnyKey, AnyModifier, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow,
-    ButtonPressMask, ButtonReleaseMask, CurrentTime, DestroyAll, Display, EnterWindowMask, False,
-    KeySym, NoEventMask, PointerMotionMask, PointerRoot, PropertyChangeMask, RevertToPointerRoot,
-    StructureNotifyMask, SubstructureRedirectMask, Success, XDestroyWindow, XErrorEvent, XFree,
-    XGetTransientForHint, XGrabServer, XKillClient, XMapWindow, XMoveResizeWindow, XMoveWindow,
-    XSelectInput, XSetCloseDownMode, XSetErrorHandler, XSetInputFocus, XSync, XUngrabButton,
-    XUngrabKey, XUngrabServer, XWindowChanges, XA_WM_NAME,
+    AnyKey, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow, ButtonPressMask,
+    ButtonReleaseMask, Display, EnterWindowMask, KeySym, NoEventMask, PointerMotionMask,
+    PropertyChangeMask, StructureNotifyMask, Success, XErrorEvent, XFree, XGetTransientForHint,
+    XMapWindow, XMoveResizeWindow, XMoveWindow, XSelectInput, XA_WM_NAME,
 };
 
 use std::cmp::{max, min};
@@ -677,13 +673,6 @@ impl Rule {
     }
 }
 
-pub fn xerrorstart(_: *mut Display, _: *mut XErrorEvent) -> i32 {
-    // info!("[xerrorstart]");
-    eprintln!("jwm: another window manager is already running");
-    unsafe {
-        exit(1);
-    }
-}
 // There's no way to check accesses to destroyed windows, thus those cases are ignored (especially
 // on UnmapNotify's). Other types of errors call xlibs default error handler, which may call exit.
 pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
@@ -1174,49 +1163,181 @@ impl Jwm {
             || *h != client_now.h;
     }
 
-    pub fn cleanup(&mut self) {
-        // info!("[cleanup]");
-        // Bitwise or to get max value.
+    pub fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[cleanup] Starting window manager cleanup");
+
         // 清理状态栏
         let statusbar_monitor_ids: Vec<i32> = self.status_bar_clients.keys().cloned().collect();
         for monitor_id in statusbar_monitor_ids {
             self.unmanage_statusbar(monitor_id, false);
         }
+
         // 常规清理逻辑
         drop(self.sender.clone());
-        let mut a: Arg = Arg::Ui(!0);
-        unsafe {
-            let _ = self.view(&mut a);
-            let mut m = self.mons.clone();
-            while let Some(ref m_opt) = m {
-                let mut stack_iter: Option<Rc<RefCell<Client>>>;
-                loop {
-                    stack_iter = m_opt.borrow_mut().stack.clone();
-                    if let Some(client_rc) = stack_iter {
-                        let _ = self.unmanage(Some(client_rc), false);
-                    } else {
+
+        // 切换到显示所有窗口的视图
+        let show_all_arg = Arg::Ui(!0);
+        let _ = self.view(&show_all_arg);
+
+        // 卸载所有客户端
+        self.cleanup_all_clients()?;
+
+        // 释放所有按键抓取
+        self.cleanup_key_grabs()?;
+
+        // 清理所有监视器
+        self.cleanup_all_monitors();
+
+        // 销毁 WM 检查窗口
+        self.cleanup_wm_check_window()?;
+
+        // 重置输入焦点到根窗口
+        self.reset_input_focus()?;
+
+        // 清理 EWMH 属性
+        self.cleanup_ewmh_properties()?;
+
+        // 确保所有操作都被发送
+        self.x11rb_conn.flush()?;
+
+        info!("[cleanup] Window manager cleanup completed");
+        Ok(())
+    }
+
+    fn cleanup_all_clients(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let mut m = self.mons.clone();
+
+        while let Some(ref m_opt) = m {
+            // 不断卸载当前监视器的第一个客户端，直到没有客户端为止
+            loop {
+                let stack_client = m_opt.borrow().stack.clone();
+                if let Some(client_rc) = stack_client {
+                    if let Err(e) = self.unmanage(Some(client_rc), false) {
+                        warn!("[cleanup_all_clients] Failed to unmanage client: {:?}", e);
+                        // 继续处理下一个客户端，避免无限循环
                         break;
                     }
+                } else {
+                    break;
                 }
-                let next = { m_opt.borrow_mut().next.clone() };
-                m = next;
             }
-            XUngrabKey(self.x11_dpy, AnyKey, AnyModifier, self.x11rb_root.into());
-            while self.mons.is_some() {
-                self.cleanupmon(self.mons.clone());
-            }
-            XDestroyWindow(self.x11_dpy, self.wm_check_win.into());
-            XSync(self.x11_dpy, False);
-            XSetInputFocus(
-                self.x11_dpy,
-                PointerRoot as u64,
-                RevertToPointerRoot,
-                CurrentTime,
-            );
-            let _ = self
-                .x11rb_conn
-                .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW);
+
+            let next = m_opt.borrow().next.clone();
+            m = next;
         }
+
+        Ok(())
+    }
+
+    fn cleanup_key_grabs(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // 释放所有按键抓取
+        match self
+            .x11rb_conn
+            .ungrab_key(AnyKey as u8, self.x11rb_root, ModMask::ANY.into())
+        {
+            Ok(cookie) => {
+                if let Err(e) = cookie.check() {
+                    warn!("[cleanup_key_grabs] Failed to ungrab keys: {:?}", e);
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "[cleanup_key_grabs] Failed to send ungrab_key request: {:?}",
+                    e
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn cleanup_all_monitors(&mut self) {
+        while self.mons.is_some() {
+            self.cleanupmon(self.mons.clone());
+        }
+    }
+
+    fn cleanup_wm_check_window(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if self.wm_check_win != 0 {
+            match self.x11rb_conn.destroy_window(self.wm_check_win) {
+                Ok(cookie) => {
+                    if let Err(e) = cookie.check() {
+                        warn!(
+                            "[cleanup_wm_check_window] Failed to destroy WM check window: {:?}",
+                            e
+                        );
+                    }
+                }
+                Err(e) => {
+                    warn!(
+                        "[cleanup_wm_check_window] Failed to send destroy_window request: {:?}",
+                        e
+                    );
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    fn reset_input_focus(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // 将输入焦点重置到根窗口
+        match self.x11rb_conn.set_input_focus(
+            InputFocus::POINTER_ROOT,
+            self.x11rb_root,
+            0u32, // CurrentTime equivalent
+        ) {
+            Ok(cookie) => {
+                if let Err(e) = cookie.check() {
+                    warn!("[reset_input_focus] Failed to reset input focus: {:?}", e);
+                }
+            }
+            Err(e) => {
+                warn!(
+                    "[reset_input_focus] Failed to send set_input_focus request: {:?}",
+                    e
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    fn cleanup_ewmh_properties(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // 清理 _NET_ACTIVE_WINDOW 属性
+        if let Err(e) = self
+            .x11rb_conn
+            .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW)
+        {
+            warn!(
+                "[cleanup_ewmh_properties] Failed to delete _NET_ACTIVE_WINDOW: {:?}",
+                e
+            );
+        }
+
+        // 清理客户端列表
+        if let Err(e) = self
+            .x11rb_conn
+            .delete_property(self.x11rb_root, self.atoms._NET_CLIENT_LIST)
+        {
+            warn!(
+                "[cleanup_ewmh_properties] Failed to delete _NET_CLIENT_LIST: {:?}",
+                e
+            );
+        }
+
+        // 清理支持的协议列表
+        if let Err(e) = self
+            .x11rb_conn
+            .delete_property(self.x11rb_root, self.atoms._NET_SUPPORTED)
+        {
+            warn!(
+                "[cleanup_ewmh_properties] Failed to delete _NET_SUPPORTED: {:?}",
+                e
+            );
+        }
+
+        Ok(())
     }
 
     pub fn cleanupmon(&mut self, mon: Option<Rc<RefCell<Monitor>>>) {
@@ -2265,7 +2386,7 @@ impl Jwm {
                     Ok(()) // Or keep as Ok, depending on desired error propagation
                 }
                 Err(e) => {
-                    eprintln!("写入错误: {}", e);
+                    error!("写入错误: {}", e);
                     Err(e) // Propagate the I/O error
                 }
             }
@@ -2475,7 +2596,7 @@ impl Jwm {
                     break;
                 }
                 Err(e) => {
-                    eprintln!("Error polling for event: {:?}", e);
+                    error!("Error polling for event: {:?}", e);
                     break;
                 }
             }
@@ -2922,20 +3043,52 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn checkotherwm(&mut self) {
+    pub fn checkotherwm(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[checkotherwm]");
-        unsafe {
-            _ = XSetErrorHandler(Some(transmute(xerrorstart as *const ())));
-            // this causes an error if some other window manager is running.
-            XSelectInput(
-                self.x11_dpy,
-                self.x11rb_root.into(),
-                SubstructureRedirectMask,
-            );
-            XSync(self.x11_dpy, False);
-            // Attention what transmut does is great;
-            XSetErrorHandler(Some(transmute(xerror as *const ())));
-            XSync(self.x11_dpy, False);
+        // 在 XCB 中，我们通过尝试选择 SubstructureRedirect 事件来检查
+        // 如果有其他窗口管理器运行，这个操作会失败
+        let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT);
+        match self
+            .x11rb_conn
+            .change_window_attributes(self.x11rb_root, &aux)
+        {
+            Ok(cookie) => {
+                // 等待请求完成，检查是否有错误
+                match cookie.check() {
+                    Ok(_) => {
+                        info!("[checkotherwm] Successfully acquired SubstructureRedirect, no other WM running");
+                        Ok(())
+                    }
+                    Err(e) => {
+                        error!(
+                            "[checkotherwm] Failed to acquire SubstructureRedirect: {:?}",
+                            e
+                        );
+                        // 检查错误类型
+                        match e {
+                            x11rb::errors::ReplyError::X11Error(ref x11_error) => {
+                                if x11_error.error_kind == x11rb::protocol::ErrorKind::Access {
+                                    error!("jwm: another window manager is already running");
+                                    std::process::exit(1);
+                                }
+                            }
+                            _ => {
+                                error!("jwm: X11 connection error during WM check");
+                                std::process::exit(1);
+                            }
+                        }
+                        Err(e.into())
+                    }
+                }
+            }
+            Err(e) => {
+                error!(
+                    "[checkotherwm] Failed to send change_window_attributes request: {:?}",
+                    e
+                );
+                error!("jwm: failed to communicate with X server");
+                std::process::exit(1);
+            }
         }
     }
 
@@ -4098,25 +4251,57 @@ impl Jwm {
 
     pub fn killclient(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         info!("[killclient]");
-        unsafe {
-            let sel = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
-            if sel.is_none() {
-                return Ok(());
+        let sel = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
+        if sel.is_none() {
+            return Ok(());
+        }
+        let client_rc = sel.as_ref().unwrap();
+        info!("[killclient] {}", client_rc.borrow());
+        // 首先尝试发送 WM_DELETE_WINDOW 协议消息（优雅关闭）
+        if self.sendevent(&mut client_rc.borrow_mut(), self.atoms.WM_DELETE_WINDOW) {
+            info!("[killclient] Sent WM_DELETE_WINDOW protocol message");
+            return Ok(());
+        }
+        // 如果优雅关闭失败，强制终止客户端
+        info!("[killclient] WM_DELETE_WINDOW failed, force killing client");
+        self.force_kill_client(client_rc)?;
+        Ok(())
+    }
+
+    fn force_kill_client(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let win = client_rc.borrow().win;
+        // 抓取服务器以确保操作的原子性
+        self.x11rb_conn.grab_server()?;
+        // 设置关闭模式为销毁所有资源
+        self.x11rb_conn
+            .set_close_down_mode(CloseDown::DESTROY_ALL)?;
+        // 强制终止客户端
+        match self.x11rb_conn.kill_client(win) {
+            Ok(cookie) => {
+                // 同步并检查结果
+                self.x11rb_conn.flush()?;
+                if let Err(e) = cookie.check() {
+                    warn!("[force_kill_client] Kill client failed: {:?}", e);
+                    // 即使失败也继续，因为窗口可能已经被销毁
+                }
             }
-            info!("[killclient] {}", sel.as_ref().unwrap().borrow());
-            if !self.sendevent(
-                &mut sel.as_ref().unwrap().borrow_mut(),
-                self.atoms.WM_DELETE_WINDOW,
-            ) {
-                XGrabServer(self.x11_dpy);
-                XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
-                XSetCloseDownMode(self.x11_dpy, DestroyAll);
-                XKillClient(self.x11_dpy, sel.as_ref().unwrap().borrow().win.into());
-                XSync(self.x11_dpy, False);
-                XSetErrorHandler(Some(transmute(xerror as *const ())));
-                XUngrabServer(self.x11_dpy);
+            Err(e) => {
+                warn!(
+                    "[force_kill_client] Failed to send kill_client request: {:?}",
+                    e
+                );
             }
         }
+        // 释放服务器
+        self.x11rb_conn.ungrab_server()?;
+        self.x11rb_conn.flush()?;
+        info!(
+            "[force_kill_client] Force kill completed for window {}",
+            win
+        );
         Ok(())
     }
 
@@ -5280,80 +5465,127 @@ impl Jwm {
         &mut self,
         mut c_opt: Option<Rc<RefCell<Client>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[focus]");
-        unsafe {
-            {
-                // 如果传入的是状态栏客户端，忽略并寻找合适的替代
-                if let Some(ref c) = c_opt {
-                    if self.status_bar_windows.contains_key(&c.borrow().win) {
-                        c_opt = None; // 忽略状态栏
-                    }
-                }
+        info!("[focus]");
 
-                let (isvisible, _) = match c_opt.clone() {
-                    Some(c_rc) => (c_rc.borrow().isvisible(), c_rc.borrow().is_status_bar()),
-                    _ => (false, false),
-                };
-                if !isvisible {
-                    if let Some(ref sel_mon_opt) = self.sel_mon {
-                        c_opt = sel_mon_opt.borrow_mut().stack.clone();
-                    }
-                    while let Some(c_rc) = c_opt.clone() {
-                        let c_borrow = c_rc.borrow();
-                        if c_borrow.isvisible() {
-                            break;
-                        }
-                        let next = c_rc.borrow().stack_next.clone();
-                        c_opt = next;
-                    }
-                }
-                let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-                if sel.is_some() && !Self::are_equal_rc(&sel, &c_opt) {
-                    self.unfocus(sel.clone(), false)?;
-                }
+        // 如果传入的是状态栏客户端，忽略并寻找合适的替代
+        if let Some(ref c) = c_opt {
+            if self.status_bar_windows.contains_key(&c.borrow().win) {
+                c_opt = None; // 忽略状态栏
             }
-            if let Some(c_rc) = c_opt.clone() {
-                if !Rc::ptr_eq(
-                    c_rc.borrow().mon.as_ref().unwrap(),
-                    self.sel_mon.as_ref().unwrap(),
-                ) {
-                    self.sel_mon = c_rc.borrow().mon.clone();
-                }
-                if c_rc.borrow().is_urgent {
-                    self.seturgent(&c_rc, false);
-                }
-                self.detachstack(Some(c_rc.clone()));
-                self.attachstack(Some(c_rc.clone()));
-                self.grabbuttons(Some(c_rc.clone()), true)?;
-                let _ = self.set_window_border_pixel(
-                    c_rc.borrow().win,
-                    self.theme_manager
-                        .get_scheme(SchemeType::Sel)
-                        .border_color()
-                        .pixel as u32,
-                );
-                let _ = self.setfocus(&c_rc);
-            } else {
-                XSetInputFocus(
-                    self.x11_dpy,
-                    self.x11rb_root.into(),
-                    RevertToPointerRoot,
-                    CurrentTime,
-                );
-                let _ = self
-                    .x11rb_conn
-                    .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW);
-            }
-            if let Some(sel_mon_opt) = self.sel_mon.as_mut() {
-                let mut sel_mon_mut = sel_mon_opt.borrow_mut();
-                sel_mon_mut.sel = c_opt.clone();
-                let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                sel_mon_mut.pertag.as_mut().unwrap().sel[cur_tag] = c_opt.clone();
-            }
+        }
 
-            self.mark_bar_update_needed(None);
+        // 检查客户端是否可见，如果不可见则寻找可见的客户端
+        let is_visible = match c_opt.clone() {
+            Some(c_rc) => c_rc.borrow().isvisible(),
+            None => false,
+        };
+
+        if !is_visible {
+            c_opt = self.find_visible_client();
+        }
+
+        // 处理焦点切换
+        self.handle_focus_change(&c_opt)?;
+
+        // 设置新的焦点客户端
+        if let Some(c_rc) = c_opt.clone() {
+            self.set_client_focus(&c_rc)?;
+        } else {
+            self.set_root_focus()?;
+        }
+
+        // 更新选中监视器的状态
+        self.update_monitor_selection(c_opt.clone());
+
+        // 标记状态栏需要更新
+        self.mark_bar_update_needed(None);
+
+        Ok(())
+    }
+
+    fn find_visible_client(&mut self) -> Option<Rc<RefCell<Client>>> {
+        if let Some(ref sel_mon_opt) = self.sel_mon {
+            let mut c_opt = sel_mon_opt.borrow().stack.clone();
+            while let Some(c_rc) = c_opt.clone() {
+                if c_rc.borrow().isvisible() {
+                    return Some(c_rc);
+                }
+                c_opt = c_rc.borrow().stack_next.clone();
+            }
+        }
+        None
+    }
+
+    fn handle_focus_change(
+        &mut self,
+        new_focus: &Option<Rc<RefCell<Client>>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let current_sel = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
+        if current_sel.is_some() && !Self::are_equal_rc(&current_sel, new_focus) {
+            self.unfocus(current_sel, false)?;
         }
         Ok(())
+    }
+
+    fn set_client_focus(
+        &mut self,
+        c_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 检查客户端是否在当前选中的监视器上
+        let client_monitor = c_rc.borrow().mon.clone();
+        if let Some(ref client_mon) = client_monitor {
+            if !Rc::ptr_eq(client_mon, self.sel_mon.as_ref().unwrap()) {
+                self.sel_mon = Some(client_mon.clone());
+            }
+        }
+        // 清除紧急状态
+        if c_rc.borrow().is_urgent {
+            self.seturgent(c_rc, false);
+        }
+        // 重新排列堆栈顺序
+        self.detachstack(Some(c_rc.clone()));
+        self.attachstack(Some(c_rc.clone()));
+        // 抓取按钮事件
+        self.grabbuttons(Some(c_rc.clone()), true)?;
+        // 设置边框颜色为选中状态
+        self.set_window_border_pixel(
+            c_rc.borrow().win,
+            self.theme_manager.get_scheme(SchemeType::Sel).border.pixel as u32,
+        )?;
+
+        // 设置焦点
+        self.setfocus(c_rc)?;
+
+        Ok(())
+    }
+
+    fn set_root_focus(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // 将焦点设置到根窗口
+        self.x11rb_conn.set_input_focus(
+            InputFocus::POINTER_ROOT,
+            self.x11rb_root,
+            0u32, // CurrentTime equivalent
+        )?;
+
+        // 清除 _NET_ACTIVE_WINDOW 属性
+        self.x11rb_conn
+            .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW)?;
+
+        self.x11rb_conn.flush()?;
+        Ok(())
+    }
+
+    fn update_monitor_selection(&mut self, c_opt: Option<Rc<RefCell<Client>>>) {
+        if let Some(ref sel_mon_opt) = self.sel_mon {
+            let mut sel_mon_mut = sel_mon_opt.borrow_mut();
+            sel_mon_mut.sel = c_opt.clone();
+
+            if let Some(ref pertag) = sel_mon_mut.pertag {
+                let cur_tag = pertag.cur_tag;
+
+                sel_mon_mut.pertag.as_mut().unwrap().sel[cur_tag] = c_opt;
+            }
+        }
     }
 
     pub fn setfocus(&mut self, c: &Rc<RefCell<Client>>) -> Result<(), Box<dyn std::error::Error>> {
@@ -6488,58 +6720,118 @@ impl Jwm {
         client_rc: &Rc<RefCell<Client>>,
         destroyed: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[unmanage]");
-        unsafe {
-            let mut wc: XWindowChanges = zeroed();
+        info!("[unmanage_regular_client]");
 
-            for i in 0..=CONFIG.tags_length() {
-                let sel_i = client_rc
-                    .borrow()
+        // 清理 pertag 中的选中客户端引用
+        for i in 0..=CONFIG.tags_length() {
+            let sel_i = client_rc
+                .borrow()
+                .mon
+                .as_ref()
+                .unwrap()
+                .borrow()
+                .pertag
+                .as_ref()
+                .unwrap()
+                .sel[i]
+                .clone();
+
+            if Self::are_equal_rc(&sel_i, &Some(client_rc.clone())) {
+                client_rc
+                    .borrow_mut()
                     .mon
-                    .as_ref()
+                    .as_mut()
                     .unwrap()
-                    .borrow()
+                    .borrow_mut()
                     .pertag
-                    .as_ref()
+                    .as_mut()
                     .unwrap()
-                    .sel[i]
-                    .clone();
-                if Self::are_equal_rc(&sel_i, &Some(client_rc.clone())) {
-                    client_rc
-                        .borrow_mut()
-                        .mon
-                        .as_mut()
-                        .unwrap()
-                        .borrow_mut()
-                        .pertag
-                        .as_mut()
-                        .unwrap()
-                        .sel[i] = None;
-                }
+                    .sel[i] = None;
+            }
+        }
+
+        // 从链表中移除客户端
+        self.detach(Some(client_rc.clone()));
+        self.detachstack(Some(client_rc.clone()));
+
+        // 如果窗口没有被销毁，需要清理窗口状态
+        if !destroyed {
+            self.cleanup_window_state(client_rc)?;
+        }
+
+        // 重新聚焦和排列
+        self.focus(None)?;
+        self.update_net_client_list()?;
+        self.arrange(client_rc.borrow().mon.clone());
+
+        Ok(())
+    }
+
+    fn cleanup_window_state(
+        &mut self,
+        client_rc: &Rc<RefCell<Client>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (win, old_border_w) = {
+            let client = client_rc.borrow();
+            (client.win, client.old_border_w)
+        };
+
+        // 抓取服务器
+        self.x11rb_conn.grab_server()?.check()?;
+
+        // 执行清理操作（将借用范围限制在这个块内）
+        let cleanup_result = {
+            // 取消事件选择
+            let clear_events_result = {
+                let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT);
+                self.x11rb_conn
+                    .change_window_attributes(win, &aux)
+                    .and_then(|cookie| Ok(cookie.check()))
+            };
+            if let Err(e) = clear_events_result {
+                warn!("[cleanup_window_state] Failed to clear event mask: {:?}", e);
             }
 
-            self.detach(Some(client_rc.clone()));
-            self.detachstack(Some(client_rc.clone()));
-            if !destroyed {
-                let oldbw = client_rc.borrow().old_border_w;
-                let win = client_rc.borrow().win;
-                wc.border_width = oldbw;
-                // avoid race conditions.
-                XGrabServer(self.x11_dpy);
-                XSetErrorHandler(Some(transmute(xerrordummy as *const ())));
-                XSelectInput(self.x11_dpy, win.into(), NoEventMask);
-                // restore border.
-                let _ = self.set_window_border_width(win, oldbw as u32);
-                XUngrabButton(self.x11_dpy, AnyButton as u32, AnyModifier, win.into());
-                let _ = self.setclientstate(client_rc, WithdrawnState as i64);
-                XSync(self.x11_dpy, False);
-                XSetErrorHandler(Some(transmute(xerror as *const ())));
-                XUngrabServer(self.x11_dpy);
+            // 恢复原始边框宽度
+            if let Err(e) = self.set_window_border_width(win, old_border_w as u32) {
+                warn!(
+                    "[cleanup_window_state] Failed to restore border width: {:?}",
+                    e
+                );
             }
-            self.focus(None)?;
-            let _ = self.update_net_client_list();
-            self.arrange(client_rc.borrow().mon.clone());
-        }
+
+            // 取消所有按钮抓取
+            let ungrab_result = self
+                .x11rb_conn
+                .ungrab_button(ButtonIndex::ANY, win, ModMask::ANY.into())
+                .and_then(|cookie| Ok(cookie.check()));
+            if let Err(e) = ungrab_result {
+                warn!("[cleanup_window_state] Failed to ungrab buttons: {:?}", e);
+            }
+
+            // 设置客户端状态为 WithdrawnState
+            if let Err(e) = self.setclientstate(client_rc, WithdrawnState as i64) {
+                warn!("[cleanup_window_state] Failed to set client state: {:?}", e);
+            }
+
+            // 同步所有操作
+            self.x11rb_conn.flush()
+        };
+
+        // 释放服务器（无论前面的操作是否成功）
+        let ungrab_result = self
+            .x11rb_conn
+            .ungrab_server()
+            .and_then(|_| self.x11rb_conn.flush());
+
+        // 处理结果
+        cleanup_result?;
+        ungrab_result?;
+
+        info!(
+            "[cleanup_window_state] Window cleanup completed for {}",
+            win
+        );
         Ok(())
     }
 
