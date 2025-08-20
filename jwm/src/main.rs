@@ -5,23 +5,19 @@ use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use jwm::Jwm;
 use libc::{setlocale, LC_CTYPE};
 use log::info;
+use std::ffi::CString;
 use std::sync::mpsc;
-use std::{ffi::CString, process::exit};
 use std::{thread, time::Duration};
-use x11::xlib::{XCloseDisplay, XSupportsLocale};
+use x11::xlib::XSupportsLocale;
 
 #[tokio::main]
-async fn main()-> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = register_panic_handler();
     jwm::miscellaneous::init_auto_command();
     jwm::miscellaneous::init_auto_start();
     let (tx, rx) = mpsc::channel();
 
     let mut jwm = Jwm::new(tx);
-    if jwm.x11_dpy.is_null() {
-        eprintln!("jwm: cannot open display");
-        exit(1);
-    }
 
     let status_update_thread = thread::spawn(move || {
         // let mut status_bar = StatusBar::new();
@@ -97,7 +93,6 @@ async fn main()-> Result<(), Box<dyn std::error::Error>> {
         info!("[main] cleanup");
         jwm.cleanup()?;
         info!("[main] XCloseDisplay");
-        XCloseDisplay(jwm.x11_dpy);
         info!("[main] end");
     }
 

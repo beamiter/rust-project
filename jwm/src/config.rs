@@ -995,7 +995,7 @@ impl Config {
         let function = self.parse_function(&key_config.function)?;
         let arg = self.convert_argument(&key_config.argument);
 
-        Some(Key::new(modifiers, keysym, Some(function), arg))
+        Some(Key::new(modifiers, keysym as u32, Some(function), arg))
     }
 
     fn generate_tag_keys(&self, tag: usize) -> Vec<Key> {

@@ -15,15 +15,13 @@ use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
-use std::ptr::null_mut;
 use std::rc::Rc;
 use std::str::FromStr; // 用于从字符串解析 // 用于格式化输出，如 Display trait
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
-use std::{os::raw::c_long, usize};
+use std::usize;
 use x11::xft::XftColor;
-use x11::xlib::XOpenDisplay;
 use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::properties::WmSizeHints;
@@ -36,22 +34,17 @@ use x11rb::x11_utils::Serialize;
 use x11rb::COPY_DEPTH_FROM_PARENT;
 
 use x11::keysym::XK_Num_Lock;
-use x11::xlib::{
-    AnyKey, BadAccess, BadDrawable, BadLength, BadMatch, BadWindow, ButtonPressMask,
-    ButtonReleaseMask, Display, KeySym, PointerMotionMask, XErrorEvent, XA_WM_NAME,
-};
 
 use std::cmp::{max, min};
 
 use crate::config::CONFIG;
 use crate::xcb_util::{test_all_cursors, Atoms, CursorManager};
-use crate::xproto::{
-    IconicState, NormalState, WithdrawnState, X_ConfigureWindow, X_CopyArea, X_GrabButton,
-    X_GrabKey, X_PolyFillRectangle, X_PolySegment, X_PolyText8, X_SetInputFocus,
-};
+use crate::xproto::{IconicState, NormalState, WithdrawnState};
 
-pub const BUTTONMASK: c_long = ButtonPressMask | ButtonReleaseMask;
-pub const MOUSEMASK: c_long = BUTTONMASK | PointerMotionMask;
+lazy_static::lazy_static! {
+    pub static ref BUTTONMASK: u32 = (EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE).bits();
+    pub static ref MOUSEMASK: u32 = (EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION).bits();
+}
 
 #[repr(C)]
 #[derive(Debug, Clone)]
@@ -214,13 +207,13 @@ pub type WMFunc = fn(&mut Jwm, &Arg) -> Result<(), Box<dyn std::error::Error>>;
 #[derive(Debug, Clone)]
 pub struct Key {
     pub mod0: u32,
-    pub keysym: KeySym,
+    pub keysym: Keysym,
     pub func: Option<WMFunc>,
     pub arg: Arg,
 }
 impl Key {
     #[allow(unused)]
-    pub fn new(mod0: u32, keysym: KeySym, func: Option<WMFunc>, arg: Arg) -> Self {
+    pub fn new(mod0: u32, keysym: Keysym, func: Option<WMFunc>, arg: Arg) -> Self {
         Self {
             mod0,
             keysym,
@@ -665,38 +658,6 @@ impl Rule {
     }
 }
 
-// There's no way to check accesses to destroyed windows, thus those cases are ignored (especially
-// on UnmapNotify's). Other types of errors call xlibs default error handler, which may call exit.
-pub fn xerror(_: *mut Display, ee: *mut XErrorEvent) -> i32 {
-    // info!("[xerror]");
-    let X_FixesChangeSaveSet: u8 = 139;
-    unsafe {
-        if (*ee).error_code == BadWindow
-            || ((*ee).request_code == X_SetInputFocus && (*ee).error_code == BadMatch)
-            || ((*ee).request_code == X_PolyText8 && (*ee).error_code == BadDrawable)
-            || ((*ee).request_code == X_PolyFillRectangle && (*ee).error_code == BadDrawable)
-            || ((*ee).request_code == X_PolySegment && (*ee).error_code == BadDrawable)
-            || ((*ee).request_code == X_ConfigureWindow && (*ee).error_code == BadMatch)
-            || ((*ee).request_code == X_GrabButton && (*ee).error_code == BadAccess)
-            || ((*ee).request_code == X_GrabKey && (*ee).error_code == BadAccess)
-            || ((*ee).request_code == X_CopyArea && (*ee).error_code == BadDrawable)
-            || ((*ee).request_code == X_FixesChangeSaveSet && (*ee).error_code == BadLength)
-        {
-            return 0;
-        }
-        info!(
-            "jwm: fatal error: request code = {}, error code = {}",
-            (*ee).request_code,
-            (*ee).error_code
-        );
-        return -1;
-    }
-}
-pub fn xerrordummy(_: *mut Display, _: *mut XErrorEvent) -> i32 {
-    // info!("[xerrordummy]");
-    0
-}
-
 pub struct Jwm {
     pub stext_max_len: usize,
     pub s_w: i32,
@@ -722,8 +683,6 @@ pub struct Jwm {
     pub status_bar_windows: HashMap<Window, i32>,              // window_id -> monitor_id (快速查找)
 
     pub pending_bar_updates: HashSet<i32>,
-
-    pub x11_dpy: *mut Display,
 
     pub x11rb_conn: RustConnection,
     pub x11rb_root: Window,
@@ -817,7 +776,6 @@ impl Jwm {
                     .unwrap(),
             ),
         );
-        let dpy = unsafe { XOpenDisplay(null_mut()) };
 
         let (x11rb_conn, x11rb_screen_num) =
             x11rb::rust_connection::RustConnection::connect(None).unwrap();
@@ -836,7 +794,6 @@ impl Jwm {
             running: AtomicBool::new(true),
             theme_manager,
             cursor_manager,
-            x11_dpy: dpy,
             mons: None,
             motion_mon: None,
             sel_mon: None,
@@ -1225,7 +1182,7 @@ impl Jwm {
         // 释放所有按键抓取
         match self
             .x11rb_conn
-            .ungrab_key(AnyKey as u8, self.x11rb_root, ModMask::ANY.into())
+            .ungrab_key(Grab::ANY, self.x11rb_root, ModMask::ANY.into())
         {
             Ok(cookie) => {
                 if let Err(e) = cookie.check() {
@@ -1562,7 +1519,7 @@ impl Jwm {
 
         // 取消之前的按键抓取
         self.x11rb_conn
-            .ungrab_key(AnyKey as u8, self.x11rb_root, ModMask::ANY.into())?;
+            .ungrab_key(Grab::ANY, self.x11rb_root, ModMask::ANY.into())?;
 
         // 获取键盘映射
         let setup = self.x11rb_conn.setup();
@@ -1630,7 +1587,7 @@ impl Jwm {
             self.x11rb_conn.grab_button(
                 false, // owner_events
                 client_win_id,
-                (BUTTONMASK as u32).into(),
+                (*BUTTONMASK as u32).into(),
                 GrabMode::SYNC,
                 GrabMode::SYNC,
                 0u32, // confine_to
@@ -1646,7 +1603,7 @@ impl Jwm {
                     self.x11rb_conn.grab_button(
                         false,
                         client_win_id,
-                        (BUTTONMASK as u32).into(),
+                        (*BUTTONMASK as u32).into(),
                         GrabMode::ASYNC,
                         GrabMode::ASYNC,
                         0u32,
@@ -7370,7 +7327,7 @@ impl Jwm {
     pub fn updatetitle(&mut self, c: &mut Client) {
         // info!("[updatetitle]");
         if !self.gettextprop(c.win, self.atoms._NET_WM_NAME.into(), &mut c.name) {
-            self.gettextprop(c.win, XA_WM_NAME as u32, &mut c.name);
+            self.gettextprop(c.win, AtomEnum::WM_NAME.into(), &mut c.name);
         }
     }
 
