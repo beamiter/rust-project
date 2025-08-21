@@ -25,7 +25,7 @@ use x11::xft::XftColor;
 use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::properties::WmSizeHints;
-use x11rb::protocol::render::PictType;
+use x11rb::protocol::render::Pictforminfo;
 use x11rb::protocol::xinput::KeyCode;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
@@ -3132,56 +3132,135 @@ impl Jwm {
     }
 
     fn xinit_visual(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Open the connection to the X server. Use the DISPLAY environment variable.
-        let x11rb_screen = &self.x11rb_conn.setup().roots[self.x11rb_screen_num];
-        use x11rb::protocol::render::ConnectionExt;
+        let x11rb_screen = self.x11rb_conn.setup().roots[self.x11rb_screen_num].clone();
 
+        // 首先尝试找到支持 alpha 通道的 32 位视觉效果
         for depth in &x11rb_screen.allowed_depths {
             if depth.depth != 32 {
                 continue;
             }
+
             for visualtype in &depth.visuals {
-                if visualtype.visual_id == x11rb_screen.root_visual {
-                    println!("Found: {:?}", visualtype);
-                }
                 if visualtype.class != VisualClass::TRUE_COLOR {
                     continue;
                 }
 
-                let format_cookie = self.x11rb_conn.render_query_pict_formats()?;
-                let format_reply = format_cookie.reply()?;
-                if let Some(visual_format) = format_reply.formats.iter().find(|fmt| {
-                    fmt.id == visualtype.visual_id
-                        || (fmt.type_ == PictType::DIRECT
-                            && fmt.direct.red_mask > 0
-                            && fmt.direct.green_mask > 0
-                            && fmt.direct.blue_mask > 0
-                            && fmt.direct.alpha_mask > 0)
-                }) {
-                    self.visual_id = visual_format.id;
-                    self.depth = visual_format.depth;
-                    let colormap_id = self.x11rb_conn.generate_id()?;
-                    self.x11rb_conn.create_colormap(
-                        ColormapAlloc::NONE,
-                        colormap_id,
-                        self.x11rb_root,
-                        visual_format.id,
-                    )?;
-                    self.color_map = colormap_id.into();
-                    let _rep = self
-                        .x11rb_conn
-                        .alloc_color(colormap_id, 65535, 0, 0)?
-                        .reply()?;
-                    info!("[xinit_visual] Found 32-bit ARGB visual with alpha channel. VisualID: 0x{:x}, ColormapID: 0x{:x}",
-                          self.visual_id, self.color_map);
-                    return Ok(());
+                // 检查 render 扩展中是否有对应的格式
+                match self.find_render_format_for_visual(visualtype.visual_id) {
+                    Ok(Some(format)) if self.has_alpha_channel(&format) => {
+                        // 找到了支持 alpha 的格式
+                        return self.setup_argb_visual(visualtype, &format);
+                    }
+                    Ok(_) => continue, // 格式不支持 alpha，继续查找
+                    Err(e) => {
+                        warn!("[xinit_visual] Failed to query render format: {:?}", e);
+                        continue;
+                    }
                 }
             }
         }
-        info!("[xinitvisual_x11rb] No 32-bit ARGB visual found. Falling back to default.");
+
+        // 如果没找到 32 位 ARGB 视觉效果，回退到默认
+        info!("[xinit_visual] No 32-bit ARGB visual found. Falling back to default.");
+        self.setup_default_visual()
+    }
+
+    fn find_render_format_for_visual(
+        &self,
+        visual_id: Visualid,
+    ) -> Result<Option<Pictforminfo>, Box<dyn std::error::Error>> {
+        use x11rb::protocol::render::ConnectionExt;
+
+        let format_cookie = self.x11rb_conn.render_query_pict_formats()?;
+        let format_reply = format_cookie.reply()?;
+
+        // 查找匹配的 PictFormat
+        for format in &format_reply.formats {
+            if format.id == visual_id {
+                return Ok(Some(*format));
+            }
+        }
+
+        Ok(None)
+    }
+
+    fn has_alpha_channel(&self, format: &Pictforminfo) -> bool {
+        // 检查是否有 alpha 通道
+        format.direct.alpha_mask > 0
+    }
+
+    fn setup_argb_visual(
+        &mut self,
+        visualtype: &Visualtype,
+        _format: &Pictforminfo,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.visual_id = visualtype.visual_id;
+        self.depth = 32;
+
+        // 创建 colormap
+        let colormap_id = self.x11rb_conn.generate_id()?;
+        self.x11rb_conn
+            .create_colormap(
+                ColormapAlloc::NONE,
+                colormap_id,
+                self.x11rb_root,
+                visualtype.visual_id,
+            )?
+            .check()?;
+
+        self.color_map = colormap_id.into();
+
+        // 测试颜色分配（使用更安全的颜色值）
+        match self.test_color_allocation(colormap_id) {
+            Ok(_) => {
+                info!("[xinit_visual] Successfully set up 32-bit ARGB visual. VisualID: 0x{:x}, ColormapID: 0x{:x}",
+                  self.visual_id, self.color_map);
+                Ok(())
+            }
+            Err(e) => {
+                warn!("[xinit_visual] Color allocation test failed: {:?}", e);
+                // 清理失败的 colormap
+                let _ = self.x11rb_conn.free_colormap(colormap_id);
+                self.setup_default_visual()
+            }
+        }
+    }
+
+    fn setup_default_visual(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let x11rb_screen = &self.x11rb_conn.setup().roots[self.x11rb_screen_num];
+
         self.visual_id = x11rb_screen.root_visual;
         self.depth = x11rb_screen.root_depth;
         self.color_map = x11rb_screen.default_colormap.into();
+
+        info!(
+            "[xinit_visual] Using default visual. VisualID: 0x{:x}, Depth: {}, ColormapID: 0x{:x}",
+            self.visual_id, self.depth, self.color_map
+        );
+
+        Ok(())
+    }
+
+    fn test_color_allocation(
+        &self,
+        colormap_id: Colormap,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 测试分配一个简单的颜色（红色）
+        let color_reply = self
+            .x11rb_conn
+            .alloc_color(colormap_id, 65535, 0, 0)?
+            .reply()?;
+
+        debug!(
+            "[test_color_allocation] Successfully allocated test color, pixel: {}",
+            color_reply.pixel
+        );
+
+        // 可选：释放测试颜色
+        let _ = self
+            .x11rb_conn
+            .free_colors(colormap_id, 0, &[color_reply.pixel]);
+
         Ok(())
     }
 
