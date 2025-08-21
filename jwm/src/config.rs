@@ -17,8 +17,8 @@ use x11::keysym::{
     XK_3, XK_4, XK_5, XK_6, XK_7, XK_8, XK_9,
 };
 
-use crate::jwm::WMFunc;
-use crate::jwm::{self, Button, Jwm, Key, Layout, Rule, CLICK};
+use crate::jwm::WMFuncType;
+use crate::jwm::{self, Jwm, LayoutEnum, WMRule, WMButton, WMKey, CLICK};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
 macro_rules! status_bar_config {
@@ -362,8 +362,14 @@ impl Config {
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "Tab".to_string(),
-                function: "view".to_string(),
-                argument: ArgumentConfig::UInt(0),
+                function: "loopview".to_string(),
+                argument: ArgumentConfig::Int(1),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "Tab".to_string(),
+                function: "loopview".to_string(),
+                argument: ArgumentConfig::Int(-1),
             },
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
@@ -643,7 +649,7 @@ impl Config {
     }
 
     // 转换方法
-    pub fn get_keys(&self) -> Vec<Key> {
+    pub fn get_keys(&self) -> Vec<WMKey> {
         let mut keys = Vec::new();
 
         for key_config in &self.inner.keybindings.keys {
@@ -660,12 +666,12 @@ impl Config {
         keys
     }
 
-    pub fn get_rules(&self) -> Vec<Rule> {
+    pub fn get_rules(&self) -> Vec<WMRule> {
         self.inner
             .rules
             .iter()
             .map(|rule| {
-                Rule::new(
+                WMRule::new(
                     rule.class.clone(),
                     rule.instance.clone(),
                     rule.name.clone(),
@@ -709,14 +715,14 @@ impl Config {
             })
     }
 
-    fn convert_button_config(&self, btn_config: &ButtonConfig) -> Option<Button> {
+    fn convert_button_config(&self, btn_config: &ButtonConfig) -> Option<WMButton> {
         let click_type = self.parse_click_type(&btn_config.click_type)?;
         let modifiers = self.parse_modifiers(&btn_config.modifier);
         let button = ButtonIndex::from(btn_config.button as u8);
         let function = self.parse_function(&btn_config.function)?;
         let arg = self.convert_argument(&btn_config.argument);
 
-        Some(Button::new(
+        Some(WMButton::new(
             click_type,
             modifiers,
             button,
@@ -741,7 +747,7 @@ impl Config {
     }
 
     // 扩展 parse_function 以支持更多函数
-    fn parse_function(&self, func_name: &str) -> Option<WMFunc> {
+    fn parse_function(&self, func_name: &str) -> Option<WMFuncType> {
         match func_name {
             // 窗口管理
             "spawn" => Some(Jwm::spawn),
@@ -889,19 +895,19 @@ impl Config {
     }
 
     // 扩展 convert_argument 以支持布局参数
-    fn convert_argument(&self, arg: &ArgumentConfig) -> jwm::Arg {
+    fn convert_argument(&self, arg: &ArgumentConfig) -> jwm::WMArgEnum {
         match arg {
-            ArgumentConfig::Int(i) => jwm::Arg::I(*i),
-            ArgumentConfig::UInt(u) => jwm::Arg::Ui(*u),
-            ArgumentConfig::Float(f) => jwm::Arg::F(*f),
-            ArgumentConfig::StringVec(v) => jwm::Arg::V(v.clone()),
+            ArgumentConfig::Int(i) => jwm::WMArgEnum::Int(*i),
+            ArgumentConfig::UInt(u) => jwm::WMArgEnum::UInt(*u),
+            ArgumentConfig::Float(f) => jwm::WMArgEnum::Float(*f),
+            ArgumentConfig::StringVec(v) => jwm::WMArgEnum::StringVec(v.clone()),
             ArgumentConfig::String(s) => {
                 // 特殊处理布局字符串
                 match s.as_str() {
-                    "tile" => jwm::Arg::Lt(Rc::new(Layout::try_from(0).unwrap())),
-                    "float" => jwm::Arg::Lt(Rc::new(Layout::try_from(1).unwrap())),
-                    "monocle" => jwm::Arg::Lt(Rc::new(Layout::try_from(2).unwrap())),
-                    _ => jwm::Arg::V(vec![s.clone()]),
+                    "tile" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::try_from(0).unwrap())),
+                    "float" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::try_from(1).unwrap())),
+                    "monocle" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::try_from(2).unwrap())),
+                    _ => jwm::WMArgEnum::StringVec(vec![s.clone()]),
                 }
             }
         }
@@ -990,7 +996,7 @@ impl Config {
         ]
     }
 
-    pub fn get_buttons(&self) -> Vec<Button> {
+    pub fn get_buttons(&self) -> Vec<WMButton> {
         let button_configs = if self.inner.mouse_bindings.buttons.is_empty() {
             self.get_default_buttons()
         } else {
@@ -1004,16 +1010,16 @@ impl Config {
     }
 
     // 私有辅助方法
-    fn convert_key_config(&self, key_config: &KeyConfig) -> Option<Key> {
+    fn convert_key_config(&self, key_config: &KeyConfig) -> Option<WMKey> {
         let modifiers = self.parse_modifiers(&key_config.modifier);
         let keysym = self.parse_keysym(&key_config.key)?;
         let function = self.parse_function(&key_config.function)?;
         let arg = self.convert_argument(&key_config.argument);
 
-        Some(Key::new(modifiers, keysym as u32, Some(function), arg))
+        Some(WMKey::new(modifiers, keysym as u32, Some(function), arg))
     }
 
-    fn generate_tag_keys(&self, tag: usize) -> Vec<Key> {
+    fn generate_tag_keys(&self, tag: usize) -> Vec<WMKey> {
         let key = match tag {
             0 => XK_1,
             1 => XK_2,
@@ -1030,24 +1036,29 @@ impl Config {
         let modkey = self.parse_modifiers(&[self.inner.keybindings.modkey.clone()]);
 
         vec![
-            Key::new(modkey, key.into(), Some(Jwm::view), jwm::Arg::Ui(1 << tag)),
-            Key::new(
+            WMKey::new(
+                modkey,
+                key.into(),
+                Some(Jwm::view),
+                jwm::WMArgEnum::UInt(1 << tag),
+            ),
+            WMKey::new(
                 modkey | KeyButMask::CONTROL,
                 key.into(),
                 Some(Jwm::toggleview),
-                jwm::Arg::Ui(1 << tag),
+                jwm::WMArgEnum::UInt(1 << tag),
             ),
-            Key::new(
+            WMKey::new(
                 modkey | KeyButMask::SHIFT,
                 key.into(),
                 Some(Jwm::tag),
-                jwm::Arg::Ui(1 << tag),
+                jwm::WMArgEnum::UInt(1 << tag),
             ),
-            Key::new(
+            WMKey::new(
                 modkey | KeyButMask::CONTROL | KeyButMask::SHIFT,
                 key.into(),
                 Some(Jwm::toggletag),
-                jwm::Arg::Ui(1 << tag),
+                jwm::WMArgEnum::UInt(1 << tag),
             ),
         ]
     }

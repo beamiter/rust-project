@@ -16,7 +16,8 @@ use std::fmt;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
 use std::rc::Rc;
-use std::str::FromStr; // 用于从字符串解析 // 用于格式化输出，如 Display trait
+use std::str::FromStr;
+// 用于从字符串解析 // 用于格式化输出，如 Display trait
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::usize;
@@ -46,7 +47,7 @@ lazy_static::lazy_static! {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct WindowGeom {
+pub struct WMWindowGeom {
     pub x: u16,
     pub y: u16,
     pub width: u16,
@@ -66,30 +67,30 @@ pub enum CLICK {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum Arg {
-    I(i32),
-    Ui(u32),
-    F(f32),
-    V(Vec<String>),
-    Lt(Rc<Layout>),
+pub enum WMArgEnum {
+    Int(i32),
+    UInt(u32),
+    Float(f32),
+    StringVec(Vec<String>),
+    Layout(Rc<LayoutEnum>),
 }
 
 #[derive(Debug, Clone)]
-pub struct Button {
+pub struct WMButton {
     pub click: u32,
     pub mask: KeyButMask,
     pub button: ButtonIndex,
-    pub func: Option<WMFunc>,
-    pub arg: Arg,
+    pub func: Option<WMFuncType>,
+    pub arg: WMArgEnum,
 }
-impl Button {
+impl WMButton {
     #[allow(unused)]
     pub fn new(
         click: u32,
         mask: KeyButMask,
         button: ButtonIndex,
-        func: Option<WMFunc>,
-        arg: Arg,
+        func: Option<WMFuncType>,
+        arg: WMArgEnum,
     ) -> Self {
         Self {
             click,
@@ -101,21 +102,21 @@ impl Button {
     }
 }
 
-pub type WMFunc = fn(&mut Jwm, &Arg) -> Result<(), Box<dyn std::error::Error>>;
+pub type WMFuncType = fn(&mut Jwm, &WMArgEnum) -> Result<(), Box<dyn std::error::Error>>;
 #[derive(Debug, Clone)]
-pub struct Key {
-    pub mod0: KeyButMask,
-    pub keysym: Keysym,
-    pub func: Option<WMFunc>,
-    pub arg: Arg,
+pub struct WMKey {
+    pub mask: KeyButMask,
+    pub key_sym: Keysym,
+    pub func_opt: Option<WMFuncType>,
+    pub arg: WMArgEnum,
 }
-impl Key {
+impl WMKey {
     #[allow(unused)]
-    pub fn new(mod0: KeyButMask, keysym: Keysym, func: Option<WMFunc>, arg: Arg) -> Self {
+    pub fn new(mod0: KeyButMask, keysym: Keysym, func: Option<WMFuncType>, arg: WMArgEnum) -> Self {
         Self {
-            mod0,
-            keysym,
-            func,
+            mask: mod0,
+            key_sym: keysym,
+            func_opt: func,
             arg,
         }
     }
@@ -134,11 +135,11 @@ pub struct Pertag {
     // selected layouts
     pub sel_lts: Vec<usize>,
     // matrix of tags and layouts indexes
-    lt_idxs: Vec<Vec<Option<Rc<Layout>>>>,
+    lt_idxs: Vec<Vec<Option<Rc<LayoutEnum>>>>,
     // display bar for the current tag
     pub show_bars: Vec<bool>,
     // selected client
-    pub sel: Vec<Option<Rc<RefCell<Client>>>>,
+    pub sel: Vec<Option<Rc<RefCell<WMClient>>>>,
 }
 impl Pertag {
     pub fn new() -> Self {
@@ -160,39 +161,34 @@ pub const DEFAULT_TILE_SYMBOL: &'static str = "[]=";
 pub const DEFAULT_FLOAT_SYMBOL: &'static str = "><>";
 pub const DEFAULT_MONOCLE_SYMBOL: &'static str = "[M]";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)] // 添加了 Copy 和 Eq
-                                             // Debug: 允许使用 {:?} 格式化打印
-                                             // Clone: 允许创建副本
-                                             // Copy: 允许按值复制（因为 &'static str 是 Copy 的）
-                                             // PartialEq: 允许使用 == 和 != 进行比较
-                                             // Eq: PartialEq 的一个子集，要求比较是等价关系 (reflexive, symmetric, transitive)
-pub enum Layout {
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LayoutEnum {
     Tile(&'static str),    // 平铺式布局，关联一个静态字符串作为其符号
     Float(&'static str),   // 浮动式布局
     Monocle(&'static str), // 单窗口最大化布局
 }
 
-impl Layout {
+impl LayoutEnum {
     // 获取布局实例的符号
     pub fn symbol(&self) -> &'static str {
         match self {
-            Layout::Tile(symbol) |     // 使用模式匹配的 "or" ( | ) 来合并分支
-            Layout::Float(symbol) |
-            Layout::Monocle(symbol) => symbol, // 返回关联的 symbol
+            LayoutEnum::Tile(symbol) |     // 使用模式匹配的 "or" ( | ) 来合并分支
+            LayoutEnum::Float(symbol) |
+            LayoutEnum::Monocle(symbol) => symbol, // 返回关联的 symbol
         }
     }
 
     // 获取布局的类型名称（小写字符串）
     pub fn layout_type(&self) -> &str {
         match self {
-            Layout::Tile(_) => "tile",
-            Layout::Float(_) => "float",
-            Layout::Monocle(_) => "monocle",
+            LayoutEnum::Tile(_) => "tile",
+            LayoutEnum::Float(_) => "float",
+            LayoutEnum::Monocle(_) => "monocle",
         }
     }
 
     pub fn is_tile(&self) -> bool {
-        if let Layout::Float(_) = self {
+        if let LayoutEnum::Float(_) = self {
             false
         } else {
             true
@@ -226,40 +222,40 @@ impl std::error::Error for LayoutConversionError {}
 
 // 2. Layout -> u8 (将 Layout 转换为 u8)
 // 由于 Layout 是 Copy 的，From<Layout> 使用起来很方便。
-impl From<Layout> for u8 {
-    fn from(layout: Layout) -> Self {
+impl From<LayoutEnum> for u8 {
+    fn from(layout: LayoutEnum) -> Self {
         match layout {
-            Layout::Tile(_) => 0,    // Tile 对应 0
-            Layout::Float(_) => 1,   // Float 对应 1
-            Layout::Monocle(_) => 2, // Monocle 对应 2
+            LayoutEnum::Tile(_) => 0,    // Tile 对应 0
+            LayoutEnum::Float(_) => 1,   // Float 对应 1
+            LayoutEnum::Monocle(_) => 2, // Monocle 对应 2
         }
     }
 }
 
 // 为了方便，如果你有一个对 Layout 的引用 &Layout：
-impl From<&Layout> for u8 {
-    fn from(layout: &Layout) -> Self {
+impl From<&LayoutEnum> for u8 {
+    fn from(layout: &LayoutEnum) -> Self {
         // 因为 Layout 是 Copy 的，所以先解引用再调用已有的 From<Layout> 实现
         (*layout).into()
     }
 }
 
 // 3. u8 -> Layout (将 u8 转换为 Layout，可能失败)
-impl TryFrom<u8> for Layout {
+impl TryFrom<u8> for LayoutEnum {
     type Error = LayoutConversionError; // 定义转换失败时的错误类型
 
     fn try_from(value: u8) -> Result<Self, Self::Error> {
         match value {
-            0 => Ok(Layout::Tile(DEFAULT_TILE_SYMBOL)), // 0 转换为 Tile，使用默认符号
-            1 => Ok(Layout::Float(DEFAULT_FLOAT_SYMBOL)), // 1 转换为 Float，使用默认符号
-            2 => Ok(Layout::Monocle(DEFAULT_MONOCLE_SYMBOL)), // 2 转换为 Monocle，使用默认符号
+            0 => Ok(LayoutEnum::Tile(DEFAULT_TILE_SYMBOL)), // 0 转换为 Tile，使用默认符号
+            1 => Ok(LayoutEnum::Float(DEFAULT_FLOAT_SYMBOL)), // 1 转换为 Float，使用默认符号
+            2 => Ok(LayoutEnum::Monocle(DEFAULT_MONOCLE_SYMBOL)), // 2 转换为 Monocle，使用默认符号
             _ => Err(LayoutConversionError::InvalidU8(value)), // 其他 u8 值则返回错误
         }
     }
 }
 
 // 4. Layout -> String (通过 Display trait，通常表示布局的类型名称)
-impl fmt::Display for Layout {
+impl fmt::Display for LayoutEnum {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         // 调用 layout_type() 方法获取类型名称并写入格式化器
         write!(f, "{}", self.layout_type())
@@ -268,26 +264,26 @@ impl fmt::Display for Layout {
 
 // 5. &str -> Layout (将字符串切片转换为 Layout，可能失败，使用 FromStr trait)
 // 这个实现会尝试从布局类型名称（如 "tile"）或默认符号（如 "[T]"）进行解析
-impl FromStr for Layout {
+impl FromStr for LayoutEnum {
     type Err = LayoutConversionError; // 定义解析失败时的错误类型
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         // 首先，尝试匹配已知的布局类型名称（不区分大小写）
         match s.to_lowercase().as_str() {
             // 将输入字符串转为小写进行比较
-            "tile" => return Ok(Layout::Tile(DEFAULT_TILE_SYMBOL)),
-            "float" => return Ok(Layout::Float(DEFAULT_FLOAT_SYMBOL)),
-            "monocle" => return Ok(Layout::Monocle(DEFAULT_MONOCLE_SYMBOL)),
+            "tile" => return Ok(LayoutEnum::Tile(DEFAULT_TILE_SYMBOL)),
+            "float" => return Ok(LayoutEnum::Float(DEFAULT_FLOAT_SYMBOL)),
+            "monocle" => return Ok(LayoutEnum::Monocle(DEFAULT_MONOCLE_SYMBOL)),
             _ => {} // 如果不是已知的类型名称，则继续检查符号
         }
 
         // 接下来，尝试匹配已知的默认符号（区分大小写）
         if s == DEFAULT_TILE_SYMBOL {
-            Ok(Layout::Tile(DEFAULT_TILE_SYMBOL))
+            Ok(LayoutEnum::Tile(DEFAULT_TILE_SYMBOL))
         } else if s == DEFAULT_FLOAT_SYMBOL {
-            Ok(Layout::Float(DEFAULT_FLOAT_SYMBOL))
+            Ok(LayoutEnum::Float(DEFAULT_FLOAT_SYMBOL))
         } else if s == DEFAULT_MONOCLE_SYMBOL {
-            Ok(Layout::Monocle(DEFAULT_MONOCLE_SYMBOL))
+            Ok(LayoutEnum::Monocle(DEFAULT_MONOCLE_SYMBOL))
         } else {
             // 如果所有尝试都失败，则返回错误
             Err(LayoutConversionError::InvalidStr(s.to_string()))
@@ -296,7 +292,7 @@ impl FromStr for Layout {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Client {
+pub struct WMClient {
     pub name: String,
     pub class: String,
     pub instance: String,
@@ -329,12 +325,12 @@ pub struct Client {
     pub never_focus: bool,
     pub old_state: bool,
     pub is_fullscreen: bool,
-    pub next: Option<Rc<RefCell<Client>>>,
-    pub stack_next: Option<Rc<RefCell<Client>>>,
-    pub mon: Option<Rc<RefCell<Monitor>>>,
+    pub next: Option<Rc<RefCell<WMClient>>>,
+    pub stack_next: Option<Rc<RefCell<WMClient>>>,
+    pub mon: Option<Rc<RefCell<WMMonitor>>>,
     pub win: Window,
 }
-impl fmt::Display for Client {
+impl fmt::Display for WMClient {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Client {{ name: {}, class: {}, instance: {} min_a: {}, max_a: {}, cleint_fact: {}, x: {}, y: {}, w: {}, h: {}, old_x: {}, old_y: {}, old_w: {}, old_h: {}, base_w: {}, base_h: {}, inc_w: {}, inc_h: {}, max_w: {}, max_h: {}, min_w: {}, min_h: {}, hints_valid: {}, border_w: {}, old_border_w: {}, tags: {}, is_fixed: {}, is_floating: {}, is_urgent: {}, never_focus: {}, old_state: {}, is_fullscreen: {}, win: {} }}",
     self.name,
@@ -373,7 +369,7 @@ impl fmt::Display for Client {
         )
     }
 }
-impl Client {
+impl WMClient {
     #[allow(unused)]
     pub fn new() -> Self {
         Self {
@@ -446,7 +442,7 @@ impl Client {
 }
 
 #[derive(Debug, Clone, PartialEq)]
-pub struct Monitor {
+pub struct WMMonitor {
     pub lt_symbol: String,
     pub m_fact: f32,
     pub n_master: u32,
@@ -462,14 +458,14 @@ pub struct Monitor {
     pub sel_tags: usize,
     pub sel_lt: usize,
     pub tag_set: [u32; 2],
-    pub clients: Option<Rc<RefCell<Client>>>,
-    pub sel: Option<Rc<RefCell<Client>>>,
-    pub stack: Option<Rc<RefCell<Client>>>,
-    pub next: Option<Rc<RefCell<Monitor>>>,
-    pub lt: [Rc<Layout>; 2],
+    pub clients: Option<Rc<RefCell<WMClient>>>,
+    pub sel: Option<Rc<RefCell<WMClient>>>,
+    pub stack: Option<Rc<RefCell<WMClient>>>,
+    pub next: Option<Rc<RefCell<WMMonitor>>>,
+    pub lt: [Rc<LayoutEnum>; 2],
     pub pertag: Option<Pertag>,
 }
-impl Monitor {
+impl WMMonitor {
     #[allow(unused)]
     pub fn new() -> Self {
         Self {
@@ -493,8 +489,8 @@ impl Monitor {
             stack: None,
             next: None,
             lt: [
-                Rc::new(Layout::try_from(0).unwrap()),
-                Rc::new(Layout::try_from(0).unwrap()),
+                Rc::new(LayoutEnum::try_from(0).unwrap()),
+                Rc::new(LayoutEnum::try_from(0).unwrap()),
             ],
             pertag: None,
         }
@@ -504,7 +500,7 @@ impl Monitor {
             * max(0, min(y + h, self.w_y + self.w_h) - max(y, self.w_y))
     }
 }
-impl fmt::Display for Monitor {
+impl fmt::Display for WMMonitor {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         write!(f, "Monitor {{ ltsymbol: {}, m_fact: {}, n_master: {}, num: {}, m_x: {}, m_y: {}, m_w: {}, m_h: {}, wx: {}, w_y: {}, w_w: {}, w_h: {}, sel_tags: {}, sel_lt: {}, tag_set: [{}, {}], }}",
                self.lt_symbol,
@@ -528,7 +524,7 @@ impl fmt::Display for Monitor {
 }
 
 #[derive(Debug, Clone)]
-pub struct Rule {
+pub struct WMRule {
     pub class: String,
     pub instance: String,
     pub name: String,
@@ -536,7 +532,7 @@ pub struct Rule {
     pub is_floating: bool,
     pub monitor: i32,
 }
-impl Rule {
+impl WMRule {
     #[allow(unused)]
     pub fn new(
         class: String,
@@ -546,7 +542,7 @@ impl Rule {
         is_floating: bool,
         monitor: i32,
     ) -> Self {
-        Rule {
+        WMRule {
             class,
             instance,
             name,
@@ -565,9 +561,9 @@ pub struct Jwm {
     pub running: AtomicBool,
     pub cursor_manager: CursorManager,
     pub theme_manager: ThemeManager,
-    pub mons: Option<Rc<RefCell<Monitor>>>,
-    pub motion_mon: Option<Rc<RefCell<Monitor>>>,
-    pub sel_mon: Option<Rc<RefCell<Monitor>>>,
+    pub mons: Option<Rc<RefCell<WMMonitor>>>,
+    pub motion_mon: Option<Rc<RefCell<WMMonitor>>>,
+    pub sel_mon: Option<Rc<RefCell<WMMonitor>>>,
     pub visual_id: Visualid,
     pub depth: u8,
     pub color_map: Colormap,
@@ -576,7 +572,7 @@ pub struct Jwm {
     pub message: SharedMessage,
 
     // 状态栏专用管理
-    pub status_bar_clients: HashMap<i32, Rc<RefCell<Client>>>, // monitor_id -> statusbar_client
+    pub status_bar_clients: HashMap<i32, Rc<RefCell<WMClient>>>, // monitor_id -> statusbar_client
     pub status_bar_windows: HashMap<Window, i32>,              // window_id -> monitor_id (快速查找)
 
     pub pending_bar_updates: HashSet<i32>,
@@ -717,7 +713,7 @@ impl Jwm {
     }
 
     // function declarations and implementations.
-    pub fn applyrules(&mut self, c: &Rc<RefCell<Client>>) {
+    pub fn applyrules(&mut self, c: &Rc<RefCell<WMClient>>) {
         info!("[applyrules]");
         // rule matching
         let mut c = c.borrow_mut();
@@ -770,7 +766,7 @@ impl Jwm {
 
     pub fn updatesizehints(
         &mut self,
-        c: &Rc<RefCell<Client>>,
+        c: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 获取 WM_NORMAL_HINTS
         let reply =
@@ -817,7 +813,7 @@ impl Jwm {
 
     pub fn applysizehints(
         &mut self,
-        c: &Rc<RefCell<Client>>,
+        c: &Rc<RefCell<WMClient>>,
         x: &mut i32,
         y: &mut i32,
         w: &mut i32,
@@ -958,7 +954,7 @@ impl Jwm {
         }
 
         // 切换到显示所有窗口的视图
-        let show_all_arg = Arg::Ui(!0);
+        let show_all_arg = WMArgEnum::UInt(!0);
         let _ = self.view(&show_all_arg);
 
         // 卸载所有客户端
@@ -1096,7 +1092,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn cleanupmon(&mut self, mon: Option<Rc<RefCell<Monitor>>>) {
+    pub fn cleanupmon(&mut self, mon: Option<Rc<RefCell<WMMonitor>>>) {
         // info!("[cleanupmon]");
         if Rc::ptr_eq(mon.as_ref().unwrap(), self.mons.as_ref().unwrap()) {
             let next = self.mons.as_ref().unwrap().borrow_mut().next.clone();
@@ -1243,7 +1239,7 @@ impl Jwm {
 
     fn update_fullscreen_clients_on_monitor(
         &mut self,
-        monitor: &Rc<RefCell<Monitor>>,
+        monitor: &Rc<RefCell<WMMonitor>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let monitor_geometry = {
             let m_borrow = monitor.borrow();
@@ -1270,7 +1266,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn configure(&self, c: &mut Client) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn configure(&self, c: &mut WMClient) -> Result<(), Box<dyn std::error::Error>> {
         let event = ConfigureNotifyEvent {
             event: c.win,
             window: c.win,
@@ -1360,12 +1356,12 @@ impl Jwm {
             if let Some(&keysym) = keysyms_for_keycode.first() {
                 // 检查是否匹配配置中的按键
                 for key_config in CONFIG.get_keys().iter() {
-                    if key_config.keysym == keysym.into() {
+                    if key_config.key_sym == keysym.into() {
                         for &modifier_combo in modifiers_to_try.iter() {
                             self.x11rb_conn.grab_key(
                                 false, // owner_events
                                 self.x11rb_root,
-                                ModMask::from(key_config.mod0.bits() | modifier_combo.bits()),
+                                ModMask::from(key_config.mask.bits() | modifier_combo.bits()),
                                 keycode,
                                 GrabMode::ASYNC,
                                 GrabMode::ASYNC,
@@ -1382,7 +1378,7 @@ impl Jwm {
 
     pub fn grabbuttons(
         &mut self,
-        client_opt: Option<Rc<RefCell<Client>>>,
+        client_opt: Option<Rc<RefCell<WMClient>>>,
         focused: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let client_win_id = match client_opt.as_ref() {
@@ -1439,7 +1435,7 @@ impl Jwm {
 
     pub fn setfullscreen(
         &mut self,
-        c: &Rc<RefCell<Client>>,
+        c: &Rc<RefCell<WMClient>>,
         fullscreen: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[setfullscreen]");
@@ -1503,7 +1499,7 @@ impl Jwm {
 
     pub fn resizeclient(
         &mut self,
-        c: &mut Client,
+        c: &mut WMClient,
         x: i32,
         y: i32,
         w: i32,
@@ -1539,7 +1535,7 @@ impl Jwm {
 
     pub fn resize(
         &mut self,
-        c: &Rc<RefCell<Client>>,
+        c: &Rc<RefCell<WMClient>>,
         mut x: i32,
         mut y: i32,
         mut w: i32,
@@ -1553,7 +1549,7 @@ impl Jwm {
     }
 
     /// 设置窗口的 urgent 状态（XUrgencyHint）
-    pub fn seturgent(&self, c_rc: &Rc<RefCell<Client>>, urg: bool) {
+    pub fn seturgent(&self, c_rc: &Rc<RefCell<WMClient>>, urg: bool) {
         {
             c_rc.borrow_mut().is_urgent = urg;
         }
@@ -1644,7 +1640,7 @@ impl Jwm {
             .and_then(|_| self.x11rb_conn.flush());
     }
 
-    pub fn showhide(&mut self, client_opt: Option<Rc<RefCell<Client>>>) {
+    pub fn showhide(&mut self, client_opt: Option<Rc<RefCell<WMClient>>>) {
         let client_rc = match client_opt {
             Some(c) => c,
             None => return,
@@ -1664,7 +1660,7 @@ impl Jwm {
         }
     }
 
-    fn show_client(&mut self, client_rc: &Rc<RefCell<Client>>) {
+    fn show_client(&mut self, client_rc: &Rc<RefCell<WMClient>>) {
         let (win, x, y, is_floating, is_fullscreen) = {
             let client_borrow = client_rc.borrow();
             (
@@ -1698,7 +1694,7 @@ impl Jwm {
         self.showhide(snext);
     }
 
-    fn hide_client(&mut self, client_rc: &Rc<RefCell<Client>>) {
+    fn hide_client(&mut self, client_rc: &Rc<RefCell<WMClient>>) {
         // 先递归处理下一个客户端（底部优先）
         let snext = {
             let client_borrow = client_rc.borrow();
@@ -1839,7 +1835,7 @@ impl Jwm {
 
     fn handle_regular_configure_request(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
         e: &ConfigureRequestEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut client_mut = client_rc.borrow_mut();
@@ -1942,15 +1938,15 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn createmon(&mut self) -> Monitor {
+    pub fn createmon(&mut self) -> WMMonitor {
         // info!("[createmon]");
-        let mut m: Monitor = Monitor::new();
+        let mut m: WMMonitor = WMMonitor::new();
         m.tag_set[0] = 1;
         m.tag_set[1] = 1;
         m.m_fact = CONFIG.m_fact();
         m.n_master = CONFIG.n_master();
-        m.lt[0] = Rc::new(Layout::try_from(0).unwrap()).clone();
-        m.lt[1] = Rc::new(Layout::try_from(1).unwrap()).clone();
+        m.lt[0] = Rc::new(LayoutEnum::try_from(0).unwrap()).clone();
+        m.lt[1] = Rc::new(LayoutEnum::try_from(1).unwrap()).clone();
         m.lt_symbol = m.lt[0].symbol().to_string();
         m.pertag = Some(Pertag::new());
         let ref_pertag = m.pertag.as_mut().unwrap();
@@ -1982,19 +1978,19 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn applylayout(&mut self, layout: &Layout, mon_rc: &Rc<RefCell<Monitor>>) {
+    pub fn applylayout(&mut self, layout: &LayoutEnum, mon_rc: &Rc<RefCell<WMMonitor>>) {
         match layout {
-            Layout::Tile(_) => {
+            LayoutEnum::Tile(_) => {
                 self.tile(mon_rc);
             }
-            Layout::Float(_) => {}
-            Layout::Monocle(_) => {
+            LayoutEnum::Float(_) => {}
+            LayoutEnum::Monocle(_) => {
                 self.monocle(mon_rc);
             }
         }
     }
 
-    pub fn arrangemon(&mut self, m: &Rc<RefCell<Monitor>>) {
+    pub fn arrangemon(&mut self, m: &Rc<RefCell<WMMonitor>>) {
         info!("[arrangemon]");
         let layout;
         {
@@ -2011,17 +2007,17 @@ impl Jwm {
     }
 
     fn detach_node_from_list<FGetHead, FSetHead, FGetNext, FSetNext>(
-        mon: &Rc<RefCell<Monitor>>,
-        node_to_detach: &Option<Rc<RefCell<Client>>>,
+        mon: &Rc<RefCell<WMMonitor>>,
+        node_to_detach: &Option<Rc<RefCell<WMClient>>>,
         get_head: FGetHead,
         set_head: FSetHead,
         get_next: FGetNext, // Assuming this returns Option<Rc<RefCell<Client>>>
         set_next: FSetNext,
     ) where
-        FGetHead: Fn(&mut Monitor) -> &mut Option<Rc<RefCell<Client>>>,
-        FSetHead: Fn(&mut Monitor, Option<Rc<RefCell<Client>>>),
-        FGetNext: Fn(&mut Client) -> Option<Rc<RefCell<Client>>>, // Changed to &mut Client
-        FSetNext: Fn(&mut Client, Option<Rc<RefCell<Client>>>),
+        FGetHead: Fn(&mut WMMonitor) -> &mut Option<Rc<RefCell<WMClient>>>,
+        FSetHead: Fn(&mut WMMonitor, Option<Rc<RefCell<WMClient>>>),
+        FGetNext: Fn(&mut WMClient) -> Option<Rc<RefCell<WMClient>>>, // Changed to &mut Client
+        FSetNext: Fn(&mut WMClient, Option<Rc<RefCell<WMClient>>>),
     {
         if node_to_detach.is_none() {
             return;
@@ -2031,7 +2027,7 @@ impl Jwm {
         let mut current_node_opt = (get_head)(&mut *mon_borrow_for_head).clone();
         drop(mon_borrow_for_head);
 
-        let mut prev_node_opt: Option<Rc<RefCell<Client>>> = None;
+        let mut prev_node_opt: Option<Rc<RefCell<WMClient>>> = None;
 
         while let Some(current_rc) = current_node_opt.clone() {
             // Clone current_rc for this iteration's ownership
@@ -2060,7 +2056,7 @@ impl Jwm {
         }
     }
 
-    pub fn detach(&mut self, c: Option<Rc<RefCell<Client>>>) {
+    pub fn detach(&mut self, c: Option<Rc<RefCell<WMClient>>>) {
         // info!("[detach]");
         let c = match c {
             Some(val) => val,
@@ -2080,7 +2076,7 @@ impl Jwm {
         );
     }
 
-    pub fn detachstack(&mut self, c: Option<Rc<RefCell<Client>>>) {
+    pub fn detachstack(&mut self, c: Option<Rc<RefCell<WMClient>>>) {
         // info!("[detachstack]");
         let c = match c {
             Some(val) => val,
@@ -2113,7 +2109,7 @@ impl Jwm {
         }
     }
 
-    pub fn dirtomon(&mut self, dir: &i32) -> Option<Rc<RefCell<Monitor>>> {
+    pub fn dirtomon(&mut self, dir: &i32) -> Option<Rc<RefCell<WMMonitor>>> {
         let selected_monitor = self.sel_mon.as_ref()?; // Return None if selmon is None
         let monitors_head = self.mons.as_ref()?; // Return None if mons is None
         if *dir > 0 {
@@ -2281,7 +2277,7 @@ impl Jwm {
         }
     }
 
-    pub fn UpdateBarMessage(&mut self, m: Option<Rc<RefCell<Monitor>>>) {
+    pub fn UpdateBarMessage(&mut self, m: Option<Rc<RefCell<WMMonitor>>>) {
         self.update_bar_message_for_monitor(m);
         let num = self.message.monitor_info.monitor_num;
 
@@ -2305,7 +2301,7 @@ impl Jwm {
 
     pub fn restack(
         &mut self,
-        mon_rc_opt: Option<Rc<RefCell<Monitor>>>,
+        mon_rc_opt: Option<Rc<RefCell<WMMonitor>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[restack]");
 
@@ -2491,7 +2487,7 @@ impl Jwm {
                         "[process_commands] ViewTag command received: {}",
                         cmd.parameter
                     );
-                    let arg = Arg::Ui(cmd.parameter);
+                    let arg = WMArgEnum::UInt(cmd.parameter);
                     let _ = self.view(&arg);
                 }
                 CommandType::ToggleTag => {
@@ -2500,7 +2496,7 @@ impl Jwm {
                         "[process_commands] ToggleTag command received: {}",
                         cmd.parameter
                     );
-                    let arg = Arg::Ui(cmd.parameter);
+                    let arg = WMArgEnum::UInt(cmd.parameter);
                     let _ = self.toggletag(&arg);
                 }
                 CommandType::SetLayout => {
@@ -2509,7 +2505,9 @@ impl Jwm {
                         "[process_commands] SetLayout command received: {}",
                         cmd.parameter
                     );
-                    let arg = Arg::Lt(Rc::new(Layout::try_from(cmd.parameter as u8).unwrap()));
+                    let arg = WMArgEnum::Layout(Rc::new(
+                        LayoutEnum::try_from(cmd.parameter as u8).unwrap(),
+                    ));
                     let _ = self.setlayout(&arg);
                 }
                 CommandType::None => {}
@@ -2550,10 +2548,10 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn arrange(&mut self, m_target: Option<Rc<RefCell<Monitor>>>) {
+    pub fn arrange(&mut self, m_target: Option<Rc<RefCell<WMMonitor>>>) {
         info!("[arrange]");
         // Determine which monitors to operate on
-        let monitors_to_process: Vec<Rc<RefCell<Monitor>>> = match m_target {
+        let monitors_to_process: Vec<Rc<RefCell<WMMonitor>>> = match m_target {
             Some(monitor_rc) => vec![monitor_rc], // Operate on a single monitor
             None => {
                 // Operate on all monitors
@@ -2582,12 +2580,12 @@ impl Jwm {
     }
 
     fn attach_to_list_head_internal(
-        client_rc: &Rc<RefCell<Client>>,
-        mon_rc: &Rc<RefCell<Monitor>>,
+        client_rc: &Rc<RefCell<WMClient>>,
+        mon_rc: &Rc<RefCell<WMMonitor>>,
         // FnMut because it modifies `cli`
-        mut set_client_next: impl FnMut(&mut Client, Option<Rc<RefCell<Client>>>),
+        mut set_client_next: impl FnMut(&mut WMClient, Option<Rc<RefCell<WMClient>>>),
         // FnMut because it modifies `mon` (by returning a mutable reference to its field)
-        mut access_mon_list_head: impl FnMut(&mut Monitor) -> &mut Option<Rc<RefCell<Client>>>,
+        mut access_mon_list_head: impl FnMut(&mut WMMonitor) -> &mut Option<Rc<RefCell<WMClient>>>,
     ) {
         // Borrow client mutably once
         let mut client_borrow = client_rc.borrow_mut();
@@ -2604,7 +2602,7 @@ impl Jwm {
         *list_head_field_ref = Some(client_rc.clone());
     }
 
-    pub fn attach(&mut self, client_opt: Option<Rc<RefCell<Client>>>) {
+    pub fn attach(&mut self, client_opt: Option<Rc<RefCell<WMClient>>>) {
         let client_rc = match client_opt {
             Some(c) => c,
             None => return,
@@ -2622,7 +2620,7 @@ impl Jwm {
         );
     }
 
-    pub fn attachstack(&mut self, client_opt: Option<Rc<RefCell<Client>>>) {
+    pub fn attachstack(&mut self, client_opt: Option<Rc<RefCell<WMClient>>>) {
         let client_rc = match client_opt {
             Some(c) => c,
             None => return,
@@ -2644,7 +2642,7 @@ impl Jwm {
 
     /// 如果失败或属性不存在，返回 0
 
-    pub fn getatomprop(&self, c: &Client, prop: Atom) -> Atom {
+    pub fn getatomprop(&self, c: &WMClient, prop: Atom) -> Atom {
         // 发送 GetProperty 请求
         let cookie = match self.x11rb_conn.get_property(
             false,          // delete: 是否删除属性（false）
@@ -2727,7 +2725,7 @@ impl Jwm {
         state
     }
 
-    pub fn recttomon(&mut self, x: i32, y: i32, w: i32, h: i32) -> Option<Rc<RefCell<Monitor>>> {
+    pub fn recttomon(&mut self, x: i32, y: i32, w: i32, h: i32) -> Option<Rc<RefCell<WMMonitor>>> {
         // info!("[recttomon]");
         let mut area: i32 = 0;
 
@@ -2745,7 +2743,7 @@ impl Jwm {
         return r;
     }
 
-    pub fn wintoclient(&mut self, w: Window) -> Option<Rc<RefCell<Client>>> {
+    pub fn wintoclient(&mut self, w: Window) -> Option<Rc<RefCell<WMClient>>> {
         // 首先检查是否是状态栏窗口
         if let Some(&monitor_id) = self.status_bar_windows.get(&w) {
             return self.status_bar_clients.get(&monitor_id).cloned();
@@ -2769,7 +2767,7 @@ impl Jwm {
         None
     }
 
-    pub fn wintomon(&mut self, w: Window) -> Option<Rc<RefCell<Monitor>>> {
+    pub fn wintomon(&mut self, w: Window) -> Option<Rc<RefCell<WMMonitor>>> {
         // info!("[wintomon]");
         if w == self.x11rb_root {
             if let Ok((x, y)) = self.getrootptr() {
@@ -2785,9 +2783,9 @@ impl Jwm {
 
     pub fn buttonpress(&mut self, e: &ButtonPressEvent) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[buttonpress]");
-        let _arg: Arg = Arg::Ui(0);
+        let _arg: WMArgEnum = WMArgEnum::UInt(0);
 
-        let c: Option<Rc<RefCell<Client>>>;
+        let c: Option<Rc<RefCell<WMClient>>>;
         let mut click = CLICK::ClkRootWin;
 
         // focus monitor if necessary.
@@ -2883,11 +2881,11 @@ impl Jwm {
         }
     }
 
-    pub fn spawn(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn spawn(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[spawn]");
 
-        let mut mut_arg: Arg = arg.clone();
-        if let Arg::V(ref mut v) = mut_arg {
+        let mut mut_arg: WMArgEnum = arg.clone();
+        if let WMArgEnum::StringVec(ref mut v) = mut_arg {
             // 处理 dmenu 命令的特殊情况
             if *v == *CONFIG.get_dmenucmd() {
                 let monitor_num = self.sel_mon.as_ref().unwrap().borrow().num;
@@ -3082,7 +3080,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn tile(&mut self, mon_rc: &Rc<RefCell<Monitor>>) {
+    pub fn tile(&mut self, mon_rc: &Rc<RefCell<WMMonitor>>) {
         info!("[tile]"); // 日志记录，进入 tile 布局函数
 
         // 初始化变量
@@ -3236,7 +3234,7 @@ impl Jwm {
         }
     }
 
-    pub fn togglefloating(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn togglefloating(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[togglefloating]");
         if self.sel_mon.is_none() {
             return Ok(());
@@ -3276,14 +3274,14 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn focusmon(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn focusmon(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[focusmon]");
         if let Some(ref mons_opt) = self.mons {
             if mons_opt.borrow_mut().next.is_none() {
                 return Ok(());
             }
         }
-        if let Arg::I(i) = arg {
+        if let WMArgEnum::Int(i) = arg {
             let m = self.dirtomon(i);
             if Rc::ptr_eq(m.as_ref().unwrap(), self.sel_mon.as_ref().unwrap()) {
                 return Ok(());
@@ -3296,9 +3294,9 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn tag(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn tag(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[tag]");
-        if let Arg::Ui(ui) = *arg {
+        if let WMArgEnum::UInt(ui) = *arg {
             let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
             let target_tag = ui & CONFIG.tagmask();
             if let Some(ref sel_opt) = sel {
@@ -3313,7 +3311,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn tagmon(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn tagmon(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[tagmon]");
         if let Some(ref selmon_opt) = self.sel_mon {
             if selmon_opt.borrow_mut().sel.is_none() {
@@ -3329,7 +3327,7 @@ impl Jwm {
         } else {
             return Ok(());
         }
-        if let Arg::I(i) = *arg {
+        if let WMArgEnum::Int(i) = *arg {
             let selmon_clone = self.sel_mon.clone();
             if let Some(ref selmon_opt) = selmon_clone {
                 let dir_i_mon = self.dirtomon(&i);
@@ -3340,7 +3338,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn focusstack(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn focusstack(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[focusstack]");
         {
             let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
@@ -3351,8 +3349,8 @@ impl Jwm {
                 return Ok(());
             }
         }
-        let mut c: Option<Rc<RefCell<Client>>> = None;
-        let i = if let Arg::I(i) = *arg { i } else { 0 };
+        let mut c: Option<Rc<RefCell<WMClient>>> = None;
+        let i = if let WMArgEnum::Int(i) = *arg { i } else { 0 };
         if i == 0 {
             return Ok(());
         }
@@ -3422,9 +3420,9 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn togglebar(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn togglebar(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[togglebar]");
-        if let Arg::I(_) = arg {
+        if let WMArgEnum::Int(_) = arg {
             let mut monitor_num = None;
             if let Some(sel_mon_ref) = self.sel_mon.as_ref() {
                 let mut sel_mon_borrow_mut = sel_mon_ref.borrow_mut();
@@ -3444,9 +3442,9 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn incnmaster(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn incnmaster(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[incnmaster]");
-        if let Arg::I(i) = *arg {
+        if let WMArgEnum::Int(i) = *arg {
             let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
             let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
             sel_mon_mut.pertag.as_mut().unwrap().n_masters[cur_tag] =
@@ -3458,13 +3456,13 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn setcfact(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn setcfact(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[setcfact]");
         let c = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
         if c.is_none() {
             return Ok(());
         }
-        if let Arg::F(f0) = *arg {
+        if let WMArgEnum::Float(f0) = *arg {
             let mut f = f0 + c.as_ref().unwrap().borrow().client_fact;
             if f0.abs() < 0.0001 {
                 f = 1.0;
@@ -3477,12 +3475,12 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn movestack(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
-        let mut c: Option<Rc<RefCell<Client>>> = None;
-        let mut i: Option<Rc<RefCell<Client>>>;
-        let mut p: Option<Rc<RefCell<Client>>> = None;
-        let mut pc: Option<Rc<RefCell<Client>>> = None;
-        if let Arg::I(arg_i) = arg {
+    pub fn movestack(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
+        let mut c: Option<Rc<RefCell<WMClient>>> = None;
+        let mut i: Option<Rc<RefCell<WMClient>>>;
+        let mut p: Option<Rc<RefCell<WMClient>>> = None;
+        let mut pc: Option<Rc<RefCell<WMClient>>> = None;
+        if let WMArgEnum::Int(arg_i) = arg {
             if arg_i > &0 {
                 // Find the client after selmon->sel
                 c = self
@@ -3620,9 +3618,9 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn setmfact(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn setmfact(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[setmfact]");
-        if let Arg::F(f) = arg {
+        if let WMArgEnum::Float(f) = arg {
             let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
             let f = if f < &1.0 {
                 f + sel_mon_mut.m_fact
@@ -3640,11 +3638,11 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn setlayout(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn setlayout(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[setlayout]");
         let sel_is_some;
         match *arg {
-            Arg::Lt(ref lt) => {
+            WMArgEnum::Layout(ref lt) => {
                 let sel_mon_layout_type = {
                     let sel_mon = self.sel_mon.as_ref().unwrap().borrow();
                     sel_mon.lt[sel_mon.sel_lt].layout_type().to_string()
@@ -3688,7 +3686,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn zoom(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn zoom(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[zoom]");
         let mut c;
         let sel_c;
@@ -3715,9 +3713,9 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn loopview(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[loopview]");
-        let direction = if let Arg::I(val) = arg {
+    pub fn loopview(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[loopview]");
+        let direction = if let WMArgEnum::Int(val) = arg {
             val
         } else {
             return Ok(());
@@ -3814,9 +3812,9 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn view(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn view(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[view]");
-        let ui = if let Arg::Ui(val) = arg {
+        let ui = if let WMArgEnum::UInt(val) = arg {
             val
         } else {
             return Ok(());
@@ -3884,9 +3882,9 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn toggleview(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn toggleview(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[toggleview]");
-        if let Arg::Ui(ui) = *arg {
+        if let WMArgEnum::UInt(ui) = *arg {
             if self.sel_mon.is_none() {
                 return Ok(());
             }
@@ -3946,7 +3944,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn togglefullscr(&mut self, _: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn togglefullscr(&mut self, _: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[togglefullscr]");
         if let Some(ref selmon_opt) = self.sel_mon {
             let sel = { selmon_opt.borrow_mut().sel.clone() };
@@ -3959,13 +3957,13 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn toggletag(&mut self, arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn toggletag(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[toggletag]");
         let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
         if sel.is_none() {
             return Ok(());
         }
-        if let Arg::Ui(ui) = *arg {
+        if let WMArgEnum::UInt(ui) = *arg {
             let newtags = sel.as_ref().unwrap().borrow_mut().tags ^ (ui & CONFIG.tagmask());
             if newtags > 0 {
                 sel.as_ref().unwrap().borrow_mut().tags = newtags;
@@ -3977,7 +3975,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn quit(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn quit(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[quit]");
         self.running.store(false, Ordering::SeqCst);
         Ok(())
@@ -4110,7 +4108,7 @@ impl Jwm {
 
     fn register_client_events(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = client_rc.borrow().win;
 
@@ -4144,7 +4142,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn killclient(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn killclient(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[killclient]");
         let sel = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
         if sel.is_none() {
@@ -4165,7 +4163,7 @@ impl Jwm {
 
     fn force_kill_client(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = client_rc.borrow().win;
         // 抓取服务器以确保操作的原子性
@@ -4202,8 +4200,8 @@ impl Jwm {
 
     pub fn nexttiled(
         &mut self,
-        mut client_rc_opt: Option<Rc<RefCell<Client>>>,
-    ) -> Option<Rc<RefCell<Client>>> {
+        mut client_rc_opt: Option<Rc<RefCell<WMClient>>>,
+    ) -> Option<Rc<RefCell<WMClient>>> {
         // info!("[nexttiled]");
         while let Some(ref client_rc) = client_rc_opt.clone() {
             let client_borrow = client_rc.borrow();
@@ -4219,7 +4217,7 @@ impl Jwm {
         return client_rc_opt;
     }
 
-    pub fn pop(&mut self, c: Option<Rc<RefCell<Client>>>) {
+    pub fn pop(&mut self, c: Option<Rc<RefCell<WMClient>>>) {
         // info!("[pop]");
         self.detach(c.clone());
         self.attach(c.clone());
@@ -4402,7 +4400,7 @@ impl Jwm {
 
     fn handle_client_property_change(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
         e: &PropertyNotifyEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
         match e.atom {
@@ -4431,7 +4429,7 @@ impl Jwm {
 
     fn handle_transient_for_change(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut client = client_rc.borrow_mut();
         if !client.is_floating {
@@ -4457,7 +4455,7 @@ impl Jwm {
 
     fn handle_normal_hints_change(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut client = client_rc.borrow_mut();
         client.hints_valid = false;
@@ -4470,7 +4468,7 @@ impl Jwm {
 
     fn handle_wm_hints_change(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.updatewmhints(client_rc);
         // WM_HINTS 改变可能影响紧急状态，需要重绘状态栏
@@ -4481,7 +4479,7 @@ impl Jwm {
 
     fn handle_title_change(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.updatetitle(&mut client_rc.borrow_mut());
         // 检查是否需要更新状态栏
@@ -4508,14 +4506,14 @@ impl Jwm {
 
     fn handle_window_type_change(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.updatewindowtype(client_rc);
         debug!("Window type updated for window {}", client_rc.borrow().win);
         Ok(())
     }
 
-    pub fn movemouse(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn movemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[movemouse]");
         // 1. 获取当前选中的客户端
         let client_rc = match self.get_selected_client() {
@@ -4607,7 +4605,7 @@ impl Jwm {
 
     fn move_loop(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
         original_x: i32,
         original_y: i32,
         initial_mouse_x: u16,
@@ -4660,7 +4658,7 @@ impl Jwm {
 
     fn handle_move_motion(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
         e: &MotionNotifyEvent,
         original_x: i32,
         original_y: i32,
@@ -4712,7 +4710,7 @@ impl Jwm {
 
     fn apply_edge_snapping(
         &self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
         new_x: &mut i32,
         new_y: &mut i32,
         mon_wx: i32,
@@ -4747,7 +4745,7 @@ impl Jwm {
 
     fn check_and_toggle_floating_for_move(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
         new_x: i32,
         new_y: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -4767,7 +4765,7 @@ impl Jwm {
             && ((new_x - current_x).abs() > CONFIG.snap() as i32
                 || (new_y - current_y).abs() > CONFIG.snap() as i32)
         {
-            self.togglefloating(&Arg::I(0))?;
+            self.togglefloating(&WMArgEnum::Int(0))?;
         }
 
         Ok(())
@@ -4776,7 +4774,7 @@ impl Jwm {
     fn cleanup_move(
         &mut self,
         _window_id: Window,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 释放鼠标抓取
         ungrab_pointer(&self.x11rb_conn, 0u32)?;
@@ -4804,7 +4802,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn resizemouse(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn resizemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[resizemouse]");
         // 1. 获取当前选中的客户端
         let client_rc = match self.get_selected_client() {
@@ -4872,13 +4870,13 @@ impl Jwm {
         result
     }
 
-    fn get_selected_client(&self) -> Option<Rc<RefCell<Client>>> {
+    fn get_selected_client(&self) -> Option<Rc<RefCell<WMClient>>> {
         self.sel_mon.as_ref()?.borrow().sel.clone()
     }
 
     fn resize_loop(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
         original_x: i32,
         original_y: i32,
         border_width: i32,
@@ -4923,7 +4921,7 @@ impl Jwm {
 
     fn handle_resize_motion(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
         e: &MotionNotifyEvent,
         original_x: i32,
         original_y: i32,
@@ -4956,7 +4954,7 @@ impl Jwm {
 
     fn check_and_toggle_floating(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
         new_width: i32,
         new_height: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -4977,7 +4975,7 @@ impl Jwm {
                 || (new_height - current_h).abs() > snap_threshold
             {
                 debug!("Toggling to floating mode due to size change");
-                let _ = self.togglefloating(&Arg::Ui(0));
+                let _ = self.togglefloating(&WMArgEnum::UInt(0));
             }
         }
 
@@ -5163,7 +5161,7 @@ impl Jwm {
 
     pub fn setclienttagprop(
         &mut self,
-        c: &Rc<RefCell<Client>>,
+        c: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let client_mut = c.borrow();
         let data: [u32; 2] = [
@@ -5181,7 +5179,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn sendevent(&mut self, client_mut: &mut Client, proto: Atom) -> bool {
+    pub fn sendevent(&mut self, client_mut: &mut WMClient, proto: Atom) -> bool {
         info!(
             "[sendevent] Sending protocol {:?} to window 0x{:x}",
             proto, client_mut.win
@@ -5318,7 +5316,7 @@ impl Jwm {
 
     fn switch_to_monitor(
         &mut self,
-        target_monitor: &Rc<RefCell<Monitor>>,
+        target_monitor: &Rc<RefCell<WMMonitor>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 获取旧选中显示器上的选中客户端
         let previously_selected_client_opt = {
@@ -5335,7 +5333,7 @@ impl Jwm {
 
     fn should_focus_client(
         &self,
-        client_rc_opt: &Option<Rc<RefCell<Client>>>,
+        client_rc_opt: &Option<Rc<RefCell<WMClient>>>,
         is_on_selected_monitor: bool,
     ) -> bool {
         // 如果切换了显示器，需要重新聚焦
@@ -5367,7 +5365,7 @@ impl Jwm {
 
     pub fn focus(
         &mut self,
-        mut c_opt: Option<Rc<RefCell<Client>>>,
+        mut c_opt: Option<Rc<RefCell<WMClient>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[focus]");
 
@@ -5407,7 +5405,7 @@ impl Jwm {
         Ok(())
     }
 
-    fn find_visible_client(&mut self) -> Option<Rc<RefCell<Client>>> {
+    fn find_visible_client(&mut self) -> Option<Rc<RefCell<WMClient>>> {
         if let Some(ref sel_mon_opt) = self.sel_mon {
             let mut c_opt = sel_mon_opt.borrow().stack.clone();
             while let Some(c_rc) = c_opt.clone() {
@@ -5422,7 +5420,7 @@ impl Jwm {
 
     fn handle_focus_change(
         &mut self,
-        new_focus: &Option<Rc<RefCell<Client>>>,
+        new_focus: &Option<Rc<RefCell<WMClient>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let current_sel = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
         if current_sel.is_some() && !Self::are_equal_rc(&current_sel, new_focus) {
@@ -5433,7 +5431,7 @@ impl Jwm {
 
     fn set_client_focus(
         &mut self,
-        c_rc: &Rc<RefCell<Client>>,
+        c_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 检查客户端是否在当前选中的监视器上
         let client_monitor = c_rc.borrow().mon.clone();
@@ -5476,7 +5474,7 @@ impl Jwm {
         Ok(())
     }
 
-    fn update_monitor_selection(&mut self, c_opt: Option<Rc<RefCell<Client>>>) {
+    fn update_monitor_selection(&mut self, c_opt: Option<Rc<RefCell<WMClient>>>) {
         if let Some(ref sel_mon_opt) = self.sel_mon {
             let mut sel_mon_mut = sel_mon_opt.borrow_mut();
             sel_mon_mut.sel = c_opt.clone();
@@ -5489,7 +5487,7 @@ impl Jwm {
         }
     }
 
-    pub fn setfocus(&mut self, c: &Rc<RefCell<Client>>) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn setfocus(&mut self, c: &Rc<RefCell<WMClient>>) -> Result<(), Box<dyn std::error::Error>> {
         let mut c_mut = c.borrow_mut();
 
         if !c_mut.never_focus {
@@ -5516,7 +5514,7 @@ impl Jwm {
 
     pub fn unfocus(
         &mut self,
-        c: Option<Rc<RefCell<Client>>>,
+        c: Option<Rc<RefCell<WMClient>>>,
         setfocus: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if c.is_none() {
@@ -5540,7 +5538,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn sendmon(&mut self, c: Option<Rc<RefCell<Client>>>, m: Option<Rc<RefCell<Monitor>>>) {
+    pub fn sendmon(&mut self, c: Option<Rc<RefCell<WMClient>>>, m: Option<Rc<RefCell<WMMonitor>>>) {
         // info!("[sendmon]");
         if Self::are_equal_rc(&c.as_ref().unwrap().borrow_mut().mon, &m) {
             return;
@@ -5565,7 +5563,7 @@ impl Jwm {
 
     pub fn setclientstate(
         &mut self,
-        c: &Rc<RefCell<Client>>,
+        c: &Rc<RefCell<WMClient>>,
         state: i64,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[setclientstate]");
@@ -5630,9 +5628,9 @@ impl Jwm {
             if self.is_key_match(key_config, keysym, clean_state) {
                 info!(
                     "[keypress] executing binding {}: keysym=0x{:x}, mod={:?}, arg={:?}",
-                    i, key_config.keysym, key_config.mod0, key_config.arg
+                    i, key_config.key_sym, key_config.mask, key_config.arg,
                 );
-                if let Some(func) = key_config.func {
+                if let Some(func) = key_config.func_opt {
                     let _ = func(self, &key_config.arg);
                     return Ok(true);
                 }
@@ -5641,10 +5639,10 @@ impl Jwm {
         Ok(false)
     }
 
-    fn is_key_match(&self, key_config: &Key, keysym: u32, clean_state: KeyButMask) -> bool {
-        keysym == key_config.keysym as u32
-            && self.clean_mask(key_config.mod0.bits()) == clean_state
-            && key_config.func.is_some()
+    fn is_key_match(&self, key_config: &WMKey, keysym: u32, clean_state: KeyButMask) -> bool {
+        keysym == key_config.key_sym as u32
+            && self.clean_mask(key_config.mask.bits()) == clean_state
+            && key_config.func_opt.is_some()
     }
 
     /// 清除键盘映射缓存（在键盘映射变更时调用）
@@ -5656,7 +5654,7 @@ impl Jwm {
     pub fn manage(&mut self, w: Window, geom: &GetGeometryReply) {
         // info!("[manage]"); // 日志
         // --- 1. 创建新的 Client 对象 ---
-        let client_rc_opt: Option<Rc<RefCell<Client>>> = Some(Rc::new(RefCell::new(Client::new())));
+        let client_rc_opt: Option<Rc<RefCell<WMClient>>> = Some(Rc::new(RefCell::new(WMClient::new())));
         let client_rc = client_rc_opt.as_ref().unwrap();
         // --- 2. 初始化 Client 结构体的基本属性 ---
         {
@@ -5716,7 +5714,7 @@ impl Jwm {
 
     fn setup_client_window(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = client_rc.borrow().win;
         info!("[setup_client_window] Setting up window {}", win);
@@ -5792,7 +5790,7 @@ impl Jwm {
         Ok(())
     }
 
-    fn handle_new_client_focus(&mut self, client_rc: &Rc<RefCell<Client>>) {
+    fn handle_new_client_focus(&mut self, client_rc: &Rc<RefCell<WMClient>>) {
         // 检查新窗口所在的显示器是否是当前选中的显示器
         let current_client_monitor_is_selected_monitor = {
             let client_borrow = client_rc.borrow();
@@ -5869,7 +5867,7 @@ impl Jwm {
     // 分离出来的常规客户端管理
     fn manage_regular_client(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 处理 WM_TRANSIENT_FOR
         self.handle_transient_for(&client_rc)?;
@@ -5906,7 +5904,7 @@ impl Jwm {
 
     fn handle_transient_for(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = client_rc.borrow().win;
 
@@ -5979,7 +5977,7 @@ impl Jwm {
 
     fn map_client_window(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = client_rc.borrow().win;
 
@@ -6007,7 +6005,7 @@ impl Jwm {
         Ok(())
     }
 
-    fn manage_statusbar(&mut self, client_rc: &Rc<RefCell<Client>>) {
+    fn manage_statusbar(&mut self, client_rc: &Rc<RefCell<WMClient>>) {
         // 确定状态栏所属的显示器
         let monitor_id;
         // 配置状态栏客户端
@@ -6051,7 +6049,7 @@ impl Jwm {
     }
 
     // 确定状态栏应该在哪个显示器
-    fn determine_statusbar_monitor(&self, client: &Client) -> i32 {
+    fn determine_statusbar_monitor(&self, client: &WMClient) -> i32 {
         info!("[determine_statusbar_monitor]: {}", client);
         if let Some(suffix) = client
             .name
@@ -6081,7 +6079,7 @@ impl Jwm {
     }
 
     // 定位状态栏
-    fn position_statusbar(&mut self, client_mut: &mut Client, monitor_id: i32) {
+    fn position_statusbar(&mut self, client_mut: &mut WMClient, monitor_id: i32) {
         if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
             let monitor_borrow = monitor.borrow();
 
@@ -6103,7 +6101,7 @@ impl Jwm {
     // 设置状态栏窗口属性
     fn setup_statusbar_window(
         &mut self,
-        client_mut: &mut Client,
+        client_mut: &mut WMClient,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = client_mut.win;
         info!(
@@ -6126,7 +6124,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn client_y_offset(&mut self, m: &Monitor) -> i32 {
+    pub fn client_y_offset(&mut self, m: &WMMonitor) -> i32 {
         let monitor_id = m.num;
 
         if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
@@ -6204,7 +6202,7 @@ impl Jwm {
     }
 
     // 辅助函数：根据ID获取显示器
-    fn get_monitor_by_id(&self, monitor_id: i32) -> Option<Rc<RefCell<Monitor>>> {
+    fn get_monitor_by_id(&self, monitor_id: i32) -> Option<Rc<RefCell<WMMonitor>>> {
         let mut m_iter = self.mons.clone();
         while let Some(ref mon_rc) = m_iter.clone() {
             if mon_rc.borrow().num == monitor_id {
@@ -6218,7 +6216,7 @@ impl Jwm {
     #[allow(dead_code)]
     fn set_class_info(
         &mut self,
-        client_mut: &mut Client,
+        client_mut: &mut WMClient,
         res_class: &str,
         res_name: &str,
     ) -> Result<(), String> {
@@ -6266,7 +6264,7 @@ impl Jwm {
     #[allow(dead_code)]
     fn verify_class_info_set(
         &mut self,
-        client: &Client,
+        client: &WMClient,
         expected_class: &str,
         expected_instance: &str,
     ) {
@@ -6285,7 +6283,7 @@ impl Jwm {
     }
 
     // 更新窗口类信息
-    fn update_class_info(&mut self, client_mut: &mut Client) {
+    fn update_class_info(&mut self, client_mut: &mut WMClient) {
         if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, client_mut.win as u32) {
             client_mut.instance = inst;
             client_mut.class = cls;
@@ -6360,7 +6358,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn monocle(&mut self, mon_rc: &Rc<RefCell<Monitor>>) {
+    pub fn monocle(&mut self, mon_rc: &Rc<RefCell<WMMonitor>>) {
         info!("[monocle]");
         // --- 1. 计算当前显示器上可见且可聚焦的客户端数量 (n) ---
         let mut n: u32 = 0;
@@ -6444,7 +6442,7 @@ impl Jwm {
 
     fn handle_monitor_switch(
         &mut self,
-        new_monitor: &Option<Rc<RefCell<Monitor>>>,
+        new_monitor: &Option<Rc<RefCell<WMMonitor>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 从当前选中显示器的选中客户端上移除焦点
         let selmon_sel = self.sel_mon.as_ref().unwrap().borrow().sel.clone();
@@ -6464,7 +6462,7 @@ impl Jwm {
 
     pub fn unmanage(
         &mut self,
-        c: Option<Rc<RefCell<Client>>>,
+        c: Option<Rc<RefCell<WMClient>>>,
         destroyed: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let client_rc = match c {
@@ -6686,7 +6684,7 @@ impl Jwm {
         }
     }
 
-    fn adjust_client_position(&mut self, client_rc: &Rc<RefCell<Client>>) {
+    fn adjust_client_position(&mut self, client_rc: &Rc<RefCell<WMClient>>) {
         let (client_total_width, client_mon_rc_opt) = {
             let client_borrow = client_rc.borrow();
             (client_borrow.width(), client_borrow.mon.clone())
@@ -6763,7 +6761,7 @@ impl Jwm {
 
     pub fn unmanage_regular_client(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
         destroyed: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[unmanage_regular_client]");
@@ -6815,7 +6813,7 @@ impl Jwm {
 
     fn cleanup_window_state(
         &mut self,
-        client_rc: &Rc<RefCell<Client>>,
+        client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (win, old_border_w) = {
             let client = client_rc.borrow();
@@ -7005,7 +7003,7 @@ impl Jwm {
         for _ in target_count..current_count {
             // 找到最后一个显示器
             let mut current = self.mons.clone();
-            let mut prev: Option<Rc<RefCell<Monitor>>> = None;
+            let mut prev: Option<Rc<RefCell<WMMonitor>>> = None;
 
             while let Some(ref mon_rc) = current {
                 if mon_rc.borrow().next.is_none() {
@@ -7039,7 +7037,7 @@ impl Jwm {
         }
     }
 
-    fn move_clients_to_first_monitor(&mut self, from_monitor: &Rc<RefCell<Monitor>>) {
+    fn move_clients_to_first_monitor(&mut self, from_monitor: &Rc<RefCell<WMMonitor>>) {
         if self.mons.is_none() {
             return;
         }
@@ -7130,7 +7128,7 @@ impl Jwm {
         dirty
     }
 
-    pub fn updatewindowtype(&mut self, c: &Rc<RefCell<Client>>) {
+    pub fn updatewindowtype(&mut self, c: &Rc<RefCell<WMClient>>) {
         // info!("[updatewindowtype]");
         let state;
         let wtype;
@@ -7150,7 +7148,7 @@ impl Jwm {
     }
 
     /// 更新客户端的 WM_HINTS 状态：urgent 和 never_focus
-    pub fn updatewmhints(&self, client_rc: &Rc<RefCell<Client>>) {
+    pub fn updatewmhints(&self, client_rc: &Rc<RefCell<WMClient>>) {
         let win = client_rc.borrow().win;
         // 1. 读取 WM_HINTS 属性
         use ConnectionExt;
@@ -7243,14 +7241,14 @@ impl Jwm {
         }
     }
 
-    pub fn updatetitle(&mut self, c: &mut Client) {
+    pub fn updatetitle(&mut self, c: &mut WMClient) {
         // info!("[updatetitle]");
         if !self.gettextprop(c.win, self.atoms._NET_WM_NAME.into(), &mut c.name) {
             self.gettextprop(c.win, AtomEnum::WM_NAME.into(), &mut c.name);
         }
     }
 
-    pub fn update_bar_message_for_monitor(&mut self, m_opt: Option<Rc<RefCell<Monitor>>>) {
+    pub fn update_bar_message_for_monitor(&mut self, m_opt: Option<Rc<RefCell<WMMonitor>>>) {
         // info!("[update_bar_message_for_monitor]");
         if m_opt.is_none() {
             error!("[update_bar_message_for_monitor] Monitor option is None, cannot update bar message.");
