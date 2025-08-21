@@ -18,7 +18,6 @@ use std::process::{Child, Command};
 use std::rc::Rc;
 use std::str::FromStr; // 用于从字符串解析 // 用于格式化输出，如 Display trait
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc::Sender;
 use std::time::{Duration, Instant};
 use std::usize;
 use x11::xft::XftColor;
@@ -42,8 +41,8 @@ use crate::xcb_util::{test_all_cursors, Atoms, CursorManager};
 use crate::xproto::{IconicState, NormalState, WithdrawnState};
 
 lazy_static::lazy_static! {
-    pub static ref BUTTONMASK: u32 = (EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE).bits();
-    pub static ref MOUSEMASK: u32 = (EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION).bits();
+    pub static ref BUTTONMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE;
+    pub static ref MOUSEMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
 }
 
 #[repr(C)]
@@ -674,7 +673,6 @@ pub struct Jwm {
     pub visual_id: Visualid,
     pub depth: u8,
     pub color_map: Colormap,
-    pub sender: Sender<u8>,
     pub status_bar_shmem: HashMap<i32, SharedRingBuffer>,
     pub status_bar_child: HashMap<i32, Child>,
     pub message: SharedMessage,
@@ -743,7 +741,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn new(sender: Sender<u8>) -> Self {
+    pub fn new() -> Self {
         let theme_manager = ThemeManager::new(
             ColorScheme::new(
                 Self::drw_clr_create_from_hex(
@@ -802,7 +800,6 @@ impl Jwm {
             visual_id: 0,
             depth: 0,
             color_map: 0,
-            sender,
             status_bar_shmem: HashMap::new(),
             status_bar_child: HashMap::new(),
             message: SharedMessage::default(),
@@ -1121,9 +1118,6 @@ impl Jwm {
         for monitor_id in statusbar_monitor_ids {
             self.unmanage_statusbar(monitor_id, false)?;
         }
-
-        // 常规清理逻辑
-        drop(self.sender.clone());
 
         // 切换到显示所有窗口的视图
         let show_all_arg = Arg::Ui(!0);
@@ -1588,7 +1582,7 @@ impl Jwm {
             self.x11rb_conn.grab_button(
                 false, // owner_events
                 client_win_id,
-                (*BUTTONMASK as u32).into(),
+                *BUTTONMASK,
                 GrabMode::SYNC,
                 GrabMode::SYNC,
                 0u32, // confine_to
@@ -1604,7 +1598,7 @@ impl Jwm {
                     self.x11rb_conn.grab_button(
                         false,
                         client_win_id,
-                        (*BUTTONMASK as u32).into(),
+                        *BUTTONMASK,
                         GrabMode::ASYNC,
                         GrabMode::ASYNC,
                         0u32,
@@ -2347,8 +2341,8 @@ impl Jwm {
             // Assuming get_mut
             match ring_buffer.try_write_message(&message) {
                 Ok(true) => {
-                    if let Some(statusbar) = self.status_bar_clients.get(&num) {
-                        info!("statusbar: {}", statusbar.borrow());
+                    if let Some(_statusbar) = self.status_bar_clients.get(&num) {
+                        // info!("statusbar: {}", statusbar.borrow());
                     }
                     // info!("[write_message] {:?}", message);
                     Ok(()) // Message written successfully
@@ -4163,7 +4157,6 @@ impl Jwm {
     pub fn quit(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[quit]");
         self.running.store(false, Ordering::SeqCst);
-        let _ = self.sender.send(0);
         Ok(())
     }
 
@@ -4710,56 +4703,68 @@ impl Jwm {
                 return Ok(());
             }
         };
-
         // 2. 全屏检查
         if client_rc.borrow().is_fullscreen {
             debug!("Cannot move fullscreen window");
             return Ok(());
         }
-
         // 3. 准备工作
         self.restack(self.sel_mon.clone())?;
-
         // 保存窗口开始移动时的信息
         let (original_x, original_y, window_id) = {
             let client = client_rc.borrow();
             (client.x, client.y, client.win)
         };
-
-        // 4. 抓取鼠标指针
+        // 4. 抓取鼠标指针 - 添加错误处理和同步
         let cursor = self
             .cursor_manager
-            .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Sizing)?;
-
-        let grab_reply = grab_pointer(
+            .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Hand1)?;
+        let grab_cookie = grab_pointer(
             &self.x11rb_conn,
             false,           // owner_events
             self.x11rb_root, // grab_window
-            EventMask::BUTTON_PRESS
-                | EventMask::BUTTON_RELEASE
-                | EventMask::POINTER_MOTION
-                | EventMask::EXPOSURE, // event_mask
+            *MOUSEMASK,      // event_mask
             GrabMode::ASYNC, // pointer_mode
             GrabMode::ASYNC, // keyboard_mode
             0u32,            // confine_to
             cursor,          // cursor
             0u32,            // time
         )?;
-
-        let grab_reply = grab_reply.reply()?;
+        // 添加超时和错误处理
+        let grab_reply = match grab_cookie.reply() {
+            Ok(reply) => reply,
+            Err(e) => {
+                error!("[movemouse] Failed to get grab reply: {}", e);
+                return Err(format!("Grab pointer reply failed: {}", e).into());
+            }
+        };
         if grab_reply.status != GrabStatus::SUCCESS {
-            debug!("Failed to grab pointer for move");
-            return Ok(());
+            let status_str = match grab_reply.status {
+                GrabStatus::ALREADY_GRABBED => "AlreadyGrabbed",
+                GrabStatus::FROZEN => "Frozen",
+                GrabStatus::INVALID_TIME => "InvalidTime",
+                GrabStatus::NOT_VIEWABLE => "NotViewable",
+                _ => "Unknown",
+            };
+            error!("[movemouse] Failed to grab pointer: {}", status_str);
+            return Err(format!("Failed to grab pointer: {}", status_str).into());
         }
-
         // 5. 获取鼠标初始位置
-        let query_reply = query_pointer(&self.x11rb_conn, self.x11rb_root)?.reply()?;
+        let query_cookie = query_pointer(&self.x11rb_conn, self.x11rb_root)?;
+        let query_reply = match query_cookie.reply() {
+            Ok(reply) => reply,
+            Err(e) => {
+                error!("[movemouse] Failed to query pointer: {}", e);
+                // 清理grab
+                let _ = ungrab_pointer(&self.x11rb_conn, 0u32);
+                return Err(format!("Query pointer failed: {}", e).into());
+            }
+        };
         let (initial_mouse_x, initial_mouse_y) = (query_reply.root_x, query_reply.root_y);
         info!(
             "[movemouse] initial mouse (root): x={}, y={}",
             initial_mouse_x, initial_mouse_y
         );
-
         // 6. 进入移动循环
         let result = self.move_loop(
             &client_rc,
@@ -4768,9 +4773,13 @@ impl Jwm {
             initial_mouse_x as u16,
             initial_mouse_y as u16,
         );
-
         // 7. 清理工作
+        // 确保释放grab
+        if let Err(e) = ungrab_pointer(&self.x11rb_conn, 0u32) {
+            error!("[movemouse] Failed to ungrab pointer: {}", e);
+        }
         self.cleanup_move(window_id, &client_rc)?;
+        info!("[movemouse] completed");
         result
     }
 
@@ -4975,7 +4984,6 @@ impl Jwm {
 
     pub fn resizemouse(&mut self, _arg: &Arg) -> Result<(), Box<dyn std::error::Error>> {
         info!("[resizemouse]");
-
         // 1. 获取当前选中的客户端
         let client_rc = match self.get_selected_client() {
             Some(client) => client,
@@ -4984,16 +4992,13 @@ impl Jwm {
                 return Ok(());
             }
         };
-
         // 2. 全屏检查
         if client_rc.borrow().is_fullscreen {
             debug!("Cannot resize fullscreen window");
             return Ok(());
         }
-
         // 3. 准备工作
         self.restack(self.sel_mon.clone())?;
-
         // 保存窗口开始调整大小时的信息
         let (original_x, original_y, border_width, window_id, current_w, current_h) = {
             let client = client_rc.borrow();
@@ -5006,21 +5011,16 @@ impl Jwm {
                 client.h,
             )
         };
-
         // 4. 抓取鼠标指针
         let cursor = self
             .cursor_manager
-            .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Sizing)
-            .unwrap();
+            .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Fleur)?;
         let grab_reply = self
             .x11rb_conn
             .grab_pointer(
                 false,
                 self.x11rb_root,
-                EventMask::BUTTON_PRESS
-                    | EventMask::BUTTON_RELEASE
-                    | EventMask::POINTER_MOTION
-                    | EventMask::EXPOSURE,
+                *MOUSEMASK,
                 GrabMode::ASYNC,
                 GrabMode::ASYNC,
                 0u32,
@@ -5028,12 +5028,10 @@ impl Jwm {
                 0u32,
             )?
             .reply()?;
-
         if grab_reply.status != GrabStatus::SUCCESS {
             debug!("Failed to grab pointer for resize");
             return Ok(());
         }
-
         // 5. 将鼠标移动到窗口右下角
         self.x11rb_conn.warp_pointer(
             0u32,
@@ -5045,13 +5043,10 @@ impl Jwm {
             (current_w + border_width - 1) as i16,
             (current_h + border_width - 1) as i16,
         )?;
-
         // 6. 进入调整大小循环
         let result = self.resize_loop(&client_rc, original_x, original_y, border_width);
-
         // 7. 清理工作
         self.cleanup_resize(window_id, border_width)?;
-
         result
     }
 

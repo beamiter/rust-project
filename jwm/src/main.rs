@@ -3,55 +3,41 @@ use chrono::prelude::*;
 use coredump::register_panic_handler;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use jwm::Jwm;
-use libc::{setlocale, LC_CTYPE};
-use log::info;
-use std::ffi::CString;
-use std::sync::mpsc;
-use std::{thread, time::Duration};
-use x11::xlib::XSupportsLocale;
+use log::{info, warn};
+use std::env;
+
+pub fn setup_locale() {
+    // 获取当前locale
+    let locale = env::var("LANG")
+        .or_else(|_| env::var("LC_ALL"))
+        .or_else(|_| env::var("LC_CTYPE"))
+        .unwrap_or_else(|_| "C".to_string());
+    info!("Using locale: {}", locale);
+    // 检查UTF-8支持
+    if !locale.contains("UTF-8") && !locale.contains("utf8") {
+        warn!(
+            "Non-UTF-8 locale detected ({}). Text display may be affected.",
+            locale
+        );
+        warn!("Consider setting: export LANG=en_US.UTF-8");
+    }
+    // 确保关键的locale环境变量存在
+    if env::var("LC_CTYPE").is_err() {
+        if locale.contains("UTF-8") {
+            env::set_var("LC_CTYPE", &locale);
+        } else {
+            env::set_var("LC_CTYPE", "en_US.UTF-8");
+        }
+    }
+}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let _ = register_panic_handler();
+
+    setup_locale();
     jwm::miscellaneous::init_auto_command();
     jwm::miscellaneous::init_auto_start();
-    let (tx, rx) = mpsc::channel();
-
-    let mut jwm = Jwm::new(tx);
-
-    let status_update_thread = thread::spawn(move || {
-        // let mut status_bar = StatusBar::new();
-        loop {
-            let mut need_sleep = true;
-            match rx.try_recv() {
-                Ok(mut latest_value) => {
-                    while let Ok(value) = rx.try_recv() {
-                        latest_value = value;
-                    }
-                    match latest_value {
-                        0 => {
-                            info!("Recieve {}, shut down", latest_value);
-                            break;
-                        }
-                        1 => {
-                            need_sleep = false;
-                            // status_bar.update_icon_list();
-                        }
-                        _ => {
-                            break;
-                        }
-                    }
-                }
-                Err(_) => {}
-            }
-            // let status = status_bar.broadcast_string();
-            // info!("status string: {}", status);
-            // let _output = Command::new("xsetroot").arg("-name").arg(status).output();
-            if need_sleep {
-                thread::sleep(Duration::from_millis(500));
-            }
-        }
-    });
 
     let now = Local::now();
     let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
@@ -76,30 +62,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         )
         .start()
         .unwrap();
-    unsafe {
-        let c_string = CString::new("").unwrap();
-        if setlocale(LC_CTYPE, c_string.as_ptr()).is_null() || XSupportsLocale() <= 0 {
-            eprintln!("warning: no locale support");
-        }
-        info!("[main] main begin");
-        info!("[main] checkotherwm");
-        jwm.checkotherwm()?;
-        info!("[main] setup");
-        jwm.setup()?;
-        info!("[main] scan");
-        let _ = jwm.scan();
-        info!("[main] run");
-        jwm.run_async().await?;
-        info!("[main] cleanup");
-        jwm.cleanup()?;
-        info!("[main] XCloseDisplay");
-        info!("[main] end");
-    }
 
-    match status_update_thread.join() {
-        Ok(_) => println!("Status update thread finished successfully."),
-        Err(e) => eprintln!("Error joining status update thread: {:?}", e),
-    }
+    info!("[main] main begin");
+    let mut jwm = Jwm::new();
+    info!("[main] checkotherwm");
+    jwm.checkotherwm()?;
+    info!("[main] setup");
+    jwm.setup()?;
+    info!("[main] scan");
+    let _ = jwm.scan();
+    info!("[main] run");
+    jwm.run_async().await?;
+    info!("[main] cleanup");
+    jwm.cleanup()?;
+    info!("[main] close display");
+    info!("[main] end");
 
     Ok(())
 }
