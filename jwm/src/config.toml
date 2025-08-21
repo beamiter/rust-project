@@ -1,10 +1,8 @@
-# config.toml
 [appearance]
 border_px = 3
 snap = 32
 dmenu_font = "SauceCodePro Nerd Font Regular 11"
 status_bar_pad = 5
-broken = "broken"
 
 [behavior]
 focus_follows_new_window = false
@@ -12,9 +10,7 @@ resize_hints = true
 lock_fullscreen = true
 
 [status_bar]
-name = "egui_bar"
-bar_0 = "egui_bar_0"
-bar_1 = "egui_bar_1"
+base_name = "egui_bar"
 
 [colors]
 dark_sea_green1 = "#afffd7"
@@ -28,11 +24,6 @@ black = "#000000"
 transparent = 0
 opaque = 255
 
-[layout]
-m_fact = 0.55
-n_master = 1
-tags_length = 9
-
 [keybindings]
 modkey = "Mod1"
 
@@ -40,13 +31,58 @@ modkey = "Mod1"
 modifier = ["Mod1"]
 key = "e"
 function = "spawn"
-argument = ["dmenu_run", "-m", "0", "-fn", "SauceCodePro Nerd Font Regular 11", "-nb", "#afd7ff", "-nf", "#afffff", "-sb", "#000000", "-sf", "#d7d7d7", "-b"]
+argument = [
+    "dmenu_run",
+    "-m",
+    "0",
+    "-fn",
+    "SauceCodePro Nerd Font Regular 11",
+    "-nb",
+    "#afd7ff",
+    "-nf",
+    "#afffff",
+    "-sb",
+    "#000000",
+    "-sf",
+    "#d7d7d7",
+    "-b",
+]
 
 [[keybindings.keys]]
-modifier = ["Mod1", "Shift"]
+modifier = ["Mod1"]
+key = "r"
+function = "spawn"
+argument = [
+    "dmenu_run",
+    "-m",
+    "0",
+    "-fn",
+    "SauceCodePro Nerd Font Regular 11",
+    "-nb",
+    "#afd7ff",
+    "-nf",
+    "#afffff",
+    "-sb",
+    "#000000",
+    "-sf",
+    "#d7d7d7",
+    "-b",
+]
+
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
 key = "Return"
 function = "spawn"
-argument = ["x-terminal-emulator"]
+argument = ["warp-terminal"]
+
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "b"
+function = "togglebar"
+argument = 0
 
 [[keybindings.keys]]
 modifier = ["Mod1"]
@@ -60,44 +96,203 @@ key = "k"
 function = "focusstack"
 argument = -1
 
-# 更多按键绑定...
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "i"
+function = "incnmaster"
+argument = 1
 
-[mouse_bindings]
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "d"
+function = "incnmaster"
+argument = -1
 
-[[mouse_bindings.buttons]]
-click_type = "ClkLtSymbol"
-modifier = []
-button = 1
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "h"
+function = "setmfact"
+argument = -0.025
+
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "l"
+function = "setmfact"
+argument = 0.025
+
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
+key = "h"
+function = "setcfact"
+argument = 0.2
+
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
+key = "l"
+function = "setcfact"
+argument = -0.2
+
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
+key = "o"
+function = "setcfact"
+argument = 0.0
+
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
+key = "j"
+function = "movestack"
+argument = 1
+
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
+key = "k"
+function = "movestack"
+argument = -1
+
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "Return"
+function = "zoom"
+argument = 0
+
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "Tab"
+function = "view"
+argument = 0
+
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "Page_Up"
+function = "loopview"
+argument = -1
+
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "Page_Down"
+function = "loopview"
+argument = 1
+
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
+key = "c"
+function = "killclient"
+argument = 0
+
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "t"
+function = "setlayout"
+argument = "tile"
+
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "f"
+function = "setlayout"
+argument = "float"
+
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "m"
+function = "setlayout"
+argument = "monocle"
+
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "space"
 function = "setlayout"
 argument = 0
 
-[[mouse_bindings.buttons]]
-click_type = "ClkClientWin"
-modifier = ["Mod1"]
-button = 1
-function = "movemouse"
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
+key = "space"
+function = "togglefloating"
 argument = 0
 
-# 更多鼠标绑定...
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
+key = "f"
+function = "togglefullscr"
+argument = 0
 
-[[rules]]
-class = "broken"
-instance = "broken"
-name = "broken"
-tags_mask = 0
-is_floating = true
-monitor = -1
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "0"
+function = "view"
+argument = 4294967295
 
-[[rules]]
-class = "egui_bar_0"
-instance = "egui_bar_0"
-name = "egui_bar"
-tags_mask = 511  # (1 << 9) - 1
-is_floating = true
-monitor = 0
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
+key = "0"
+function = "tag"
+argument = 4294967295
 
-# config.toml 中的鼠标绑定部分
-[mouse_bindings]
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "comma"
+function = "focusmon"
+argument = -1
+
+[[keybindings.keys]]
+modifier = ["Mod1"]
+key = "period"
+function = "focusmon"
+argument = 1
+
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
+key = "comma"
+function = "tagmon"
+argument = -1
+
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
+key = "period"
+function = "tagmon"
+argument = 1
+
+[[keybindings.keys]]
+modifier = [
+    "Mod1",
+    "Shift",
+]
+key = "q"
+function = "quit"
+argument = 0
 
 [[mouse_bindings.buttons]]
 click_type = "ClkLtSymbol"
@@ -125,7 +320,7 @@ click_type = "ClkStatusText"
 modifier = []
 button = 2
 function = "spawn"
-argument = ["x-terminal-emulator"]
+argument = ["warp-terminal"]
 
 [[mouse_bindings.buttons]]
 click_type = "ClkClientWin"
@@ -175,3 +370,16 @@ modifier = ["Mod1"]
 button = 3
 function = "toggletag"
 argument = 0
+
+[[rules]]
+class = "broken"
+instance = "broken"
+name = "broken"
+tags_mask = 0
+is_floating = true
+monitor = -1
+
+[layout]
+m_fact = 0.55
+n_master = 1
+tags_length = 9

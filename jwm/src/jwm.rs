@@ -537,12 +537,13 @@ impl Client {
     }
 
     pub fn is_status_bar(&self) -> bool {
-        return ((self.name == CONFIG.status_bar_name())
-            || (self.name == CONFIG.status_bar_0())
-            || (self.name == CONFIG.status_bar_1()))
-            && ((self.class == CONFIG.status_bar_0() && self.instance == CONFIG.status_bar_0())
-                || (self.class == CONFIG.status_bar_1()
-                    && self.instance == CONFIG.status_bar_1()));
+        return ((self.name == CONFIG.status_bar_base_name())
+            || (self.name == CONFIG.status_bar_instance_0())
+            || (self.name == CONFIG.status_bar_instance_1()))
+            && ((self.class == CONFIG.status_bar_instance_0()
+                && self.instance == CONFIG.status_bar_instance_0())
+                || (self.class == CONFIG.status_bar_instance_1()
+                    && self.instance == CONFIG.status_bar_instance_1()));
     }
 }
 
@@ -2374,8 +2375,8 @@ impl Jwm {
 
     fn monitor_to_bar_name(num: i32) -> String {
         match num {
-            0 => CONFIG.status_bar_0().to_string(),
-            1 => CONFIG.status_bar_1().to_string(),
+            0 => CONFIG.status_bar_instance_0().to_string(),
+            1 => CONFIG.status_bar_instance_1().to_string(),
             _ => String::new(),
         }
     }
@@ -2440,13 +2441,13 @@ impl Jwm {
                     nixgl_command
                 );
                 command = Command::new(&nixgl_command);
-                command.arg(CONFIG.status_bar_name());
+                command.arg(CONFIG.status_bar_base_name());
             }
             // 这段代码只有在编译时 *没有* 启用 nixgl feature 时才会存在
             #[cfg(not(feature = "nixgl"))]
             {
                 info!("   -> [feature=nixgl] disabled. Launching status bar directly.");
-                command = Command::new(CONFIG.status_bar_name());
+                command = Command::new(CONFIG.status_bar_base_name());
             }
             if let Ok(child) = command
                 .arg0(&Self::monitor_to_bar_name(num))
@@ -6215,7 +6216,7 @@ impl Jwm {
         info!("[determine_statusbar_monitor]: {}", client);
         if let Some(suffix) = client
             .name
-            .strip_prefix(&format!("{}_", CONFIG.status_bar_name()))
+            .strip_prefix(&format!("{}_", CONFIG.status_bar_base_name()))
         {
             if let Ok(monitor_id) = suffix.parse::<i32>() {
                 return monitor_id;
@@ -6223,7 +6224,7 @@ impl Jwm {
         }
         if let Some(suffix) = client
             .class
-            .strip_prefix(&format!("{}_", CONFIG.status_bar_name()))
+            .strip_prefix(&format!("{}_", CONFIG.status_bar_base_name()))
         {
             if let Ok(monitor_id) = suffix.parse::<i32>() {
                 return monitor_id;
@@ -6231,7 +6232,7 @@ impl Jwm {
         }
         if let Some(suffix) = client
             .instance
-            .strip_prefix(&format!("{}_", CONFIG.status_bar_name()))
+            .strip_prefix(&format!("{}_", CONFIG.status_bar_base_name()))
         {
             if let Ok(monitor_id) = suffix.parse::<i32>() {
                 return monitor_id;
@@ -6818,7 +6819,7 @@ impl Jwm {
             // 如果需要手动删除系统共享内存对象
             #[cfg(unix)]
             {
-                let shmem_name = format!("{}_{}", CONFIG.status_bar_name(), monitor_id);
+                let shmem_name = format!("{}_{}", CONFIG.status_bar_base_name(), monitor_id);
                 if let Ok(c_name) = std::ffi::CString::new(shmem_name) {
                     unsafe {
                         let result = libc::shm_unlink(c_name.as_ptr());
