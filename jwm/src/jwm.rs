@@ -148,7 +148,6 @@ impl Pertag {
     }
 }
 
-// 定义默认符号，当从 u8 或类型字符串创建 Layout 时会用到这些符号
 pub const DEFAULT_TILE_SYMBOL: &'static str = "[]=";
 pub const DEFAULT_FLOAT_SYMBOL: &'static str = "><>";
 pub const DEFAULT_MONOCLE_SYMBOL: &'static str = "[M]";
@@ -161,16 +160,21 @@ impl LayoutEnum {
     pub const FLOAT: Self = Self("float");
     pub const MONOCLE: Self = Self("monocle");
     pub fn symbol(&self) -> &str {
-        self.0
+        match self {
+            &LayoutEnum::TILE => DEFAULT_TILE_SYMBOL,
+            &LayoutEnum::FLOAT => DEFAULT_FLOAT_SYMBOL,
+            &LayoutEnum::MONOCLE => DEFAULT_MONOCLE_SYMBOL,
+            _ => "",
+        }
     }
     pub fn is_tile(&self) -> bool {
-        *self == LayoutEnum::TILE
+        self == &LayoutEnum::TILE
     }
     pub fn is_float(&self) -> bool {
-        *self == LayoutEnum::FLOAT
+        self == &LayoutEnum::FLOAT
     }
     pub fn is_monocle(&self) -> bool {
-        *self == LayoutEnum::MONOCLE
+        self == &LayoutEnum::MONOCLE
     }
 }
 impl From<u32> for LayoutEnum {
@@ -1836,8 +1840,8 @@ impl Jwm {
         m.tag_set[1] = 1;
         m.m_fact = CONFIG.m_fact();
         m.n_master = CONFIG.n_master();
-        m.lt[0] = Rc::new(LayoutEnum::TILE).clone();
-        m.lt[1] = Rc::new(LayoutEnum::FLOAT).clone();
+        m.lt[0] = Rc::new(LayoutEnum::TILE);
+        m.lt[1] = Rc::new(LayoutEnum::FLOAT);
         m.lt_symbol = m.lt[0].symbol().to_string();
         m.pertag = Some(Pertag::new());
         let ref_pertag = m.pertag.as_mut().unwrap();
