@@ -16,8 +16,6 @@ use std::fmt;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
 use std::rc::Rc;
-use std::str::FromStr;
-// 用于从字符串解析 // 用于格式化输出，如 Display trait
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::usize;
@@ -162,131 +160,33 @@ pub const DEFAULT_FLOAT_SYMBOL: &'static str = "><>";
 pub const DEFAULT_MONOCLE_SYMBOL: &'static str = "[M]";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum LayoutEnum {
-    Tile(&'static str),    // 平铺式布局，关联一个静态字符串作为其符号
-    Float(&'static str),   // 浮动式布局
-    Monocle(&'static str), // 单窗口最大化布局
-}
-
+pub struct LayoutEnum(&'static str);
 impl LayoutEnum {
-    // 获取布局实例的符号
-    pub fn symbol(&self) -> &'static str {
-        match self {
-            LayoutEnum::Tile(symbol) |     // 使用模式匹配的 "or" ( | ) 来合并分支
-            LayoutEnum::Float(symbol) |
-            LayoutEnum::Monocle(symbol) => symbol, // 返回关联的 symbol
-        }
+    pub const ANY: Self = Self("");
+    pub const TILE: Self = Self("tile");
+    pub const FLOAT: Self = Self("float");
+    pub const MONOCLE: Self = Self("monocle");
+    pub fn symbol(&self) -> &str {
+        self.0
     }
-
-    // 获取布局的类型名称（小写字符串）
-    pub fn layout_type(&self) -> &str {
-        match self {
-            LayoutEnum::Tile(_) => "tile",
-            LayoutEnum::Float(_) => "float",
-            LayoutEnum::Monocle(_) => "monocle",
-        }
-    }
-
     pub fn is_tile(&self) -> bool {
-        if let LayoutEnum::Float(_) = self {
-            false
-        } else {
-            true
-        }
+        *self == LayoutEnum::TILE
+    }
+    pub fn is_float(&self) -> bool {
+        *self == LayoutEnum::FLOAT
+    }
+    pub fn is_monocle(&self) -> bool {
+        *self == LayoutEnum::MONOCLE
     }
 }
-
-// --- 转换 Trait 的实现 ---
-
-// 1. 为可能失败的转换定义错误类型
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum LayoutConversionError {
-    InvalidU8(u8),      // 表示提供的 u8 值无法转换为 Layout
-    InvalidStr(String), // 表示提供的字符串无法转换为 Layout
-}
-
-// 实现 Display trait，使得错误可以被友好地打印出来
-impl fmt::Display for LayoutConversionError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            LayoutConversionError::InvalidU8(val) => write!(f, "无效的u8值用于Layout转换: {}", val),
-            LayoutConversionError::InvalidStr(s) => {
-                write!(f, "无效的字符串值用于Layout转换: '{}'", s)
-            }
-        }
-    }
-}
-
-// 实现 std::error::Error trait，使得这个错误类型可以与其他标准错误处理机制集成
-impl std::error::Error for LayoutConversionError {}
-
-// 2. Layout -> u8 (将 Layout 转换为 u8)
-// 由于 Layout 是 Copy 的，From<Layout> 使用起来很方便。
-impl From<LayoutEnum> for u8 {
-    fn from(layout: LayoutEnum) -> Self {
-        match layout {
-            LayoutEnum::Tile(_) => 0,    // Tile 对应 0
-            LayoutEnum::Float(_) => 1,   // Float 对应 1
-            LayoutEnum::Monocle(_) => 2, // Monocle 对应 2
-        }
-    }
-}
-
-// 为了方便，如果你有一个对 Layout 的引用 &Layout：
-impl From<&LayoutEnum> for u8 {
-    fn from(layout: &LayoutEnum) -> Self {
-        // 因为 Layout 是 Copy 的，所以先解引用再调用已有的 From<Layout> 实现
-        (*layout).into()
-    }
-}
-
-// 3. u8 -> Layout (将 u8 转换为 Layout，可能失败)
-impl TryFrom<u8> for LayoutEnum {
-    type Error = LayoutConversionError; // 定义转换失败时的错误类型
-
-    fn try_from(value: u8) -> Result<Self, Self::Error> {
+impl From<u32> for LayoutEnum {
+    #[inline]
+    fn from(value: u32) -> Self {
         match value {
-            0 => Ok(LayoutEnum::Tile(DEFAULT_TILE_SYMBOL)), // 0 转换为 Tile，使用默认符号
-            1 => Ok(LayoutEnum::Float(DEFAULT_FLOAT_SYMBOL)), // 1 转换为 Float，使用默认符号
-            2 => Ok(LayoutEnum::Monocle(DEFAULT_MONOCLE_SYMBOL)), // 2 转换为 Monocle，使用默认符号
-            _ => Err(LayoutConversionError::InvalidU8(value)), // 其他 u8 值则返回错误
-        }
-    }
-}
-
-// 4. Layout -> String (通过 Display trait，通常表示布局的类型名称)
-impl fmt::Display for LayoutEnum {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        // 调用 layout_type() 方法获取类型名称并写入格式化器
-        write!(f, "{}", self.layout_type())
-    }
-}
-
-// 5. &str -> Layout (将字符串切片转换为 Layout，可能失败，使用 FromStr trait)
-// 这个实现会尝试从布局类型名称（如 "tile"）或默认符号（如 "[T]"）进行解析
-impl FromStr for LayoutEnum {
-    type Err = LayoutConversionError; // 定义解析失败时的错误类型
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        // 首先，尝试匹配已知的布局类型名称（不区分大小写）
-        match s.to_lowercase().as_str() {
-            // 将输入字符串转为小写进行比较
-            "tile" => return Ok(LayoutEnum::Tile(DEFAULT_TILE_SYMBOL)),
-            "float" => return Ok(LayoutEnum::Float(DEFAULT_FLOAT_SYMBOL)),
-            "monocle" => return Ok(LayoutEnum::Monocle(DEFAULT_MONOCLE_SYMBOL)),
-            _ => {} // 如果不是已知的类型名称，则继续检查符号
-        }
-
-        // 接下来，尝试匹配已知的默认符号（区分大小写）
-        if s == DEFAULT_TILE_SYMBOL {
-            Ok(LayoutEnum::Tile(DEFAULT_TILE_SYMBOL))
-        } else if s == DEFAULT_FLOAT_SYMBOL {
-            Ok(LayoutEnum::Float(DEFAULT_FLOAT_SYMBOL))
-        } else if s == DEFAULT_MONOCLE_SYMBOL {
-            Ok(LayoutEnum::Monocle(DEFAULT_MONOCLE_SYMBOL))
-        } else {
-            // 如果所有尝试都失败，则返回错误
-            Err(LayoutConversionError::InvalidStr(s.to_string()))
+            0 => LayoutEnum::TILE,
+            1 => LayoutEnum::FLOAT,
+            2 => LayoutEnum::MONOCLE,
+            _ => LayoutEnum::ANY,
         }
     }
 }
@@ -488,10 +388,7 @@ impl WMMonitor {
             sel: None,
             stack: None,
             next: None,
-            lt: [
-                Rc::new(LayoutEnum::try_from(0).unwrap()),
-                Rc::new(LayoutEnum::try_from(0).unwrap()),
-            ],
+            lt: [Rc::new(LayoutEnum::TILE), Rc::new(LayoutEnum::TILE)],
             pertag: None,
         }
     }
@@ -573,7 +470,7 @@ pub struct Jwm {
 
     // 状态栏专用管理
     pub status_bar_clients: HashMap<i32, Rc<RefCell<WMClient>>>, // monitor_id -> statusbar_client
-    pub status_bar_windows: HashMap<Window, i32>,              // window_id -> monitor_id (快速查找)
+    pub status_bar_windows: HashMap<Window, i32>, // window_id -> monitor_id (快速查找)
 
     pub pending_bar_updates: HashSet<i32>,
 
@@ -1945,8 +1842,8 @@ impl Jwm {
         m.tag_set[1] = 1;
         m.m_fact = CONFIG.m_fact();
         m.n_master = CONFIG.n_master();
-        m.lt[0] = Rc::new(LayoutEnum::try_from(0).unwrap()).clone();
-        m.lt[1] = Rc::new(LayoutEnum::try_from(1).unwrap()).clone();
+        m.lt[0] = Rc::new(LayoutEnum::TILE).clone();
+        m.lt[1] = Rc::new(LayoutEnum::FLOAT).clone();
         m.lt_symbol = m.lt[0].symbol().to_string();
         m.pertag = Some(Pertag::new());
         let ref_pertag = m.pertag.as_mut().unwrap();
@@ -1980,13 +1877,14 @@ impl Jwm {
 
     pub fn applylayout(&mut self, layout: &LayoutEnum, mon_rc: &Rc<RefCell<WMMonitor>>) {
         match layout {
-            LayoutEnum::Tile(_) => {
+            &LayoutEnum::TILE => {
                 self.tile(mon_rc);
             }
-            LayoutEnum::Float(_) => {}
-            LayoutEnum::Monocle(_) => {
+            &LayoutEnum::FLOAT => {}
+            &LayoutEnum::MONOCLE => {
                 self.monocle(mon_rc);
             }
+            _ => {}
         }
     }
 
@@ -2506,7 +2404,7 @@ impl Jwm {
                         cmd.parameter
                     );
                     let arg = WMArgEnum::Layout(Rc::new(
-                        LayoutEnum::try_from(cmd.parameter as u8).unwrap(),
+                        LayoutEnum::from(cmd.parameter),
                     ));
                     let _ = self.setlayout(&arg);
                 }
@@ -3645,9 +3543,9 @@ impl Jwm {
             WMArgEnum::Layout(ref lt) => {
                 let sel_mon_layout_type = {
                     let sel_mon = self.sel_mon.as_ref().unwrap().borrow();
-                    sel_mon.lt[sel_mon.sel_lt].layout_type().to_string()
+                    sel_mon.lt[sel_mon.sel_lt].clone()
                 };
-                if lt.layout_type() == sel_mon_layout_type {
+                if *lt == sel_mon_layout_type {
                     let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
                     let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
                     sel_mon_mut.pertag.as_mut().unwrap().sel_lts[cur_tag] ^= 1;
@@ -5487,7 +5385,10 @@ impl Jwm {
         }
     }
 
-    pub fn setfocus(&mut self, c: &Rc<RefCell<WMClient>>) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn setfocus(
+        &mut self,
+        c: &Rc<RefCell<WMClient>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut c_mut = c.borrow_mut();
 
         if !c_mut.never_focus {
@@ -5654,7 +5555,8 @@ impl Jwm {
     pub fn manage(&mut self, w: Window, geom: &GetGeometryReply) {
         // info!("[manage]"); // 日志
         // --- 1. 创建新的 Client 对象 ---
-        let client_rc_opt: Option<Rc<RefCell<WMClient>>> = Some(Rc::new(RefCell::new(WMClient::new())));
+        let client_rc_opt: Option<Rc<RefCell<WMClient>>> =
+            Some(Rc::new(RefCell::new(WMClient::new())));
         let client_rc = client_rc_opt.as_ref().unwrap();
         // --- 2. 初始化 Client 结构体的基本属性 ---
         {

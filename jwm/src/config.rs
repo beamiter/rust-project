@@ -18,7 +18,7 @@ use x11::keysym::{
 };
 
 use crate::jwm::WMFuncType;
-use crate::jwm::{self, Jwm, LayoutEnum, WMRule, WMButton, WMKey, CLICK};
+use crate::jwm::{self, Jwm, LayoutEnum, WMButton, WMKey, WMRule, CLICK};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
 macro_rules! status_bar_config {
@@ -904,9 +904,9 @@ impl Config {
             ArgumentConfig::String(s) => {
                 // 特殊处理布局字符串
                 match s.as_str() {
-                    "tile" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::try_from(0).unwrap())),
-                    "float" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::try_from(1).unwrap())),
-                    "monocle" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::try_from(2).unwrap())),
+                    "tile" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::TILE)),
+                    "float" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::FLOAT)),
+                    "monocle" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::MONOCLE)),
                     _ => jwm::WMArgEnum::StringVec(vec![s.clone()]),
                 }
             }
