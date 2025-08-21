@@ -516,174 +516,442 @@ pub fn test_all_cursors(conn: &impl Connection) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-use x11::xft::XftColor;
-
 use crate::config::CONFIG;
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct ColorScheme {
-    pub fg: XftColor,     // 前景色
-    pub bg: XftColor,     // 背景色
-    pub border: XftColor, // 边框色
+use std::collections::HashMap;
+
+/// ARGB颜色结构，支持Alpha通道
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ArgbColor {
+    pub value: u32, // ARGB格式: 0xAARRGGBB
 }
 
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SchemeType {
-    Norm = 0, // 普通状态
-    Sel = 1,  // 选中状态
-}
-
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct ThemeManager {
-    pub normal: ColorScheme, // 普通状态的颜色方案
-    pub selected: ColorScheme,  // 选中状态的颜色方案
-}
-
-#[allow(dead_code)]
-impl ColorScheme {
-    /// 创建新的颜色方案
-    pub fn new(fg: XftColor, bg: XftColor, border: XftColor) -> Self {
-        Self { fg, bg, border }
+impl ArgbColor {
+    /// 从ARGB分量创建颜色
+    pub fn new(alpha: u8, red: u8, green: u8, blue: u8) -> Self {
+        let value =
+            ((alpha as u32) << 24) | ((red as u32) << 16) | ((green as u32) << 8) | (blue as u32);
+        Self { value }
     }
 
-    /// 获取前景色
-    pub fn foreground(&self) -> &XftColor {
-        &self.fg
+    /// 从RGB创建不透明颜色
+    pub fn from_rgb(red: u8, green: u8, blue: u8) -> Self {
+        Self::new(255, red, green, blue)
     }
 
-    /// 获取背景色
-    pub fn background(&self) -> &XftColor {
-        &self.bg
+    /// 从十六进制字符串创建颜色
+    pub fn from_hex(hex: &str, alpha: u8) -> Result<Self, Box<dyn std::error::Error>> {
+        let (r, g, b) = parse_hex_color(hex)?;
+        Ok(Self::new(alpha, r, g, b))
     }
 
-    /// 获取边框色
-    pub fn border_color(&self) -> &XftColor {
-        &self.border
+    /// 提取ARGB分量
+    pub fn components(&self) -> (u8, u8, u8, u8) {
+        let alpha = (self.value >> 24) as u8;
+        let red = (self.value >> 16) as u8;
+        let green = (self.value >> 8) as u8;
+        let blue = self.value as u8;
+        (alpha, red, green, blue)
     }
 
-    /// 设置前景色
-    pub fn set_foreground(&mut self, color: XftColor) {
-        self.fg = color;
+    /// 获取RGB分量（不包含alpha）
+    pub fn rgb(&self) -> (u8, u8, u8) {
+        let (_, r, g, b) = self.components();
+        (r, g, b)
     }
 
-    /// 设置背景色
-    pub fn set_background(&mut self, color: XftColor) {
-        self.bg = color;
+    /// 获取alpha值
+    pub fn alpha(&self) -> u8 {
+        (self.value >> 24) as u8
     }
 
-    /// 设置边框色
-    pub fn set_border(&mut self, color: XftColor) {
-        self.border = color;
-    }
-}
-
-#[allow(dead_code)]
-impl ThemeManager {
-    /// 创建新的主题管理器
-    pub fn new(norm: ColorScheme, sel: ColorScheme) -> Self {
-        Self { normal: norm, selected: sel }
+    /// 设置alpha值
+    pub fn with_alpha(&self, alpha: u8) -> Self {
+        let (_, r, g, b) = self.components();
+        Self::new(alpha, r, g, b)
     }
 
-    pub fn create_aux() -> Self {
-        ThemeManager::new(
-            ColorScheme::new(
-                Self::drw_clr_create_from_hex(
-                    &CONFIG.colors().dark_sea_green1,
-                    CONFIG.colors().opaque,
-                )
-                .unwrap(),
-                Self::drw_clr_create_from_hex(
-                    &CONFIG.colors().light_sky_blue1,
-                    CONFIG.colors().opaque,
-                )
-                .unwrap(),
-                Self::drw_clr_create_from_hex(
-                    &CONFIG.colors().light_sky_blue1,
-                    CONFIG.colors().opaque,
-                )
-                .unwrap(),
-            ),
-            ColorScheme::new(
-                Self::drw_clr_create_from_hex(
-                    &CONFIG.colors().dark_sea_green2,
-                    CONFIG.colors().opaque,
-                )
-                .unwrap(),
-                Self::drw_clr_create_from_hex(
-                    &CONFIG.colors().pale_turquoise1,
-                    CONFIG.colors().opaque,
-                )
-                .unwrap(),
-                Self::drw_clr_create_from_hex(&CONFIG.colors().cyan, CONFIG.colors().opaque)
-                    .unwrap(),
-            ),
+    /// 转换为浮点RGBA（用于Cairo等）
+    pub fn to_rgba_f64(&self) -> (f64, f64, f64, f64) {
+        let (a, r, g, b) = self.components();
+        (
+            r as f64 / 255.0,
+            g as f64 / 255.0,
+            b as f64 / 255.0,
+            a as f64 / 255.0,
         )
     }
 
-    /// 根据方案类型获取颜色方案
-    pub fn get_scheme(&self, scheme_type: SchemeType) -> &ColorScheme {
-        match scheme_type {
-            SchemeType::Norm => &self.normal,
-            SchemeType::Sel => &self.selected,
+    /// 获取X11像素值（去除alpha）
+    pub fn to_x11_pixel(&self) -> u32 {
+        self.value & 0x00FFFFFF
+    }
+}
+
+/// 颜色方案
+#[derive(Debug, Clone)]
+pub struct ColorScheme {
+    pub fg: ArgbColor,     // 前景色
+    pub bg: ArgbColor,     // 背景色
+    pub border: ArgbColor, // 边框色
+}
+
+impl ColorScheme {
+    /// 创建新的颜色方案
+    pub fn new(fg: ArgbColor, bg: ArgbColor, border: ArgbColor) -> Self {
+        Self { fg, bg, border }
+    }
+
+    /// 从十六进制字符串创建颜色方案
+    pub fn from_hex(
+        fg_hex: &str,
+        bg_hex: &str,
+        border_hex: &str,
+        alpha: u8,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self::new(
+            ArgbColor::from_hex(fg_hex, alpha)?,
+            ArgbColor::from_hex(bg_hex, alpha)?,
+            ArgbColor::from_hex(border_hex, alpha)?,
+        ))
+    }
+
+    /// 获取前景色
+    pub fn foreground(&self) -> ArgbColor {
+        self.fg
+    }
+
+    /// 获取背景色
+    pub fn background(&self) -> ArgbColor {
+        self.bg
+    }
+
+    /// 获取边框色
+    pub fn border_color(&self) -> ArgbColor {
+        self.border
+    }
+}
+
+/// 方案类型
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SchemeType {
+    Norm = 0,    // 普通状态
+    Sel = 1,     // 选中状态
+    Urgent = 2,  // 紧急状态
+    Warning = 3, // 警告状态
+    Error = 4,   // 错误状态
+}
+
+/// 主题管理器
+#[derive(Debug, Clone)]
+pub struct ThemeManager {
+    schemes: HashMap<SchemeType, ColorScheme>,
+    x11_color_cache: HashMap<u32, u32>, // ARGB -> X11 pixel映射缓存
+}
+
+impl ThemeManager {
+    /// 创建新的主题管理器
+    pub fn new() -> Self {
+        Self {
+            schemes: HashMap::new(),
+            x11_color_cache: HashMap::new(),
         }
+    }
+
+    /// 创建默认主题
+    pub fn create_default<C: Connection>(
+        conn: &C,
+        screen: &Screen,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut theme = Self::new();
+
+        // 普通状态 - 深色主题
+        let normal = ColorScheme::from_hex(
+            "#E0E0E0", // 浅灰前景
+            "#2E2E2E", // 深灰背景
+            "#404040", // 中灰边框
+            255,       // 不透明
+        )?;
+
+        // 选中状态 - 蓝色主题
+        let selected = ColorScheme::from_hex(
+            "#FFFFFF", // 白色前景
+            "#007ACC", // 蓝色背景
+            "#005A9E", // 深蓝边框
+            255,       // 不透明
+        )?;
+
+        // 紧急状态 - 红色主题
+        let urgent = ColorScheme::from_hex(
+            "#FFFFFF", // 白色前景
+            "#DC3545", // 红色背景
+            "#C82333", // 深红边框
+            255,       // 不透明
+        )?;
+
+        // 警告状态 - 黄色主题
+        let warning = ColorScheme::from_hex(
+            "#000000", // 黑色前景
+            "#FFC107", // 黄色背景
+            "#E0A800", // 深黄边框
+            255,       // 不透明
+        )?;
+
+        // 错误状态 - 深红主题
+        let error = ColorScheme::from_hex(
+            "#FFFFFF", // 白色前景
+            "#8B0000", // 深红背景
+            "#660000", // 更深红边框
+            255,       // 不透明
+        )?;
+
+        theme.set_scheme(SchemeType::Norm, normal);
+        theme.set_scheme(SchemeType::Sel, selected);
+        theme.set_scheme(SchemeType::Urgent, urgent);
+        theme.set_scheme(SchemeType::Warning, warning);
+        theme.set_scheme(SchemeType::Error, error);
+
+        // 预分配X11颜色
+        theme.allocate_x11_colors(conn, screen.default_colormap)?;
+
+        Ok(theme)
+    }
+
+    /// 从配置创建主题
+    pub fn create_from_config<C: Connection>(
+        conn: &C,
+        screen: &Screen,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut theme = Self::new();
+        let colors = CONFIG.colors();
+
+        // 从配置创建各种状态的颜色方案
+        let normal = ColorScheme::new(
+            ArgbColor::from_hex(&colors.dark_sea_green1, colors.opaque)?,
+            ArgbColor::from_hex(&colors.light_sky_blue1, colors.opaque)?,
+            ArgbColor::from_hex(&colors.light_sky_blue1, colors.opaque)?,
+        );
+
+        let selected = ColorScheme::new(
+            ArgbColor::from_hex(&colors.dark_sea_green2, colors.opaque)?,
+            ArgbColor::from_hex(&colors.pale_turquoise1, colors.opaque)?,
+            ArgbColor::from_hex(&colors.cyan, colors.opaque)?,
+        );
+
+        theme.set_scheme(SchemeType::Norm, normal);
+        theme.set_scheme(SchemeType::Sel, selected);
+
+        // 分配X11颜色
+        theme.allocate_x11_colors(conn, screen.default_colormap)?;
+
+        Ok(theme)
+    }
+
+    /// 设置颜色方案
+    pub fn set_scheme(&mut self, scheme_type: SchemeType, scheme: ColorScheme) {
+        self.schemes.insert(scheme_type, scheme);
+    }
+
+    /// 获取颜色方案
+    pub fn get_scheme(&self, scheme_type: SchemeType) -> Option<&ColorScheme> {
+        self.schemes.get(&scheme_type)
     }
 
     /// 获取可变颜色方案
-    pub fn get_scheme_mut(&mut self, scheme_type: SchemeType) -> &mut ColorScheme {
-        match scheme_type {
-            SchemeType::Norm => &mut self.normal,
-            SchemeType::Sel => &mut self.selected,
+    pub fn get_scheme_mut(&mut self, scheme_type: SchemeType) -> Option<&mut ColorScheme> {
+        self.schemes.get_mut(&scheme_type)
+    }
+
+    /// 获取前景色
+    pub fn get_fg(&self, scheme_type: SchemeType) -> Option<ArgbColor> {
+        self.get_scheme(scheme_type).map(|s| s.foreground())
+    }
+
+    /// 获取背景色
+    pub fn get_bg(&self, scheme_type: SchemeType) -> Option<ArgbColor> {
+        self.get_scheme(scheme_type).map(|s| s.background())
+    }
+
+    /// 获取边框色
+    pub fn get_border(&self, scheme_type: SchemeType) -> Option<ArgbColor> {
+        self.get_scheme(scheme_type).map(|s| s.border_color())
+    }
+
+    /// 获取X11像素值
+    pub fn get_x11_pixel(&self, color: ArgbColor) -> Option<u32> {
+        self.x11_color_cache.get(&color.value).copied()
+    }
+
+    /// 分配X11颜色
+    pub fn allocate_x11_colors<C: Connection>(
+        &mut self,
+        conn: &C,
+        colormap: Colormap,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut colors_to_allocate = Vec::new();
+
+        // 收集所有需要分配的颜色
+        for scheme in self.schemes.values() {
+            colors_to_allocate.push(scheme.fg);
+            colors_to_allocate.push(scheme.bg);
+            colors_to_allocate.push(scheme.border);
+        }
+
+        // 去重
+        colors_to_allocate.sort_by_key(|c| c.value);
+        colors_to_allocate.dedup();
+
+        // 分配颜色
+        for color in colors_to_allocate {
+            let pixel = self.allocate_single_color(conn, colormap, color)?;
+            self.x11_color_cache.insert(color.value, pixel);
+        }
+
+        Ok(())
+    }
+
+    /// 分配单个颜色
+    fn allocate_single_color<C: Connection>(
+        &self,
+        conn: &C,
+        colormap: Colormap,
+        color: ArgbColor,
+    ) -> Result<u32, Box<dyn std::error::Error>> {
+        let (_, r, g, b) = color.components();
+
+        let reply = conn
+            .alloc_color(colormap, (r as u16) << 8, (g as u16) << 8, (b as u16) << 8)?
+            .reply()?;
+
+        Ok(reply.pixel)
+    }
+
+    /// 释放X11颜色
+    pub fn free_x11_colors<C: Connection>(
+        &mut self,
+        conn: &C,
+        colormap: Colormap,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let pixels: Vec<u32> = self.x11_color_cache.values().copied().collect();
+
+        if !pixels.is_empty() {
+            conn.free_colors(colormap, 0, &pixels)?;
+            self.x11_color_cache.clear();
+        }
+
+        Ok(())
+    }
+}
+
+/// 绘图辅助功能
+impl ThemeManager {
+    /// 为Cairo设置颜色
+    #[cfg(feature = "cairo")]
+    pub fn set_cairo_source(&self, ctx: &cairo::Context, color: ArgbColor) {
+        let (r, g, b, a) = color.to_rgba_f64();
+        ctx.set_source_rgba(r, g, b, a);
+    }
+
+    /// 绘制背景（Cairo）
+    #[cfg(feature = "cairo")]
+    pub fn draw_cairo_background(
+        &self,
+        ctx: &cairo::Context,
+        scheme_type: SchemeType,
+        width: f64,
+        height: f64,
+    ) {
+        if let Some(bg_color) = self.get_bg(scheme_type) {
+            self.set_cairo_source(ctx, bg_color);
+            ctx.rectangle(0.0, 0.0, width, height);
+            let _ = ctx.fill();
         }
     }
 
-    /// 获取指定方案的前景色
-    pub fn get_fg(&self, scheme_type: SchemeType) -> &XftColor {
-        self.get_scheme(scheme_type).foreground()
-    }
-
-    /// 获取指定方案的背景色
-    pub fn get_bg(&self, scheme_type: SchemeType) -> &XftColor {
-        self.get_scheme(scheme_type).background()
-    }
-
-    /// 获取指定方案的边框色
-    pub fn get_border(&self, scheme_type: SchemeType) -> &XftColor {
-        self.get_scheme(scheme_type).border_color()
-    }
-
-    /// 设置整个颜色方案
-    pub fn set_scheme(&mut self, scheme_type: SchemeType, color_scheme: ColorScheme) {
-        match scheme_type {
-            SchemeType::Norm => self.normal = color_scheme,
-            SchemeType::Sel => self.selected = color_scheme,
+    /// 绘制边框（Cairo）
+    #[cfg(feature = "cairo")]
+    pub fn draw_cairo_border(
+        &self,
+        ctx: &cairo::Context,
+        scheme_type: SchemeType,
+        x: f64,
+        y: f64,
+        width: f64,
+        height: f64,
+        border_width: f64,
+    ) {
+        if let Some(border_color) = self.get_border(scheme_type) {
+            self.set_cairo_source(ctx, border_color);
+            ctx.set_line_width(border_width);
+            ctx.rectangle(x, y, width, height);
+            let _ = ctx.stroke();
         }
     }
+}
 
-    pub fn drw_clr_create_direct(r: u8, g: u8, b: u8, alpha: u8) -> Option<XftColor> {
-        unsafe {
-            let mut xcolor: XftColor = std::mem::zeroed();
-            // 手动构造像素值 (ARGB格式)
-            xcolor.pixel =
-                ((alpha as u64) << 24) | ((r as u64) << 16) | ((g as u64) << 8) | (b as u64);
-            // 设置其他字段
-            xcolor.color.red = (r as u16) << 8;
-            xcolor.color.green = (g as u16) << 8;
-            xcolor.color.blue = (b as u16) << 8;
-            xcolor.color.alpha = (alpha as u16) << 8;
-            Some(xcolor)
+/// 辅助函数
+fn parse_hex_color(hex: &str) -> Result<(u8, u8, u8), Box<dyn std::error::Error>> {
+    let hex = if hex.starts_with('#') { &hex[1..] } else { hex };
+
+    match hex.len() {
+        3 => {
+            // #RGB -> #RRGGBB
+            let r = u8::from_str_radix(&hex[0..1].repeat(2), 16)?;
+            let g = u8::from_str_radix(&hex[1..2].repeat(2), 16)?;
+            let b = u8::from_str_radix(&hex[2..3].repeat(2), 16)?;
+            Ok((r, g, b))
         }
+        6 => {
+            // #RRGGBB
+            let r = u8::from_str_radix(&hex[0..2], 16)?;
+            let g = u8::from_str_radix(&hex[2..4], 16)?;
+            let b = u8::from_str_radix(&hex[4..6], 16)?;
+            Ok((r, g, b))
+        }
+        _ => Err("Invalid hex color format".into()),
+    }
+}
+
+/// 预定义颜色常量
+impl ArgbColor {
+    pub const TRANSPARENT: ArgbColor = ArgbColor { value: 0x00000000 };
+    pub const BLACK: ArgbColor = ArgbColor { value: 0xFF000000 };
+    pub const WHITE: ArgbColor = ArgbColor { value: 0xFFFFFFFF };
+    pub const RED: ArgbColor = ArgbColor { value: 0xFFFF0000 };
+    pub const GREEN: ArgbColor = ArgbColor { value: 0xFF00FF00 };
+    pub const BLUE: ArgbColor = ArgbColor { value: 0xFF0000FF };
+    pub const YELLOW: ArgbColor = ArgbColor { value: 0xFFFFFF00 };
+    pub const CYAN: ArgbColor = ArgbColor { value: 0xFF00FFFF };
+    pub const MAGENTA: ArgbColor = ArgbColor { value: 0xFFFF00FF };
+}
+
+/// 使用示例和测试
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_argb_color() {
+        let color = ArgbColor::new(128, 255, 0, 0); // 半透明红色
+        assert_eq!(color.value, 0x80FF0000);
+
+        let (a, r, g, b) = color.components();
+        assert_eq!((a, r, g, b), (128, 255, 0, 0));
     }
 
-    pub fn drw_clr_create_from_hex(hex_color: &str, alpha: u8) -> Option<XftColor> {
-        // 解析 "#ff0000" 格式
-        if hex_color.starts_with('#') && hex_color.len() == 7 {
-            let r = u8::from_str_radix(&hex_color[1..3], 16).ok()?;
-            let g = u8::from_str_radix(&hex_color[3..5], 16).ok()?;
-            let b = u8::from_str_radix(&hex_color[5..7], 16).ok()?;
-            return Self::drw_clr_create_direct(r, g, b, alpha);
-        }
-        None
+    #[test]
+    fn test_hex_parsing() {
+        let color = ArgbColor::from_hex("#FF0000", 255).unwrap();
+        assert_eq!(color.rgb(), (255, 0, 0));
+
+        let color = ArgbColor::from_hex("F00", 128).unwrap();
+        assert_eq!(color.components(), (128, 255, 0, 0));
+    }
+
+    #[test]
+    fn test_color_scheme() {
+        let scheme = ColorScheme::from_hex("#000000", "#FFFFFF", "#808080", 255).unwrap();
+        assert_eq!(scheme.foreground().rgb(), (0, 0, 0));
+        assert_eq!(scheme.background().rgb(), (255, 255, 255));
+        assert_eq!(scheme.border_color().rgb(), (128, 128, 128));
     }
 }

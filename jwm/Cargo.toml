@@ -13,6 +13,7 @@ tauri_bar = []
 gtk_bar = []
 relm_bar = []
 nixgl = []
+cairo = []
 
 [dependencies]
 battery = "0.7.8"

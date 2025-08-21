@@ -5,18 +5,16 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
 use x11::keysym::*;
-use x11::xlib::*;
+use x11rb::protocol::xproto::ButtonIndex;
+use x11rb::protocol::xproto::KeyButMask;
 
 use std::fmt;
 use std::rc::Rc;
 
-use x11::{
-    keysym::{
-        XK_Page_Down, XK_Page_Up, XK_Return, XK_Tab, XK_b, XK_c, XK_comma, XK_d, XK_e, XK_f, XK_h,
-        XK_i, XK_j, XK_k, XK_l, XK_m, XK_o, XK_period, XK_q, XK_r, XK_space, XK_t, XK_0, XK_1,
-        XK_2, XK_3, XK_4, XK_5, XK_6, XK_7, XK_8, XK_9,
-    },
-    xlib::{Button1, Button2, Button3, ControlMask, Mod1Mask, ShiftMask},
+use x11::keysym::{
+    XK_Page_Down, XK_Page_Up, XK_Return, XK_Tab, XK_b, XK_c, XK_comma, XK_d, XK_e, XK_f, XK_h,
+    XK_i, XK_j, XK_k, XK_l, XK_m, XK_o, XK_period, XK_q, XK_r, XK_space, XK_t, XK_0, XK_1, XK_2,
+    XK_3, XK_4, XK_5, XK_6, XK_7, XK_8, XK_9,
 };
 
 use crate::jwm::WMFunc;
@@ -478,77 +476,77 @@ impl Config {
             ButtonConfig {
                 click_type: "ClkLtSymbol".to_string(),
                 modifier: vec![],
-                button: Button1,
+                button: ButtonIndex::M1.into(),
                 function: "setlayout".to_string(),
                 argument: ArgumentConfig::UInt(0),
             },
             ButtonConfig {
                 click_type: "ClkLtSymbol".to_string(),
                 modifier: vec![],
-                button: Button3,
+                button: ButtonIndex::M3.into(),
                 function: "setlayout".to_string(),
                 argument: ArgumentConfig::String("monocle".to_string()),
             },
             ButtonConfig {
                 click_type: "ClkWinTitle".to_string(),
                 modifier: vec![],
-                button: Button2,
+                button: ButtonIndex::M2.into(),
                 function: "zoom".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
             ButtonConfig {
                 click_type: "ClkStatusText".to_string(),
                 modifier: vec![],
-                button: Button2,
+                button: ButtonIndex::M2.into(),
                 function: "spawn".to_string(),
                 argument: ArgumentConfig::StringVec(Self::get_termcmd()),
             },
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec!["Mod1".to_string()],
-                button: Button1,
+                button: ButtonIndex::M1.into(),
                 function: "movemouse".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec!["Mod1".to_string()],
-                button: Button2,
+                button: ButtonIndex::M2.into(),
                 function: "togglefloating".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec!["Mod1".to_string()],
-                button: Button3,
+                button: ButtonIndex::M3.into(),
                 function: "resizemouse".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
             ButtonConfig {
                 click_type: "ClkTagBar".to_string(),
                 modifier: vec![],
-                button: Button1,
+                button: ButtonIndex::M1.into(),
                 function: "view".to_string(),
                 argument: ArgumentConfig::UInt(0),
             },
             ButtonConfig {
                 click_type: "ClkTagBar".to_string(),
                 modifier: vec![],
-                button: Button3,
+                button: ButtonIndex::M3.into(),
                 function: "toggleview".to_string(),
                 argument: ArgumentConfig::UInt(0),
             },
             ButtonConfig {
                 click_type: "ClkTagBar".to_string(),
                 modifier: vec!["Mod1".to_string()],
-                button: Button1,
+                button: ButtonIndex::M1.into(),
                 function: "tag".to_string(),
                 argument: ArgumentConfig::UInt(0),
             },
             ButtonConfig {
                 click_type: "ClkTagBar".to_string(),
                 modifier: vec!["Mod1".to_string()],
-                button: Button3,
+                button: ButtonIndex::M3.into(),
                 function: "toggletag".to_string(),
                 argument: ArgumentConfig::UInt(0),
             },
@@ -714,7 +712,7 @@ impl Config {
     fn convert_button_config(&self, btn_config: &ButtonConfig) -> Option<Button> {
         let click_type = self.parse_click_type(&btn_config.click_type)?;
         let modifiers = self.parse_modifiers(&btn_config.modifier);
-        let button = btn_config.button;
+        let button = ButtonIndex::from(btn_config.button as u8);
         let function = self.parse_function(&btn_config.function)?;
         let arg = self.convert_argument(&btn_config.argument);
 
@@ -869,21 +867,21 @@ impl Config {
     }
 
     // 扩展 parse_modifiers 以支持更多修饰键
-    fn parse_modifiers(&self, modifiers: &[String]) -> u32 {
-        let mut mask = 0;
+    fn parse_modifiers(&self, modifiers: &[String]) -> KeyButMask {
+        let mut mask = KeyButMask::default();
         for modifier in modifiers {
             mask |= match modifier.as_str() {
-                "Mod1" | "Alt" => Mod1Mask,
-                "Mod2" => Mod2Mask,
-                "Mod3" => Mod3Mask,
-                "Mod4" | "Super" | "Win" => Mod4Mask,
-                "Mod5" => Mod5Mask,
-                "Control" | "Ctrl" => ControlMask,
-                "Shift" => ShiftMask,
-                "Lock" | "CapsLock" => LockMask,
+                "Mod1" | "Alt" => KeyButMask::MOD1,
+                "Mod2" => KeyButMask::MOD2,
+                "Mod3" => KeyButMask::MOD3,
+                "Mod4" | "Super" | "Win" => KeyButMask::MOD4,
+                "Mod5" => KeyButMask::MOD5,
+                "Control" | "Ctrl" => KeyButMask::CONTROL,
+                "Shift" => KeyButMask::SHIFT,
+                "Lock" | "CapsLock" => KeyButMask::LOCK,
                 _ => {
                     eprintln!("Unknown modifier: {}", modifier);
-                    0
+                    KeyButMask::default()
                 }
             };
         }
@@ -915,77 +913,77 @@ impl Config {
             ButtonConfig {
                 click_type: "ClkLtSymbol".to_string(),
                 modifier: vec![],
-                button: Button1,
+                button: ButtonIndex::M1.into(),
                 function: "setlayout".to_string(),
                 argument: ArgumentConfig::UInt(0),
             },
             ButtonConfig {
                 click_type: "ClkLtSymbol".to_string(),
                 modifier: vec![],
-                button: Button3,
+                button: ButtonIndex::M3.into(),
                 function: "setlayout".to_string(),
                 argument: ArgumentConfig::String("monocle".to_string()),
             },
             ButtonConfig {
                 click_type: "ClkWinTitle".to_string(),
                 modifier: vec![],
-                button: Button2,
+                button: ButtonIndex::M2.into(),
                 function: "zoom".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
             ButtonConfig {
                 click_type: "ClkStatusText".to_string(),
                 modifier: vec![],
-                button: Button2,
+                button: ButtonIndex::M2.into(),
                 function: "spawn".to_string(),
                 argument: ArgumentConfig::StringVec(Self::get_termcmd()),
             },
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: Button1,
+                button: ButtonIndex::M1.into(),
                 function: "movemouse".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: Button2,
+                button: ButtonIndex::M2.into(),
                 function: "togglefloating".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: Button3,
+                button: ButtonIndex::M3.into(),
                 function: "resizemouse".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
             ButtonConfig {
                 click_type: "ClkTagBar".to_string(),
                 modifier: vec![],
-                button: Button1,
+                button: ButtonIndex::M1.into(),
                 function: "view".to_string(),
                 argument: ArgumentConfig::UInt(0),
             },
             ButtonConfig {
                 click_type: "ClkTagBar".to_string(),
                 modifier: vec![],
-                button: Button3,
+                button: ButtonIndex::M3.into(),
                 function: "toggleview".to_string(),
                 argument: ArgumentConfig::UInt(0),
             },
             ButtonConfig {
                 click_type: "ClkTagBar".to_string(),
                 modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: Button1,
+                button: ButtonIndex::M1.into(),
                 function: "tag".to_string(),
                 argument: ArgumentConfig::UInt(0),
             },
             ButtonConfig {
                 click_type: "ClkTagBar".to_string(),
                 modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: Button3,
+                button: ButtonIndex::M3.into(),
                 function: "toggletag".to_string(),
                 argument: ArgumentConfig::UInt(0),
             },
@@ -1034,19 +1032,19 @@ impl Config {
         vec![
             Key::new(modkey, key.into(), Some(Jwm::view), jwm::Arg::Ui(1 << tag)),
             Key::new(
-                modkey | ControlMask,
+                modkey | KeyButMask::CONTROL,
                 key.into(),
                 Some(Jwm::toggleview),
                 jwm::Arg::Ui(1 << tag),
             ),
             Key::new(
-                modkey | ShiftMask,
+                modkey | KeyButMask::SHIFT,
                 key.into(),
                 Some(Jwm::tag),
                 jwm::Arg::Ui(1 << tag),
             ),
             Key::new(
-                modkey | ControlMask | ShiftMask,
+                modkey | KeyButMask::CONTROL | KeyButMask::SHIFT,
                 key.into(),
                 Some(Jwm::toggletag),
                 jwm::Arg::Ui(1 << tag),
