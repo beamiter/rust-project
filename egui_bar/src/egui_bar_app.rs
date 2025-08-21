@@ -13,7 +13,7 @@ use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::collections::BTreeMap;
 use std::process::Command;
 use std::sync::{Arc, Mutex, Once};
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use egui::{Button, Stroke, StrokeKind};
 use shared_structures::CommandType;

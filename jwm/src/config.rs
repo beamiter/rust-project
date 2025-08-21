@@ -23,37 +23,32 @@ use crate::jwm::WMFunc;
 use crate::jwm::{self, Button, Jwm, Key, Layout, Rule, CLICK};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
-cfg_if! {
-    if #[cfg(feature = "dioxus_bar")] {
-        pub const STATUS_BAR_NAME: &str = "dioxus_bar";
-        pub const STATUS_BAR_0: &str = "dioxus_bar_0";
-        pub const STATUS_BAR_1: &str = "dioxus_bar_1";
-    } else if #[cfg(feature = "egui_bar")] {
-        pub const STATUS_BAR_NAME: &str = "egui_bar";
-        pub const STATUS_BAR_0: &str = "egui_bar_0";
-        pub const STATUS_BAR_1: &str = "egui_bar_1";
-    } else if #[cfg(feature = "iced_bar")] {
-        pub const STATUS_BAR_NAME: &str = "iced_bar";
-        pub const STATUS_BAR_0: &str = "iced_bar_0";
-        pub const STATUS_BAR_1: &str = "iced_bar_1";
-    } else if #[cfg(feature = "gtk_bar")] {
-        pub const STATUS_BAR_NAME: &str = "gtk_bar";
-        pub const STATUS_BAR_0: &str = "gtk_bar_0";
-        pub const STATUS_BAR_1: &str = "gtk_bar_1";
-    } else if #[cfg(feature = "relm_bar")] {
-        pub const STATUS_BAR_NAME: &str = "relm_bar";
-        pub const STATUS_BAR_0: &str = "relm_bar_0";
-        pub const STATUS_BAR_1: &str = "relm_bar_1";
-    } else if #[cfg(feature = "tauri_bar")] {
-        pub const STATUS_BAR_NAME: &str = "tauri_bar";
-        pub const STATUS_BAR_0: &str = "tauri_bar_0";
-        pub const STATUS_BAR_1: &str = "tauri_bar_1";
-    } else {
-        pub const STATUS_BAR_NAME: &str = "egui_bar";
-        pub const STATUS_BAR_0: &str = "egui_bar_0";
-        pub const STATUS_BAR_1: &str = "egui_bar_1";
-    }
+macro_rules! status_bar_config {
+    ($($feature:literal => $name:literal),* $(,)?) => {
+        cfg_if! {
+            $(
+                if #[cfg(feature = $feature)] {
+                    pub const STATUS_BAR_NAME: &str = $name;
+                    pub const STATUS_BAR_0: &str = concat!($name, "_0");
+                    pub const STATUS_BAR_1: &str = concat!($name, "_1");
+                } else
+            )*
+            {
+                pub const STATUS_BAR_NAME: &str = "egui_bar";
+                pub const STATUS_BAR_0: &str = "egui_bar_0";
+                pub const STATUS_BAR_1: &str = "egui_bar_1";
+            }
+        }
+    };
 }
+status_bar_config!(
+    "dioxus_bar" => "dioxus_bar",
+    "egui_bar" => "egui_bar",
+    "iced_bar" => "iced_bar",
+    "gtk_bar" => "gtk_bar",
+    "relm_bar" => "relm_bar",
+    "tauri_bar" => "tauri_bar",
+);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TomlConfig {
