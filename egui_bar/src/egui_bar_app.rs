@@ -13,7 +13,7 @@ use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::collections::BTreeMap;
 use std::process::Command;
 use std::sync::{Arc, Mutex, Once};
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use egui::{Button, Stroke, StrokeKind};
 use shared_structures::CommandType;
@@ -377,17 +377,21 @@ impl EguiBarApp {
         if self.state.ui_state.need_resize {
             // Try to adjust window unless get window dimensions.
             if let Some((width, height, pos)) = self.calculate_window_dimensions(ui) {
-                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
-                ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2::new(
-                    width, height,
-                )));
                 let viewport_info = ctx.input(|i| i.viewport().clone());
                 info!("screen_rect: {:?}", viewport_info);
                 let outer_rect = viewport_info.outer_rect.unwrap();
-                if (outer_rect.width() - width).abs() > 5.
+                if (outer_rect.left_top().x - pos.x).abs() > 1.
+                    || (outer_rect.left_top().y - pos.y).abs() > 1.
+                {
+                    info!("Window adjusted position at: {:?}", pos);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+                } else if (outer_rect.width() - width).abs() > 5.
                     || (outer_rect.height() - height).abs() > 5.
                 {
-                    info!("Window adjusted: {}x{} at {:?}", width, height, pos);
+                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2::new(
+                        width, height,
+                    )));
+                    info!("Window adjusted size: {}x{}", width, height);
                 } else {
                     self.state.ui_state.need_resize = false;
                 }

@@ -75,7 +75,7 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
         .format(flexi_logger::colored_opt_format)
         .log_to_file(
             FileSpec::default()
-                .directory("/tmp")
+                .directory("/tmp/jwm")
                 .basename(log_filename)
                 .suffix("log"),
         )
