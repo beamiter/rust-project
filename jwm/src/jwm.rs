@@ -25,14 +25,11 @@ use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::properties::WmSizeHints;
 use x11rb::protocol::render::Pictforminfo;
-use x11rb::protocol::xinput::KeyCode;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 use x11rb::x11_utils::Serialize;
 use x11rb::COPY_DEPTH_FROM_PARENT;
-
-use x11::keysym::XK_Num_Lock;
 
 use std::cmp::{max, min};
 
@@ -1475,7 +1472,7 @@ impl Jwm {
 
     pub fn grabkeys(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[grabkeys]");
-        self.update_num_lock_mask()?;
+        self.setup_modifier_masks()?;
 
         let modifiers_to_try = [
             0,
@@ -5197,88 +5194,136 @@ impl Jwm {
         Ok(())
     }
 
-    /// 使用 x11rb 更新 Num_Lock 键的修饰符掩码
-    // (TODO) fix bug here
-    pub fn update_num_lock_mask(&mut self) -> Result<(), ReplyOrIdError> {
-        // 1. 初始化 numlockmask 为 0
-        self.numlock_mask = 0;
-
-        // 2. 找到 Num_Lock 键对应的 KeyCode
-        let num_lock_keysym = XK_Num_Lock;
-        let num_lock_keycode =
-            match Self::find_keycode_for_keysym(&self.x11rb_conn, num_lock_keysym)? {
-                Some(kc) => kc,
-                None => {
-                    // 如果键盘上没有 Num_Lock 键，直接返回
-                    error!("[updatenumlockmask] warning: Could not find a keycode for Num_Lock");
-                    return Ok(());
-                }
-            };
-
-        // 3. 获取当前的修饰键映射
-        // conn.get_modifier_mapping() 发送请求，.reply()? 等待并解析回复。
-        // 这个调用是异步的，但在 .reply() 这里会阻塞等待结果。
-        let modmap = self.x11rb_conn.get_modifier_mapping()?.reply()?;
-
-        // 4. 遍历修饰键映射表 (安全且符合 Rust 习惯的方式)
-        // `modmap.keycodes` 是一个 Vec<Keycode>，我们可以用安全的迭代器来处理。
-        // info!(
-        //     "[updatenumlockmask] keycodes {:?}, length {:?}, sequence {:?}, num_lock_keycode: {}",
-        //     modmap.keycodes, modmap.length, modmap.sequence, num_lock_keycode
-        // );
-        for (index, &keycode) in modmap.keycodes.iter().enumerate() {
-            // `keycode` 是映射到某个修饰符的物理键码
-            if keycode == num_lock_keycode {
-                // 计算当前 keycode 属于哪个修饰符组 (0-7)
-                let modifier_index = index as u32 / modmap.length;
-                // info!(
-                //     "[updatenumlockmask] index: {}, modifier_index: {}",
-                //     index, modifier_index
-                // );
-
-                // 计算掩码 (1 << modifier_index)，并转换为 x11rb 的 ModMask 类型
-                // ModMask 在 xproto 中是 u16 的类型别名
-                self.numlock_mask = 1 << modifier_index;
-
-                break;
-            }
+    pub fn setup_modifier_masks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("Setting up modifier masks...");
+        // 1. 获取NumLock的keycode
+        let numlock_keycode = self.find_numlock_keycode()?;
+        if numlock_keycode == 0 {
+            warn!("NumLock key not found, using default mask");
+            self.numlock_mask = 0x10; // 默认Mod2
+            return Ok(());
         }
-        self.numlock_mask = 1 << 4;
+        // 2. 获取修饰键映射
+        let modifier_mapping = self.x11rb_conn.get_modifier_mapping()?.reply()?;
+        // 3. 查找NumLock对应的修饰键位
+        self.numlock_mask = self.find_modifier_mask(numlock_keycode, &modifier_mapping);
+        info!(
+            "NumLock detection: keycode={}, mask=0x{:02x} ({})",
+            numlock_keycode,
+            self.numlock_mask,
+            self.modifier_mask_to_string(self.numlock_mask)
+        );
+        // 4. 验证结果
+        self.verify_modifier_setup()?;
         Ok(())
     }
 
-    /// 一个辅助函数，用于根据 Keysym (如 XK_Num_Lock) 查找其对应的 Keycode。
-    fn find_keycode_for_keysym(
-        conn: &impl Connection,
-        target_keysym: Keysym,
-    ) -> Result<Option<KeyCode>, ReplyOrIdError> {
-        // 获取整个键盘的映射信息
-        let setup = conn.setup();
-        let mapping = conn
-            .get_keyboard_mapping(
-                setup.min_keycode,
-                (setup.max_keycode - setup.min_keycode) + 1,
-            )?
+    fn find_numlock_keycode(&self) -> Result<u8, Box<dyn std::error::Error>> {
+        // NumLock的keysym值
+        const XK_NUM_LOCK: u32 = 0xFF7F;
+        // 获取键盘映射
+        let setup = self.x11rb_conn.setup();
+        let min_keycode = setup.min_keycode;
+        let max_keycode = setup.max_keycode;
+        let keyboard_mapping = self
+            .x11rb_conn
+            .get_keyboard_mapping(min_keycode, max_keycode - min_keycode + 1)?
             .reply()?;
-        // info!(
-        //     "[find_keycode_for_keysym] setup: {}, {}, mapping: {}, {}",
-        //     setup.min_keycode, setup.max_keycode, mapping.sequence, mapping.keysyms_per_keycode
-        // );
-
-        // 遍历每个 Keycode
-        for (keycode_offset, keysyms_for_keycode) in mapping.keysyms.iter().enumerate() {
-            // info!(
-            //     "[find_keycode_for_keysym] keycode_offset: {}, keysyms_for_keycode: {}",
-            //     keycode_offset, keysyms_for_keycode
-            // );
-            // `keysyms_for_keycode` 是一个 Vec<KEYSYM>，包含了该键码在不同状态下（如按下、Shift+按下）的符号
-            if *keysyms_for_keycode == target_keysym {
-                let keycode = (setup.min_keycode + keycode_offset as u8) as KeyCode;
-                return Ok(Some(keycode));
+        let keysyms_per_keycode = keyboard_mapping.keysyms_per_keycode as usize;
+        // 遍历所有keycode，查找NumLock
+        for keycode in min_keycode..=max_keycode {
+            let keycode_index = (keycode - min_keycode) as usize;
+            let base_index = keycode_index * keysyms_per_keycode;
+            // 检查这个keycode的所有keysym
+            for i in 0..keysyms_per_keycode {
+                let keysym_index = base_index + i;
+                if keysym_index < keyboard_mapping.keysyms.len() {
+                    if keyboard_mapping.keysyms[keysym_index] == XK_NUM_LOCK {
+                        info!("Found NumLock at keycode {}", keycode);
+                        return Ok(keycode);
+                    }
+                }
             }
         }
+        warn!("NumLock keycode not found in keyboard mapping");
+        Ok(0)
+    }
 
-        Ok(None)
+    fn find_modifier_mask(
+        &self,
+        target_keycode: u8,
+        modifier_map: &GetModifierMappingReply,
+    ) -> u32 {
+        let keycodes_per_modifier = modifier_map.keycodes_per_modifier() as usize;
+        // 遍历8个修饰键位 (Shift, Lock, Control, Mod1-Mod5)
+        for mod_index in 0..8 {
+            let start_index = mod_index * keycodes_per_modifier;
+            let end_index = start_index + keycodes_per_modifier;
+            // 检查这个修饰键位的所有keycode
+            if end_index <= modifier_map.keycodes.len() {
+                for &keycode in &modifier_map.keycodes[start_index..end_index] {
+                    if keycode == target_keycode && keycode != 0 {
+                        let mask = 1 << mod_index;
+                        info!(
+                            "NumLock found at modifier index {} ({}), mask=0x{:02x}",
+                            mod_index,
+                            self.modifier_index_to_name(mod_index),
+                            mask
+                        );
+                        return mask;
+                    }
+                }
+            }
+        }
+        warn!(
+            "NumLock keycode {} not found in modifier mapping",
+            target_keycode
+        );
+        0
+    }
+
+    fn modifier_index_to_name(&self, index: usize) -> &'static str {
+        match index {
+            0 => "Shift",
+            1 => "Lock",
+            2 => "Control",
+            3 => "Mod1",
+            4 => "Mod2",
+            5 => "Mod3",
+            6 => "Mod4",
+            7 => "Mod5",
+            _ => "Unknown",
+        }
+    }
+
+    fn modifier_mask_to_string(&self, mask: u32) -> String {
+        if mask == 0 {
+            return "None".to_string();
+        }
+
+        let mut parts = Vec::new();
+        for i in 0..8 {
+            if mask & (1 << i) != 0 {
+                parts.push(self.modifier_index_to_name(i));
+            }
+        }
+        parts.join("|")
+    }
+
+    fn verify_modifier_setup(&self) -> Result<(), Box<dyn std::error::Error>> {
+        // 获取当前修饰键状态来验证设置
+        let pointer_query = self.x11rb_conn.query_pointer(self.x11rb_root)?.reply()?;
+
+        info!("Current modifier state: {:?}", pointer_query.mask);
+        if self.numlock_mask != 0 {
+            let numlock_active = pointer_query.mask & self.numlock_mask as u16 != 0u16.into();
+            info!(
+                "NumLock currently {}",
+                if numlock_active { "ON" } else { "OFF" }
+            );
+        }
+
+        Ok(())
     }
 
     pub fn setclienttagprop(
