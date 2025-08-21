@@ -18,7 +18,7 @@ use x11::keysym::{
 };
 
 use crate::jwm::WMFuncType;
-use crate::jwm::{self, Jwm, LayoutEnum, WMButton, WMKey, WMRule, CLICK};
+use crate::jwm::{self, Jwm, LayoutEnum, WMButton, WMClickType, WMKey, WMRule};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
 macro_rules! status_bar_config {
@@ -480,34 +480,6 @@ impl Config {
     fn get_default_button_configs() -> Vec<ButtonConfig> {
         vec![
             ButtonConfig {
-                click_type: "ClkLtSymbol".to_string(),
-                modifier: vec![],
-                button: ButtonIndex::M1.into(),
-                function: "setlayout".to_string(),
-                argument: ArgumentConfig::UInt(0),
-            },
-            ButtonConfig {
-                click_type: "ClkLtSymbol".to_string(),
-                modifier: vec![],
-                button: ButtonIndex::M3.into(),
-                function: "setlayout".to_string(),
-                argument: ArgumentConfig::String("monocle".to_string()),
-            },
-            ButtonConfig {
-                click_type: "ClkWinTitle".to_string(),
-                modifier: vec![],
-                button: ButtonIndex::M2.into(),
-                function: "zoom".to_string(),
-                argument: ArgumentConfig::Int(0),
-            },
-            ButtonConfig {
-                click_type: "ClkStatusText".to_string(),
-                modifier: vec![],
-                button: ButtonIndex::M2.into(),
-                function: "spawn".to_string(),
-                argument: ArgumentConfig::StringVec(Self::get_termcmd()),
-            },
-            ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec!["Mod1".to_string()],
                 button: ButtonIndex::M1.into(),
@@ -527,34 +499,6 @@ impl Config {
                 button: ButtonIndex::M3.into(),
                 function: "resizemouse".to_string(),
                 argument: ArgumentConfig::Int(0),
-            },
-            ButtonConfig {
-                click_type: "ClkTagBar".to_string(),
-                modifier: vec![],
-                button: ButtonIndex::M1.into(),
-                function: "view".to_string(),
-                argument: ArgumentConfig::UInt(0),
-            },
-            ButtonConfig {
-                click_type: "ClkTagBar".to_string(),
-                modifier: vec![],
-                button: ButtonIndex::M3.into(),
-                function: "toggleview".to_string(),
-                argument: ArgumentConfig::UInt(0),
-            },
-            ButtonConfig {
-                click_type: "ClkTagBar".to_string(),
-                modifier: vec!["Mod1".to_string()],
-                button: ButtonIndex::M1.into(),
-                function: "tag".to_string(),
-                argument: ArgumentConfig::UInt(0),
-            },
-            ButtonConfig {
-                click_type: "ClkTagBar".to_string(),
-                modifier: vec!["Mod1".to_string()],
-                button: ButtonIndex::M3.into(),
-                function: "toggletag".to_string(),
-                argument: ArgumentConfig::UInt(0),
             },
         ]
     }
@@ -731,14 +675,10 @@ impl Config {
         ))
     }
 
-    fn parse_click_type(&self, click_type: &str) -> Option<u32> {
+    fn parse_click_type(&self, click_type: &str) -> Option<WMClickType> {
         match click_type {
-            "ClkLtSymbol" => Some(CLICK::ClkLtSymbol as u32),
-            "ClkWinTitle" => Some(CLICK::ClkWinTitle as u32),
-            "ClkStatusText" => Some(CLICK::ClkStatusText as u32),
-            "ClkClientWin" => Some(CLICK::ClkClientWin as u32),
-            "ClkTagBar" => Some(CLICK::ClkTagBar as u32),
-            "ClkRootWin" => Some(CLICK::ClkRootWin as u32),
+            "ClkClientWin" => Some(WMClickType::ClickClientWin),
+            "ClkRootWin" => Some(WMClickType::ClickRootWin),
             _ => {
                 eprintln!("Unknown click type: {}", click_type);
                 None
@@ -916,20 +856,6 @@ impl Config {
     // 生成默认鼠标绑定的辅助方法
     fn get_default_buttons(&self) -> Vec<ButtonConfig> {
         vec![
-            ButtonConfig {
-                click_type: "ClkLtSymbol".to_string(),
-                modifier: vec![],
-                button: ButtonIndex::M1.into(),
-                function: "setlayout".to_string(),
-                argument: ArgumentConfig::UInt(0),
-            },
-            ButtonConfig {
-                click_type: "ClkLtSymbol".to_string(),
-                modifier: vec![],
-                button: ButtonIndex::M3.into(),
-                function: "setlayout".to_string(),
-                argument: ArgumentConfig::String("monocle".to_string()),
-            },
             ButtonConfig {
                 click_type: "ClkWinTitle".to_string(),
                 modifier: vec![],

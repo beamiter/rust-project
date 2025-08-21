@@ -52,16 +52,10 @@ pub struct WMWindowGeom {
     pub height: u16,
 }
 
-#[derive(Debug, Clone, Copy)]
-#[repr(C)]
-pub enum CLICK {
-    ClkTagBar = 0,
-    ClkLtSymbol = 1,
-    ClkStatusText = 2,
-    ClkWinTitle = 3,
-    ClkClientWin = 4,
-    ClkRootWin = 5,
-    _ClkLast = 6,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WMClickType {
+    ClickClientWin,
+    ClickRootWin,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -75,7 +69,7 @@ pub enum WMArgEnum {
 
 #[derive(Debug, Clone)]
 pub struct WMButton {
-    pub click: u32,
+    pub click_type: WMClickType,
     pub mask: KeyButMask,
     pub button: ButtonIndex,
     pub func: Option<WMFuncType>,
@@ -84,18 +78,18 @@ pub struct WMButton {
 impl WMButton {
     #[allow(unused)]
     pub fn new(
-        click: u32,
+        click_type: WMClickType,
         mask: KeyButMask,
         button: ButtonIndex,
         func: Option<WMFuncType>,
-        arg: WMArgEnum,
+        arg_enum: WMArgEnum,
     ) -> Self {
         Self {
-            click,
+            click_type,
             mask,
             button,
             func,
-            arg,
+            arg: arg_enum,
         }
     }
 }
@@ -1309,7 +1303,7 @@ impl Jwm {
         }
 
         for button_config in CONFIG.get_buttons().iter() {
-            if button_config.click == CLICK::ClkClientWin as u32 {
+            if button_config.click_type == WMClickType::ClickClientWin {
                 for &modifier_combo in modifiers_to_try.iter() {
                     self.x11rb_conn.grab_button(
                         false,
@@ -2403,9 +2397,7 @@ impl Jwm {
                         "[process_commands] SetLayout command received: {}",
                         cmd.parameter
                     );
-                    let arg = WMArgEnum::Layout(Rc::new(
-                        LayoutEnum::from(cmd.parameter),
-                    ));
+                    let arg = WMArgEnum::Layout(Rc::new(LayoutEnum::from(cmd.parameter)));
                     let _ = self.setlayout(&arg);
                 }
                 CommandType::None => {}
@@ -2684,7 +2676,7 @@ impl Jwm {
         let _arg: WMArgEnum = WMArgEnum::UInt(0);
 
         let c: Option<Rc<RefCell<WMClient>>>;
-        let mut click = CLICK::ClkRootWin;
+        let mut click_type = WMClickType::ClickRootWin;
 
         // focus monitor if necessary.
         let m = self.wintomon(e.event as u32);
@@ -2704,21 +2696,21 @@ impl Jwm {
             // 使用x11rb的allow_events
             self.x11rb_conn
                 .allow_events(Allow::REPLAY_POINTER, e.time)?;
-            click = CLICK::ClkClientWin;
+            click_type = WMClickType::ClickClientWin;
         }
 
         // 处理按钮配置
         let buttons = CONFIG.get_buttons();
         for button_config in buttons.iter() {
-            if click as u32 == button_config.click
+            if click_type == button_config.click_type
                 && button_config.func.is_some()
                 && button_config.button == ButtonIndex::from(e.detail)
                 && self.clean_mask(button_config.mask.bits()) == self.clean_mask(e.state.bits())
             {
                 if let Some(ref func) = button_config.func {
                     info!(
-                        "[buttonpress] click: {}, button: {:?}, mask: {:?}",
-                        button_config.click, button_config.button, button_config.mask
+                        "[buttonpress] click_type: {:?}, button: {:?}, mask: {:?}",
+                        button_config.click_type, button_config.button, button_config.mask
                     );
                     info!("[buttonpress] use button arg");
                     let _ = func(self, &button_config.arg);
