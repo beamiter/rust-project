@@ -669,7 +669,6 @@ pub struct Jwm {
     pub mons: Option<Rc<RefCell<Monitor>>>,
     pub motion_mon: Option<Rc<RefCell<Monitor>>>,
     pub sel_mon: Option<Rc<RefCell<Monitor>>>,
-    pub wm_check_win: Window,
     pub visual_id: Visualid,
     pub depth: u8,
     pub color_map: Colormap,
@@ -796,7 +795,6 @@ impl Jwm {
             mons: None,
             motion_mon: None,
             sel_mon: None,
-            wm_check_win: 0,
             visual_id: 0,
             depth: 0,
             color_map: 0,
@@ -1132,9 +1130,6 @@ impl Jwm {
         // 清理所有监视器
         self.cleanup_all_monitors();
 
-        // 销毁 WM 检查窗口
-        self.cleanup_wm_check_window()?;
-
         // 重置输入焦点到根窗口
         self.reset_input_focus()?;
 
@@ -1199,29 +1194,6 @@ impl Jwm {
         while self.mons.is_some() {
             self.cleanupmon(self.mons.clone());
         }
-    }
-
-    fn cleanup_wm_check_window(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if self.wm_check_win != 0 {
-            match self.x11rb_conn.destroy_window(self.wm_check_win) {
-                Ok(cookie) => {
-                    if let Err(e) = cookie.check() {
-                        warn!(
-                            "[cleanup_wm_check_window] Failed to destroy WM check window: {:?}",
-                            e
-                        );
-                    }
-                }
-                Err(e) => {
-                    warn!(
-                        "[cleanup_wm_check_window] Failed to send destroy_window request: {:?}",
-                        e
-                    );
-                }
-            }
-        }
-
-        Ok(())
     }
 
     fn reset_input_focus(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -4164,7 +4136,6 @@ impl Jwm {
         // --- 1. 创建 _NET_SUPPORTING_WM_CHECK 窗口 ---
         let frame_win = self.x11rb_conn.generate_id()?;
         let x11rb_screen = &self.x11rb_conn.setup().roots[self.x11rb_screen_num];
-        self.wm_check_win = frame_win;
         let win_aux = CreateWindowAux::new()
             .event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS)
             .background_pixel(x11rb_screen.white_pixel);
@@ -4184,7 +4155,7 @@ impl Jwm {
 
         // --- 2. 设置 _NET_SUPPORTING_WM_CHECK 窗口的属性 ---
 
-        // _NET_SUPPORTING_WM_CHECK = wm_check_win (Atom 类型 WINDOW)
+        // _NET_SUPPORTING_WM_CHECK = frame_win (Atom 类型 WINDOW)
         use x11rb::wrapper::ConnectionExt;
         self.x11rb_conn.change_property32(
             PropMode::REPLACE,
