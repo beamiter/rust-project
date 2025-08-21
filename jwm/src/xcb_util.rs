@@ -515,3 +515,175 @@ pub fn test_all_cursors(conn: &impl Connection) -> Result<(), Box<dyn std::error
     conn.close_font(cursor_font)?;
     Ok(())
 }
+
+use x11::xft::XftColor;
+
+use crate::config::CONFIG;
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct ColorScheme {
+    pub fg: XftColor,     // 前景色
+    pub bg: XftColor,     // 背景色
+    pub border: XftColor, // 边框色
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SchemeType {
+    Norm = 0, // 普通状态
+    Sel = 1,  // 选中状态
+}
+
+#[repr(C)]
+#[derive(Debug, Clone)]
+pub struct ThemeManager {
+    pub normal: ColorScheme, // 普通状态的颜色方案
+    pub selected: ColorScheme,  // 选中状态的颜色方案
+}
+
+#[allow(dead_code)]
+impl ColorScheme {
+    /// 创建新的颜色方案
+    pub fn new(fg: XftColor, bg: XftColor, border: XftColor) -> Self {
+        Self { fg, bg, border }
+    }
+
+    /// 获取前景色
+    pub fn foreground(&self) -> &XftColor {
+        &self.fg
+    }
+
+    /// 获取背景色
+    pub fn background(&self) -> &XftColor {
+        &self.bg
+    }
+
+    /// 获取边框色
+    pub fn border_color(&self) -> &XftColor {
+        &self.border
+    }
+
+    /// 设置前景色
+    pub fn set_foreground(&mut self, color: XftColor) {
+        self.fg = color;
+    }
+
+    /// 设置背景色
+    pub fn set_background(&mut self, color: XftColor) {
+        self.bg = color;
+    }
+
+    /// 设置边框色
+    pub fn set_border(&mut self, color: XftColor) {
+        self.border = color;
+    }
+}
+
+#[allow(dead_code)]
+impl ThemeManager {
+    /// 创建新的主题管理器
+    pub fn new(norm: ColorScheme, sel: ColorScheme) -> Self {
+        Self { normal: norm, selected: sel }
+    }
+
+    pub fn create_aux() -> Self {
+        ThemeManager::new(
+            ColorScheme::new(
+                Self::drw_clr_create_from_hex(
+                    &CONFIG.colors().dark_sea_green1,
+                    CONFIG.colors().opaque,
+                )
+                .unwrap(),
+                Self::drw_clr_create_from_hex(
+                    &CONFIG.colors().light_sky_blue1,
+                    CONFIG.colors().opaque,
+                )
+                .unwrap(),
+                Self::drw_clr_create_from_hex(
+                    &CONFIG.colors().light_sky_blue1,
+                    CONFIG.colors().opaque,
+                )
+                .unwrap(),
+            ),
+            ColorScheme::new(
+                Self::drw_clr_create_from_hex(
+                    &CONFIG.colors().dark_sea_green2,
+                    CONFIG.colors().opaque,
+                )
+                .unwrap(),
+                Self::drw_clr_create_from_hex(
+                    &CONFIG.colors().pale_turquoise1,
+                    CONFIG.colors().opaque,
+                )
+                .unwrap(),
+                Self::drw_clr_create_from_hex(&CONFIG.colors().cyan, CONFIG.colors().opaque)
+                    .unwrap(),
+            ),
+        )
+    }
+
+    /// 根据方案类型获取颜色方案
+    pub fn get_scheme(&self, scheme_type: SchemeType) -> &ColorScheme {
+        match scheme_type {
+            SchemeType::Norm => &self.normal,
+            SchemeType::Sel => &self.selected,
+        }
+    }
+
+    /// 获取可变颜色方案
+    pub fn get_scheme_mut(&mut self, scheme_type: SchemeType) -> &mut ColorScheme {
+        match scheme_type {
+            SchemeType::Norm => &mut self.normal,
+            SchemeType::Sel => &mut self.selected,
+        }
+    }
+
+    /// 获取指定方案的前景色
+    pub fn get_fg(&self, scheme_type: SchemeType) -> &XftColor {
+        self.get_scheme(scheme_type).foreground()
+    }
+
+    /// 获取指定方案的背景色
+    pub fn get_bg(&self, scheme_type: SchemeType) -> &XftColor {
+        self.get_scheme(scheme_type).background()
+    }
+
+    /// 获取指定方案的边框色
+    pub fn get_border(&self, scheme_type: SchemeType) -> &XftColor {
+        self.get_scheme(scheme_type).border_color()
+    }
+
+    /// 设置整个颜色方案
+    pub fn set_scheme(&mut self, scheme_type: SchemeType, color_scheme: ColorScheme) {
+        match scheme_type {
+            SchemeType::Norm => self.normal = color_scheme,
+            SchemeType::Sel => self.selected = color_scheme,
+        }
+    }
+
+    pub fn drw_clr_create_direct(r: u8, g: u8, b: u8, alpha: u8) -> Option<XftColor> {
+        unsafe {
+            let mut xcolor: XftColor = std::mem::zeroed();
+            // 手动构造像素值 (ARGB格式)
+            xcolor.pixel =
+                ((alpha as u64) << 24) | ((r as u64) << 16) | ((g as u64) << 8) | (b as u64);
+            // 设置其他字段
+            xcolor.color.red = (r as u16) << 8;
+            xcolor.color.green = (g as u16) << 8;
+            xcolor.color.blue = (b as u16) << 8;
+            xcolor.color.alpha = (alpha as u16) << 8;
+            Some(xcolor)
+        }
+    }
+
+    pub fn drw_clr_create_from_hex(hex_color: &str, alpha: u8) -> Option<XftColor> {
+        // 解析 "#ff0000" 格式
+        if hex_color.starts_with('#') && hex_color.len() == 7 {
+            let r = u8::from_str_radix(&hex_color[1..3], 16).ok()?;
+            let g = u8::from_str_radix(&hex_color[3..5], 16).ok()?;
+            let b = u8::from_str_radix(&hex_color[5..7], 16).ok()?;
+            return Self::drw_clr_create_direct(r, g, b, alpha);
+        }
+        None
+    }
+}

@@ -20,7 +20,6 @@ use std::str::FromStr; // 用于从字符串解析 // 用于格式化输出，�
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::usize;
-use x11::xft::XftColor;
 use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::properties::WmSizeHints;
@@ -34,34 +33,12 @@ use x11rb::COPY_DEPTH_FROM_PARENT;
 use std::cmp::{max, min};
 
 use crate::config::CONFIG;
-use crate::xcb_util::{test_all_cursors, Atoms, CursorManager};
+use crate::xcb_util::{test_all_cursors, Atoms, CursorManager, ThemeManager};
 use crate::xproto::{IconicState, NormalState, WithdrawnState};
 
 lazy_static::lazy_static! {
     pub static ref BUTTONMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE;
     pub static ref MOUSEMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
-}
-
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct ColorScheme {
-    pub fg: XftColor,     // 前景色
-    pub bg: XftColor,     // 背景色
-    pub border: XftColor, // 边框色
-}
-
-#[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SchemeType {
-    Norm = 0, // 普通状态
-    Sel = 1,  // 选中状态
-}
-
-#[repr(C)]
-#[derive(Debug, Clone)]
-pub struct ThemeManager {
-    pub norm: ColorScheme, // 普通状态的颜色方案
-    pub sel: ColorScheme,  // 选中状态的颜色方案
 }
 
 #[derive(Debug, Clone, Default)]
@@ -70,91 +47,6 @@ pub struct WindowGeom {
     pub y: u16,
     pub width: u16,
     pub height: u16,
-}
-
-#[allow(dead_code)]
-impl ColorScheme {
-    /// 创建新的颜色方案
-    pub fn new(fg: XftColor, bg: XftColor, border: XftColor) -> Self {
-        Self { fg, bg, border }
-    }
-
-    /// 获取前景色
-    pub fn foreground(&self) -> &XftColor {
-        &self.fg
-    }
-
-    /// 获取背景色
-    pub fn background(&self) -> &XftColor {
-        &self.bg
-    }
-
-    /// 获取边框色
-    pub fn border_color(&self) -> &XftColor {
-        &self.border
-    }
-
-    /// 设置前景色
-    pub fn set_foreground(&mut self, color: XftColor) {
-        self.fg = color;
-    }
-
-    /// 设置背景色
-    pub fn set_background(&mut self, color: XftColor) {
-        self.bg = color;
-    }
-
-    /// 设置边框色
-    pub fn set_border(&mut self, color: XftColor) {
-        self.border = color;
-    }
-}
-
-#[allow(dead_code)]
-impl ThemeManager {
-    /// 创建新的主题管理器
-    pub fn new(norm: ColorScheme, sel: ColorScheme) -> Self {
-        Self { norm, sel }
-    }
-
-    /// 根据方案类型获取颜色方案
-    pub fn get_scheme(&self, scheme_type: SchemeType) -> &ColorScheme {
-        match scheme_type {
-            SchemeType::Norm => &self.norm,
-            SchemeType::Sel => &self.sel,
-        }
-    }
-
-    /// 获取可变颜色方案
-    pub fn get_scheme_mut(&mut self, scheme_type: SchemeType) -> &mut ColorScheme {
-        match scheme_type {
-            SchemeType::Norm => &mut self.norm,
-            SchemeType::Sel => &mut self.sel,
-        }
-    }
-
-    /// 获取指定方案的前景色
-    pub fn get_fg(&self, scheme_type: SchemeType) -> &XftColor {
-        self.get_scheme(scheme_type).foreground()
-    }
-
-    /// 获取指定方案的背景色
-    pub fn get_bg(&self, scheme_type: SchemeType) -> &XftColor {
-        self.get_scheme(scheme_type).background()
-    }
-
-    /// 获取指定方案的边框色
-    pub fn get_border(&self, scheme_type: SchemeType) -> &XftColor {
-        self.get_scheme(scheme_type).border_color()
-    }
-
-    /// 设置整个颜色方案
-    pub fn set_scheme(&mut self, scheme_type: SchemeType, color_scheme: ColorScheme) {
-        match scheme_type {
-            SchemeType::Norm => self.norm = color_scheme,
-            SchemeType::Sel => self.sel = color_scheme,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -688,32 +580,6 @@ pub struct Jwm {
 }
 
 impl Jwm {
-    pub fn drw_clr_create_direct(r: u8, g: u8, b: u8, alpha: u8) -> Option<XftColor> {
-        unsafe {
-            let mut xcolor: XftColor = std::mem::zeroed();
-            // 手动构造像素值 (ARGB格式)
-            xcolor.pixel =
-                ((alpha as u64) << 24) | ((r as u64) << 16) | ((g as u64) << 8) | (b as u64);
-            // 设置其他字段
-            xcolor.color.red = (r as u16) << 8;
-            xcolor.color.green = (g as u16) << 8;
-            xcolor.color.blue = (b as u16) << 8;
-            xcolor.color.alpha = (alpha as u16) << 8;
-            Some(xcolor)
-        }
-    }
-
-    pub fn drw_clr_create_from_hex(hex_color: &str, alpha: u8) -> Option<XftColor> {
-        // 解析 "#ff0000" 格式
-        if hex_color.starts_with('#') && hex_color.len() == 7 {
-            let r = u8::from_str_radix(&hex_color[1..3], 16).ok()?;
-            let g = u8::from_str_radix(&hex_color[3..5], 16).ok()?;
-            let b = u8::from_str_radix(&hex_color[5..7], 16).ok()?;
-            return Self::drw_clr_create_direct(r, g, b, alpha);
-        }
-        None
-    }
-
     fn handler(&mut self, event: Event) -> Result<(), Box<dyn std::error::Error>> {
         match event {
             Event::ButtonPress(e) => self.buttonpress(&e)?,
@@ -738,39 +604,7 @@ impl Jwm {
     }
 
     pub fn new() -> Self {
-        let theme_manager = ThemeManager::new(
-            ColorScheme::new(
-                Self::drw_clr_create_from_hex(
-                    &CONFIG.colors().dark_sea_green1,
-                    CONFIG.colors().opaque,
-                )
-                .unwrap(),
-                Self::drw_clr_create_from_hex(
-                    &CONFIG.colors().light_sky_blue1,
-                    CONFIG.colors().opaque,
-                )
-                .unwrap(),
-                Self::drw_clr_create_from_hex(
-                    &CONFIG.colors().light_sky_blue1,
-                    CONFIG.colors().opaque,
-                )
-                .unwrap(),
-            ),
-            ColorScheme::new(
-                Self::drw_clr_create_from_hex(
-                    &CONFIG.colors().dark_sea_green2,
-                    CONFIG.colors().opaque,
-                )
-                .unwrap(),
-                Self::drw_clr_create_from_hex(
-                    &CONFIG.colors().pale_turquoise1,
-                    CONFIG.colors().opaque,
-                )
-                .unwrap(),
-                Self::drw_clr_create_from_hex(&CONFIG.colors().cyan, CONFIG.colors().opaque)
-                    .unwrap(),
-            ),
-        );
+        let theme_manager = ThemeManager::create_aux();
 
         let (x11rb_conn, x11rb_screen_num) =
             x11rb::rust_connection::RustConnection::connect(None).unwrap();
@@ -5619,7 +5453,7 @@ impl Jwm {
         // 设置边框颜色为选中状态
         self.set_window_border_pixel(
             c_rc.borrow().win,
-            self.theme_manager.get_scheme(SchemeType::Sel).border.pixel as u32,
+            self.theme_manager.selected.border.pixel as u32,
         )?;
 
         // 设置焦点
@@ -5696,7 +5530,7 @@ impl Jwm {
 
         self.set_window_border_pixel(
             client_rc.borrow().win,
-            self.theme_manager.get_scheme(SchemeType::Norm).border.pixel as u32,
+            self.theme_manager.normal.border.pixel as u32,
         )?;
 
         if setfocus {
@@ -5900,7 +5734,7 @@ impl Jwm {
         }
 
         // 2. 设置边框颜色为"正常"状态的颜色
-        let border_color = self.theme_manager.get_scheme(SchemeType::Norm).border.pixel;
+        let border_color = self.theme_manager.normal.border.pixel;
         self.set_window_border_pixel(win, border_color as u32)?;
 
         // 3. 发送 ConfigureNotify 事件给客户端
