@@ -6361,63 +6361,76 @@ impl Jwm {
 
     pub fn monocle(&mut self, mon_rc: &Rc<RefCell<WMMonitor>>) {
         info!("[monocle]");
-        // --- 1. 计算当前显示器上可见且可聚焦的客户端数量 (n) ---
-        let mut n: u32 = 0;
-        let mut c_iter_opt = {
+
+        // 获取监视器信息
+        let (wx, wy, ww, wh, monitor_num, clients_head) = {
             let mon_borrow = mon_rc.borrow();
-            mon_borrow.clients.clone()
-        }; // 从客户端链表头开始
-        while let Some(ref c_rc) = c_iter_opt.clone() {
-            let c_client_borrow = c_rc.borrow();
-            if c_client_borrow.isvisible() {
-                n += 1;
-            }
-            c_iter_opt = c_client_borrow.next.clone(); // 移动到下一个客户端
-        }
-
-        // --- 2. 更新布局符号 (ltsymbol) ---
-        if n > 0 {
-            // 如果有可见的客户端
-            // 将布局符号更新为 "[n]"，例如 "[3]" 表示有3个窗口在此布局下
-            let formatted_string = format!("[{}]", n);
-            let mut mon_borrow = mon_rc.borrow_mut();
-            info!(
-                "[monocle] formatted_string: {}, monitor_num: {}",
-                formatted_string, mon_borrow.num
-            );
-            mon_borrow.lt_symbol = formatted_string;
-        }
-        // 如果 n == 0，ltsymbol 保持不变 (或者可以设为默认的 monocle 符号)
-
-        // --- 3. 将所有可见且非浮动的客户端调整为占据整个工作区大小 ---
-        let (wx, wy, ww, wh, clients_head_opt_for_resize) = {
-            let m_read_borrow = mon_rc.borrow(); // 先进行只读操作
             (
-                m_read_borrow.w_x,
-                m_read_borrow.w_y,
-                m_read_borrow.w_w,
-                m_read_borrow.w_h,
-                m_read_borrow.clients.clone(),
+                mon_borrow.w_x,
+                mon_borrow.w_y,
+                mon_borrow.w_w,
+                mon_borrow.w_h,
+                mon_borrow.num,
+                mon_borrow.clients.clone(),
             )
         };
+
+        // 统计可见客户端数量并收集平铺客户端
+        let mut visible_count = 0u32;
+        let mut tiled_clients = Vec::new();
+
+        let mut current = clients_head;
+        while let Some(client_rc) = current {
+            let (is_visible, is_floating, border_w, next) = {
+                let client_borrow = client_rc.borrow();
+                (
+                    client_borrow.isvisible(),
+                    client_borrow.is_floating,
+                    client_borrow.border_w,
+                    client_borrow.next.clone(),
+                )
+            };
+
+            if is_visible {
+                visible_count += 1;
+                // 同时收集平铺客户端（可见且非浮动）
+                if !is_floating {
+                    tiled_clients.push((client_rc, border_w));
+                }
+            }
+
+            current = next;
+        }
+
+        // 更新布局符号
+        if visible_count > 0 {
+            let formatted_string = format!("[{}]", visible_count);
+            mon_rc.borrow_mut().lt_symbol = formatted_string.clone();
+            info!(
+                "[monocle] formatted_string: {}, monitor_num: {}",
+                formatted_string, monitor_num
+            );
+        }
+
+        // 如果没有平铺客户端，直接返回
+        if tiled_clients.is_empty() {
+            return;
+        }
+
+        // 获取Y轴偏移
         let client_y_offset = self.client_y_offset(&mon_rc.borrow());
         info!("[monocle] client_y_offset: {}", client_y_offset);
 
-        let mut c_resize_iter_opt = self.nexttiled(clients_head_opt_for_resize); // 获取第一个可见平铺客户端
-        while let Some(ref c_rc_to_resize) = c_resize_iter_opt.clone() {
-            let border_width = c_rc_to_resize.borrow().border_w; // 不可变借用获取边框宽度
-
-            // 将客户端调整为占据整个显示器工作区的大小（减去边框和Y轴偏移）
+        // 调整所有平铺客户端为全屏大小
+        for (client_rc, border_w) in tiled_clients {
             self.resize(
-                c_rc_to_resize,
+                &client_rc,
                 wx,
                 wy + client_y_offset,
-                ww - 2 * border_width,
-                wh - 2 * border_width - client_y_offset,
+                ww - 2 * border_w,
+                wh - 2 * border_w - client_y_offset,
                 false,
             );
-
-            c_resize_iter_opt = self.nexttiled(c_rc_to_resize.borrow().next.clone());
         }
     }
 
