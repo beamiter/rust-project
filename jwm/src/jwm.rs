@@ -515,10 +515,7 @@ impl Jwm {
         let x11rb_root = x11rb_screen.root;
         info!(
             "[JWM] roots: {:?}, x11rb_screen_num: {}, s_w: {}, s_h: {}",
-            x11rb_screen,
-            x11rb_screen_num,
-            s_w,
-            s_h
+            x11rb_screen, x11rb_screen_num, s_w, s_h
         );
         let cursor_manager = CursorManager::new(&x11rb_conn).unwrap();
         let theme_manager = ThemeManager::create_default(&x11rb_conn, x11rb_screen).unwrap();
@@ -3240,85 +3237,123 @@ impl Jwm {
     }
 
     pub fn focusstack(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[focusstack]");
-        {
-            let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-            if sel_mon_mut.sel.is_none()
-                || (sel_mon_mut.sel.as_ref().unwrap().borrow_mut().is_fullscreen
-                    && CONFIG.behavior().lock_fullscreen)
-            {
-                return Ok(());
-            }
-        }
-        let mut c: Option<Rc<RefCell<WMClient>>> = None;
-        let i = if let WMArgEnum::Int(i) = *arg { i } else { 0 };
-        if i == 0 {
+        // 提取输入参数
+        let direction = match *arg {
+            WMArgEnum::Int(i) => i,
+            _ => return Ok(()), // 如果不是整数参数，直接返回
+        };
+        if direction == 0 {
             return Ok(());
         }
-        if i > 0 {
-            c = {
-                self.sel_mon
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .sel
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .next
-                    .clone()
-            };
-            while let Some(ref client_opt) = c {
-                if client_opt.borrow().isvisible() {
-                    break;
-                }
-                let next = client_opt.borrow().next.clone();
-                c = next;
-            }
-            if c.is_none() {
-                c = {
-                    let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                    sel_mon_mut.clients.clone()
-                };
-                while let Some(ref client_opt) = c {
-                    if client_opt.borrow_mut().isvisible() {
-                        break;
-                    }
-                    let next = client_opt.borrow_mut().next.clone();
-                    c = next;
-                }
-            }
-        } else {
-            if let Some(ref selmon_opt) = self.sel_mon {
-                let (mut cl, sel) = {
-                    let sel_mon_mut = selmon_opt.borrow_mut();
-                    (sel_mon_mut.clients.clone(), sel_mon_mut.sel.clone())
-                };
-                while !Self::are_equal_rc(&cl, &sel) {
-                    if let Some(ref cl_opt) = cl {
-                        if cl_opt.borrow_mut().isvisible() {
-                            c = cl.clone();
-                        }
-                        let next = cl_opt.borrow_mut().next.clone();
-                        cl = next;
-                    }
-                }
-                if c.is_none() {
-                    while let Some(ref cl_opt) = cl {
-                        if cl_opt.borrow_mut().isvisible() {
-                            c = cl.clone();
-                        }
-                        let next = cl_opt.borrow_mut().next.clone();
-                        cl = next;
-                    }
-                }
-            }
+        // 检查是否可以切换焦点
+        if !self.can_focus_switch()? {
+            return Ok(());
         }
-        if c.is_some() {
-            self.focus(c)?;
-            let _ = self.restack(self.sel_mon.clone());
+        // 根据方向查找目标客户端
+        let target_client = if direction > 0 {
+            self.find_next_visible_client()?
+        } else {
+            self.find_previous_visible_client()?
+        };
+        // 切换焦点
+        if let Some(client) = target_client {
+            self.focus(Some(client))?;
+            self.restack(self.sel_mon.clone())?;
         }
         Ok(())
+    }
+
+    // 辅助方法：检查是否可以切换焦点
+    fn can_focus_switch(&self) -> Result<bool, Box<dyn std::error::Error>> {
+        let sel_mon = self.sel_mon.as_ref().ok_or("No selected monitor")?;
+        let sel_mon_ref = sel_mon.borrow();
+
+        // 检查是否有选中的客户端
+        let selected_client = sel_mon_ref.sel.as_ref().ok_or("No selected client")?;
+
+        // 检查是否处于锁定的全屏状态
+        let is_locked_fullscreen =
+            selected_client.borrow().is_fullscreen && CONFIG.behavior().lock_fullscreen;
+        Ok(!is_locked_fullscreen)
+    }
+
+    // 辅助方法：查找下一个可见客户端
+    fn find_next_visible_client(
+        &self,
+    ) -> Result<Option<Rc<RefCell<WMClient>>>, Box<dyn std::error::Error>> {
+        let sel_mon = self.sel_mon.as_ref().ok_or("No selected monitor")?;
+
+        // 从当前选中客户端的下一个开始查找
+        let mut current = {
+            let sel_mon_ref = sel_mon.borrow();
+            let next = sel_mon_ref
+                .sel
+                .as_ref()
+                .ok_or("No selected client")?
+                .borrow()
+                .next
+                .clone();
+            next
+        };
+
+        // 向前查找可见客户端
+        while let Some(ref client) = current {
+            if client.borrow().isvisible() {
+                return Ok(current);
+            }
+            let next = client.borrow().next.clone();
+            current = next;
+        }
+
+        // 如果没找到，从头开始查找
+        current = sel_mon.borrow().clients.clone();
+        while let Some(ref client) = current {
+            if client.borrow().isvisible() {
+                return Ok(current);
+            }
+            let next = client.borrow().next.clone();
+            current = next;
+        }
+
+        Ok(None)
+    }
+
+    // 辅助方法：查找上一个可见客户端
+    fn find_previous_visible_client(
+        &self,
+    ) -> Result<Option<Rc<RefCell<WMClient>>>, Box<dyn std::error::Error>> {
+        let sel_mon = self.sel_mon.as_ref().ok_or("No selected monitor")?;
+
+        let sel_mon_ref = sel_mon.borrow();
+        let selected_client = sel_mon_ref.sel.clone();
+        let mut clients_list = sel_mon_ref.clients.clone();
+        drop(sel_mon_ref); // 释放借用
+
+        let mut previous_visible: Option<Rc<RefCell<WMClient>>> = None;
+        // 遍历到选中客户端之前，记录最后一个可见的客户端
+        while let Some(ref client) = clients_list {
+            if Self::are_equal_rc(&clients_list, &selected_client) {
+                break;
+            }
+            if client.borrow().isvisible() {
+                previous_visible = clients_list.clone();
+            }
+            let next = client.borrow().next.clone();
+            clients_list = next;
+        }
+        // 如果没找到，从末尾开始查找最后一个可见客户端
+        if previous_visible.is_none() {
+            clients_list = self.sel_mon.as_ref().unwrap().borrow().clients.clone();
+            while let Some(ref client) = clients_list {
+                if client.borrow().isvisible() {
+                    previous_visible = clients_list.clone();
+                }
+                let next = client.borrow().next.clone();
+                clients_list = next;
+            }
+        }
+
+        Ok(previous_visible)
     }
 
     pub fn togglebar(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
@@ -3377,145 +3412,236 @@ impl Jwm {
     }
 
     pub fn movestack(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        let mut c: Option<Rc<RefCell<WMClient>>> = None;
-        let mut i: Option<Rc<RefCell<WMClient>>>;
-        let mut p: Option<Rc<RefCell<WMClient>>> = None;
-        let mut pc: Option<Rc<RefCell<WMClient>>> = None;
-        if let WMArgEnum::Int(arg_i) = arg {
-            if arg_i > &0 {
-                // Find the client after selmon->sel
-                c = self
-                    .sel_mon
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .sel
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .next
-                    .clone();
-                while c.is_some() {
-                    let isvisible = c.as_ref().unwrap().borrow_mut().isvisible();
-                    let is_floating = c.as_ref().unwrap().borrow_mut().is_floating;
-                    let condition = !isvisible || is_floating;
-                    if !condition {
-                        break;
-                    }
-                    let next = c.as_ref().unwrap().borrow_mut().next.clone();
-                    c = next;
-                }
-                if c.is_none() {
-                    c = self.sel_mon.as_ref().unwrap().borrow_mut().clients.clone();
-                }
-                while c.is_some() {
-                    let isvisible = c.as_ref().unwrap().borrow_mut().isvisible();
-                    let is_floating = c.as_ref().unwrap().borrow_mut().is_floating;
-                    let condition = !isvisible || is_floating;
-                    if !condition {
-                        break;
-                    }
-                    let next = c.as_ref().unwrap().borrow_mut().next.clone();
-                    c = next;
-                }
-            } else {
-                // Find the client before selmon->sel
-                i = self.sel_mon.as_ref().unwrap().borrow_mut().clients.clone();
-                let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
-                while !Self::are_equal_rc(&i, &sel) {
-                    let isvisible = i.as_ref().unwrap().borrow_mut().isvisible();
-                    let is_floating = i.as_ref().unwrap().borrow_mut().is_floating;
-                    if isvisible && !is_floating {
-                        c = i.clone();
-                    }
-                    let next = i.as_ref().unwrap().borrow_mut().next.clone();
-                    i = next;
-                }
-                if c.is_none() {
-                    while i.is_some() {
-                        let isvisible = i.as_ref().unwrap().borrow_mut().isvisible();
-                        let is_floating = i.as_ref().unwrap().borrow_mut().is_floating;
-                        if isvisible && !is_floating {
-                            c = i.clone();
-                        }
-                        let next = i.as_ref().unwrap().borrow_mut().next.clone();
-                        i = next;
-                    }
-                }
-            }
-            // Find the client before selmon->sel and c
-            i = self.sel_mon.as_ref().unwrap().borrow_mut().clients.clone();
-            let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
-            while i.is_some() && (p.is_none() || pc.is_none()) {
-                let next = i.as_ref().unwrap().borrow_mut().next.clone();
-                if next.is_some() && sel.is_some() && Self::are_equal_rc(&next, &sel) {
-                    p = i.clone();
-                }
-                if next.is_some() && c.is_some() && Self::are_equal_rc(&next, &c) {
-                    pc = i.clone();
-                }
-                i = next;
-            }
-            // Swap c and selmon->sel selmon->clietns in the selmon->clients list
-            if c.is_some() && sel.is_some() && !Self::are_equal_rc(&c, &sel) {
-                let sel_next = self
-                    .sel_mon
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .sel
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .next
-                    .clone();
-                let temp = if sel_next.is_some() && c.is_some() && Self::are_equal_rc(&sel_next, &c)
-                {
-                    self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone()
-                } else {
-                    sel_next
-                };
-                let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
-                let c_next = c.as_ref().unwrap().borrow_mut().next.clone();
-                self.sel_mon
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .sel
-                    .as_ref()
-                    .unwrap()
-                    .borrow_mut()
-                    .next =
-                    if c_next.is_some() && sel.is_some() && Self::are_equal_rc(&c_next, &sel) {
-                        c.clone()
-                    } else {
-                        c_next
-                    };
-                c.as_ref().unwrap().borrow_mut().next = temp;
+        // 提取并验证参数
+        let direction = match arg {
+            WMArgEnum::Int(i) => *i,
+            _ => return Ok(()),
+        };
 
-                if p.is_some() && !Self::are_equal_rc(&p, &c) {
-                    p.as_ref().unwrap().borrow_mut().next = c.clone();
-                }
-                if pc.is_some() {
-                    let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
-                    if !Self::are_equal_rc(&pc, &sel) {
-                        pc.as_ref().unwrap().borrow_mut().next = sel;
-                    }
-                }
-
-                let sel = self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone();
-                let clients = self.sel_mon.as_ref().unwrap().borrow_mut().clients.clone();
-                if Self::are_equal_rc(&sel, &clients) {
-                    self.sel_mon.as_ref().unwrap().borrow_mut().clients = c;
-                } else if Self::are_equal_rc(&c, &clients) {
-                    self.sel_mon.as_ref().unwrap().borrow_mut().clients = sel;
-                }
-
-                self.arrange(self.sel_mon.clone());
-            }
+        // 获取当前选中的客户端
+        let selected_client = self.get_selected_client()?;
+        let selected = if let Some(val) = selected_client {
+            val
         } else {
             return Ok(());
+        };
+
+        // 根据方向查找目标客户端
+        let target_client = if direction > 0 {
+            self.find_next_tiled_client(&selected)?
+        } else {
+            self.find_previous_tiled_client(&selected)?
+        };
+
+        // 如果找到目标客户端且不是同一个，则交换它们
+        if let Some(target) = target_client {
+            if !Rc::ptr_eq(&selected, &target) {
+                self.swap_clients_in_list(selected.clone(), target)?;
+                self.arrange(self.sel_mon.clone());
+            }
         }
+
+        Ok(())
+    }
+
+    // 辅助方法：获取当前选中的客户端
+    fn get_selected_client(
+        &self,
+    ) -> Result<Option<Rc<RefCell<WMClient>>>, Box<dyn std::error::Error>> {
+        let sel_mon = self.sel_mon.as_ref().ok_or("No selected monitor")?;
+
+        Ok(sel_mon.borrow().sel.clone())
+    }
+
+    // 辅助方法：检查客户端是否为可见且非浮动的平铺窗口
+    fn is_tiled_and_visible(client: &Rc<RefCell<WMClient>>) -> bool {
+        let client_ref = client.borrow();
+        client_ref.isvisible() && !client_ref.is_floating
+    }
+
+    // 辅助方法：查找下一个平铺客户端
+    fn find_next_tiled_client(
+        &self,
+        current: &Rc<RefCell<WMClient>>,
+    ) -> Result<Option<Rc<RefCell<WMClient>>>, Box<dyn std::error::Error>> {
+        // 从当前客户端的下一个开始查找
+        let mut candidate = current.borrow().next.clone();
+
+        // 第一轮：从当前位置向后查找
+        while let Some(ref client) = candidate {
+            if Self::is_tiled_and_visible(client) {
+                return Ok(candidate);
+            }
+            let next = client.borrow().next.clone();
+            candidate = next;
+        }
+
+        // 第二轮：从头开始查找（循环查找）
+        let sel_mon = self.sel_mon.as_ref().ok_or("No selected monitor")?;
+        candidate = sel_mon.borrow().clients.clone();
+        while let Some(ref client) = candidate {
+            if Self::is_tiled_and_visible(client) {
+                return Ok(candidate);
+            }
+            let next = client.borrow().next.clone();
+            candidate = next;
+        }
+
+        Ok(None)
+    }
+
+    // 辅助方法：查找上一个平铺客户端
+    fn find_previous_tiled_client(
+        &self,
+        current: &Rc<RefCell<WMClient>>,
+    ) -> Result<Option<Rc<RefCell<WMClient>>>, Box<dyn std::error::Error>> {
+        let sel_mon = self.sel_mon.as_ref().ok_or("No selected monitor")?;
+
+        let mut previous_tiled: Option<Rc<RefCell<WMClient>>> = None;
+        let mut walker = sel_mon.borrow().clients.clone();
+
+        // 第一轮：遍历到当前客户端之前，记录最后一个平铺客户端
+        while let Some(ref client) = walker {
+            if Rc::ptr_eq(&client, &current) {
+                break;
+            }
+            if Self::is_tiled_and_visible(client) {
+                previous_tiled = walker.clone();
+            }
+            let next = client.borrow().next.clone();
+            walker = next;
+        }
+
+        // 第二轮：如果没找到，从末尾开始查找（循环查找）
+        if previous_tiled.is_none() {
+            walker = sel_mon.borrow().clients.clone();
+            while let Some(ref client) = walker {
+                if Self::is_tiled_and_visible(client) {
+                    previous_tiled = walker.clone();
+                }
+                let next = client.borrow().next.clone();
+                walker = next;
+            }
+        }
+
+        Ok(previous_tiled)
+    }
+
+    // 辅助方法：在链表中交换两个客户端的位置
+    fn swap_clients_in_list(
+        &mut self,
+        client1: Rc<RefCell<WMClient>>,
+        client2: Rc<RefCell<WMClient>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 查找两个客户端的前驱节点
+        let (prev1, prev2) = self.find_predecessors(&client1, &client2)?;
+
+        // 获取两个客户端的后继节点
+        let next1 = client1.borrow().next.clone();
+        let next2 = client2.borrow().next.clone();
+
+        // 处理相邻节点的特殊情况
+        if Self::are_equal_rc(&next1, &Some(client2.clone())) {
+            // client1 在 client2 前面
+            self.swap_adjacent_nodes(client1, client2, prev1, next2)?;
+        } else if Self::are_equal_rc(&next2, &Some(client1.clone())) {
+            // client2 在 client1 前面
+            self.swap_adjacent_nodes(client2, client1, prev2, next1)?;
+        } else {
+            // 非相邻节点
+            self.swap_non_adjacent_nodes(client1, client2, prev1, prev2, next1, next2)?;
+        }
+
+        Ok(())
+    }
+
+    // 辅助方法：查找两个客户端的前驱节点
+    fn find_predecessors(
+        &self,
+        client1: &Rc<RefCell<WMClient>>,
+        client2: &Rc<RefCell<WMClient>>,
+    ) -> Result<
+        (Option<Rc<RefCell<WMClient>>>, Option<Rc<RefCell<WMClient>>>),
+        Box<dyn std::error::Error>,
+    > {
+        let sel_mon = self.sel_mon.as_ref().ok_or("No selected monitor")?;
+        let mut prev1: Option<Rc<RefCell<WMClient>>> = None;
+        let mut prev2: Option<Rc<RefCell<WMClient>>> = None;
+        let mut current = sel_mon.borrow().clients.clone();
+        while let Some(ref client) = current {
+            let next = client.borrow().next.clone();
+            if let Some(ref next_client) = next {
+                if Rc::ptr_eq(&next_client, &client1) {
+                    prev1 = current.clone();
+                }
+                if Rc::ptr_eq(&next_client, &client2) {
+                    prev2 = current.clone();
+                }
+            }
+            current = next;
+            if prev1.is_some() && prev2.is_some() {
+                break;
+            }
+        }
+
+        Ok((prev1, prev2))
+    }
+
+    // 辅助方法：交换相邻节点
+    fn swap_adjacent_nodes(
+        &mut self,
+        first: Rc<RefCell<WMClient>>,
+        second: Rc<RefCell<WMClient>>,
+        prev_first: Option<Rc<RefCell<WMClient>>>,
+        next_second: Option<Rc<RefCell<WMClient>>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 更新 first 指向 second 的后继
+        first.borrow_mut().next = next_second;
+        // 更新 second 指向 first
+        second.borrow_mut().next = Some(first.clone());
+        // 更新前驱节点或头节点
+        if let Some(prev) = prev_first {
+            prev.borrow_mut().next = Some(second);
+        } else {
+            // first 是头节点，现在 second 成为头节点
+            let sel_mon = self.sel_mon.as_ref().unwrap();
+            sel_mon.borrow_mut().clients = Some(second);
+        }
+
+        Ok(())
+    }
+
+    // 辅助方法：交换非相邻节点
+    fn swap_non_adjacent_nodes(
+        &mut self,
+        client1: Rc<RefCell<WMClient>>,
+        client2: Rc<RefCell<WMClient>>,
+        prev1: Option<Rc<RefCell<WMClient>>>,
+        prev2: Option<Rc<RefCell<WMClient>>>,
+        next1: Option<Rc<RefCell<WMClient>>>,
+        next2: Option<Rc<RefCell<WMClient>>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 交换后继节点
+        client1.borrow_mut().next = next2;
+        client2.borrow_mut().next = next1;
+
+        // 更新前驱节点
+        if let Some(prev) = prev1 {
+            prev.borrow_mut().next = Some(client2.clone());
+        } else {
+            // client1 是头节点
+            let sel_mon = self.sel_mon.as_ref().unwrap();
+            sel_mon.borrow_mut().clients = Some(client2.clone());
+        }
+
+        if let Some(prev) = prev2 {
+            prev.borrow_mut().next = Some(client1.clone());
+        } else {
+            // client2 是头节点
+            let sel_mon = self.sel_mon.as_ref().unwrap();
+            sel_mon.borrow_mut().clients = Some(client1);
+        }
+
         Ok(())
     }
 
@@ -4417,7 +4543,7 @@ impl Jwm {
     pub fn movemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[movemouse]");
         // 1. 获取当前选中的客户端
-        let client_rc = match self.get_selected_client() {
+        let client_rc = match self.get_selected_client()? {
             Some(client) => client,
             None => {
                 debug!("No selected client for move");
@@ -4706,7 +4832,7 @@ impl Jwm {
     pub fn resizemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[resizemouse]");
         // 1. 获取当前选中的客户端
-        let client_rc = match self.get_selected_client() {
+        let client_rc = match self.get_selected_client()? {
             Some(client) => client,
             None => {
                 debug!("No selected client for resize");
@@ -4769,10 +4895,6 @@ impl Jwm {
         // 7. 清理工作
         self.cleanup_resize(window_id, border_width)?;
         result
-    }
-
-    fn get_selected_client(&self) -> Option<Rc<RefCell<WMClient>>> {
-        self.sel_mon.as_ref()?.borrow().sel.clone()
     }
 
     fn resize_loop(
@@ -4890,7 +5012,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 将鼠标定位到最终位置
         let (final_w, final_h) = {
-            let client = self.get_selected_client();
+            let client = self.get_selected_client()?;
             if let Some(ref client_rc) = client {
                 let c = client_rc.borrow();
                 (c.w, c.h)
@@ -4923,7 +5045,7 @@ impl Jwm {
     }
 
     fn check_monitor_change_after_resize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let client_rc = match self.get_selected_client() {
+        let client_rc = match self.get_selected_client()? {
             Some(client) => client,
             None => return Ok(()),
         };

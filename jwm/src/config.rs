@@ -11,12 +11,6 @@ use x11rb::protocol::xproto::KeyButMask;
 use std::fmt;
 use std::rc::Rc;
 
-use x11::keysym::{
-    XK_Page_Down, XK_Page_Up, XK_Return, XK_Tab, XK_b, XK_c, XK_comma, XK_d, XK_e, XK_f, XK_h,
-    XK_i, XK_j, XK_k, XK_l, XK_m, XK_o, XK_period, XK_q, XK_r, XK_space, XK_t, XK_0, XK_1, XK_2,
-    XK_3, XK_4, XK_5, XK_6, XK_7, XK_8, XK_9,
-};
-
 use crate::jwm::WMFuncType;
 use crate::jwm::{self, Jwm, LayoutEnum, WMButton, WMClickType, WMKey, WMRule};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
