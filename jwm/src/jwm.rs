@@ -474,7 +474,7 @@ pub struct Jwm {
 
     pub x11rb_conn: RustConnection,
     pub x11rb_root: Window,
-    pub x11rb_screen_num: usize,
+    pub x11rb_screen: Screen,
     pub atoms: Atoms,
 
     keycode_cache: HashMap<u8, u32>,
@@ -509,7 +509,7 @@ impl Jwm {
             x11rb::rust_connection::RustConnection::connect(None).unwrap();
         let atoms = Atoms::new(&x11rb_conn).unwrap().reply().unwrap();
         let _ = test_all_cursors(&x11rb_conn);
-        let x11rb_screen = &x11rb_conn.setup().roots[x11rb_screen_num];
+        let x11rb_screen = x11rb_conn.setup().roots[x11rb_screen_num].clone();
         let s_w = x11rb_screen.width_in_pixels.into();
         let s_h = x11rb_screen.height_in_pixels.into();
         let x11rb_root = x11rb_screen.root;
@@ -518,7 +518,8 @@ impl Jwm {
             x11rb_screen, x11rb_screen_num, s_w, s_h
         );
         let cursor_manager = CursorManager::new(&x11rb_conn).unwrap();
-        let theme_manager = ThemeManager::create_default(&x11rb_conn, x11rb_screen).unwrap();
+        let theme_manager =
+            ThemeManager::create_default(&x11rb_conn, &x11rb_screen.clone()).unwrap();
         Jwm {
             stext_max_len: 512,
             s_w,
@@ -542,7 +543,7 @@ impl Jwm {
 
             x11rb_conn,
             x11rb_root,
-            x11rb_screen_num,
+            x11rb_screen,
             atoms,
             keycode_cache: HashMap::new(),
         }
@@ -2846,10 +2847,8 @@ impl Jwm {
     }
 
     fn xinit_visual(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let x11rb_screen = self.x11rb_conn.setup().roots[self.x11rb_screen_num].clone();
-
         // 首先尝试找到支持 alpha 通道的 32 位视觉效果
-        for depth in &x11rb_screen.allowed_depths {
+        for depth in self.x11rb_screen.allowed_depths.clone() {
             if depth.depth != 32 {
                 continue;
             }
@@ -2941,11 +2940,9 @@ impl Jwm {
     }
 
     fn setup_default_visual(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let x11rb_screen = &self.x11rb_conn.setup().roots[self.x11rb_screen_num];
-
-        self.visual_id = x11rb_screen.root_visual;
-        self.depth = x11rb_screen.root_depth;
-        self.color_map = x11rb_screen.default_colormap.into();
+        self.visual_id = self.x11rb_screen.root_visual;
+        self.depth = self.x11rb_screen.root_depth;
+        self.color_map = self.x11rb_screen.default_colormap.into();
 
         info!(
             "[xinit_visual] Using default visual. VisualID: 0x{:x}, Depth: {}, ColormapID: 0x{:x}",
@@ -4125,14 +4122,13 @@ impl Jwm {
     pub fn setup_ewmh(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // --- 1. 创建 _NET_SUPPORTING_WM_CHECK 窗口 ---
         let frame_win = self.x11rb_conn.generate_id()?;
-        let x11rb_screen = &self.x11rb_conn.setup().roots[self.x11rb_screen_num];
         let win_aux = CreateWindowAux::new()
             .event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS)
-            .background_pixel(x11rb_screen.white_pixel);
+            .background_pixel(self.x11rb_screen.white_pixel);
         self.x11rb_conn.create_window(
             COPY_DEPTH_FROM_PARENT,
             frame_win,
-            x11rb_screen.root,
+            self.x11rb_screen.root,
             0,
             0,
             1,
@@ -4166,7 +4162,7 @@ impl Jwm {
 
         self.x11rb_conn.change_property32(
             PropMode::REPLACE,
-            x11rb_screen.root,
+            self.x11rb_screen.root,
             self.atoms._NET_SUPPORTING_WM_CHECK,
             AtomEnum::WINDOW,
             &[frame_win],
@@ -4187,7 +4183,7 @@ impl Jwm {
         ];
         self.x11rb_conn.change_property32(
             PropMode::REPLACE,
-            x11rb_screen.root,
+            self.x11rb_screen.root,
             self.atoms._NET_SUPPORTED,
             AtomEnum::ATOM,
             &supported_atoms,
@@ -4196,10 +4192,10 @@ impl Jwm {
         // --- 5. 清除 _NET_CLIENT_LIST 和 _NET_CLIENT_INFO ---
         let _ = self
             .x11rb_conn
-            .delete_property(x11rb_screen.root, self.atoms._NET_CLIENT_LIST);
+            .delete_property(self.x11rb_screen.root, self.atoms._NET_CLIENT_LIST);
         let _ = self
             .x11rb_conn
-            .delete_property(x11rb_screen.root, self.atoms._NET_CLIENT_INFO);
+            .delete_property(self.x11rb_screen.root, self.atoms._NET_CLIENT_INFO);
 
         // --- 6. 刷新请求 ---
         let _ = self.x11rb_conn.flush();
