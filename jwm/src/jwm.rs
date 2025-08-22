@@ -1214,9 +1214,9 @@ impl Jwm {
         &mut self,
         e: &ConfigureNotifyEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[configurenotify]");
         // 检查是否是根窗口的配置变更
         if e.window == self.x11rb_root {
+            info!("[configurenotify] e: {:?}", e);
             let dirty = self.s_w != e.width as i32 || self.s_h != e.height as i32;
             self.s_w = e.width as i32;
             self.s_h = e.height as i32;
@@ -2395,45 +2395,43 @@ impl Jwm {
         self.x11rb_conn.flush()?;
 
         // 7. 刷新进入事件
-        self.flush_enter_events();
+        self.clear_enter_events()?;
 
+        info!("[restack] finish");
         Ok(())
     }
 
-    pub fn flush_enter_events(&self) {
-        loop {
-            match self.x11rb_conn.poll_for_event() {
-                Ok(Some(event)) => {
-                    if EventMask::from(event.response_type()) == EventMask::ENTER_WINDOW {
-                        continue;
-                    } else {
-                        // (TODO): need to store the event?
-                        break;
-                    }
+    fn clear_enter_events(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[clear_enter_events]");
+        // 收集所有待处理事件
+        let mut events = Vec::new();
+        while let Some(event) = self.x11rb_conn.poll_for_event()? {
+            match event {
+                Event::EnterNotify(_) | Event::ConfigureNotify(_) => {
+                    // 丢弃 EnterNotify 事件
+                    info!("drop event: {:?}", event);
                 }
-                Ok(None) => {
-                    break;
-                }
-                Err(e) => {
-                    error!("Error polling for event: {:?}", e);
-                    break;
+                other => {
+                    // 保留其他事件
+                    events.push(other);
                 }
             }
         }
-
-        self.x11rb_conn
-            .flush()
-            .expect("Failed to flush X11 connection");
+        // 处理保留的事件
+        for event in events {
+            self.handler(event)?;
+        }
+        Ok(())
     }
 
     fn flush_pending_bar_updates(&mut self) {
         if self.pending_bar_updates.is_empty() {
             return;
         }
-        info!(
-            "[flush_pending_bar_updates] Updating {} monitors",
-            self.pending_bar_updates.len()
-        );
+        // info!(
+        //     "[flush_pending_bar_updates] Updating {} monitors",
+        //     self.pending_bar_updates.len()
+        // );
         for monitor_id in self.pending_bar_updates.clone() {
             if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
                 self.UpdateBarMessage(Some(monitor));
@@ -2454,6 +2452,10 @@ impl Jwm {
             // 处理所有挂起的X11事件
             while let Some(event) = self.x11rb_conn.poll_for_event()? {
                 event_count = event_count.wrapping_add(1);
+                info!(
+                    "[run_async] event_count: {}, event: {:?}",
+                    event_count, event
+                );
                 let _ = self.handler(event);
                 events_processed = true;
             }
@@ -5161,10 +5163,8 @@ impl Jwm {
         border_width: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut last_motion_time = 0u32;
-
         loop {
             let event = self.x11rb_conn.wait_for_event()?;
-
             match event {
                 Event::ConfigureRequest(e) => {
                     self.configurerequest(&e)?;
@@ -5194,7 +5194,6 @@ impl Jwm {
                 }
             }
         }
-
         Ok(())
     }
 
@@ -5292,7 +5291,7 @@ impl Jwm {
         self.x11rb_conn.ungrab_pointer(0u32)?;
 
         // 清理事件
-        self.flush_enter_events();
+        self.clear_enter_events()?;
 
         // 检查是否需要移动到不同的显示器
         self.check_monitor_change_after_resize()?;
@@ -5532,7 +5531,7 @@ impl Jwm {
     }
 
     pub fn enternotify(&mut self, e: &EnterNotifyEvent) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[enternotify]");
+        info!("[enternotify]");
         // 过滤不需要处理的事件
         if (e.mode != NotifyMode::NORMAL || e.detail == NotifyDetail::INFERIOR)
             && e.event != self.x11rb_root
