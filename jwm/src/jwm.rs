@@ -2979,156 +2979,127 @@ impl Jwm {
     }
 
     pub fn tile(&mut self, mon_rc: &Rc<RefCell<WMMonitor>>) {
-        info!("[tile]"); // 日志记录，进入 tile 布局函数
+        info!("[tile]");
 
-        // 初始化变量
-        let mut n: u32 = 0; // 可见且平铺的客户端总数
-        let mut mfacts: f32 = 0.0; // 主区域 (master area) 客户端的 cfact 总和
-        let mut sfacts: f32 = 0.0; // 堆叠区域 (stack area) 客户端的 cfact 总和
-
-        // --- 第一遍遍历：计算客户端数量和 cfact 总和 ---
-        {
-            // 创建一个新的作用域来限制 mon_borrow 的生命周期
-            let mon_borrow = mon_rc.borrow(); // 不可变借用 Monitor
-            let mut c = self.nexttiled(mon_borrow.clients.clone()); // 获取第一个可见且平铺的客户端
-                                                                    // nexttiled 会跳过浮动和不可见的客户端
-
-            while let Some(client_opt) = c {
-                // 遍历所有可见且平铺的客户端
-                let c_borrow = client_opt.borrow(); // 可变借用 Client 来读取和修改 cfact (虽然这里只读取)
-                if n < mon_borrow.n_master {
-                    // 如果当前客户端在主区域
-                    mfacts += c_borrow.client_fact; // 累加到主区域的 cfact 总和
-                } else {
-                    // 如果当前客户端在堆叠区域
-                    sfacts += c_borrow.client_fact; // 累加到堆叠区域的 cfact 总和
-                }
-                let next_c = self.nexttiled(c_borrow.next.clone()); // 获取下一个可见平铺客户端
-                drop(c_borrow); // 显式 drop 可变借用，以便 nexttiled 中的借用不会冲突
-                c = next_c;
-                n += 1; // 客户端总数加一
-            }
-            info!("[tile] monitor_num: {}", mon_borrow.num);
-        } // mon_borrow 在这里被 drop
-
-        if n == 0 {
-            // 如果没有可见且平铺的客户端，则直接返回
-            return;
-        }
-
-        // --- 计算主区域的宽度 (mw) ---
-        let (ww, mfact0_val, nmaster0_val, wx_val, wy_val, wh_val) = {
-            // 再次借用 Monitor 获取其属性
+        // 获取监视器基本信息
+        let (wx, wy, ww, wh, mfact, nmaster, monitor_num) = {
             let mon_borrow = mon_rc.borrow();
             (
-                mon_borrow.w_w,
-                mon_borrow.m_fact,
-                mon_borrow.n_master,
                 mon_borrow.w_x,
                 mon_borrow.w_y,
+                mon_borrow.w_w,
                 mon_borrow.w_h,
+                mon_borrow.m_fact,
+                mon_borrow.n_master,
+                mon_borrow.num,
             )
         };
 
-        let mw: u32;
-        if n > nmaster0_val {
-            // 如果客户端总数大于主区域配置的窗口数
-            mw = if nmaster0_val > 0 {
-                // 如果主区域至少有一个窗口
-                (ww as f32 * mfact0_val) as u32 // 主区域宽度 = 显示器工作区宽度 * mfact 比例
-            } else {
-                0 // 否则主区域宽度为 0 (所有窗口都在堆叠区)
+        // 第一遍：统计客户端信息
+        let mut clients = Vec::new();
+        let mut c = self.nexttiled(mon_rc.borrow().clients.clone());
+
+        while let Some(client_rc) = c {
+            let (client_fact, border_w, next) = {
+                let client_borrow = client_rc.borrow();
+                (
+                    client_borrow.client_fact,
+                    client_borrow.border_w,
+                    client_borrow.next.clone(),
+                )
             };
-        } else {
-            // 如果客户端总数小于等于主区域配置的窗口数 (所有窗口都在主区域)
-            mw = ww as u32; // 主区域宽度 =整个显示器工作区宽度
+
+            clients.push((client_rc, client_fact, border_w));
+            c = self.nexttiled(next);
         }
 
-        // --- 第二遍遍历：调整客户端大小和位置 ---
-        let mut my: u32 = 0; // 主区域当前窗口的 Y 轴累积高度
-        let mut ty: u32 = 0; // 堆叠区域当前窗口的 Y 轴累积高度
-        let mut i: u32 = 0; // 当前处理到的客户端索引
-        let mut h: u32; // 当前客户端将要设置的高度
+        if clients.is_empty() {
+            return;
+        }
 
-        let client_y_offset = {
-            // 获取 Y 轴偏移（考虑状态栏）
-            self.client_y_offset(&mon_rc.borrow())
+        info!(
+            "[tile] monitor_num: {}, clients: {}",
+            monitor_num,
+            clients.len()
+        );
+
+        let n = clients.len() as u32;
+
+        // 计算主区域和堆栈区域的cfact总和
+        let mut mfacts = 0.0;
+        let mut sfacts = 0.0;
+        for (i, (_, client_fact, _)) in clients.iter().enumerate() {
+            if i < nmaster as usize {
+                mfacts += client_fact;
+            } else {
+                sfacts += client_fact;
+            }
+        }
+
+        // 计算主区域宽度
+        let mw = if n > nmaster && nmaster > 0 {
+            (ww as f32 * mfact) as i32
+        } else {
+            ww
         };
+
+        let client_y_offset = self.client_y_offset(&mon_rc.borrow());
         info!("[tile] client_y_offset: {}", client_y_offset);
 
-        let mut c_iter = {
-            // 重新从头开始获取可见平铺客户端
-            let mon_borrow = mon_rc.borrow();
-            self.nexttiled(mon_borrow.clients.clone())
-        };
+        // 第二遍：调整客户端大小
+        let mut my = 0i32; // 主区域Y偏移
+        let mut ty = 0i32; // 堆栈区域Y偏移
 
-        while let Some(ref c_opt_rc) = c_iter {
-            let next_client_in_list_opt; // 用于存储下一个迭代的客户端
-            let bw;
-            {
-                // 创建一个新的作用域来限制 c_borrow 的生命周期
-                let c_borrow = c_opt_rc.borrow(); // 不可变借用开始
-                bw = c_borrow.border_w;
-                let current_cfact = c_borrow.client_fact;
-                next_client_in_list_opt = c_borrow.next.clone(); // 在释放借用前获取 next
+        for (i, (client_rc, client_fact, border_w)) in clients.iter().enumerate() {
+            let is_master = i < nmaster as usize;
 
-                // 在这个作用域内完成所有对 c_borrow 的只读操作
-                if i < nmaster0_val {
-                    h = if mfacts > 0.001 {
-                        ((wh_val as u32 - my) as f32 * (current_cfact / mfacts)) as u32
-                    } else if nmaster0_val - i > 0 {
-                        (wh_val as u32 - my) / (nmaster0_val - i)
-                    } else {
-                        wh_val as u32 - my
-                    };
-                    // drop(c_borrow) 会在这个作用域结束时自动发生
+            let (x, y, w, h) = if is_master {
+                let remaining_master = nmaster - i as u32;
+                let remaining_height = (wh - my - client_y_offset).max(0);
+
+                let height = if mfacts > 0.001 {
+                    (remaining_height as f32 * (client_fact / mfacts)) as i32
+                } else if remaining_master > 0 {
+                    remaining_height / remaining_master as i32
                 } else {
-                    h = if sfacts > 0.001 {
-                        ((wh_val as u32 - ty) as f32 * (current_cfact / sfacts)) as u32
-                    } else if n - i > 0 {
-                        (wh_val as u32 - ty) / (n - i)
-                    } else {
-                        wh_val as u32 - ty
-                    };
-                    // drop(c_borrow) 会在这个作用域结束时自动发生
-                }
-            } // c_borrow (不可变借用) 在这里被 drop
+                    remaining_height
+                };
 
-            // 现在可以安全地调用 resize，它内部可以对 c_opt_rc 进行 borrow_mut()
-            if i < nmaster0_val {
-                self.resize(
-                    c_opt_rc,
-                    wx_val,
-                    wy_val + my as i32 + client_y_offset,
-                    mw as i32 - (2 * bw),
-                    h as i32 - (2 * bw) - client_y_offset,
-                    false,
+                let result = (
+                    wx,
+                    wy + my + client_y_offset,
+                    mw - 2 * border_w,
+                    height - 2 * border_w,
                 );
-                // resize 之后，如果需要读取更新后的 height，需要重新 borrow
-                let client_actual_height = c_opt_rc.borrow().height() as u32;
-                if my + client_actual_height < wh_val as u32 {
-                    my += client_actual_height;
-                }
-                mfacts -= c_opt_rc.borrow().client_fact; // 重新 borrow 读取 cfact (如果 cfact 不变，可以提前读取)
-                                                         // 或者确保 cfact 在 resize 中不会改变，则可以使用之前读取的 current_cfact
+
+                my += height;
+                mfacts -= client_fact;
+                result
             } else {
-                self.resize(
-                    c_opt_rc,
-                    wx_val + mw as i32,
-                    wy_val + ty as i32 + client_y_offset,
-                    ww as i32 - mw as i32 - (2 * bw),
-                    h as i32 - (2 * bw) - client_y_offset,
-                    false,
-                );
-                let client_actual_height = c_opt_rc.borrow().height() as u32;
-                if ty + client_actual_height < wh_val as u32 {
-                    ty += client_actual_height;
-                }
-                sfacts -= c_opt_rc.borrow().client_fact; // 同上
-            }
+                let remaining_stack = n - i as u32;
+                let remaining_height = (wh - ty - client_y_offset).max(0);
 
-            c_iter = self.nexttiled(next_client_in_list_opt); // 使用之前获取的 next
-            i += 1;
+                let height = if sfacts > 0.001 {
+                    (remaining_height as f32 * (client_fact / sfacts)) as i32
+                } else if remaining_stack > 0 {
+                    remaining_height / remaining_stack as i32
+                } else {
+                    remaining_height
+                };
+
+                let result = (
+                    wx + mw,
+                    wy + ty + client_y_offset,
+                    ww - mw - 2 * border_w,
+                    height - 2 * border_w,
+                );
+
+                ty += height;
+                sfacts -= client_fact;
+                result
+            };
+
+            self.resize(client_rc, x, y, w, h, false);
         }
     }
 
