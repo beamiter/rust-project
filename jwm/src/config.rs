@@ -147,7 +147,7 @@ pub struct MouseBindingsConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ButtonConfig {
-    pub click_type: String, // "ClkLtSymbol", "ClkWinTitle", etc.
+    pub click_type: String, //
     pub modifier: Vec<String>,
     pub button: u32, // 1, 2, 3
     pub function: String,
@@ -853,20 +853,6 @@ impl Config {
     fn get_default_buttons(&self) -> Vec<ButtonConfig> {
         vec![
             ButtonConfig {
-                click_type: "ClkWinTitle".to_string(),
-                modifier: vec![],
-                button: ButtonIndex::M2.into(),
-                function: "zoom".to_string(),
-                argument: ArgumentConfig::Int(0),
-            },
-            ButtonConfig {
-                click_type: "ClkStatusText".to_string(),
-                modifier: vec![],
-                button: ButtonIndex::M2.into(),
-                function: "spawn".to_string(),
-                argument: ArgumentConfig::StringVec(Self::get_termcmd()),
-            },
-            ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec![self.inner.keybindings.modkey.clone()],
                 button: ButtonIndex::M1.into(),
@@ -886,34 +872,6 @@ impl Config {
                 button: ButtonIndex::M3.into(),
                 function: "resizemouse".to_string(),
                 argument: ArgumentConfig::Int(0),
-            },
-            ButtonConfig {
-                click_type: "ClkTagBar".to_string(),
-                modifier: vec![],
-                button: ButtonIndex::M1.into(),
-                function: "view".to_string(),
-                argument: ArgumentConfig::UInt(0),
-            },
-            ButtonConfig {
-                click_type: "ClkTagBar".to_string(),
-                modifier: vec![],
-                button: ButtonIndex::M3.into(),
-                function: "toggleview".to_string(),
-                argument: ArgumentConfig::UInt(0),
-            },
-            ButtonConfig {
-                click_type: "ClkTagBar".to_string(),
-                modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: ButtonIndex::M1.into(),
-                function: "tag".to_string(),
-                argument: ArgumentConfig::UInt(0),
-            },
-            ButtonConfig {
-                click_type: "ClkTagBar".to_string(),
-                modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: ButtonIndex::M3.into(),
-                function: "toggletag".to_string(),
-                argument: ArgumentConfig::UInt(0),
             },
         ]
     }

@@ -3950,63 +3950,138 @@ impl Jwm {
 
     pub fn toggleview(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[toggleview]");
-        if let WMArgEnum::UInt(ui) = *arg {
-            if self.sel_mon.is_none() {
-                return Ok(());
+
+        // 提取并验证参数
+        let ui = match arg {
+            WMArgEnum::UInt(val) => *val,
+            _ => return Ok(()),
+        };
+
+        if self.sel_mon.is_none() {
+            return Ok(());
+        }
+
+        // 计算新的标签集
+        let (sel_tags, newtagset) = {
+            let sel_mon = self.sel_mon.as_ref().unwrap().borrow();
+            let sel_tags = sel_mon.sel_tags;
+            let newtagset = sel_mon.tag_set[sel_tags] ^ (ui & CONFIG.tagmask());
+            (sel_tags, newtagset)
+        };
+
+        if newtagset == 0 {
+            return Ok(());
+        }
+
+        info!("[toggleview] newtagset: {}", newtagset);
+
+        // 更新标签集和per-tag设置
+        self.update_tagset_and_pertag(sel_tags, newtagset)?;
+
+        // 更新焦点和布局
+        self.focus(None)?;
+        self.arrange(self.sel_mon.clone());
+
+        Ok(())
+    }
+
+    // 更新标签集和per-tag设置
+    fn update_tagset_and_pertag(
+        &mut self,
+        sel_tags: usize,
+        newtagset: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+
+        // 设置新的标签集
+        sel_mon_mut.tag_set[sel_tags] = newtagset;
+
+        // 更新当前标签
+        let new_cur_tag = if newtagset == !0 {
+            // 显示所有标签
+            if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
+                pertag.prev_tag = pertag.cur_tag;
+                pertag.cur_tag = 0;
             }
-            let sel_tags;
-            let newtagset;
-            {
-                let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                sel_tags = sel_mon_mut.sel_tags;
-                newtagset = sel_mon_mut.tag_set[sel_tags] ^ (ui & CONFIG.tagmask());
-            }
-            if newtagset > 0 {
-                {
-                    let mut selmon_clone = self.sel_mon.clone();
-                    let mut sel_mon_mut = selmon_clone.as_mut().unwrap().borrow_mut();
-                    sel_mon_mut.tag_set[sel_tags] = newtagset;
+            0
+        } else {
+            // 检查当前标签是否还在新的标签集中
+            let current_cur_tag = sel_mon_mut
+                .pertag
+                .as_ref()
+                .ok_or("No pertag information")?
+                .cur_tag;
 
-                    if newtagset == !0 {
-                        sel_mon_mut.pertag.as_mut().unwrap().prev_tag =
-                            sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                        sel_mon_mut.pertag.as_mut().unwrap().cur_tag = 0;
-                    }
+            if current_cur_tag > 0 && (newtagset & (1 << (current_cur_tag - 1))) > 0 {
+                // 当前标签仍在新集合中，保持不变
+                current_cur_tag
+            } else {
+                // 当前标签不在新集合中，找到第一个有效标签
+                let first_tag = self.find_first_active_tag(newtagset);
 
-                    // test if the user did not select the same tag
-                    let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                    if newtagset & 1 << (cur_tag - 1) <= 0 {
-                        sel_mon_mut.pertag.as_mut().unwrap().prev_tag = cur_tag;
-                        let mut i = 0;
-                        loop {
-                            let condition = newtagset & 1 << i;
-                            if condition > 0 {
-                                break;
-                            }
-                            i += 1;
-                        }
-                        sel_mon_mut.pertag.as_mut().unwrap().cur_tag = i + 1;
-                    }
-
-                    // apply settings for this view
-                    let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                    sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
-                    sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
-                    sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
-                    let sel_lt = sel_mon_mut.sel_lt;
-                    sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
-                        [sel_lt]
-                        .clone()
-                        .expect("None unwrap");
-                    sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs
-                        [cur_tag][sel_lt ^ 1]
-                        .clone()
-                        .expect("None unwrap");
+                if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
+                    pertag.prev_tag = current_cur_tag;
+                    pertag.cur_tag = first_tag;
                 }
-                self.focus(None)?;
-                self.arrange(self.sel_mon.clone());
+                first_tag
+            }
+        };
+
+        // 应用per-tag设置
+        self.apply_pertag_settings_internal(&mut sel_mon_mut, new_cur_tag)?;
+
+        Ok(())
+    }
+
+    // 查找第一个激活的标签
+    fn find_first_active_tag(&self, tagset: u32) -> usize {
+        for i in 0..32 {
+            if (tagset & (1 << i)) > 0 {
+                return i + 1;
             }
         }
+        1 // 默认返回第一个标签
+    }
+
+    // 应用per-tag设置（内部版本，接受已借用的monitor）
+    fn apply_pertag_settings_internal(
+        &self,
+        sel_mon_mut: &mut std::cell::RefMut<WMMonitor>,
+        cur_tag: usize,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 提取所有需要的值
+        let (n_master, m_fact, sel_lt, layout_0, layout_1) = {
+            let pertag = sel_mon_mut
+                .pertag
+                .as_ref()
+                .ok_or("No pertag information available")?;
+
+            let sel_lt = pertag.sel_lts[cur_tag];
+            (
+                pertag.n_masters[cur_tag],
+                pertag.m_facts[cur_tag],
+                sel_lt,
+                pertag.lt_idxs[cur_tag][sel_lt]
+                    .clone()
+                    .ok_or("Layout not found")?,
+                pertag.lt_idxs[cur_tag][sel_lt ^ 1]
+                    .clone()
+                    .ok_or("Alternative layout not found")?,
+            )
+        };
+
+        // 应用设置
+        sel_mon_mut.n_master = n_master;
+        sel_mon_mut.m_fact = m_fact;
+        sel_mon_mut.sel_lt = sel_lt;
+        sel_mon_mut.lt[sel_lt] = layout_0;
+        sel_mon_mut.lt[sel_lt ^ 1] = layout_1;
+
+        info!(
+            "[apply_pertag_settings_internal] Applied settings for tag {}: n_master={}, m_fact={}, sel_lt={}",
+            cur_tag, n_master, m_fact, sel_lt
+        );
+
         Ok(())
     }
 
