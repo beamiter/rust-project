@@ -3436,7 +3436,10 @@ impl Jwm {
         // 如果找到目标客户端且不是同一个，则交换它们
         if let Some(target) = target_client {
             if !Rc::ptr_eq(&selected, &target) {
-                self.swap_clients_in_list(selected.clone(), target)?;
+                // 交换客户端在链表中的位置
+                self.swap_clients_in_list(selected, target)?;
+
+                // 重新排列布局
                 self.arrange(self.sel_mon.clone());
             }
         }
