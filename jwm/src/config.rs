@@ -21,6 +21,8 @@ use crate::jwm::WMFuncType;
 use crate::jwm::{self, Jwm, LayoutEnum, WMButton, WMClickType, WMKey, WMRule};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
+pub const LOAD_LOCAL_CONFIG: bool = false;
+
 macro_rules! status_bar_config {
     ($($feature:literal => $name:literal),* $(,)?) => {
         cfg_if! {
@@ -1141,9 +1143,12 @@ impl From<toml::ser::Error> for ConfigError {
 
 // 全局配置实例
 pub static CONFIG: Lazy<Config> = Lazy::new(|| {
+    if !LOAD_LOCAL_CONFIG {
+        return Config::default();
+    }
+
     // 加载配置
     let config = Config::load_default();
-
     // 生成配置文件模板（如果不存在）
     if !Config::config_exists() {
         Config::generate_template(Config::get_default_config_path()).unwrap();
@@ -1157,15 +1162,12 @@ pub static CONFIG: Lazy<Config> = Lazy::new(|| {
     // // 备份现有配置
     // let backup_path = Config::backup_config(Config::get_default_config_path()).unwrap();
     // println!("Backup created at: {:?}", backup_path);
-    //
     // // 保存当前配置
     // config.save_default().unwrap();
     // println!("Configuration saved successfully!");
-    //
     // // 验证配置文件
     // Config::validate_config_file(Config::get_default_config_path()).unwrap();
     // println!("Configuration file is valid!");
-    //
     // // 重新加载配置
     // config.reload().unwrap();
     println!("Configuration reloaded!");

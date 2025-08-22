@@ -230,7 +230,7 @@ pub struct WMClient {
 }
 impl fmt::Display for WMClient {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Client {{ name: {}, class: {}, instance: {} min_a: {}, max_a: {}, cleint_fact: {}, x: {}, y: {}, w: {}, h: {}, old_x: {}, old_y: {}, old_w: {}, old_h: {}, base_w: {}, base_h: {}, inc_w: {}, inc_h: {}, max_w: {}, max_h: {}, min_w: {}, min_h: {}, hints_valid: {}, border_w: {}, old_border_w: {}, tags: {}, is_fixed: {}, is_floating: {}, is_urgent: {}, never_focus: {}, old_state: {}, is_fullscreen: {}, win: {} }}",
+        write!(f, "Client {{ name: {}, class: {}, instance: {} min_a: {}, max_a: {}, cleint_fact: {}, x: {}, y: {}, w: {}, h: {}, old_x: {}, old_y: {}, old_w: {}, old_h: {}, base_w: {}, base_h: {}, inc_w: {}, inc_h: {}, max_w: {}, max_h: {}, min_w: {}, min_h: {}, hints_valid: {}, border_w: {}, old_border_w: {}, tags: {}, is_fixed: {}, is_floating: {}, is_urgent: {}, never_focus: {}, old_state: {}, is_fullscreen: {}, win: 0x{:x} }}",
     self.name,
     self.class,
     self.instance,
@@ -513,6 +513,13 @@ impl Jwm {
         let s_w = x11rb_screen.width_in_pixels.into();
         let s_h = x11rb_screen.height_in_pixels.into();
         let x11rb_root = x11rb_screen.root;
+        info!(
+            "[JWM] roots: {:?}, x11rb_screen_num: {}, s_w: {}, s_h: {}",
+            x11rb_screen,
+            x11rb_screen_num,
+            s_w,
+            s_h
+        );
         let cursor_manager = CursorManager::new(&x11rb_conn).unwrap();
         let theme_manager = ThemeManager::create_default(&x11rb_conn, x11rb_screen).unwrap();
         Jwm {
@@ -6003,7 +6010,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = client_mut.win;
         info!(
-            "[setup_statusbar_window] Setting up statusbar window {}",
+            "[setup_statusbar_window] Setting up statusbar window 0x{:x}",
             win
         );
         // 设置状态栏窗口的事件监听
@@ -6016,7 +6023,7 @@ impl Jwm {
         // 同步操作
         self.x11rb_conn.flush()?;
         info!(
-            "[setup_statusbar_window] Statusbar window setup completed for {}",
+            "[setup_statusbar_window] Statusbar window setup completed for 0x{:x}",
             win
         );
         Ok(())
@@ -6802,6 +6809,7 @@ impl Jwm {
         // 使用 RandR 扩展替代 Xinerama
         match self.get_monitors_randr() {
             Ok(monitors) => {
+                info!("[updategeom] monitors: {:?}", monitors);
                 if monitors.is_empty() {
                     // 回退到单显示器模式
                     dirty = self.setup_single_monitor();
@@ -6968,17 +6976,14 @@ impl Jwm {
 
     fn get_monitors_randr(&self) -> Result<Vec<(i32, i32, i32, i32)>, Box<dyn std::error::Error>> {
         use x11rb::protocol::randr::ConnectionExt;
-
         // 首先检查 RandR 扩展是否可用
         let version = self.x11rb_conn.randr_query_version(1, 2)?;
         let _version_reply = version.reply()?;
-
         let resources = self
             .x11rb_conn
             .randr_get_screen_resources(self.x11rb_root)?
             .reply()?;
         let mut monitors = Vec::new();
-
         for crtc in resources.crtcs {
             let crtc_info = self.x11rb_conn.randr_get_crtc_info(crtc, 0)?.reply()?;
 
@@ -6991,9 +6996,6 @@ impl Jwm {
                 ));
             }
         }
-
-        // 去重，确保没有重复的几何区域
-        monitors.sort_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
         monitors.dedup();
 
         Ok(monitors)
