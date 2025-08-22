@@ -44,6 +44,340 @@ lazy_static::lazy_static! {
     pub static ref MOUSEMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub struct WMClient {
+    // === 基本信息 ===
+    pub name: String,
+    pub class: String,
+    pub instance: String,
+    pub win: Window,
+
+    // === 几何信息 ===
+    pub geometry: ClientGeometry,
+    pub size_hints: SizeHints,
+
+    // === 状态信息 ===
+    pub state: ClientState,
+
+    // === 链表和关联 ===
+    pub next: Option<Rc<RefCell<WMClient>>>,
+    pub stack_next: Option<Rc<RefCell<WMClient>>>,
+    pub mon: Option<Rc<RefCell<WMMonitor>>>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientGeometry {
+    // 当前位置和大小
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+
+    // 之前的位置和大小
+    pub old_x: i32,
+    pub old_y: i32,
+    pub old_w: i32,
+    pub old_h: i32,
+
+    // 边框
+    pub border_w: i32,
+    pub old_border_w: i32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct SizeHints {
+    pub base_w: i32,
+    pub base_h: i32,
+    pub inc_w: i32,
+    pub inc_h: i32,
+    pub max_w: i32,
+    pub max_h: i32,
+    pub min_w: i32,
+    pub min_h: i32,
+    pub min_aspect: f32,
+    pub max_aspect: f32,
+    pub hints_valid: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ClientState {
+    pub tags: u32,
+    pub client_fact: f32,
+    pub is_fixed: bool,
+    pub is_floating: bool,
+    pub is_urgent: bool,
+    pub never_focus: bool,
+    pub old_state: bool,
+    pub is_fullscreen: bool,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct WMMonitor {
+    // === 基本信息 ===
+    pub num: i32,
+    pub lt_symbol: String,
+
+    // === 布局信息 ===
+    pub layout: MonitorLayout,
+
+    // === 几何信息 ===
+    pub geometry: MonitorGeometry,
+
+    // === 标签和布局选择 ===
+    pub sel_tags: usize,
+    pub sel_lt: usize,
+    pub tag_set: [u32; 2],
+
+    // === 客户端链表 ===
+    pub clients: Option<Rc<RefCell<WMClient>>>,
+    pub sel: Option<Rc<RefCell<WMClient>>>,
+    pub stack: Option<Rc<RefCell<WMClient>>>,
+    pub next: Option<Rc<RefCell<WMMonitor>>>,
+
+    // === 布局和扩展 ===
+    pub lt: [Rc<LayoutEnum>; 2],
+    pub pertag: Option<Pertag>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MonitorLayout {
+    pub m_fact: f32,
+    pub n_master: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct MonitorGeometry {
+    // 显示器区域
+    pub m_x: i32,
+    pub m_y: i32,
+    pub m_w: i32,
+    pub m_h: i32,
+
+    // 工作区域
+    pub w_x: i32,
+    pub w_y: i32,
+    pub w_w: i32,
+    pub w_h: i32,
+}
+
+impl Default for ClientGeometry {
+    fn default() -> Self {
+        Self {
+            x: 0,
+            y: 0,
+            w: 0,
+            h: 0,
+            old_x: 0,
+            old_y: 0,
+            old_w: 0,
+            old_h: 0,
+            border_w: 0,
+            old_border_w: 0,
+        }
+    }
+}
+
+impl Default for SizeHints {
+    fn default() -> Self {
+        Self {
+            base_w: 0,
+            base_h: 0,
+            inc_w: 0,
+            inc_h: 0,
+            max_w: 0,
+            max_h: 0,
+            min_w: 0,
+            min_h: 0,
+            min_aspect: 0.0,
+            max_aspect: 0.0,
+            hints_valid: false,
+        }
+    }
+}
+
+impl Default for ClientState {
+    fn default() -> Self {
+        Self {
+            tags: 0,
+            client_fact: 0.0,
+            is_fixed: false,
+            is_floating: false,
+            is_urgent: false,
+            never_focus: false,
+            old_state: false,
+            is_fullscreen: false,
+        }
+    }
+}
+
+impl Default for MonitorLayout {
+    fn default() -> Self {
+        Self {
+            m_fact: 0.55, // 默认主区域比例
+            n_master: 1,  // 默认主窗口数量
+        }
+    }
+}
+
+impl Default for MonitorGeometry {
+    fn default() -> Self {
+        Self {
+            m_x: 0,
+            m_y: 0,
+            m_w: 0,
+            m_h: 0,
+            w_x: 0,
+            w_y: 0,
+            w_w: 0,
+            w_h: 0,
+        }
+    }
+}
+
+impl WMClient {
+    pub fn new() -> Self {
+        Self {
+            name: String::new(),
+            class: String::new(),
+            instance: String::new(),
+            win: 0,
+            geometry: ClientGeometry::default(),
+            size_hints: SizeHints::default(),
+            state: ClientState::default(),
+            next: None,
+            stack_next: None,
+            mon: None,
+        }
+    }
+
+    /// 检查客户端是否可见
+    pub fn is_visible(&self) -> bool {
+        let mon_rc = self.mon.as_ref().unwrap();
+        let mon_borrow = mon_rc.borrow();
+        (self.state.tags & mon_borrow.tag_set[mon_borrow.sel_tags]) > 0
+    }
+
+    /// 获取包含边框的总宽度
+    pub fn total_width(&self) -> i32 {
+        self.geometry.w + 2 * self.geometry.border_w
+    }
+
+    /// 获取包含边框的总高度
+    pub fn total_height(&self) -> i32 {
+        self.geometry.h + 2 * self.geometry.border_w
+    }
+
+    /// 检查是否为状态栏（需要CONFIG常量）
+    pub fn is_status_bar(&self) -> bool {
+        // 这里需要根据你的CONFIG实现来调整
+        // 示例实现：
+        self.name.contains("bar") || self.class.contains("bar")
+    }
+
+    /// 获取客户端矩形区域
+    pub fn rect(&self) -> (i32, i32, i32, i32) {
+        (
+            self.geometry.x,
+            self.geometry.y,
+            self.geometry.w,
+            self.geometry.h,
+        )
+    }
+
+    /// 设置客户端位置
+    pub fn set_position(&mut self, x: i32, y: i32) {
+        self.geometry.old_x = self.geometry.x;
+        self.geometry.old_y = self.geometry.y;
+        self.geometry.x = x;
+        self.geometry.y = y;
+    }
+
+    /// 设置客户端大小
+    pub fn set_size(&mut self, w: i32, h: i32) {
+        self.geometry.old_w = self.geometry.w;
+        self.geometry.old_h = self.geometry.h;
+        self.geometry.w = w;
+        self.geometry.h = h;
+    }
+}
+
+impl WMMonitor {
+    pub fn new() -> Self {
+        Self {
+            num: 0,
+            lt_symbol: String::new(),
+            layout: MonitorLayout::default(),
+            geometry: MonitorGeometry::default(),
+            sel_tags: 0,
+            sel_lt: 0,
+            tag_set: [0; 2],
+            clients: None,
+            sel: None,
+            stack: None,
+            next: None,
+            lt: [Rc::new(LayoutEnum::TILE), Rc::new(LayoutEnum::TILE)],
+            pertag: None,
+        }
+    }
+
+    /// 计算与给定矩形的交集面积
+    pub fn intersect_area(&self, x: i32, y: i32, w: i32, h: i32) -> i32 {
+        let geom = &self.geometry;
+        max(0, min(x + w, geom.w_x + geom.w_w) - max(x, geom.w_x))
+            * max(0, min(y + h, geom.w_y + geom.w_h) - max(y, geom.w_y))
+    }
+
+    /// 检查点是否在工作区域内
+    pub fn contains_point(&self, x: i32, y: i32) -> bool {
+        let geom = &self.geometry;
+        x >= geom.w_x && x < geom.w_x + geom.w_w && y >= geom.w_y && y < geom.w_y + geom.w_h
+    }
+
+    /// 获取工作区域矩形
+    pub fn work_area(&self) -> (i32, i32, i32, i32) {
+        let geom = &self.geometry;
+        (geom.w_x, geom.w_y, geom.w_w, geom.w_h)
+    }
+}
+
+// 简化的Display实现
+impl fmt::Display for WMClient {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Client {{ name: \"{}\", class: \"{}\", geometry: {}x{}+{}+{}, win: 0x{:x} }}",
+            self.name,
+            self.class,
+            self.geometry.w,
+            self.geometry.h,
+            self.geometry.x,
+            self.geometry.y,
+            self.win
+        )
+    }
+}
+
+impl fmt::Display for WMMonitor {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(
+            f,
+            "Monitor {{ num: {}, work_area: {}x{}+{}+{}, m_fact: {:.2} }}",
+            self.num,
+            self.geometry.w_w,
+            self.geometry.w_h,
+            self.geometry.w_x,
+            self.geometry.w_y,
+            self.layout.m_fact
+        )
+    }
+}
+
+impl fmt::Display for ClientGeometry {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{}x{}+{}+{}", self.w, self.h, self.x, self.y)
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct WMWindowGeom {
     pub x: u16,
@@ -177,6 +511,7 @@ impl LayoutEnum {
         self == &LayoutEnum::MONOCLE
     }
 }
+
 impl From<u32> for LayoutEnum {
     #[inline]
     fn from(value: u32) -> Self {
@@ -186,235 +521,6 @@ impl From<u32> for LayoutEnum {
             2 => LayoutEnum::MONOCLE,
             _ => LayoutEnum::ANY,
         }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct WMClient {
-    pub name: String,
-    pub class: String,
-    pub instance: String,
-    pub min_a: f32,
-    pub max_a: f32,
-    pub client_fact: f32,
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
-    pub old_x: i32,
-    pub old_y: i32,
-    pub old_w: i32,
-    pub old_h: i32,
-    pub base_w: i32,
-    pub base_h: i32,
-    pub inc_w: i32,
-    pub inc_h: i32,
-    pub max_w: i32,
-    pub max_h: i32,
-    pub min_w: i32,
-    pub min_h: i32,
-    pub hints_valid: bool,
-    pub border_w: i32,
-    pub old_border_w: i32,
-    pub tags: u32,
-    pub is_fixed: bool,
-    pub is_floating: bool,
-    pub is_urgent: bool,
-    pub never_focus: bool,
-    pub old_state: bool,
-    pub is_fullscreen: bool,
-    pub next: Option<Rc<RefCell<WMClient>>>,
-    pub stack_next: Option<Rc<RefCell<WMClient>>>,
-    pub mon: Option<Rc<RefCell<WMMonitor>>>,
-    pub win: Window,
-}
-impl fmt::Display for WMClient {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Client {{ name: {}, class: {}, instance: {} min_a: {}, max_a: {}, cleint_fact: {}, x: {}, y: {}, w: {}, h: {}, old_x: {}, old_y: {}, old_w: {}, old_h: {}, base_w: {}, base_h: {}, inc_w: {}, inc_h: {}, max_w: {}, max_h: {}, min_w: {}, min_h: {}, hints_valid: {}, border_w: {}, old_border_w: {}, tags: {}, is_fixed: {}, is_floating: {}, is_urgent: {}, never_focus: {}, old_state: {}, is_fullscreen: {}, win: 0x{:x} }}",
-    self.name,
-    self.class,
-    self.instance,
-    self.min_a,
-    self.max_a,
-    self.client_fact,
-    self.x,
-    self.y,
-    self.w,
-    self.h,
-    self.old_x,
-    self.old_y,
-    self.old_w,
-    self.old_h,
-    self.base_w,
-    self.base_h,
-    self.inc_w,
-    self.inc_h,
-    self.max_w,
-    self.max_h,
-    self.min_w,
-    self.min_h,
-    self.hints_valid,
-    self.border_w,
-    self.old_border_w,
-    self.tags,
-    self.is_fixed,
-    self.is_floating,
-    self.is_urgent,
-    self.never_focus,
-    self.old_state,
-    self.is_fullscreen,
-    self.win,
-        )
-    }
-}
-impl WMClient {
-    #[allow(unused)]
-    pub fn new() -> Self {
-        Self {
-            name: String::new(),
-            class: String::new(),
-            instance: String::new(),
-            min_a: 0.,
-            max_a: 0.,
-            client_fact: 0.,
-            x: 0,
-            y: 0,
-            w: 0,
-            h: 0,
-            old_x: 0,
-            old_y: 0,
-            old_w: 0,
-            old_h: 0,
-            base_w: 0,
-            base_h: 0,
-            inc_w: 0,
-            inc_h: 0,
-            max_w: 0,
-            max_h: 0,
-            min_w: 0,
-            min_h: 0,
-            hints_valid: false,
-            border_w: 0,
-            old_border_w: 0,
-            tags: 0,
-            is_fixed: false,
-            is_floating: false,
-            is_urgent: false,
-            never_focus: false,
-            old_state: false,
-            is_fullscreen: false,
-            next: None,
-            stack_next: None,
-            mon: None,
-            win: 0,
-        }
-    }
-
-    pub fn isvisible(&self) -> bool {
-        // info!("[ISVISIBLE]");
-        let mon_rc = match self.mon {
-            Some(ref m) => m,
-            _ => return false,
-        };
-        let mon_borrow = mon_rc.borrow();
-        (self.tags & mon_borrow.tag_set[mon_borrow.sel_tags]) > 0
-    }
-
-    pub fn width(&self) -> i32 {
-        self.w + 2 * self.border_w
-    }
-
-    pub fn height(&self) -> i32 {
-        self.h + 2 * self.border_w
-    }
-
-    pub fn is_status_bar(&self) -> bool {
-        return ((self.name == CONFIG.status_bar_base_name())
-            || (self.name == CONFIG.status_bar_instance_0())
-            || (self.name == CONFIG.status_bar_instance_1()))
-            && ((self.class == CONFIG.status_bar_instance_0()
-                && self.instance == CONFIG.status_bar_instance_0())
-                || (self.class == CONFIG.status_bar_instance_1()
-                    && self.instance == CONFIG.status_bar_instance_1()));
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct WMMonitor {
-    pub lt_symbol: String,
-    pub m_fact: f32,
-    pub n_master: u32,
-    pub num: i32,
-    pub m_x: i32,
-    pub m_y: i32,
-    pub m_w: i32,
-    pub m_h: i32,
-    pub w_x: i32,
-    pub w_y: i32,
-    pub w_w: i32,
-    pub w_h: i32,
-    pub sel_tags: usize,
-    pub sel_lt: usize,
-    pub tag_set: [u32; 2],
-    pub clients: Option<Rc<RefCell<WMClient>>>,
-    pub sel: Option<Rc<RefCell<WMClient>>>,
-    pub stack: Option<Rc<RefCell<WMClient>>>,
-    pub next: Option<Rc<RefCell<WMMonitor>>>,
-    pub lt: [Rc<LayoutEnum>; 2],
-    pub pertag: Option<Pertag>,
-}
-impl WMMonitor {
-    #[allow(unused)]
-    pub fn new() -> Self {
-        Self {
-            lt_symbol: String::new(),
-            m_fact: 0.0,
-            n_master: 0,
-            num: 0,
-            m_x: 0,
-            m_y: 0,
-            m_w: 0,
-            m_h: 0,
-            w_x: 0,
-            w_y: 0,
-            w_w: 0,
-            w_h: 0,
-            sel_tags: 0,
-            sel_lt: 0,
-            tag_set: [0; 2],
-            clients: None,
-            sel: None,
-            stack: None,
-            next: None,
-            lt: [Rc::new(LayoutEnum::TILE), Rc::new(LayoutEnum::TILE)],
-            pertag: None,
-        }
-    }
-    pub fn intersect(&self, x: i32, y: i32, w: i32, h: i32) -> i32 {
-        max(0, min(x + w, self.w_x + self.w_w) - max(x, self.w_x))
-            * max(0, min(y + h, self.w_y + self.w_h) - max(y, self.w_y))
-    }
-}
-impl fmt::Display for WMMonitor {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "Monitor {{ ltsymbol: {}, m_fact: {}, n_master: {}, num: {}, m_x: {}, m_y: {}, m_w: {}, m_h: {}, wx: {}, w_y: {}, w_w: {}, w_h: {}, sel_tags: {}, sel_lt: {}, tag_set: [{}, {}], }}",
-               self.lt_symbol,
-               self.m_fact,
-               self.n_master,
-               self.num,
-               self.m_x,
-               self.m_y,
-               self.m_w,
-               self.m_h,
-               self.w_x,
-               self.w_y,
-               self.w_w,
-               self.w_h,
-               self.sel_tags,
-               self.sel_lt,
-               self.tag_set[0],
-               self.tag_set[1],
-        )
     }
 }
 
@@ -617,7 +723,7 @@ impl Jwm {
         info!("[applyrules]");
         // rule matching
         let mut c = c.borrow_mut();
-        c.is_floating = false;
+        c.state.is_floating = false;
         if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, c.win as u32) {
             c.instance = inst;
             c.class = cls;
@@ -636,8 +742,8 @@ impl Jwm {
                         "[############################### applyrules] class: {}, instance: {}, name: {}",
                         c.class, c.instance, c.name
                     );
-                c.is_floating = r.is_floating;
-                c.tags |= r.tags as u32;
+                c.state.is_floating = r.is_floating;
+                c.state.tags |= r.tags as u32;
                 let mut m = self.mons.clone();
                 while let Some(ref m_opt) = m {
                     if m_opt.borrow_mut().num == r.monitor {
@@ -651,8 +757,8 @@ impl Jwm {
                 }
             }
         }
-        let condition = c.tags & CONFIG.tagmask();
-        c.tags = if condition > 0 {
+        let condition = c.state.tags & CONFIG.tagmask();
+        c.state.tags = if condition > 0 {
             condition
         } else {
             let sel_tags = c.mon.as_ref().unwrap().borrow().sel_tags;
@@ -660,7 +766,7 @@ impl Jwm {
         };
         info!(
             "[applyrules] class: {}, instance: {}, name: {}, tags: {}",
-            c.class, c.instance, c.name, c.tags
+            c.class, c.instance, c.name, c.state.tags
         );
     }
 
@@ -675,38 +781,40 @@ impl Jwm {
                 None => {
                     // 没有 WM_NORMAL_HINTS 属性，使用默认值
                     let mut c_mut = c.borrow_mut();
-                    c_mut.hints_valid = false;
+                    c_mut.size_hints.hints_valid = false;
                     return Ok(());
                 }
             };
 
         let mut c_mut = c.borrow_mut();
         if let Some((w, h)) = reply.base_size {
-            c_mut.base_w = w;
-            c_mut.base_h = h;
+            c_mut.size_hints.base_w = w;
+            c_mut.size_hints.base_h = h;
         }
         if let Some((w, h)) = reply.size_increment {
-            c_mut.inc_w = w;
-            c_mut.inc_h = h;
+            c_mut.size_hints.inc_w = w;
+            c_mut.size_hints.inc_h = h;
         }
         if let Some((w, h)) = reply.max_size {
-            c_mut.max_w = w;
-            c_mut.max_h = h;
+            c_mut.size_hints.max_w = w;
+            c_mut.size_hints.max_h = h;
         }
         if let Some((w, h)) = reply.min_size {
-            c_mut.min_w = w;
-            c_mut.min_h = h;
+            c_mut.size_hints.min_w = w;
+            c_mut.size_hints.min_h = h;
         }
         if let Some((min_aspect, max_aspect)) = reply.aspect {
-            c_mut.min_a = min_aspect.numerator as f32 / min_aspect.denominator as f32;
-            c_mut.max_a = max_aspect.numerator as f32 / max_aspect.denominator as f32;
+            c_mut.size_hints.min_aspect =
+                min_aspect.numerator as f32 / min_aspect.denominator as f32;
+            c_mut.size_hints.max_aspect =
+                max_aspect.numerator as f32 / max_aspect.denominator as f32;
         }
-        c_mut.is_fixed = (c_mut.max_w > 0)
-            && (c_mut.max_h > 0)
-            && (c_mut.max_w == c_mut.min_w)
-            && (c_mut.max_h == c_mut.min_h);
+        c_mut.state.is_fixed = (c_mut.size_hints.max_w > 0)
+            && (c_mut.size_hints.max_h > 0)
+            && (c_mut.size_hints.max_w == c_mut.size_hints.min_w)
+            && (c_mut.size_hints.max_h == c_mut.size_hints.min_h);
 
-        c_mut.hints_valid = true;
+        c_mut.size_hints.hints_valid = true;
 
         Ok(())
     }
@@ -728,8 +836,8 @@ impl Jwm {
         // Boundary checks
         if interact {
             let cc = c.as_ref().borrow(); // Borrow immutably for reading
-            let client_total_width = *w + 2 * cc.border_w; // Use desired w for this check
-            let client_total_height = *h + 2 * cc.border_w; // Use desired h for this check
+            let client_total_width = *w + 2 * cc.geometry.border_w; // Use desired w for this check
+            let client_total_height = *h + 2 * cc.geometry.border_w; // Use desired h for this check
 
             if *x > self.s_w {
                 // Off right edge
@@ -750,12 +858,12 @@ impl Jwm {
         } else {
             let cc = c.as_ref().borrow(); // Borrow immutably for reading
             let mon_borrow = cc.mon.as_ref().unwrap().borrow();
-            let wx = mon_borrow.w_x;
-            let wy = mon_borrow.w_y;
-            let ww = mon_borrow.w_w;
-            let wh = mon_borrow.w_h;
-            let client_total_width = *w + 2 * cc.border_w; // Use desired w
-            let client_total_height = *h + 2 * cc.border_w; // Use desired h
+            let wx = mon_borrow.geometry.w_x;
+            let wy = mon_borrow.geometry.w_y;
+            let ww = mon_borrow.geometry.w_w;
+            let wh = mon_borrow.geometry.w_h;
+            let client_total_width = *w + 2 * cc.geometry.border_w; // Use desired w
+            let client_total_height = *h + 2 * cc.geometry.border_w; // Use desired h
 
             if *x >= wx + ww {
                 // Client's left edge past monitor's right edge
@@ -775,10 +883,10 @@ impl Jwm {
             }
         }
 
-        let is_floating = { c.as_ref().borrow().is_floating };
+        let is_floating = { c.as_ref().borrow().state.is_floating };
 
         if CONFIG.behavior().resize_hints || is_floating {
-            if !c.as_ref().borrow().hints_valid {
+            if !c.as_ref().borrow().size_hints.hints_valid {
                 // Check immutable borrow first
                 let _ = self.updatesizehints(c); // This will mutably borrow internally
             }
@@ -791,45 +899,45 @@ impl Jwm {
             let mut current_h = *h;
 
             // 1. Subtract base size to get the dimensions that increments apply to.
-            current_w -= cc.base_w;
-            current_h -= cc.base_h;
+            current_w -= cc.size_hints.base_w;
+            current_h -= cc.size_hints.base_h;
 
             // 2. Apply resize increments.
-            if cc.inc_w > 0 {
-                current_w -= current_w % cc.inc_w;
+            if cc.size_hints.inc_w > 0 {
+                current_w -= current_w % cc.size_hints.inc_w;
             }
-            if cc.inc_h > 0 {
-                current_h -= current_h % cc.inc_h;
+            if cc.size_hints.inc_h > 0 {
+                current_h -= current_h % cc.size_hints.inc_h;
             }
 
             // 3. Add base size back before aspect ratio and min/max checks.
-            current_w += cc.base_w;
-            current_h += cc.base_h;
+            current_w += cc.size_hints.base_w;
+            current_h += cc.size_hints.base_h;
 
             // 4. Apply aspect ratio limits.
             // cc.mina is min_aspect.y / min_aspect.x (target H/W)
             // cc.maxa is max_aspect.x / max_aspect.y (target W/H)
-            if cc.min_a > 0.0 && cc.max_a > 0.0 {
-                if cc.max_a < current_w as f32 / current_h as f32 {
+            if cc.size_hints.min_aspect > 0.0 && cc.size_hints.max_aspect > 0.0 {
+                if cc.size_hints.max_aspect < current_w as f32 / current_h as f32 {
                     // Too wide (current W/H > max W/H) -> Adjust W
-                    current_w = (current_h as f32 * cc.max_a + 0.5) as i32;
-                } else if current_h as f32 / current_w as f32 > cc.min_a {
+                    current_w = (current_h as f32 * cc.size_hints.max_aspect + 0.5) as i32;
+                } else if current_h as f32 / current_w as f32 > cc.size_hints.min_aspect {
                     // Too tall (current H/W > min H/W) -> Adjust H
-                    current_h = (current_w as f32 * cc.min_a + 0.5) as i32;
+                    current_h = (current_w as f32 * cc.size_hints.min_aspect + 0.5) as i32;
                 }
             }
 
             // 5. Enforce min and max dimensions.
             // Ensure client area is not smaller than min_width/height.
-            current_w = current_w.max(cc.min_w);
-            current_h = current_h.max(cc.min_h);
+            current_w = current_w.max(cc.size_hints.min_w);
+            current_h = current_h.max(cc.size_hints.min_h);
 
             // Ensure client area is not larger than max_width/height if specified.
-            if cc.max_w > 0 {
-                current_w = current_w.min(cc.max_w);
+            if cc.size_hints.max_w > 0 {
+                current_w = current_w.min(cc.size_hints.max_w);
             }
-            if cc.max_h > 0 {
-                current_h = current_h.min(cc.max_h);
+            if cc.size_hints.max_h > 0 {
+                current_h = current_h.min(cc.size_hints.max_h);
             }
 
             *w = current_w;
@@ -838,10 +946,10 @@ impl Jwm {
 
         // Check if final geometry is different from the client's current geometry
         let client_now = c.as_ref().borrow();
-        return *x != client_now.x
-            || *y != client_now.y
-            || *w != client_now.w
-            || *h != client_now.h;
+        return *x != client_now.geometry.x
+            || *y != client_now.geometry.y
+            || *w != client_now.geometry.w
+            || *h != client_now.geometry.h;
     }
 
     pub fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -1025,7 +1133,7 @@ impl Jwm {
         if e.type_ == self.atoms._NET_WM_STATE {
             // 检查是否是全屏状态变更
             if self.is_fullscreen_state_message(e) {
-                let isfullscreen = { c.borrow().is_fullscreen };
+                let isfullscreen = { c.borrow().state.is_fullscreen };
 
                 // 解析操作类型
                 let action = self.get_client_message_long(e, 0)?;
@@ -1041,7 +1149,7 @@ impl Jwm {
         }
         // 检查是否是激活窗口消息
         else if e.type_ == self.atoms._NET_ACTIVE_WINDOW {
-            let is_urgent = { c.borrow().is_urgent };
+            let is_urgent = { c.borrow().state.is_urgent };
             let sel = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
             if !Self::are_equal_rc(&Some(c.clone()), &sel) && !is_urgent {
                 self.seturgent(c, true);
@@ -1143,12 +1251,17 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let monitor_geometry = {
             let m_borrow = monitor.borrow();
-            (m_borrow.m_x, m_borrow.m_y, m_borrow.m_w, m_borrow.m_h)
+            (
+                m_borrow.geometry.m_x,
+                m_borrow.geometry.m_y,
+                m_borrow.geometry.m_w,
+                m_borrow.geometry.m_h,
+            )
         };
         let mut c = monitor.borrow().clients.clone();
         while let Some(ref client_rc) = c {
             // 检查是否是全屏客户端
-            let is_fullscreen = { client_rc.borrow().is_fullscreen };
+            let is_fullscreen = { client_rc.borrow().state.is_fullscreen };
             if is_fullscreen {
                 // 调整全屏客户端到新的显示器尺寸
                 let _ = self.resizeclient(
@@ -1170,11 +1283,11 @@ impl Jwm {
         let event = ConfigureNotifyEvent {
             event: c.win,
             window: c.win,
-            x: c.x as i16,
-            y: c.y as i16,
-            width: c.w as u16,
-            height: c.h as u16,
-            border_width: c.border_w as u16,
+            x: c.geometry.x as i16,
+            y: c.geometry.y as i16,
+            width: c.geometry.w as u16,
+            height: c.geometry.h as u16,
+            border_width: c.geometry.border_w as u16,
             above_sibling: 0,
             override_redirect: false,
             response_type: CONFIGURE_NOTIFY_EVENT,
@@ -1340,7 +1453,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[setfullscreen]");
         use x11rb::wrapper::ConnectionExt;
-        let isfullscreen = { c.borrow_mut().is_fullscreen };
+        let isfullscreen = { c.borrow_mut().state.is_fullscreen };
         let win = { c.borrow_mut().win };
         if fullscreen && !isfullscreen {
             self.x11rb_conn.change_property32(
@@ -1352,11 +1465,11 @@ impl Jwm {
             )?;
             {
                 let mut c = c.borrow_mut();
-                c.is_fullscreen = true;
-                c.old_state = c.is_floating;
-                c.old_border_w = c.border_w;
-                c.border_w = 0;
-                c.is_floating = true;
+                c.state.is_fullscreen = true;
+                c.state.old_state = c.state.is_floating;
+                c.geometry.old_border_w = c.geometry.border_w;
+                c.geometry.border_w = 0;
+                c.state.is_floating = true;
             }
             let (mx, my, mw, mh) = {
                 let c_mon = &c.borrow().mon;
@@ -1377,14 +1490,14 @@ impl Jwm {
             )?;
             {
                 let mut c = c.borrow_mut();
-                c.is_fullscreen = false;
-                c.is_floating = c.old_state;
-                c.border_w = c.old_border_w;
-                c.x = c.old_x;
-                c.y = c.old_y;
+                c.state.is_fullscreen = false;
+                c.state.is_floating = c.state.old_state;
+                c.geometry.border_w = c.geometry.old_border_w;
+                c.geometry.x = c.geometry.old_x;
+                c.geometry.y = c.geometry.old_y;
                 // println!("line: {}, {}", line!(), c.y);
-                c.w = c.old_w;
-                c.h = c.old_h;
+                c.geometry.w = c.geometry.old_w;
+                c.geometry.h = c.geometry.old_h;
             }
             {
                 let mut c = c.borrow_mut();
@@ -1407,15 +1520,15 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[resizeclient] {x}, {y}, {w}, {h}");
         // 保存旧的位置和大小
-        c.old_x = c.x;
-        c.old_y = c.y;
-        c.old_w = c.w;
-        c.old_h = c.h;
+        c.geometry.old_x = c.geometry.x;
+        c.geometry.old_y = c.geometry.y;
+        c.geometry.old_w = c.geometry.w;
+        c.geometry.old_h = c.geometry.h;
         // 更新新的位置和大小
-        c.x = x;
-        c.y = y;
-        c.w = w;
-        c.h = h;
+        c.geometry.x = x;
+        c.geometry.y = y;
+        c.geometry.w = w;
+        c.geometry.h = h;
         // 构建配置值向量
         let values = ConfigureWindowAux::new()
             .x(x)
@@ -1739,10 +1852,10 @@ impl Jwm {
         e: &ConfigureRequestEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut client_mut = client_rc.borrow_mut();
-        let is_floating = client_mut.is_floating;
+        let is_floating = client_mut.state.is_floating;
 
         if e.value_mask.contains(ConfigWindow::BORDER_WIDTH) {
-            client_mut.border_w = e.border_width as i32;
+            client_mut.geometry.border_w = e.border_width as i32;
         }
 
         if is_floating {
@@ -4342,8 +4455,8 @@ impl Jwm {
         // info!("[nexttiled]");
         while let Some(ref client_rc) = client_rc_opt.clone() {
             let client_borrow = client_rc.borrow();
-            let is_floating = client_borrow.is_floating;
-            let isvisible = client_borrow.isvisible();
+            let is_floating = client_borrow.state.is_floating;
+            let isvisible = client_borrow.is_visible();
             if is_floating || !isvisible {
                 let next = client_borrow.next.clone();
                 client_rc_opt = next;
@@ -4569,13 +4682,13 @@ impl Jwm {
         client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut client = client_rc.borrow_mut();
-        if !client.is_floating {
+        if !client.state.is_floating {
             // 获取transient_for属性
             let transient_for = self.get_transient_for_hint(client.win)?;
             if let Some(parent_window) = transient_for {
                 // 检查父窗口是否是我们管理的客户端
                 if self.wintoclient(parent_window).is_some() {
-                    client.is_floating = true;
+                    client.state.is_floating = true;
                     debug!(
                         "Window {} became floating due to transient_for: {}",
                         client.win, parent_window
@@ -4595,7 +4708,7 @@ impl Jwm {
         client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut client = client_rc.borrow_mut();
-        client.hints_valid = false;
+        client.size_hints.hints_valid = false;
         debug!(
             "Normal hints changed for window {}, invalidating cache",
             client.win
@@ -4661,7 +4774,7 @@ impl Jwm {
             }
         };
         // 2. 全屏检查
-        if client_rc.borrow().is_fullscreen {
+        if client_rc.borrow().state.is_fullscreen {
             debug!("Cannot move fullscreen window");
             return Ok(());
         }
@@ -4670,7 +4783,7 @@ impl Jwm {
         // 保存窗口开始移动时的信息
         let (original_x, original_y, window_id) = {
             let client = client_rc.borrow();
-            (client.x, client.y, client.win)
+            (client.geometry.x, client.geometry.y, client.win)
         };
         // 4. 抓取鼠标指针 - 添加错误处理和同步
         let cursor = self
@@ -4812,10 +4925,10 @@ impl Jwm {
         let (mon_wx, mon_wy, mon_ww, mon_wh) = {
             let selmon_borrow = self.sel_mon.as_ref().unwrap().borrow();
             (
-                selmon_borrow.w_x,
-                selmon_borrow.w_y,
-                selmon_borrow.w_w,
-                selmon_borrow.w_h,
+                selmon_borrow.geometry.w_x,
+                selmon_borrow.geometry.w_y,
+                selmon_borrow.geometry.w_w,
+                selmon_borrow.geometry.w_h,
             )
         };
 
@@ -4831,13 +4944,13 @@ impl Jwm {
         let should_move = {
             let client = client_rc.borrow();
             let monitor = client.mon.as_ref().unwrap().borrow();
-            client.is_floating || !monitor.lt[monitor.sel_lt].is_tile()
+            client.state.is_floating || !monitor.lt[monitor.sel_lt].is_tile()
         };
 
         if should_move {
             let (window_w, window_h) = {
                 let client = client_rc.borrow();
-                (client.w, client.h)
+                (client.geometry.w, client.geometry.h)
             };
             self.resize(client_rc, new_x, new_y, window_w, window_h, true);
         }
@@ -4855,8 +4968,8 @@ impl Jwm {
         mon_ww: i32,
         mon_wh: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let client_total_width = { client_rc.borrow().width() };
-        let client_total_height = { client_rc.borrow().height() };
+        let client_total_width = { client_rc.borrow().total_width() };
+        let client_total_height = { client_rc.borrow().total_height() };
         let snap_distance = CONFIG.snap() as i32;
 
         // 吸附到左边缘
@@ -4888,7 +5001,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (is_floating, current_x, current_y) = {
             let client = client_rc.borrow();
-            (client.is_floating, client.x, client.y)
+            (client.state.is_floating, client.geometry.x, client.geometry.y)
         };
 
         let current_layout_is_tile = {
@@ -4920,7 +5033,12 @@ impl Jwm {
         // 检查窗口移动后是否跨越了显示器边界
         let (final_x, final_y, final_w, final_h) = {
             let c_borrow = client_rc.borrow();
-            (c_borrow.x, c_borrow.y, c_borrow.w, c_borrow.h)
+            (
+                c_borrow.geometry.x,
+                c_borrow.geometry.y,
+                c_borrow.geometry.w,
+                c_borrow.geometry.h,
+            )
         };
 
         let target_monitor_opt = self.recttomon(final_x, final_y, final_w, final_h);
@@ -4950,7 +5068,7 @@ impl Jwm {
             }
         };
         // 2. 全屏检查
-        if client_rc.borrow().is_fullscreen {
+        if client_rc.borrow().state.is_fullscreen {
             debug!("Cannot resize fullscreen window");
             return Ok(());
         }
@@ -4960,12 +5078,12 @@ impl Jwm {
         let (original_x, original_y, border_width, window_id, current_w, current_h) = {
             let client = client_rc.borrow();
             (
-                client.x,
-                client.y,
-                client.border_w,
+                client.geometry.x,
+                client.geometry.y,
+                client.geometry.border_w,
                 client.win,
-                client.w,
-                client.h,
+                client.geometry.w,
+                client.geometry.h,
             )
         };
         // 4. 抓取鼠标指针
@@ -5073,7 +5191,7 @@ impl Jwm {
         let should_resize = {
             let client = client_rc.borrow();
             let monitor = client.mon.as_ref().unwrap().borrow();
-            client.is_floating || !monitor.lt[monitor.sel_lt].is_tile()
+            client.state.is_floating || !monitor.lt[monitor.sel_lt].is_tile()
         };
 
         if should_resize {
@@ -5095,9 +5213,9 @@ impl Jwm {
             let client = client_rc.borrow();
             let monitor = client.mon.as_ref().unwrap().borrow();
             (
-                client.is_floating,
-                client.w,
-                client.h,
+                client.state.is_floating,
+                client.geometry.w,
+                client.geometry.h,
                 monitor.lt[monitor.sel_lt].is_tile(),
             )
         };
@@ -5125,7 +5243,7 @@ impl Jwm {
             let client = self.get_selected_client()?;
             if let Some(ref client_rc) = client {
                 let c = client_rc.borrow();
-                (c.w, c.h)
+                (c.geometry.w, c.geometry.h)
             } else {
                 return Ok(());
             }
@@ -5298,7 +5416,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let client_mut = c.borrow();
         let data: [u32; 2] = [
-            client_mut.tags,
+            client_mut.state.tags,
             client_mut.mon.as_ref().unwrap().borrow().num as u32,
         ];
         use x11rb::wrapper::ConnectionExt;
@@ -5511,7 +5629,7 @@ impl Jwm {
 
         // 检查客户端是否可见，如果不可见则寻找可见的客户端
         let is_visible = match c_opt.clone() {
-            Some(c_rc) => c_rc.borrow().isvisible(),
+            Some(c_rc) => c_rc.borrow().is_visible(),
             None => false,
         };
 
@@ -5542,7 +5660,7 @@ impl Jwm {
         if let Some(ref sel_mon_opt) = self.sel_mon {
             let mut c_opt = sel_mon_opt.borrow().stack.clone();
             while let Some(c_rc) = c_opt.clone() {
-                if c_rc.borrow().isvisible() {
+                if c_rc.borrow().is_visible() {
                     return Some(c_rc);
                 }
                 c_opt = c_rc.borrow().stack_next.clone();
@@ -5574,7 +5692,7 @@ impl Jwm {
             }
         }
         // 清除紧急状态
-        if c_rc.borrow().is_urgent {
+        if c_rc.borrow().state.is_urgent {
             self.seturgent(c_rc, false);
         }
         // 重新排列堆栈顺序
@@ -5626,7 +5744,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut c_mut = c.borrow_mut();
 
-        if !c_mut.never_focus {
+        if !c_mut.state.never_focus {
             self.x11rb_conn.set_input_focus(
                 InputFocus::POINTER_ROOT,
                 c_mut.win,
@@ -5688,7 +5806,8 @@ impl Jwm {
         // assign tags of target monitor.
         let sel_tags = { m.as_ref().unwrap().borrow().sel_tags };
         {
-            c.as_ref().unwrap().borrow_mut().tags = m.as_ref().unwrap().borrow().tag_set[sel_tags]
+            c.as_ref().unwrap().borrow_mut().state.tags =
+                m.as_ref().unwrap().borrow().tag_set[sel_tags]
         };
         self.attach(c.clone());
         self.attachstack(c.clone());
@@ -5799,16 +5918,16 @@ impl Jwm {
             // 设置窗口 ID
             client_mut.win = w;
             // 从传入的 XWindowAttributes 中获取初始的几何信息和边框宽度
-            client_mut.x = geom.x.into();
-            client_mut.old_x = geom.x.into();
-            client_mut.y = geom.y.into();
-            client_mut.old_y = geom.y.into();
-            client_mut.w = geom.width.into();
-            client_mut.old_w = geom.width.into();
-            client_mut.h = geom.height.into();
-            client_mut.old_h = geom.height.into();
-            client_mut.old_border_w = geom.border_width.into();
-            client_mut.client_fact = 1.0;
+            client_mut.geometry.x = geom.x.into();
+            client_mut.geometry.old_x = geom.x.into();
+            client_mut.geometry.y = geom.y.into();
+            client_mut.geometry.old_y = geom.y.into();
+            client_mut.geometry.w = geom.width.into();
+            client_mut.geometry.old_w = geom.width.into();
+            client_mut.geometry.h = geom.height.into();
+            client_mut.geometry.old_h = geom.height.into();
+            client_mut.geometry.old_border_w = geom.border_width.into();
+            client_mut.state.client_fact = 1.0;
 
             // 获取并设置窗口标题
             self.updatetitle(&mut client_mut);
@@ -5859,8 +5978,8 @@ impl Jwm {
         // 1. 设置边框宽度
         {
             let mut client_mut = client_rc.borrow_mut();
-            client_mut.border_w = CONFIG.border_px() as i32;
-            self.set_window_border_width(win, client_mut.border_w as u32)?;
+            client_mut.geometry.border_w = CONFIG.border_px() as i32;
+            self.set_window_border_width(win, client_mut.geometry.border_w as u32)?;
         }
 
         // 2. 设置边框颜色为"正常"状态的颜色
@@ -5875,13 +5994,13 @@ impl Jwm {
         // 4. 设置窗口在屏幕外的临时位置（避免闪烁）
         {
             let client_borrow = client_rc.borrow();
-            let offscreen_x = client_borrow.x + 2 * self.s_w; // 移到屏幕外
+            let offscreen_x = client_borrow.geometry.x + 2 * self.s_w; // 移到屏幕外
 
             let aux = ConfigureWindowAux::new()
                 .x(offscreen_x)
-                .y(client_borrow.y)
-                .width(client_borrow.w as u32)
-                .height(client_borrow.h as u32);
+                .y(client_borrow.geometry.y)
+                .width(client_borrow.geometry.w as u32)
+                .height(client_borrow.geometry.h as u32);
 
             self.x11rb_conn.configure_window(win, &aux)?;
         }
@@ -5959,7 +6078,7 @@ impl Jwm {
             self.arrange(Some(client_monitor_rc));
 
             // 设置焦点到新窗口（如果它不是 never_focus）
-            if !client_rc.borrow().never_focus {
+            if !client_rc.borrow().state.never_focus {
                 let _ = self.focus(Some(client_rc.clone()));
                 info!(
                     "[handle_new_client_focus] Focused new client: {}",
@@ -6053,7 +6172,7 @@ impl Jwm {
                     let mut client_mut = client_rc.borrow_mut();
                     let parent_borrow = parent_client.borrow();
                     client_mut.mon = parent_borrow.mon.clone();
-                    client_mut.tags = parent_borrow.tags;
+                    client_mut.state.tags = parent_borrow.state.tags;
 
                     info!(
                         "[handle_transient_for] Client {} is transient for {}",
@@ -6151,10 +6270,10 @@ impl Jwm {
             monitor_id = self.determine_statusbar_monitor(&mut client_mut);
             info!("[manage_statusbar] monitor_id: {}", monitor_id);
             client_mut.mon = self.get_monitor_by_id(monitor_id);
-            client_mut.never_focus = true;
-            client_mut.is_floating = true;
-            client_mut.tags = CONFIG.tagmask(); // 在所有标签可见
-            client_mut.border_w = CONFIG.border_px() as i32;
+            client_mut.state.never_focus = true;
+            client_mut.state.is_floating = true;
+            client_mut.state.tags = CONFIG.tagmask(); // 在所有标签可见
+            client_mut.geometry.border_w = CONFIG.border_px() as i32;
 
             // 调整状态栏位置（通常在顶部）
             self.position_statusbar(&mut client_mut, monitor_id);
@@ -6221,16 +6340,19 @@ impl Jwm {
             let monitor_borrow = monitor.borrow();
 
             // 将状态栏放在显示器顶部
-            client_mut.x = monitor_borrow.m_x;
-            client_mut.y = monitor_borrow.m_y;
-            client_mut.w = monitor_borrow.m_w;
+            client_mut.geometry.x = monitor_borrow.geometry.m_x;
+            client_mut.geometry.y = monitor_borrow.geometry.m_y;
+            client_mut.geometry.w = monitor_borrow.geometry.m_w;
             // 高度由 status bar 自己决定，或使用默认值
-            if client_mut.h <= 0 {
-                client_mut.h = 30;
+            if client_mut.geometry.h <= 0 {
+                client_mut.geometry.h = 30;
             }
             info!(
                 "[position_statusbar] Positioned at ({}, {}) {}x{}",
-                client_mut.x, client_mut.y, client_mut.w, client_mut.h
+                client_mut.geometry.x,
+                client_mut.geometry.y,
+                client_mut.geometry.w,
+                client_mut.geometry.h
             );
         }
     }
@@ -6266,12 +6388,13 @@ impl Jwm {
 
         if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
             let statusbar_borrow = statusbar.borrow();
-            let offset = statusbar_borrow.y + statusbar_borrow.h + CONFIG.status_bar_pad();
+            let offset =
+                statusbar_borrow.geometry.y + statusbar_borrow.geometry.h + CONFIG.status_bar_pad();
             info!(
                 "[client_y_offset] Monitor {}: offset = {} (statusbar_h: {} + pad: {})",
                 monitor_id,
                 offset,
-                statusbar_borrow.h,
+                statusbar_borrow.geometry.h,
                 CONFIG.status_bar_pad()
             );
             return offset.max(0);
@@ -6289,38 +6412,38 @@ impl Jwm {
                 let mut statusbar_mut = statusbar.borrow_mut();
                 let mut changed = false;
                 // 确保状态栏在显示器范围内
-                if statusbar_mut.x != monitor_borrow.m_x {
+                if statusbar_mut.geometry.x != monitor_borrow.geometry.m_x {
                     info!(
                         "[validate_statusbar_geometry] Correcting statusbar X: {} -> {}",
-                        statusbar_mut.x, monitor_borrow.m_x
+                        statusbar_mut.geometry.x, monitor_borrow.geometry.m_x
                     );
-                    statusbar_mut.x = monitor_borrow.m_x;
+                    statusbar_mut.geometry.x = monitor_borrow.geometry.m_x;
                     changed = true;
                 }
-                if statusbar_mut.y != monitor_borrow.m_y {
+                if statusbar_mut.geometry.y != monitor_borrow.geometry.m_y {
                     info!(
                         "[validate_statusbar_geometry] Correcting statusbar Y: {} -> {}",
-                        statusbar_mut.y, monitor_borrow.m_y
+                        statusbar_mut.geometry.y, monitor_borrow.geometry.m_y
                     );
-                    statusbar_mut.y = monitor_borrow.m_y;
+                    statusbar_mut.geometry.y = monitor_borrow.geometry.m_y;
                     changed = true;
                 }
-                if statusbar_mut.w != monitor_borrow.m_w {
+                if statusbar_mut.geometry.w != monitor_borrow.geometry.m_w {
                     info!(
                         "[validate_statusbar_geometry] Correcting statusbar width: {} -> {}",
-                        statusbar_mut.w, monitor_borrow.m_w
+                        statusbar_mut.geometry.w, monitor_borrow.geometry.m_w
                     );
-                    statusbar_mut.w = monitor_borrow.m_w;
+                    statusbar_mut.geometry.w = monitor_borrow.geometry.m_w;
                     changed = true;
                 }
                 // 高度检查 - 确保不超过显示器高度的一半
-                let max_height = monitor_borrow.m_h / 2;
-                if statusbar_mut.h > max_height {
+                let max_height = monitor_borrow.geometry.m_h / 2;
+                if statusbar_mut.geometry.h > max_height {
                     info!(
                         "[validate_statusbar_geometry] Limiting statusbar height: {} -> {}",
-                        statusbar_mut.h, max_height
+                        statusbar_mut.geometry.h, max_height
                     );
-                    statusbar_mut.h = max_height;
+                    statusbar_mut.geometry.h = max_height;
                     changed = true;
                 }
                 if changed {
@@ -6502,10 +6625,10 @@ impl Jwm {
         let (wx, wy, ww, wh, monitor_num, clients_head) = {
             let mon_borrow = mon_rc.borrow();
             (
-                mon_borrow.w_x,
-                mon_borrow.w_y,
-                mon_borrow.w_w,
-                mon_borrow.w_h,
+                mon_borrow.geometry.w_x,
+                mon_borrow.geometry.w_y,
+                mon_borrow.geometry.w_w,
+                mon_borrow.geometry.w_h,
                 mon_borrow.num,
                 mon_borrow.clients.clone(),
             )
@@ -6520,9 +6643,9 @@ impl Jwm {
             let (is_visible, is_floating, border_w, next) = {
                 let client_borrow = client_rc.borrow();
                 (
-                    client_borrow.isvisible(),
-                    client_borrow.is_floating,
-                    client_borrow.border_w,
+                    client_borrow.is_visible(),
+                    client_borrow.state.is_floating,
+                    client_borrow.geometry.border_w,
                     client_borrow.next.clone(),
                 )
             };
@@ -6662,8 +6785,8 @@ impl Jwm {
         // 恢复显示器工作区域
         if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
             let mut monitor_mut = monitor.borrow_mut();
-            monitor_mut.w_y = monitor_mut.m_y;
-            monitor_mut.w_h = monitor_mut.m_h;
+            monitor_mut.geometry.w_y = monitor_mut.geometry.m_y;
+            monitor_mut.geometry.w_h = monitor_mut.geometry.m_h;
             info!(
                 "[unmanage_statusbar] Restored workarea for monitor {}",
                 monitor_id
@@ -6837,72 +6960,75 @@ impl Jwm {
     fn adjust_client_position(&mut self, client_rc: &Rc<RefCell<WMClient>>) {
         let (client_total_width, client_mon_rc_opt) = {
             let client_borrow = client_rc.borrow();
-            (client_borrow.width(), client_borrow.mon.clone())
+            (client_borrow.total_width(), client_borrow.mon.clone())
         };
 
         if let Some(ref client_mon_rc) = client_mon_rc_opt {
             let (mon_wx, mon_wy, mon_ww, mon_wh) = {
                 let client_mon_borrow = client_mon_rc.borrow();
                 (
-                    client_mon_borrow.w_x,
-                    client_mon_borrow.w_y,
-                    client_mon_borrow.w_w,
-                    client_mon_borrow.w_h,
+                    client_mon_borrow.geometry.w_x,
+                    client_mon_borrow.geometry.w_y,
+                    client_mon_borrow.geometry.w_w,
+                    client_mon_borrow.geometry.w_h,
                 )
             };
 
             let mut client_mut = client_rc.borrow_mut();
 
             // 确保窗口的右边界不超过显示器工作区的右边界
-            if client_mut.x + client_total_width > mon_wx + mon_ww {
-                client_mut.x = mon_wx + mon_ww - client_total_width;
+            if client_mut.geometry.x + client_total_width > mon_wx + mon_ww {
+                client_mut.geometry.x = mon_wx + mon_ww - client_total_width;
                 info!(
                     "[adjust_client_position] Adjusted X to prevent overflow: {}",
-                    client_mut.x
+                    client_mut.geometry.x
                 );
             }
 
             // 确保窗口的下边界不超过显示器工作区的下边界
-            let client_total_height = client_mut.height();
-            if client_mut.y + client_total_height > mon_wy + mon_wh {
-                client_mut.y = mon_wy + mon_wh - client_total_height;
+            let client_total_height = client_mut.total_height();
+            if client_mut.geometry.y + client_total_height > mon_wy + mon_wh {
+                client_mut.geometry.y = mon_wy + mon_wh - client_total_height;
                 info!(
                     "[adjust_client_position] Adjusted Y to prevent overflow: {}",
-                    client_mut.y
+                    client_mut.geometry.y
                 );
             }
 
             // 确保窗口的左边界不小于显示器工作区的左边界
-            if client_mut.x < mon_wx {
-                client_mut.x = mon_wx;
+            if client_mut.geometry.x < mon_wx {
+                client_mut.geometry.x = mon_wx;
                 info!(
                     "[adjust_client_position] Adjusted X to workarea left: {}",
-                    client_mut.x
+                    client_mut.geometry.x
                 );
             }
 
             // 确保窗口的上边界不小于显示器工作区的上边界
-            if client_mut.y < mon_wy {
-                client_mut.y = mon_wy;
+            if client_mut.geometry.y < mon_wy {
+                client_mut.geometry.y = mon_wy;
                 info!(
                     "[adjust_client_position] Adjusted Y to workarea top: {}",
-                    client_mut.y
+                    client_mut.geometry.y
                 );
             }
 
             // 对于小窗口，居中显示
-            if client_mut.w < mon_ww / 3 && client_mut.h < mon_wh / 3 {
-                client_mut.x = mon_wx + (mon_ww - client_total_width) / 2;
-                client_mut.y = mon_wy + (mon_wh - client_total_height) / 2;
+            if client_mut.geometry.w < mon_ww / 3 && client_mut.geometry.h < mon_wh / 3 {
+                client_mut.geometry.x = mon_wx + (mon_ww - client_total_width) / 2;
+                client_mut.geometry.y = mon_wy + (mon_wh - client_total_height) / 2;
                 info!(
                     "[adjust_client_position] Centered small window at ({}, {})",
-                    client_mut.x, client_mut.y
+                    client_mut.geometry.x, client_mut.geometry.y
                 );
             }
 
             info!(
                 "[adjust_client_position] Final position: ({}, {}) {}x{}",
-                client_mut.x, client_mut.y, client_mut.w, client_mut.h
+                client_mut.geometry.x,
+                client_mut.geometry.y,
+                client_mut.geometry.w,
+                client_mut.geometry.h
             );
         } else {
             error!("[adjust_client_position] Client has no monitor assigned!");
@@ -6967,7 +7093,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (win, old_border_w) = {
             let client = client_rc.borrow();
-            (client.win, client.old_border_w)
+            (client.win, client.geometry.old_border_w)
         };
 
         // 抓取服务器
@@ -7117,21 +7243,21 @@ impl Jwm {
 
                 // 检查几何信息是否需要更新
                 if i as i32 >= current_num_monitors
-                    || mon.m_x != x
-                    || mon.m_y != y
-                    || mon.m_w != w
-                    || mon.m_h != h
+                    || mon.geometry.m_x != x
+                    || mon.geometry.m_y != y
+                    || mon.geometry.m_w != w
+                    || mon.geometry.m_h != h
                 {
                     dirty = true;
                     mon.num = i as i32;
-                    mon.m_x = x;
-                    mon.w_x = x;
-                    mon.m_y = y;
-                    mon.w_y = y;
-                    mon.m_w = w;
-                    mon.w_w = w;
-                    mon.m_h = h;
-                    mon.w_h = h;
+                    mon.geometry.m_x = x;
+                    mon.geometry.w_x = x;
+                    mon.geometry.m_y = y;
+                    mon.geometry.w_y = y;
+                    mon.geometry.m_w = w;
+                    mon.geometry.w_w = w;
+                    mon.geometry.m_h = h;
+                    mon.geometry.w_h = h;
                 }
 
                 let next = mon.next.clone();
@@ -7205,9 +7331,9 @@ impl Jwm {
 
                 if let Some(ref first_mon) = self.mons {
                     let first_mon_borrow = first_mon.borrow();
-                    client_mut.tags = first_mon_borrow.tag_set[first_mon_borrow.sel_tags];
+                    client_mut.state.tags = first_mon_borrow.tag_set[first_mon_borrow.sel_tags];
                 } else {
-                    client_mut.tags = 1; // 默认标签
+                    client_mut.state.tags = 1; // 默认标签
                 }
             }
 
@@ -7256,17 +7382,17 @@ impl Jwm {
 
         if let Some(ref mon_rc) = self.mons {
             let mut mon = mon_rc.borrow_mut();
-            if mon.m_w != self.s_w || mon.m_h != self.s_h {
+            if mon.geometry.m_w != self.s_w || mon.geometry.m_h != self.s_h {
                 dirty = true;
                 mon.num = 0;
-                mon.m_x = 0;
-                mon.w_x = 0;
-                mon.m_y = 0;
-                mon.w_y = 0;
-                mon.m_w = self.s_w;
-                mon.w_w = self.s_w;
-                mon.m_h = self.s_h;
-                mon.w_h = self.s_h;
+                mon.geometry.m_x = 0;
+                mon.geometry.w_x = 0;
+                mon.geometry.m_y = 0;
+                mon.geometry.w_y = 0;
+                mon.geometry.m_w = self.s_w;
+                mon.geometry.w_w = self.s_w;
+                mon.geometry.m_h = self.s_h;
+                mon.geometry.w_h = self.s_h;
             }
         }
 
@@ -7288,7 +7414,7 @@ impl Jwm {
         }
         if wtype == self.atoms._NET_WM_WINDOW_TYPE_DIALOG.into() {
             let c = &mut *c.borrow_mut();
-            c.is_floating = true;
+            c.state.is_floating = true;
         }
     }
 
@@ -7365,11 +7491,11 @@ impl Jwm {
                     .and_then(|_| self.x11rb_conn.flush());
             } else {
                 // 否则标记为 urgent
-                client_rc.borrow_mut().is_urgent = true;
+                client_rc.borrow_mut().state.is_urgent = true;
             }
         } else {
             // 没有 urgency hint
-            client_rc.borrow_mut().is_urgent = false;
+            client_rc.borrow_mut().state.is_urgent = false;
         }
 
         // 5. 处理 InputHint
@@ -7379,10 +7505,10 @@ impl Jwm {
                 Some(i) => i as i32,
                 None => return,
             };
-            client_rc.borrow_mut().never_focus = input <= 0;
+            client_rc.borrow_mut().state.never_focus = input <= 0;
         } else {
             // InputHint 不存在，可聚焦
-            client_rc.borrow_mut().never_focus = false;
+            client_rc.borrow_mut().state.never_focus = false;
         }
     }
 
@@ -7408,10 +7534,10 @@ impl Jwm {
         {
             let mon_borrow = mon_rc.borrow();
             // info!("[update_bar_message_for_monitor], {}", mon_borrow);
-            monitor_info_for_message.monitor_x = mon_borrow.w_x;
-            monitor_info_for_message.monitor_y = mon_borrow.w_y;
-            monitor_info_for_message.monitor_width = mon_borrow.w_w;
-            monitor_info_for_message.monitor_height = mon_borrow.w_h;
+            monitor_info_for_message.monitor_x = mon_borrow.geometry.w_x;
+            monitor_info_for_message.monitor_y = mon_borrow.geometry.w_y;
+            monitor_info_for_message.monitor_width = mon_borrow.geometry.w_w;
+            monitor_info_for_message.monitor_height = mon_borrow.geometry.w_h;
             monitor_info_for_message.monitor_num = mon_borrow.num;
             monitor_info_for_message.set_ltsymbol(&mon_borrow.lt_symbol);
             monitor_info_for_message.border_w = CONFIG.border_px() as i32;
@@ -7419,9 +7545,9 @@ impl Jwm {
             let mut c_iter_opt = mon_borrow.clients.clone();
             while let Some(ref client_rc_iter) = c_iter_opt.clone() {
                 let client_borrow_iter = client_rc_iter.borrow();
-                occupied_tags_mask |= client_borrow_iter.tags;
-                if client_borrow_iter.is_urgent {
-                    urgent_tags_mask |= client_borrow_iter.tags;
+                occupied_tags_mask |= client_borrow_iter.state.tags;
+                if client_borrow_iter.state.is_urgent {
+                    urgent_tags_mask |= client_borrow_iter.state.tags;
                 }
                 c_iter_opt = client_borrow_iter.next.clone();
             }
@@ -7436,7 +7562,7 @@ impl Jwm {
                     if Rc::ptr_eq(mon_rc, global_selmon_rc) {
                         // 当前 monitor 是全局选中的 monitor
                         if let Some(ref selected_client_on_selmon) = global_selmon_rc.borrow().sel {
-                            (selected_client_on_selmon.borrow().tags & tag_bit) != 0
+                            (selected_client_on_selmon.borrow().state.tags & tag_bit) != 0
                         } else {
                             false // 全局选中的 monitor 上没有选中的 client
                         }
