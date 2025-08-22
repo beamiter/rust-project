@@ -3814,73 +3814,138 @@ impl Jwm {
     }
 
     pub fn view(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[view]");
-        let ui = if let WMArgEnum::UInt(val) = arg {
-            val
-        } else {
-            return Ok(());
+        // 提取并验证参数
+        let ui = match arg {
+            WMArgEnum::UInt(val) => *val,
+            _ => return Ok(()),
         };
+
         let target_tag = ui & CONFIG.tagmask();
-        let cur_tag;
-        {
-            let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-            info!("[view] ui: {ui}, {target_tag}, {:?}", sel_mon_mut.tag_set);
-            if target_tag == sel_mon_mut.tag_set[sel_mon_mut.sel_tags] {
-                return Ok(());
-            }
-            // toggle sel tagset.
-            info!("[view] sel_tags: {}", sel_mon_mut.sel_tags);
-            sel_mon_mut.sel_tags ^= 1;
-            info!("[view] sel_tags: {}", sel_mon_mut.sel_tags);
-            if target_tag > 0 {
-                let sel_tags = sel_mon_mut.sel_tags;
-                sel_mon_mut.tag_set[sel_tags] = target_tag;
-                if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
-                    pertag.prev_tag = pertag.cur_tag;
-                }
-                if *ui == !0 {
-                    // 会将tag_set设置为包含所有tag的值
-                    // 使用 curtag = 0 对应的配置
-                    sel_mon_mut.pertag.as_mut().unwrap().cur_tag = 0;
-                } else {
-                    let i = ui.trailing_zeros() as usize;
-                    sel_mon_mut.pertag.as_mut().unwrap().cur_tag = i + 1;
-                }
-            } else {
-                if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
-                    std::mem::swap(&mut pertag.prev_tag, &mut pertag.cur_tag);
-                }
-            }
-            if let Some(pertag) = &sel_mon_mut.pertag {
-                info!(
-                    "[view] prevtag: {}, cur_tag: {}",
-                    pertag.prev_tag, pertag.cur_tag
-                );
-            }
-            cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+
+        // 检查是否需要切换标签
+        if self.is_same_tag(target_tag) {
+            return Ok(());
         }
-        let sel_opt;
-        {
-            let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-            sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
-            sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
-            sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
-            let sel_lt = sel_mon_mut.sel_lt;
-            sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag][sel_lt]
-                .clone()
-                .expect("None unwrap");
-            sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
-                [sel_lt ^ 1]
-                .clone()
-                .expect("None unwrap");
-            sel_opt = sel_mon_mut.pertag.as_ref().unwrap().sel[cur_tag].clone();
-            if sel_opt.is_some() {
-                info!("[view] sel_opt: {}", sel_opt.as_ref().unwrap().borrow());
-            }
-        };
+
+        info!("[view] ui: {}, target_tag: {}", ui, target_tag);
+
+        // 执行标签切换
+        let cur_tag = self.switch_to_tag(target_tag, ui)?;
+
+        // 应用per-tag设置
+        let sel_opt = self.apply_pertag_settings(cur_tag)?;
+
+        // 更新焦点和布局
         self.focus(sel_opt)?;
         self.arrange(self.sel_mon.clone());
+
         Ok(())
+    }
+
+    // 检查是否是相同标签
+    fn is_same_tag(&self, target_tag: u32) -> bool {
+        let sel_mon = self.sel_mon.as_ref().unwrap().borrow();
+        target_tag == sel_mon.tag_set[sel_mon.sel_tags]
+    }
+
+    // 切换到指定标签
+    fn switch_to_tag(
+        &mut self,
+        target_tag: u32,
+        ui: u32,
+    ) -> Result<usize, Box<dyn std::error::Error>> {
+        let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+
+        info!("[switch_to_tag] tag_set: {:?}", sel_mon_mut.tag_set);
+        info!("[switch_to_tag] old sel_tags: {}", sel_mon_mut.sel_tags);
+
+        // 切换标签集
+        sel_mon_mut.sel_tags ^= 1;
+        let new_sel_tags = sel_mon_mut.sel_tags;
+        info!("[switch_to_tag] new sel_tags: {}", new_sel_tags);
+
+        // 更新per-tag信息
+        let cur_tag = if target_tag > 0 {
+            // 设置新标签
+            sel_mon_mut.tag_set[new_sel_tags] = target_tag;
+
+            // 计算当前标签索引
+            let new_cur_tag = if ui == !0 {
+                0 // 显示所有标签
+            } else {
+                ui.trailing_zeros() as usize + 1
+            };
+
+            // 更新 pertag
+            if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
+                pertag.prev_tag = pertag.cur_tag;
+                pertag.cur_tag = new_cur_tag;
+            }
+
+            new_cur_tag
+        } else {
+            // 切换到上一个标签
+            if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
+                std::mem::swap(&mut pertag.prev_tag, &mut pertag.cur_tag);
+                pertag.cur_tag
+            } else {
+                return Err("No pertag information available".into());
+            }
+        };
+
+        info!(
+            "[switch_to_tag] prev_tag: {}, cur_tag: {}",
+            sel_mon_mut.pertag.as_ref().unwrap().prev_tag,
+            cur_tag
+        );
+
+        Ok(cur_tag)
+    }
+
+    // 应用per-tag设置
+    fn apply_pertag_settings(
+        &mut self,
+        cur_tag: usize,
+    ) -> Result<Option<Rc<RefCell<WMClient>>>, Box<dyn std::error::Error>> {
+        let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
+
+        // 先提取所有需要的值，避免借用冲突
+        let (n_master, m_fact, sel_lt, layout_0, layout_1, sel_opt) = {
+            let pertag = sel_mon_mut
+                .pertag
+                .as_ref()
+                .ok_or("No pertag information available")?;
+
+            let sel_lt = pertag.sel_lts[cur_tag];
+            (
+                pertag.n_masters[cur_tag],
+                pertag.m_facts[cur_tag],
+                sel_lt,
+                pertag.lt_idxs[cur_tag][sel_lt]
+                    .clone()
+                    .ok_or("Layout not found")?,
+                pertag.lt_idxs[cur_tag][sel_lt ^ 1]
+                    .clone()
+                    .ok_or("Alternative layout not found")?,
+                pertag.sel[cur_tag].clone(),
+            )
+        };
+
+        // 现在安全地应用设置
+        sel_mon_mut.n_master = n_master;
+        sel_mon_mut.m_fact = m_fact;
+        sel_mon_mut.sel_lt = sel_lt;
+        sel_mon_mut.lt[sel_lt] = layout_0;
+        sel_mon_mut.lt[sel_lt ^ 1] = layout_1;
+
+        if let Some(ref client) = sel_opt {
+            info!(
+                "[apply_pertag_settings] selected client: {}",
+                client.borrow()
+            );
+        }
+
+        Ok(sel_opt)
     }
 
     pub fn toggleview(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
