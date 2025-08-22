@@ -1474,7 +1474,12 @@ impl Jwm {
             let (mx, my, mw, mh) = {
                 let c_mon = &c.borrow().mon;
                 let mon_mut = c_mon.as_ref().unwrap().borrow();
-                (mon_mut.m_x, mon_mut.m_y, mon_mut.m_w, mon_mut.m_h)
+                (
+                    mon_mut.geometry.m_x,
+                    mon_mut.geometry.m_y,
+                    mon_mut.geometry.m_w,
+                    mon_mut.geometry.m_h,
+                )
             };
             let _ = self.resizeclient(&mut *c.borrow_mut(), mx, my, mw, mh);
             // Raise the window to the top of the stacking order
@@ -1501,7 +1506,7 @@ impl Jwm {
             }
             {
                 let mut c = c.borrow_mut();
-                let (x, y, w, h) = (c.x, c.y, c.w, c.h);
+                let (x, y, w, h) = (c.geometry.x, c.geometry.y, c.geometry.w, c.geometry.h);
                 let _ = self.resizeclient(&mut *c, x, y, w, h);
             }
             let mon = { c.borrow_mut().mon.clone() };
@@ -1535,7 +1540,7 @@ impl Jwm {
             .y(y)
             .width(w as u32)
             .height(h as u32)
-            .border_width(c.border_w as u32);
+            .border_width(c.geometry.border_w as u32);
         // 发送配置窗口请求
         self.x11rb_conn.configure_window(c.win, &values)?;
         // 调用configure方法
@@ -1564,7 +1569,7 @@ impl Jwm {
     /// 设置窗口的 urgent 状态（XUrgencyHint）
     pub fn seturgent(&self, c_rc: &Rc<RefCell<WMClient>>, urg: bool) {
         {
-            c_rc.borrow_mut().is_urgent = urg;
+            c_rc.borrow_mut().state.is_urgent = urg;
         }
         let win = c_rc.borrow().win;
         // 1. 先读取现有的 WM_HINTS 属性
@@ -1659,12 +1664,12 @@ impl Jwm {
             None => return,
         };
 
-        let isvisible = {
+        let is_visible = {
             let client_borrow = client_rc.borrow();
-            client_borrow.isvisible()
+            client_borrow.is_visible()
         };
 
-        if isvisible {
+        if is_visible {
             // 显示客户端 - 从上到下
             self.show_client(&client_rc);
         } else {
@@ -1678,10 +1683,10 @@ impl Jwm {
             let client_borrow = client_rc.borrow();
             (
                 client_borrow.win,
-                client_borrow.x,
-                client_borrow.y,
-                client_borrow.is_floating,
-                client_borrow.is_fullscreen,
+                client_borrow.geometry.x,
+                client_borrow.geometry.y,
+                client_borrow.state.is_floating,
+                client_borrow.state.is_fullscreen,
             )
         };
 
@@ -1694,7 +1699,7 @@ impl Jwm {
         if is_floating && !is_fullscreen {
             let (w, h) = {
                 let client_borrow = client_rc.borrow();
-                (client_borrow.w, client_borrow.h)
+                (client_borrow.geometry.w, client_borrow.geometry.h)
             };
             self.resize(client_rc, x, y, w, h, false);
         }
@@ -1718,7 +1723,11 @@ impl Jwm {
         // 然后隐藏当前客户端
         let (win, y, width) = {
             let client_borrow = client_rc.borrow();
-            (client_borrow.win, client_borrow.y, client_borrow.width())
+            (
+                client_borrow.win,
+                client_borrow.geometry.y,
+                client_borrow.total_width(),
+            )
         };
 
         // 将窗口移动到屏幕外隐藏
@@ -1774,30 +1783,30 @@ impl Jwm {
         if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
             let mut statusbar_mut = statusbar.borrow_mut();
             let old_geometry = (
-                statusbar_mut.x,
-                statusbar_mut.y,
-                statusbar_mut.w,
-                statusbar_mut.h,
+                statusbar_mut.geometry.x,
+                statusbar_mut.geometry.y,
+                statusbar_mut.geometry.w,
+                statusbar_mut.geometry.h,
             );
             let mut geometry_changed = false;
             let mut needs_workarea_update = false;
 
             // 被动接受 status bar 的大小变化请求，不做任何限制或修正
             if e.value_mask.contains(ConfigWindow::X) {
-                statusbar_mut.x = e.x as i32;
+                statusbar_mut.geometry.x = e.x as i32;
                 geometry_changed = true;
             }
             if e.value_mask.contains(ConfigWindow::Y) {
-                statusbar_mut.y = e.y as i32;
+                statusbar_mut.geometry.y = e.y as i32;
                 geometry_changed = true;
                 needs_workarea_update = true; // Y 位置变化影响工作区
             }
             if e.value_mask.contains(ConfigWindow::WIDTH) {
-                statusbar_mut.w = e.width as i32;
+                statusbar_mut.geometry.w = e.width as i32;
                 geometry_changed = true;
             }
             if e.value_mask.contains(ConfigWindow::HEIGHT) {
-                statusbar_mut.h = e.height as i32;
+                statusbar_mut.geometry.h = e.height as i32;
                 geometry_changed = true;
                 needs_workarea_update = true; // 高度变化是最主要的关注点
             }
@@ -1805,14 +1814,14 @@ impl Jwm {
             if geometry_changed {
                 info!(
                     "[handle_statusbar_configure_request] StatusBar geometry updated: {:?} -> ({}, {}, {}, {})",
-                    old_geometry, statusbar_mut.x, statusbar_mut.y, statusbar_mut.w, statusbar_mut.h
+                    old_geometry, statusbar_mut.geometry.x, statusbar_mut.geometry.y, statusbar_mut.geometry.w, statusbar_mut.geometry.h
                 );
 
                 let values = ConfigureWindowAux::new()
-                    .x(statusbar_mut.x)
-                    .y(statusbar_mut.y)
-                    .width(statusbar_mut.w as u32)
-                    .height(statusbar_mut.h as u32);
+                    .x(statusbar_mut.geometry.x)
+                    .y(statusbar_mut.geometry.y)
+                    .width(statusbar_mut.geometry.w as u32)
+                    .height(statusbar_mut.geometry.h as u32);
                 self.x11rb_conn.configure_window(e.window, &values)?;
 
                 // 确保状态栏始终在最上层
@@ -1862,32 +1871,41 @@ impl Jwm {
             // 浮动窗口或无布局时，允许自由调整
             let (mx, my, mw, mh) = {
                 let m = client_mut.mon.as_ref().unwrap().borrow();
-                (m.m_x, m.m_y, m.m_w, m.m_h)
+                (
+                    m.geometry.m_x,
+                    m.geometry.m_y,
+                    m.geometry.m_w,
+                    m.geometry.m_h,
+                )
             };
 
             if e.value_mask.contains(ConfigWindow::X) {
-                client_mut.old_x = client_mut.x;
-                client_mut.x = mx + e.x as i32;
+                client_mut.geometry.old_x = client_mut.geometry.x;
+                client_mut.geometry.x = mx + e.x as i32;
             }
             if e.value_mask.contains(ConfigWindow::Y) {
-                client_mut.old_y = client_mut.y;
-                client_mut.y = my + e.y as i32;
+                client_mut.geometry.old_y = client_mut.geometry.y;
+                client_mut.geometry.y = my + e.y as i32;
             }
             if e.value_mask.contains(ConfigWindow::WIDTH) {
-                client_mut.old_w = client_mut.w;
-                client_mut.w = e.width as i32;
+                client_mut.geometry.old_w = client_mut.geometry.w;
+                client_mut.geometry.w = e.width as i32;
             }
             if e.value_mask.contains(ConfigWindow::HEIGHT) {
-                client_mut.old_h = client_mut.h;
-                client_mut.h = e.height as i32;
+                client_mut.geometry.old_h = client_mut.geometry.h;
+                client_mut.geometry.h = e.height as i32;
             }
 
             // 确保窗口不超出显示器边界
-            if (client_mut.x + client_mut.w) > mx + mw && client_mut.is_floating {
-                client_mut.x = mx + (mw / 2 - client_mut.width() / 2);
+            if (client_mut.geometry.x + client_mut.geometry.w) > mx + mw
+                && client_mut.state.is_floating
+            {
+                client_mut.geometry.x = mx + (mw / 2 - client_mut.total_width() / 2);
             }
-            if (client_mut.y + client_mut.h) > my + mh && client_mut.is_floating {
-                client_mut.y = my + (mh / 2 - client_mut.height() / 2);
+            if (client_mut.geometry.y + client_mut.geometry.h) > my + mh
+                && client_mut.state.is_floating
+            {
+                client_mut.geometry.y = my + (mh / 2 - client_mut.total_height() / 2);
             }
 
             // 如果只是位置变化，发送配置确认
@@ -1899,15 +1917,15 @@ impl Jwm {
                 self.configure(&mut client_mut)?;
             }
 
-            let isvisible = client_mut.isvisible();
-            if isvisible {
+            let is_visible = client_mut.is_visible();
+            if is_visible {
                 self.x11rb_conn.configure_window(
                     client_mut.win,
                     &ConfigureWindowAux::new()
-                        .x(client_mut.x)
-                        .y(client_mut.y)
-                        .width(client_mut.w as u32)
-                        .height(client_mut.h as u32),
+                        .x(client_mut.geometry.x)
+                        .y(client_mut.geometry.y)
+                        .width(client_mut.geometry.w as u32)
+                        .height(client_mut.geometry.h as u32),
                 )?;
             }
         } else {
@@ -1956,8 +1974,8 @@ impl Jwm {
         let mut m: WMMonitor = WMMonitor::new();
         m.tag_set[0] = 1;
         m.tag_set[1] = 1;
-        m.m_fact = CONFIG.m_fact();
-        m.n_master = CONFIG.n_master();
+        m.layout.m_fact = CONFIG.m_fact();
+        m.layout.n_master = CONFIG.n_master();
         m.lt[0] = Rc::new(LayoutEnum::TILE);
         m.lt[1] = Rc::new(LayoutEnum::FLOAT);
         m.lt_symbol = m.lt[0].symbol().to_string();
@@ -1968,8 +1986,8 @@ impl Jwm {
         let default_layout_0 = m.lt[0].clone();
         let default_layout_1 = m.lt[1].clone();
         for i in 0..=CONFIG.tags_length() {
-            ref_pertag.n_masters[i] = m.n_master;
-            ref_pertag.m_facts[i] = m.m_fact;
+            ref_pertag.n_masters[i] = m.layout.n_master;
+            ref_pertag.m_facts[i] = m.layout.m_fact;
 
             ref_pertag.lt_idxs[i][0] = Some(default_layout_0.clone());
             ref_pertag.lt_idxs[i][1] = Some(default_layout_1.clone());
@@ -2112,8 +2130,8 @@ impl Jwm {
         if Self::are_equal_rc(&Some(c), &m.borrow().sel) {
             let mut t = { m.borrow().stack.clone() };
             while let Some(ref t_opt) = t {
-                let isvisible = { t_opt.borrow_mut().isvisible() };
-                if isvisible {
+                let is_visible = { t_opt.borrow_mut().is_visible() };
+                if is_visible {
                     break;
                 }
                 let snext = { t_opt.borrow_mut().stack_next.clone() };
@@ -2330,7 +2348,7 @@ impl Jwm {
         // 1. 首先处理选中的浮动窗口
         if let Some(ref sel) = mon_borrow.sel {
             let sel_borrow = sel.borrow();
-            if sel_borrow.is_floating {
+            if sel_borrow.state.is_floating {
                 windows_to_restack.push((sel_borrow.win, StackMode::ABOVE, None));
             }
         }
@@ -2347,7 +2365,7 @@ impl Jwm {
         let mut client_rc_opt = mon_borrow.stack.clone();
         while let Some(ref client_rc) = client_rc_opt.clone() {
             let client_borrow = client_rc.borrow();
-            if !client_borrow.is_floating && client_borrow.isvisible() {
+            if !client_borrow.state.is_floating && client_borrow.is_visible() {
                 non_floating_windows.push(client_borrow.win);
             }
             let next = client_borrow.stack_next.clone();
@@ -2744,7 +2762,7 @@ impl Jwm {
         let mut r = self.sel_mon.clone();
         let mut m = self.mons.clone();
         while let Some(ref m_opt) = m {
-            let a = m_opt.borrow().intersect(x, y, w, h);
+            let a = m_opt.borrow().intersect_area(x, y, w, h);
             if a > area {
                 area = a;
                 r = m.clone();
@@ -3095,12 +3113,12 @@ impl Jwm {
         let (wx, wy, ww, wh, mfact, nmaster, monitor_num) = {
             let mon_borrow = mon_rc.borrow();
             (
-                mon_borrow.w_x,
-                mon_borrow.w_y,
-                mon_borrow.w_w,
-                mon_borrow.w_h,
-                mon_borrow.m_fact,
-                mon_borrow.n_master,
+                mon_borrow.geometry.w_x,
+                mon_borrow.geometry.w_y,
+                mon_borrow.geometry.w_w,
+                mon_borrow.geometry.w_h,
+                mon_borrow.layout.m_fact,
+                mon_borrow.layout.n_master,
                 mon_borrow.num,
             )
         };
@@ -3113,8 +3131,8 @@ impl Jwm {
             let (client_fact, border_w, next) = {
                 let client_borrow = client_rc.borrow();
                 (
-                    client_borrow.client_fact,
-                    client_borrow.border_w,
+                    client_borrow.state.client_fact,
+                    client_borrow.geometry.border_w,
                     client_borrow.next.clone(),
                 )
             };
@@ -3221,19 +3239,25 @@ impl Jwm {
         let sel = { self.sel_mon.as_ref().unwrap().borrow_mut().sel.clone() };
         if let Some(ref sel_opt) = sel {
             // no support for fullscreen windows.
-            let isfullscreen = { sel_opt.borrow_mut().is_fullscreen };
+            let isfullscreen = { sel_opt.borrow_mut().state.is_fullscreen };
             if isfullscreen {
                 return Ok(());
             }
             {
                 let mut sel_borrow = sel_opt.borrow_mut();
-                sel_borrow.is_floating = !sel_borrow.is_floating || sel_borrow.is_fixed;
+                sel_borrow.state.is_floating =
+                    !sel_borrow.state.is_floating || sel_borrow.state.is_fixed;
             }
-            let is_floating = { sel_opt.borrow_mut().is_floating };
+            let is_floating = { sel_opt.borrow_mut().state.is_floating };
             if is_floating {
                 let (x, y, w, h) = {
                     let sel_opt_mut = sel_opt.borrow_mut();
-                    (sel_opt_mut.x, sel_opt_mut.y, sel_opt_mut.w, sel_opt_mut.h)
+                    (
+                        sel_opt_mut.geometry.x,
+                        sel_opt_mut.geometry.y,
+                        sel_opt_mut.geometry.w,
+                        sel_opt_mut.geometry.h,
+                    )
                 };
                 self.resize(sel_opt, x, y, w, h, false);
             }
@@ -3280,7 +3304,7 @@ impl Jwm {
             let target_tag = ui & CONFIG.tagmask();
             if let Some(ref sel_opt) = sel {
                 if target_tag > 0 {
-                    sel_opt.borrow_mut().tags = target_tag;
+                    sel_opt.borrow_mut().state.tags = target_tag;
                     let _ = self.setclienttagprop(sel_opt);
                     self.focus(None)?;
                     self.arrange(self.sel_mon.clone());
@@ -3354,7 +3378,7 @@ impl Jwm {
 
         // 检查是否处于锁定的全屏状态
         let is_locked_fullscreen =
-            selected_client.borrow().is_fullscreen && CONFIG.behavior().lock_fullscreen;
+            selected_client.borrow().state.is_fullscreen && CONFIG.behavior().lock_fullscreen;
         Ok(!is_locked_fullscreen)
     }
 
@@ -3379,7 +3403,7 @@ impl Jwm {
 
         // 向前查找可见客户端
         while let Some(ref client) = current {
-            if client.borrow().isvisible() {
+            if client.borrow().is_visible() {
                 return Ok(current);
             }
             let next = client.borrow().next.clone();
@@ -3389,7 +3413,7 @@ impl Jwm {
         // 如果没找到，从头开始查找
         current = sel_mon.borrow().clients.clone();
         while let Some(ref client) = current {
-            if client.borrow().isvisible() {
+            if client.borrow().is_visible() {
                 return Ok(current);
             }
             let next = client.borrow().next.clone();
@@ -3416,7 +3440,7 @@ impl Jwm {
             if Self::are_equal_rc(&clients_list, &selected_client) {
                 break;
             }
-            if client.borrow().isvisible() {
+            if client.borrow().is_visible() {
                 previous_visible = clients_list.clone();
             }
             let next = client.borrow().next.clone();
@@ -3426,7 +3450,7 @@ impl Jwm {
         if previous_visible.is_none() {
             clients_list = self.sel_mon.as_ref().unwrap().borrow().clients.clone();
             while let Some(ref client) = clients_list {
-                if client.borrow().isvisible() {
+                if client.borrow().is_visible() {
                     previous_visible = clients_list.clone();
                 }
                 let next = client.borrow().next.clone();
@@ -3465,9 +3489,9 @@ impl Jwm {
             let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
             let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
             sel_mon_mut.pertag.as_mut().unwrap().n_masters[cur_tag] =
-                0.max(sel_mon_mut.n_master as i32 + i) as u32;
+                0.max(sel_mon_mut.layout.n_master as i32 + i) as u32;
 
-            sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
+            sel_mon_mut.layout.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
         }
         self.arrange(self.sel_mon.clone());
         Ok(())
@@ -3480,13 +3504,13 @@ impl Jwm {
             return Ok(());
         }
         if let WMArgEnum::Float(f0) = *arg {
-            let mut f = f0 + c.as_ref().unwrap().borrow().client_fact;
+            let mut f = f0 + c.as_ref().unwrap().borrow().state.client_fact;
             if f0.abs() < 0.0001 {
                 f = 1.0;
             } else if f < 0.25 || f > 4.0 {
                 return Ok(());
             }
-            c.as_ref().unwrap().borrow_mut().client_fact = f;
+            c.as_ref().unwrap().borrow_mut().state.client_fact = f;
             self.arrange(self.sel_mon.clone());
         }
         Ok(())
@@ -3540,7 +3564,7 @@ impl Jwm {
     // 辅助方法：检查客户端是否为可见且非浮动的平铺窗口
     fn is_tiled_and_visible(client: &Rc<RefCell<WMClient>>) -> bool {
         let client_ref = client.borrow();
-        client_ref.isvisible() && !client_ref.is_floating
+        client_ref.is_visible() && !client_ref.state.is_floating
     }
 
     // 辅助方法：查找下一个平铺客户端
@@ -3734,7 +3758,7 @@ impl Jwm {
         if let WMArgEnum::Float(f) = arg {
             let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
             let f = if f < &1.0 {
-                f + sel_mon_mut.m_fact
+                f + sel_mon_mut.layout.m_fact
             } else {
                 f - 1.0
             };
@@ -3743,7 +3767,7 @@ impl Jwm {
             }
             let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
             sel_mon_mut.pertag.as_mut().unwrap().m_facts[cur_tag] = f;
-            sel_mon_mut.m_fact = sel_mon_mut.pertag.as_mut().unwrap().m_facts[cur_tag];
+            sel_mon_mut.layout.m_fact = sel_mon_mut.pertag.as_mut().unwrap().m_facts[cur_tag];
         }
         self.arrange(self.sel_mon.clone());
         Ok(())
@@ -3805,7 +3829,7 @@ impl Jwm {
         {
             let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
             c = sel_mon_mut.sel.clone();
-            if c.is_none() || c.as_ref().unwrap().borrow().is_floating {
+            if c.is_none() || c.as_ref().unwrap().borrow().state.is_floating {
                 return Ok(());
             }
             sel_c = sel_mon_mut.clients.clone();
@@ -3901,8 +3925,8 @@ impl Jwm {
         let sel_opt;
         {
             let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-            sel_mon_mut.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
-            sel_mon_mut.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
+            sel_mon_mut.layout.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
+            sel_mon_mut.layout.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
             sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
             let sel_lt = sel_mon_mut.sel_lt;
             sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag][sel_lt]
@@ -4042,8 +4066,8 @@ impl Jwm {
         };
 
         // 现在安全地应用设置
-        sel_mon_mut.n_master = n_master;
-        sel_mon_mut.m_fact = m_fact;
+        sel_mon_mut.layout.n_master = n_master;
+        sel_mon_mut.layout.m_fact = m_fact;
         sel_mon_mut.sel_lt = sel_lt;
         sel_mon_mut.lt[sel_lt] = layout_0;
         sel_mon_mut.lt[sel_lt ^ 1] = layout_1;
@@ -4181,8 +4205,8 @@ impl Jwm {
         };
 
         // 应用设置
-        sel_mon_mut.n_master = n_master;
-        sel_mon_mut.m_fact = m_fact;
+        sel_mon_mut.layout.n_master = n_master;
+        sel_mon_mut.layout.m_fact = m_fact;
         sel_mon_mut.sel_lt = sel_lt;
         sel_mon_mut.lt[sel_lt] = layout_0;
         sel_mon_mut.lt[sel_lt ^ 1] = layout_1;
@@ -4202,7 +4226,7 @@ impl Jwm {
             if sel.is_none() {
                 return Ok(());
             }
-            let isfullscreen = { sel.as_ref().unwrap().borrow_mut().is_fullscreen };
+            let isfullscreen = { sel.as_ref().unwrap().borrow_mut().state.is_fullscreen };
             let _ = self.setfullscreen(sel.as_ref().unwrap(), !isfullscreen);
         }
         Ok(())
@@ -4215,9 +4239,9 @@ impl Jwm {
             return Ok(());
         }
         if let WMArgEnum::UInt(ui) = *arg {
-            let newtags = sel.as_ref().unwrap().borrow_mut().tags ^ (ui & CONFIG.tagmask());
+            let newtags = sel.as_ref().unwrap().borrow_mut().state.tags ^ (ui & CONFIG.tagmask());
             if newtags > 0 {
-                sel.as_ref().unwrap().borrow_mut().tags = newtags;
+                sel.as_ref().unwrap().borrow_mut().state.tags = newtags;
                 let _ = self.setclienttagprop(sel.as_ref().unwrap());
                 self.focus(None)?;
                 self.arrange(self.sel_mon.clone());
@@ -4456,8 +4480,8 @@ impl Jwm {
         while let Some(ref client_rc) = client_rc_opt.clone() {
             let client_borrow = client_rc.borrow();
             let is_floating = client_borrow.state.is_floating;
-            let isvisible = client_borrow.is_visible();
-            if is_floating || !isvisible {
+            let is_visible = client_borrow.is_visible();
+            if is_floating || !is_visible {
                 let next = client_borrow.next.clone();
                 client_rc_opt = next;
             } else {
@@ -5001,7 +5025,11 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (is_floating, current_x, current_y) = {
             let client = client_rc.borrow();
-            (client.state.is_floating, client.geometry.x, client.geometry.y)
+            (
+                client.state.is_floating,
+                client.geometry.x,
+                client.geometry.y,
+            )
         };
 
         let current_layout_is_tile = {
@@ -5280,7 +5308,12 @@ impl Jwm {
 
         let (x, y, w, h) = {
             let client = client_rc.borrow();
-            (client.x, client.y, client.w, client.h)
+            (
+                client.geometry.x,
+                client.geometry.y,
+                client.geometry.w,
+                client.geometry.h,
+            )
         };
 
         let target_monitor = self.recttomon(x, y, w, h);
