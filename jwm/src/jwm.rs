@@ -584,8 +584,6 @@ pub struct Jwm {
     pub atoms: Atoms,
 
     keycode_cache: HashMap<u8, u32>,
-
-    pub need_clear_enter_events: bool,
 }
 
 impl Jwm {
@@ -654,8 +652,6 @@ impl Jwm {
             x11rb_screen,
             atoms,
             keycode_cache: HashMap::new(),
-
-            need_clear_enter_events: false,
         }
     }
 
@@ -1218,7 +1214,7 @@ impl Jwm {
         &mut self,
         e: &ConfigureNotifyEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[configurenotify] {:?}", e);
+        // info!("[configurenotify] {:?}", e);
         // 检查是否是根窗口的配置变更
         if e.window == self.x11rb_root {
             info!("[configurenotify] e: {:?}", e);
@@ -2400,9 +2396,6 @@ impl Jwm {
         // 6. 同步所有操作
         self.x11rb_conn.flush()?;
 
-        // 7. 刷新进入事件
-        // self.need_clear_enter_events = true;
-
         info!("[restack] finish");
         Ok(())
     }
@@ -2411,10 +2404,10 @@ impl Jwm {
         if self.pending_bar_updates.is_empty() {
             return;
         }
-        info!(
-            "[flush_pending_bar_updates] Updating {} monitors",
-            self.pending_bar_updates.len()
-        );
+        // info!(
+        //     "[flush_pending_bar_updates] Updating {} monitors",
+        //     self.pending_bar_updates.len()
+        // );
         for monitor_id in self.pending_bar_updates.clone() {
             if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
                 self.UpdateBarMessage(Some(monitor));
@@ -5297,9 +5290,6 @@ impl Jwm {
         // 释放鼠标抓取
         self.x11rb_conn.ungrab_pointer(0u32)?;
 
-        // 清理事件
-        // self.need_clear_enter_events = true;
-
         // 检查是否需要移动到不同的显示器
         self.check_monitor_change_after_resize()?;
 
@@ -5538,12 +5528,7 @@ impl Jwm {
     }
 
     pub fn enternotify(&mut self, e: &EnterNotifyEvent) -> Result<(), Box<dyn std::error::Error>> {
-        if self.need_clear_enter_events {
-            self.need_clear_enter_events = false;
-            info!("[enternotify] skip");
-            return Ok(());
-        }
-        info!("[enternotify]");
+        // info!("[enternotify]");
         // 过滤不需要处理的事件
         if (e.mode != NotifyMode::NORMAL || e.detail == NotifyDetail::INFERIOR)
             && e.event != self.x11rb_root
