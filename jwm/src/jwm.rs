@@ -2397,6 +2397,10 @@ impl Jwm {
         let restack_operations = self.collect_restack_operations(&mon_rc, monitor_num)?;
         self.execute_restack_operations(restack_operations)?;
 
+        if let Some(sel_rc) = mon_rc.borrow().sel.as_ref() {
+            self.move_cursor_to_client_center(&sel_rc)?;
+        }
+
         info!("[restack] finish");
         Ok(())
     }
@@ -5952,10 +5956,6 @@ impl Jwm {
         // 设置新的焦点客户端
         if let Some(c_rc) = c_opt.clone() {
             self.set_client_focus(&c_rc)?;
-
-            if self.should_move_cursor_on_focus() {
-                self.move_cursor_to_client_center(&c_rc)?;
-            }
         } else {
             self.set_root_focus()?;
         }
@@ -6002,13 +6002,6 @@ impl Jwm {
         );
 
         Ok(())
-    }
-
-    /// 可选：检查是否应该移动鼠标（可以添加配置选项控制）
-    fn should_move_cursor_on_focus(&self) -> bool {
-        // 可以在CONFIG中添加一个配置项来控制这个行为
-        // CONFIG.behavior().move_cursor_on_focus
-        true // 目前默认启用
     }
 
     fn find_visible_client(&mut self) -> Option<Rc<RefCell<WMClient>>> {
