@@ -2794,9 +2794,7 @@ impl Jwm {
     }
 
     /// 从窗口属性中读取一个 Atom 值
-
     /// 如果失败或属性不存在，返回 0
-
     pub fn getatomprop(&self, c: &WMClient, prop: Atom) -> Atom {
         // 发送 GetProperty 请求
         let cookie = match self.x11rb_conn.get_property(
@@ -2938,8 +2936,6 @@ impl Jwm {
 
     pub fn buttonpress(&mut self, e: &ButtonPressEvent) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[buttonpress]");
-        let _arg: WMArgEnum = WMArgEnum::UInt(0);
-
         let c: Option<Rc<RefCell<WMClient>>>;
         let mut click_type = WMClickType::ClickRootWin;
 
@@ -3235,20 +3231,63 @@ impl Jwm {
         info!("[tile]");
 
         // 获取监视器基本信息
-        let (wx, wy, ww, wh, mfact, nmaster, monitor_num) = {
-            let mon_borrow = mon_rc.borrow();
-            (
-                mon_borrow.geometry.w_x,
-                mon_borrow.geometry.w_y,
-                mon_borrow.geometry.w_w,
-                mon_borrow.geometry.w_h,
-                mon_borrow.layout.m_fact,
-                mon_borrow.layout.n_master,
-                mon_borrow.num,
-            )
-        };
+        let (wx, wy, ww, wh, mfact, nmaster, monitor_num, client_y_offset) =
+            self.get_monitor_info(mon_rc);
 
-        // 第一遍：统计客户端信息
+        // 收集所有可平铺的客户端
+        let clients = self.collect_tileable_clients(mon_rc);
+
+        if clients.is_empty() {
+            return;
+        }
+
+        info!(
+            "[tile] monitor_num: {}, clients: {}",
+            monitor_num,
+            clients.len()
+        );
+
+        // 计算布局参数
+        let (mw, mfacts, sfacts) = self.calculate_layout_params(&clients, ww, mfact, nmaster);
+
+        // 安排客户端位置
+        self.arrange_clients(
+            &clients,
+            wx,
+            wy,
+            ww,
+            wh,
+            mw,
+            mfacts,
+            sfacts,
+            nmaster,
+            client_y_offset,
+        );
+    }
+
+    // 获取监视器基本信息
+    fn get_monitor_info(
+        &mut self,
+        mon_rc: &Rc<RefCell<WMMonitor>>,
+    ) -> (i32, i32, i32, i32, f32, u32, i32, i32) {
+        let mon_borrow = mon_rc.borrow();
+        (
+            mon_borrow.geometry.w_x,
+            mon_borrow.geometry.w_y,
+            mon_borrow.geometry.w_w,
+            mon_borrow.geometry.w_h,
+            mon_borrow.layout.m_fact,
+            mon_borrow.layout.n_master,
+            mon_borrow.num,
+            self.client_y_offset(&mon_borrow),
+        )
+    }
+
+    // 收集所有可平铺的客户端
+    fn collect_tileable_clients(
+        &mut self,
+        mon_rc: &Rc<RefCell<WMMonitor>>,
+    ) -> Vec<(Rc<RefCell<WMClient>>, f32, i32)> {
         let mut clients = Vec::new();
         let mut c = self.nexttiled(mon_rc.borrow().clients.clone());
 
@@ -3266,28 +3305,30 @@ impl Jwm {
             c = self.nexttiled(next);
         }
 
-        if clients.is_empty() {
-            return;
-        }
+        clients
+    }
 
-        info!(
-            "[tile] monitor_num: {}, clients: {}",
-            monitor_num,
-            clients.len()
-        );
-
+    // 计算布局参数
+    fn calculate_layout_params(
+        &self,
+        clients: &[(Rc<RefCell<WMClient>>, f32, i32)],
+        ww: i32,
+        mfact: f32,
+        nmaster: u32,
+    ) -> (i32, f32, f32) {
         let n = clients.len() as u32;
 
         // 计算主区域和堆栈区域的cfact总和
-        let mut mfacts = 0.0;
-        let mut sfacts = 0.0;
-        for (i, (_, client_fact, _)) in clients.iter().enumerate() {
-            if i < nmaster as usize {
-                mfacts += client_fact;
-            } else {
-                sfacts += client_fact;
-            }
-        }
+        let (mfacts, sfacts) = clients.iter().enumerate().fold(
+            (0.0, 0.0),
+            |(mfacts, sfacts), (i, (_, client_fact, _))| {
+                if i < nmaster as usize {
+                    (mfacts + client_fact, sfacts)
+                } else {
+                    (mfacts, sfacts + client_fact)
+                }
+            },
+        );
 
         // 计算主区域宽度
         let mw = if n > nmaster && nmaster > 0 {
@@ -3296,64 +3337,144 @@ impl Jwm {
             ww
         };
 
-        let client_y_offset = self.client_y_offset(&mon_rc.borrow());
-        info!("[tile] client_y_offset: {}", client_y_offset);
+        (mw, mfacts, sfacts)
+    }
 
-        // 第二遍：调整客户端大小
+    // 安排客户端位置
+    fn arrange_clients(
+        &mut self,
+        clients: &[(Rc<RefCell<WMClient>>, f32, i32)],
+        wx: i32,
+        wy: i32,
+        ww: i32,
+        wh: i32,
+        mw: i32,
+        mfacts: f32,
+        sfacts: f32,
+        nmaster: u32,
+        client_y_offset: i32,
+    ) {
+        let available_height = wh - client_y_offset;
         let mut my = 0i32; // 主区域Y偏移
         let mut ty = 0i32; // 堆栈区域Y偏移
+        let mut remaining_mfacts = mfacts;
+        let mut remaining_sfacts = sfacts;
 
         for (i, (client_rc, client_fact, border_w)) in clients.iter().enumerate() {
             let is_master = i < nmaster as usize;
 
             let (x, y, w, h) = if is_master {
-                let remaining_master = nmaster - i as u32;
-                let remaining_height = (wh - my - client_y_offset).max(0);
-
-                let height = if mfacts > 0.001 {
-                    (remaining_height as f32 * (client_fact / mfacts)) as i32
-                } else if remaining_master > 0 {
-                    remaining_height / remaining_master as i32
-                } else {
-                    remaining_height
-                };
-
-                let result = (
+                self.calculate_master_geometry(
                     wx,
-                    wy + my + client_y_offset,
-                    mw - 2 * border_w,
-                    height - 2 * border_w,
-                );
-
-                my += height;
-                mfacts -= client_fact;
-                result
+                    wy,
+                    mw,
+                    available_height,
+                    client_y_offset,
+                    *client_fact,
+                    *border_w,
+                    i,
+                    nmaster,
+                    &mut my,
+                    &mut remaining_mfacts,
+                )
             } else {
-                let remaining_stack = n - i as u32;
-                let remaining_height = (wh - ty - client_y_offset).max(0);
-
-                let height = if sfacts > 0.001 {
-                    (remaining_height as f32 * (client_fact / sfacts)) as i32
-                } else if remaining_stack > 0 {
-                    remaining_height / remaining_stack as i32
-                } else {
-                    remaining_height
-                };
-
-                let result = (
-                    wx + mw,
-                    wy + ty + client_y_offset,
-                    ww - mw - 2 * border_w,
-                    height - 2 * border_w,
-                );
-
-                ty += height;
-                sfacts -= client_fact;
-                result
+                self.calculate_stack_geometry(
+                    wx,
+                    wy,
+                    ww,
+                    mw,
+                    available_height,
+                    client_y_offset,
+                    *client_fact,
+                    *border_w,
+                    i,
+                    nmaster,
+                    clients.len(),
+                    &mut ty,
+                    &mut remaining_sfacts,
+                )
             };
 
             self.resize(client_rc, x, y, w, h, false);
         }
+    }
+
+    // 计算主区域窗口几何形状
+    fn calculate_master_geometry(
+        &self,
+        wx: i32,
+        wy: i32,
+        mw: i32,
+        available_height: i32,
+        client_y_offset: i32,
+        client_fact: f32,
+        border_w: i32,
+        index: usize,
+        nmaster: u32,
+        my: &mut i32,
+        remaining_mfacts: &mut f32,
+    ) -> (i32, i32, i32, i32) {
+        let remaining_masters = nmaster - index as u32;
+        let remaining_height = (available_height - *my).max(0);
+
+        let height = if *remaining_mfacts > 0.001 {
+            (remaining_height as f32 * (client_fact / *remaining_mfacts)) as i32
+        } else if remaining_masters > 0 {
+            remaining_height / remaining_masters as i32
+        } else {
+            remaining_height
+        };
+
+        *my += height;
+        *remaining_mfacts -= client_fact;
+
+        (
+            wx,
+            wy + *my - height + client_y_offset,
+            mw - 2 * border_w,
+            height - 2 * border_w,
+        )
+    }
+
+    // 计算堆栈区域窗口几何形状
+    fn calculate_stack_geometry(
+        &self,
+        wx: i32,
+        wy: i32,
+        ww: i32,
+        mw: i32,
+        available_height: i32,
+        client_y_offset: i32,
+        client_fact: f32,
+        border_w: i32,
+        index: usize,
+        nmaster: u32,
+        total_clients: usize,
+        ty: &mut i32,
+        remaining_sfacts: &mut f32,
+    ) -> (i32, i32, i32, i32) {
+        let stack_index = index - nmaster as usize;
+        let stack_count = total_clients - nmaster as usize;
+        let remaining_stacks = stack_count - stack_index;
+        let remaining_height = (available_height - *ty).max(0);
+
+        let height = if *remaining_sfacts > 0.001 {
+            (remaining_height as f32 * (client_fact / *remaining_sfacts)) as i32
+        } else if remaining_stacks > 0 {
+            remaining_height / remaining_stacks as i32
+        } else {
+            remaining_height
+        };
+
+        *ty += height;
+        *remaining_sfacts -= client_fact;
+
+        (
+            wx + mw,
+            wy + *ty - height + client_y_offset,
+            ww - mw - 2 * border_w,
+            height - 2 * border_w,
+        )
     }
 
     pub fn togglefloating(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
