@@ -554,6 +554,14 @@ impl WMRule {
     }
 }
 
+/// 表示一个窗口重排操作
+#[derive(Debug, Clone)]
+struct RestackOperation {
+    window: Window,
+    stack_mode: StackMode,
+    sibling: Option<Window>,
+}
+
 pub struct Jwm {
     pub stext_max_len: usize,
     pub s_w: i32,
@@ -1600,7 +1608,10 @@ impl Jwm {
         interact: bool,
     ) {
         // info!("[resize] {x}, {y}, {w}, {h}");
-        if self.applysizehints(c, &mut x, &mut y, &mut w, &mut h, interact).is_ok() {
+        if self
+            .applysizehints(c, &mut x, &mut y, &mut w, &mut h, interact)
+            .is_ok()
+        {
             let _ = self.resizeclient(&mut *c.borrow_mut(), x, y, w, h);
         }
     }
@@ -2228,7 +2239,6 @@ impl Jwm {
 
     fn write_message(&mut self, num: i32, message: &SharedMessage) -> std::io::Result<()> {
         if let Some(ring_buffer) = self.status_bar_shmem.get_mut(&num) {
-            // Assuming get_mut
             match ring_buffer.try_write_message(&message) {
                 Ok(true) => {
                     if let Some(_statusbar) = self.status_bar_clients.get(&num) {
@@ -2239,8 +2249,6 @@ impl Jwm {
                 }
                 Ok(false) => {
                     println!("缓冲区已满，等待空间...");
-                    // Consider returning a specific error type or just Ok(()) if this is not critical
-                    // For example: Err(std::io::Error::new(std::io::ErrorKind::WouldBlock, "Ring buffer full"))
                     Ok(()) // Or keep as Ok, depending on desired error propagation
                 }
                 Err(e) => {
@@ -2376,64 +2384,142 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[restack]");
 
-        let mon_rc = match mon_rc_opt {
-            Some(monitor) => monitor,
-            None => return Ok(()),
+        let mon_rc = mon_rc_opt.ok_or("Monitor is required for restack operation")?;
+
+        let monitor_num = {
+            let mon = mon_rc.borrow();
+            self.mark_bar_update_needed(Some(mon.num));
+            mon.num
         };
-        self.mark_bar_update_needed(Some(mon_rc.borrow().num));
-        let mon_borrow = mon_rc.borrow();
-        // 收集所有需要重新排列的窗口
-        let mut windows_to_restack = Vec::new();
-        // 1. 首先处理选中的浮动窗口
-        if let Some(ref sel) = mon_borrow.sel {
-            let sel_borrow = sel.borrow();
-            if sel_borrow.state.is_floating {
-                windows_to_restack.push((sel_borrow.win, StackMode::ABOVE, None));
-            }
-        }
 
-        // 2. 处理状态栏（确保在最顶层）
-        let monitor_id = mon_borrow.num;
-        if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
-            let statusbar_win = statusbar.borrow().win;
-            windows_to_restack.push((statusbar_win, StackMode::ABOVE, None));
-        }
-
-        // 3. 收集非浮动可见窗口
-        let mut non_floating_windows = Vec::new();
-        let mut client_rc_opt = mon_borrow.stack.clone();
-        while let Some(ref client_rc) = client_rc_opt.clone() {
-            let client_borrow = client_rc.borrow();
-            if !client_borrow.state.is_floating && client_borrow.is_visible() {
-                non_floating_windows.push(client_borrow.win);
-            }
-            let next = client_borrow.stack_next.clone();
-            client_rc_opt = next;
-        }
-
-        // 4. 按堆叠顺序排列非浮动窗口
-        for (i, &win) in non_floating_windows.iter().enumerate() {
-            let sibling = if i == 0 {
-                None
-            } else {
-                Some(non_floating_windows[i - 1])
-            };
-            windows_to_restack.push((win, StackMode::BELOW, sibling));
-        }
-
-        // 5. 批量执行所有窗口重排操作
-        for (window, stack_mode, sibling) in windows_to_restack {
-            let mut config = ConfigureWindowAux::new().stack_mode(stack_mode);
-            if let Some(sibling_win) = sibling {
-                config = config.sibling(sibling_win);
-            }
-            self.x11rb_conn.configure_window(window, &config)?;
-        }
-
-        // 6. 同步所有操作
-        self.x11rb_conn.flush()?;
+        // 收集并批量处理所有窗口重排操作
+        let restack_operations = self.collect_restack_operations(&mon_rc, monitor_num)?;
+        self.execute_restack_operations(restack_operations)?;
 
         info!("[restack] finish");
+        Ok(())
+    }
+
+    /// 收集所有需要重新排列的窗口操作
+    fn collect_restack_operations(
+        &self,
+        mon_rc: &Rc<RefCell<WMMonitor>>,
+        monitor_num: i32,
+    ) -> Result<Vec<RestackOperation>, Box<dyn std::error::Error>> {
+        let mut operations = Vec::new();
+
+        let mon = mon_rc.borrow();
+
+        // 1. 收集非浮动窗口（底层）
+        let non_floating_windows = self.collect_non_floating_windows(&mon)?;
+        operations.extend(self.create_non_floating_operations(&non_floating_windows));
+
+        // 2. 添加选中的浮动窗口（中层）
+        if let Some(floating_op) = self.create_selected_floating_operation(&mon)? {
+            operations.push(floating_op);
+        }
+
+        // 3. 添加状态栏（顶层）
+        if let Some(statusbar_op) = self.create_statusbar_operation(monitor_num)? {
+            operations.push(statusbar_op);
+        }
+
+        Ok(operations)
+    }
+
+    /// 收集所有非浮动可见窗口
+    fn collect_non_floating_windows(
+        &self,
+        mon: &std::cell::Ref<WMMonitor>,
+    ) -> Result<Vec<Window>, Box<dyn std::error::Error>> {
+        let mut windows = Vec::new();
+        let mut current = mon.stack.clone();
+
+        while let Some(client_rc) = current {
+            let client = client_rc.borrow();
+
+            if !client.state.is_floating && client.is_visible() {
+                windows.push(client.win);
+            }
+
+            current = client.stack_next.clone();
+        }
+
+        Ok(windows)
+    }
+
+    /// 为非浮动窗口创建重排操作
+    fn create_non_floating_operations(&self, windows: &[Window]) -> Vec<RestackOperation> {
+        windows
+            .iter()
+            .enumerate()
+            .map(|(i, &win)| {
+                let sibling = if i == 0 { None } else { Some(windows[i - 1]) };
+                RestackOperation {
+                    window: win,
+                    stack_mode: StackMode::BELOW,
+                    sibling,
+                }
+            })
+            .collect()
+    }
+
+    /// 为选中的浮动窗口创建重排操作
+    fn create_selected_floating_operation(
+        &self,
+        mon: &std::cell::Ref<WMMonitor>,
+    ) -> Result<Option<RestackOperation>, Box<dyn std::error::Error>> {
+        if let Some(ref sel) = mon.sel {
+            let sel_client = sel.borrow();
+            if sel_client.state.is_floating {
+                return Ok(Some(RestackOperation {
+                    window: sel_client.win,
+                    stack_mode: StackMode::ABOVE,
+                    sibling: None,
+                }));
+            }
+        }
+        Ok(None)
+    }
+
+    /// 为状态栏创建重排操作
+    fn create_statusbar_operation(
+        &self,
+        monitor_num: i32,
+    ) -> Result<Option<RestackOperation>, Box<dyn std::error::Error>> {
+        if let Some(statusbar) = self.status_bar_clients.get(&monitor_num) {
+            let statusbar_win = statusbar.borrow().win;
+            return Ok(Some(RestackOperation {
+                window: statusbar_win,
+                stack_mode: StackMode::ABOVE,
+                sibling: None,
+            }));
+        }
+        Ok(None)
+    }
+
+    /// 执行所有重排操作
+    fn execute_restack_operations(
+        &mut self,
+        operations: Vec<RestackOperation>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if operations.is_empty() {
+            return Ok(());
+        }
+
+        // 批量执行所有配置更改
+        for op in operations {
+            let mut config = ConfigureWindowAux::new().stack_mode(op.stack_mode);
+
+            if let Some(sibling_win) = op.sibling {
+                config = config.sibling(sibling_win);
+            }
+
+            self.x11rb_conn.configure_window(op.window, &config)?;
+        }
+
+        // 单次同步所有操作
+        self.x11rb_conn.flush()?;
         Ok(())
     }
 
