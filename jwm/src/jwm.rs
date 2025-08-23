@@ -584,6 +584,8 @@ pub struct Jwm {
     pub atoms: Atoms,
 
     keycode_cache: HashMap<u8, u32>,
+
+    pub need_clear_enter_events: bool,
 }
 
 impl Jwm {
@@ -652,6 +654,8 @@ impl Jwm {
             x11rb_screen,
             atoms,
             keycode_cache: HashMap::new(),
+
+            need_clear_enter_events: false,
         }
     }
 
@@ -1214,6 +1218,7 @@ impl Jwm {
         &mut self,
         e: &ConfigureNotifyEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[configurenotify] {:?}", e);
         // 检查是否是根窗口的配置变更
         if e.window == self.x11rb_root {
             info!("[configurenotify] e: {:?}", e);
@@ -1280,6 +1285,7 @@ impl Jwm {
     }
 
     pub fn configure(&self, c: &mut WMClient) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[configure]");
         let event = ConfigureNotifyEvent {
             event: c.win,
             window: c.win,
@@ -2395,32 +2401,9 @@ impl Jwm {
         self.x11rb_conn.flush()?;
 
         // 7. 刷新进入事件
-        self.clear_enter_events()?;
+        // self.need_clear_enter_events = true;
 
         info!("[restack] finish");
-        Ok(())
-    }
-
-    fn clear_enter_events(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[clear_enter_events]");
-        // 收集所有待处理事件
-        let mut events = Vec::new();
-        while let Some(event) = self.x11rb_conn.poll_for_event()? {
-            match event {
-                Event::EnterNotify(_) | Event::ConfigureNotify(_) => {
-                    // 丢弃 EnterNotify 事件
-                    info!("drop event: {:?}", event);
-                }
-                other => {
-                    // 保留其他事件
-                    events.push(other);
-                }
-            }
-        }
-        // 处理保留的事件
-        for event in events {
-            self.handler(event)?;
-        }
         Ok(())
     }
 
@@ -2428,10 +2411,10 @@ impl Jwm {
         if self.pending_bar_updates.is_empty() {
             return;
         }
-        // info!(
-        //     "[flush_pending_bar_updates] Updating {} monitors",
-        //     self.pending_bar_updates.len()
-        // );
+        info!(
+            "[flush_pending_bar_updates] Updating {} monitors",
+            self.pending_bar_updates.len()
+        );
         for monitor_id in self.pending_bar_updates.clone() {
             if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
                 self.UpdateBarMessage(Some(monitor));
@@ -2440,60 +2423,84 @@ impl Jwm {
 
         self.pending_bar_updates.clear();
     }
-
     pub async fn run_async(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 初始同步
         self.x11rb_conn.flush()?;
         let mut event_count: u64 = 0;
-        let mut update_timer = tokio::time::interval(Duration::from_millis(10)); // 10ms for ~100 FPS
-        info!("Starting async event loop");
-        while self.running.load(Ordering::SeqCst) {
-            let mut events_processed = false;
-            // 处理所有挂起的X11事件
-            while let Some(event) = self.x11rb_conn.poll_for_event()? {
-                event_count = event_count.wrapping_add(1);
-                info!(
-                    "[run_async] event_count: {}, event: {:?}",
-                    event_count, event
-                );
-                let _ = self.handler(event);
-                events_processed = true;
-            }
+        let mut update_timer = tokio::time::interval(Duration::from_millis(10));
 
-            // 处理来自status bar的命令 (保持不变)
+        // 🔧 创建一次性的 AsyncFd
+        let async_fd = {
+            use std::os::unix::io::AsRawFd;
+            use tokio::io::unix::AsyncFd;
+            let stream = self.x11rb_conn.stream();
+            let fd = stream.as_raw_fd();
+            AsyncFd::new(fd)?
+        };
+
+        info!("Starting async event loop");
+
+        while self.running.load(Ordering::SeqCst) {
+            // 🔧 一次性处理所有事件
+            let events_processed = self.process_all_x11_events(&mut event_count)?;
+
             self.process_commands_from_status_bar();
 
-            // ✨ 在事件循环结束后，批量更新状态栏 (保持不变)
             if events_processed || !self.pending_bar_updates.is_empty() {
                 self.flush_pending_bar_updates();
             }
 
-            // 使用tokio的异步等待替代select
+            // 🔧 修复的 select 逻辑
             tokio::select! {
                 _ = update_timer.tick() => {
-                    // 超时，检查是否有挂起的更新
                     if !self.pending_bar_updates.is_empty() {
                         self.flush_pending_bar_updates();
                     }
                 }
-                _ = self.wait_for_x11_ready() => {
-                    // X11事件就绪，下次循环会处理
+                // _ = tokio::time::sleep(Duration::from_millis(1)) => {
+                //     // 确保循环不会阻塞
+                // }
+                result = self.wait_for_x11_ready_fixed(&async_fd) => {
+                    if let Err(e) = result {
+                        warn!("X11 ready wait error: {}", e);
+                    }
+                    // 下次循环会处理新事件
                 }
             }
         }
         Ok(())
     }
 
-    // 等待X11事件就绪的辅助函数
-    async fn wait_for_x11_ready(&self) -> Result<(), Box<dyn std::error::Error>> {
-        use std::os::unix::io::AsRawFd;
-        use tokio::io::unix::AsyncFd;
-        // 获取底层的TCP流或Unix域套接字
-        let stream = self.x11rb_conn.stream();
-        let fd = stream.as_raw_fd();
-        let async_fd = AsyncFd::new(fd)?;
-        let mut guard = async_fd.readable().await?;
-        guard.clear_ready();
+    // 🔧 统一的事件处理函数
+    fn process_all_x11_events(
+        &mut self,
+        event_count: &mut u64,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let mut events_processed = false;
+        while let Some(event) = self.x11rb_conn.poll_for_event()? {
+            *event_count = event_count.wrapping_add(1);
+            info!(
+                "[run_async] event_count: {}, event: {:?}",
+                event_count, event
+            );
+            let _ = self.handler(event);
+            events_processed = true;
+        }
+
+        Ok(events_processed)
+    }
+
+    // 🔧 修复的 wait_for_x11_ready
+    async fn wait_for_x11_ready_fixed(
+        &self,
+        async_fd: &tokio::io::unix::AsyncFd<std::os::unix::io::RawFd>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 添加超时保护
+        tokio::time::timeout(Duration::from_millis(100), async {
+            let mut guard = async_fd.readable().await?;
+            guard.clear_ready();
+            Ok::<(), Box<dyn std::error::Error>>(())
+        })
+        .await??;
         Ok(())
     }
 
@@ -5291,7 +5298,7 @@ impl Jwm {
         self.x11rb_conn.ungrab_pointer(0u32)?;
 
         // 清理事件
-        self.clear_enter_events()?;
+        // self.need_clear_enter_events = true;
 
         // 检查是否需要移动到不同的显示器
         self.check_monitor_change_after_resize()?;
@@ -5531,6 +5538,11 @@ impl Jwm {
     }
 
     pub fn enternotify(&mut self, e: &EnterNotifyEvent) -> Result<(), Box<dyn std::error::Error>> {
+        if self.need_clear_enter_events {
+            self.need_clear_enter_events = false;
+            info!("[enternotify] skip");
+            return Ok(());
+        }
         info!("[enternotify]");
         // 过滤不需要处理的事件
         if (e.mode != NotifyMode::NORMAL || e.detail == NotifyDetail::INFERIOR)
