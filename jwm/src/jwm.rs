@@ -827,129 +827,166 @@ impl Jwm {
         w: &mut i32,
         h: &mut i32,
         interact: bool,
-    ) -> bool {
-        // info!("[applysizehints] {x}, {y}, {w}, {h}");
-        // set minimum possible client area size.
-        *w = 1.max(*w);
-        *h = 1.max(*h);
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        // 设置最小可能的客户端区域大小
+        *w = (*w).max(1);
+        *h = (*h).max(1);
+        // 边界检查 - 提取重复的逻辑到内部函数
+        self.apply_boundary_constraints(c, x, y, w, h, interact);
+        // 尺寸提示处理
+        let geometry_changed = self.apply_size_hints_constraints(c, w, h)?;
+        // 检查最终几何形状是否与客户端当前几何形状不同
+        let client = c.borrow();
 
-        // Boundary checks
+        Ok(geometry_changed
+            || *x != client.geometry.x
+            || *y != client.geometry.y
+            || *w != client.geometry.w
+            || *h != client.geometry.h)
+    }
+
+    /// 应用边界约束
+    fn apply_boundary_constraints(
+        &self,
+        c: &Rc<RefCell<WMClient>>,
+        x: &mut i32,
+        y: &mut i32,
+        w: &i32,
+        h: &i32,
+        interact: bool,
+    ) {
+        let client = c.borrow();
+        let client_total_width = *w + 2 * client.geometry.border_w;
+        let client_total_height = *h + 2 * client.geometry.border_w;
+
         if interact {
-            let cc = c.as_ref().borrow(); // Borrow immutably for reading
-            let client_total_width = *w + 2 * cc.geometry.border_w; // Use desired w for this check
-            let client_total_height = *h + 2 * cc.geometry.border_w; // Use desired h for this check
-
-            if *x > self.s_w {
-                // Off right edge
-                *x = self.s_w - client_total_width;
-            }
-            if *y > self.s_h {
-                // Off bottom edge
-                *y = self.s_h - client_total_height;
-            }
-            if *x + client_total_width < 0 {
-                // Off left edge
-                *x = 0;
-            }
-            if *y + client_total_height < 0 {
-                // Off top edge
-                *y = 0;
-            }
+            // 屏幕边界约束
+            self.constrain_to_screen(x, y, client_total_width, client_total_height);
         } else {
-            let cc = c.as_ref().borrow(); // Borrow immutably for reading
-            let mon_borrow = cc.mon.as_ref().unwrap().borrow();
-            let wx = mon_borrow.geometry.w_x;
-            let wy = mon_borrow.geometry.w_y;
-            let ww = mon_borrow.geometry.w_w;
-            let wh = mon_borrow.geometry.w_h;
-            let client_total_width = *w + 2 * cc.geometry.border_w; // Use desired w
-            let client_total_height = *h + 2 * cc.geometry.border_w; // Use desired h
-
-            if *x >= wx + ww {
-                // Client's left edge past monitor's right edge
-                *x = wx + ww - client_total_width;
-            }
-            if *y >= wy + wh {
-                // Client's top edge past monitor's bottom edge
-                *y = wy + wh - client_total_height;
-            }
-            if *x + client_total_width <= wx {
-                // Client's right edge before monitor's left edge
-                *x = wx;
-            }
-            if *y + client_total_height <= wy {
-                // Client's bottom edge before monitor's top edge
-                *y = wy;
+            // 监视器边界约束
+            if let Some(monitor) = &client.mon {
+                let mon = monitor.borrow();
+                self.constrain_to_monitor(
+                    x,
+                    y,
+                    client_total_width,
+                    client_total_height,
+                    &mon.geometry,
+                );
             }
         }
+    }
 
-        let is_floating = { c.as_ref().borrow().state.is_floating };
+    /// 约束到屏幕边界
+    fn constrain_to_screen(&self, x: &mut i32, y: &mut i32, total_width: i32, total_height: i32) {
+        // 防止窗口完全离开屏幕
+        *x = (*x).clamp(-(total_width - 1), self.s_w - 1);
+        *y = (*y).clamp(-(total_height - 1), self.s_h - 1);
+    }
 
-        if CONFIG.behavior().resize_hints || is_floating {
-            if !c.as_ref().borrow().size_hints.hints_valid {
-                // Check immutable borrow first
-                let _ = self.updatesizehints(c); // This will mutably borrow internally
-            }
+    /// 约束到监视器边界
+    fn constrain_to_monitor(
+        &self,
+        x: &mut i32,
+        y: &mut i32,
+        total_width: i32,
+        total_height: i32,
+        monitor_geometry: &MonitorGeometry,
+    ) {
+        let MonitorGeometry {
+            w_x: wx,
+            w_y: wy,
+            w_w: ww,
+            w_h: wh,
+            ..
+        } = *monitor_geometry;
 
-            let cc = c.as_ref().borrow(); // Re-borrow (immutable) after potential updatesizehints
+        // 防止窗口完全离开监视器
+        *x = (*x).clamp(wx - total_width + 1, wx + ww - 1);
+        *y = (*y).clamp(wy - total_height + 1, wy + wh - 1);
+    }
 
-            // Adjust w and h for base dimensions and increments
-            // These are client area dimensions (without border)
-            let mut current_w = *w;
-            let mut current_h = *h;
-
-            // 1. Subtract base size to get the dimensions that increments apply to.
-            current_w -= cc.size_hints.base_w;
-            current_h -= cc.size_hints.base_h;
-
-            // 2. Apply resize increments.
-            if cc.size_hints.inc_w > 0 {
-                current_w -= current_w % cc.size_hints.inc_w;
-            }
-            if cc.size_hints.inc_h > 0 {
-                current_h -= current_h % cc.size_hints.inc_h;
-            }
-
-            // 3. Add base size back before aspect ratio and min/max checks.
-            current_w += cc.size_hints.base_w;
-            current_h += cc.size_hints.base_h;
-
-            // 4. Apply aspect ratio limits.
-            // cc.mina is min_aspect.y / min_aspect.x (target H/W)
-            // cc.maxa is max_aspect.x / max_aspect.y (target W/H)
-            if cc.size_hints.min_aspect > 0.0 && cc.size_hints.max_aspect > 0.0 {
-                if cc.size_hints.max_aspect < current_w as f32 / current_h as f32 {
-                    // Too wide (current W/H > max W/H) -> Adjust W
-                    current_w = (current_h as f32 * cc.size_hints.max_aspect + 0.5) as i32;
-                } else if current_h as f32 / current_w as f32 > cc.size_hints.min_aspect {
-                    // Too tall (current H/W > min H/W) -> Adjust H
-                    current_h = (current_w as f32 * cc.size_hints.min_aspect + 0.5) as i32;
-                }
-            }
-
-            // 5. Enforce min and max dimensions.
-            // Ensure client area is not smaller than min_width/height.
-            current_w = current_w.max(cc.size_hints.min_w);
-            current_h = current_h.max(cc.size_hints.min_h);
-
-            // Ensure client area is not larger than max_width/height if specified.
-            if cc.size_hints.max_w > 0 {
-                current_w = current_w.min(cc.size_hints.max_w);
-            }
-            if cc.size_hints.max_h > 0 {
-                current_h = current_h.min(cc.size_hints.max_h);
-            }
-
-            *w = current_w;
-            *h = current_h;
+    /// 应用尺寸提示约束
+    fn apply_size_hints_constraints(
+        &mut self,
+        c: &Rc<RefCell<WMClient>>,
+        w: &mut i32,
+        h: &mut i32,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let is_floating = c.borrow().state.is_floating;
+        // 只有在需要时才应用尺寸提示
+        if !CONFIG.behavior().resize_hints && !is_floating {
+            return Ok(false);
         }
+        // 确保尺寸提示有效
+        {
+            let client = c.borrow();
+            if !client.size_hints.hints_valid {
+                drop(client); // 显式释放借用
+                self.updatesizehints(c)?;
+            }
+        }
+        let client = c.borrow();
+        let hints = &client.size_hints;
+        // 应用所有尺寸约束
+        let (new_w, new_h) = self.calculate_constrained_size(*w, *h, hints);
+        let changed = *w != new_w || *h != new_h;
+        *w = new_w;
+        *h = new_h;
+        Ok(changed)
+    }
 
-        // Check if final geometry is different from the client's current geometry
-        let client_now = c.as_ref().borrow();
-        return *x != client_now.geometry.x
-            || *y != client_now.geometry.y
-            || *w != client_now.geometry.w
-            || *h != client_now.geometry.h;
+    /// 计算受约束的尺寸
+    fn calculate_constrained_size(
+        &self,
+        mut w: i32,
+        mut h: i32,
+        hints: &SizeHints, // 假设的类型名
+    ) -> (i32, i32) {
+        // 1. 应用基础尺寸和增量
+        w = self.apply_increments(w - hints.base_w, hints.inc_w) + hints.base_w;
+        h = self.apply_increments(h - hints.base_h, hints.inc_h) + hints.base_h;
+        // 2. 应用长宽比限制
+        (w, h) = self.apply_aspect_ratio_constraints(w, h, hints);
+        // 3. 应用最小/最大尺寸限制
+        w = w.max(hints.min_w);
+        h = h.max(hints.min_h);
+        if hints.max_w > 0 {
+            w = w.min(hints.max_w);
+        }
+        if hints.max_h > 0 {
+            h = h.min(hints.max_h);
+        }
+        (w, h)
+    }
+
+    /// 应用增量约束
+    fn apply_increments(&self, size: i32, increment: i32) -> i32 {
+        if increment > 0 {
+            (size / increment) * increment
+        } else {
+            size
+        }
+    }
+
+    /// 应用长宽比约束
+    fn apply_aspect_ratio_constraints(
+        &self,
+        mut w: i32,
+        mut h: i32,
+        hints: &SizeHints,
+    ) -> (i32, i32) {
+        if hints.min_aspect > 0.0 && hints.max_aspect > 0.0 {
+            let current_ratio = w as f32 / h as f32;
+            if current_ratio > hints.max_aspect {
+                // 太宽，调整宽度
+                w = (h as f32 * hints.max_aspect + 0.5) as i32;
+            } else if current_ratio < 1.0 / hints.min_aspect {
+                // 太高，调整高度
+                h = (w as f32 * hints.min_aspect + 0.5) as i32;
+            }
+        }
+        (w, h)
     }
 
     pub fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -1563,7 +1600,7 @@ impl Jwm {
         interact: bool,
     ) {
         // info!("[resize] {x}, {y}, {w}, {h}");
-        if self.applysizehints(c, &mut x, &mut y, &mut w, &mut h, interact) {
+        if self.applysizehints(c, &mut x, &mut y, &mut w, &mut h, interact).is_ok() {
             let _ = self.resizeclient(&mut *c.borrow_mut(), x, y, w, h);
         }
     }
