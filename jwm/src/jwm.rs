@@ -4154,101 +4154,78 @@ impl Jwm {
 
     pub fn loopview(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[loopview]");
-        let direction = if let WMArgEnum::Int(val) = arg {
-            val
-        } else {
-            return Ok(());
+
+        // 提取并验证参数
+        let direction = match arg {
+            WMArgEnum::Int(val) => *val,
+            _ => return Ok(()),
         };
-        if direction == &0 {
+
+        if direction == 0 {
             return Ok(());
         }
-        let next_tag;
-        let current_tag;
-        let cur_tag;
-        {
-            let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
-            current_tag = sel_mon_mut.tag_set[sel_mon_mut.sel_tags];
-            // 找到当前tag的位置
-            let current_tag_index = if current_tag == 0 {
-                0 // 如果当前没有选中的tag，从第一个开始
+
+        // 计算下一个标签
+        let next_tag = self.calculate_next_tag(direction);
+
+        // 检查是否需要切换标签
+        if self.is_same_tag(next_tag) {
+            return Ok(());
+        }
+
+        info!(
+            "[loopview] next_tag: {}, direction: {}",
+            next_tag, direction
+        );
+
+        // 执行标签切换
+        let cur_tag = self.switch_to_tag(next_tag, next_tag)?;
+
+        // 应用per-tag设置
+        let sel_opt = self.apply_pertag_settings(cur_tag)?;
+
+        // 更新焦点和布局
+        self.focus(sel_opt)?;
+        self.arrange(self.sel_mon.clone());
+
+        Ok(())
+    }
+
+    // 计算下一个标签的辅助函数
+    fn calculate_next_tag(&self, direction: i32) -> u32 {
+        let sel_mon = self.sel_mon.as_ref().unwrap().borrow();
+        let current_tag = sel_mon.tag_set[sel_mon.sel_tags];
+
+        // 找到当前tag的位置
+        let current_tag_index = if current_tag == 0 {
+            0 // 如果当前没有选中的tag，从第一个开始
+        } else {
+            current_tag.trailing_zeros() as usize
+        };
+
+        // 计算下一个tag的索引（假设支持9个tag，即1-9）
+        const MAX_TAGS: usize = 9;
+        let next_tag_index = if direction > 0 {
+            // 向前循环：1>2>3>...>9>1
+            (current_tag_index + 1) % MAX_TAGS
+        } else {
+            // 向后循环：1>9>8>...>2>1
+            if current_tag_index == 0 {
+                MAX_TAGS - 1
             } else {
-                current_tag.trailing_zeros() as usize
-            };
-            // 计算下一个tag的索引（假设支持9个tag，即1-9）
-            let max_tags = 9;
-            let next_tag_index = if direction > &0 {
-                // 向前循环：1>2>3>...>9>1
-                (current_tag_index + 1) % max_tags
-            } else {
-                // 向后循环：1>9>8>...>2>1
-                if current_tag_index == 0 {
-                    max_tags - 1
-                } else {
-                    current_tag_index - 1
-                }
-            };
-            // 将索引转换为tag位掩码
-            next_tag = 1 << next_tag_index;
-            info!(
-                "[loopview] current_tag: {}, next_tag: {}, direction: {}",
-                current_tag, next_tag, direction
-            );
-        }
-        // 如果下一个tag和当前tag相同，不需要切换
-        {
-            let sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow();
-            if next_tag == sel_mon_mut.tag_set[sel_mon_mut.sel_tags] {
-                return Ok(());
-            }
-        }
-        {
-            let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-            // 切换sel tagset
-            info!("[loopview] sel_tags: {}", sel_mon_mut.sel_tags);
-            sel_mon_mut.sel_tags ^= 1;
-            info!("[loopview] sel_tags: {}", sel_mon_mut.sel_tags);
-            // 设置新的tag
-            let sel_tags = sel_mon_mut.sel_tags;
-            sel_mon_mut.tag_set[sel_tags] = next_tag;
-            // 更新pertag信息
-            if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
-                pertag.prev_tag = pertag.cur_tag;
-                // 计算新的当前tag索引
-                let i = next_tag.trailing_zeros() as usize;
-                pertag.cur_tag = i + 1;
-            }
-            if let Some(pertag) = sel_mon_mut.pertag.as_ref() {
-                info!(
-                    "[loopview] prevtag: {}, cur_tag: {}",
-                    pertag.prev_tag, pertag.cur_tag
-                );
-            }
-            cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-        }
-        // 应用pertag设置
-        let sel_opt;
-        {
-            let mut sel_mon_mut = self.sel_mon.as_mut().unwrap().borrow_mut();
-            sel_mon_mut.layout.n_master = sel_mon_mut.pertag.as_ref().unwrap().n_masters[cur_tag];
-            sel_mon_mut.layout.m_fact = sel_mon_mut.pertag.as_ref().unwrap().m_facts[cur_tag];
-            sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
-            let sel_lt = sel_mon_mut.sel_lt;
-            sel_mon_mut.lt[sel_lt] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag][sel_lt]
-                .clone()
-                .expect("None unwrap");
-            sel_mon_mut.lt[sel_lt ^ 1] = sel_mon_mut.pertag.as_ref().unwrap().lt_idxs[cur_tag]
-                [sel_lt ^ 1]
-                .clone()
-                .expect("None unwrap");
-            sel_opt = sel_mon_mut.pertag.as_ref().unwrap().sel[cur_tag].clone();
-            if sel_opt.is_some() {
-                info!("[loopview] sel_opt: {}", sel_opt.as_ref().unwrap().borrow());
+                current_tag_index - 1
             }
         };
 
-        self.focus(sel_opt)?;
-        self.arrange(self.sel_mon.clone());
-        Ok(())
+        // 将索引转换为tag位掩码
+        let next_tag = 1 << next_tag_index;
+
+        info!(
+            "[calculate_next_tag] current_tag: {}, next_tag: {}, direction: {}",
+            current_tag, next_tag, direction
+        );
+
+        next_tag
     }
 
     pub fn view(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
@@ -5975,6 +5952,10 @@ impl Jwm {
         // 设置新的焦点客户端
         if let Some(c_rc) = c_opt.clone() {
             self.set_client_focus(&c_rc)?;
+
+            if self.should_move_cursor_on_focus() {
+                self.move_cursor_to_client_center(&c_rc)?;
+            }
         } else {
             self.set_root_focus()?;
         }
@@ -5986,6 +5967,48 @@ impl Jwm {
         self.mark_bar_update_needed(None);
 
         Ok(())
+    }
+
+    /// 将鼠标指针移动到客户端窗口的中心
+    fn move_cursor_to_client_center(
+        &mut self,
+        client_rc: &Rc<RefCell<WMClient>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (win, center_x, center_y) = {
+            let client = client_rc.borrow();
+            let center_x = client.geometry.x + client.geometry.w / 2;
+            let center_y = client.geometry.y + client.geometry.h / 2;
+            (client.win, center_x, center_y)
+        };
+
+        // 使用 warp_pointer 将鼠标移动到窗口中心
+        self.x11rb_conn.warp_pointer(
+            0u32,            // src_window (0 = None)
+            win,             // dst_window (目标窗口)
+            0,               // src_x
+            0,               // src_y
+            0,               // src_width
+            0,               // src_height
+            center_x as i16, // dst_x (相对于目标窗口的X坐标)
+            center_y as i16, // dst_y (相对于目标窗口的Y坐标)
+        )?;
+
+        // 刷新连接确保请求被发送
+        self.x11rb_conn.flush()?;
+
+        debug!(
+            "[move_cursor_to_client_center] Moved cursor to center of window {}: ({}, {})",
+            win, center_x, center_y
+        );
+
+        Ok(())
+    }
+
+    /// 可选：检查是否应该移动鼠标（可以添加配置选项控制）
+    fn should_move_cursor_on_focus(&self) -> bool {
+        // 可以在CONFIG中添加一个配置项来控制这个行为
+        // CONFIG.behavior().move_cursor_on_focus
+        true // 目前默认启用
     }
 
     fn find_visible_client(&mut self) -> Option<Rc<RefCell<WMClient>>> {
