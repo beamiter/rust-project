@@ -4805,108 +4805,109 @@ impl Jwm {
     }
 
     pub fn gettextprop(&mut self, w: Window, atom: Atom, text: &mut String) -> bool {
-        // 清空输出字符串
         text.clear();
 
-        // 获取窗口属性
-        let property = match self.x11rb_conn.get_property(
+        let property = match self.get_window_property(w, atom) {
+            Ok(prop) => prop,
+            Err(_) => return false,
+        };
+
+        if property.value.is_empty() {
+            debug!("[gettextprop] Property value is empty");
+            return false;
+        }
+
+        // 只处理 8 位格式的属性
+        if property.format != 8 {
+            debug!(
+                "[gettextprop] Unsupported property format: {}",
+                property.format
+            );
+            return false;
+        }
+
+        // 根据属性类型解析文本
+        let parsed_text = match property.type_ {
+            type_ if type_ == self.atoms.UTF8_STRING => self.parse_utf8_string(&property.value),
+            type_ if type_ == AtomEnum::STRING.into() => {
+                Some(self.parse_latin1_string(&property.value))
+            }
+            type_ if type_ == self.atoms.COMPOUND_TEXT => self.parse_compound_text(&property.value),
+            _ => self.parse_fallback_text(&property.value),
+        };
+
+        match parsed_text {
+            Some(parsed) => {
+                *text = self.truncate_text(parsed);
+                true
+            }
+            None => false,
+        }
+    }
+
+    // 获取窗口属性
+    fn get_window_property(
+        &mut self,
+        w: Window,
+        atom: Atom,
+    ) -> Result<GetPropertyReply, Box<dyn std::error::Error>> {
+        let cookie = self.x11rb_conn.get_property(
             false,         // delete: 不删除属性
             w,             // window
             atom,          // property
             AtomEnum::ANY, // type: 接受任何类型
             0,             // long_offset
             u32::MAX,      // long_length: 读取全部内容
-        ) {
-            Ok(cookie) => match cookie.reply() {
-                Ok(prop) => prop,
-                Err(e) => {
-                    debug!("[gettextprop] Failed to get property reply: {:?}", e);
-                    return false;
-                }
-            },
+        )?;
+
+        let property = cookie.reply()?;
+        Ok(property)
+    }
+
+    // 解析 UTF-8 字符串
+    fn parse_utf8_string(&self, value: &[u8]) -> Option<String> {
+        match String::from_utf8(value.to_vec()) {
+            Ok(utf8_string) => {
+                debug!("[gettextprop] Successfully parsed UTF8_STRING");
+                Some(utf8_string)
+            }
             Err(e) => {
-                debug!("[gettextprop] Failed to send get_property request: {:?}", e);
-                return false;
+                debug!("[gettextprop] Invalid UTF-8 in UTF8_STRING: {:?}", e);
+                None
             }
-        };
-
-        // 检查属性是否有效
-        if property.value.is_empty() {
-            debug!("[gettextprop] Property value is empty");
-            return false;
         }
+    }
 
-        // 根据属性类型和格式处理文本
-        match (property.type_, property.format) {
-            // UTF8_STRING 类型 (现代应用首选)
-            (type_, 8) if type_ == self.atoms.UTF8_STRING => {
-                match String::from_utf8(property.value) {
-                    Ok(utf8_string) => {
-                        *text = self.truncate_text(utf8_string);
-                        return true;
-                    }
-                    Err(e) => {
-                        debug!("[gettextprop] Invalid UTF-8 in UTF8_STRING: {:?}", e);
-                        return false;
-                    }
-                }
+    // 解析 Latin-1 字符串
+    fn parse_latin1_string(&self, value: &[u8]) -> String {
+        debug!("[gettextprop] Parsing as STRING (Latin-1)");
+        value.iter().map(|&b| b as char).collect()
+    }
+
+    // 解析 COMPOUND_TEXT
+    fn parse_compound_text(&self, value: &[u8]) -> Option<String> {
+        debug!("[gettextprop] Parsing as COMPOUND_TEXT");
+
+        // 首先尝试 UTF-8 解析
+        match String::from_utf8(value.to_vec()) {
+            Ok(utf8_string) => Some(utf8_string),
+            Err(_) => {
+                debug!("[gettextprop] COMPOUND_TEXT UTF-8 failed, falling back to Latin-1");
+                Some(self.parse_latin1_string(value))
             }
+        }
+    }
 
-            // STRING 类型 (传统的 Latin-1 编码)
-            (type_, 8) if type_ == AtomEnum::STRING.into() => {
-                // 尝试将 Latin-1 转换为 UTF-8
-                let latin1_string: String = property
-                    .value
-                    .iter()
-                    .map(|&b| b as char) // Latin-1 直接映射到 Unicode
-                    .collect();
-                *text = self.truncate_text(latin1_string);
-                return true;
-            }
+    // 回退文本解析
+    fn parse_fallback_text(&self, value: &[u8]) -> Option<String> {
+        debug!("[gettextprop] Using fallback text parsing");
 
-            // COMPOUND_TEXT 类型 (需要特殊处理)
-            (type_, 8) if type_ == self.atoms.COMPOUND_TEXT => {
-                // 对于 COMPOUND_TEXT，我们尝试简单的 UTF-8 解析
-                // 如果失败，回退到 Latin-1
-                match String::from_utf8(property.value.clone()) {
-                    Ok(utf8_string) => {
-                        *text = self.truncate_text(utf8_string);
-                        return true;
-                    }
-                    Err(_) => {
-                        // 回退到 Latin-1
-                        let latin1_string: String =
-                            property.value.iter().map(|&b| b as char).collect();
-                        *text = self.truncate_text(latin1_string);
-                        return true;
-                    }
-                }
-            }
-
-            // 其他类型，尝试作为原始字节处理
-            (_, 8) => {
-                match String::from_utf8(property.value.clone()) {
-                    Ok(utf8_string) => {
-                        *text = self.truncate_text(utf8_string);
-                        return true;
-                    }
-                    Err(_) => {
-                        // 回退到 Latin-1
-                        let latin1_string: String =
-                            property.value.iter().map(|&b| b as char).collect();
-                        *text = self.truncate_text(latin1_string);
-                        return true;
-                    }
-                }
-            }
-
-            // 非 8 位格式
-            _ => {
-                debug!(
-                    "[gettextprop] Unsupported property format: {}",
-                    property.format
-                );
-                return false;
+        // 首先尝试 UTF-8
+        match String::from_utf8(value.to_vec()) {
+            Ok(utf8_string) => Some(utf8_string),
+            Err(_) => {
+                debug!("[gettextprop] Fallback UTF-8 failed, using Latin-1");
+                Some(self.parse_latin1_string(value))
             }
         }
     }
