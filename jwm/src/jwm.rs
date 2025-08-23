@@ -300,6 +300,11 @@ impl WMClient {
         self.geometry.w = w;
         self.geometry.h = h;
     }
+
+    pub fn contains_point(&self, x: i32, y: i32) -> bool {
+        let geom = &self.geometry;
+        x >= geom.x && x < geom.x + geom.w && y >= geom.y && y < geom.y + geom.h
+    }
 }
 
 impl WMMonitor {
@@ -5974,13 +5979,29 @@ impl Jwm {
         &mut self,
         client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let query_cookie = query_pointer(&self.x11rb_conn, self.x11rb_root)?;
+        let query_reply = match query_cookie.reply() {
+            Ok(reply) => reply,
+            Err(e) => {
+                error!("[movemouse] Failed to query pointer: {}", e);
+                // 清理grab
+                let _ = ungrab_pointer(&self.x11rb_conn, 0u32);
+                return Err(format!("Query pointer failed: {}", e).into());
+            }
+        };
+        let (initial_mouse_x, initial_mouse_y) = (query_reply.root_x, query_reply.root_y);
+        if client_rc
+            .borrow()
+            .contains_point(initial_mouse_x.into(), initial_mouse_y.into())
+        {
+            return Ok(());
+        }
         let (win, center_x, center_y) = {
             let client = client_rc.borrow();
-            let center_x = client.geometry.x + client.geometry.w / 2;
-            let center_y = client.geometry.y + client.geometry.h / 2;
+            let center_x = client.geometry.w / 2;
+            let center_y = client.geometry.h / 2;
             (client.win, center_x, center_y)
         };
-
         // 使用 warp_pointer 将鼠标移动到窗口中心
         self.x11rb_conn.warp_pointer(
             0u32,            // src_window (0 = None)
@@ -5992,15 +6013,12 @@ impl Jwm {
             center_x as i16, // dst_x (相对于目标窗口的X坐标)
             center_y as i16, // dst_y (相对于目标窗口的Y坐标)
         )?;
-
         // 刷新连接确保请求被发送
         self.x11rb_conn.flush()?;
-
         debug!(
             "[move_cursor_to_client_center] Moved cursor to center of window {}: ({}, {})",
             win, center_x, center_y
         );
-
         Ok(())
     }
 
