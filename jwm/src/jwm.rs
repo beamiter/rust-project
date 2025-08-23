@@ -11,6 +11,7 @@ use shared_structures::CommandType;
 use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 use std::cell::RefCell;
+use std::cell::RefMut;
 use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::os::unix::process::CommandExt;
@@ -4021,50 +4022,107 @@ impl Jwm {
 
     pub fn setlayout(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[setlayout]");
-        let sel_is_some;
-        match *arg {
-            WMArgEnum::Layout(ref lt) => {
-                let sel_mon_layout_type = {
-                    let sel_mon = self.sel_mon.as_ref().unwrap().borrow();
-                    sel_mon.lt[sel_mon.sel_lt].clone()
-                };
-                if *lt == sel_mon_layout_type {
-                    let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                    let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                    sel_mon_mut.pertag.as_mut().unwrap().sel_lts[cur_tag] ^= 1;
-                    sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
-                } else {
-                    let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                    let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                    let sel_lt = sel_mon_mut.sel_lt;
-                    sel_mon_mut.pertag.as_mut().unwrap().lt_idxs[cur_tag][sel_lt] =
-                        Some(lt.clone());
-                    sel_mon_mut.lt[sel_lt] = lt.clone();
-                }
-            }
-            _ => {
-                let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-                let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
-                sel_mon_mut.pertag.as_mut().unwrap().sel_lts[cur_tag] ^= 1;
-                sel_mon_mut.sel_lt = sel_mon_mut.pertag.as_ref().unwrap().sel_lts[cur_tag];
-            }
-        }
-        {
-            let mut sel_mon_mut = self.sel_mon.as_ref().unwrap().borrow_mut();
-            sel_mon_mut.lt_symbol = sel_mon_mut.lt[sel_mon_mut.sel_lt].symbol().to_string();
-            sel_is_some = sel_mon_mut.sel.is_some();
-        }
-        if sel_is_some {
+        let sel_mon = { self.sel_mon.as_ref().ok_or("No selected monitor")?.clone() };
+
+        // 处理布局设置逻辑
+        self.update_layout_selection(&sel_mon, arg)?;
+
+        // 更新布局符号并检查是否需要重新排列
+        let (should_arrange, mon_num) = self.finalize_layout_update(&sel_mon);
+
+        // 根据情况进行排列或更新状态栏
+        if should_arrange {
             self.arrange(self.sel_mon.clone());
         } else {
-            let mon_num = if let Some(sel_mon_ref) = self.sel_mon.as_ref() {
-                Some(sel_mon_ref.borrow().num)
-            } else {
-                None
-            };
             self.mark_bar_update_needed(mon_num);
         }
+
         Ok(())
+    }
+
+    // 更新布局选择逻辑
+    fn update_layout_selection(
+        &mut self,
+        sel_mon: &Rc<RefCell<WMMonitor>>,
+        arg: &WMArgEnum,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        match *arg {
+            WMArgEnum::Layout(ref lt) => self.handle_specific_layout(sel_mon, lt),
+            _ => self.toggle_layout_selection(sel_mon),
+        }
+    }
+
+    // 处理指定布局的情况
+    fn handle_specific_layout(
+        &mut self,
+        sel_mon: &Rc<RefCell<WMMonitor>>,
+        layout: &Rc<LayoutEnum>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut sel_mon_mut = sel_mon.borrow_mut();
+        let current_layout = sel_mon_mut.lt[sel_mon_mut.sel_lt].clone();
+        let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+
+        if *layout == current_layout {
+            // 如果是相同布局，则切换选择
+            self.toggle_layout_selection_impl(&mut sel_mon_mut, cur_tag);
+        } else {
+            // 如果是不同布局，则设置新布局
+            self.set_new_layout(&mut sel_mon_mut, layout, cur_tag);
+        }
+
+        Ok(())
+    }
+
+    // 切换布局选择（无参数情况）
+    fn toggle_layout_selection(
+        &mut self,
+        sel_mon: &Rc<RefCell<WMMonitor>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut sel_mon_mut = sel_mon.borrow_mut();
+        let cur_tag = sel_mon_mut.pertag.as_ref().unwrap().cur_tag;
+        self.toggle_layout_selection_impl(&mut sel_mon_mut, cur_tag);
+        Ok(())
+    }
+
+    // 切换布局选择的具体实现
+    fn toggle_layout_selection_impl(
+        &mut self,
+        sel_mon_mut: &mut RefMut<WMMonitor>,
+        cur_tag: usize,
+    ) {
+        let pertag = sel_mon_mut.pertag.as_mut().unwrap();
+        pertag.sel_lts[cur_tag] ^= 1;
+        sel_mon_mut.sel_lt = pertag.sel_lts[cur_tag];
+    }
+
+    // 设置新布局
+    fn set_new_layout(
+        &mut self,
+        sel_mon_mut: &mut RefMut<WMMonitor>,
+        layout: &Rc<LayoutEnum>,
+        cur_tag: usize,
+    ) {
+        let sel_lt = sel_mon_mut.sel_lt;
+        let pertag = sel_mon_mut.pertag.as_mut().unwrap();
+
+        pertag.lt_idxs[cur_tag][sel_lt] = Some(layout.clone());
+        sel_mon_mut.lt[sel_lt] = layout.clone();
+    }
+
+    // 完成布局更新并返回后续操作信息
+    fn finalize_layout_update(&mut self, sel_mon: &Rc<RefCell<WMMonitor>>) -> (bool, Option<i32>) {
+        let mut sel_mon_mut = sel_mon.borrow_mut();
+
+        // 更新布局符号
+        sel_mon_mut.lt_symbol = sel_mon_mut.lt[sel_mon_mut.sel_lt].symbol().to_string();
+
+        // 检查是否有选中的客户端
+        let has_selection = sel_mon_mut.sel.is_some();
+        let mon_num = sel_mon_mut.num;
+
+        drop(sel_mon_mut); // 显式释放借用
+
+        (has_selection, Some(mon_num))
     }
 
     pub fn zoom(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
