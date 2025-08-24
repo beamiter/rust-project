@@ -469,6 +469,12 @@ impl Config {
                 function: "quit".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "r".to_string(),
+                function: "restart".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
         ]
     }
 
@@ -690,6 +696,7 @@ impl Config {
             "focusstack" => Some(Jwm::focusstack),
             "focusmon" => Some(Jwm::focusmon),
             "quit" => Some(Jwm::quit),
+            "restart" => Some(Jwm::restart),
             "killclient" => Some(Jwm::killclient),
             "zoom" => Some(Jwm::zoom),
 

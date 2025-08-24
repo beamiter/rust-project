@@ -2,17 +2,19 @@
 #![allow(non_snake_case)]
 
 use libc::{close, setsid, sigaction, sigemptyset, SIGCHLD, SIG_DFL};
+
 use log::info;
 use log::warn;
 use log::{debug, error};
+
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
-use shared_structures::CommandType;
-use shared_structures::SharedCommand;
-use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
+
 use std::cell::RefCell;
 use std::cell::RefMut;
+use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
+use std::env;
 use std::fmt;
 use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
@@ -20,6 +22,7 @@ use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::usize;
+
 use x11rb::connection::Connection;
 use x11rb::errors::{ReplyError, ReplyOrIdError};
 use x11rb::properties::WmSizeHints;
@@ -27,14 +30,17 @@ use x11rb::protocol::render::Pictforminfo;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
-use x11rb::x11_utils::Serialize;
 use x11rb::COPY_DEPTH_FROM_PARENT;
-
-use std::cmp::{max, min};
 
 use crate::config::CONFIG;
 use crate::xcb_util::SchemeType;
 use crate::xcb_util::{test_all_cursors, Atoms, CursorManager, ThemeManager};
+use shared_structures::CommandType;
+use shared_structures::SharedCommand;
+use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
+
+use serde::{Deserialize, Serialize};
+
 // definitions for initial window state.
 pub const WithdrawnState: u8 = 0;
 pub const NormalState: u8 = 1;
@@ -43,6 +49,42 @@ pub const IconicState: u8 = 2;
 lazy_static::lazy_static! {
     pub static ref BUTTONMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE;
     pub static ref MOUSEMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
+}
+
+// 重启相关常量
+pub const RESTART_ENV_VAR: &str = "JWM_RESTART";
+pub const RESTART_STATE_FILE: &str = "/tmp/jwm_restart_state";
+pub static RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RestartState {
+    pub windows: Vec<WindowState>,
+    pub monitors: Vec<MonitorState>,
+    pub current_tags: Vec<u32>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WindowState {
+    pub window_id: u32, // 改为 u32 以支持序列化
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub tags: u32,
+    pub is_floating: bool,
+    pub is_fullscreen: bool,
+    pub monitor_id: i32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MonitorState {
+    pub id: i32,
+    pub x: i32,
+    pub y: i32,
+    pub width: i32,
+    pub height: i32,
+    pub selected_tags: u32,
+    pub layout: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -598,6 +640,9 @@ pub struct Jwm {
     pub atoms: Atoms,
 
     keycode_cache: HashMap<u8, u32>,
+
+    pub restart_pending: AtomicBool,
+    pub restart_state_file: String,
 }
 
 impl Jwm {
@@ -624,23 +669,84 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        info!("[new] Starting JWM initialization");
+
+        // 显示当前的 X11 环境信息
+        Self::log_x11_environment();
+
+        // 尝试连接到 X11 服务器，添加错误处理
+        info!("[new] Connecting to X11 server");
         let (x11rb_conn, x11rb_screen_num) =
-            x11rb::rust_connection::RustConnection::connect(None).unwrap();
-        let atoms = Atoms::new(&x11rb_conn).unwrap().reply().unwrap();
+            match x11rb::rust_connection::RustConnection::connect(None) {
+                Ok(conn) => {
+                    info!("[new] X11 connection established");
+                    conn
+                }
+                Err(e) => {
+                    error!("[new] Failed to connect to X11 server: {}", e);
+                    return Err(format!("X11 connection failed: {}", e).into());
+                }
+            };
+
+        info!("[new] Getting atoms");
+        let atoms = match Atoms::new(&x11rb_conn) {
+            Ok(cookie) => match cookie.reply() {
+                Ok(atoms) => {
+                    info!("[new] Atoms retrieved successfully");
+                    atoms
+                }
+                Err(e) => {
+                    error!("[new] Failed to get atoms reply: {}", e);
+                    return Err(format!("Atoms reply failed: {}", e).into());
+                }
+            },
+            Err(e) => {
+                error!("[new] Failed to request atoms: {}", e);
+                return Err(format!("Atoms request failed: {}", e).into());
+            }
+        };
+
+        info!("[new] Testing cursors");
         let _ = test_all_cursors(&x11rb_conn);
+
         let x11rb_screen = x11rb_conn.setup().roots[x11rb_screen_num].clone();
         let s_w = x11rb_screen.width_in_pixels.into();
         let s_h = x11rb_screen.height_in_pixels.into();
         let x11rb_root = x11rb_screen.root;
+
         info!(
-            "[JWM] roots: {:?}, x11rb_screen_num: {}, s_w: {}, s_h: {}",
-            x11rb_screen, x11rb_screen_num, s_w, s_h
+            "[new] Screen info - screen_num: {}, resolution: {}x{}, root: 0x{:x}",
+            x11rb_screen_num, s_w, s_h, x11rb_root
         );
-        let cursor_manager = CursorManager::new(&x11rb_conn).unwrap();
-        let theme_manager =
-            ThemeManager::create_default(&x11rb_conn, &x11rb_screen.clone()).unwrap();
-        Jwm {
+
+        info!("[new] Creating cursor manager");
+        let cursor_manager = match CursorManager::new(&x11rb_conn) {
+            Ok(cm) => {
+                info!("[new] Cursor manager created");
+                cm
+            }
+            Err(e) => {
+                error!("[new] Failed to create cursor manager: {}", e);
+                return Err(format!("Cursor manager creation failed: {}", e).into());
+            }
+        };
+
+        info!("[new] Creating theme manager");
+        let theme_manager = match ThemeManager::create_default(&x11rb_conn, &x11rb_screen.clone()) {
+            Ok(tm) => {
+                info!("[new] Theme manager created");
+                tm
+            }
+            Err(e) => {
+                error!("[new] Failed to create theme manager: {}", e);
+                return Err(format!("Theme manager creation failed: {}", e).into());
+            }
+        };
+
+        info!("[new] JWM initialization completed successfully");
+
+        Ok(Jwm {
             stext_max_len: 512,
             s_w,
             s_h,
@@ -660,13 +766,276 @@ impl Jwm {
             status_bar_clients: HashMap::new(),
             status_bar_windows: HashMap::new(),
             pending_bar_updates: HashSet::new(),
-
             x11rb_conn,
             x11rb_root,
             x11rb_screen,
             atoms,
             keycode_cache: HashMap::new(),
+            restart_pending: AtomicBool::new(false),
+            restart_state_file: RESTART_STATE_FILE.to_string(),
+        })
+    }
+
+    /// 记录 X11 环境信息用于调试
+    fn log_x11_environment() {
+        info!("[X11 Environment Debug]");
+        info!("DISPLAY: {:?}", env::var("DISPLAY"));
+        info!("XAUTHORITY: {:?}", env::var("XAUTHORITY"));
+        info!("XDG_SESSION_TYPE: {:?}", env::var("XDG_SESSION_TYPE"));
+        info!("USER: {:?}", env::var("USER"));
+        info!("HOME: {:?}", env::var("HOME"));
+
+        // 检查 X11 socket 文件
+        if let Ok(display) = env::var("DISPLAY") {
+            let socket_path = format!("/tmp/.X11-unix/X{}", display.trim_start_matches(":"));
+            info!("X11 socket path: {}", socket_path);
+            info!(
+                "X11 socket exists: {}",
+                std::path::Path::new(&socket_path).exists()
+            );
         }
+
+        // 检查 X 服务器是否在运行
+        let x_running = std::process::Command::new("pgrep")
+            .arg("-f")
+            .arg("X|Xorg")
+            .output()
+            .map(|output| !output.stdout.is_empty())
+            .unwrap_or(false);
+        info!("X server running: {}", x_running);
+    }
+
+    /// 检查是否从重启恢复
+    pub fn check_restart_recovery(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if env::var(RESTART_ENV_VAR).is_ok() {
+            info!("[restart] Recovering from restart");
+            self.restore_state()?;
+            // 清除环境变量
+            env::remove_var(RESTART_ENV_VAR);
+        }
+        Ok(())
+    }
+
+    /// 保存当前状态用于重启
+    pub fn save_restart_state(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[restart] Saving current state for restart");
+
+        let mut windows = Vec::new();
+        let mut monitors = Vec::new();
+
+        // 保存所有监视器状态
+        let mut m = self.mons.clone();
+        while let Some(m_opt) = m {
+            let mon_borrow = m_opt.borrow();
+
+            let monitor_state = MonitorState {
+                id: mon_borrow.num,
+                x: mon_borrow.geometry.m_x,
+                y: mon_borrow.geometry.m_y,
+                width: mon_borrow.geometry.m_w,
+                height: mon_borrow.geometry.m_h,
+                selected_tags: mon_borrow.tag_set[mon_borrow.sel_tags],
+                layout: mon_borrow.lt_symbol.clone(),
+            };
+            monitors.push(monitor_state);
+
+            // 保存该监视器上的所有客户端
+            let mut c = mon_borrow.clients.clone();
+            while let Some(client_opt) = c {
+                let client_borrow = client_opt.borrow();
+
+                let window_state = WindowState {
+                    window_id: client_borrow.win,
+                    x: client_borrow.geometry.x,
+                    y: client_borrow.geometry.y,
+                    width: client_borrow.geometry.w,
+                    height: client_borrow.geometry.h,
+                    tags: client_borrow.state.tags,
+                    is_floating: client_borrow.state.is_floating,
+                    is_fullscreen: client_borrow.state.is_fullscreen,
+                    monitor_id: mon_borrow.num,
+                };
+                windows.push(window_state);
+
+                let next = client_borrow.next.clone();
+                c = next;
+            }
+
+            let next = mon_borrow.next.clone();
+            m = next;
+        }
+
+        let restart_state = RestartState {
+            windows,
+            monitors,
+            current_tags: self.get_current_tags(),
+        };
+
+        // 将状态序列化到文件
+        self.write_restart_state(&restart_state)?;
+
+        info!("[restart] State saved successfully");
+        Ok(())
+    }
+
+    /// 恢复重启前的状态
+    pub fn restore_state(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[restart] Restoring previous state");
+
+        let restart_state = self.read_restart_state()?;
+
+        // 等待所有窗口被重新管理
+        std::thread::sleep(std::time::Duration::from_millis(500));
+
+        // 恢复窗口状态
+        for window_state in &restart_state.windows {
+            if let Some(client_rc) = self.wintoclient(window_state.window_id) {
+                self.restore_window_state(&client_rc, window_state)?;
+            }
+        }
+
+        // 恢复监视器状态
+        for monitor_state in &restart_state.monitors {
+            self.restore_monitor_state(monitor_state)?;
+        }
+
+        // 重新排列所有窗口
+        self.arrange(None);
+
+        // 清理状态文件
+        let _ = std::fs::remove_file(&self.restart_state_file);
+
+        info!("[restart] State restored successfully");
+        Ok(())
+    }
+
+    /// 恢复单个窗口状态
+    fn restore_window_state(
+        &mut self,
+        client_rc: &Rc<RefCell<WMClient>>,
+        window_state: &WindowState,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut client_mut = client_rc.borrow_mut();
+
+        // 恢复几何信息
+        client_mut.geometry.x = window_state.x;
+        client_mut.geometry.y = window_state.y;
+        client_mut.geometry.w = window_state.width;
+        client_mut.geometry.h = window_state.height;
+
+        // 恢复状态
+        client_mut.state.tags = window_state.tags;
+        client_mut.state.is_floating = window_state.is_floating;
+        client_mut.state.is_fullscreen = window_state.is_fullscreen;
+
+        // 恢复监视器分配
+        if let Some(monitor) = self.get_monitor_by_id(window_state.monitor_id) {
+            client_mut.mon = Some(monitor);
+        }
+
+        drop(client_mut);
+
+        // 如果是全屏窗口，重新设置全屏
+        if window_state.is_fullscreen {
+            self.setfullscreen(client_rc, true)?;
+        }
+
+        info!("[restart] Restored window 0x{:x}", window_state.window_id);
+        Ok(())
+    }
+
+    /// 恢复监视器状态
+    fn restore_monitor_state(
+        &mut self,
+        monitor_state: &MonitorState,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(monitor) = self.get_monitor_by_id(monitor_state.id) {
+            let mut mon_mut = monitor.borrow_mut();
+
+            // 恢复标签设置
+            let sel_tags = mon_mut.sel_tags;
+            mon_mut.tag_set[sel_tags] = monitor_state.selected_tags;
+
+            info!(
+                "[restart] Restored monitor {} with tags: {}",
+                monitor_state.id, monitor_state.selected_tags
+            );
+        }
+        Ok(())
+    }
+
+    /// 获取当前所有标签状态
+    fn get_current_tags(&self) -> Vec<u32> {
+        let mut tags = Vec::new();
+        let mut m = self.mons.clone();
+        while let Some(m_opt) = m {
+            let mon_borrow = m_opt.borrow();
+            tags.push(mon_borrow.tag_set[mon_borrow.sel_tags]);
+            let next = mon_borrow.next.clone();
+            m = next;
+        }
+        tags
+    }
+
+    /// 将重启状态写入文件
+    fn write_restart_state(&self, state: &RestartState) -> Result<(), Box<dyn std::error::Error>> {
+        use std::fs::File;
+        use std::io::Write;
+
+        let serialized = serde_json::to_string(state)?;
+        let mut file = File::create(&self.restart_state_file)?;
+        file.write_all(serialized.as_bytes())?;
+        file.sync_all()?;
+
+        Ok(())
+    }
+
+    /// 从文件读取重启状态
+    fn read_restart_state(&self) -> Result<RestartState, Box<dyn std::error::Error>> {
+        use std::fs;
+
+        let content = fs::read_to_string(&self.restart_state_file)?;
+        let state: RestartState = serde_json::from_str(&content)?;
+
+        Ok(state)
+    }
+
+    /// 设置 X11 环境变量
+    pub fn set_x11_environment(env_vars: &HashMap<String, String>) {
+        for (key, value) in env_vars {
+            env::set_var(key, value);
+            info!("[set_x11_environment] Set {}: {}", key, value);
+        }
+    }
+
+    /// 简化的重启方法 - 使用信号机制
+    pub fn restart(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[restart] Preparing for restart via signal");
+
+        // 保存当前状态
+        self.save_restart_state()?;
+
+        // 设置重启标志
+        RESTART_REQUESTED.store(true, Ordering::SeqCst);
+
+        // 设置环境变量
+        env::set_var(RESTART_ENV_VAR, "1");
+
+        // 停止主循环
+        self.running.store(false, Ordering::SeqCst);
+
+        info!("[restart] Restart prepared, main loop will exit");
+        Ok(())
+    }
+
+    /// 检查重启状态文件是否存在
+    pub fn has_restart_state(&self) -> bool {
+        std::path::Path::new(&self.restart_state_file).exists()
+    }
+
+    /// 清理重启状态文件
+    pub fn cleanup_restart_state(&self) {
+        let _ = std::fs::remove_file(&self.restart_state_file);
     }
 
     fn mark_bar_update_needed(&mut self, monitor_id: Option<i32>) {
@@ -712,7 +1081,7 @@ impl Jwm {
             .unwrap();
         if let Ok(prop) = cookie.reply() {
             // 2. 检查属性是否存在且格式正确
-            if prop.type_ != AtomEnum::STRING.into() || prop.format != 8 {
+            if prop.type_ != u32::from(AtomEnum::STRING) || prop.format != 8 {
                 return None;
             }
             let value = prop.value; // 字节流
@@ -1422,7 +1791,7 @@ impl Jwm {
             if let Some(&keysym) = keysyms_for_keycode.first() {
                 // 检查是否匹配配置中的按键
                 for key_config in CONFIG.get_keys().iter() {
-                    if key_config.key_sym == keysym.into() {
+                    if key_config.key_sym == u32::from(keysym) {
                         for &modifier_combo in modifiers_to_try.iter() {
                             self.x11rb_conn.grab_key(
                                 false, // owner_events
@@ -2549,6 +2918,35 @@ impl Jwm {
 
         self.pending_bar_updates.clear();
     }
+
+    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // 在启动时检查是否从重启恢复
+        if env::var(RESTART_ENV_VAR).is_ok() {
+            info!("[run] Checking for restart recovery");
+            if let Err(e) = self.check_restart_recovery() {
+                error!("[run] Restart recovery failed: {}", e);
+                // 清理重启状态但继续运行
+                self.cleanup_restart_state();
+                env::remove_var(RESTART_ENV_VAR);
+            }
+        }
+
+        // 选择运行模式
+        if env::var("JWM_USE_SYNC").is_ok() {
+            self.run_sync()
+        } else {
+            self.run_async_wrapper()
+        }
+    }
+
+    fn run_async_wrapper(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()?;
+
+        rt.block_on(self.run_async())
+    }
+
     pub async fn run_async(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.x11rb_conn.flush()?;
         let mut event_count: u64 = 0;
@@ -2593,6 +2991,45 @@ impl Jwm {
                 }
             }
         }
+        Ok(())
+    }
+
+    pub fn run_sync(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.x11rb_conn.flush()?;
+        let mut event_count: u64 = 0;
+
+        info!("Starting sync event loop");
+
+        while self.running.load(Ordering::SeqCst) {
+            // 处理所有待处理的 X11 事件
+            while let Some(event) = self.x11rb_conn.poll_for_event()? {
+                event_count = event_count.wrapping_add(1);
+                info!(
+                    "[run_sync] event_count: {}, event: {:?}",
+                    event_count, event
+                );
+                let _ = self.handler(event);
+            }
+
+            // 处理状态栏命令
+            self.process_commands_from_status_bar();
+
+            // 更新状态栏
+            if !self.pending_bar_updates.is_empty() {
+                self.flush_pending_bar_updates();
+            }
+
+            // 等待下一个事件
+            if let Some(event) = self.x11rb_conn.wait_for_event().ok() {
+                event_count = event_count.wrapping_add(1);
+                info!(
+                    "[run_sync] event_count: {}, event: {:?}",
+                    event_count, event
+                );
+                let _ = self.handler(event);
+            }
+        }
+
         Ok(())
     }
 
@@ -2995,6 +3432,13 @@ impl Jwm {
 
     pub fn checkotherwm(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[checkotherwm]");
+
+        // 检查是否是重启模式
+        if env::var(RESTART_ENV_VAR).is_ok() {
+            info!("[checkotherwm] Restart mode detected, skipping WM check");
+            return Ok(());
+        }
+
         // 在 XCB 中，我们通过尝试选择 SubstructureRedirect 事件来检查
         // 如果有其他窗口管理器运行，这个操作会失败
         let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT);
@@ -4815,7 +5259,7 @@ impl Jwm {
         // 根据属性类型解析文本
         let parsed_text = match property.type_ {
             type_ if type_ == self.atoms.UTF8_STRING => self.parse_utf8_string(&property.value),
-            type_ if type_ == AtomEnum::STRING.into() => {
+            type_ if type_ == u32::from(AtomEnum::STRING) => {
                 Some(self.parse_latin1_string(&property.value))
             }
             type_ if type_ == self.atoms.COMPOUND_TEXT => self.parse_compound_text(&property.value),
@@ -4943,7 +5387,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[propertynotify]");
         // 处理根窗口属性变更
-        if e.window == self.x11rb_root && e.atom == AtomEnum::WM_NAME.into() {
+        if e.window == self.x11rb_root && e.atom == u32::from(AtomEnum::WM_NAME) {
             // 根窗口名称变更，通常不需要处理
             debug!("Root window name property changed");
             return Ok(());
@@ -4972,13 +5416,13 @@ impl Jwm {
             atom if atom == self.atoms.WM_TRANSIENT_FOR => {
                 self.handle_transient_for_change(client_rc)?;
             }
-            atom if atom == AtomEnum::WM_NORMAL_HINTS.into() => {
+            atom if atom == u32::from(AtomEnum::WM_NORMAL_HINTS) => {
                 self.handle_normal_hints_change(client_rc)?;
             }
-            atom if atom == AtomEnum::WM_HINTS.into() => {
+            atom if atom == u32::from(AtomEnum::WM_HINTS) => {
                 self.handle_wm_hints_change(client_rc)?;
             }
-            atom if atom == AtomEnum::WM_NAME.into() || atom == self.atoms._NET_WM_NAME => {
+            atom if atom == u32::from(AtomEnum::WM_NAME) || atom == self.atoms._NET_WM_NAME => {
                 self.handle_title_change(client_rc)?;
             }
             atom if atom == self.atoms._NET_WM_WINDOW_TYPE => {
@@ -5793,6 +6237,7 @@ impl Jwm {
             [proto, 0, 0, 0, 0],     // data.l[0] = protocol atom
         );
         // 4. 发送事件
+        use x11rb::x11_utils::Serialize;
         let buffer = event.serialize();
         let result = self.x11rb_conn.send_event(
             false,
@@ -7775,10 +8220,10 @@ impl Jwm {
             wtype = self.getatomprop(c, self.atoms._NET_WM_WINDOW_TYPE.into());
         }
 
-        if state == self.atoms._NET_WM_STATE_FULLSCREEN.into() {
+        if state == self.atoms._NET_WM_STATE_FULLSCREEN {
             let _ = self.setfullscreen(c, true);
         }
-        if wtype == self.atoms._NET_WM_WINDOW_TYPE_DIALOG.into() {
+        if wtype == self.atoms._NET_WM_WINDOW_TYPE_DIALOG {
             let c = &mut *c.borrow_mut();
             c.state.is_floating = true;
         }
