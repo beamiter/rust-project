@@ -11,9 +11,9 @@ ps aux | grep jwm_daemon | grep -v grep
 echo ""
 echo "2. 检查PID文件:"
 if [ -f "/tmp/jwm_daemon.pid" ]; then
-    echo "PID文件存在: $(cat /tmp/jwm_daemon.pid)"
+  echo "PID文件存在: $(cat /tmp/jwm_daemon.pid)"
 else
-    echo "PID文件不存在"
+  echo "PID文件不存在"
 fi
 
 echo ""
@@ -27,10 +27,10 @@ ps aux | grep -E "jwm[^_]" | grep -v grep
 echo ""
 echo "5. 检查日志:"
 if [ -f "$HOME/.local/share/jwm/jwm_daemon.log" ]; then
-    echo "最近的日志:"
-    tail -10 "$HOME/.local/share/jwm/jwm_daemon.log"
+  echo "最近的日志:"
+  tail -10 "$HOME/.local/share/jwm/jwm_daemon.log"
 else
-    echo "日志文件不存在"
+  echo "日志文件不存在"
 fi
 
 echo ""

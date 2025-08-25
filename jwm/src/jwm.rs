@@ -39,8 +39,6 @@ use shared_structures::CommandType;
 use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 
-use serde::{Deserialize, Serialize};
-
 // definitions for initial window state.
 pub const WithdrawnState: u8 = 0;
 pub const NormalState: u8 = 1;
@@ -49,42 +47,6 @@ pub const IconicState: u8 = 2;
 lazy_static::lazy_static! {
     pub static ref BUTTONMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE;
     pub static ref MOUSEMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
-}
-
-// 重启相关常量
-pub const RESTART_ENV_VAR: &str = "JWM_RESTART";
-pub const RESTART_STATE_FILE: &str = "/tmp/jwm_restart_state";
-pub static RESTART_REQUESTED: AtomicBool = AtomicBool::new(false);
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct RestartState {
-    pub windows: Vec<WindowState>,
-    pub monitors: Vec<MonitorState>,
-    pub current_tags: Vec<u32>,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WindowState {
-    pub window_id: u32, // 改为 u32 以支持序列化
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-    pub tags: u32,
-    pub is_floating: bool,
-    pub is_fullscreen: bool,
-    pub monitor_id: i32,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct MonitorState {
-    pub id: i32,
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-    pub selected_tags: u32,
-    pub layout: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -616,6 +578,7 @@ pub struct Jwm {
     pub s_h: i32,
     pub numlock_mask: KeyButMask,
     pub running: AtomicBool,
+    pub is_restarting: AtomicBool,
     pub cursor_manager: CursorManager,
     pub theme_manager: ThemeManager,
     pub mons: Option<Rc<RefCell<WMMonitor>>>,
@@ -641,13 +604,11 @@ pub struct Jwm {
 
     keycode_cache: HashMap<u8, u32>,
 
-    pub restart_state_file: String,
     pub enable_move_cursor_to_client_center: bool,
 }
 
 impl Jwm {
     fn handler(&mut self, event: Event) -> Result<(), Box<dyn std::error::Error>> {
-        info!("hahaha");
         match event {
             Event::ButtonPress(e) => self.buttonpress(&e)?,
             Event::ClientMessage(e) => self.clientmessage(&e)?,
@@ -672,14 +633,6 @@ impl Jwm {
 
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         info!("[new] Starting JWM initialization");
-
-        if let Err(_) = Command::new("pkill")
-            .arg("-9")
-            .arg(CONFIG.status_bar_base_name())
-            .spawn()
-        {
-            error!("[new] Clear status bar failed");
-        }
 
         // 显示当前的 X11 环境信息
         Self::log_x11_environment();
@@ -761,6 +714,7 @@ impl Jwm {
             s_h,
             numlock_mask: KeyButMask::default(),
             running: AtomicBool::new(true),
+            is_restarting: AtomicBool::new(false),
             theme_manager,
             cursor_manager,
             mons: None,
@@ -780,7 +734,6 @@ impl Jwm {
             x11rb_screen,
             atoms,
             keycode_cache: HashMap::new(),
-            restart_state_file: RESTART_STATE_FILE.to_string(),
             enable_move_cursor_to_client_center: false,
         })
     }
@@ -814,201 +767,6 @@ impl Jwm {
         info!("X server running: {}", x_running);
     }
 
-    /// 检查是否从重启恢复
-    pub fn check_restart_recovery(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if env::var(RESTART_ENV_VAR).is_ok() {
-            info!("[restart] Recovering from restart");
-            self.restore_state()?;
-            // 清除环境变量
-            env::remove_var(RESTART_ENV_VAR);
-        }
-        Ok(())
-    }
-
-    /// 保存当前状态用于重启
-    pub fn save_restart_state(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[restart] Saving current state for restart");
-
-        let mut windows = Vec::new();
-        let mut monitors = Vec::new();
-
-        // 保存所有监视器状态
-        let mut m = self.mons.clone();
-        while let Some(m_opt) = m {
-            let mon_borrow = m_opt.borrow();
-
-            let monitor_state = MonitorState {
-                id: mon_borrow.num,
-                x: mon_borrow.geometry.m_x,
-                y: mon_borrow.geometry.m_y,
-                width: mon_borrow.geometry.m_w,
-                height: mon_borrow.geometry.m_h,
-                selected_tags: mon_borrow.tag_set[mon_borrow.sel_tags],
-                layout: mon_borrow.lt_symbol.clone(),
-            };
-            monitors.push(monitor_state);
-
-            // 保存该监视器上的所有客户端
-            let mut c = mon_borrow.clients.clone();
-            while let Some(client_opt) = c {
-                let client_borrow = client_opt.borrow();
-
-                let window_state = WindowState {
-                    window_id: client_borrow.win,
-                    x: client_borrow.geometry.x,
-                    y: client_borrow.geometry.y,
-                    width: client_borrow.geometry.w,
-                    height: client_borrow.geometry.h,
-                    tags: client_borrow.state.tags,
-                    is_floating: client_borrow.state.is_floating,
-                    is_fullscreen: client_borrow.state.is_fullscreen,
-                    monitor_id: mon_borrow.num,
-                };
-                windows.push(window_state);
-
-                let next = client_borrow.next.clone();
-                c = next;
-            }
-
-            let next = mon_borrow.next.clone();
-            m = next;
-        }
-
-        let restart_state = RestartState {
-            windows,
-            monitors,
-            current_tags: self.get_current_tags(),
-        };
-
-        // 将状态序列化到文件
-        self.write_restart_state(&restart_state)?;
-
-        info!("[restart] State saved successfully");
-        Ok(())
-    }
-
-    /// 恢复重启前的状态
-    pub fn restore_state(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[restart] Restoring previous state");
-
-        let restart_state = self.read_restart_state()?;
-
-        // 等待所有窗口被重新管理
-        std::thread::sleep(std::time::Duration::from_millis(500));
-
-        // 恢复窗口状态
-        for window_state in &restart_state.windows {
-            if let Some(client_rc) = self.wintoclient(window_state.window_id) {
-                self.restore_window_state(&client_rc, window_state)?;
-            }
-        }
-
-        // 恢复监视器状态
-        for monitor_state in &restart_state.monitors {
-            self.restore_monitor_state(monitor_state)?;
-        }
-
-        // 重新排列所有窗口
-        self.arrange(None);
-
-        // 清理状态文件
-        let _ = std::fs::remove_file(&self.restart_state_file);
-
-        info!("[restart] State restored successfully");
-        Ok(())
-    }
-
-    /// 恢复单个窗口状态
-    fn restore_window_state(
-        &mut self,
-        client_rc: &Rc<RefCell<WMClient>>,
-        window_state: &WindowState,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut client_mut = client_rc.borrow_mut();
-
-        // 恢复几何信息
-        client_mut.geometry.x = window_state.x;
-        client_mut.geometry.y = window_state.y;
-        client_mut.geometry.w = window_state.width;
-        client_mut.geometry.h = window_state.height;
-
-        // 恢复状态
-        client_mut.state.tags = window_state.tags;
-        client_mut.state.is_floating = window_state.is_floating;
-        client_mut.state.is_fullscreen = window_state.is_fullscreen;
-
-        // 恢复监视器分配
-        if let Some(monitor) = self.get_monitor_by_id(window_state.monitor_id) {
-            client_mut.mon = Some(monitor);
-        }
-
-        drop(client_mut);
-
-        // 如果是全屏窗口，重新设置全屏
-        if window_state.is_fullscreen {
-            self.setfullscreen(client_rc, true)?;
-        }
-
-        info!("[restart] Restored window 0x{:x}", window_state.window_id);
-        Ok(())
-    }
-
-    /// 恢复监视器状态
-    fn restore_monitor_state(
-        &mut self,
-        monitor_state: &MonitorState,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(monitor) = self.get_monitor_by_id(monitor_state.id) {
-            let mut mon_mut = monitor.borrow_mut();
-
-            // 恢复标签设置
-            let sel_tags = mon_mut.sel_tags;
-            mon_mut.tag_set[sel_tags] = monitor_state.selected_tags;
-
-            info!(
-                "[restart] Restored monitor {} with tags: {}",
-                monitor_state.id, monitor_state.selected_tags
-            );
-        }
-        Ok(())
-    }
-
-    /// 获取当前所有标签状态
-    fn get_current_tags(&self) -> Vec<u32> {
-        let mut tags = Vec::new();
-        let mut m = self.mons.clone();
-        while let Some(m_opt) = m {
-            let mon_borrow = m_opt.borrow();
-            tags.push(mon_borrow.tag_set[mon_borrow.sel_tags]);
-            let next = mon_borrow.next.clone();
-            m = next;
-        }
-        tags
-    }
-
-    /// 将重启状态写入文件
-    fn write_restart_state(&self, state: &RestartState) -> Result<(), Box<dyn std::error::Error>> {
-        use std::fs::File;
-        use std::io::Write;
-
-        let serialized = serde_json::to_string(state)?;
-        let mut file = File::create(&self.restart_state_file)?;
-        file.write_all(serialized.as_bytes())?;
-        file.sync_all()?;
-
-        Ok(())
-    }
-
-    /// 从文件读取重启状态
-    fn read_restart_state(&self) -> Result<RestartState, Box<dyn std::error::Error>> {
-        use std::fs;
-
-        let content = fs::read_to_string(&self.restart_state_file)?;
-        let state: RestartState = serde_json::from_str(&content)?;
-
-        Ok(state)
-    }
-
     /// 设置 X11 环境变量
     pub fn set_x11_environment(env_vars: &HashMap<String, String>) {
         for (key, value) in env_vars {
@@ -1020,31 +778,10 @@ impl Jwm {
     /// 简化的重启方法 - 使用信号机制
     pub fn restart(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[restart] Preparing for restart via signal");
-
-        // 保存当前状态
-        self.save_restart_state()?;
-
-        // 设置重启标志
-        RESTART_REQUESTED.store(true, Ordering::SeqCst);
-
-        // 设置环境变量
-        env::set_var(RESTART_ENV_VAR, "1");
-
-        // 停止主循环
         self.running.store(false, Ordering::SeqCst);
-
+        self.is_restarting.store(true, Ordering::SeqCst);
         info!("[restart] Restart prepared, main loop will exit");
         Ok(())
-    }
-
-    /// 检查重启状态文件是否存在
-    pub fn has_restart_state(&self) -> bool {
-        std::path::Path::new(&self.restart_state_file).exists()
-    }
-
-    /// 清理重启状态文件
-    pub fn cleanup_restart_state(&self) {
-        let _ = std::fs::remove_file(&self.restart_state_file);
     }
 
     fn mark_bar_update_needed(&mut self, monitor_id: Option<i32>) {
@@ -2929,16 +2666,6 @@ impl Jwm {
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 在启动时检查是否从重启恢复
-        if env::var(RESTART_ENV_VAR).is_ok() {
-            info!("[run] Checking for restart recovery");
-            if let Err(e) = self.check_restart_recovery() {
-                error!("[run] Restart recovery failed: {}", e);
-                // 清理重启状态但继续运行
-                self.cleanup_restart_state();
-                env::remove_var(RESTART_ENV_VAR);
-            }
-        }
         // 选择运行模式
         if env::var("JWM_USE_SYNC").is_ok() {
             self.run_sync()
@@ -3422,12 +3149,6 @@ impl Jwm {
 
     pub fn checkotherwm(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[checkotherwm]");
-
-        // 检查是否是重启模式
-        if env::var(RESTART_ENV_VAR).is_ok() {
-            info!("[checkotherwm] Restart mode detected, skipping WM check");
-            return Ok(());
-        }
 
         // 在 XCB 中，我们通过尝试选择 SubstructureRedirect 事件来检查
         // 如果有其他窗口管理器运行，这个操作会失败
