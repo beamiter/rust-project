@@ -131,7 +131,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_jwm() -> Result<bool, Box<dyn std::error::Error>> {
     let mut jwm = Jwm::new()?;
 
-    // jwm.checkotherwm()?;
+    jwm.checkotherwm()?;
     jwm.setup()?;
     jwm.scan()?;
 
