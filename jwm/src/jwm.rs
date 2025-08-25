@@ -647,6 +647,7 @@ pub struct Jwm {
 
 impl Jwm {
     fn handler(&mut self, event: Event) -> Result<(), Box<dyn std::error::Error>> {
+        info!("hahaha");
         match event {
             Event::ButtonPress(e) => self.buttonpress(&e)?,
             Event::ClientMessage(e) => self.clientmessage(&e)?,
@@ -671,6 +672,14 @@ impl Jwm {
 
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         info!("[new] Starting JWM initialization");
+
+        if let Err(_) = Command::new("pkill")
+            .arg("-9")
+            .arg(CONFIG.status_bar_base_name())
+            .spawn()
+        {
+            error!("[new] Clear status bar failed");
+        }
 
         // 显示当前的 X11 环境信息
         Self::log_x11_environment();

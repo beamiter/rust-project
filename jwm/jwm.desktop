@@ -1,5 +1,8 @@
 [Desktop Entry]
-Name=jwm
-Comment=jwm made beautiful
-Exec=jwm
+Name=JWM
+Comment=JWM Window Manager with Daemon
+Exec=/usr/local/bin/jwm_daemon.sh
 Type=Application
+Categories=System;
+StartupNotify=false
+NoDisplay=false
