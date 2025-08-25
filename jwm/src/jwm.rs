@@ -772,7 +772,7 @@ impl Jwm {
             atoms,
             keycode_cache: HashMap::new(),
             restart_state_file: RESTART_STATE_FILE.to_string(),
-            enable_move_cursor_to_client_center: true,
+            enable_move_cursor_to_client_center: false,
         })
     }
 
@@ -2930,28 +2930,21 @@ impl Jwm {
                 env::remove_var(RESTART_ENV_VAR);
             }
         }
-
         // 选择运行模式
         if env::var("JWM_USE_SYNC").is_ok() {
             self.run_sync()
         } else {
-            self.run_async_wrapper()
+            let rt = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()?;
+            rt.block_on(self.run_async())
         }
-    }
-
-    fn run_async_wrapper(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let rt = tokio::runtime::Builder::new_current_thread()
-            .enable_all()
-            .build()?;
-
-        rt.block_on(self.run_async())
     }
 
     pub async fn run_async(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.x11rb_conn.flush()?;
         let mut event_count: u64 = 0;
         let mut update_timer = tokio::time::interval(Duration::from_millis(10));
-
         // 🔧 创建一次性的 AsyncFd
         let async_fd = {
             use std::os::unix::io::AsRawFd;
@@ -2960,19 +2953,14 @@ impl Jwm {
             let fd = stream.as_raw_fd();
             AsyncFd::new(fd)?
         };
-
         info!("Starting async event loop");
-
         while self.running.load(Ordering::SeqCst) {
             // 🔧 一次性处理所有事件
             let events_processed = self.process_all_x11_events(&mut event_count)?;
-
             self.process_commands_from_status_bar();
-
             if events_processed || !self.pending_bar_updates.is_empty() {
                 self.flush_pending_bar_updates();
             }
-
             // 🔧 修复的 select 逻辑
             tokio::select! {
                 _ = update_timer.tick() => {
@@ -2980,8 +2968,8 @@ impl Jwm {
                         self.flush_pending_bar_updates();
                     }
                 }
+                // 替换方案
                 // _ = tokio::time::sleep(Duration::from_millis(1)) => {
-                //     // 确保循环不会阻塞
                 // }
                 result = self.wait_for_x11_ready_fixed(&async_fd) => {
                     if let Err(e) = result {
@@ -2997,9 +2985,7 @@ impl Jwm {
     pub fn run_sync(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.x11rb_conn.flush()?;
         let mut event_count: u64 = 0;
-
         info!("Starting sync event loop");
-
         while self.running.load(Ordering::SeqCst) {
             // 处理所有待处理的 X11 事件
             while let Some(event) = self.x11rb_conn.poll_for_event()? {
@@ -3010,15 +2996,12 @@ impl Jwm {
                 );
                 let _ = self.handler(event);
             }
-
             // 处理状态栏命令
             self.process_commands_from_status_bar();
-
             // 更新状态栏
             if !self.pending_bar_updates.is_empty() {
                 self.flush_pending_bar_updates();
             }
-
             // 等待下一个事件
             if let Some(event) = self.x11rb_conn.wait_for_event().ok() {
                 event_count = event_count.wrapping_add(1);
@@ -3029,7 +3012,6 @@ impl Jwm {
                 let _ = self.handler(event);
             }
         }
-
         Ok(())
     }
 
@@ -3071,7 +3053,6 @@ impl Jwm {
     fn process_commands_from_status_bar(&mut self) {
         // 创建一个临时向量来收集所有命令
         let mut commands_to_process: Vec<(i32, SharedCommand)> = Vec::new();
-
         // 第一步：遍历共享内存缓冲区并收集命令
         for (&monitor_id, buffer) in &self.status_bar_shmem {
             while let Some(cmd) = buffer.receive_command() {
@@ -3081,9 +3062,9 @@ impl Jwm {
                 }
             }
         }
-
         // 第二步：处理收集到的命令
         for (_monitor_id, cmd) in commands_to_process {
+            self.enable_move_cursor_to_client_center = false;
             match cmd.cmd_type.into() {
                 CommandType::ViewTag => {
                     // 切换到指定标签
@@ -3383,7 +3364,6 @@ impl Jwm {
 
     pub fn buttonpress(&mut self, e: &ButtonPressEvent) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[buttonpress]");
-        self.enable_move_cursor_to_client_center = false;
         let c: Option<Rc<RefCell<WMClient>>>;
         let mut click_type = WMClickType::ClickRootWin;
 
@@ -6426,7 +6406,6 @@ impl Jwm {
         client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if !self.enable_move_cursor_to_client_center {
-            self.enable_move_cursor_to_client_center = true;
             return Ok(());
         }
         let query_cookie = query_pointer(&self.x11rb_conn, self.x11rb_root)?;
@@ -6653,6 +6632,7 @@ impl Jwm {
 
     pub fn keypress(&mut self, e: &KeyPressEvent) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[keypress]");
+        self.enable_move_cursor_to_client_center = true;
         // 使用缓存的键盘映射转换keycode到keysym
         let keysym = self.get_keysym_from_keycode(e.detail)?;
         debug!(
