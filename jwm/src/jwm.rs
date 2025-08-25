@@ -641,8 +641,8 @@ pub struct Jwm {
 
     keycode_cache: HashMap<u8, u32>,
 
-    pub restart_pending: AtomicBool,
     pub restart_state_file: String,
+    pub enable_move_cursor_to_client_center: bool,
 }
 
 impl Jwm {
@@ -771,8 +771,8 @@ impl Jwm {
             x11rb_screen,
             atoms,
             keycode_cache: HashMap::new(),
-            restart_pending: AtomicBool::new(false),
             restart_state_file: RESTART_STATE_FILE.to_string(),
+            enable_move_cursor_to_client_center: true,
         })
     }
 
@@ -3041,10 +3041,10 @@ impl Jwm {
         let mut events_processed = false;
         while let Some(event) = self.x11rb_conn.poll_for_event()? {
             *event_count = event_count.wrapping_add(1);
-            info!(
-                "[run_async] event_count: {}, event: {:?}",
-                event_count, event
-            );
+            // info!(
+            //     "[run_async] event_count: {}, event: {:?}",
+            //     event_count, event
+            // );
             let _ = self.handler(event);
             events_processed = true;
         }
@@ -3383,6 +3383,7 @@ impl Jwm {
 
     pub fn buttonpress(&mut self, e: &ButtonPressEvent) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[buttonpress]");
+        self.enable_move_cursor_to_client_center = false;
         let c: Option<Rc<RefCell<WMClient>>>;
         let mut click_type = WMClickType::ClickRootWin;
 
@@ -6424,6 +6425,10 @@ impl Jwm {
         &mut self,
         client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if !self.enable_move_cursor_to_client_center {
+            self.enable_move_cursor_to_client_center = true;
+            return Ok(());
+        }
         let query_cookie = query_pointer(&self.x11rb_conn, self.x11rb_root)?;
         let query_reply = match query_cookie.reply() {
             Ok(reply) => reply,
@@ -7610,10 +7615,10 @@ impl Jwm {
                 "terminate_process",
                 self.terminate_status_bar_process_safe(monitor_id),
             ),
-            (
-                "cleanup_shared_memory",
-                self.cleanup_shared_memory_safe(monitor_id),
-            ),
+            // (
+            //     "cleanup_shared_memory",
+            //     self.cleanup_shared_memory_safe(monitor_id),
+            // ),
         ];
 
         // 记录清理结果但不中断流程
@@ -7727,6 +7732,7 @@ impl Jwm {
     }
 
     /// 安全的共享内存清理方法
+    #[allow(dead_code)]
     fn cleanup_shared_memory_safe(&mut self, monitor_id: i32) -> Result<(), String> {
         if let Some(shmem) = self.status_bar_shmem.remove(&monitor_id) {
             info!(
