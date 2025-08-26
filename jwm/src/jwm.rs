@@ -1447,7 +1447,7 @@ impl Jwm {
     }
 
     pub fn configure(&self, c: &mut WMClient) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[configure]");
+        info!("[configure] {}", c);
         let event = ConfigureNotifyEvent {
             event: c.win,
             window: c.win,
@@ -1915,7 +1915,6 @@ impl Jwm {
         y: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let aux = ConfigureWindowAux::new().x(x).y(y);
-
         self.x11rb_conn.configure_window(win, &aux)?;
         Ok(())
     }
@@ -1959,60 +1958,59 @@ impl Jwm {
                 statusbar_mut.geometry.w,
                 statusbar_mut.geometry.h,
             );
-            let mut geometry_changed = false;
-            let mut needs_workarea_update = false;
-
-            // 被动接受 status bar 的大小变化请求，不做任何限制或修正
+            info!(
+                "[handle_statusbar_configure_request] old_geometry: {:?}",
+                old_geometry
+            );
+            // May help with monitor size.
+            let (_mx, _my, _mw, _mh) = {
+                let m = statusbar_mut.mon.as_ref().unwrap().borrow();
+                (
+                    m.geometry.m_x,
+                    m.geometry.m_y,
+                    m.geometry.m_w,
+                    m.geometry.m_h,
+                )
+            };
             if e.value_mask.contains(ConfigWindow::X) {
                 statusbar_mut.geometry.x = e.x as i32;
-                geometry_changed = true;
             }
             if e.value_mask.contains(ConfigWindow::Y) {
                 statusbar_mut.geometry.y = e.y as i32;
-                geometry_changed = true;
-                needs_workarea_update = true; // Y 位置变化影响工作区
             }
-            if e.value_mask.contains(ConfigWindow::WIDTH) {
-                statusbar_mut.geometry.w = e.width as i32;
-                geometry_changed = true;
-            }
+            // if e.value_mask.contains(ConfigWindow::WIDTH) {
+            //     // WIDTH fixed.
+            //     statusbar_mut.geometry.w = e.width as i32;
+            // }
             if e.value_mask.contains(ConfigWindow::HEIGHT) {
-                statusbar_mut.geometry.h = e.height as i32;
-                geometry_changed = true;
-                needs_workarea_update = true; // 高度变化是最主要的关注点
+                statusbar_mut.geometry.h = e.height.max(40) as i32;
             }
-
-            if geometry_changed {
-                info!(
+            info!(
                     "[handle_statusbar_configure_request] StatusBar geometry updated: {:?} -> ({}, {}, {}, {})",
                     old_geometry, statusbar_mut.geometry.x, statusbar_mut.geometry.y, statusbar_mut.geometry.w, statusbar_mut.geometry.h
                 );
+            let values = ConfigureWindowAux::new()
+                .x(statusbar_mut.geometry.x)
+                .y(statusbar_mut.geometry.y)
+                .width(statusbar_mut.geometry.w as u32)
+                .height(statusbar_mut.geometry.h as u32);
+            self.x11rb_conn.configure_window(e.window, &values)?;
 
-                let values = ConfigureWindowAux::new()
-                    .x(statusbar_mut.geometry.x)
-                    .y(statusbar_mut.geometry.y)
-                    .width(statusbar_mut.geometry.w as u32)
-                    .height(statusbar_mut.geometry.h as u32);
-                self.x11rb_conn.configure_window(e.window, &values)?;
+            // 确保状态栏始终在最上层
+            // self.x11rb_conn.configure_window(
+            //     e.window,
+            //     &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+            // )?;
 
-                // 确保状态栏始终在最上层
-                self.x11rb_conn.configure_window(
-                    e.window,
-                    &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
-                )?;
-
-                // 发送确认配置事件给 status bar
-                self.configure(&mut statusbar_mut)?;
-            }
+            // 发送确认配置事件给 status bar
+            self.configure(&mut statusbar_mut)?;
             drop(statusbar_mut); // 释放借用
                                  // 重要：当状态栏大小变化时，需要更新工作区域并重新排列其他窗口
-            if needs_workarea_update {
-                info!("[handle_statusbar_configure_request] Updating workarea due to statusbar geometry change");
+            info!("[handle_statusbar_configure_request] Updating workarea due to statusbar geometry change");
 
-                // 重新排列该显示器上的其他客户端
-                if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-                    self.arrange(Some(monitor));
-                }
+            // 重新排列该显示器上的其他客户端
+            if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
+                self.arrange(Some(monitor));
             }
         } else {
             error!(
@@ -6362,7 +6360,7 @@ impl Jwm {
 
     pub fn keypress(&mut self, e: &KeyPressEvent) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[keypress]");
-        self.enable_move_cursor_to_client_center = true;
+        self.enable_move_cursor_to_client_center = false;
         // 使用缓存的键盘映射转换keycode到keysym
         let keysym = self.get_keysym_from_keycode(e.detail)?;
         debug!(
@@ -6813,7 +6811,6 @@ impl Jwm {
         self.status_bar_windows
             .insert(client_rc.borrow().win, monitor_id);
 
-        // 映射状态栏窗口 - 使用 x11rb 替代 XMapWindow
         let win = client_rc.borrow().win;
         if let Err(e) = self.x11rb_conn.map_window(win) {
             error!(
@@ -6864,15 +6861,12 @@ impl Jwm {
     fn position_statusbar(&mut self, client_mut: &mut WMClient, monitor_id: i32) {
         if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
             let monitor_borrow = monitor.borrow();
-
+            let bar_padding = CONFIG.status_bar_pad();
             // 将状态栏放在显示器顶部
-            client_mut.geometry.x = monitor_borrow.geometry.m_x;
-            client_mut.geometry.y = monitor_borrow.geometry.m_y;
-            client_mut.geometry.w = monitor_borrow.geometry.m_w;
-            // 高度由 status bar 自己决定，或使用默认值
-            if client_mut.geometry.h <= 0 {
-                client_mut.geometry.h = 30;
-            }
+            client_mut.geometry.x = monitor_borrow.geometry.m_x + bar_padding;
+            client_mut.geometry.y = monitor_borrow.geometry.m_y + bar_padding;
+            client_mut.geometry.w = monitor_borrow.geometry.m_w - 2 * bar_padding;
+            client_mut.geometry.h = 40;
             info!(
                 "[position_statusbar] Positioned at ({}, {}) {}x{}",
                 client_mut.geometry.x,

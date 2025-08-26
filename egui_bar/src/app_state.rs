@@ -2,8 +2,8 @@
 
 use crate::audio_manager::{AudioDevice, AudioManager};
 use crate::constants;
-use crate::system_monitor::SystemMonitor;
 use crate::metrics::PerformanceMetrics;
+use crate::system_monitor::SystemMonitor;
 use shared_structures::SharedMessage;
 use std::time::Instant;
 
@@ -64,6 +64,8 @@ pub struct UiState {
     pub last_ui_update: Instant,
 
     pub button_height: f32,
+
+    pub show_bar: bool,
 }
 
 /// Volume control window state
@@ -195,12 +197,13 @@ impl UiState {
         Self {
             volume_window: VolumeWindowState::new(),
             scale_factor: constants::ui::DEFAULT_SCALE_FACTOR,
-            need_resize: true,
+            need_resize: false,
             show_seconds: false,
             show_debug_window: false,
             show_settings_window: false,
             last_ui_update: Instant::now(),
             button_height: 0.,
+            show_bar: true,
         }
     }
 

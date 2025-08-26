@@ -26,7 +26,7 @@ async fn main() -> eframe::Result<()> {
         viewport: egui::ViewportBuilder::default()
             .with_position(egui::Pos2::new(0.0, 0.0))
             .with_inner_size([1080.0, 40.])
-            .with_min_inner_size([480.0, 20.])
+            .with_min_inner_size([480.0, 40.])
             .with_decorations(false)
             .with_resizable(true)
             .with_transparent(false),

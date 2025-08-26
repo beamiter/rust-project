@@ -9,16 +9,14 @@ use egui::Sense;
 use egui::{Align, Color32, FontFamily, FontId, Layout, Margin, TextStyle, Vec2};
 use egui_plot::{Line, Plot, PlotPoints};
 use log::{debug, error, info, warn};
-use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
+use shared_structures::{MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer};
 use std::collections::BTreeMap;
 use std::process::Command;
-use std::sync::{Arc, Mutex, Once};
+use std::sync::{Arc, Mutex};
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use egui::{Button, Stroke, StrokeKind};
 use shared_structures::CommandType;
-
-static START: Once = Once::new();
 
 /// 线程间共享的应用状态
 #[derive(Debug)]
@@ -340,62 +338,32 @@ impl EguiBarApp {
             .and_then(|state| state.current_message.clone())
     }
 
-    /// Calculate window dimensions
-    fn calculate_window_dimensions(&self, _ui: &egui::Ui) -> Option<(f32, f32, egui::Pos2)> {
+    fn calculate_target_height(&self, _ui: &egui::Ui) -> f32 {
         if let Some(message) = self.get_current_message() {
             let monitor_info = &message.monitor_info;
-
             // 根据打开的窗口数量调整高度
-            let base_height = if self.state.ui_state.volume_window.open
-                || self.state.ui_state.show_debug_window
-            {
+            if self.state.ui_state.volume_window.open || self.state.ui_state.show_debug_window {
                 // 如果有任何窗口打开，使用更大的高度
-                monitor_info.monitor_height as f32 * 0.618
-            } else {
-                // 否则使用默认紧凑高度
-                40.
-            };
-
-            let width = monitor_info.monitor_width as f32 - 2.0 * monitor_info.border_w as f32;
-            let target_height = self.state.ui_state.button_height + 3. * 2.;
-            info!("target_height: {target_height}");
-            let height = base_height.max(target_height);
-
-            let pos = egui::Pos2::new(
-                monitor_info.monitor_x as f32 + monitor_info.border_w as f32,
-                monitor_info.monitor_y as f32 + monitor_info.border_w as f32 * 0.5,
-            );
-
-            Some((width, height, pos))
-        } else {
-            None
+                return monitor_info.monitor_height as f32 * 0.618;
+            }
         }
+        return 40.0;
     }
 
     /// Adjust window size and position
     fn adjust_window(&mut self, ctx: &egui::Context, ui: &egui::Ui) {
         if self.state.ui_state.need_resize {
-            // Try to adjust window unless get window dimensions.
-            if let Some((width, height, pos)) = self.calculate_window_dimensions(ui) {
-                let viewport_info = ctx.input(|i| i.viewport().clone());
-                info!("screen_rect: {:?}", viewport_info);
-                let outer_rect = viewport_info.outer_rect.unwrap();
-                if (outer_rect.left_top().x - pos.x).abs() > 1.
-                    || (outer_rect.left_top().y - pos.y).abs() > 1.
-                {
-                    info!("Window adjusted position at: {:?}", pos);
-                    ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
-                } else if (outer_rect.width() - width).abs() > 5.
-                    || (outer_rect.height() - height).abs() > 5.
-                {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2::new(
-                        width, height,
-                    )));
-                    info!("Window adjusted size: {}x{}", width, height);
-                } else {
-                    self.state.ui_state.need_resize = false;
-                }
-            }
+            let target_height = self.calculate_target_height(ui);
+            let viewport_info = ctx.input(|i| i.viewport().clone());
+            info!("screen_rect: {:?}", viewport_info);
+            let outer_rect = viewport_info.outer_rect.unwrap();
+            let target_width = outer_rect.width();
+            ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2::new(
+                target_width,
+                target_height,
+            )));
+            info!("Window adjusted size: {}x{}", target_width, target_height);
+            self.state.ui_state.need_resize = false;
         }
     }
 
@@ -772,46 +740,33 @@ impl EguiBarApp {
 
     /// Draw workspace information
     pub fn draw_workspace_panel(&mut self, ui: &mut egui::Ui) {
-        let mut tag_status_vec = Vec::new();
-        let mut layout_symbol = String::from(" ? ");
         let bold_thickness = 2.5;
         let light_thickness = 1.5;
-        if let Some(ref message) = self.state.current_message {
-            tag_status_vec = message.monitor_info.tag_status_vec.to_vec();
-            layout_symbol = message.monitor_info.get_ltsymbol();
-        }
+        let monitor_info = self
+            .state
+            .current_message
+            .map_or(MonitorInfo::default(), |m| m.monitor_info);
+        let mut current_active_index = 0;
         // Draw tag icons as buttons
-        for (i, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {
-            let tag_color = colors::TAG_COLORS[i];
-            let tag_bit = 1 << i;
+        for (index, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {
+            let tag_color = colors::TAG_COLORS[index];
+            let tag_bit = 1 << index;
             // 构建基础文本样式
             let mut rich_text = egui::RichText::new(tag_icon).monospace();
-            // 设置工具提示文本
-            let mut tooltip = format!("标签 {}", i + 1);
-            // 根据状态设置样式
-            if let Some(tag_status) = tag_status_vec.get(i) {
-                if tag_status.is_filled {
-                    tooltip.push_str(" (有窗口)");
-                }
-                // is_selected: 当前标签标记
-                if tag_status.is_selected {
-                    tooltip.push_str(" (当前)");
-                }
-                // is_urg: 紧急状态标记
-                if tag_status.is_urg {
-                    tooltip.push_str(" (紧急)");
-                }
-            }
             // 绘制各种装饰效果
             let mut is_urg = false;
             let mut is_filled = false;
             let mut is_selected = false;
-            if let Some(tag_status) = tag_status_vec.get(i) {
+            let mut tooltip = format!("标签 {}", index + 1);
+            if let Some(tag_status) = monitor_info.tag_status_vec.get(index) {
                 if tag_status.is_urg {
+                    tooltip.push_str(" (紧急)");
                     is_urg = true;
                     rich_text = rich_text.background_color(Color32::RED);
                 } else if tag_status.is_filled {
                     is_filled = true;
+                    current_active_index = index;
+                    tooltip.push_str(" (有窗口)");
                     let bg_color = Color32::from_rgba_premultiplied(
                         tag_color.r(),
                         tag_color.g(),
@@ -820,6 +775,7 @@ impl EguiBarApp {
                     );
                     rich_text = rich_text.background_color(bg_color);
                 } else if tag_status.is_selected {
+                    tooltip.push_str(" (当前)");
                     is_selected = true;
                     let bg_color = Color32::from_rgba_premultiplied(
                         tag_color.r(),
@@ -840,6 +796,14 @@ impl EguiBarApp {
                     rich_text = rich_text.background_color(Color32::TRANSPARENT);
                 }
             }
+            let show_bar = monitor_info
+                .show_bars
+                .get(current_active_index)
+                .unwrap_or(&true);
+            if self.state.ui_state.show_bar != *show_bar {
+                self.state.ui_state.need_resize = true;
+            }
+            self.state.ui_state.show_bar = *show_bar;
 
             let label_response = ui.add(Button::new(rich_text).min_size(Vec2::new(36., 24.)));
             let rect = label_response.rect;
@@ -867,7 +831,7 @@ impl EguiBarApp {
                 );
             }
             // 处理交互事件
-            self.handle_tag_interactions(&label_response, tag_bit, i);
+            self.handle_tag_interactions(&label_response, tag_bit, index);
 
             // 悬停效果和工具提示
             if label_response.hovered() {
@@ -881,7 +845,7 @@ impl EguiBarApp {
             }
         }
 
-        self.render_layout_section(ui, &layout_symbol);
+        self.render_layout_section(ui, &monitor_info.get_ltsymbol());
     }
     // 提取交互处理逻辑到单独函数
     fn handle_tag_interactions(
@@ -1338,9 +1302,6 @@ impl EguiBarApp {
 
 impl eframe::App for EguiBarApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        START.call_once(|| {
-            self.state.ui_state.need_resize = true;
-        });
         ctx.set_pixels_per_point(self.state.ui_state.scale_factor);
 
         // Update application state (system monitoring, audio, etc.)
