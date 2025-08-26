@@ -411,6 +411,20 @@ pub enum WMArgEnum {
     Layout(Rc<LayoutEnum>),
 }
 
+#[derive(Debug, Clone, PartialEq, Copy)]
+pub enum WMShowBarEnum {
+    Keep(bool),
+    Toggle(bool),
+}
+impl WMShowBarEnum {
+    pub fn show_bar(&self) -> &bool {
+        match self {
+            Self::Keep(val) => val,
+            Self::Toggle(val) => val,
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct WMButton {
     pub click_type: WMClickType,
@@ -592,8 +606,9 @@ pub struct Jwm {
     pub message: SharedMessage,
 
     // 状态栏专用管理
+    pub status_bar_flags: HashMap<i32, WMShowBarEnum>, // monitor_id -> show_bar_enum
     pub status_bar_clients: HashMap<i32, Rc<RefCell<WMClient>>>, // monitor_id -> statusbar_client
-    pub status_bar_windows: HashMap<Window, i32>, // window_id -> monitor_id (快速查找)
+    pub status_bar_windows: HashMap<Window, i32>,      // window_id -> monitor_id (快速查找)
 
     pub pending_bar_updates: HashSet<i32>,
 
@@ -726,6 +741,7 @@ impl Jwm {
             status_bar_shmem: HashMap::new(),
             status_bar_child: HashMap::new(),
             message: SharedMessage::default(),
+            status_bar_flags: HashMap::new(),
             status_bar_clients: HashMap::new(),
             status_bar_windows: HashMap::new(),
             pending_bar_updates: HashSet::new(),
@@ -2661,6 +2677,33 @@ impl Jwm {
         }
 
         self.pending_bar_updates.clear();
+
+        // Show or hide status bar
+        let status_bar_flags = self.status_bar_flags.clone();
+        for (&mon_id, &show_bar_enum) in status_bar_flags.iter() {
+            match show_bar_enum {
+                WMShowBarEnum::Toggle(show_bar) => {
+                    let client_mut = self.status_bar_clients.get_mut(&mon_id).unwrap().clone();
+                    if show_bar == true {
+                        info!("[flush_pending_bar_updates] show bar");
+                        let _ = self.show_statusbar(&mut client_mut.as_ref().borrow_mut(), mon_id);
+                    } else {
+                        info!("[flush_pending_bar_updates] hide bar");
+                        let _ = self.hide_statusbar(&mut client_mut.as_ref().borrow_mut(), mon_id);
+                    }
+                    // 发送确认配置事件给 status bar
+                    let _ = self.configure(&mut client_mut.as_ref().borrow_mut());
+                    info!("[flush_pending_bar_updates] Updating workarea due to statusbar geometry change");
+                    // 重新排列该显示器上的其他客户端
+                    if let Some(monitor) = self.get_monitor_by_id(mon_id) {
+                        self.arrange(Some(monitor));
+                    }
+                    self.status_bar_flags
+                        .insert(mon_id, WMShowBarEnum::Keep(show_bar));
+                }
+                _ => {}
+            }
+        }
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -6810,6 +6853,8 @@ impl Jwm {
             .insert(monitor_id, client_rc.clone());
         self.status_bar_windows
             .insert(client_rc.borrow().win, monitor_id);
+        self.status_bar_flags
+            .insert(monitor_id, WMShowBarEnum::Keep(true));
 
         let win = client_rc.borrow().win;
         if let Err(e) = self.x11rb_conn.map_window(win) {
@@ -6877,6 +6922,35 @@ impl Jwm {
         }
     }
 
+    fn show_statusbar(
+        &mut self,
+        client_mut: &mut WMClient,
+        monitor_id: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(_monitor) = self.get_monitor_by_id(monitor_id) {
+            // 将状态栏放在显示器顶部
+            let x = client_mut.geometry.x;
+            let y = client_mut.geometry.y;
+            info!("[show_statusbar] Show at ({}, {})", x, y,);
+            self.move_window(client_mut.win, x, y)?;
+        }
+        Ok(())
+    }
+
+    fn hide_statusbar(
+        &mut self,
+        client_mut: &mut WMClient,
+        monitor_id: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(_monitor) = self.get_monitor_by_id(monitor_id) {
+            let hidden_x = -1000;
+            let hidden_y = -1000;
+            info!("[hide_statusbar] Hide at ({}, {})", hidden_x, hidden_y,);
+            self.move_window(client_mut.win, hidden_x, hidden_y)?;
+        }
+        Ok(())
+    }
+
     // 设置状态栏窗口属性
     fn setup_statusbar_window(
         &mut self,
@@ -6905,11 +6979,13 @@ impl Jwm {
 
     pub fn client_y_offset(&mut self, m: &WMMonitor) -> i32 {
         let monitor_id = m.num;
-
         if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
             let statusbar_borrow = statusbar.borrow();
-            let offset =
-                statusbar_borrow.geometry.y + statusbar_borrow.geometry.h + CONFIG.status_bar_pad();
+            let offset = if *self.status_bar_flags.get(&monitor_id).unwrap().show_bar() {
+                statusbar_borrow.geometry.y + statusbar_borrow.geometry.h + CONFIG.status_bar_pad()
+            } else {
+                0
+            };
             info!(
                 "[client_y_offset] Monitor {}: offset = {} (statusbar_h: {} + pad: {})",
                 monitor_id,
@@ -6919,7 +6995,6 @@ impl Jwm {
             );
             return offset.max(0);
         }
-
         0
     }
 
@@ -8074,9 +8149,9 @@ impl Jwm {
             }
         }
 
+        let mut current_tag_index = 0;
         for i in 0..CONFIG.tags_length() {
             let tag_bit = 1 << i;
-            // is_filled_tag 的正确计算方式 (与你之前版本类似，但确保变量名一致和借用正确)
             let is_filled_tag_calculated: bool; // 声明变量
             {
                 is_filled_tag_calculated = if let Some(ref global_selmon_rc) = self.sel_mon {
@@ -8097,26 +8172,41 @@ impl Jwm {
             let mon_borrow = mon_rc.borrow(); // 再次不可变借用 m_rc 来获取 tagset 信息
             let active_tagset_for_mon = mon_borrow.tag_set[mon_borrow.sel_tags];
             // drop(m_borrow_for_tagset); // 可选，如果下面不再需要
-
             let is_selected_tag = (active_tagset_for_mon & tag_bit) != 0;
             let is_urgent_tag = (urgent_tags_mask & tag_bit) != 0;
             let is_occupied_tag = (occupied_tags_mask & tag_bit) != 0;
-
             let tag_status = TagStatus::new(
                 is_selected_tag,
                 is_urgent_tag,
                 is_filled_tag_calculated,
                 is_occupied_tag,
             );
+            if is_selected_tag {
+                current_tag_index = i + 1;
+            }
             monitor_info_for_message.set_tag_status(i, tag_status);
-            let show_bar = mon_borrow
-                .pertag
-                .as_ref()
-                .unwrap()
-                .show_bars
-                .get(i + 1)
-                .unwrap_or(&true);
-            monitor_info_for_message.set_show_bars(i, *show_bar);
+            // let show_bar = mon_borrow
+            //     .pertag
+            //     .as_ref()
+            //     .unwrap()
+            //     .show_bars
+            //     .get(i + 1)
+            //     .unwrap_or(&true);
+            // monitor_info_for_message.set_show_bars(i, *show_bar);
+        }
+        let current_show_bar = *mon_rc
+            .borrow()
+            .pertag
+            .as_ref()
+            .unwrap()
+            .show_bars
+            .get(current_tag_index)
+            .unwrap_or(&true);
+        if let Some(show_bar_enum) = self.status_bar_flags.get_mut(&mon_rc.borrow().num) {
+            let prev_show_bar = show_bar_enum.show_bar();
+            if current_show_bar != *prev_show_bar {
+                *show_bar_enum = WMShowBarEnum::Toggle(current_show_bar);
+            }
         }
 
         let mut selected_client_name_for_bar = String::new();
