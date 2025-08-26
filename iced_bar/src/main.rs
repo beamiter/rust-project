@@ -554,40 +554,23 @@ impl IcedBar {
 
             Message::SharedMemoryUpdated(message) => {
                 info!("SharedMemoryUpdated: {:?}", message);
-                let mut tasks = Vec::new();
                 self.monitor_info_opt = Some(message.monitor_info);
-
                 if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
                     self.layout_symbol = monitor_info.get_ltsymbol();
                     self.monitor_num = monitor_info.monitor_num;
-
-                    let width = (monitor_info.monitor_width as f32
-                        - 2.0 * monitor_info.border_w as f32)
-                        / self.scale_factor;
-                    let height = 40.0;
-                    let window_pos = Point::new(
-                        (monitor_info.monitor_x as f32 + monitor_info.border_w as f32)
-                            / self.scale_factor,
-                        (monitor_info.monitor_y as f32 + monitor_info.border_w as f32 * 0.5)
-                            / self.scale_factor,
-                    );
-                    let window_size = Size::new(width, height);
-                    self.target_window_pos = Some(window_pos);
-                    self.target_window_size = Some(window_size);
-
                     for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
                         if tag_status.is_selected {
                             self.active_tab = index;
                         }
                     }
                 }
-
-                tasks.push(
-                    window::get_size(self.current_window_id.unwrap())
-                        .map(Message::GetAndResizeWindowSize),
-                );
-
-                Task::batch(tasks)
+                // let mut tasks = Vec::new();
+                // tasks.push(
+                //     window::get_size(self.current_window_id.unwrap())
+                //         .map(Message::GetAndResizeWindowSize),
+                // );
+                // Task::batch(tasks)
+                Task::none()
             }
 
             Message::SharedMemoryError(err) => {

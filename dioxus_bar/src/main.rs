@@ -545,7 +545,6 @@ fn App() -> Element {
             // 获取窗口控制句柄
             let window = use_window();
             let scale_factor = window.scale_factor();
-            let mut prev_show_bar = true;
 
             // 异步等待消息，无需轮询
             while let Some(shared_message) = message_receiver.recv().await {
@@ -559,7 +558,6 @@ fn App() -> Element {
                 monitor_num.set(Some(monitor_info.monitor_num));
 
                 // 更新按钮状态
-                let mut current_active_index = 0;
                 for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
                     if index < new_states.len() {
                         new_states[index] = ButtonStateData {
@@ -568,15 +566,8 @@ fn App() -> Element {
                             is_urg: tag_status.is_urg,
                             is_occ: tag_status.is_occ,
                         };
-                        if tag_status.is_filled {
-                            current_active_index = index;
-                        }
                     }
                 }
-                let show_bar = *monitor_info
-                    .show_bars
-                    .get(current_active_index)
-                    .unwrap_or(&true);
 
                 // 调整前状态
                 let before_size = window.inner_size();
@@ -590,7 +581,6 @@ fn App() -> Element {
                     || (before_pos.y - target_y).abs() > 100
                     || (before_size.width as i32 - monitor_info.monitor_width).abs() > 10
                     || (before_size.height as i32 - target_height).abs() > 10
-                    || (prev_show_bar != show_bar)
                 {
                     info!(
                         "Before: size={}x{}, pos=({}, {})",
@@ -600,10 +590,8 @@ fn App() -> Element {
                         "Target: size={}x{}, pos=({}, {})",
                         target_width, target_height, target_x, target_y
                     );
-                    window.set_outer_position(LogicalPosition::new(
-                        target_x as f64,
-                        target_y as f64 + if show_bar { 0.0 } else { -1000.0 },
-                    ));
+                    window
+                        .set_outer_position(LogicalPosition::new(target_x as f64, target_y as f64));
                     window.set_inner_size(LogicalSize::new(
                         target_width as f64,
                         target_height as f64,
@@ -616,7 +604,6 @@ fn App() -> Element {
                     info!("Window minimized: {}", window.is_minimized());
                     info!("Scale factor: {}", window.scale_factor());
                 }
-                prev_show_bar = show_bar;
 
                 let need_update_button_states = { *button_states.read() != new_states };
                 if need_update_button_states {
