@@ -352,10 +352,27 @@ impl EguiBarApp {
 
     /// Adjust window size and position
     fn adjust_window(&mut self, ctx: &egui::Context, ui: &egui::Ui) {
+        if self.state.ui_state.show_bar != self.state.ui_state.prev_show_bar {
+            let viewport_info = ctx.input(|i| i.viewport().clone());
+            info!("viewport_info: {:?}", viewport_info);
+            let outer_rect = viewport_info.outer_rect.unwrap();
+            let target_x = outer_rect.left();
+            let target_y = outer_rect.top()
+                + if self.state.ui_state.show_bar {
+                    0.0
+                } else {
+                    -1000.0
+                };
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::Pos2::new(
+                target_x, target_y,
+            )));
+            info!("Window adjusted position: {}x{}", target_x, target_y);
+            return;
+        }
         if self.state.ui_state.need_resize {
             let target_height = self.calculate_target_height(ui);
             let viewport_info = ctx.input(|i| i.viewport().clone());
-            info!("screen_rect: {:?}", viewport_info);
+            info!("viewport_info: {:?}", viewport_info);
             let outer_rect = viewport_info.outer_rect.unwrap();
             let target_width = outer_rect.width();
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::Vec2::new(
@@ -800,9 +817,7 @@ impl EguiBarApp {
                 .show_bars
                 .get(current_active_index)
                 .unwrap_or(&true);
-            if self.state.ui_state.show_bar != *show_bar {
-                self.state.ui_state.need_resize = true;
-            }
+            self.state.ui_state.prev_show_bar = self.state.ui_state.show_bar;
             self.state.ui_state.show_bar = *show_bar;
 
             let label_response = ui.add(Button::new(rich_text).min_size(Vec2::new(36., 24.)));
