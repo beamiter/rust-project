@@ -8136,7 +8136,6 @@ impl Jwm {
             monitor_info_for_message.monitor_height = mon_borrow.geometry.w_h;
             monitor_info_for_message.monitor_num = mon_borrow.num;
             monitor_info_for_message.set_ltsymbol(&mon_borrow.lt_symbol);
-            monitor_info_for_message.border_w = CONFIG.border_px() as i32;
 
             let mut c_iter_opt = mon_borrow.clients.clone();
             while let Some(ref client_rc_iter) = c_iter_opt.clone() {
@@ -8185,14 +8184,6 @@ impl Jwm {
                 current_tag_index = i + 1;
             }
             monitor_info_for_message.set_tag_status(i, tag_status);
-            // let show_bar = mon_borrow
-            //     .pertag
-            //     .as_ref()
-            //     .unwrap()
-            //     .show_bars
-            //     .get(i + 1)
-            //     .unwrap_or(&true);
-            // monitor_info_for_message.set_show_bars(i, *show_bar);
         }
         let current_show_bar = *mon_rc
             .borrow()

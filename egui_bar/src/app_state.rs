@@ -64,10 +64,6 @@ pub struct UiState {
     pub last_ui_update: Instant,
 
     pub button_height: f32,
-
-    pub show_bar: bool,
-    pub prev_show_bar: bool,
-    pub top_y: f32,
 }
 
 /// Volume control window state
@@ -205,9 +201,6 @@ impl UiState {
             show_settings_window: false,
             last_ui_update: Instant::now(),
             button_height: 0.,
-            show_bar: true,
-            prev_show_bar: true,
-            top_y: 0.0,
         }
     }
 

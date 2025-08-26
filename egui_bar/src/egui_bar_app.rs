@@ -352,23 +352,6 @@ impl EguiBarApp {
 
     /// Adjust window size and position
     fn adjust_window(&mut self, ctx: &egui::Context, ui: &egui::Ui) {
-        if self.state.ui_state.show_bar != self.state.ui_state.prev_show_bar {
-            let viewport_info = ctx.input(|i| i.viewport().clone());
-            info!("viewport_info: {:?}", viewport_info);
-            let outer_rect = viewport_info.outer_rect.unwrap();
-            let target_x = outer_rect.left();
-            self.state.ui_state.top_y = outer_rect.top().max(0.0);
-            let target_y = if self.state.ui_state.show_bar {
-                self.state.ui_state.top_y
-            } else {
-                -1000.0
-            };
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::Pos2::new(
-                target_x, target_y,
-            )));
-            info!("Window adjusted position: {}x{}", target_x, target_y);
-            return;
-        }
         if self.state.ui_state.need_resize {
             let target_height = self.calculate_target_height(ui);
             let viewport_info = ctx.input(|i| i.viewport().clone());
@@ -763,7 +746,6 @@ impl EguiBarApp {
             .state
             .current_message
             .map_or(MonitorInfo::default(), |m| m.monitor_info);
-        let mut current_active_index = 0;
         // Draw tag icons as buttons
         for (index, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {
             let tag_color = colors::TAG_COLORS[index];
@@ -782,7 +764,6 @@ impl EguiBarApp {
                     rich_text = rich_text.background_color(Color32::RED);
                 } else if tag_status.is_filled {
                     is_filled = true;
-                    current_active_index = index;
                     tooltip.push_str(" (有窗口)");
                     let bg_color = Color32::from_rgba_premultiplied(
                         tag_color.r(),
@@ -853,16 +834,6 @@ impl EguiBarApp {
                 label_response.on_hover_text(tooltip);
             }
         }
-        let show_bar = monitor_info
-            .show_bars
-            .get(current_active_index)
-            .unwrap_or(&true);
-        info!(
-            "[draw_workspace_panel] current_active_index: {}, show_bar: {}",
-            current_active_index, show_bar
-        );
-        self.state.ui_state.prev_show_bar = self.state.ui_state.show_bar;
-        self.state.ui_state.show_bar = *show_bar;
 
         self.render_layout_section(ui, &monitor_info.get_ltsymbol());
     }
