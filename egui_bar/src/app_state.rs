@@ -67,6 +67,7 @@ pub struct UiState {
 
     pub show_bar: bool,
     pub prev_show_bar: bool,
+    pub top_y: f32,
 }
 
 /// Volume control window state
@@ -206,6 +207,7 @@ impl UiState {
             button_height: 0.,
             show_bar: true,
             prev_show_bar: true,
+            top_y: 0.0,
         }
     }
 

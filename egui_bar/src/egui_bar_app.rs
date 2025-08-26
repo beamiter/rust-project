@@ -357,12 +357,12 @@ impl EguiBarApp {
             info!("viewport_info: {:?}", viewport_info);
             let outer_rect = viewport_info.outer_rect.unwrap();
             let target_x = outer_rect.left();
-            let target_y = outer_rect.top()
-                + if self.state.ui_state.show_bar {
-                    0.0
-                } else {
-                    -1000.0
-                };
+            self.state.ui_state.top_y = outer_rect.top().max(0.0);
+            let target_y = if self.state.ui_state.show_bar {
+                self.state.ui_state.top_y
+            } else {
+                -1000.0
+            };
             ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(egui::Pos2::new(
                 target_x, target_y,
             )));
@@ -813,12 +813,6 @@ impl EguiBarApp {
                     rich_text = rich_text.background_color(Color32::TRANSPARENT);
                 }
             }
-            let show_bar = monitor_info
-                .show_bars
-                .get(current_active_index)
-                .unwrap_or(&true);
-            self.state.ui_state.prev_show_bar = self.state.ui_state.show_bar;
-            self.state.ui_state.show_bar = *show_bar;
 
             let label_response = ui.add(Button::new(rich_text).min_size(Vec2::new(36., 24.)));
             let rect = label_response.rect;
@@ -859,6 +853,16 @@ impl EguiBarApp {
                 label_response.on_hover_text(tooltip);
             }
         }
+        let show_bar = monitor_info
+            .show_bars
+            .get(current_active_index)
+            .unwrap_or(&true);
+        info!(
+            "[draw_workspace_panel] current_active_index: {}, show_bar: {}",
+            current_active_index, show_bar
+        );
+        self.state.ui_state.prev_show_bar = self.state.ui_state.show_bar;
+        self.state.ui_state.show_bar = *show_bar;
 
         self.render_layout_section(ui, &monitor_info.get_ltsymbol());
     }
