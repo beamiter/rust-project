@@ -330,6 +330,16 @@ impl WMMonitor {
         }
     }
 
+    pub fn count_clients(&self) -> usize {
+        let mut count = 0;
+        let mut current = self.clients.clone();
+        while let Some(client_rc) = current {
+            count += 1;
+            current = client_rc.borrow().next.clone();
+        }
+        count
+    }
+
     /// 计算与给定矩形的交集面积
     pub fn intersect_area(&self, x: i32, y: i32, w: i32, h: i32) -> i32 {
         let geom = &self.geometry;
@@ -350,34 +360,69 @@ impl WMMonitor {
     }
 }
 
-// 简化的Display实现
 impl fmt::Display for WMClient {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Client {{ name: \"{}\", class: \"{}\", geometry: {}x{}+{}+{}, win: 0x{:x} }}",
+            "WMClient {{\n\
+            \x20\x20name: \"{}\",\n\
+            \x20\x20class: \"{}\",\n\
+            \x20\x20instance: \"{}\",\n\
+            \x20\x20win: 0x{},\n\
+            \x20\x20geometry: {},\n\
+            \x20\x20size_hints: {:?},\n\
+            \x20\x20state: {:?},\n\
+            \x20\x20monitor: {}\n\
+            }}",
             self.name,
             self.class,
-            self.geometry.w,
-            self.geometry.h,
-            self.geometry.x,
-            self.geometry.y,
-            self.win
+            self.instance,
+            self.win,
+            self.geometry,
+            self.size_hints,
+            self.state,
+            // 对于 monitor，我们只显示是否存在，避免循环引用问题
+            if self.mon.is_some() {
+                "Some(Monitor)"
+            } else {
+                "None"
+            }
         )
     }
 }
 
 impl fmt::Display for WMMonitor {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "Monitor {{ num: {}, work_area: {}x{}+{}+{}, m_fact: {:.2} }}",
+            "WMMonitor {{\n\
+            \x20\x20num: {},\n\
+            \x20\x20lt_symbol: \"{}\",\n\
+            \x20\x20layout: {:?},\n\
+            \x20\x20geometry: {:?},\n\
+            \x20\x20sel_tags: {},\n\
+            \x20\x20sel_lt: {},\n\
+            \x20\x20tag_set: [{}, {}],\n\
+            \x20\x20clients_count: {},\n\
+            \x20\x20has_selection: {},\n\
+            \x20\x20pertag: {}\n\
+            }}",
             self.num,
-            self.geometry.w_w,
-            self.geometry.w_h,
-            self.geometry.w_x,
-            self.geometry.w_y,
-            self.layout.m_fact
+            self.lt_symbol,
+            self.layout,
+            self.geometry,
+            self.sel_tags,
+            self.sel_lt,
+            self.tag_set[0],
+            self.tag_set[1],
+            // 显示客户端数量而不是整个链表
+            self.count_clients(),
+            self.sel.is_some(),
+            if self.pertag.is_some() {
+                "Some(Pertag)"
+            } else {
+                "None"
+            }
         )
     }
 }
@@ -1170,8 +1215,8 @@ impl Jwm {
     }
 
     fn cleanup_all_clients(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[cleanup_all_clients]");
         let mut m = self.mons.clone();
-
         while let Some(ref m_opt) = m {
             // 不断卸载当前监视器的第一个客户端，直到没有客户端为止
             loop {
@@ -1186,11 +1231,9 @@ impl Jwm {
                     break;
                 }
             }
-
             let next = m_opt.borrow().next.clone();
             m = next;
         }
-
         Ok(())
     }
 
@@ -2186,10 +2229,10 @@ impl Jwm {
         &mut self,
         e: &DestroyNotifyEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[destroynotify]");
+        info!("[destroynotify]");
         let c = self.wintoclient(e.window);
-        if let Some(client_opt) = c {
-            self.unmanage(Some(client_opt), true)?;
+        if c.is_some() {
+            self.unmanage(c, true)?;
         }
         Ok(())
     }
@@ -5201,8 +5244,8 @@ impl Jwm {
                 if self.wintoclient(parent_window).is_some() {
                     client.state.is_floating = true;
                     debug!(
-                        "Window {} became floating due to transient_for: {}",
-                        client.win, parent_window
+                        "Window {} became floating due to transient_for: 0x{}",
+                        client, parent_window
                     );
                     // 重新排列布局
                     let monitor = client.mon.clone();
@@ -6540,7 +6583,7 @@ impl Jwm {
         client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = client_rc.borrow().win;
-        info!("[setup_client_window] Setting up window {}", win);
+        info!("[setup_client_window] Setting up window 0x{}", win);
 
         // 1. 设置边框宽度
         {
@@ -6743,7 +6786,7 @@ impl Jwm {
 
                     info!(
                         "[handle_transient_for] Client {} is transient for {}",
-                        win, transient_for_win
+                        client_mut, parent_borrow
                     );
                 } else {
                     // 父窗口不是我们管理的客户端
@@ -7745,7 +7788,7 @@ impl Jwm {
         ungrab_result?;
 
         info!(
-            "[cleanup_window_state] Window cleanup completed for {}",
+            "[cleanup_window_state] Window cleanup completed for 0x{}",
             win
         );
         Ok(())

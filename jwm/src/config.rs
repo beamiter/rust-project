@@ -507,14 +507,24 @@ impl Config {
 
     // 获取默认规则
     fn get_default_rules() -> Vec<RuleConfig> {
-        vec![RuleConfig {
-            class: "broken".to_string(),
-            instance: "broken".to_string(),
-            name: "broken".to_string(),
-            tags_mask: 0,
-            is_floating: true,
-            monitor: -1,
-        }]
+        vec![
+            RuleConfig {
+                class: "meeting".to_string(),
+                instance: "".to_string(),
+                name: "飞书会议".to_string(),
+                tags_mask: 0,
+                is_floating: true,
+                monitor: -1,
+            },
+            RuleConfig {
+                class: "meeting".to_string(),
+                instance: "".to_string(),
+                name: "飞书会议".to_string(),
+                tags_mask: 0,
+                is_floating: true,
+                monitor: -1,
+            },
+        ]
     }
 
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
