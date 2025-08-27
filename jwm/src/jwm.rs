@@ -919,7 +919,6 @@ impl Jwm {
             c.class = cls;
             info!("instance: {}, class: {}", c.instance, c.class);
         }
-
         for r in &CONFIG.get_rules() {
             if r.name.is_empty() && r.class.is_empty() && r.instance.is_empty() {
                 continue;
@@ -1003,9 +1002,7 @@ impl Jwm {
             && (c_mut.size_hints.max_h > 0)
             && (c_mut.size_hints.max_w == c_mut.size_hints.min_w)
             && (c_mut.size_hints.max_h == c_mut.size_hints.min_h);
-
         c_mut.size_hints.hints_valid = true;
-
         Ok(())
     }
 
@@ -1520,7 +1517,6 @@ impl Jwm {
             response_type: CONFIGURE_NOTIFY_EVENT,
             sequence: 0,
         };
-
         self.x11rb_conn
             .send_event(false, c.win, EventMask::STRUCTURE_NOTIFY, event)?;
         self.x11rb_conn.flush()?;
@@ -1556,7 +1552,6 @@ impl Jwm {
                 )?;
             }
         }
-
         Ok(())
     }
 
@@ -1919,12 +1914,10 @@ impl Jwm {
                 client_borrow.state.is_fullscreen,
             )
         };
-
         // 移动窗口到可见位置
         if let Err(e) = self.move_window(win, x, y) {
             warn!("[show_client] Failed to move window {}: {:?}", win, e);
         }
-
         // 如果是浮动窗口且非全屏，调整大小
         if is_floating && !is_fullscreen {
             let (w, h) = {
@@ -1933,7 +1926,6 @@ impl Jwm {
             };
             self.resize(client_rc, x, y, w, h, false);
         }
-
         // 递归处理下一个客户端
         let snext = {
             let client_borrow = client_rc.borrow();
@@ -2090,11 +2082,9 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut client_mut = client_rc.borrow_mut();
         let is_floating = client_mut.state.is_floating;
-
         if e.value_mask.contains(ConfigWindow::BORDER_WIDTH) {
             client_mut.geometry.border_w = e.border_width as i32;
         }
-
         if is_floating {
             // 浮动窗口或无布局时，允许自由调整
             let (mx, my, mw, mh) = {
@@ -2616,17 +2606,13 @@ impl Jwm {
     ) -> Result<Vec<Window>, Box<dyn std::error::Error>> {
         let mut windows = Vec::new();
         let mut current = mon.stack.clone();
-
         while let Some(client_rc) = current {
             let client = client_rc.borrow();
-
             if !client.state.is_floating && client.is_visible() {
                 windows.push(client.win);
             }
-
             current = client.stack_next.clone();
         }
-
         Ok(windows)
     }
 
@@ -3014,7 +3000,6 @@ impl Jwm {
             Some(m) => m.clone(),
             None => return,
         };
-
         Self::attach_to_list_head_internal(
             &client_rc,
             &mon_rc,
@@ -4914,7 +4899,6 @@ impl Jwm {
         client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = client_rc.borrow().win;
-
         // 选择窗口事件
         let aux = ChangeWindowAttributesAux::new().event_mask(
             EventMask::ENTER_WINDOW
@@ -4922,12 +4906,9 @@ impl Jwm {
                 | EventMask::PROPERTY_CHANGE
                 | EventMask::STRUCTURE_NOTIFY,
         );
-
         self.x11rb_conn.change_window_attributes(win, &aux)?;
-
         // 抓取按钮
         self.grabbuttons(Some(client_rc.clone()), false)?;
-
         // 更新 EWMH _NET_CLIENT_LIST
         use x11rb::wrapper::ConnectionExt;
         self.x11rb_conn.change_property32(
@@ -4937,7 +4918,6 @@ impl Jwm {
             AtomEnum::WINDOW,
             &[client_rc.borrow().win],
         )?;
-
         info!(
             "[register_client_events] Events registered for window {}",
             win
@@ -6584,43 +6564,34 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = client_rc.borrow().win;
         info!("[setup_client_window] Setting up window 0x{}", win);
-
         // 1. 设置边框宽度
         {
             let mut client_mut = client_rc.borrow_mut();
             client_mut.geometry.border_w = CONFIG.border_px() as i32;
             self.set_window_border_width(win, client_mut.geometry.border_w as u32)?;
         }
-
         // 2. 设置边框颜色为"正常"状态的颜色
         self.set_window_border_color(win, true)?;
-
         // 3. 发送 ConfigureNotify 事件给客户端
         {
             let mut client_mut = client_rc.borrow_mut();
             self.configure(&mut client_mut)?;
         }
-
         // 4. 设置窗口在屏幕外的临时位置（避免闪烁）
         {
             let client_borrow = client_rc.borrow();
             let offscreen_x = client_borrow.geometry.x + 2 * self.s_w; // 移到屏幕外
-
             let aux = ConfigureWindowAux::new()
                 .x(offscreen_x)
                 .y(client_borrow.geometry.y)
                 .width(client_borrow.geometry.w as u32)
                 .height(client_borrow.geometry.h as u32);
-
             self.x11rb_conn.configure_window(win, &aux)?;
         }
-
         // 5. 设置客户端的 WM_STATE 为 NormalState
         self.setclientstate(client_rc, NormalState as i64)?;
-
         // 6. 同步所有操作
         self.x11rb_conn.flush()?;
-
         info!("[setup_client_window] Window setup completed for {}", win);
         Ok(())
     }
@@ -6632,7 +6603,6 @@ impl Jwm {
         let _ = self
             .x11rb_conn
             .delete_property(self.x11rb_root, self.atoms._NET_CLIENT_LIST);
-
         // 重新构建列表
         let mut m = self.mons.clone();
         while let Some(ref m_opt) = m {
@@ -6651,7 +6621,6 @@ impl Jwm {
             let next = m_opt.borrow().next.clone();
             m = next;
         }
-
         info!("[update_net_client_list] Updated _NET_CLIENT_LIST");
         Ok(())
     }
@@ -6668,7 +6637,6 @@ impl Jwm {
                 None => false,
             }
         };
-
         if current_client_monitor_is_selected_monitor {
             // 取消当前选中窗口的焦点
             let prev_sel_opt = { self.sel_mon.as_ref().unwrap().borrow().sel.clone() };
@@ -6676,17 +6644,14 @@ impl Jwm {
                 let _ = self.unfocus(prev_sel_opt, false); // false: 不立即设置根窗口焦点
                 info!("[handle_new_client_focus] Unfocused previous client");
             }
-
             // 将新窗口设为其所在显示器的选中窗口
             {
                 let client_monitor_rc = client_rc.borrow().mon.clone().unwrap();
                 client_monitor_rc.borrow_mut().sel = Some(client_rc.clone());
             }
-
             // 重新排列该显示器的窗口
             let client_monitor_rc = client_rc.borrow().mon.clone().unwrap();
             self.arrange(Some(client_monitor_rc));
-
             // 设置焦点到新窗口（如果它不是 never_focus）
             if !client_rc.borrow().state.never_focus {
                 let _ = self.focus(Some(client_rc.clone()));
@@ -6706,14 +6671,11 @@ impl Jwm {
                 let client_monitor_rc = client_rc.borrow().mon.clone().unwrap();
                 client_monitor_rc.borrow_mut().sel = Some(client_rc.clone());
             }
-
             // 只重新排列该显示器，不改变全局焦点
             let client_monitor_rc = client_rc.borrow().mon.clone().unwrap();
             self.arrange(Some(client_monitor_rc));
-
             info!("[handle_new_client_focus] New client on non-selected monitor, arranged only");
         }
-
         // 根据配置决定是否自动切换到新窗口的显示器
         if CONFIG.behavior().focus_follows_new_window {
             let client_monitor = client_rc.borrow().mon.clone();
@@ -6773,7 +6735,6 @@ impl Jwm {
         client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = client_rc.borrow().win;
-
         // 使用 x11rb 获取 WM_TRANSIENT_FOR 属性
         match self.get_transient_for_hint(win) {
             Ok(Some(transient_for_win)) => {
@@ -6783,33 +6744,32 @@ impl Jwm {
                     let parent_borrow = parent_client.borrow();
                     client_mut.mon = parent_borrow.mon.clone();
                     client_mut.state.tags = parent_borrow.state.tags;
-
-                    info!(
+                    // 总是设置为floating
+                    client_mut.state.is_floating = true;
+                    warn!(
                         "[handle_transient_for] Client {} is transient for {}",
                         client_mut, parent_borrow
                     );
                 } else {
+                    info!("[handle_transient_for] parent client is None");
                     // 父窗口不是我们管理的客户端
                     client_rc.borrow_mut().mon = self.sel_mon.clone();
                     self.applyrules(&client_rc);
                 }
             }
             Ok(None) => {
+                info!("no WM_TRANSIENT_FOR property");
                 // 没有 WM_TRANSIENT_FOR 属性
                 client_rc.borrow_mut().mon = self.sel_mon.clone();
                 self.applyrules(&client_rc);
             }
             Err(e) => {
-                warn!(
-                    "[handle_transient_for] Failed to get transient_for hint: {:?}",
-                    e
-                );
+                warn!("Failed to get transient_for hint: {:?}", e);
                 // 失败时使用默认行为
                 client_rc.borrow_mut().mon = self.sel_mon.clone();
                 self.applyrules(&client_rc);
             }
         }
-
         Ok(())
     }
 
@@ -6846,7 +6806,6 @@ impl Jwm {
         client_rc: &Rc<RefCell<WMClient>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = client_rc.borrow().win;
-
         match self.x11rb_conn.map_window(win) {
             Ok(cookie) => {
                 // 检查映射是否成功
@@ -6863,10 +6822,8 @@ impl Jwm {
                 return Err(e.into());
             }
         }
-
         // 确保请求被发送
         self.x11rb_conn.flush()?;
-
         info!("[map_client_window] Successfully mapped window {}", win);
         Ok(())
     }
@@ -8047,7 +8004,6 @@ impl Jwm {
             state = self.getatomprop(c, self.atoms._NET_WM_STATE.into());
             wtype = self.getatomprop(c, self.atoms._NET_WM_WINDOW_TYPE.into());
         }
-
         if state == self.atoms._NET_WM_STATE_FULLSCREEN {
             let _ = self.setfullscreen(c, true);
         }
@@ -8076,7 +8032,6 @@ impl Jwm {
                 return;
             }
         };
-
         let reply = match cookie.reply() {
             Ok(reply) => reply,
             Err(_) => {
@@ -8084,14 +8039,12 @@ impl Jwm {
                 return;
             }
         };
-
         // 2. 解析 flags（第一个 u32）
         let mut values = reply.value32().into_iter().flatten();
         let flags = match values.next() {
             Some(f) => f,
             None => return, // 无数据
         };
-
         // 3. 检查是否为当前选中窗口
         let is_focused = {
             if let Some(ref sel_mon) = self.sel_mon {
@@ -8105,10 +8058,8 @@ impl Jwm {
                 false
             }
         };
-
         const X_URGENCY_HINT: u32 = 1 << 8;
         const INPUT_HINT: u32 = 1 << 0;
-
         // 4. 处理 XUrgencyHint
         if (flags & X_URGENCY_HINT) != 0 {
             if is_focused {
@@ -8116,7 +8067,6 @@ impl Jwm {
                 let new_flags = flags & !X_URGENCY_HINT;
                 let mut data: Vec<u32> = vec![new_flags];
                 data.extend(&mut values); // 保留其余字段
-
                 use x11rb::wrapper::ConnectionExt;
                 let _ = self
                     .x11rb_conn
@@ -8136,7 +8086,6 @@ impl Jwm {
             // 没有 urgency hint
             client_rc.borrow_mut().state.is_urgent = false;
         }
-
         // 5. 处理 InputHint
         if (flags & INPUT_HINT) != 0 {
             // InputHint 存在，检查 input 字段
