@@ -235,14 +235,14 @@ impl Config {
                     "-fn".to_string(),
                     "SauceCodePro Nerd Font Regular 11".to_string(),
                     "-nb".to_string(),
-                    "#afd7ff".to_string(),
+                    "#2e3440".to_string(), // 普通背景：Nord Black
                     "-nf".to_string(),
-                    "#afffff".to_string(),
+                    "#d8dee9".to_string(), // 普通文本：Snow Storm
                     "-sb".to_string(),
-                    "#000000".to_string(),
+                    "#81a1c1".to_string(), // 选中背景：Frost Blue
                     "-sf".to_string(),
-                    "#d7d7d7".to_string(),
-                    "-b".to_string(),
+                    "#eceff4".to_string(), // 选中文本：Very Light Blue
+                    "-b".to_string(),      // 在底部显示（可选）
                 ]),
             },
             KeyConfig {
