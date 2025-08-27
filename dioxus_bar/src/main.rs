@@ -545,7 +545,6 @@ fn App() -> Element {
             // 获取窗口控制句柄
             let window = use_window();
             let scale_factor = window.scale_factor();
-
             // 异步等待消息，无需轮询
             while let Some(shared_message) = message_receiver.recv().await {
                 let mut new_states = vec![ButtonStateData::default(); BUTTONS.len()];
@@ -556,7 +555,6 @@ fn App() -> Element {
                         + format!(", m: {}", monitor_info.monitor_num).as_str(),
                 );
                 monitor_num.set(Some(monitor_info.monitor_num));
-
                 // 更新按钮状态
                 for (index, tag_status) in monitor_info.tag_status_vec.iter().enumerate() {
                     if index < new_states.len() {
@@ -568,43 +566,6 @@ fn App() -> Element {
                         };
                     }
                 }
-
-                // 调整前状态
-                // let before_size = window.inner_size();
-                // let before_pos = window.outer_position().unwrap_or_default();
-                // let target_x = monitor_info.monitor_x;
-                // let target_y = monitor_info.monitor_y;
-                // let target_width = monitor_info.monitor_width;
-                // let target_height: i32 = 42;
-                // // 检查是否需要调整窗口
-                // if (before_pos.x - target_x).abs() > 100
-                //     || (before_pos.y - target_y).abs() > 100
-                //     || (before_size.width as i32 - monitor_info.monitor_width).abs() > 10
-                //     || (before_size.height as i32 - target_height).abs() > 10
-                // {
-                //     info!(
-                //         "Before: size={}x{}, pos=({}, {})",
-                //         before_size.width, before_size.height, before_pos.x, before_pos.y
-                //     );
-                //     info!(
-                //         "Target: size={}x{}, pos=({}, {})",
-                //         target_width, target_height, target_x, target_y
-                //     );
-                //     window
-                //         .set_outer_position(LogicalPosition::new(target_x as f64, target_y as f64));
-                //     window.set_inner_size(LogicalSize::new(
-                //         target_width as f64,
-                //         target_height as f64,
-                //     ));
-                //     // 在窗口调整代码中添加更详细的调试信息
-                //     info!("=== Window Adjustment Debug ===");
-                //     info!("Window decorations: {}", window.is_decorated());
-                //     info!("Window resizable: {}", window.is_resizable());
-                //     info!("Window maximized: {}", window.is_maximized());
-                //     info!("Window minimized: {}", window.is_minimized());
-                //     info!("Scale factor: {}", window.scale_factor());
-                // }
-
                 let need_update_button_states = { *button_states.read() != new_states };
                 if need_update_button_states {
                     button_states.set(new_states);
