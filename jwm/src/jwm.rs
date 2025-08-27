@@ -1711,6 +1711,7 @@ impl Jwm {
             // Raise the window to the top of the stacking order
             let config = ConfigureWindowAux::new().stack_mode(StackMode::ABOVE);
             self.x11rb_conn.configure_window(win, &config)?;
+            self.x11rb_conn.flush()?;
         } else if !fullscreen && isfullscreen {
             self.x11rb_conn.change_property32(
                 PropMode::REPLACE,
@@ -1773,7 +1774,6 @@ impl Jwm {
         self.configure(c)?;
         // 同步连接（刷新所有待发送的请求）
         self.x11rb_conn.flush()?;
-
         Ok(())
     }
 
@@ -1971,6 +1971,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let aux = ConfigureWindowAux::new().x(x).y(y);
         self.x11rb_conn.configure_window(win, &aux)?;
+        self.x11rb_conn.flush()?;
         Ok(())
     }
 
@@ -2004,7 +2005,6 @@ impl Jwm {
             "[handle_statusbar_configure_request] StatusBar resize request for monitor {}: {}x{}+{}+{} (mask: {:?})",
             monitor_id, e.width, e.height, e.x, e.y, e.value_mask
         );
-
         if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
             let mut statusbar_mut = statusbar.borrow_mut();
             let old_geometry = (
@@ -2050,6 +2050,7 @@ impl Jwm {
                 .width(statusbar_mut.geometry.w as u32)
                 .height(statusbar_mut.geometry.h as u32);
             self.x11rb_conn.configure_window(e.window, &values)?;
+            self.x11rb_conn.flush()?;
 
             // 确保状态栏始终在最上层
             // self.x11rb_conn.configure_window(
@@ -2146,6 +2147,7 @@ impl Jwm {
                         .width(client_mut.geometry.w as u32)
                         .height(client_mut.geometry.h as u32),
                 )?;
+                self.x11rb_conn.flush()?;
             }
         } else {
             // 平铺布局中的窗口，只允许有限的配置更改
@@ -2158,7 +2160,7 @@ impl Jwm {
         &mut self,
         e: &ConfigureRequestEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[handle_unmanaged_configure_request]");
+        info!("[handle_unmanaged_configure_request] e: {:?}", e);
         // 对于未管理的窗口，构建并应用配置请求
         let mut values = ConfigureWindowAux::new();
         if e.value_mask.contains(ConfigWindow::X) {
@@ -2183,6 +2185,7 @@ impl Jwm {
             values = values.stack_mode(e.stack_mode);
         }
         self.x11rb_conn.configure_window(e.window, &values)?;
+        self.x11rb_conn.flush()?;
         Ok(())
     }
 
@@ -2505,7 +2508,7 @@ impl Jwm {
             // 这段代码只有在编译时 *没有* 启用 nixgl feature 时才会存在
             #[cfg(not(feature = "nixgl"))]
             {
-                info!("   -> [feature=nixgl] disabled. Launching status bar directly.");
+                info!("--> [feature=nixgl] disabled. Launching status bar directly.");
                 command = Command::new(CONFIG.status_bar_base_name());
             }
             if let Ok(child) = command
@@ -2516,7 +2519,7 @@ impl Jwm {
                 // insert 会自动处理新增和覆盖两种情况
                 self.status_bar_child.insert(num, child);
                 info!(
-                    "   -> spawned: Successfully started/restarted status bar for monitor {}.",
+                    "--> spawned: Successfully started/restarted status bar for monitor {}.",
                     num
                 );
             }
@@ -2683,6 +2686,7 @@ impl Jwm {
             }
 
             self.x11rb_conn.configure_window(op.window, &config)?;
+            self.x11rb_conn.flush()?;
         }
 
         // 单次同步所有操作
@@ -6578,6 +6582,7 @@ impl Jwm {
                 .width(client_borrow.geometry.w as u32)
                 .height(client_borrow.geometry.h as u32);
             self.x11rb_conn.configure_window(win, &aux)?;
+            self.x11rb_conn.flush()?;
         }
         // 5. 设置客户端的 WM_STATE 为 NormalState
         self.setclientstate(client_rc, NormalState as i64)?;
@@ -6825,7 +6830,7 @@ impl Jwm {
             client_mut.geometry.border_w = CONFIG.border_px() as i32;
 
             // 调整状态栏位置（通常在顶部）
-            self.position_statusbar(&mut client_mut, monitor_id);
+            let _ = self.position_statusbar(&mut client_mut, monitor_id);
             // 设置状态栏特有的窗口属性
             let _ = self.setup_statusbar_window(&mut client_mut);
         }
@@ -6885,7 +6890,11 @@ impl Jwm {
     }
 
     // 定位状态栏
-    fn position_statusbar(&mut self, client_mut: &mut WMClient, monitor_id: i32) {
+    fn position_statusbar(
+        &mut self,
+        client_mut: &mut WMClient,
+        monitor_id: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
             let monitor_borrow = monitor.borrow();
             let bar_padding = CONFIG.status_bar_padding();
@@ -6901,7 +6910,15 @@ impl Jwm {
                 client_mut.geometry.w,
                 client_mut.geometry.h
             );
+            let aux = ConfigureWindowAux::new()
+                .x(client_mut.geometry.x)
+                .y(client_mut.geometry.y)
+                .width(client_mut.geometry.w as u32)
+                .height(client_mut.geometry.h as u32);
+            self.x11rb_conn.configure_window(client_mut.win, &aux)?;
+            self.x11rb_conn.flush()?;
         }
+        Ok(())
     }
 
     fn show_statusbar(
