@@ -918,7 +918,7 @@ impl Jwm {
             c.instance = inst;
             c.class = cls;
             info!(
-                "0x{}, name: {}, instance: {}, class: {}",
+                "win: 0x{}, name: {}, instance: {}, class: {}",
                 c.win, c.name, c.instance, c.class
             );
         } else {
@@ -934,10 +934,7 @@ impl Jwm {
                 && (r.class.is_empty() || c.class.find(&r.class).is_some())
                 && (r.instance.is_empty() || c.instance.find(&r.instance).is_some())
             {
-                info!(
-                        "[############################### applyrules] class: {}, instance: {}, name: {}",
-                        c.class, c.instance, c.name
-                    );
+                info!("[applyrules] rule: {:?}", r);
                 c.state.is_floating = r.is_floating;
                 c.state.tags |= r.tags as u32;
                 let mut m = self.mons.clone();
@@ -961,8 +958,8 @@ impl Jwm {
             c.mon.as_ref().unwrap().borrow().tag_set[sel_tags]
         };
         info!(
-            "[applyrules] class: {}, instance: {}, name: {}, tags: {}",
-            c.class, c.instance, c.name, c.state.tags
+            "[applyrules] class: {}, instance: {}, name: {}, tags: {}, floating: {}",
+            c.class, c.instance, c.name, c.state.tags, c.state.is_floating
         );
     }
 
@@ -2041,7 +2038,7 @@ impl Jwm {
             //     statusbar_mut.geometry.w = e.width as i32;
             // }
             if e.value_mask.contains(ConfigWindow::HEIGHT) {
-                statusbar_mut.geometry.h = e.height.max(40) as i32;
+                statusbar_mut.geometry.h = e.height.max(CONFIG.status_bar_height() as u16) as i32;
             }
             info!(
                     "[handle_statusbar_configure_request] StatusBar geometry updated: {:?} -> ({}, {}, {}, {})",
@@ -2087,6 +2084,7 @@ impl Jwm {
         client_rc: &Rc<RefCell<WMClient>>,
         e: &ConfigureRequestEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[handle_regular_configure_request]");
         let mut client_mut = client_rc.borrow_mut();
         let is_floating = client_mut.state.is_floating;
         if e.value_mask.contains(ConfigWindow::BORDER_WIDTH) {
@@ -2103,7 +2101,6 @@ impl Jwm {
                     m.geometry.m_h,
                 )
             };
-
             if e.value_mask.contains(ConfigWindow::X) {
                 client_mut.geometry.old_x = client_mut.geometry.x;
                 client_mut.geometry.x = mx + e.x as i32;
@@ -2120,7 +2117,6 @@ impl Jwm {
                 client_mut.geometry.old_h = client_mut.geometry.h;
                 client_mut.geometry.h = e.height as i32;
             }
-
             // 确保窗口不超出显示器边界
             if (client_mut.geometry.x + client_mut.geometry.w) > mx + mw
                 && client_mut.state.is_floating
@@ -2132,7 +2128,6 @@ impl Jwm {
             {
                 client_mut.geometry.y = my + (mh / 2 - client_mut.total_height() / 2);
             }
-
             // 如果只是位置变化，发送配置确认
             if e.value_mask.contains(ConfigWindow::X | ConfigWindow::Y)
                 && !e
@@ -2141,7 +2136,6 @@ impl Jwm {
             {
                 self.configure(&mut client_mut)?;
             }
-
             let is_visible = client_mut.is_visible();
             if is_visible {
                 self.x11rb_conn.configure_window(
@@ -2157,7 +2151,6 @@ impl Jwm {
             // 平铺布局中的窗口，只允许有限的配置更改
             self.configure(&mut client_mut)?;
         }
-
         Ok(())
     }
 
@@ -2165,9 +2158,9 @@ impl Jwm {
         &mut self,
         e: &ConfigureRequestEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[handle_unmanaged_configure_request]");
         // 对于未管理的窗口，构建并应用配置请求
         let mut values = ConfigureWindowAux::new();
-
         if e.value_mask.contains(ConfigWindow::X) {
             values = values.x(e.x as i32);
         }
@@ -2189,7 +2182,6 @@ impl Jwm {
         if e.value_mask.contains(ConfigWindow::STACK_MODE) {
             values = values.stack_mode(e.stack_mode);
         }
-
         self.x11rb_conn.configure_window(e.window, &values)?;
         Ok(())
     }
@@ -3520,7 +3512,7 @@ impl Jwm {
             mon_borrow.layout.m_fact,
             mon_borrow.layout.n_master,
             mon_borrow.num,
-            self.client_y_offset(&mon_borrow),
+            self.get_client_y_offset(&mon_borrow),
         )
     }
 
@@ -4926,7 +4918,7 @@ impl Jwm {
             &[client_rc.borrow().win],
         )?;
         info!(
-            "[register_client_events] Events registered for window {}",
+            "[register_client_events] Events registered for window 0x{}",
             win
         );
         Ok(())
@@ -6164,40 +6156,32 @@ impl Jwm {
         mut c_opt: Option<Rc<RefCell<WMClient>>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[focus]");
-
         // 如果传入的是状态栏客户端，忽略并寻找合适的替代
         if let Some(ref c) = c_opt {
             if self.status_bar_windows.contains_key(&c.borrow().win) {
                 c_opt = None; // 忽略状态栏
             }
         }
-
         // 检查客户端是否可见，如果不可见则寻找可见的客户端
         let is_visible = match c_opt.clone() {
             Some(c_rc) => c_rc.borrow().is_visible(),
             None => false,
         };
-
         if !is_visible {
             c_opt = self.find_visible_client();
         }
-
         // 处理焦点切换
         self.handle_focus_change(&c_opt)?;
-
         // 设置新的焦点客户端
         if let Some(c_rc) = c_opt.clone() {
             self.set_client_focus(&c_rc)?;
         } else {
             self.set_root_focus()?;
         }
-
         // 更新选中监视器的状态
         self.update_monitor_selection(c_opt.clone());
-
         // 标记状态栏需要更新
         self.mark_bar_update_needed(None);
-
         Ok(())
     }
 
@@ -6530,14 +6514,14 @@ impl Jwm {
             self.updatetitle(&mut client_mut);
             #[cfg(any(feature = "nixgl", feature = "tauri_bar"))]
             {
-                if client_mut.name == CONFIG.status_bar_name() {
+                if client_mut.name == CONFIG.status_bar_base_name() {
                     let mut instance_name = String::new();
                     for &tmp_num in self.status_bar_child.keys() {
                         if !self.status_bar_clients.contains_key(&tmp_num) {
                             instance_name = match tmp_num {
-                                0 => CONFIG.status_bar_0().to_string(),
-                                1 => CONFIG.status_bar_1().to_string(),
-                                _ => CONFIG.status_bar_name().to_string(),
+                                0 => CONFIG.status_bar_instance_0().to_string(),
+                                1 => CONFIG.status_bar_instance_1().to_string(),
+                                _ => CONFIG.status_bar_base_name().to_string(),
                             };
                         }
                     }
@@ -6706,34 +6690,25 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 处理 WM_TRANSIENT_FOR
         self.handle_transient_for(&client_rc)?;
-
         // 调整窗口位置
         self.adjust_client_position(&client_rc);
-
         // 设置窗口属性
         self.setup_client_window(&client_rc)?;
-
         // 更新各种提示
         self.updatewindowtype(&client_rc);
         self.updatesizehints(&client_rc)?;
         self.updatewmhints(&client_rc);
-
         // 添加到管理链表
         self.attach(Some(client_rc.clone()));
         self.attachstack(Some(client_rc.clone()));
-
         // 注册事件和抓取按钮
         self.register_client_events(&client_rc)?;
-
         // 更新客户端列表
         self.update_net_client_list()?;
-
         // 映射窗口
         self.map_client_window(&client_rc)?;
-
         // 处理焦点
         self.handle_new_client_focus(&client_rc);
-
         Ok(())
     }
 
@@ -6831,7 +6806,7 @@ impl Jwm {
         }
         // 确保请求被发送
         self.x11rb_conn.flush()?;
-        info!("[map_client_window] Successfully mapped window {}", win);
+        info!("[map_client_window] Successfully mapped window 0x{}", win);
         Ok(())
     }
 
@@ -6913,12 +6888,12 @@ impl Jwm {
     fn position_statusbar(&mut self, client_mut: &mut WMClient, monitor_id: i32) {
         if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
             let monitor_borrow = monitor.borrow();
-            let bar_padding = CONFIG.status_bar_pad();
+            let bar_padding = CONFIG.status_bar_padding();
             // 将状态栏放在显示器顶部
             client_mut.geometry.x = monitor_borrow.geometry.m_x + bar_padding;
             client_mut.geometry.y = monitor_borrow.geometry.m_y + bar_padding;
             client_mut.geometry.w = monitor_borrow.geometry.m_w - 2 * bar_padding;
-            client_mut.geometry.h = 40;
+            client_mut.geometry.h = CONFIG.status_bar_height();
             info!(
                 "[position_statusbar] Positioned at ({}, {}) {}x{}",
                 client_mut.geometry.x,
@@ -6984,21 +6959,20 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn client_y_offset(&mut self, m: &WMMonitor) -> i32 {
+    pub fn get_client_y_offset(&mut self, m: &WMMonitor) -> i32 {
         let monitor_id = m.num;
-        if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
-            let statusbar_borrow = statusbar.borrow();
+        if self.status_bar_clients.get(&monitor_id).is_some() {
             let offset = if *self.status_bar_flags.get(&monitor_id).unwrap().show_bar() {
-                statusbar_borrow.geometry.y + statusbar_borrow.geometry.h + CONFIG.status_bar_pad()
+                CONFIG.status_bar_height() + CONFIG.status_bar_padding() * 2
             } else {
                 0
             };
             info!(
-                "[client_y_offset] Monitor {}: offset = {} (statusbar_h: {} + pad: {})",
+                "[get_client_y_offset] Monitor {}: offset = {} (height: {} + pad: {} x 2)",
                 monitor_id,
                 offset,
-                statusbar_borrow.geometry.h,
-                CONFIG.status_bar_pad()
+                CONFIG.status_bar_height(),
+                CONFIG.status_bar_padding()
             );
             return offset.max(0);
         }
@@ -7279,7 +7253,7 @@ impl Jwm {
         }
 
         // 获取Y轴偏移
-        let client_y_offset = self.client_y_offset(&mon_rc.borrow());
+        let client_y_offset = self.get_client_y_offset(&mon_rc.borrow());
         info!("[monocle] client_y_offset: {}", client_y_offset);
 
         // 调整所有平铺客户端为全屏大小
@@ -7609,6 +7583,17 @@ impl Jwm {
                     "[adjust_client_position] Adjusted Y to workarea top: {}",
                     client_mut.geometry.y
                 );
+            }
+            // 确保窗口上边界要低于状态栏高度
+            if let Some(monitor) = client_mut.mon.as_ref() {
+                let client_y_offset = self.get_client_y_offset(&monitor.as_ref().borrow());
+                if client_mut.geometry.y < client_y_offset {
+                    client_mut.geometry.y = client_y_offset;
+                    info!(
+                        "[adjust_client_position] Adjusted Y to avoid status bar: {}",
+                        client_mut.geometry.y
+                    );
+                }
             }
             // 对于小窗口，居中显示
             if client_mut.geometry.w < mon_ww / 3 && client_mut.geometry.h < mon_wh / 3 {

@@ -61,7 +61,8 @@ pub struct AppearanceConfig {
     pub border_px: u32,
     pub snap: u32,
     pub dmenu_font: String,
-    pub status_bar_pad: i32,
+    pub status_bar_padding: i32,
+    pub status_bar_height: i32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -176,7 +177,8 @@ impl Default for Config {
                     border_px: 3,
                     snap: 32,
                     dmenu_font: "SauceCodePro Nerd Font Regular 11".to_string(),
-                    status_bar_pad: 5,
+                    status_bar_padding: 5,
+                    status_bar_height: 42,
                 },
                 behavior: BehaviorConfig {
                     focus_follows_new_window: false,
@@ -552,8 +554,12 @@ impl Config {
         self.inner.appearance.snap
     }
 
-    pub fn status_bar_pad(&self) -> i32 {
-        self.inner.appearance.status_bar_pad
+    pub fn status_bar_padding(&self) -> i32 {
+        self.inner.appearance.status_bar_padding
+    }
+
+    pub fn status_bar_height(&self) -> i32 {
+        self.inner.appearance.status_bar_height
     }
 
     pub fn dmenu_font(&self) -> &str {
