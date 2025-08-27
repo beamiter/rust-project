@@ -917,7 +917,14 @@ impl Jwm {
         if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, c.win as u32) {
             c.instance = inst;
             c.class = cls;
-            info!("instance: {}, class: {}", c.instance, c.class);
+            info!(
+                "0x{}, name: {}, instance: {}, class: {}",
+                c.win, c.name, c.instance, c.class
+            );
+        } else {
+            // 对于这种完全未命名的，直接设置为floating
+            c.state.is_floating = true;
+            info!("[applyrules] special case");
         }
         for r in &CONFIG.get_rules() {
             if r.name.is_empty() && r.class.is_empty() && r.instance.is_empty() {
@@ -7558,7 +7565,6 @@ impl Jwm {
             let client_borrow = client_rc.borrow();
             (client_borrow.total_width(), client_borrow.mon.clone())
         };
-
         if let Some(ref client_mon_rc) = client_mon_rc_opt {
             let (mon_wx, mon_wy, mon_ww, mon_wh) = {
                 let client_mon_borrow = client_mon_rc.borrow();
@@ -7569,9 +7575,8 @@ impl Jwm {
                     client_mon_borrow.geometry.w_h,
                 )
             };
-
             let mut client_mut = client_rc.borrow_mut();
-
+            info!("[adjust_client_position] 0x{}", client_mut.win);
             // 确保窗口的右边界不超过显示器工作区的右边界
             if client_mut.geometry.x + client_total_width > mon_wx + mon_ww {
                 client_mut.geometry.x = mon_wx + mon_ww - client_total_width;
@@ -7580,7 +7585,6 @@ impl Jwm {
                     client_mut.geometry.x
                 );
             }
-
             // 确保窗口的下边界不超过显示器工作区的下边界
             let client_total_height = client_mut.total_height();
             if client_mut.geometry.y + client_total_height > mon_wy + mon_wh {
@@ -7590,7 +7594,6 @@ impl Jwm {
                     client_mut.geometry.y
                 );
             }
-
             // 确保窗口的左边界不小于显示器工作区的左边界
             if client_mut.geometry.x < mon_wx {
                 client_mut.geometry.x = mon_wx;
@@ -7599,7 +7602,6 @@ impl Jwm {
                     client_mut.geometry.x
                 );
             }
-
             // 确保窗口的上边界不小于显示器工作区的上边界
             if client_mut.geometry.y < mon_wy {
                 client_mut.geometry.y = mon_wy;
@@ -7608,7 +7610,6 @@ impl Jwm {
                     client_mut.geometry.y
                 );
             }
-
             // 对于小窗口，居中显示
             if client_mut.geometry.w < mon_ww / 3 && client_mut.geometry.h < mon_wh / 3 {
                 client_mut.geometry.x = mon_wx + (mon_ww - client_total_width) / 2;
@@ -7618,7 +7619,6 @@ impl Jwm {
                     client_mut.geometry.x, client_mut.geometry.y
                 );
             }
-
             info!(
                 "[adjust_client_position] Final position: ({}, {}) {}x{}",
                 client_mut.geometry.x,
