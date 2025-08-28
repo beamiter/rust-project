@@ -60,11 +60,13 @@ pub struct WMClientRestore {
     pub geometry: ClientGeometry,
     pub size_hints: SizeHints,
     pub state: ClientState,
+    pub monitor_num: u32,
 }
 
 impl WMClientRestore {
     /// 从 WMClient 创建可序列化的版本
     pub fn from_client(client: &WMClient) -> Self {
+        let monitor_num = client.mon.as_ref().map_or(0, |v| v.borrow().num as u32);
         Self {
             name: client.name.clone(),
             class: client.class.clone(),
@@ -73,6 +75,7 @@ impl WMClientRestore {
             geometry: client.geometry.clone(),
             size_hints: client.size_hints.clone(),
             state: client.state.clone(),
+            monitor_num,
         }
     }
     pub fn to_client(&self) -> WMClient {
@@ -1451,7 +1454,6 @@ impl Jwm {
         self.restored_clients_info = match WMClientCollection::load_from_file(CLIENT_STORAGE_PATH) {
             Ok(val) => val,
             _ => return Ok(()),
-
         };
         info!("[restore_all_clients] {:?}", self.restored_clients_info);
         Ok(())
@@ -3174,7 +3176,7 @@ impl Jwm {
         for win in tree_reply.children {
             let restored_client = self.restored_clients_info.get_client(win).cloned();
             if let Some(restored_client) = restored_client {
-                self.manage_restored(win, &restored_client);
+                self.manage_restored(&restored_client);
                 continue;
             }
             let attr = self.get_window_attributes(win)?;
@@ -6758,14 +6760,14 @@ impl Jwm {
         info!("Keycode cache cleared");
     }
 
-    pub fn manage_restored(&mut self, w: Window, restored_client: &WMClientRestore) {
+    pub fn manage_restored(&mut self, restored_client: &WMClientRestore) {
         info!("[manage_restored]");
         let client_rc_opt: Option<Rc<RefCell<WMClient>>> =
             Some(Rc::new(RefCell::new(WMClient::new())));
         let client_rc = client_rc_opt.as_ref().unwrap();
         {
             let mut client_mut = client_rc.borrow_mut();
-            client_mut.win = w;
+            client_mut.win = restored_client.win;
             client_mut.name = restored_client.name.clone();
             client_mut.instance = restored_client.instance.clone();
             client_mut.class = restored_client.class.clone();
@@ -6975,17 +6977,20 @@ impl Jwm {
     fn manage_restored_client(
         &mut self,
         client_rc: &Rc<RefCell<WMClient>>,
-        _restored_client: &WMClientRestore,
+        restored_client: &WMClientRestore,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[manage_restored_client]");
         let mut m = self.mons.clone();
         while let Some(ref m_opt) = m {
-            info!("monitor infoi: {:?}", m_opt);
-            if client_rc.borrow_mut().win == m_opt.borrow_mut().num as u32 {
+            if restored_client.monitor_num == m_opt.borrow().num as u32 {
                 client_rc.borrow_mut().mon = m.clone();
+                info!(
+                    "[manage_restored_client] set monitor number: {:?}",
+                    m_opt.borrow().num
+                );
                 break;
             }
-            let next = m_opt.borrow_mut().next.clone();
+            let next = m_opt.borrow().next.clone();
             m = next;
         }
 
@@ -6995,6 +7000,7 @@ impl Jwm {
         self.setup_client_window(&client_rc)?;
 
         self.updatewmhints(&client_rc);
+
         // 添加到管理链表
         self.attach(Some(client_rc.clone()));
         self.attachstack(Some(client_rc.clone()));

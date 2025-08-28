@@ -13,6 +13,7 @@ use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 use std::{
     env,
     process::Command,
+    sync::Arc,
     thread,
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
@@ -66,16 +67,15 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 
 // 优化的共享内存工作线程 - 降低CPU使用率
 fn shared_memory_worker(
-    shared_path: String,
+    shared_buffer_opt: Option<Arc<SharedRingBuffer>>,
     message_sender: tokio::sync::mpsc::Sender<SharedMessage>,
 ) {
     info!("Starting shared memory worker thread");
-    let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
     let mut prev_timestamp = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    if let Some(ref shared_buffer) = shared_buffer_opt {
+    if let Some(shared_buffer) = shared_buffer_opt {
         loop {
             match shared_buffer.wait_for_message(Some(std::time::Duration::from_secs(2))) {
                 Ok(true) => {
@@ -102,7 +102,7 @@ fn shared_memory_worker(
 }
 
 fn send_tag_command(
-    shared_buffer_opt: &Option<SharedRingBuffer>,
+    shared_buffer: &SharedRingBuffer,
     monitor_id: i32,
     active_tab: usize,
     is_view: bool,
@@ -113,17 +113,15 @@ fn send_tag_command(
     } else {
         SharedCommand::toggle_tag(tag_bit, monitor_id)
     };
-    if let Some(shared_buffer) = shared_buffer_opt {
-        match shared_buffer.send_command(cmd) {
-            Ok(true) => {
-                info!("Sent command: {:?} by shared_buffer", cmd);
-            }
-            Ok(false) => {
-                warn!("Command buffer full, command dropped");
-            }
-            Err(e) => {
-                error!("Failed to send command: {}", e);
-            }
+    match shared_buffer.send_command(cmd) {
+        Ok(true) => {
+            info!("Sent command: {:?} by shared_buffer", cmd);
+        }
+        Ok(false) => {
+            warn!("Command buffer full, command dropped");
+        }
+        Err(e) => {
+            error!("Failed to send command: {}", e);
         }
     }
 }
@@ -499,11 +497,13 @@ fn App() -> Element {
     let mut pressed_button = use_signal(|| None::<usize>);
     let mut monitor_num = use_signal(|| None::<i32>);
     let mut layout_symbol = use_signal(|| " ? ".to_string());
-    let mut shared_buffer_sig = use_signal(|| None::<SharedRingBuffer>);
-    let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
-    if shared_buffer_opt.is_some() {
-        shared_buffer_sig.set(shared_buffer_opt);
-    }
+    let shared_buffer_sig = use_signal(|| {
+        info!(
+            "(SIGNAL-INIT) Creating shared ring buffer for path: {}",
+            shared_path
+        );
+        SharedRingBuffer::create_shared_ring_buffer(&shared_path).map(Arc::new)
+    });
 
     // 系统信息监控（保持原有逻辑）
     use_effect(move || {
@@ -536,9 +536,10 @@ fn App() -> Element {
         let (message_sender, mut message_receiver) =
             tokio::sync::mpsc::channel::<SharedMessage>(100);
         info!("Using shared memory path: {}", shared_path);
-        let shared_path_clone = shared_path.clone();
+        // MODIFIED: `shared_buffer_arc` 是一个引用，所以我们需要克隆它内部的值
+        let shared_buffer_for_worker = shared_buffer_sig.read().clone();
         thread::spawn(move || {
-            shared_memory_worker(shared_path_clone, message_sender);
+            shared_memory_worker(shared_buffer_for_worker, message_sender);
         });
 
         spawn(async move {
@@ -584,9 +585,13 @@ fn App() -> Element {
     let mut handle_button_release = move |index: usize| {
         info!("Button {} released", index);
         pressed_button.set(None);
-        if let Some(monitor_num) = monitor_num() {
-            let shared_buffer_opt = shared_buffer_sig.read();
-            send_tag_command(&shared_buffer_opt, monitor_num, index, true);
+        if let (Some(monitor_num), Some(buffer_arc)) =
+            (monitor_num(), shared_buffer_sig.read().as_ref())
+        {
+            // buffer_arc 的类型是 &Arc<SharedRingBuffer>
+            send_tag_command(buffer_arc, monitor_num, index, true);
+        } else {
+            warn!("Shared buffer or monitor_num not available, cannot send command.");
         }
     };
 
