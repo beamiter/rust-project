@@ -3300,7 +3300,8 @@ impl Jwm {
             if attr.override_redirect || trans.is_some() {
                 continue;
             }
-            if attr.map_state == MapState::VIEWABLE || self.get_wm_state(*win) == ICONIC_STATE as i64
+            if attr.map_state == MapState::VIEWABLE
+                || self.get_wm_state(*win) == ICONIC_STATE as i64
             {
                 self.manage(*win, geom);
             }
@@ -7422,6 +7423,7 @@ impl Jwm {
         Ok(())
     }
 
+    // Add default y offset.
     pub fn get_client_y_offset(&mut self, m: &WMMonitor) -> i32 {
         let monitor_id = m.num;
         if self.status_bar_clients.get(&monitor_id).is_some() {
@@ -7439,7 +7441,7 @@ impl Jwm {
             );
             return offset.max(0);
         }
-        0
+        CONFIG.status_bar_height() + CONFIG.status_bar_padding() * 2
     }
 
     // 辅助函数：根据ID获取显示器
