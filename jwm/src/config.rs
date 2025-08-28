@@ -256,14 +256,14 @@ impl Config {
                     "-fn".to_string(),
                     "SauceCodePro Nerd Font Regular 11".to_string(),
                     "-nb".to_string(),
-                    "#afd7ff".to_string(),
+                    "#2e3440".to_string(), // 普通背景：Nord Black
                     "-nf".to_string(),
-                    "#afffff".to_string(),
+                    "#d8dee9".to_string(), // 普通文本：Snow Storm
                     "-sb".to_string(),
-                    "#000000".to_string(),
+                    "#81a1c1".to_string(), // 选中背景：Frost Blue
                     "-sf".to_string(),
-                    "#d7d7d7".to_string(),
-                    "-b".to_string(),
+                    "#eceff4".to_string(), // 选中文本：Very Light Blue
+                    "-b".to_string(),      // 在底部显示（可选）
                 ]),
             },
             KeyConfig {
@@ -651,19 +651,12 @@ impl Config {
             .keybindings
             .keys
             .iter()
-            .find(|k| k.function == "spawn" && k.key == "e")
+            .find(|k| k.function == "spawn" && (k.key == "e" || k.key == "r"))
             .and_then(|k| match &k.argument {
                 ArgumentConfig::StringVec(cmd) => Some(cmd.clone()),
                 _ => None,
             })
-            .unwrap_or_else(|| {
-                vec![
-                    "dmenu_run".to_string(),
-                    "-m".to_string(),
-                    "0".to_string(),
-                    // 其他默认参数...
-                ]
-            })
+            .unwrap_or_else(|| vec!["dmenu_run".to_string(), "-m".to_string(), "0".to_string()])
     }
 
     pub fn get_termcmd() -> Vec<String> {
