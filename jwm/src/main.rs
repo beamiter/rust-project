@@ -2,7 +2,7 @@
 use chrono::prelude::*;
 use coredump::register_panic_handler;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-use jwm::{config::CONFIG, Jwm};
+use jwm::Jwm;
 use log::{error, info, warn};
 use std::{env, process::Command, sync::atomic::Ordering};
 
@@ -73,22 +73,18 @@ fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
     info!("[main] Starting JWM instance");
     let mut jwm = Jwm::new()?;
     jwm.checkotherwm()?;
-    if let Err(_) = Command::new("pkill")
-        .arg("-9")
-        .arg(CONFIG.status_bar_base_name())
-        .spawn()
-    {
-        error!("[new] Clear status bar failed");
-    }
+
     jwm.setup()?;
+
     jwm.scan()?;
 
-    // 运行主循环
     jwm.run()?;
-    // 清理
+
+    let is_restarting = jwm.is_restarting.load(Ordering::SeqCst);
+
     jwm.cleanup()?;
 
-    if jwm.is_restarting.load(Ordering::SeqCst) {
+    if is_restarting {
         if let Err(_) = Command::new("jwmc").arg("restart").spawn() {
             error!("[new] Failted to quit jwmc");
         }

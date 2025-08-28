@@ -710,7 +710,6 @@ pub struct WMButton {
     pub arg: WMArgEnum,
 }
 impl WMButton {
-    #[allow(unused)]
     pub fn new(
         click_type: WMClickType,
         mask: KeyButMask,
@@ -737,7 +736,6 @@ pub struct WMKey {
     pub arg: WMArgEnum,
 }
 impl WMKey {
-    #[allow(unused)]
     pub fn new(mod0: KeyButMask, keysym: Keysym, func: Option<WMFuncType>, arg: WMArgEnum) -> Self {
         Self {
             mask: mod0,
@@ -834,7 +832,6 @@ pub struct WMRule {
     pub monitor: i32,
 }
 impl WMRule {
-    #[allow(unused)]
     pub fn new(
         class: String,
         instance: String,
@@ -1413,29 +1410,37 @@ impl Jwm {
         (w, h)
     }
 
+    /// 优化后的清理函数 - 只处理必须手动清理的资源
     pub fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[cleanup] Starting window manager cleanup");
+        info!("[cleanup] Starting essential cleanup (letting Rust handle memory)");
 
-        // 清理状态栏
-        let statusbar_monitor_ids: Vec<i32> = self.status_bar_clients.keys().cloned().collect();
-        for monitor_id in statusbar_monitor_ids {
-            self.unmanage_statusbar(monitor_id, false)?;
+        // 1. 保存客户端状态（在清理 X11 资源之前）
+        if let Err(e) = self.store_all_clients() {
+            warn!("[cleanup] Failed to store client state: {:?}", e);
         }
 
-        self.store_all_clients()?;
+        // 2. 清理 X11 相关资源（必须手动处理）
+        self.cleanup_x11_resources()?;
 
-        // 切换到显示所有窗口的视图
-        let show_all_arg = WMArgEnum::UInt(!0);
-        let _ = self.view(&show_all_arg);
+        // 3. 清理系统资源（必须手动处理）
+        self.cleanup_system_resources()?;
 
-        // 卸载所有客户端
-        self.cleanup_all_clients()?;
+        // 4. 同步所有 X11 操作
+        self.x11rb_conn.flush()?;
 
-        // 释放所有按键抓取
+        info!("[cleanup] Essential cleanup completed (Rust will handle the rest)");
+        Ok(())
+    }
+
+    /// 清理 X11 相关资源
+    fn cleanup_x11_resources(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[cleanup_x11_resources] Cleaning X11 resources");
+
+        // 清理所有客户端的 X11 状态（恢复窗口到合理状态）
+        self.cleanup_all_clients_x11_state()?;
+
+        // 释放按键抓取
         self.cleanup_key_grabs()?;
-
-        // 清理所有监视器
-        self.cleanup_all_monitors();
 
         // 重置输入焦点到根窗口
         self.reset_input_focus()?;
@@ -1443,10 +1448,231 @@ impl Jwm {
         // 清理 EWMH 属性
         self.cleanup_ewmh_properties()?;
 
-        // 确保所有操作都被发送
-        self.x11rb_conn.flush()?;
+        info!("[cleanup_x11_resources] X11 resources cleaned");
+        Ok(())
+    }
 
-        info!("[cleanup] Window manager cleanup completed");
+    /// 清理系统资源
+    fn cleanup_system_resources(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[cleanup_system_resources] Cleaning system resources");
+
+        // 终止状态栏进程
+        self.cleanup_statusbar_processes()?;
+
+        // 清理共享内存（如果需要显式清理）
+        self.cleanup_shared_memory_resources()?;
+
+        info!("[cleanup_system_resources] System resources cleaned");
+        Ok(())
+    }
+
+    /// 清理所有客户端的 X11 状态（不是为了释放内存，而是为了恢复窗口状态）
+    fn cleanup_all_clients_x11_state(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[cleanup_all_clients_x11_state] Restoring client window states");
+
+        let mut clients_to_cleanup = Vec::new();
+
+        // 收集所有需要清理的客户端
+        let mut m = self.mons.clone();
+        while let Some(ref m_opt) = m {
+            let mut stack_client = m_opt.borrow().stack.clone();
+            while let Some(client_rc) = stack_client {
+                clients_to_cleanup.push(client_rc.clone());
+                stack_client = client_rc.borrow().stack_next.clone();
+            }
+            let next = m_opt.borrow().next.clone();
+            m = next;
+        }
+
+        // 批量清理客户端 X11 状态
+        for client_rc in clients_to_cleanup {
+            if let Err(e) = self.cleanup_single_client_x11_state(&client_rc) {
+                warn!(
+                    "[cleanup_all_clients_x11_state] Failed to cleanup client {}: {:?}",
+                    client_rc.borrow().win,
+                    e
+                );
+                // 继续处理其他客户端，不要因为一个失败就停止
+            }
+        }
+        Ok(())
+    }
+
+    /// 清理单个客户端的 X11 状态
+    fn cleanup_single_client_x11_state(
+        &mut self,
+        client_rc: &Rc<RefCell<WMClient>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let (win, old_border_w) = {
+            let client = client_rc.borrow();
+            (client.win, client.geometry.old_border_w)
+        };
+
+        // 抓取服务器确保操作原子性
+        self.x11rb_conn.grab_server()?;
+
+        let result = self.restore_client_x11_state(win, old_border_w, client_rc);
+
+        // 无论成功失败都要释放服务器
+        let _ = self.x11rb_conn.ungrab_server();
+
+        result
+    }
+
+    /// 恢复客户端的 X11 状态
+    fn restore_client_x11_state(
+        &mut self,
+        win: Window,
+        old_border_w: i32,
+        client_rc: &Rc<RefCell<WMClient>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 取消事件选择
+        let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT);
+        if let Err(e) = self.x11rb_conn.change_window_attributes(win, &aux) {
+            warn!(
+                "[restore_client_x11_state] Failed to clear events for {}: {:?}",
+                win, e
+            );
+        }
+
+        // 恢复原始边框宽度
+        if let Err(e) = self.set_window_border_width(win, old_border_w as u32) {
+            warn!(
+                "[restore_client_x11_state] Failed to restore border for {}: {:?}",
+                win, e
+            );
+        }
+
+        // 取消按钮抓取
+        if let Err(e) = self
+            .x11rb_conn
+            .ungrab_button(ButtonIndex::ANY, win, ModMask::ANY.into())
+        {
+            warn!(
+                "[restore_client_x11_state] Failed to ungrab buttons for {}: {:?}",
+                win, e
+            );
+        }
+
+        // 设置客户端状态为 WithdrawnState
+        if let Err(e) = self.setclientstate(client_rc, WithdrawnState as i64) {
+            warn!(
+                "[restore_client_x11_state] Failed to set withdrawn state for {}: {:?}",
+                win, e
+            );
+        }
+
+        Ok(())
+    }
+
+    /// 清理状态栏进程
+    fn cleanup_statusbar_processes(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let statusbar_monitor_ids: Vec<i32> = self.status_bar_child.keys().cloned().collect();
+
+        for monitor_id in statusbar_monitor_ids {
+            if let Err(e) = self.terminate_status_bar_process_safe(monitor_id) {
+                warn!(
+                    "[cleanup_statusbar_processes] Failed to terminate statusbar {}: {}",
+                    monitor_id, e
+                );
+            }
+        }
+
+        // 清理状态栏客户端映射（让 Drop 处理实际的内存释放）
+        self.status_bar_clients.clear();
+        self.status_bar_windows.clear();
+        self.status_bar_flags.clear();
+
+        Ok(())
+    }
+
+    /// 清理共享内存资源
+    fn cleanup_shared_memory_resources(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // 只清理需要显式处理的共享内存资源
+        let monitor_ids: Vec<i32> = self.status_bar_shmem.keys().cloned().collect();
+
+        for monitor_id in monitor_ids {
+            // 显式删除系统共享内存对象（如果需要）
+            self.cleanup_system_shared_memory(monitor_id)?;
+        }
+
+        // 清理映射表（Rust 会自动释放 SharedRingBuffer 对象）
+        self.status_bar_shmem.clear();
+
+        Ok(())
+    }
+
+    /// 清理系统级共享内存
+    fn cleanup_system_shared_memory(
+        &self,
+        monitor_id: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        #[cfg(unix)]
+        {
+            let shared_path = format!("/dev/shm/monitor_{}", monitor_id);
+            if std::path::Path::new(&shared_path).exists() {
+                if let Err(e) = std::fs::remove_file(&shared_path) {
+                    warn!(
+                        "[cleanup_system_shared_memory] Failed to remove {}: {}",
+                        shared_path, e
+                    );
+                }
+            }
+        }
+        Ok(())
+    }
+
+    // 保留原有的辅助清理函数，但简化它们的职责
+
+    fn cleanup_key_grabs(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        match self
+            .x11rb_conn
+            .ungrab_key(Grab::ANY, self.x11rb_root, ModMask::ANY.into())
+        {
+            Ok(cookie) => {
+                if let Err(e) = cookie.check() {
+                    warn!("[cleanup_key_grabs] Failed to ungrab keys: {:?}", e);
+                }
+            }
+            Err(e) => {
+                warn!("[cleanup_key_grabs] Failed to send ungrab request: {:?}", e);
+            }
+        }
+        Ok(())
+    }
+
+    fn reset_input_focus(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        match self
+            .x11rb_conn
+            .set_input_focus(InputFocus::POINTER_ROOT, self.x11rb_root, 0u32)
+        {
+            Ok(cookie) => {
+                if let Err(e) = cookie.check() {
+                    warn!("[reset_input_focus] Failed to reset focus: {:?}", e);
+                }
+            }
+            Err(e) => {
+                warn!("[reset_input_focus] Failed to send focus request: {:?}", e);
+            }
+        }
+        Ok(())
+    }
+
+    fn cleanup_ewmh_properties(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let properties_to_clean = [
+            self.atoms._NET_ACTIVE_WINDOW,
+            self.atoms._NET_CLIENT_LIST,
+            self.atoms._NET_SUPPORTED,
+        ];
+
+        for &property in &properties_to_clean {
+            if let Err(e) = self.x11rb_conn.delete_property(self.x11rb_root, property) {
+                warn!(
+                    "[cleanup_ewmh_properties] Failed to delete property {:?}: {:?}",
+                    property, e
+                );
+            }
+        }
         Ok(())
     }
 
@@ -1474,117 +1700,6 @@ impl Jwm {
             m = next;
         }
         client_store.save_to_file(CLIENT_STORAGE_PATH)?;
-        Ok(())
-    }
-
-    fn cleanup_all_clients(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[cleanup_all_clients]");
-        let mut m = self.mons.clone();
-        while let Some(ref m_opt) = m {
-            // 不断卸载当前监视器的第一个客户端，直到没有客户端为止
-            loop {
-                let stack_client = m_opt.borrow().stack.clone();
-                if let Some(client_rc) = stack_client {
-                    if let Err(e) = self.unmanage(Some(client_rc), false) {
-                        warn!("[cleanup_all_clients] Failed to unmanage client: {:?}", e);
-                        // 继续处理下一个客户端，避免无限循环
-                        break;
-                    }
-                } else {
-                    break;
-                }
-            }
-            let next = m_opt.borrow().next.clone();
-            m = next;
-        }
-        Ok(())
-    }
-
-    fn cleanup_key_grabs(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 释放所有按键抓取
-        match self
-            .x11rb_conn
-            .ungrab_key(Grab::ANY, self.x11rb_root, ModMask::ANY.into())
-        {
-            Ok(cookie) => {
-                if let Err(e) = cookie.check() {
-                    warn!("[cleanup_key_grabs] Failed to ungrab keys: {:?}", e);
-                }
-            }
-            Err(e) => {
-                warn!(
-                    "[cleanup_key_grabs] Failed to send ungrab_key request: {:?}",
-                    e
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    fn cleanup_all_monitors(&mut self) {
-        while self.mons.is_some() {
-            self.cleanupmon(self.mons.clone());
-        }
-    }
-
-    fn reset_input_focus(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 将输入焦点重置到根窗口
-        match self.x11rb_conn.set_input_focus(
-            InputFocus::POINTER_ROOT,
-            self.x11rb_root,
-            0u32, // CurrentTime equivalent
-        ) {
-            Ok(cookie) => {
-                if let Err(e) = cookie.check() {
-                    warn!("[reset_input_focus] Failed to reset input focus: {:?}", e);
-                }
-            }
-            Err(e) => {
-                warn!(
-                    "[reset_input_focus] Failed to send set_input_focus request: {:?}",
-                    e
-                );
-            }
-        }
-
-        Ok(())
-    }
-
-    fn cleanup_ewmh_properties(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 清理 _NET_ACTIVE_WINDOW 属性
-        if let Err(e) = self
-            .x11rb_conn
-            .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW)
-        {
-            warn!(
-                "[cleanup_ewmh_properties] Failed to delete _NET_ACTIVE_WINDOW: {:?}",
-                e
-            );
-        }
-
-        // 清理客户端列表
-        if let Err(e) = self
-            .x11rb_conn
-            .delete_property(self.x11rb_root, self.atoms._NET_CLIENT_LIST)
-        {
-            warn!(
-                "[cleanup_ewmh_properties] Failed to delete _NET_CLIENT_LIST: {:?}",
-                e
-            );
-        }
-
-        // 清理支持的协议列表
-        if let Err(e) = self
-            .x11rb_conn
-            .delete_property(self.x11rb_root, self.atoms._NET_SUPPORTED)
-        {
-            warn!(
-                "[cleanup_ewmh_properties] Failed to delete _NET_SUPPORTED: {:?}",
-                e
-            );
-        }
-
         Ok(())
     }
 
@@ -5124,6 +5239,13 @@ impl Jwm {
     }
 
     pub fn setup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Err(_) = Command::new("pkill")
+            .arg("-9")
+            .arg(CONFIG.status_bar_base_name())
+            .spawn()
+        {
+            error!("[new] Clear status bar failed");
+        }
         info!("[setup]");
 
         // 初始化视觉效果
@@ -7323,64 +7445,6 @@ impl Jwm {
         0
     }
 
-    // 验证并修正状态栏几何配置
-    #[allow(dead_code)]
-    fn validate_statusbar_geometry(&mut self, monitor_id: i32) -> bool {
-        if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-            if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
-                let monitor_borrow = monitor.borrow();
-                let mut statusbar_mut = statusbar.borrow_mut();
-                let mut changed = false;
-                // 确保状态栏在显示器范围内
-                if statusbar_mut.geometry.x != monitor_borrow.geometry.m_x {
-                    info!(
-                        "[validate_statusbar_geometry] Correcting statusbar X: {} -> {}",
-                        statusbar_mut.geometry.x, monitor_borrow.geometry.m_x
-                    );
-                    statusbar_mut.geometry.x = monitor_borrow.geometry.m_x;
-                    changed = true;
-                }
-                if statusbar_mut.geometry.y != monitor_borrow.geometry.m_y {
-                    info!(
-                        "[validate_statusbar_geometry] Correcting statusbar Y: {} -> {}",
-                        statusbar_mut.geometry.y, monitor_borrow.geometry.m_y
-                    );
-                    statusbar_mut.geometry.y = monitor_borrow.geometry.m_y;
-                    changed = true;
-                }
-                if statusbar_mut.geometry.w != monitor_borrow.geometry.m_w {
-                    info!(
-                        "[validate_statusbar_geometry] Correcting statusbar width: {} -> {}",
-                        statusbar_mut.geometry.w, monitor_borrow.geometry.m_w
-                    );
-                    statusbar_mut.geometry.w = monitor_borrow.geometry.m_w;
-                    changed = true;
-                }
-                // 高度检查 - 确保不超过显示器高度的一半
-                let max_height = monitor_borrow.geometry.m_h / 2;
-                if statusbar_mut.geometry.h > max_height {
-                    info!(
-                        "[validate_statusbar_geometry] Limiting statusbar height: {} -> {}",
-                        statusbar_mut.geometry.h, max_height
-                    );
-                    statusbar_mut.geometry.h = max_height;
-                    changed = true;
-                }
-                if changed {
-                    let _ = self.configure(&mut statusbar_mut);
-                    drop(statusbar_mut);
-                    drop(monitor_borrow);
-                    info!(
-                        "[validate_statusbar_geometry] Applied corrections for monitor {}",
-                        monitor_id
-                    );
-                }
-                return changed;
-            }
-        }
-        false
-    }
-
     // 辅助函数：根据ID获取显示器
     fn get_monitor_by_id(&self, monitor_id: i32) -> Option<Rc<RefCell<WMMonitor>>> {
         let mut m_iter = self.mons.clone();
@@ -7393,7 +7457,7 @@ impl Jwm {
         None
     }
 
-    #[allow(dead_code)]
+    #[cfg(any(feature = "nixgl", feature = "tauri_bar"))]
     fn set_class_info(
         &mut self,
         client_mut: &mut WMClient,
@@ -7440,8 +7504,7 @@ impl Jwm {
         Ok(())
     }
 
-    // 验证设置是否成功的辅助函数
-    #[allow(dead_code)]
+    #[cfg(any(feature = "nixgl", feature = "tauri_bar"))]
     fn verify_class_info_set(
         &mut self,
         client: &WMClient,
@@ -7682,7 +7745,6 @@ impl Jwm {
             "[unmanage_statusbar] Removing statusbar for monitor {}",
             monitor_id
         );
-
         let statusbar = match self.status_bar_clients.remove(&monitor_id) {
             Some(bar) => bar,
             None => {
@@ -7693,39 +7755,21 @@ impl Jwm {
                 return Ok(());
             }
         };
-
         let win = statusbar.borrow().win;
         self.status_bar_windows.remove(&win);
-
-        // 清理窗口状态（如果未被销毁）
         if !destroyed {
             self.cleanup_statusbar_window(win)?;
         }
-
-        // 恢复显示器工作区域
-        if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-            let mut monitor_mut = monitor.borrow_mut();
-            monitor_mut.geometry.w_y = monitor_mut.geometry.m_y;
-            monitor_mut.geometry.w_h = monitor_mut.geometry.m_h;
-            info!(
-                "[unmanage_statusbar] Restored workarea for monitor {}",
-                monitor_id
-            );
-        }
-
-        // 按顺序清理资源
         let cleanup_results = [
             (
                 "terminate_process",
                 self.terminate_status_bar_process_safe(monitor_id),
             ),
-            // (
-            //     "cleanup_shared_memory",
-            //     self.cleanup_shared_memory_safe(monitor_id),
-            // ),
+            (
+                "cleanup_shared_memory",
+                self.cleanup_shared_memory_safe(monitor_id),
+            ),
         ];
-
-        // 记录清理结果但不中断流程
         for (operation, result) in cleanup_results.iter() {
             if let Err(ref e) = result {
                 error!(
@@ -7734,13 +7778,6 @@ impl Jwm {
                 );
             }
         }
-
-        // 重新排列客户端
-        if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-            //
-            self.arrange(Some(monitor));
-        }
-
         info!(
             "[unmanage_statusbar] Successfully removed statusbar for monitor {}",
             monitor_id
@@ -7753,7 +7790,6 @@ impl Jwm {
         let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT);
         self.x11rb_conn.change_window_attributes(win, &aux)?;
         self.x11rb_conn.flush()?;
-
         debug!(
             "[cleanup_statusbar_window] Cleared events for statusbar window {}",
             win
@@ -7837,7 +7873,6 @@ impl Jwm {
     }
 
     /// 安全的共享内存清理方法
-    #[allow(dead_code)]
     fn cleanup_shared_memory_safe(&mut self, monitor_id: i32) -> Result<(), String> {
         if let Some(shmem) = self.status_bar_shmem.remove(&monitor_id) {
             info!(
@@ -7967,7 +8002,6 @@ impl Jwm {
         destroyed: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[unmanage_regular_client]");
-
         // 清理 pertag 中的选中客户端引用
         for i in 0..=CONFIG.tags_length() {
             let sel_i = client_rc
@@ -7981,7 +8015,6 @@ impl Jwm {
                 .unwrap()
                 .sel[i]
                 .clone();
-
             if Self::are_equal_rc(&sel_i, &Some(client_rc.clone())) {
                 client_rc
                     .borrow_mut()
@@ -7995,21 +8028,17 @@ impl Jwm {
                     .sel[i] = None;
             }
         }
-
         // 从链表中移除客户端
         self.detach(Some(client_rc.clone()));
         self.detachstack(Some(client_rc.clone()));
-
         // 如果窗口没有被销毁，需要清理窗口状态
         if !destroyed {
             self.cleanup_window_state(client_rc)?;
         }
-
         // 重新聚焦和排列
         self.focus(None)?;
         self.update_net_client_list()?;
         self.arrange(client_rc.borrow().mon.clone());
-
         Ok(())
     }
 
