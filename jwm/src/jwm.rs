@@ -1,6 +1,3 @@
-#![allow(non_upper_case_globals)]
-#![allow(non_snake_case)]
-
 use libc::{close, setsid, sigaction, sigemptyset, SIGCHLD, SIG_DFL};
 
 use log::info;
@@ -41,9 +38,9 @@ use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 
 // definitions for initial window state.
-pub const WithdrawnState: u8 = 0;
-pub const NormalState: u8 = 1;
-pub const IconicState: u8 = 2;
+pub const WITHDRAWN_STATE: u8 = 0;
+pub const NORMAL_STATE: u8 = 1;
+pub const ICONIC_STATE: u8 = 2;
 pub const CLIENT_STORAGE_PATH: &str = "/tmp/jwm/client_storage.bin";
 
 lazy_static::lazy_static! {
@@ -1555,7 +1552,7 @@ impl Jwm {
         }
 
         // 设置客户端状态为 WithdrawnState
-        if let Err(e) = self.setclientstate(client_rc, WithdrawnState as i64) {
+        if let Err(e) = self.setclientstate(client_rc, WITHDRAWN_STATE as i64) {
             warn!(
                 "[restore_client_x11_state] Failed to set withdrawn state for {}: {:?}",
                 win, e
@@ -2903,7 +2900,7 @@ impl Jwm {
         }
     }
 
-    pub fn UpdateBarMessage(&mut self, m: Option<Rc<RefCell<WMMonitor>>>) {
+    pub fn update_bar_message(&mut self, m: Option<Rc<RefCell<WMMonitor>>>) {
         self.update_bar_message_for_monitor(m);
         let num = self.message.monitor_info.monitor_num;
 
@@ -3081,7 +3078,7 @@ impl Jwm {
         // );
         for monitor_id in self.pending_bar_updates.clone() {
             if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-                self.UpdateBarMessage(Some(monitor));
+                self.update_bar_message(Some(monitor));
             }
         }
 
@@ -3303,7 +3300,7 @@ impl Jwm {
             if attr.override_redirect || trans.is_some() {
                 continue;
             }
-            if attr.map_state == MapState::VIEWABLE || self.get_wm_state(*win) == IconicState as i64
+            if attr.map_state == MapState::VIEWABLE || self.get_wm_state(*win) == ICONIC_STATE as i64
             {
                 self.manage(*win, geom);
             }
@@ -3312,7 +3309,7 @@ impl Jwm {
             {
                 if trans.is_some() {
                     if attr.map_state == MapState::VIEWABLE
-                        || self.get_wm_state(*win) == IconicState as i64
+                        || self.get_wm_state(*win) == ICONIC_STATE as i64
                     {
                         self.manage(*win, geom);
                     }
@@ -6993,7 +6990,7 @@ impl Jwm {
             self.x11rb_conn.flush()?;
         }
         // 5. 设置客户端的 WM_STATE 为 NormalState
-        self.setclientstate(client_rc, NormalState as i64)?;
+        self.setclientstate(client_rc, NORMAL_STATE as i64)?;
         // 6. 同步所有操作
         self.x11rb_conn.flush()?;
         info!("[setup_client_window] Window setup completed for {}", win);
@@ -8085,7 +8082,7 @@ impl Jwm {
             }
 
             // 设置客户端状态为 WithdrawnState
-            if let Err(e) = self.setclientstate(client_rc, WithdrawnState as i64) {
+            if let Err(e) = self.setclientstate(client_rc, WITHDRAWN_STATE as i64) {
                 warn!("[cleanup_window_state] Failed to set client state: {:?}", e);
             }
 
@@ -8116,7 +8113,7 @@ impl Jwm {
             if e.from_configure {
                 // 这是由于配置请求导致的unmap（通常是合成窗口管理器）
                 debug!("Unmap from configure for window {}", e.window);
-                self.setclientstate(&client_rc, WithdrawnState as i64)?;
+                self.setclientstate(&client_rc, WITHDRAWN_STATE as i64)?;
             } else {
                 // 这是真正的窗口销毁或隐藏
                 debug!("Real unmap for window {}, unmanaging", e.window);
