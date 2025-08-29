@@ -700,36 +700,36 @@ impl Config {
     // 扩展 parse_function 以支持更多函数
     fn parse_function(&self, func_name: &str) -> Option<WMFuncType> {
         match func_name {
-            // // 窗口管理
-            // "spawn" => Some(Jwm::spawn),
-            // "focusstack" => Some(Jwm::focusstack),
-            // "focusmon" => Some(Jwm::focusmon),
-            // "quit" => Some(Jwm::quit),
-            // "restart" => Some(Jwm::restart),
-            // "killclient" => Some(Jwm::killclient),
-            // "zoom" => Some(Jwm::zoom),
-            //
-            // // 布局相关
-            // "setlayout" => Some(Jwm::setlayout),
-            // "togglefloating" => Some(Jwm::togglefloating),
-            // "togglefullscr" => Some(Jwm::togglefullscr),
-            // "togglebar" => Some(Jwm::togglebar),
-            // "setmfact" => Some(Jwm::setmfact),
-            // "setcfact" => Some(Jwm::setcfact),
-            // "incnmaster" => Some(Jwm::incnmaster),
-            // "movestack" => Some(Jwm::movestack),
-            //
-            // // 标签相关
-            // "view" => Some(Jwm::view),
-            // "tag" => Some(Jwm::tag),
-            // "toggleview" => Some(Jwm::toggleview),
-            // "toggletag" => Some(Jwm::toggletag),
-            // "tagmon" => Some(Jwm::tagmon),
-            // "loopview" => Some(Jwm::loopview),
-            //
-            // // 鼠标相关
-            // "movemouse" => Some(Jwm::movemouse),
-            // "resizemouse" => Some(Jwm::resizemouse),
+            // 窗口管理
+            "spawn" => Some(Jwm::spawn),
+            "focusstack" => Some(Jwm::focusstack),
+            "focusmon" => Some(Jwm::focusmon),
+            "quit" => Some(Jwm::quit),
+            "restart" => Some(Jwm::restart),
+            "killclient" => Some(Jwm::killclient),
+            "zoom" => Some(Jwm::zoom),
+
+            // 布局相关
+            "setlayout" => Some(Jwm::setlayout),
+            "togglefloating" => Some(Jwm::togglefloating),
+            "togglefullscr" => Some(Jwm::togglefullscr),
+            "togglebar" => Some(Jwm::togglebar),
+            "setmfact" => Some(Jwm::setmfact),
+            "setcfact" => Some(Jwm::setcfact),
+            "incnmaster" => Some(Jwm::incnmaster),
+            "movestack" => Some(Jwm::movestack),
+
+            // 标签相关
+            "view" => Some(Jwm::view),
+            "tag" => Some(Jwm::tag),
+            "toggleview" => Some(Jwm::toggleview),
+            "toggletag" => Some(Jwm::toggletag),
+            "tagmon" => Some(Jwm::tagmon),
+            "loopview" => Some(Jwm::loopview),
+
+            // 鼠标相关
+            "movemouse" => Some(Jwm::movemouse),
+            "resizemouse" => Some(Jwm::resizemouse),
 
             _ => {
                 eprintln!("Unknown function: {}", func_name);
@@ -932,30 +932,30 @@ impl Config {
         let modkey = self.parse_modifiers(&[self.inner.keybindings.modkey.clone()]);
 
         vec![
-            // WMKey::new(
-            //     modkey,
-            //     key.into(),
-            //     Some(Jwm::view),
-            //     jwm::WMArgEnum::UInt(1 << tag),
-            // ),
-            // WMKey::new(
-            //     modkey | KeyButMask::CONTROL,
-            //     key.into(),
-            //     Some(Jwm::toggleview),
-            //     jwm::WMArgEnum::UInt(1 << tag),
-            // ),
-            // WMKey::new(
-            //     modkey | KeyButMask::SHIFT,
-            //     key.into(),
-            //     Some(Jwm::tag),
-            //     jwm::WMArgEnum::UInt(1 << tag),
-            // ),
-            // WMKey::new(
-            //     modkey | KeyButMask::CONTROL | KeyButMask::SHIFT,
-            //     key.into(),
-            //     Some(Jwm::toggletag),
-            //     jwm::WMArgEnum::UInt(1 << tag),
-            // ),
+            WMKey::new(
+                modkey,
+                key.into(),
+                Some(Jwm::view),
+                jwm::WMArgEnum::UInt(1 << tag),
+            ),
+            WMKey::new(
+                modkey | KeyButMask::CONTROL,
+                key.into(),
+                Some(Jwm::toggleview),
+                jwm::WMArgEnum::UInt(1 << tag),
+            ),
+            WMKey::new(
+                modkey | KeyButMask::SHIFT,
+                key.into(),
+                Some(Jwm::tag),
+                jwm::WMArgEnum::UInt(1 << tag),
+            ),
+            WMKey::new(
+                modkey | KeyButMask::CONTROL | KeyButMask::SHIFT,
+                key.into(),
+                Some(Jwm::toggletag),
+                jwm::WMArgEnum::UInt(1 << tag),
+            ),
         ]
     }
 

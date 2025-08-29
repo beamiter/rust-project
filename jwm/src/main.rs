@@ -71,27 +71,27 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
     info!("[main] Starting JWM instance");
-    // let mut jwm = Jwm::new()?;
-    // jwm.checkotherwm()?;
-    //
-    // jwm.setup()?;
-    //
-    // jwm.scan()?;
-    //
-    // jwm.run()?;
-    //
-    // let is_restarting = jwm.is_restarting.load(Ordering::SeqCst);
-    //
-    // jwm.cleanup()?;
-    //
-    // if is_restarting {
-    //     if let Err(_) = Command::new("jwmc").arg("restart").spawn() {
-    //         error!("[new] Failted to quit jwmc");
-    //     }
-    // } else {
-    //     if let Err(_) = Command::new("jwmc").arg("quit").spawn() {
-    //         error!("[new] Failted to quit jwmc");
-    //     }
-    // }
+    let mut jwm = Jwm::new()?;
+    jwm.checkotherwm()?;
+
+    jwm.setup()?;
+
+    jwm.scan()?;
+
+    jwm.run()?;
+
+    let is_restarting = jwm.is_restarting.load(Ordering::SeqCst);
+
+    jwm.cleanup()?;
+
+    if is_restarting {
+        if let Err(_) = Command::new("jwmc").arg("restart").spawn() {
+            error!("[new] Failted to quit jwmc");
+        }
+    } else {
+        if let Err(_) = Command::new("jwmc").arg("quit").spawn() {
+            error!("[new] Failted to quit jwmc");
+        }
+    }
     Ok(())
 }
