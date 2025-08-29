@@ -3054,155 +3054,31 @@ impl Jwm {
         }
     }
 
-    // fn detach_node_from_list<FGetHead, FSetHead, FGetNext, FSetNext>(
-    //     mon: &Rc<RefCell<WMMonitor>>,
-    //     node_to_detach: &Option<Rc<RefCell<WMClient>>>,
-    //     get_head: FGetHead,
-    //     set_head: FSetHead,
-    //     get_next: FGetNext, // Assuming this returns Option<Rc<RefCell<Client>>>
-    //     set_next: FSetNext,
-    // ) where
-    //     FGetHead: Fn(&mut WMMonitor) -> &mut Option<Rc<RefCell<WMClient>>>,
-    //     FSetHead: Fn(&mut WMMonitor, Option<Rc<RefCell<WMClient>>>),
-    //     FGetNext: Fn(&mut WMClient) -> Option<Rc<RefCell<WMClient>>>, // Changed to &mut Client
-    //     FSetNext: Fn(&mut WMClient, Option<Rc<RefCell<WMClient>>>),
-    // {
-    //     if node_to_detach.is_none() {
-    //         return;
-    //     }
-    //
-    //     let mut mon_borrow_for_head = mon.borrow_mut();
-    //     let mut current_node_opt = (get_head)(&mut *mon_borrow_for_head).clone();
-    //     drop(mon_borrow_for_head);
-    //
-    //     let mut prev_node_opt: Option<Rc<RefCell<WMClient>>> = None;
-    //
-    //     while let Some(current_rc) = current_node_opt.clone() {
-    //         // Clone current_rc for this iteration's ownership
-    //         // current_rc is now an owned Rc<RefCell<Client>> for this iteration
-    //
-    //         // Check if current_rc is the one to detach
-    //         // We need an Option for are_equal_rc, so wrap current_rc
-    //         if Self::are_equal_rc(&Some(current_rc.clone()), node_to_detach) {
-    //             // Clone for comparison
-    //             let next_node_to_link = (get_next)(&mut current_rc.borrow_mut()); // Get next
-    //
-    //             if let Some(ref prev_rc_strong) = prev_node_opt {
-    //                 (set_next)(&mut prev_rc_strong.borrow_mut(), next_node_to_link);
-    //             } else {
-    //                 // Detaching the head node
-    //                 let mut mon_borrow_for_set_head = mon.borrow_mut();
-    //                 (set_head)(&mut *mon_borrow_for_set_head, next_node_to_link);
-    //             }
-    //             break; // Node detached, exit loop
-    //         }
-    //
-    //         // Not the node to detach, advance
-    //         let next_for_iteration = (get_next)(&mut current_rc.borrow_mut());
-    //         prev_node_opt = Some(current_rc); // current_rc (owned for this iteration) becomes prev
-    //         current_node_opt = next_for_iteration; // Update for the next iteration of the while loop
-    //     }
-    // }
-    //
-    // pub fn detach(&mut self, c: Option<Rc<RefCell<WMClient>>>) {
-    //     // info!("[detach]");
-    //     let c = match c {
-    //         Some(val) => val,
-    //         None => return,
-    //     };
-    //     let m = match c.borrow().mon {
-    //         Some(ref mon_val) => mon_val.clone(),
-    //         None => return,
-    //     };
-    //     Self::detach_node_from_list(
-    //         &m,
-    //         &Some(c),
-    //         |m| &mut m.clients,
-    //         |m, next| m.clients = next,
-    //         |cli| cli.next.clone(),
-    //         |cli, next| cli.next = next,
-    //     );
-    // }
-    //
-    // pub fn detachstack(&mut self, c: Option<Rc<RefCell<WMClient>>>) {
-    //     // info!("[detachstack]");
-    //     let c = match c {
-    //         Some(val) => val,
-    //         None => return,
-    //     };
-    //     let m = match c.borrow().mon {
-    //         Some(ref mon_val) => mon_val.clone(),
-    //         None => return,
-    //     };
-    //     Self::detach_node_from_list(
-    //         &m,
-    //         &Some(c.clone()),
-    //         |m| &mut m.stack,
-    //         |m, next| m.stack = next,
-    //         |cli| cli.stack_next.clone(),
-    //         |cli, next| cli.stack_next = next,
-    //     );
-    //
-    //     if Self::are_equal_rc(&Some(c), &m.borrow().sel) {
-    //         let mut t = { m.borrow().stack.clone() };
-    //         while let Some(ref t_opt) = t {
-    //             let is_visible = { t_opt.borrow_mut().is_visible() };
-    //             if is_visible {
-    //                 break;
-    //             }
-    //             let snext = { t_opt.borrow_mut().stack_next.clone() };
-    //             t = snext;
-    //         }
-    //         m.borrow_mut().sel = t.clone();
-    //     }
-    // }
-    //
-    // pub fn dirtomon(&mut self, dir: &i32) -> Option<Rc<RefCell<WMMonitor>>> {
-    //     let selected_monitor = self.sel_mon.as_ref()?; // Return None if selmon is None
-    //     let monitors_head = self.mons.as_ref()?; // Return None if mons is None
-    //     if *dir > 0 {
-    //         // Next monitor
-    //         let next_mon = selected_monitor.borrow().next.clone();
-    //         return next_mon.or_else(|| self.mons.clone()); // If next is None, loop to head
-    //     } else {
-    //         // Previous monitor
-    //         if Rc::ptr_eq(selected_monitor, monitors_head) {
-    //             // Selected is head, find the tail
-    //             let mut current = self.mons.clone();
-    //             let mut tail = self.mons.clone(); // Initialize tail to head in case of single monitor
-    //             while let Some(current_rc) = current {
-    //                 tail = Some(current_rc.clone()); // current_rc is the potential tail
-    //                 current = current_rc.borrow().next.clone();
-    //                 if current.is_none() {
-    //                     // Reached the actual tail
-    //                     break;
-    //                 }
-    //             }
-    //             return tail;
-    //         } else {
-    //             // Selected is not head, find p such that p.next == selected_monitor
-    //             let mut current = self.mons.clone();
-    //             let mut prev = None;
-    //             while let Some(current_rc) = current {
-    //                 if Rc::ptr_eq(&current_rc, selected_monitor) {
-    //                     return prev; // Found selected, prev is the one before it
-    //                 }
-    //                 prev = Some(current_rc.clone());
-    //                 current = current_rc.borrow().next.clone();
-    //                 if current.is_none() && prev.is_some() {
-    //                     // Should not happen if selected_monitor is in the list and not head,
-    //                     // unless list structure is broken or selected_monitor is not in mons.
-    //                     // This indicates an issue if selected_monitor was supposed to be found.
-    //                     return None; // Or some error, or loop to tail if selmon wasn't found
-    //                 }
-    //             }
-    //             // If loop finishes, selected_monitor was not found in the list after the head
-    //             // This implies an inconsistent state.
-    //             return None;
-    //         }
-    //     }
-    // }
-    //
+    pub fn dirtomon(&mut self, dir: &i32) -> Option<MonitorKey> {
+        let selected_monitor_key = self.sel_mon?; // Return None if sel_mon is None
+        if self.monitor_order.is_empty() {
+            return None;
+        }
+        // 找到当前选中监视器在顺序列表中的位置
+        let current_index = self
+            .monitor_order
+            .iter()
+            .position(|&key| key == selected_monitor_key)?;
+        if *dir > 0 {
+            // Next monitor (向前)
+            let next_index = (current_index + 1) % self.monitor_order.len();
+            Some(self.monitor_order[next_index])
+        } else {
+            // Previous monitor (向后)
+            let prev_index = if current_index == 0 {
+                self.monitor_order.len() - 1 // 循环到最后一个
+            } else {
+                current_index - 1
+            };
+            Some(self.monitor_order[prev_index])
+        }
+    }
+
     // fn write_message(&mut self, num: i32, message: &SharedMessage) -> std::io::Result<()> {
     //     if let Some(ring_buffer) = self.status_bar_shmem.get_mut(&num) {
     //         match ring_buffer.try_write_message(&message) {
@@ -3823,36 +3699,6 @@ impl Jwm {
     //     );
     // }
     //
-    // /// 从窗口属性中读取一个 Atom 值
-    // /// 如果失败或属性不存在，返回 0
-    // pub fn getatomprop(&self, c: &WMClient, prop: Atom) -> Atom {
-    //     // 发送 GetProperty 请求
-    //     let cookie = match self.x11rb_conn.get_property(
-    //         false,          // delete: 是否删除属性（false）
-    //         c.win,          // window
-    //         prop,           // property
-    //         AtomEnum::ATOM, // req_type: 期望的类型（Atom）
-    //         0,              // long_offset
-    //         1,              // long_length (最多读取 1 个 Atom)
-    //     ) {
-    //         Ok(cookie) => cookie,
-    //         Err(_) => return 0, // 请求发送失败
-    //     };
-    //
-    //     // 等待回复
-    //     let reply = match cookie.reply() {
-    //         Ok(reply) => reply,
-    //         Err(_) => return 0, // 无回复或属性不存在
-    //     };
-    //     let mut values = if let Some(values) = reply.value32() {
-    //         values
-    //     } else {
-    //         return 0;
-    //     };
-    //
-    //     // 提取第一个 Atom 值（32 位）
-    //     values.next().unwrap_or(0)
-    // }
 
     pub fn getrootptr(&mut self) -> Result<(i32, i32), ReplyError> {
         let cookie = self.x11rb_conn.query_pointer(self.x11rb_root)?;
@@ -7200,7 +7046,7 @@ impl Jwm {
     // }
 
     pub fn setclientstate(
-        &mut self,
+        &self,
         client: &WMClient,
         state: i64,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -7407,36 +7253,41 @@ impl Jwm {
     //     info!("[setup_client_window] Window setup completed for {}", win);
     //     Ok(())
     // }
-    //
-    // // 更新完整的客户端列表（在需要时调用）
-    // fn update_net_client_list(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-    //     use x11rb::wrapper::ConnectionExt;
-    //     // 清空现有列表
-    //     let _ = self
-    //         .x11rb_conn
-    //         .delete_property(self.x11rb_root, self.atoms._NET_CLIENT_LIST);
-    //     // 重新构建列表
-    //     let mut m = self.mons.clone();
-    //     while let Some(ref m_opt) = m {
-    //         let mut c = m_opt.borrow().clients.clone();
-    //         while let Some(ref client_opt) = c {
-    //             self.x11rb_conn.change_property32(
-    //                 PropMode::APPEND,
-    //                 self.x11rb_root,
-    //                 self.atoms._NET_CLIENT_LIST,
-    //                 AtomEnum::WINDOW,
-    //                 &[client_opt.borrow().win],
-    //             )?;
-    //             let next = client_opt.borrow().next.clone();
-    //             c = next;
-    //         }
-    //         let next = m_opt.borrow().next.clone();
-    //         m = next;
-    //     }
-    //     info!("[update_net_client_list] Updated _NET_CLIENT_LIST");
-    //     Ok(())
-    // }
-    //
+
+    fn update_net_client_list(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        use x11rb::wrapper::ConnectionExt;
+        // 清空现有列表
+        let _ = self
+            .x11rb_conn
+            .delete_property(self.x11rb_root, self.atoms._NET_CLIENT_LIST);
+        // 收集所有客户端窗口ID
+        let mut all_windows = Vec::new();
+        for &mon_key in &self.monitor_order {
+            if let Some(client_keys) = self.monitor_clients.get(mon_key) {
+                for &client_key in client_keys {
+                    if let Some(client) = self.clients.get(client_key) {
+                        all_windows.push(client.win);
+                    }
+                }
+            }
+        }
+        // 一次性设置所有窗口
+        if !all_windows.is_empty() {
+            self.x11rb_conn.change_property32(
+                PropMode::REPLACE,
+                self.x11rb_root,
+                self.atoms._NET_CLIENT_LIST,
+                AtomEnum::WINDOW,
+                &all_windows,
+            )?;
+        }
+        info!(
+            "[update_net_client_list] Updated _NET_CLIENT_LIST with {} windows",
+            all_windows.len()
+        );
+        Ok(())
+    }
+
     // fn handle_new_client_focus(&mut self, client_rc: &Rc<RefCell<WMClient>>) {
     //     // 检查新窗口所在的显示器是否是当前选中的显示器
     //     let current_client_monitor_is_selected_monitor = {
@@ -8432,7 +8283,8 @@ impl Jwm {
         self.client_stack_order.retain(|&k| k != client_key);
 
         // 重新聚焦和排列
-        self.focus(None)?;
+        // (TODO)
+        // self.focus(None)?;
         self.update_net_client_list()?;
         if let Some(mon_key) = mon_key {
             self.arrange(Some(mon_key));
@@ -8454,10 +8306,10 @@ impl Jwm {
     }
 
     fn cleanup_window_state(
-        &mut self,
+        &self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let client = if let Some(client) = self.clients.get_mut(client_key) {
+        let client = if let Some(client) = self.clients.get(client_key) {
             client
         } else {
             return Err("Client not found".into());
@@ -8523,24 +8375,28 @@ impl Jwm {
         Ok(())
     }
 
-    // pub fn unmapnotify(&mut self, e: &UnmapNotifyEvent) -> Result<(), Box<dyn std::error::Error>> {
-    //     // info!("[unmapnotify]");
-    //     if let Some(client_rc) = self.wintoclient(e.window) {
-    //         if e.from_configure {
-    //             // 这是由于配置请求导致的unmap（通常是合成窗口管理器）
-    //             debug!("Unmap from configure for window {}", e.window);
-    //             self.setclientstate(&client_rc, WITHDRAWN_STATE as i64)?;
-    //         } else {
-    //             // 这是真正的窗口销毁或隐藏
-    //             debug!("Real unmap for window {}, unmanaging", e.window);
-    //             self.unmanage(Some(client_rc), false)?;
-    //         }
-    //     } else {
-    //         debug!("Unmap event for unmanaged window: {}", e.window);
-    //     }
-    //     Ok(())
-    // }
-    //
+    pub fn unmapnotify(&mut self, e: &UnmapNotifyEvent) -> Result<(), Box<dyn std::error::Error>> {
+        // info!("[unmapnotify]");
+        if let Some(client_key) = self.wintoclient(e.window) {
+            if e.from_configure {
+                // 这是由于配置请求导致的unmap（通常是合成窗口管理器）
+                debug!("Unmap from configure for window {}", e.window);
+                let client = if let Some(client) = self.clients.get(client_key) {
+                    client
+                } else {
+                    return Ok(());
+                };
+                self.setclientstate(client, WITHDRAWN_STATE as i64)?;
+            } else {
+                // 这是真正的窗口销毁或隐藏
+                debug!("Real unmap for window {}, unmanaging", e.window);
+                self.unmanage(Some(client_key), false)?;
+            }
+        } else {
+            debug!("Unmap event for unmanaged window: {}", e.window);
+        }
+        Ok(())
+    }
 
     pub fn updategeom(&mut self) -> bool {
         info!("[updategeom]");
@@ -8748,111 +8604,158 @@ impl Jwm {
         Ok(monitors)
     }
 
-    // pub fn updatewindowtype(&mut self, c: &Rc<RefCell<WMClient>>) {
-    //     // info!("[updatewindowtype]");
-    //     let state;
-    //     let wtype;
-    //     {
-    //         let c = &mut *c.borrow_mut();
-    //         state = self.getatomprop(c, self.atoms._NET_WM_STATE.into());
-    //         wtype = self.getatomprop(c, self.atoms._NET_WM_WINDOW_TYPE.into());
-    //     }
-    //     if state == self.atoms._NET_WM_STATE_FULLSCREEN {
-    //         let _ = self.setfullscreen(c, true);
-    //     }
-    //     if wtype == self.atoms._NET_WM_WINDOW_TYPE_DIALOG {
-    //         let c = &mut *c.borrow_mut();
-    //         c.state.is_floating = true;
-    //     }
-    // }
-    //
-    // /// 更新客户端的 WM_HINTS 状态：urgent 和 never_focus
-    // pub fn updatewmhints(&self, client_rc: &Rc<RefCell<WMClient>>) {
-    //     let win = client_rc.borrow().win;
-    //     // 1. 读取 WM_HINTS 属性
-    //     use ConnectionExt;
-    //     let cookie = match self.x11rb_conn.get_property(
-    //         false, // delete: 不删除
-    //         win,   // window
-    //         AtomEnum::WM_HINTS,
-    //         AtomEnum::CARDINAL, // type: 期望 CARDINAL（实际是位图）
-    //         0,                  // long_offset
-    //         20,                 // length
-    //     ) {
-    //         Ok(cookie) => cookie,
-    //         Err(_) => {
-    //             debug!("updatewmhints: failed to send get_property request");
-    //             return;
-    //         }
-    //     };
-    //     let reply = match cookie.reply() {
-    //         Ok(reply) => reply,
-    //         Err(_) => {
-    //             // 属性不存在或无效
-    //             return;
-    //         }
-    //     };
-    //     // 2. 解析 flags（第一个 u32）
-    //     let mut values = reply.value32().into_iter().flatten();
-    //     let flags = match values.next() {
-    //         Some(f) => f,
-    //         None => return, // 无数据
-    //     };
-    //     // 3. 检查是否为当前选中窗口
-    //     let is_focused = {
-    //         if let Some(ref sel_mon) = self.sel_mon {
-    //             let sel_mon_borrow = sel_mon.borrow();
-    //             if let Some(ref sel) = sel_mon_borrow.sel {
-    //                 Rc::ptr_eq(client_rc, sel)
-    //             } else {
-    //                 false
-    //             }
-    //         } else {
-    //             false
-    //         }
-    //     };
-    //     const X_URGENCY_HINT: u32 = 1 << 8;
-    //     const INPUT_HINT: u32 = 1 << 0;
-    //     // 4. 处理 XUrgencyHint
-    //     if (flags & X_URGENCY_HINT) != 0 {
-    //         if is_focused {
-    //             // 如果是当前选中窗口，清除 urgency hint
-    //             let new_flags = flags & !X_URGENCY_HINT;
-    //             let mut data: Vec<u32> = vec![new_flags];
-    //             data.extend(&mut values); // 保留其余字段
-    //             use x11rb::wrapper::ConnectionExt;
-    //             let _ = self
-    //                 .x11rb_conn
-    //                 .change_property32(
-    //                     PropMode::REPLACE,
-    //                     win,
-    //                     AtomEnum::WM_HINTS,
-    //                     AtomEnum::CARDINAL, // type: 期望 CARDINAL（实际是位图）
-    //                     &data,
-    //                 )
-    //                 .and_then(|_| self.x11rb_conn.flush());
-    //         } else {
-    //             // 否则标记为 urgent
-    //             client_rc.borrow_mut().state.is_urgent = true;
-    //         }
-    //     } else {
-    //         // 没有 urgency hint
-    //         client_rc.borrow_mut().state.is_urgent = false;
-    //     }
-    //     // 5. 处理 InputHint
-    //     if (flags & INPUT_HINT) != 0 {
-    //         // InputHint 存在，检查 input 字段
-    //         let input = match values.next() {
-    //             Some(i) => i as i32,
-    //             None => return,
-    //         };
-    //         client_rc.borrow_mut().state.never_focus = input <= 0;
-    //     } else {
-    //         // InputHint 不存在，可聚焦
-    //         client_rc.borrow_mut().state.never_focus = false;
-    //     }
-    // }
-    //
+    pub fn updatewindowtype(&mut self, client_key: ClientKey) {
+        // info!("[updatewindowtype]");
+        // 获取窗口ID
+        let win = if let Some(client) = self.clients.get(client_key) {
+            client.win
+        } else {
+            warn!("[updatewindowtype] Client {:?} not found", client_key);
+            return;
+        };
+        // 获取窗口属性
+        let state = self.getatomprop_by_window(win, self.atoms._NET_WM_STATE.into());
+        let wtype = self.getatomprop_by_window(win, self.atoms._NET_WM_WINDOW_TYPE.into());
+        // 处理全屏状态
+        if state == self.atoms._NET_WM_STATE_FULLSCREEN {
+            let _ = self.setfullscreen(client_key, true);
+        }
+        // 处理对话框类型
+        if wtype == self.atoms._NET_WM_WINDOW_TYPE_DIALOG {
+            if let Some(client) = self.clients.get_mut(client_key) {
+                client.state.is_floating = true;
+            }
+        }
+    }
+
+    /// 根据窗口ID获取原子属性
+    pub fn getatomprop_by_window(&self, window: Window, prop: Atom) -> Atom {
+        // 发送 GetProperty 请求
+        let cookie = match self.x11rb_conn.get_property(
+            false,          // delete: 是否删除属性（false）
+            window,         // window
+            prop,           // property
+            AtomEnum::ATOM, // req_type: 期望的类型（Atom）
+            0,              // long_offset
+            1,              // long_length (最多读取 1 个 Atom)
+        ) {
+            Ok(cookie) => cookie,
+            Err(_) => return 0, // 请求发送失败
+        };
+
+        // 等待回复
+        let reply = match cookie.reply() {
+            Ok(reply) => reply,
+            Err(_) => return 0, // 无回复或属性不存在
+        };
+
+        let mut values = if let Some(values) = reply.value32() {
+            values
+        } else {
+            return 0;
+        };
+
+        // 提取第一个 Atom 值（32 位）
+        values.next().unwrap_or(0)
+    }
+
+    pub fn updatewmhints(&mut self, client_key: ClientKey) {
+        // 获取窗口ID
+        let win = if let Some(client) = self.clients.get(client_key) {
+            client.win
+        } else {
+            warn!("[updatewmhints] Client {:?} not found", client_key);
+            return;
+        };
+
+        // 1. 读取 WM_HINTS 属性
+        use x11rb::wrapper::ConnectionExt;
+        let cookie = match self.x11rb_conn.get_property(
+            false, // delete: 不删除
+            win,   // window
+            AtomEnum::WM_HINTS,
+            AtomEnum::CARDINAL, // type: 期望 CARDINAL（实际是位图）
+            0,                  // long_offset
+            20,                 // length
+        ) {
+            Ok(cookie) => cookie,
+            Err(_) => {
+                debug!("updatewmhints: failed to send get_property request");
+                return;
+            }
+        };
+
+        let reply = match cookie.reply() {
+            Ok(reply) => reply,
+            Err(_) => {
+                // 属性不存在或无效
+                return;
+            }
+        };
+
+        // 2. 解析 flags（第一个 u32）
+        let mut values = reply.value32().into_iter().flatten();
+        let flags = match values.next() {
+            Some(f) => f,
+            None => return, // 无数据
+        };
+
+        // 3. 检查是否为当前选中窗口
+        let is_focused = self.is_client_selected(client_key);
+
+        const X_URGENCY_HINT: u32 = 1 << 8;
+        const INPUT_HINT: u32 = 1 << 0;
+
+        // 4. 处理 XUrgencyHint
+        if (flags & X_URGENCY_HINT) != 0 {
+            if is_focused {
+                // 如果是当前选中窗口，清除 urgency hint
+                let new_flags = flags & !X_URGENCY_HINT;
+                let mut data: Vec<u32> = vec![new_flags];
+                data.extend(&mut values); // 保留其余字段
+
+                let _ = self
+                    .x11rb_conn
+                    .change_property32(
+                        PropMode::REPLACE,
+                        win,
+                        AtomEnum::WM_HINTS,
+                        AtomEnum::CARDINAL,
+                        &data,
+                    )
+                    .and_then(|_| self.x11rb_conn.flush());
+            } else {
+                // 否则标记为 urgent
+                if let Some(client) = self.clients.get_mut(client_key) {
+                    client.state.is_urgent = true;
+                }
+            }
+        } else {
+            // 没有 urgency hint
+            if let Some(client) = self.clients.get_mut(client_key) {
+                client.state.is_urgent = false;
+            }
+        }
+
+        // 5. 处理 InputHint
+        if (flags & INPUT_HINT) != 0 {
+            // InputHint 存在，检查 input 字段
+            let input = match values.next() {
+                Some(i) => i as i32,
+                None => return,
+            };
+
+            if let Some(client) = self.clients.get_mut(client_key) {
+                client.state.never_focus = input <= 0;
+            }
+        } else {
+            // InputHint 不存在，可聚焦
+            if let Some(client) = self.clients.get_mut(client_key) {
+                client.state.never_focus = false;
+            }
+        }
+    }
+
     // pub fn updatetitle(&mut self, c: &mut WMClient) {
     //     // info!("[updatetitle]");
     //     if !self.gettextprop(c.win, self.atoms._NET_WM_NAME.into(), &mut c.name) {
