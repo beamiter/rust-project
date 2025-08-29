@@ -876,20 +876,20 @@ pub struct Jwm {
 impl Jwm {
     fn handler(&mut self, event: Event) -> Result<(), Box<dyn std::error::Error>> {
         match event {
-            // Event::ButtonPress(e) => self.buttonpress(&e)?,
-            // Event::ClientMessage(e) => self.clientmessage(&e)?,
-            // Event::ConfigureRequest(e) => self.configurerequest(&e)?,
-            // Event::ConfigureNotify(e) => self.configurenotify(&e)?,
-            // Event::DestroyNotify(e) => self.destroynotify(&e)?,
-            // Event::EnterNotify(e) => self.enternotify(&e)?,
-            // Event::Expose(e) => self.expose(&e)?,
-            // Event::FocusIn(e) => self.focusin(&e)?,
-            // Event::KeyPress(e) => self.keypress(&e)?,
-            // Event::MappingNotify(e) => self.mappingnotify(&e)?,
-            // Event::MapRequest(e) => self.maprequest(&e)?,
-            // Event::MotionNotify(e) => self.motionnotify(&e)?,
-            // Event::PropertyNotify(e) => self.propertynotify(&e)?,
-            // Event::UnmapNotify(e) => self.unmapnotify(&e)?,
+            Event::ButtonPress(e) => self.buttonpress(&e)?,
+            Event::ClientMessage(e) => self.clientmessage(&e)?,
+            Event::ConfigureRequest(e) => self.configurerequest(&e)?,
+            Event::ConfigureNotify(e) => self.configurenotify(&e)?,
+            Event::DestroyNotify(e) => self.destroynotify(&e)?,
+            Event::EnterNotify(e) => self.enternotify(&e)?,
+            Event::Expose(e) => self.expose(&e)?,
+            Event::FocusIn(e) => self.focusin(&e)?,
+            Event::KeyPress(e) => self.keypress(&e)?,
+            Event::MappingNotify(e) => self.mappingnotify(&e)?,
+            Event::MapRequest(e) => self.maprequest(&e)?,
+            Event::MotionNotify(e) => self.motionnotify(&e)?,
+            Event::PropertyNotify(e) => self.propertynotify(&e)?,
+            Event::UnmapNotify(e) => self.unmapnotify(&e)?,
             _ => {
                 debug!("Unsupported event type: {:?}", event);
             }
@@ -901,7 +901,7 @@ impl Jwm {
         info!("[new] Starting JWM initialization");
 
         // 显示当前的 X11 环境信息
-        // Self::log_x11_environment();
+        Self::log_x11_environment();
 
         // 尝试连接到 X11 服务器，添加错误处理
         info!("[new] Connecting to X11 server");
