@@ -36,6 +36,7 @@ serde_json = "1.0.143"
 shared_memory = "0.12.4"
 # shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
 shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
+slotmap = { version = "1.0.7", features = ["serde"] }
 sysinfo = "0.32.0"
 tokio = { version = "1.47.1", features = ["full"] }
 toml = "0.9.5"
