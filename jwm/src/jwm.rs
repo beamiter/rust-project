@@ -10,7 +10,6 @@ use nix::unistd::Pid;
 use serde::{Deserialize, Serialize};
 use slotmap::{DefaultKey, SecondaryMap, SlotMap};
 use std::cell::RefCell;
-use std::cell::RefMut;
 use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -23,7 +22,7 @@ use std::time::{Duration, Instant};
 use std::usize;
 
 use x11rb::connection::Connection;
-use x11rb::errors::{ReplyError, ReplyOrIdError};
+use x11rb::errors::ReplyError;
 use x11rb::properties::WmSizeHints;
 use x11rb::protocol::render::Pictforminfo;
 use x11rb::protocol::xproto::*;
@@ -1040,6 +1039,7 @@ impl Jwm {
     }
 
     /// 获取当前选中的客户端键
+    #[allow(dead_code)]
     fn get_selected_client(&self) -> Option<ClientKey> {
         self.sel_mon
             .and_then(|sel_mon_key| self.monitors.get(sel_mon_key))
@@ -1304,13 +1304,6 @@ impl Jwm {
             for val in self.monitors.values() {
                 self.pending_bar_updates.insert(val.num);
             }
-        }
-    }
-
-    fn are_equal_rc<T>(a: &Option<Rc<RefCell<T>>>, b: &Option<Rc<RefCell<T>>>) -> bool {
-        match (a, b) {
-            (Some(rc_a), Some(rc_b)) => Rc::ptr_eq(rc_a, rc_b),
-            _ => false,
         }
     }
 
@@ -2619,6 +2612,7 @@ impl Jwm {
     }
 
     /// 递归显示/隐藏监视器上的所有客户端（保持原有逻辑）
+    #[allow(dead_code)]
     fn showhide_monitor_recursive(&mut self, mon_key: MonitorKey) {
         // 获取堆栈中的第一个客户端
         let first_client = self
@@ -2879,7 +2873,7 @@ impl Jwm {
         info!("[handle_regular_configure_request]");
 
         // 获取客户端基本信息
-        let (is_floating, mon_key, win) = if let Some(client) = self.clients.get(client_key) {
+        let (is_floating, mon_key, _win) = if let Some(client) = self.clients.get(client_key) {
             (client.state.is_floating, client.mon, client.win)
         } else {
             return Err("Client not found".into());
@@ -3697,14 +3691,14 @@ impl Jwm {
         }
     }
 
-    pub fn scan(&mut self) -> Result<(), ReplyOrIdError> {
+    pub fn scan(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[scan]");
         let tree_reply = self.x11rb_conn.query_tree(self.x11rb_root)?.reply()?;
         let mut cookies = Vec::with_capacity(tree_reply.children.len());
         for win in tree_reply.children {
             let restored_client = self.restored_clients_info.get_client(win).cloned();
             if let Some(restored_client) = restored_client {
-                self.manage_restored(&restored_client);
+                self.manage_restored(&restored_client)?;
                 continue;
             }
             let attr = self.get_window_attributes(win)?;
@@ -3719,7 +3713,7 @@ impl Jwm {
             if attr.map_state == MapState::VIEWABLE
                 || self.get_wm_state(*win) == ICONIC_STATE as i64
             {
-                self.manage(*win, geom);
+                self.manage(*win, geom)?;
             }
         }
         for (win, attr, geom, trans) in &cookies {
@@ -3728,7 +3722,7 @@ impl Jwm {
                     if attr.map_state == MapState::VIEWABLE
                         || self.get_wm_state(*win) == ICONIC_STATE as i64
                     {
-                        self.manage(*win, geom);
+                        self.manage(*win, geom)?;
                     }
                 }
             }
@@ -5952,7 +5946,7 @@ impl Jwm {
             .set_close_down_mode(CloseDown::DESTROY_ALL)?;
 
         // 强制终止客户端
-        let result = match self.x11rb_conn.kill_client(win) {
+        match self.x11rb_conn.kill_client(win) {
             Ok(cookie) => {
                 // 同步并检查结果
                 self.x11rb_conn.flush()?;
@@ -6221,47 +6215,6 @@ impl Jwm {
             debug!("WM hints updated for window 0x{:x}", client.win);
         }
         Ok(())
-    }
-
-    fn gettextprop_by_window(&mut self, window: Window, atom: Atom, text: &mut String) -> bool {
-        text.clear();
-
-        let property = match self.get_window_property(window, atom) {
-            Ok(prop) => prop,
-            Err(_) => return false,
-        };
-
-        if property.value.is_empty() {
-            debug!("[gettextprop_by_window] Property value is empty");
-            return false;
-        }
-
-        // 只处理 8 位格式的属性
-        if property.format != 8 {
-            debug!(
-                "[gettextprop_by_window] Unsupported property format: {}",
-                property.format
-            );
-            return false;
-        }
-
-        // 根据属性类型解析文本
-        let parsed_text = match property.type_ {
-            type_ if type_ == self.atoms.UTF8_STRING => self.parse_utf8_string(&property.value),
-            type_ if type_ == u32::from(AtomEnum::STRING) => {
-                Some(self.parse_latin1_string(&property.value))
-            }
-            type_ if type_ == self.atoms.COMPOUND_TEXT => self.parse_compound_text(&property.value),
-            _ => self.parse_fallback_text(&property.value),
-        };
-
-        match parsed_text {
-            Some(parsed) => {
-                *text = self.truncate_text(parsed);
-                true
-            }
-            None => false,
-        }
     }
 
     fn updatetitle_by_key(&mut self, client_key: ClientKey) {
@@ -6789,10 +6742,10 @@ impl Jwm {
                     self.configurerequest(&e)?;
                 }
                 Event::Expose(e) => {
-                    // self.expose(&e)?;
+                    self.expose(&e)?;
                 }
                 Event::MapRequest(e) => {
-                    // self.maprequest(&e)?;
+                    self.maprequest(&e)?;
                 }
                 Event::MotionNotify(e) => {
                     // 节流处理
@@ -7895,12 +7848,12 @@ impl Jwm {
                         instance_name.as_str(),
                     );
                     // 重新获取类信息
-                    self.update_class_info_by_window(&mut client);
+                    self.update_class_info(&mut client);
                 }
             }
         }
 
-        self.update_class_info_by_window(&mut client);
+        self.update_class_info(&mut client);
         info!("[manage] {}", client);
 
         // 检查是否是状态栏
@@ -8222,7 +8175,7 @@ impl Jwm {
         }
     }
 
-    fn update_class_info_by_window(&mut self, client: &mut WMClient) {
+    fn update_class_info(&mut self, client: &mut WMClient) {
         if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, client.win) {
             client.instance = inst;
             client.class = cls;
@@ -8317,7 +8270,7 @@ impl Jwm {
 
     /// 应用所有规则到客户端（完整版本）
     fn applyrules_by_key(&mut self, client_key: ClientKey) {
-        let (win, mut name, mut class, mut instance) =
+        let (win, name, mut class, mut instance) =
             if let Some(client) = self.clients.get(client_key) {
                 (
                     client.win,
@@ -8744,14 +8697,6 @@ impl Jwm {
         }
     }
 
-    // 更新窗口类信息
-    fn update_class_info(&mut self, client_mut: &mut WMClient) {
-        if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, client_mut.win as u32) {
-            client_mut.instance = inst;
-            client_mut.class = cls;
-        }
-    }
-
     pub fn mappingnotify(
         &mut self,
         e: &MappingNotifyEvent,
@@ -8810,7 +8755,7 @@ impl Jwm {
         if self.wintoclient(e.window).is_none() {
             // 获取窗口几何信息并开始管理
             let geom = Self::get_and_query_window_geom(&self.x11rb_conn, e.window)?;
-            self.manage(e.window, &geom);
+            self.manage(e.window, &geom)?;
         } else {
             debug!(
                 "Window {} is already managed, ignoring map request",
@@ -9269,6 +9214,7 @@ impl Jwm {
     }
 
     // 如果需要批量调整客户端位置的优化版本
+    #[allow(dead_code)]
     fn adjust_multiple_clients_positions(&mut self, client_keys: &[ClientKey]) {
         for &client_key in client_keys {
             self.adjust_client_position(client_key);
@@ -9276,6 +9222,7 @@ impl Jwm {
     }
 
     // 针对特定监视器调整所有客户端位置
+    #[allow(dead_code)]
     fn adjust_all_clients_on_monitor(&mut self, mon_key: MonitorKey) {
         let client_keys: Vec<ClientKey> =
             if let Some(client_list) = self.monitor_clients.get(mon_key) {
@@ -9290,6 +9237,7 @@ impl Jwm {
     }
 
     // 智能调整：只调整超出边界的客户端
+    #[allow(dead_code)]
     fn adjust_client_position_smart(&mut self, client_key: ClientKey) {
         let needs_adjustment = if let Some(client) = self.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
