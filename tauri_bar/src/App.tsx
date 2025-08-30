@@ -11,17 +11,15 @@ interface TagStatus {
   is_occ: boolean;
 }
 
-interface MonitorInfo {
-  client_name: string;
-  tag_status_vec: TagStatus[];
+interface MonitorInfoSnapshot {
   monitor_num: number;
   monitor_width: number;
   monitor_height: number;
   monitor_x: number;
   monitor_y: number;
-  showbar: boolean;
+  tag_status_vec: TagStatus[];
+  client_name: string;
   ltsymbol: string;
-  border_w: number;
 }
 
 interface SystemSnapshot {
@@ -34,7 +32,7 @@ interface SystemSnapshot {
 }
 
 interface UiState {
-  monitor_info: MonitorInfo;
+  monitor_info: MonitorInfoSnapshot;
   system_snapshot: SystemSnapshot | null;
 }
 

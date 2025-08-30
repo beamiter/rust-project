@@ -1,3 +1,5 @@
+use serde::Serialize;
+use serde_big_array::BigArray;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 // 常量定义
@@ -7,7 +9,7 @@ pub const MAX_TAGS: usize = 9;
 
 // 移除 packed，使用合理的对齐
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct TagStatus {
     pub is_selected: bool,
     pub is_urg: bool,
@@ -39,7 +41,7 @@ impl TagStatus {
 
 // 使用更合理的对齐策略
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct MonitorInfo {
     // 将较大的字段放在前面，确保对齐
     pub monitor_num: i32,
@@ -49,6 +51,7 @@ pub struct MonitorInfo {
     pub monitor_y: i32,
     // 固定大小的数组
     pub tag_status_vec: [TagStatus; MAX_TAGS],
+    #[serde(with = "BigArray")]
     pub client_name: [u8; MAX_CLIENT_NAME_LEN],
     pub ltsymbol: [u8; MAX_LT_SYMBOL_LEN],
 }

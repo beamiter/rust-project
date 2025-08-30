@@ -14,7 +14,6 @@ use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt;
-use std::os::unix::process::CommandExt;
 use std::process::{Child, Command};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -827,6 +826,8 @@ struct RestackOperation {
     sibling: Option<Window>,
 }
 
+pub type MonitorIndex = i32;
+
 pub struct Jwm {
     pub stext_max_len: usize,
     pub s_w: i32,
@@ -839,8 +840,6 @@ pub struct Jwm {
     pub visual_id: Visualid,
     pub depth: u8,
     pub color_map: Colormap,
-    pub status_bar_shmem: HashMap<i32, SharedRingBuffer>,
-    pub status_bar_child: HashMap<i32, Child>,
     pub message: SharedMessage,
 
     // 新的SlotMap存储结构
@@ -858,10 +857,13 @@ pub struct Jwm {
     pub monitor_stack: SecondaryMap<MonitorKey, Vec<ClientKey>>,
 
     // 状态栏专用管理
-    pub status_bar_flags: HashMap<i32, WMShowBarEnum>, // monitor_id -> show_bar_enum
-    pub status_bar_clients: HashMap<i32, Rc<RefCell<WMClient>>>, // monitor_id -> statusbar_client
-    pub status_bar_windows: HashMap<Window, i32>,      // window_id -> monitor_id (快速查找)
-    pub pending_bar_updates: HashSet<i32>,
+    pub status_bar_shmem: HashMap<MonitorIndex, SharedRingBuffer>,
+    pub status_bar_child: HashMap<MonitorIndex, Child>,
+    pub status_bar_pid_to_monitor: HashMap<u32, MonitorIndex>,
+    pub status_bar_flags: HashMap<MonitorIndex, WMShowBarEnum>, // monitor_id -> show_bar_enum
+    pub status_bar_clients: HashMap<MonitorIndex, Rc<RefCell<WMClient>>>, // monitor_id -> statusbar_client
+    pub status_bar_windows: HashMap<Window, MonitorIndex>, // window_id -> monitor_id (快速查找)
+    pub pending_bar_updates: HashSet<MonitorIndex>,
 
     pub x11rb_conn: RustConnection,
     pub x11rb_root: Window,
@@ -998,6 +1000,7 @@ impl Jwm {
             color_map: 0,
             status_bar_shmem: HashMap::new(),
             status_bar_child: HashMap::new(),
+            status_bar_pid_to_monitor: HashMap::new(),
             message: SharedMessage::default(),
             status_bar_flags: HashMap::new(),
             status_bar_clients: HashMap::new(),
@@ -3127,87 +3130,65 @@ impl Jwm {
         }
     }
 
-    fn ensure_bar_is_running(&mut self, num: i32, shared_path: &str) {
-        let mut needs_spawn = true; // 默认需要启动
-        if let Some(child) = self.status_bar_child.get_mut(&num) {
-            match child.try_wait() {
-                // Ok(None) 表示子进程仍在运行
-                Ok(None) => {
-                    debug!(" checked: status bar for monitor {} is still running.", num);
-                    needs_spawn = false; // 不需要启动
-                }
-                // Ok(Some(status)) 表示子进程已退出
-                Ok(Some(status)) => {
-                    error!(
-                        " checked: status bar for monitor {} has exited with status: {}. Restarting...",
-                        num, status
-                    );
-                    // needs_spawn 保持为 true
-                }
-                // 检查时发生 I/O 错误
-                Err(e) => {
-                    error!(
-                        " error: Failed to check status of status bar for monitor {}: {}. Assuming it's dead and restarting...",
-                        num, e
-                    );
-                    // needs_spawn 保持为 true
-                }
-            }
-        } else {
-            // 哈希表中不存在记录，是第一次启动
-            info!(
-                "- first time: Spawning status bar for monitor {} for the first time.",
-                num
-            );
-            // needs_spawn 保持为 true
+    fn ensure_bar_is_running(&mut self, monitor_id: i32, shared_path: &str) {
+        // 检查是否已经完全初始化
+        if self.status_bar_clients.contains_key(&monitor_id) {
+            return;
         }
-        // --- 执行操作 ---
-        // 如果需要启动（无论是第一次还是重启）
-        if needs_spawn {
-            let mut command: Command;
-            // --- 使用 #[cfg] 进行条件编译 ---
-            // 这段代码只有在编译时启用了 nixgl feature 时才会存在
-            #[cfg(feature = "nixgl")]
-            {
-                // Hack for nixgl.
-                let mut not_fully_initialized = false;
-                for (&tmp_num, _) in self.status_bar_child.iter() {
-                    if !self.status_bar_clients.contains_key(&tmp_num) {
-                        not_fully_initialized = true;
-                        break;
-                    }
-                }
-                if not_fully_initialized {
-                    return;
-                }
 
-                let nixgl_command = "nixGL".to_string();
-                info!(
-                    "   -> [feature=nixgl] enabled. Launching status bar with '{}'.",
-                    nixgl_command
-                );
-                command = Command::new(&nixgl_command);
-                command.arg(CONFIG.status_bar_base_name());
-            }
-            // 这段代码只有在编译时 *没有* 启用 nixgl feature 时才会存在
-            #[cfg(not(feature = "nixgl"))]
-            {
-                info!("--> [feature=nixgl] disabled. Launching status bar directly.");
-                command = Command::new(CONFIG.status_bar_base_name());
-            }
-            if let Ok(child) = command
-                .arg0(&Self::monitor_to_bar_name(num))
-                .arg(shared_path)
-                .spawn()
-            {
-                // insert 会自动处理新增和覆盖两种情况
-                self.status_bar_child.insert(num, child);
-                info!(
-                    "--> spawned: Successfully started/restarted status bar for monitor {}.",
-                    num
-                );
+        // 检查进程是否还在运行
+        if let Some(child) = self.status_bar_child.get_mut(&monitor_id) {
+            match child.try_wait() {
+                Ok(None) => return, // 进程还在运行
+                Ok(Some(_)) | Err(_) => {
+                    // 进程已退出，清理映射
+                    let pid = child.id();
+                    self.status_bar_pid_to_monitor.remove(&pid);
+                    self.status_bar_child.remove(&monitor_id);
+                }
             }
         }
+
+        // 启动新进程
+        let mut command = if cfg!(feature = "nixgl") {
+            let mut cmd = Command::new("nixGL");
+            cmd.arg(CONFIG.status_bar_base_name());
+            cmd
+        } else {
+            Command::new(CONFIG.status_bar_base_name())
+        };
+
+        command.arg(shared_path);
+
+        if let Ok(child) = command.spawn() {
+            let pid = child.id();
+            info!(
+                "[ensure_bar_is_running] Started process PID {} for monitor {}",
+                pid, monitor_id
+            );
+
+            // 记录 PID 到 monitor_id 的映射
+            self.status_bar_pid_to_monitor.insert(pid, monitor_id);
+            self.status_bar_child.insert(monitor_id, child);
+        }
+    }
+
+    fn get_window_pid(&self, window: Window) -> Result<u32, Box<dyn std::error::Error>> {
+        let cookie = self.x11rb_conn.get_property(
+            false,
+            window,
+            self.atoms._NET_WM_PID,
+            AtomEnum::CARDINAL,
+            0,
+            1,
+        )?;
+        let reply = cookie.reply()?;
+        if let Some(mut values) = reply.value32() {
+            if let Some(pid) = values.next() {
+                return Ok(pid);
+            }
+        }
+        Err("No _NET_WM_PID property found".into())
     }
 
     pub fn update_bar_message(&mut self, mon_key_opt: Option<MonitorKey>) {
@@ -7799,19 +7780,15 @@ impl Jwm {
         geom: &GetGeometryReply,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[manage] Managing window 0x{:x}", w);
-
         // 检查窗口是否已被管理
         if self.wintoclient(w).is_some() {
             warn!("[manage] Window 0x{:x} already managed", w);
             return Ok(());
         }
-
         // 创建新的客户端对象
         let mut client = WMClient::new();
-
         // 设置窗口ID
         client.win = w;
-
         // 从几何信息中设置初始属性
         client.geometry.x = geom.x as i32;
         client.geometry.old_x = geom.x as i32;
@@ -7823,49 +7800,36 @@ impl Jwm {
         client.geometry.old_h = geom.height as i32;
         client.geometry.old_border_w = geom.border_width as i32;
         client.state.client_fact = 1.0;
-
         // 获取并设置窗口标题
         self.updatetitle_by_window(&mut client);
-
-        #[cfg(any(feature = "nixgl", feature = "tauri_bar"))]
-        {
-            if client.name == CONFIG.status_bar_base_name() {
-                let mut instance_name = String::new();
-                for &tmp_num in self.status_bar_child.keys() {
-                    if !self.status_bar_clients.contains_key(&tmp_num) {
-                        instance_name = match tmp_num {
-                            0 => CONFIG.status_bar_instance_0().to_string(),
-                            1 => CONFIG.status_bar_instance_1().to_string(),
-                            _ => CONFIG.status_bar_base_name().to_string(),
-                        };
-                        break;
-                    }
-                }
-                if !instance_name.is_empty() {
-                    let _ = self.set_class_info(
-                        &mut client,
-                        instance_name.as_str(),
-                        instance_name.as_str(),
+        if client.name == CONFIG.status_bar_base_name() {
+            // 尝试通过 PID 识别状态栏
+            if let Ok(pid) = self.get_window_pid(w) {
+                if let Some(&monitor_id) = self.status_bar_pid_to_monitor.get(&pid) {
+                    info!(
+                        "[manage] Found statusbar: PID {} → monitor {}",
+                        pid, monitor_id
                     );
-                    // 重新获取类信息
-                    self.update_class_info(&mut client);
+                    let instance_name = Self::monitor_to_bar_name(monitor_id);
+                    if !instance_name.is_empty() {
+                        let _ = self.set_class_info(&mut client, &instance_name, &instance_name);
+                    }
                 }
             }
         }
-
         self.update_class_info(&mut client);
-        info!("[manage] {}", client);
 
+        info!("[manage] {}", client);
         // 检查是否是状态栏
         if client.is_status_bar() {
             info!("[manage] Detected status bar, managing as statusbar");
+            // 插入到SlotMap
             let client_key = self.insert_client(client);
             return self.manage_statusbar(client_key);
         }
 
         // 插入到SlotMap
         let client_key = self.insert_client(client);
-
         // 常规客户端管理流程
         self.manage_regular_client(client_key)
     }
@@ -8629,7 +8593,6 @@ impl Jwm {
             .map(|(key, _)| key)
     }
 
-    #[cfg(any(feature = "nixgl", feature = "tauri_bar"))]
     fn set_class_info(
         &mut self,
         client_mut: &mut WMClient,
@@ -8676,7 +8639,6 @@ impl Jwm {
         Ok(())
     }
 
-    #[cfg(any(feature = "nixgl", feature = "tauri_bar"))]
     fn verify_class_info_set(
         &mut self,
         client: &WMClient,
@@ -8987,6 +8949,7 @@ impl Jwm {
             );
             // 获取进程 ID
             let pid = child.id();
+            self.status_bar_pid_to_monitor.remove(&pid);
             let nix_pid = Pid::from_raw(pid as i32);
             // 检查进程是否存在
             match signal::kill(nix_pid, None) {

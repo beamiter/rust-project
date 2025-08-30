@@ -14,6 +14,7 @@ x11rb::atom_manager! {
         _NET_ACTIVE_WINDOW,
         _NET_SUPPORTED,
         _NET_WM_NAME,
+        _NET_WM_PID,
         _NET_WM_STATE,
         _NET_SUPPORTING_WM_CHECK,
         _NET_WM_STATE_FULLSCREEN,

@@ -14,6 +14,7 @@ libc = "0.2.175"
 log = "0.4.26"
 nix = { version = "0.30.1", features = ["event", "fs"] }
 serde = { version = "1.0.217", features = ["derive"] }
+serde-big-array = "0.5.1"
 shared_memory = "0.12.4"
 
 [[bench]]

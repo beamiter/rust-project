@@ -4,6 +4,7 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use log::{error, info, warn};
+use shared_structures::TagStatus;
 use tauri::Emitter;
 use tauri::Manager;
 
@@ -16,10 +17,35 @@ mod system_monitor;
 use shared_structures::{MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer};
 use system_monitor::{SystemMonitor, SystemSnapshot};
 
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct MonitorInfoSnapshot {
+    pub monitor_num: i32,
+    pub monitor_width: i32,
+    pub monitor_height: i32,
+    pub monitor_x: i32,
+    pub monitor_y: i32,
+    pub tag_status_vec: [TagStatus; 9],
+    pub client_name: String,
+    pub ltsymbol: String,
+}
+impl MonitorInfoSnapshot {
+    pub fn new(monitor_info: &MonitorInfo) -> Self {
+        Self {
+            monitor_num: monitor_info.monitor_num,
+            monitor_width: monitor_info.monitor_width,
+            monitor_height: monitor_info.monitor_height,
+            monitor_x: monitor_info.monitor_x,
+            monitor_y: monitor_info.monitor_y,
+            tag_status_vec: monitor_info.tag_status_vec,
+            client_name: monitor_info.get_client_name(),
+            ltsymbol: monitor_info.get_ltsymbol(),
+        }
+    }
+}
 // 定义一个整合所有UI状态的结构体，方便序列化为JSON
 #[derive(Clone, serde::Serialize)]
 struct UiState {
-    monitor_info: MonitorInfo,
+    monitor_info_snapshot: MonitorInfoSnapshot,
     system_snapshot: Option<SystemSnapshot>,
 }
 
@@ -52,7 +78,7 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
         .format(flexi_logger::colored_opt_format)
         .log_to_file(
             FileSpec::default()
-                .directory("/tmp")
+                .directory("/tmp/jwm")
                 .basename(log_filename)
                 .suffix("log"),
         )
@@ -118,8 +144,7 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
         warn!("No shared path provided, running without shared memory");
         None
     } else {
-        // ... (此处打开/创建共享内存的逻辑与你的 `shared_memory_worker` 相同)
-        match SharedRingBuffer::open(&shared_path) {
+        match SharedRingBuffer::open(&shared_path, None) {
             Ok(shared_buffer) => {
                 info!("Successfully opened shared ring buffer: {}", shared_path);
                 Some(shared_buffer)
@@ -179,7 +204,7 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
 
         // 2. 从共享内存读取最新的状态
         if let Some(ref sb) = shared_buffer_opt {
-            match sb.try_read_latest_message::<SharedMessage>() {
+            match sb.try_read_latest_message() {
                 Ok(Some(msg)) => {
                     if last_message
                         .as_ref()
@@ -233,13 +258,16 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
                         ))
                         .unwrap();
                 }
+
+                let mut monitor_info_snapshot = MonitorInfoSnapshot::new(&monitor_info);
                 let scale_factor = window.scale_factor().unwrap();
-                let mut monitor_info = msg.monitor_info.clone();
-                monitor_info.ltsymbol = monitor_info.ltsymbol.clone()
+                let new_symbol = monitor_info.get_ltsymbol()
                     + format!(" s: {:.2}", scale_factor).as_str()
                     + format!(", m: {}", monitor_info.monitor_num).as_str();
+                monitor_info_snapshot.ltsymbol = new_symbol;
+                info!("monitor_info_snapshot: {:?}", monitor_info_snapshot);
                 let state = UiState {
-                    monitor_info,
+                    monitor_info_snapshot,
                     system_snapshot: last_snapshot.clone(),
                 };
                 app_handle.emit("state-update", state).unwrap();
@@ -255,7 +283,6 @@ fn main() {
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
     if let Err(e) = initialize_logging(&shared_path) {
-        // 在Tauri应用启动前，日志错误只能打印到stderr
         eprintln!("Failed to initialize logging: {}", e);
     }
 
