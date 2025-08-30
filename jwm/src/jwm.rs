@@ -4634,7 +4634,7 @@ impl Jwm {
         }
 
         // 取消客户端焦点
-        // let _ = self.unfocus(Some(client_key), true);
+        let _ = self.unfocus(client_key, true);
 
         // 从当前监视器分离客户端
         self.detach(client_key);
@@ -4662,7 +4662,7 @@ impl Jwm {
         let _ = self.setclienttagprop(client_key);
 
         // 重新聚焦和排列
-        // let _ = self.focus(None);
+        let _ = self.focus(None);
         self.arrange(None);
     }
 
@@ -4691,7 +4691,7 @@ impl Jwm {
 
         // 切换焦点
         if let Some(client_key) = target_client {
-            // self.focus(Some(client_key))?;
+            self.focus(Some(client_key))?;
             self.restack(self.sel_mon)?;
         }
         Ok(())
@@ -5499,7 +5499,7 @@ impl Jwm {
         self.update_tagset_and_pertag(sel_mon_key, sel_tags, newtagset)?;
 
         // 更新焦点和布局
-        // self.focus(None)?;
+        self.focus(None)?;
         self.arrange(Some(sel_mon_key));
 
         Ok(())
@@ -5805,7 +5805,7 @@ impl Jwm {
         self.grabkeys()?;
 
         // 设置焦点
-        // self.focus(None)?;
+        self.focus(None)?;
 
         self.x11rb_conn.flush()?;
 
@@ -6971,8 +6971,7 @@ impl Jwm {
                 debug!("Moving client to different monitor after resize");
                 self.sendmon(Some(client_key), Some(target_mon_key));
                 self.sel_mon = Some(target_mon_key);
-                // 注意：这里需要实现focus方法的SlotMap版本
-                // self.focus(None)?;
+                self.focus(None)?;
             }
         }
 
