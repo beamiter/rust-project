@@ -1,5 +1,4 @@
 // tests/integration_test.rs
-use std::collections::HashMap;
 use std::process::{Command, Stdio};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -13,13 +12,11 @@ use x11rb::rust_connection::RustConnection;
 // 正确导入 X11 事件类型常量
 const KEY_PRESS: u8 = 2;
 const KEY_RELEASE: u8 = 3;
+#[allow(dead_code)]
 const BUTTON_PRESS: u8 = 4;
+#[allow(dead_code)]
 const BUTTON_RELEASE: u8 = 5;
 
-// 或者使用 x11rb 提供的常量
-use x11rb::protocol::xproto::{
-    ButtonPressEvent, ButtonReleaseEvent, KeyPressEvent, KeyReleaseEvent,
-};
 
 // 测试配置
 const TEST_DURATION_SECONDS: u64 = 30;
@@ -35,6 +32,7 @@ struct KeyCombination {
 }
 
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 enum ExpectedResult {
     WindowFocusChange,
     LayoutChange,
@@ -451,16 +449,12 @@ impl JWMTester {
                 Ok(input_focus.focus != screen.root && input_focus.focus != 0)
             }
             ExpectedResult::LayoutChange => {
-                // 布局变化较难直接检测，我们假设成功
-                // 实际应用中可以通过检查窗口位置变化来验证
                 Ok(true)
             }
             ExpectedResult::WindowClose => {
-                // 简化处理，假设成功
                 Ok(true)
             }
             ExpectedResult::TagSwitch => {
-                // 标签切换也较难直接检测
                 Ok(true)
             }
             ExpectedResult::SystemAction => Ok(true),
