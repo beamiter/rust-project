@@ -9,7 +9,6 @@ use nix::unistd::Pid;
 
 use serde::{Deserialize, Serialize};
 use slotmap::{DefaultKey, SecondaryMap, SlotMap};
-use std::cell::RefCell;
 use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::env;
@@ -860,9 +859,9 @@ pub struct Jwm {
     pub status_bar_shmem: HashMap<MonitorIndex, SharedRingBuffer>,
     pub status_bar_child: HashMap<MonitorIndex, Child>,
     pub status_bar_pid_to_monitor: HashMap<u32, MonitorIndex>,
-    pub status_bar_flags: HashMap<MonitorIndex, WMShowBarEnum>, // monitor_id -> show_bar_enum
-    pub status_bar_clients: HashMap<MonitorIndex, Rc<RefCell<WMClient>>>, // monitor_id -> statusbar_client
-    pub status_bar_windows: HashMap<Window, MonitorIndex>, // window_id -> monitor_id (快速查找)
+    pub status_bar_flags: HashMap<MonitorIndex, WMShowBarEnum>,
+    pub status_bar_clients: HashMap<MonitorIndex, ClientKey>,
+    pub status_bar_windows: HashMap<Window, MonitorIndex>,
     pub pending_bar_updates: HashSet<MonitorIndex>,
 
     pub x11rb_conn: RustConnection,
@@ -1239,13 +1238,7 @@ impl Jwm {
     pub fn wintoclient(&self, win: Window) -> Option<ClientKey> {
         // 首先检查状态栏
         if let Some(&monitor_id) = self.status_bar_windows.get(&win) {
-            return self.status_bar_clients.get(&monitor_id).and_then(|_| {
-                // 需要在SlotMap中查找对应的key
-                self.clients
-                    .iter()
-                    .find(|(_, client)| client.win == win)
-                    .map(|(key, _)| key)
-            });
+            return self.status_bar_clients.get(&monitor_id).map(|&key| key);
         }
         // 查找常规客户端
         self.clients
@@ -1786,7 +1779,6 @@ impl Jwm {
                 );
             }
         }
-        // 清理状态栏客户端映射（让 Drop 处理实际的内存释放）
         self.status_bar_clients.clear();
         self.status_bar_windows.clear();
         self.status_bar_flags.clear();
@@ -2719,8 +2711,8 @@ impl Jwm {
 
         // 更新状态栏几何信息（限制借用范围）
         {
-            if let Some(statusbar) = self.status_bar_clients.get(&monitor_id) {
-                let mut statusbar_mut = statusbar.borrow_mut();
+            if let Some(&bar_key) = self.status_bar_clients.get(&monitor_id) {
+                let statusbar_mut = self.clients.get_mut(bar_key).unwrap();
 
                 // 更新几何信息
                 if e.value_mask.contains(ConfigWindow::X) {
@@ -2990,9 +2982,6 @@ impl Jwm {
         if let Some(ring_buffer) = self.status_bar_shmem.get_mut(&num) {
             match ring_buffer.try_write_message(&message) {
                 Ok(true) => {
-                    if let Some(_statusbar) = self.status_bar_clients.get(&num) {
-                        // info!("statusbar: {}", statusbar.borrow());
-                    }
                     // info!("[write_message] {:?}", message);
                     Ok(()) // Message written successfully
                 }
@@ -3226,8 +3215,8 @@ impl Jwm {
         &self,
         monitor_num: i32,
     ) -> Result<Option<RestackOperation>, Box<dyn std::error::Error>> {
-        if let Some(statusbar) = self.status_bar_clients.get(&monitor_num) {
-            let statusbar_win = statusbar.borrow().win;
+        if let Some(&bar_key) = self.status_bar_clients.get(&monitor_num) {
+            let statusbar_win = self.clients.get(bar_key).unwrap().win;
             return Ok(Some(RestackOperation {
                 window: statusbar_win,
                 stack_mode: StackMode::ABOVE,
@@ -3324,28 +3313,21 @@ impl Jwm {
                 self.update_bar_message(Some(monitor));
             }
         }
-
         self.pending_bar_updates.clear();
-
         // Show or hide status bar
         let status_bar_flags = self.status_bar_flags.clone();
         for (&mon_id, &show_bar_enum) in status_bar_flags.iter() {
             match show_bar_enum {
                 WMShowBarEnum::Toggle(show_bar) => {
-                    let client_mut = self.status_bar_clients.get_mut(&mon_id).unwrap().clone();
+                    let &bar_key = self.status_bar_clients.get(&mon_id).unwrap();
                     if show_bar == true {
                         info!("[flush_pending_bar_updates] show bar");
-                        let _ = self.show_statusbar(&mut client_mut.as_ref().borrow_mut(), mon_id);
+                        let _ = self.show_statusbar(bar_key, mon_id);
                     } else {
                         info!("[flush_pending_bar_updates] hide bar");
-                        let _ = self.hide_statusbar(&mut client_mut.as_ref().borrow_mut(), mon_id);
+                        let _ = self.hide_statusbar(bar_key, mon_id);
                     }
-                    // 发送确认配置事件给 status bar
-                    if let Some(client_key) =
-                        self.find_client_key(&mut client_mut.as_ref().borrow_mut())
-                    {
-                        let _ = self.configure(client_key);
-                    }
+                    let _ = self.configure(bar_key);
                     info!("[flush_pending_bar_updates] Updating workarea due to statusbar geometry change");
                     // 重新排列该显示器上的其他客户端
                     if let Some(monitor) = self.get_monitor_by_id(mon_id) {
@@ -3361,29 +3343,35 @@ impl Jwm {
 
     fn show_statusbar(
         &mut self,
-        client_mut: &mut WMClient,
+        client_key: ClientKey,
         monitor_id: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(_monitor) = self.get_monitor_by_id(monitor_id) {
-            // 将状态栏放在显示器顶部
-            let x = client_mut.geometry.x;
-            let y = client_mut.geometry.y;
-            info!("[show_statusbar] Show at ({}, {})", x, y,);
-            self.move_window(client_mut.win, x, y)?;
+            if let Some(client_mut) = self.clients.get_mut(client_key) {
+                // 将状态栏放在显示器顶部
+                let x = client_mut.geometry.x;
+                let y = client_mut.geometry.y;
+                let win = client_mut.win;
+                info!("[show_statusbar] Show at ({}, {})", x, y,);
+                self.move_window(win, x, y)?;
+            }
         }
         Ok(())
     }
 
     fn hide_statusbar(
         &mut self,
-        client_mut: &mut WMClient,
+        client_key: ClientKey,
         monitor_id: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(_monitor) = self.get_monitor_by_id(monitor_id) {
-            let hidden_x = -1000;
-            let hidden_y = -1000;
-            info!("[hide_statusbar] Hide at ({}, {})", hidden_x, hidden_y,);
-            self.move_window(client_mut.win, hidden_x, hidden_y)?;
+            if let Some(client_mut) = self.clients.get_mut(client_key) {
+                let hidden_x = -1000;
+                let hidden_y = -1000;
+                info!("[hide_statusbar] Hide at ({}, {})", hidden_x, hidden_y,);
+                let win = client_mut.win;
+                self.move_window(win, hidden_x, hidden_y)?;
+            }
         }
         Ok(())
     }
@@ -8325,17 +8313,13 @@ impl Jwm {
         // 设置状态栏特有的窗口属性
         self.setup_statusbar_window_by_key(client_key)?;
 
-        let client_rc = if let Some(client) = self.clients.get(client_key) {
-            Rc::new(RefCell::new(client.clone()))
+        let win = if let Some(client) = self.clients.get(client_key) {
+            client.win
         } else {
             return Err("Client not found after configuration".into());
         };
-
-        let win = client_rc.borrow().win;
-
         // 注册状态栏到管理映射中
-        self.status_bar_clients
-            .insert(monitor_id, client_rc.clone());
+        self.status_bar_clients.insert(monitor_id, client_key);
         self.status_bar_windows.insert(win, monitor_id);
         self.status_bar_flags
             .insert(monitor_id, WMShowBarEnum::Keep(true));
@@ -8779,7 +8763,7 @@ impl Jwm {
             monitor_id
         );
         let statusbar = match self.status_bar_clients.remove(&monitor_id) {
-            Some(bar) => bar,
+            Some(bar_key) => self.clients.get(bar_key).unwrap(),
             None => {
                 warn!(
                     "[unmanage_statusbar] No statusbar found for monitor {}",
@@ -8788,7 +8772,7 @@ impl Jwm {
                 return Ok(());
             }
         };
-        let win = statusbar.borrow().win;
+        let win = statusbar.win;
         self.status_bar_windows.remove(&win);
         if !destroyed {
             self.cleanup_statusbar_window(win)?;
