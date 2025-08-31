@@ -1352,57 +1352,6 @@ impl Jwm {
         None
     }
 
-    // function declarations and implementations.
-    pub fn applyrules(&mut self, c: &Rc<RefCell<WMClient>>) {
-        info!("[applyrules]");
-        // rule matching
-        let mut c = c.borrow_mut();
-        c.state.is_floating = false;
-        if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, c.win as u32) {
-            c.instance = inst;
-            c.class = cls;
-            info!(
-                "win: 0x{}, name: {}, instance: {}, class: {}",
-                c.win, c.name, c.instance, c.class
-            );
-        } else {
-            // 对于这种完全未命名的，直接设置为floating
-            c.state.is_floating = true;
-            info!("[applyrules] special case");
-        }
-        for r in &CONFIG.get_rules() {
-            if r.name.is_empty() && r.class.is_empty() && r.instance.is_empty() {
-                continue;
-            }
-            if (r.name.is_empty() || c.name.find(&r.name).is_some())
-                && (r.class.is_empty() || c.class.find(&r.class).is_some())
-                && (r.instance.is_empty() || c.instance.find(&r.instance).is_some())
-            {
-                info!("[applyrules] rule: {:?}", r);
-                c.state.is_floating = r.is_floating;
-                c.state.tags |= r.tags as u32;
-                for (key, value) in &self.monitors {
-                    if value.num == r.monitor {
-                        c.mon = Some(key);
-                        break;
-                    }
-                }
-            }
-        }
-        let condition = c.state.tags & CONFIG.tagmask();
-        if condition > 0 {
-            c.state.tags = condition;
-        } else {
-            if let Some(client_monitor) = self.monitors.get(c.mon.unwrap()) {
-                c.state.tags = client_monitor.tag_set[client_monitor.sel_tags];
-            }
-        };
-        info!(
-            "[applyrules] class: {}, instance: {}, name: {}, tags: {}, floating: {}",
-            c.class, c.instance, c.name, c.state.tags, c.state.is_floating
-        );
-    }
-
     pub fn applysizehints(
         &mut self,
         client_key: ClientKey,
@@ -2246,63 +2195,6 @@ impl Jwm {
                             )?;
                         }
                     }
-                }
-            }
-        }
-
-        self.x11rb_conn.flush()?;
-        Ok(())
-    }
-
-    pub fn grabbuttons(
-        &mut self,
-        client_opt: Option<Rc<RefCell<WMClient>>>,
-        focused: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let client_win_id = match client_opt.as_ref() {
-            Some(c_rc) => c_rc.borrow().win,
-            None => return Ok(()),
-        };
-
-        let modifiers_to_try = [
-            KeyButMask::default(),
-            KeyButMask::LOCK,
-            self.numlock_mask,
-            self.numlock_mask | KeyButMask::LOCK,
-        ];
-
-        // 取消之前的按钮抓取
-        self.x11rb_conn
-            .ungrab_button(ButtonIndex::ANY, client_win_id, ModMask::ANY.into())?;
-
-        if !focused {
-            self.x11rb_conn.grab_button(
-                false, // owner_events
-                client_win_id,
-                *BUTTONMASK,
-                GrabMode::SYNC,
-                GrabMode::SYNC,
-                0u32, // confine_to
-                0u32, // cursor
-                ButtonIndex::ANY,
-                ModMask::ANY.into(),
-            )?;
-        }
-
-        for button_config in CONFIG.get_buttons().iter() {
-            if button_config.click_type == WMClickType::ClickClientWin {
-                for &modifier_combo in modifiers_to_try.iter() {
-                    self.x11rb_conn.grab_button(
-                        false,
-                        client_win_id,
-                        *BUTTONMASK,
-                        GrabMode::ASYNC,
-                        GrabMode::ASYNC,
-                        0u32,
-                        0u32,
-                        button_config.button,
-                        ModMask::from(button_config.mask.bits() | modifier_combo.bits()),
-                    )?;
                 }
             }
         }
@@ -7519,7 +7411,6 @@ impl Jwm {
         Ok(())
     }
 
-    // grabbuttons的SlotMap版本
     fn grabbuttons_by_key(
         &mut self,
         client_key: ClientKey,
@@ -8405,7 +8296,6 @@ impl Jwm {
         Ok(None)
     }
 
-    /// 状态栏管理的SlotMap版本（保持与现有系统兼容）
     fn manage_statusbar(
         &mut self,
         client_key: ClientKey,
@@ -8435,7 +8325,6 @@ impl Jwm {
         // 设置状态栏特有的窗口属性
         self.setup_statusbar_window_by_key(client_key)?;
 
-        // 为了保持与现有系统的兼容性，创建Rc<RefCell<WMClient>>
         let client_rc = if let Some(client) = self.clients.get(client_key) {
             Rc::new(RefCell::new(client.clone()))
         } else {
