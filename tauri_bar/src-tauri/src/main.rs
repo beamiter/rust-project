@@ -24,7 +24,7 @@ pub struct MonitorInfoSnapshot {
     pub monitor_height: i32,
     pub monitor_x: i32,
     pub monitor_y: i32,
-    pub tag_status_vec: [TagStatus; 9],
+    pub tag_status_vec: Vec<TagStatus>,
     pub client_name: String,
     pub ltsymbol: String,
 }
@@ -36,7 +36,7 @@ impl MonitorInfoSnapshot {
             monitor_height: monitor_info.monitor_height,
             monitor_x: monitor_info.monitor_x,
             monitor_y: monitor_info.monitor_y,
-            tag_status_vec: monitor_info.tag_status_vec,
+            tag_status_vec: monitor_info.tag_status_vec.to_vec(),
             client_name: monitor_info.get_client_name(),
             ltsymbol: monitor_info.get_ltsymbol(),
         }
@@ -56,7 +56,6 @@ struct AppState {
 
 /// 初始化日志系统 (与原版相同)
 fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
-    // ... (此处代码与你的原版 `initialize_logging` 完全相同)
     let now = Local::now();
     let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
 
@@ -229,36 +228,8 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
         // 4. 如果状态有变或达到更新间隔，则向前端发送事件
         if state_changed {
             if let Some(msg) = &last_message {
-                // 窗口位置调整逻辑
                 let window = app_handle.get_webview_window("main").unwrap();
                 let monitor_info = &msg.monitor_info;
-                let target_height = 40;
-                let before_size = window.inner_size().unwrap_or_default();
-                let before_pos = window.outer_position().unwrap_or_default();
-                if (before_size.width as i32 - monitor_info.monitor_width).abs() > 10
-                    || (before_size.height as i32 - target_height).abs() > 5
-                    || (before_pos.x - monitor_info.monitor_x).abs() > 5
-                {
-                    info!(
-                        "before_pos: {:?}, before_size: {:?}, {:?}",
-                        before_pos,
-                        before_size,
-                        window.is_resizable()
-                    );
-                    window
-                        .set_position(tauri::LogicalPosition::new(
-                            monitor_info.monitor_x,
-                            monitor_info.monitor_y,
-                        ))
-                        .unwrap();
-                    window
-                        .set_size(tauri::LogicalSize::new(
-                            monitor_info.monitor_width,
-                            target_height,
-                        ))
-                        .unwrap();
-                }
-
                 let mut monitor_info_snapshot = MonitorInfoSnapshot::new(&monitor_info);
                 let scale_factor = window.scale_factor().unwrap();
                 let new_symbol = monitor_info.get_ltsymbol()
@@ -270,7 +241,24 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
                     monitor_info_snapshot,
                     system_snapshot: last_snapshot.clone(),
                 };
-                app_handle.emit("state-update", state).unwrap();
+                info!("Validating state before emit:");
+                info!("- monitor_num: {}", state.monitor_info_snapshot.monitor_num);
+                info!(
+                    "- tag_status_vec length: {}",
+                    state.monitor_info_snapshot.tag_status_vec.len()
+                );
+                info!(
+                    "- client_name: '{}'",
+                    state.monitor_info_snapshot.client_name
+                );
+                match app_handle.emit("state-update", &state) {
+                    Ok(_) => {
+                        info!("✅ Successfully emitted state-update event");
+                    }
+                    Err(e) => {
+                        error!("❌ Failed to emit state-update event: {}", e);
+                    }
+                }
                 // last_update_time = Instant::now();
             }
         }
@@ -309,6 +297,10 @@ fn main() {
             thread::spawn(move || {
                 background_worker(app_handle, shared_path_clone);
             });
+
+            // let window = app.get_webview_window("main").unwrap();
+            // window.open_devtools();
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![send_tag_command, take_screenshot])

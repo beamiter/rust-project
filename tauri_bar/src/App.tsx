@@ -32,7 +32,7 @@ interface SystemSnapshot {
 }
 
 interface UiState {
-  monitor_info: MonitorInfoSnapshot;
+  monitor_info_snapshot: MonitorInfoSnapshot;
   system_snapshot: SystemSnapshot | null;
 }
 
@@ -210,14 +210,14 @@ function App() {
     return <div className="button-row">Loading...</div>; // 或者一个更精美的加载界面
   }
 
-  const { monitor_info, system_snapshot } = uiState;
+  const { monitor_info_snapshot, system_snapshot } = uiState;
 
   return (
     <div className="button-row">
       <div className="buttons-container">
-        <TagButtons tags={monitor_info.tag_status_vec} monitorNum={monitor_info.monitor_num} />
+        <TagButtons tags={monitor_info_snapshot.tag_status_vec} monitorNum={monitor_info_snapshot.monitor_num} />
         <span className="layout-symbol" title="当前布局">
-          {monitor_info.ltsymbol}
+          {monitor_info_snapshot.ltsymbol}
         </span>
       </div>
 
