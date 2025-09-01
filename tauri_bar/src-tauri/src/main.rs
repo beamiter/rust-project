@@ -3,12 +3,15 @@
 
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+use log::debug;
 use log::{error, info, warn};
 use shared_structures::TagStatus;
 use tauri::Emitter;
 use tauri::Manager;
 
-use std::{env, process::Command as StdCommand, sync::mpsc, thread, time::Duration};
+use std::{env, sync::Arc, time::Duration};
+use tokio::sync::Mutex;
+use tokio::time::sleep;
 
 // 引入我们的模块
 mod error;
@@ -28,6 +31,7 @@ pub struct MonitorInfoSnapshot {
     pub client_name: String,
     pub ltsymbol: String,
 }
+
 impl MonitorInfoSnapshot {
     pub fn new(monitor_info: &MonitorInfo) -> Self {
         Self {
@@ -42,6 +46,7 @@ impl MonitorInfoSnapshot {
         }
     }
 }
+
 // 定义一个整合所有UI状态的结构体，方便序列化为JSON
 #[derive(Clone, serde::Serialize)]
 struct UiState {
@@ -51,7 +56,102 @@ struct UiState {
 
 // 应用状态，用于在Tauri命令间共享
 struct AppState {
-    command_sender: mpsc::Sender<SharedCommand>,
+    shared_buffer: Option<Arc<SharedRingBuffer>>,
+}
+
+// 共享的应用状态，用于在不同任务之间共享数据
+#[derive(Clone)]
+struct SharedAppState {
+    app_handle: tauri::AppHandle,
+    last_monitor_message: Arc<Mutex<Option<SharedMessage>>>,
+    last_system_snapshot: Arc<Mutex<Option<SystemSnapshot>>>,
+}
+
+impl SharedAppState {
+    fn new(app_handle: tauri::AppHandle) -> Self {
+        Self {
+            app_handle,
+            last_monitor_message: Arc::new(Mutex::new(None)),
+            last_system_snapshot: Arc::new(Mutex::new(None)),
+        }
+    }
+
+    async fn update_monitor_message(&self, message: SharedMessage) {
+        let mut last_msg = self.last_monitor_message.lock().await;
+        *last_msg = Some(message);
+        drop(last_msg);
+
+        // 立即发送状态更新
+        self.emit_current_state().await;
+    }
+
+    async fn update_system_snapshot(&self, snapshot: SystemSnapshot) {
+        let mut last_snapshot = self.last_system_snapshot.lock().await;
+        *last_snapshot = Some(snapshot);
+        drop(last_snapshot);
+
+        // 立即发送状态更新
+        self.emit_current_state().await;
+    }
+
+    async fn emit_current_state(&self) {
+        let last_msg = self.last_monitor_message.lock().await;
+        let last_snapshot = self.last_system_snapshot.lock().await;
+
+        if let Some(msg) = last_msg.as_ref() {
+            match self.emit_state_update(msg, &*last_snapshot).await {
+                Ok(_) => {
+                    info!("✅ Successfully emitted state-update event");
+                }
+                Err(e) => {
+                    error!("❌ Failed to emit state-update event: {}", e);
+                }
+            }
+        }
+    }
+
+    async fn emit_state_update(
+        &self,
+        msg: &SharedMessage,
+        last_snapshot: &Option<SystemSnapshot>,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let window = self
+            .app_handle
+            .get_webview_window("main")
+            .ok_or("Main window not found")?;
+
+        let monitor_info = &msg.monitor_info;
+        let mut monitor_info_snapshot = MonitorInfoSnapshot::new(monitor_info);
+
+        let scale_factor = window.scale_factor()?;
+        let new_symbol = format!(
+            "{} s: {:.2}, m: {}",
+            monitor_info.get_ltsymbol(),
+            scale_factor,
+            monitor_info.monitor_num
+        );
+        monitor_info_snapshot.ltsymbol = new_symbol;
+
+        let state = UiState {
+            monitor_info_snapshot,
+            system_snapshot: last_snapshot.clone(),
+        };
+
+        info!("Emitting state update:");
+        info!("- monitor_num: {}", state.monitor_info_snapshot.monitor_num);
+        info!(
+            "- tag_status_vec length: {}",
+            state.monitor_info_snapshot.tag_status_vec.len()
+        );
+        info!(
+            "- client_name: '{}'",
+            state.monitor_info_snapshot.client_name
+        );
+        info!("- has_system_snapshot: {}", state.system_snapshot.is_some());
+
+        self.app_handle.emit("state-update", &state)?;
+        Ok(())
+    }
 }
 
 /// 初始化日志系统 (与原版相同)
@@ -107,14 +207,17 @@ fn send_tag_command(
         SharedCommand::toggle_tag(tag_bit, monitor_id)
     };
 
-    match state.command_sender.send(command) {
-        Ok(_) => {
-            let action = if is_view { "ViewTag" } else { "ToggleTag" };
-            info!("Sent {} command for tag {}", action, tag_index + 1);
-        }
-        Err(e) => {
-            let action = if is_view { "ViewTag" } else { "ToggleTag" };
-            error!("Failed to send {} command: {}", action, e);
+    if let Some(shared_buffer) = state.shared_buffer.as_ref() {
+        match shared_buffer.send_command(command) {
+            Ok(true) => {
+                info!("Sent command: {:?} by shared_buffer", command);
+            }
+            Ok(false) => {
+                warn!("Command buffer full, command dropped");
+            }
+            Err(e) => {
+                error!("Failed to send command: {}", e);
+            }
         }
     }
 }
@@ -123,30 +226,76 @@ fn send_tag_command(
 #[tauri::command]
 async fn take_screenshot() -> Result<(), String> {
     info!("Taking screenshot with flameshot");
-    StdCommand::new("flameshot")
+
+    tokio::process::Command::new("flameshot")
         .arg("gui")
         .spawn()
         .map_err(|e| format!("Failed to launch flameshot: {}", e))?;
+
     Ok(())
 }
 
-// 这是重构后的核心工作线程，整合了共享内存和系统监控的数据
-fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
-    info!("Starting background worker thread");
+/// 独立的系统监控任务，直接更新共享状态
+async fn system_monitor_task(shared_state: SharedAppState) {
+    info!("Starting system monitor task");
+    tokio::task::spawn_blocking(move || {
+        let mut monitor = SystemMonitor::new(30);
+        monitor.set_update_interval(Duration::from_millis(2000));
+        let rt = tokio::runtime::Handle::current();
+        loop {
+            monitor.update_if_needed();
+            if let Some(snapshot) = monitor.get_snapshot() {
+                // 直接更新共享状态，这会触发状态发送
+                match rt.block_on(shared_state.update_system_snapshot(snapshot.clone())) {
+                    _ => {}
+                }
+            }
+            std::thread::sleep(Duration::from_millis(500));
+        }
+    });
+}
 
-    // 设置命令通道
-    let (command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
-    app_handle.manage(AppState { command_sender });
+/// 共享内存监控任务，直接更新共享状态
+async fn shared_memory_monitor_task(
+    shared_state: SharedAppState,
+    shared_buffer: Arc<SharedRingBuffer>,
+) {
+    info!("Starting shared memory monitor task");
+    let mut last_timestamp: Option<u64> = None;
+    loop {
+        let buffer_clone = shared_buffer.clone();
+        match buffer_clone.wait_for_message(Some(Duration::from_secs(2))) {
+            Ok(true) => {
+                if let Ok(Some(msg)) = shared_buffer.try_read_latest_message() {
+                    if last_timestamp.map_or(true, |ts| ts != msg.timestamp) {
+                        info!("Received new message with timestamp: {}", msg.timestamp);
+                        last_timestamp = Some(msg.timestamp);
+                        shared_state.update_monitor_message(msg).await;
+                    }
+                }
+            }
+            Ok(false) => debug!("[notifier] Wait for message timed out."),
+            Err(e) => {
+                error!("[notifier] Wait for message failed: {}", e);
+                break;
+            }
+        }
+    }
+}
+
+/// 简化的后台工作协调器
+async fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
+    info!("Starting background worker coordinator");
 
     // 初始化共享内存
-    let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
+    let shared_buffer_opt: Option<Arc<SharedRingBuffer>> = if shared_path.is_empty() {
         warn!("No shared path provided, running without shared memory");
         None
     } else {
         match SharedRingBuffer::open(&shared_path, None) {
             Ok(shared_buffer) => {
                 info!("Successfully opened shared ring buffer: {}", shared_path);
-                Some(shared_buffer)
+                Some(Arc::new(shared_buffer))
             }
             Err(e) => {
                 warn!(
@@ -156,7 +305,7 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
                 match SharedRingBuffer::create(&shared_path, None, None) {
                     Ok(shared_buffer) => {
                         info!("Created new shared ring buffer: {}", shared_path);
-                        Some(shared_buffer)
+                        Some(Arc::new(shared_buffer))
                     }
                     Err(create_err) => {
                         error!("Failed to create shared ring buffer: {}", create_err);
@@ -167,109 +316,34 @@ fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
         }
     };
 
-    // 初始化系统监视器
-    let (sys_sender, sys_receiver) = mpsc::channel::<SystemSnapshot>();
-    thread::spawn(move || {
-        let mut monitor = SystemMonitor::new(30);
-        monitor.set_update_interval(Duration::from_millis(2000));
-        loop {
-            monitor.update_if_needed();
-            if let Some(snapshot) = monitor.get_snapshot() {
-                if sys_sender.send(snapshot.clone()).is_err() {
-                    break;
-                }
-            }
-            thread::sleep(Duration::from_millis(500));
-        }
+    // 设置应用状态用于命令处理
+    app_handle.manage(AppState {
+        shared_buffer: shared_buffer_opt.clone(),
     });
 
-    let mut last_message: Option<SharedMessage> = None;
-    let mut last_snapshot: Option<SystemSnapshot> = None;
-    // let mut last_update_time = Instant::now();
+    // 创建共享应用状态
+    let shared_state = SharedAppState::new(app_handle);
 
-    // 主循环
-    loop {
-        let mut state_changed = false;
+    // 启动系统监控任务
+    system_monitor_task(shared_state.clone()).await;
 
-        // 1. 处理来自前端的命令，并发送到共享内存
-        while let Ok(cmd) = command_receiver.try_recv() {
-            info!("Received command from frontend: {:?}", cmd);
-            if let Some(ref sb) = shared_buffer_opt {
-                if let Err(e) = sb.send_command(cmd) {
-                    error!("Failed to send command via shared buffer: {}", e);
-                }
-            }
+    // 如果有共享内存，启动共享内存监控任务
+    if let Some(shared_buffer) = shared_buffer_opt {
+        shared_memory_monitor_task(shared_state.clone(), shared_buffer).await;
+    } else {
+        // 如果没有共享内存，保持主任务运行
+        info!("No shared memory available, only system monitoring will be active");
+        loop {
+            sleep(Duration::from_secs(1)).await;
         }
-
-        // 2. 从共享内存读取最新的状态
-        if let Some(ref sb) = shared_buffer_opt {
-            match sb.try_read_latest_message() {
-                Ok(Some(msg)) => {
-                    if last_message
-                        .as_ref()
-                        .map_or(true, |m| m.timestamp != msg.timestamp)
-                    {
-                        info!("msg: {:?}", msg);
-                        last_message = Some(msg);
-                        state_changed = true;
-                    }
-                }
-                Ok(_) => (),
-                Err(e) => error!("Error reading from shared buffer: {}", e),
-            }
-        }
-
-        // 3. 从系统监视器线程接收最新的快照
-        if let Ok(snapshot) = sys_receiver.try_recv() {
-            last_snapshot = Some(snapshot);
-            state_changed = true;
-        }
-
-        // 4. 如果状态有变或达到更新间隔，则向前端发送事件
-        if state_changed {
-            if let Some(msg) = &last_message {
-                let window = app_handle.get_webview_window("main").unwrap();
-                let monitor_info = &msg.monitor_info;
-                let mut monitor_info_snapshot = MonitorInfoSnapshot::new(&monitor_info);
-                let scale_factor = window.scale_factor().unwrap();
-                let new_symbol = monitor_info.get_ltsymbol()
-                    + format!(" s: {:.2}", scale_factor).as_str()
-                    + format!(", m: {}", monitor_info.monitor_num).as_str();
-                monitor_info_snapshot.ltsymbol = new_symbol;
-                info!("monitor_info_snapshot: {:?}", monitor_info_snapshot);
-                let state = UiState {
-                    monitor_info_snapshot,
-                    system_snapshot: last_snapshot.clone(),
-                };
-                info!("Validating state before emit:");
-                info!("- monitor_num: {}", state.monitor_info_snapshot.monitor_num);
-                info!(
-                    "- tag_status_vec length: {}",
-                    state.monitor_info_snapshot.tag_status_vec.len()
-                );
-                info!(
-                    "- client_name: '{}'",
-                    state.monitor_info_snapshot.client_name
-                );
-                match app_handle.emit("state-update", &state) {
-                    Ok(_) => {
-                        info!("✅ Successfully emitted state-update event");
-                    }
-                    Err(e) => {
-                        error!("❌ Failed to emit state-update event: {}", e);
-                    }
-                }
-                // last_update_time = Instant::now();
-            }
-        }
-
-        thread::sleep(Duration::from_millis(20));
     }
 }
 
-fn main() {
+#[tokio::main]
+async fn main() {
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
+
     if let Err(e) = initialize_logging(&shared_path) {
         eprintln!("Failed to initialize logging: {}", e);
     }
@@ -278,28 +352,29 @@ fn main() {
     if instance_name.is_empty() {
         instance_name = "tauri_bar".to_string();
     }
+
     let mut context = tauri::generate_context!();
     context.config_mut().product_name = Some(instance_name.clone());
     info!("product_name: {:?}", context.config_mut().product_name);
+
     instance_name = format!("{}.{}", instance_name, instance_name);
     info!("instance_name: {}", instance_name);
     context.config_mut().identifier = instance_name;
 
     info!("=== Environment Debug Info ===");
     let shared_path_clone = shared_path.clone();
+
     tauri::Builder::new()
         .plugin(tauri_plugin_opener::init())
         .setup(move |app| {
-            // 在 setup hook 中启动我们的后台工作线程
             let app_handle = app.handle().clone();
             let app_id = app_handle.config().identifier.clone();
             info!("Application ID has been set to: {}", app_id);
-            thread::spawn(move || {
-                background_worker(app_handle, shared_path_clone);
-            });
 
-            // let window = app.get_webview_window("main").unwrap();
-            // window.open_devtools();
+            // 启动后台工作协调器
+            tokio::spawn(async move {
+                background_worker(app_handle, shared_path_clone).await;
+            });
 
             Ok(())
         })
