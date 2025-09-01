@@ -4,10 +4,6 @@ version = "0.1.0"
 edition = "2021"
 # build = "build.rs"
 
-# [[bin]]
-# name = "jwm_test"
-# path = "tests/integration_test.rs"
-
 [features]
 default = []
 egui_bar = []
@@ -22,6 +18,10 @@ cairo = []
 [[bin]]
 name = "jwm_test"
 path = "tests/integration_test.rs"
+
+[[bin]]
+name = "slotmap_test"
+path = "tests/slot_map_test.rs"
 
 [dependencies]
 battery = "0.7.8"
@@ -58,3 +58,7 @@ x11rb-protocol = "0.13.1"
 [build-dependencies]
 bindgen = "0.70.1"
 pkg-config = "0.3"
+
+[[bench]]
+name = "wm_benchmark"
+harness = false
