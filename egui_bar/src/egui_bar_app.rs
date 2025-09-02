@@ -746,80 +746,88 @@ impl EguiBarApp {
             .state
             .current_message
             .map_or(MonitorInfo::default(), |m| m.monitor_info);
+
         // Draw tag icons as buttons
         for (index, &tag_icon) in icons::TAG_ICONS.iter().enumerate() {
             let tag_color = colors::TAG_COLORS[index];
             let tag_bit = 1 << index;
-            // 构建基础文本样式
-            let mut rich_text = egui::RichText::new(tag_icon).monospace();
-            // 绘制各种装饰效果
+
+            // 构建基础文本样式（不设置背景色）
+            let rich_text = egui::RichText::new(tag_icon).monospace();
+
+            // 分析标签状态
             let mut is_urg = false;
             let mut is_filled = false;
             let mut is_selected = false;
             let mut tooltip = format!("标签 {}", index + 1);
+            let mut button_bg_color = Color32::TRANSPARENT;
+
             if let Some(tag_status) = monitor_info.tag_status_vec.get(index) {
                 if tag_status.is_urg {
                     tooltip.push_str(" (紧急)");
                     is_urg = true;
-                    rich_text = rich_text.background_color(Color32::RED);
+                    button_bg_color = Color32::RED;
                 } else if tag_status.is_filled {
                     is_filled = true;
                     tooltip.push_str(" (有窗口)");
-                    let bg_color = Color32::from_rgba_premultiplied(
+                    button_bg_color = Color32::from_rgba_premultiplied(
                         tag_color.r(),
                         tag_color.g(),
                         tag_color.b(),
                         255,
                     );
-                    rich_text = rich_text.background_color(bg_color);
                 } else if tag_status.is_selected {
                     tooltip.push_str(" (当前)");
                     is_selected = true;
-                    let bg_color = Color32::from_rgba_premultiplied(
+                    button_bg_color = Color32::from_rgba_premultiplied(
                         tag_color.r(),
                         tag_color.g(),
                         tag_color.b(),
                         210,
                     );
-                    rich_text = rich_text.background_color(bg_color);
                 } else if tag_status.is_occ {
-                    let bg_color = Color32::from_rgba_premultiplied(
+                    button_bg_color = Color32::from_rgba_premultiplied(
                         tag_color.r(),
                         tag_color.g(),
                         tag_color.b(),
                         180,
                     );
-                    rich_text = rich_text.background_color(bg_color);
-                } else {
-                    rich_text = rich_text.background_color(Color32::TRANSPARENT);
                 }
             }
 
-            let label_response = ui.add(Button::new(rich_text).min_size(Vec2::new(36., 24.)));
+            // 创建带有自定义背景色的按钮
+            let button = Button::new(rich_text)
+                .min_size(Vec2::new(36., 24.))
+                .fill(button_bg_color);
+
+            let label_response = ui.add(button);
             let rect = label_response.rect;
             self.state.ui_state.button_height = rect.height();
+
+            // 绘制边框装饰
             if is_urg {
                 ui.painter().rect_stroke(
                     rect,
                     1.0,
                     Stroke::new(bold_thickness, colors::VIOLET),
-                    StrokeKind::Outside,
+                    StrokeKind::Inside,
                 );
             } else if is_filled {
                 ui.painter().rect_stroke(
                     rect,
                     1.0,
                     Stroke::new(bold_thickness, tag_color),
-                    StrokeKind::Outside,
+                    StrokeKind::Inside,
                 );
             } else if is_selected {
                 ui.painter().rect_stroke(
                     rect,
                     1.0,
                     Stroke::new(light_thickness, tag_color),
-                    StrokeKind::Outside,
+                    StrokeKind::Inside,
                 );
             }
+
             // 处理交互事件
             self.handle_tag_interactions(&label_response, tag_bit, index);
 
@@ -829,7 +837,7 @@ impl EguiBarApp {
                     rect.expand(1.0),
                     1.0,
                     Stroke::new(bold_thickness, tag_color),
-                    StrokeKind::Outside,
+                    StrokeKind::Inside,
                 );
                 label_response.on_hover_text(tooltip);
             }
@@ -837,6 +845,7 @@ impl EguiBarApp {
 
         self.render_layout_section(ui, &monitor_info.get_ltsymbol());
     }
+
     // 提取交互处理逻辑到单独函数
     fn handle_tag_interactions(
         &self,
