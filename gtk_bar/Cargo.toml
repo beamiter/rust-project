@@ -14,7 +14,8 @@ sysinfo = "0.35.2"
 thiserror = "2.0.12"
 tokio = { version = "1.45.1", features = ["full"] }
 toml = "0.8.23"
-shared_structures = { path = "../shared_structures" }
+# shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
+shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
 chrono = "0.4.41"
 cairo-rs = "0.20.12"
 pango = "0.20.12"

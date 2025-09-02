@@ -12,8 +12,7 @@ use gtk4::{
 use log::{error, info, warn};
 use std::env;
 use std::rc::Rc;
-use std::sync::{Arc, Mutex, mpsc};
-use std::thread;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 mod audio_manager;
@@ -44,8 +43,8 @@ struct AppState {
     system_monitor: SystemMonitor,
 
     // Communication
-    command_sender: Option<mpsc::Sender<SharedCommand>>,
-    last_shared_message: Option<SharedMessage>,
+    current_message: Option<SharedMessage>,
+    shared_buffer_opt: Option<SharedRingBuffer>,
 
     pending_messages: Vec<SharedMessage>,
 }
@@ -66,7 +65,7 @@ struct TabBarApp {
 }
 
 impl TabBarApp {
-    fn new(app: &Application) -> Rc<Self> {
+    fn new(app: &Application, shared_path: String) -> Rc<Self> {
         // 加载 UI 布局
         let builder = Builder::from_string(include_str!("resources/main_layout.ui"));
 
@@ -108,6 +107,7 @@ impl TabBarApp {
             .expect("Failed to get cpu_drawing_area from builder");
 
         // 创建共享状态
+        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
         let state = Arc::new(Mutex::new(AppState {
             active_tab: 0,
             layout_symbol: " ? ".to_string(),
@@ -116,8 +116,8 @@ impl TabBarApp {
             tag_status_vec: Vec::new(),
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(10),
-            command_sender: None,
-            last_shared_message: None,
+            current_message: None,
+            shared_buffer_opt,
             pending_messages: Vec::new(),
         }));
 
@@ -224,26 +224,21 @@ impl TabBarApp {
     // 事件处理方法保持不变
     fn handle_tab_selected(app: Rc<Self>, index: usize) {
         info!("Tab selected: {}", index);
-
         if let Ok(mut state) = app.state.lock() {
             state.active_tab = index;
-
             // 发送命令到共享内存
-            if let Some(ref command_sender) = state.command_sender {
-                Self::send_tag_command(&state, command_sender, true);
-            }
+            Self::send_tag_command(&state, true);
         }
-
         app.update_tab_styles();
     }
 
     fn handle_layout_clicked(app: Rc<Self>, layout_index: u32) {
         if let Ok(state) = app.state.lock() {
-            if let Some(ref message) = state.last_shared_message {
+            if let Some(ref message) = state.current_message {
                 let monitor_id = message.monitor_info.monitor_num;
                 let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
-                if let Some(ref command_sender) = state.command_sender {
-                    if let Err(e) = command_sender.send(command) {
+                if let Some(ref shared_buffer) = state.shared_buffer_opt {
+                    if let Err(e) = shared_buffer.send_command(command) {
                         error!("Failed to send SetLayout command: {}", e);
                     } else {
                         info!("Sent SetLayout command: layout_index={}", layout_index);
@@ -364,12 +359,8 @@ impl TabBarApp {
         }
     }
 
-    fn send_tag_command(
-        state: &AppState,
-        command_sender: &mpsc::Sender<SharedCommand>,
-        is_view: bool,
-    ) {
-        if let Some(ref message) = state.last_shared_message {
+    fn send_tag_command(state: &AppState, is_view: bool) {
+        if let Some(ref message) = state.current_message {
             let monitor_id = message.monitor_info.monitor_num;
             let tag_bit = 1 << state.active_tab;
             let command = if is_view {
@@ -377,19 +368,17 @@ impl TabBarApp {
             } else {
                 SharedCommand::toggle_tag(tag_bit, monitor_id)
             };
-
-            match command_sender.send(command) {
-                Ok(_) => {
-                    let action = if is_view { "ViewTag" } else { "ToggleTag" };
-                    info!(
-                        "Sent {} command for tag {} in channel",
-                        action,
-                        state.active_tab + 1
-                    );
-                }
-                Err(e) => {
-                    let action = if is_view { "ViewTag" } else { "ToggleTag" };
-                    error!("Failed to send {} command: {}", action, e);
+            if let Some(shared_buffer) = &state.shared_buffer_opt {
+                match shared_buffer.send_command(command) {
+                    Ok(true) => {
+                        info!("Sent command: {:?} by shared_buffer", command);
+                    }
+                    Ok(false) => {
+                        warn!("Command buffer full, command dropped");
+                    }
+                    Err(e) => {
+                        error!("Failed to send command: {}", e);
+                    }
                 }
             }
         }
@@ -397,11 +386,6 @@ impl TabBarApp {
 
     fn process_pending_messages(&self) {
         let mut need_update = false;
-        let mut need_resize = false;
-        let mut new_x = 0;
-        let mut new_y = 0;
-        let mut new_width = 0;
-        let mut new_height = 0;
 
         if let Ok(mut state) = self.state.lock() {
             let messages = state.pending_messages.drain(..).collect::<Vec<_>>();
@@ -411,58 +395,11 @@ impl TabBarApp {
 
             for message in &messages {
                 info!("Processing shared message: {:?}", message);
-
-                // 获取当前窗口大小
-                let current_width = self.window.width();
-                let current_height = self.window.height();
-                let monitor_x = message.monitor_info.monitor_x;
-                let monitor_y = message.monitor_info.monitor_y;
-                let monitor_width = message.monitor_info.monitor_width;
-                let monitor_height = message.monitor_info.monitor_height;
-                let border_width = message.monitor_info.border_w;
-
-                info!(
-                    "Current window size: {}x{}, Monitor size: {}x{}",
-                    current_width, current_height, monitor_width, monitor_height
-                );
-
-                // 计算状态栏应该的大小（通常宽度等于监视器宽度，高度固定）
-                let expected_x = monitor_x + border_width;
-                let expected_y = monitor_y + border_width / 2;
-                let expected_width = monitor_width - 2 * border_width;
-                let expected_height = 40;
-
-                // 检查是否需要调整窗口大小（允许小的误差）
-                let width_diff = (current_width - expected_width).abs();
-                let height_diff = (current_height - expected_height).abs();
-
-                if width_diff > 2 || height_diff > 15 {
-                    need_resize = true;
-                    new_x = expected_x;
-                    new_y = expected_y;
-                    new_width = expected_width;
-                    new_height = expected_height;
-
-                    info!(
-                        "Window resize needed: current({}x{}) -> expected({}x{}), diff({},{})",
-                        current_width,
-                        current_height,
-                        expected_width,
-                        expected_height,
-                        width_diff,
-                        height_diff
-                    );
-                } else {
-                    info!("Window size is appropriate, no resize needed");
-                }
-
-                state.last_shared_message = Some(message.clone());
-                state.layout_symbol = message.monitor_info.ltsymbol.clone();
+                state.current_message = Some(message.clone());
+                state.layout_symbol = message.monitor_info.get_ltsymbol();
                 state.monitor_num = message.monitor_info.monitor_num as u8;
-
                 // 更新标签状态向量
-                state.tag_status_vec = message.monitor_info.tag_status_vec.clone();
-
+                state.tag_status_vec = message.monitor_info.tag_status_vec.to_vec();
                 // 更新活动标签
                 for (index, tag_status) in message.monitor_info.tag_status_vec.iter().enumerate() {
                     if tag_status.is_selected {
@@ -472,16 +409,12 @@ impl TabBarApp {
             }
         }
 
-        // 先调整窗口大小，再更新UI
-        if need_resize {
-            self.resize_window_to_monitor(new_x, new_y, new_width, new_height);
-        }
-
         if need_update {
             self.update_ui();
         }
     }
 
+    #[allow(dead_code)]
     fn resize_window_to_monitor(
         &self,
         expected_x: i32,
@@ -565,97 +498,51 @@ impl TabBarApp {
         ctx.fill().ok();
     }
 
-    fn with_channels(&self, command_sender: mpsc::Sender<SharedCommand>) {
-        if let Ok(mut state) = self.state.lock() {
-            state.command_sender = Some(command_sender);
-        }
-    }
-
     fn show(&self) {
         self.window.present();
     }
 }
 
-// shared_memory_worker 和其他函数保持不变...
-fn shared_memory_worker(
-    shared_path: String,
-    app_state: SharedAppState,
-    command_receiver: mpsc::Receiver<SharedCommand>,
-) {
-    info!("Starting shared memory worker thread");
-    let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
-        warn!("No shared path provided, running without shared memory");
-        None
-    } else {
-        match SharedRingBuffer::open(&shared_path) {
-            Ok(shared_buffer) => {
-                info!("Successfully opened shared ring buffer: {}", shared_path);
-                Some(shared_buffer)
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to open shared ring buffer: {}, attempting to create new one",
-                    e
-                );
-                match SharedRingBuffer::create(&shared_path, None, None) {
-                    Ok(shared_buffer) => {
-                        info!("Created new shared ring buffer: {}", shared_path);
-                        Some(shared_buffer)
-                    }
-                    Err(create_err) => {
-                        error!("Failed to create shared ring buffer: {}", create_err);
-                        None
-                    }
-                }
-            }
-        }
-    };
+async fn shared_memory_worker(shared_path: String, app_state: SharedAppState) {
+    info!("Starting shared memory worker task");
 
+    // 尝试打开或创建共享环形缓冲区
+    let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
     let mut prev_timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis();
 
-    loop {
-        // 处理发送到共享内存的命令
-        while let Ok(cmd) = command_receiver.try_recv() {
-            info!("Receive command: {:?} in channel", cmd);
-            if let Some(ref shared_buffer) = shared_buffer_opt {
-                match shared_buffer.send_command(cmd) {
-                    Ok(true) => {
-                        info!("Sent command: {:?} by shared_buffer", cmd);
-                    }
-                    Ok(false) => {
-                        warn!("Command buffer full, command dropped");
-                    }
-                    Err(e) => {
-                        error!("Failed to send command: {}", e);
-                    }
-                }
-            }
-        }
-
-        // 处理共享内存消息
-        if let Some(ref shared_buffer) = shared_buffer_opt {
-            match shared_buffer.try_read_latest_message::<SharedMessage>() {
-                Ok(Some(message)) => {
-                    if prev_timestamp != message.timestamp {
-                        prev_timestamp = message.timestamp;
-
-                        // 将消息添加到共享状态中
-                        if let Ok(mut state) = app_state.lock() {
-                            state.pending_messages.push(message);
+    if let Some(ref shared_buffer) = shared_buffer_opt {
+        loop {
+            match shared_buffer.wait_for_message(Some(std::time::Duration::from_secs(2))) {
+                Ok(true) => {
+                    if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
+                        if prev_timestamp != message.timestamp.into() {
+                            prev_timestamp = message.timestamp.into();
+                            if let Ok(mut state) = app_state.lock() {
+                                let need_update = state
+                                    .current_message
+                                    .as_ref()
+                                    .map(|m| m.timestamp != message.timestamp)
+                                    .unwrap_or(true);
+                                if need_update {
+                                    info!("current_message: {:?}", message);
+                                    state.pending_messages.push(message);
+                                }
+                            } else {
+                                warn!("Failed to lock shared state for message update");
+                            }
                         }
                     }
                 }
-                Ok(_) => {}
+                Ok(false) => log::debug!("[notifier] Wait for message timed out."),
                 Err(e) => {
-                    error!("Ring buffer read error: {}", e);
+                    error!("[notifier] Wait for message failed: {}", e);
+                    break;
                 }
             }
         }
-
-        thread::sleep(Duration::from_millis(10));
     }
 }
 
@@ -698,7 +585,8 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-fn main() -> glib::ExitCode {
+#[tokio::main]
+async fn main() -> glib::ExitCode {
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
@@ -723,21 +611,15 @@ fn main() -> glib::ExitCode {
 
     let shared_path_clone = shared_path.clone();
     app.connect_activate(move |app| {
-        // 创建通信通道
-        let (_message_sender, _message_receiver) = mpsc::channel::<SharedMessage>();
-        let (command_sender, command_receiver) = mpsc::channel::<SharedCommand>();
-
         // 创建应用实例
-        let app_instance = TabBarApp::new(app);
+        let shared_path_for_app = shared_path_clone.clone();
+        let app_instance = TabBarApp::new(app, shared_path_for_app);
 
-        // 设置命令发送器
-        app_instance.with_channels(command_sender);
-
-        // 启动共享内存工作线程
+        // 启动异步任务
         let app_state = app_instance.state.clone();
         let shared_path_for_thread = shared_path_clone.clone();
-        thread::spawn(move || {
-            shared_memory_worker(shared_path_for_thread, app_state, command_receiver);
+        tokio::spawn(async move {
+            shared_memory_worker(shared_path_for_thread, app_state).await;
         });
 
         // 显示窗口
