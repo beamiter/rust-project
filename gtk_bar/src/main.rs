@@ -154,18 +154,10 @@ impl TabBarApp {
 
     fn setup_event_handlers(app: Rc<Self>) {
         // 设置定时器进行定期更新
-        timeout_add_local(Duration::from_millis(50), {
+        timeout_add_local(Duration::from_millis(500), {
             let app = app.clone();
             move || {
                 Self::handle_tick(app.clone());
-                glib::ControlFlow::Continue
-            }
-        });
-
-        timeout_add_local(Duration::from_secs(1), {
-            let app = app.clone();
-            move || {
-                Self::handle_update_time(app.clone());
                 glib::ControlFlow::Continue
             }
         });
@@ -248,10 +240,6 @@ impl TabBarApp {
         }
     }
 
-    fn handle_update_time(app: Rc<Self>) {
-        app.update_time_display();
-    }
-
     fn handle_toggle_seconds(app: Rc<Self>) {
         if let Ok(mut state) = app.state.lock() {
             state.show_seconds = !state.show_seconds;
@@ -272,14 +260,21 @@ impl TabBarApp {
         if let Ok(mut state) = app.state.lock() {
             state.system_monitor.update_if_needed();
             state.audio_manager.update_if_needed();
-        }
 
-        // 更新UI
-        app.update_memory_progress();
-        app.cpu_drawing_area.queue_draw();
+            if let Some(snapshot) = state.system_monitor.get_snapshot() {
+                let total = snapshot.memory_available + snapshot.memory_used;
+                let usage_ratio = snapshot.memory_used as f64 / total as f64;
+
+                // 更新UI
+                app.memory_progress.set_fraction(usage_ratio);
+                app.cpu_drawing_area.queue_draw();
+            }
+        }
 
         // 处理待处理的消息
         app.process_pending_messages();
+
+        app.update_time_display();
     }
 
     // UI 更新方法保持不变
@@ -337,16 +332,6 @@ impl TabBarApp {
         };
         let formatted_time = now.format(format_str).to_string();
         self.time_label.set_label(&formatted_time);
-    }
-
-    fn update_memory_progress(&self) {
-        if let Ok(state) = self.state.lock() {
-            if let Some(snapshot) = state.system_monitor.get_snapshot() {
-                let total = snapshot.memory_available + snapshot.memory_used;
-                let usage_ratio = snapshot.memory_used as f64 / total as f64;
-                self.memory_progress.set_fraction(usage_ratio);
-            }
-        }
     }
 
     // 其他方法保持不变...
