@@ -10,7 +10,6 @@ use tauri::Emitter;
 use tauri::Manager;
 
 use std::{env, sync::Arc, time::Duration};
-use tokio::sync::Mutex;
 use tokio::time::sleep;
 
 // 引入我们的模块
@@ -63,64 +62,24 @@ struct AppState {
 #[derive(Clone)]
 struct SharedAppState {
     app_handle: tauri::AppHandle,
-    last_monitor_message: Arc<Mutex<Option<SharedMessage>>>,
-    last_system_snapshot: Arc<Mutex<Option<SystemSnapshot>>>,
 }
 
 impl SharedAppState {
     fn new(app_handle: tauri::AppHandle) -> Self {
-        Self {
-            app_handle,
-            last_monitor_message: Arc::new(Mutex::new(None)),
-            last_system_snapshot: Arc::new(Mutex::new(None)),
-        }
+        Self { app_handle }
     }
 
-    async fn update_monitor_message(&self, message: SharedMessage) {
-        let mut last_msg = self.last_monitor_message.lock().await;
-        *last_msg = Some(message);
-        drop(last_msg);
-
-        // 立即发送状态更新
-        self.emit_current_state().await;
-    }
-
-    async fn update_system_snapshot(&self, snapshot: SystemSnapshot) {
-        let mut last_snapshot = self.last_system_snapshot.lock().await;
-        *last_snapshot = Some(snapshot);
-        drop(last_snapshot);
-
-        // 立即发送状态更新
-        self.emit_current_state().await;
-    }
-
-    async fn emit_current_state(&self) {
-        let last_msg = self.last_monitor_message.lock().await;
-        let last_snapshot = self.last_system_snapshot.lock().await;
-
-        if let Some(msg) = last_msg.as_ref() {
-            match self.emit_state_update(msg, &*last_snapshot).await {
-                Ok(_) => {
-                    info!("✅ Successfully emitted state-update event");
-                }
-                Err(e) => {
-                    error!("❌ Failed to emit state-update event: {}", e);
-                }
-            }
-        }
-    }
-
-    async fn emit_state_update(
+    // 直接发送监视器信息更新
+    async fn emit_monitor_update(
         &self,
-        msg: &SharedMessage,
-        last_snapshot: &Option<SystemSnapshot>,
+        message: &SharedMessage,
     ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let window = self
             .app_handle
             .get_webview_window("main")
             .ok_or("Main window not found")?;
 
-        let monitor_info = &msg.monitor_info;
+        let monitor_info = &message.monitor_info;
         let mut monitor_info_snapshot = MonitorInfoSnapshot::new(monitor_info);
 
         let scale_factor = window.scale_factor()?;
@@ -132,24 +91,26 @@ impl SharedAppState {
         );
         monitor_info_snapshot.ltsymbol = new_symbol;
 
-        let state = UiState {
-            monitor_info_snapshot,
-            system_snapshot: last_snapshot.clone(),
-        };
-
-        info!("Emitting state update:");
-        info!("- monitor_num: {}", state.monitor_info_snapshot.monitor_num);
+        info!("Emitting monitor-update:");
+        info!("- monitor_num: {}", monitor_info_snapshot.monitor_num);
         info!(
             "- tag_status_vec length: {}",
-            state.monitor_info_snapshot.tag_status_vec.len()
+            monitor_info_snapshot.tag_status_vec.len()
         );
-        info!(
-            "- client_name: '{}'",
-            state.monitor_info_snapshot.client_name
-        );
-        info!("- has_system_snapshot: {}", state.system_snapshot.is_some());
+        info!("- client_name: '{}'", monitor_info_snapshot.client_name);
 
-        self.app_handle.emit("state-update", &state)?;
+        self.app_handle
+            .emit("monitor-update", &monitor_info_snapshot)?;
+        Ok(())
+    }
+
+    // 直接发送系统信息更新
+    async fn emit_system_update(
+        &self,
+        snapshot: &SystemSnapshot,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Emitting system-update");
+        self.app_handle.emit("system-update", snapshot)?;
         Ok(())
     }
 }
@@ -235,7 +196,6 @@ async fn take_screenshot() -> Result<(), String> {
     Ok(())
 }
 
-/// 独立的系统监控任务，直接更新共享状态
 async fn system_monitor_task(shared_state: SharedAppState) {
     info!("Starting system monitor task");
     tokio::task::spawn_blocking(move || {
@@ -245,9 +205,9 @@ async fn system_monitor_task(shared_state: SharedAppState) {
         loop {
             monitor.update_if_needed();
             if let Some(snapshot) = monitor.get_snapshot() {
-                // 直接更新共享状态，这会触发状态发送
-                match rt.block_on(shared_state.update_system_snapshot(snapshot.clone())) {
-                    _ => {}
+                // 直接发送系统更新事件
+                if let Err(e) = rt.block_on(shared_state.emit_system_update(&snapshot)) {
+                    error!("Failed to emit system update: {}", e);
                 }
             }
             std::thread::sleep(Duration::from_millis(500));
@@ -255,7 +215,6 @@ async fn system_monitor_task(shared_state: SharedAppState) {
     });
 }
 
-/// 共享内存监控任务，直接更新共享状态
 async fn shared_memory_monitor_task(
     shared_state: SharedAppState,
     shared_buffer: Arc<SharedRingBuffer>,
@@ -270,7 +229,10 @@ async fn shared_memory_monitor_task(
                     if last_timestamp.map_or(true, |ts| ts != msg.timestamp) {
                         info!("Received new message with timestamp: {}", msg.timestamp);
                         last_timestamp = Some(msg.timestamp);
-                        shared_state.update_monitor_message(msg).await;
+                        // 直接发送监视器更新事件
+                        if let Err(e) = shared_state.emit_monitor_update(&msg).await {
+                            error!("Failed to emit monitor update: {}", e);
+                        }
                     }
                 }
             }

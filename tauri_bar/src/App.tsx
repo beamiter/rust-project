@@ -1,7 +1,7 @@
-import { useState, useEffect} from 'react';
-import { listen } from '@tauri-apps/api/event';
-import { invoke } from '@tauri-apps/api/core';
-import './App.css'; // 导入我们的样式
+import { useEffect, useState } from "react";
+import { listen } from "@tauri-apps/api/event";
+import { invoke } from "@tauri-apps/api/core";
+import "./App.css"; // 导入我们的样式
 
 // --- 类型定义，与后端 Rust 结构体对应 ---
 interface TagStatus {
@@ -32,7 +32,7 @@ interface SystemSnapshot {
 }
 
 interface UiState {
-  monitor_info_snapshot: MonitorInfoSnapshot;
+  monitor_info_snapshot: MonitorInfoSnapshot | null;
   system_snapshot: SystemSnapshot | null;
 }
 
@@ -48,7 +48,7 @@ const getButtonClass = (tagStatus: TagStatus): string => {
 };
 
 const formatBytes = (bytes: number): string => {
-  if (bytes === 0) return '0B';
+  if (bytes === 0) return "0B";
   const UNITS = ["B", "KB", "MB", "GB", "TB"];
   const i = Math.floor(Math.log(bytes) / Math.log(1024));
   const size = parseFloat((bytes / Math.pow(1024, i)).toFixed(i === 0 ? 0 : 1));
@@ -57,7 +57,9 @@ const formatBytes = (bytes: number): string => {
 
 // --- 子组件 ---
 
-const TagButtons = ({ tags, monitorNum }: { tags: TagStatus[], monitorNum: number }) => {
+const TagButtons = (
+  { tags, monitorNum }: { tags: TagStatus[]; monitorNum: number },
+) => {
   const [pressedButton, setPressedButton] = useState<number | null>(null);
 
   const handlePress = (index: number) => {
@@ -66,13 +68,23 @@ const TagButtons = ({ tags, monitorNum }: { tags: TagStatus[], monitorNum: numbe
 
   const handleRelease = (index: number) => {
     setPressedButton(null);
-    invoke('send_tag_command', { tagIndex: index, isView: true, monitorId: monitorNum });
+    invoke("send_tag_command", {
+      tagIndex: index,
+      isView: true,
+      monitorId: monitorNum,
+    });
   };
 
   return (
     <>
       {BUTTONS.map((emoji, i) => {
-        const tagStatus = tags[i] || { is_selected: false, is_urg: false, is_filled: false, is_occ: false };
+        const tagStatus = tags[i] ||
+          {
+            is_selected: false,
+            is_urg: false,
+            is_filled: false,
+            is_occ: false,
+          };
         const baseClass = getButtonClass(tagStatus);
         const isPressed = pressedButton === i;
         const buttonClass = isPressed ? `${baseClass} pressed` : baseClass;
@@ -93,7 +105,9 @@ const TagButtons = ({ tags, monitorNum }: { tags: TagStatus[], monitorNum: numbe
   );
 };
 
-const SystemInfoDisplay = ({ snapshot }: { snapshot: SystemSnapshot | null }) => {
+const SystemInfoDisplay = (
+  { snapshot }: { snapshot: SystemSnapshot | null },
+) => {
   if (!snapshot) {
     // 渲染占位符
     return (
@@ -103,9 +117,12 @@ const SystemInfoDisplay = ({ snapshot }: { snapshot: SystemSnapshot | null }) =>
     );
   }
 
-  const getCpuColor = (avg: number) => avg > 80 ? '#dc3545' : avg > 60 ? '#ffc107' : '#28a745';
-  const getMemColor = (perc: number) => perc > 85 ? '#dc3545' : perc > 70 ? '#ffc107' : '#28a745';
-  const getBatteryColor = (perc: number) => perc > 50 ? '#28a745' : perc > 20 ? '#ffc107' : '#dc3545';
+  const getCpuColor = (avg: number) =>
+    avg > 80 ? "#dc3545" : avg > 60 ? "#ffc107" : "#28a745";
+  const getMemColor = (perc: number) =>
+    perc > 85 ? "#dc3545" : perc > 70 ? "#ffc107" : "#28a745";
+  const getBatteryColor = (perc: number) =>
+    perc > 50 ? "#28a745" : perc > 20 ? "#ffc107" : "#dc3545";
   const getBatteryIcon = (perc: number, isCharging: boolean) => {
     if (isCharging) return "🔌";
     if (perc > 75) return "🔋";
@@ -116,19 +133,40 @@ const SystemInfoDisplay = ({ snapshot }: { snapshot: SystemSnapshot | null }) =>
     <div className="system-info-container">
       <div className="system-metric" title="CPU 平均使用率">
         <span className="metric-icon">💻</span>
-        <span className="metric-value" style={{ color: getCpuColor(snapshot.cpu_average) }}>
+        <span
+          className="metric-value"
+          style={{ color: getCpuColor(snapshot.cpu_average) }}
+        >
           {snapshot.cpu_average.toFixed(1)}%
         </span>
       </div>
-      <div className="system-metric" title={`内存使用: ${formatBytes(snapshot.memory_used)} / ${formatBytes(snapshot.memory_total)}`}>
+      <div
+        className="system-metric"
+        title={`内存使用: ${formatBytes(snapshot.memory_used)} / ${
+          formatBytes(snapshot.memory_total)
+        }`}
+      >
         <span className="metric-icon">🧠</span>
-        <span className="metric-value" style={{ color: getMemColor(snapshot.memory_usage_percent) }}>
+        <span
+          className="metric-value"
+          style={{ color: getMemColor(snapshot.memory_usage_percent) }}
+        >
           {snapshot.memory_usage_percent.toFixed(1)}%
         </span>
       </div>
-      <div className="system-metric" title={snapshot.is_charging ? `电池充电中: ${snapshot.battery_percent.toFixed(1)}%` : `电池电量: ${snapshot.battery_percent.toFixed(1)}%`}>
-        <span className="metric-icon">{getBatteryIcon(snapshot.battery_percent, snapshot.is_charging)}</span>
-        <span className="metric-value" style={{ color: getBatteryColor(snapshot.battery_percent) }}>
+      <div
+        className="system-metric"
+        title={snapshot.is_charging
+          ? `电池充电中: ${snapshot.battery_percent.toFixed(1)}%`
+          : `电池电量: ${snapshot.battery_percent.toFixed(1)}%`}
+      >
+        <span className="metric-icon">
+          {getBatteryIcon(snapshot.battery_percent, snapshot.is_charging)}
+        </span>
+        <span
+          className="metric-value"
+          style={{ color: getBatteryColor(snapshot.battery_percent) }}
+        >
           {snapshot.battery_percent.toFixed(0)}%
         </span>
       </div>
@@ -143,7 +181,7 @@ const ScreenshotButton = () => {
     if (isTaking) return;
     setIsTaking(true);
     try {
-      await invoke('take_screenshot');
+      await invoke("take_screenshot");
     } catch (e) {
       console.error(e);
     } finally {
@@ -152,15 +190,21 @@ const ScreenshotButton = () => {
     }
   };
 
-  const buttonClass = isTaking ? 'screenshot-button taking' : 'screenshot-button';
+  const buttonClass = isTaking
+    ? "screenshot-button taking"
+    : "screenshot-button";
 
   return (
-    <button className={buttonClass} onClick={handleClick} title="截图 (Flameshot)" disabled={isTaking}>
-      <span className="screenshot-icon">{isTaking ? '⏳' : '📷'}</span>
+    <button
+      className={buttonClass}
+      onClick={handleClick}
+      title="截图 (Flameshot)"
+      disabled={isTaking}
+    >
+      <span className="screenshot-icon">{isTaking ? "⏳" : "📷"}</span>
     </button>
   );
 };
-
 
 const TimeDisplay = () => {
   const [showSeconds, setShowSeconds] = useState(true);
@@ -174,55 +218,82 @@ const TimeDisplay = () => {
   }, [showSeconds]);
 
   const format = (d: Date) => {
-    const pad = (n: number) => n.toString().padStart(2, '0');
-    const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}${showSeconds ? `:${pad(d.getSeconds())}` : ''}`;
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${timeStr}`;
-  }
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}${
+      showSeconds ? `:${pad(d.getSeconds())}` : ""
+    }`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${
+      pad(d.getDate())
+    } ${timeStr}`;
+  };
 
   return (
-    <div className="time-container" onClick={() => setShowSeconds(!showSeconds)}>
+    <div
+      className="time-container"
+      onClick={() => setShowSeconds(!showSeconds)}
+    >
       <div className="time-display">{format(time)}</div>
     </div>
   );
 };
 
-
 // --- 主 App 组件 ---
-
 function App() {
-  const [uiState, setUiState] = useState<UiState | null>(null);
+  const [appState, setAppState] = useState<UiState>({
+    monitor_info_snapshot: null,
+    system_snapshot: null,
+  });
 
   useEffect(() => {
-    // 启动时立即打印日志，确认前端已加载
     console.log("Tauri React frontend has loaded.");
 
-    const unlisten = listen<UiState>('state-update', (event) => {
-      setUiState(event.payload);
+    // 监听监视器信息更新
+    const unlistenMonitor = listen<MonitorInfoSnapshot>(
+      "monitor-update",
+      (event) => {
+        console.log("Received monitor update:", event.payload);
+        setAppState((prev) => ({
+          ...prev,
+          monitor_info_snapshot: event.payload,
+        }));
+      },
+    );
+
+    // 监听系统信息更新
+    const unlistenSystem = listen<SystemSnapshot>("system-update", (event) => {
+      console.log("Received system update:", event.payload);
+      setAppState((prev) => ({
+        ...prev,
+        system_snapshot: event.payload,
+      }));
     });
 
     // 组件卸载时清理监听器
     return () => {
-      unlisten.then(f => f());
+      unlistenMonitor.then((f) => f());
+      unlistenSystem.then((f) => f());
     };
   }, []);
 
-  if (!uiState) {
-    return <div className="button-row">Loading...</div>; // 或者一个更精美的加载界面
+  // 如果监视器信息还没加载，显示加载状态
+  if (!appState.monitor_info_snapshot) {
+    return <div className="button-row">Loading...</div>;
   }
-
-  const { monitor_info_snapshot, system_snapshot } = uiState;
 
   return (
     <div className="button-row">
       <div className="buttons-container">
-        <TagButtons tags={monitor_info_snapshot.tag_status_vec} monitorNum={monitor_info_snapshot.monitor_num} />
+        <TagButtons
+          tags={appState.monitor_info_snapshot.tag_status_vec}
+          monitorNum={appState.monitor_info_snapshot.monitor_num}
+        />
         <span className="layout-symbol" title="当前布局">
-          {monitor_info_snapshot.ltsymbol}
+          {appState.monitor_info_snapshot.ltsymbol}
         </span>
       </div>
 
       <div className="right-info-container">
-        <SystemInfoDisplay snapshot={system_snapshot} />
+        <SystemInfoDisplay snapshot={appState.system_snapshot} />
         <ScreenshotButton />
         <TimeDisplay />
       </div>
