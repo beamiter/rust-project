@@ -46,13 +46,6 @@ impl MonitorInfoSnapshot {
     }
 }
 
-// 定义一个整合所有UI状态的结构体，方便序列化为JSON
-#[derive(Clone, serde::Serialize)]
-struct UiState {
-    monitor_info_snapshot: MonitorInfoSnapshot,
-    system_snapshot: Option<SystemSnapshot>,
-}
-
 // 应用状态，用于在Tauri命令间共享
 struct AppState {
     shared_buffer: Option<Arc<SharedRingBuffer>>,
