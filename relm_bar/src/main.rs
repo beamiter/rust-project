@@ -409,6 +409,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppInput::SystemUpdate => {
+                // info!("SystemUpdate");
                 self.system_monitor.update_if_needed();
 
                 if let Some(snapshot) = self.system_monitor.get_snapshot() {
@@ -419,6 +420,7 @@ impl SimpleComponent for AppModel {
             }
 
             AppInput::UpdateTime => {
+                // info!("UpdateTime");
                 self.update_time_display();
             }
         }
@@ -581,7 +583,7 @@ fn spawn_background_tasks(sender: ComponentSender<AppModel>, shared_path: String
     // 系统监控任务
     let sender_clone = sender.clone();
     relm4::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_millis(1000));
+        let mut interval = tokio::time::interval(Duration::from_secs(2));
         loop {
             interval.tick().await;
             sender_clone.input(AppInput::SystemUpdate);
@@ -600,13 +602,13 @@ fn spawn_background_tasks(sender: ComponentSender<AppModel>, shared_path: String
 
     // 共享内存任务
     let sender_clone = sender.clone();
-    relm4::spawn(async move {
-        shared_memory_worker(shared_path, sender_clone).await;
+    std::thread::spawn(move || {
+        shared_memory_worker(shared_path, sender_clone);
     });
 }
 
 // 共享内存工作器
-async fn shared_memory_worker(shared_path: String, sender: ComponentSender<AppModel>) {
+fn shared_memory_worker(shared_path: String, sender: ComponentSender<AppModel>) {
     info!("Starting shared memory worker");
     let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
         warn!("No shared path provided, running without shared memory");
@@ -703,7 +705,7 @@ fn initialize_logging(shared_path: &str) -> Result<(), Box<dyn std::error::Error
         .format(flexi_logger::colored_opt_format)
         .log_to_file(
             FileSpec::default()
-                .directory("/tmp")
+                .directory("/var/tmp/jwm")
                 .basename(log_filename)
                 .suffix("log"),
         )

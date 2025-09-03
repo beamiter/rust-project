@@ -45,7 +45,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .format(flexi_logger::colored_opt_format)
         .log_to_file(
             FileSpec::default()
-                .directory("/tmp/jwm")
+                .directory("/var/tmp/jwm")
                 .basename(format!("{log_filename}"))
                 .suffix("log"),
         )
