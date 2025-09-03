@@ -499,6 +499,7 @@ impl AppModel {
         }
     }
 
+    #[allow(dead_code)]
     fn resize_window_to_monitor(
         &self,
         window: Window,
@@ -530,51 +531,14 @@ impl AppModel {
 
     fn process_shared_message(&mut self, message: SharedMessage) {
         self.last_shared_message = Some(message.clone());
-        self.layout_symbol = message.monitor_info.ltsymbol.clone();
+        self.layout_symbol = message.monitor_info.get_ltsymbol();
         self.monitor_num = message.monitor_info.monitor_num as u8;
-        self.set_tag_status_vec(message.monitor_info.tag_status_vec.clone());
+        self.set_tag_status_vec(message.monitor_info.tag_status_vec.to_vec());
         let app = relm4::main_application();
         if let Some(window) = app.active_window() {
-            let mut need_resize = false;
-            let mut new_x = 0;
-            let mut new_y = 0;
-            let mut new_width = 0;
-            let mut new_height = 0;
-            let current_width = window.width();
-            let current_height = window.height();
-            let monitor_x = message.monitor_info.monitor_x;
-            let monitor_y = message.monitor_info.monitor_y;
-            let monitor_width = message.monitor_info.monitor_width;
-            let border_width = message.monitor_info.border_w;
-            let expected_x = monitor_x + border_width;
-            let expected_y = monitor_y + border_width / 2;
-            let expected_width = monitor_width - 2 * border_width;
-            let expected_height = 40;
-            let width_diff = (current_width - expected_width).abs();
-            let height_diff = (current_height - expected_height).abs();
-            if width_diff > 2 || height_diff > 15 {
-                need_resize = true;
-                new_x = expected_x;
-                new_y = expected_y;
-                new_width = expected_width;
-                new_height = expected_height;
-                info!(
-                    "Window resize needed: current({}x{}) -> expected({}x{}), diff({},{})",
-                    current_width,
-                    current_height,
-                    expected_width,
-                    expected_height,
-                    width_diff,
-                    height_diff
-                );
-            } else {
-                // info!("Window size is appropriate, no resize needed");
-            }
-            if need_resize {
-                self.resize_window_to_monitor(window, new_x, new_y, new_width, new_height);
-            }
+            let _current_width = window.width();
+            let _current_height = window.height();
         }
-
         // 更新活动标签
         for (index, tag_status) in message.monitor_info.tag_status_vec.iter().enumerate() {
             if tag_status.is_selected {
@@ -658,7 +622,7 @@ async fn shared_memory_worker(
         warn!("No shared path provided, running without shared memory");
         None
     } else {
-        match SharedRingBuffer::open(&shared_path) {
+        match SharedRingBuffer::open(&shared_path, None) {
             Ok(shared_buffer) => {
                 info!("Successfully opened shared ring buffer: {}", shared_path);
                 Some(shared_buffer)
@@ -691,10 +655,10 @@ async fn shared_memory_worker(
         tokio::select! {
             _ = interval.tick() => {
                 if let Some(ref shared_buffer) = shared_buffer_opt {
-                    match shared_buffer.try_read_latest_message::<SharedMessage>() {
+                    match shared_buffer.try_read_latest_message() {
                         Ok(Some(message)) => {
-                            if prev_timestamp != message.timestamp {
-                                prev_timestamp = message.timestamp;
+                            if prev_timestamp != message.timestamp.into() {
+                                prev_timestamp = message.timestamp.into();
                                 sender.input(AppInput::SharedMessageReceived(message));
                             }
                         }
