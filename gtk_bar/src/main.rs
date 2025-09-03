@@ -560,7 +560,6 @@ async fn shared_memory_worker(
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis();
-
     if let Some(ref shared_buffer) = shared_buffer_opt {
         loop {
             match shared_buffer.wait_for_message(Some(std::time::Duration::from_secs(2))) {

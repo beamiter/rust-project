@@ -636,27 +636,25 @@ async fn shared_memory_worker(shared_path: String, sender: ComponentSender<AppMo
         }
     };
 
-    let mut interval = tokio::time::interval(Duration::from_millis(10));
     let mut prev_timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    loop {
-        tokio::select! {
-            _ = interval.tick() => {
-                if let Some(ref shared_buffer) = shared_buffer_opt {
-                    match shared_buffer.try_read_latest_message() {
-                        Ok(Some(message)) => {
-                            if prev_timestamp != message.timestamp.into() {
-                                prev_timestamp = message.timestamp.into();
-                                sender.input(AppInput::SharedMessageReceived(message));
-                            }
-                        }
-                        Ok(_) => {}
-                        Err(e) => {
-                            error!("Ring buffer read error: {}", e);
+    if let Some(ref shared_buffer) = shared_buffer_opt {
+        loop {
+            match shared_buffer.wait_for_message(Some(std::time::Duration::from_secs(2))) {
+                Ok(true) => {
+                    if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
+                        if prev_timestamp != message.timestamp.into() {
+                            prev_timestamp = message.timestamp.into();
+                            sender.input(AppInput::SharedMessageReceived(message));
                         }
                     }
+                }
+                Ok(false) => log::debug!("[notifier] Wait for message timed out."),
+                Err(e) => {
+                    error!("[notifier] Wait for message failed: {}", e);
+                    break;
                 }
             }
         }
