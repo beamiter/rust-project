@@ -39,7 +39,7 @@ use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus}
 pub const WITHDRAWN_STATE: u8 = 0;
 pub const NORMAL_STATE: u8 = 1;
 pub const ICONIC_STATE: u8 = 2;
-pub const CLIENT_STORAGE_PATH: &str = "/tmp/jwm/client_storage.bin";
+pub const CLIENT_STORAGE_PATH: &str = "/var/tmp/jwm/client_storage.bin";
 
 pub type ClientKey = DefaultKey;
 pub type MonitorKey = DefaultKey;
@@ -63,8 +63,8 @@ pub struct WMClientRestore {
 
 impl WMClientRestore {
     /// 从 WMClient 创建可序列化的版本
-    pub fn from_client(client: &WMClient) -> Self {
-        // let monitor_num = client.mon.as_ref().map_or(0, |v| v.borrow().num as u32);
+    pub fn from_client(jwm: &Jwm, client: &WMClient) -> Self {
+        let monitor_num = jwm.monitors.get(client.mon.unwrap()).map_or(0, |v| v.num) as u32;
         Self {
             name: client.name.clone(),
             class: client.class.clone(),
@@ -73,19 +73,7 @@ impl WMClientRestore {
             geometry: client.geometry.clone(),
             size_hints: client.size_hints.clone(),
             state: client.state.clone(),
-            monitor_num: 0,
-        }
-    }
-    pub fn to_client(&self) -> WMClient {
-        WMClient {
-            name: self.name.clone(),
-            class: self.class.clone(),
-            instance: self.instance.clone(),
-            win: self.win,
-            geometry: self.geometry.clone(),
-            size_hints: self.size_hints.clone(),
-            state: self.state.clone(),
-            mon: None,
+            monitor_num,
         }
     }
 }
@@ -1888,7 +1876,7 @@ impl Jwm {
             .filter_map(|&mon_key| self.monitor_stack.get(mon_key))
             .flat_map(|stack_clients| stack_clients.iter())
             .filter_map(|&client_key| self.clients.get(client_key))
-            .map(|client| WMClientRestore::from_client(client))
+            .map(|client| WMClientRestore::from_client(self, client))
             .collect();
         let client_store = WMClientCollection::from_clients(client_restores);
         client_store.save_to_file(CLIENT_STORAGE_PATH)?;
