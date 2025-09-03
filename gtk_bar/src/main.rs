@@ -217,25 +217,34 @@ impl TabBarApp {
         // 设置事件处理器
         Self::setup_event_handlers(app_instance.clone());
 
-        // 系统监控/CPU绘图：按需（例如每1~2秒）更新，且“值变化才刷新”
-        // 时间显示每秒一次（成本很低）
+        // 定时器 1: 每秒更新时间（低成本）
         {
             let app_clone = app_instance.clone();
             glib::timeout_add_seconds_local(1, move || {
                 app_clone.update_time_display();
+                ControlFlow::Continue
+            });
+        }
+
+        // 定时器 2: 每 2 秒更新系统资源（高成本）
+        {
+            let app_clone = app_instance.clone();
+            glib::timeout_add_seconds_local(2, move || {
                 if let Ok(mut state) = app_clone.state.lock() {
+                    // 在这里执行昂贵的更新
                     state.system_monitor.update_if_needed();
-                    if let Some(snapshot) = state.system_monitor.get_snapshot() {
-                        let snapshot = snapshot.clone();
+
+                    if let Some(snapshot_ref) = state.system_monitor.get_snapshot() {
+                        let snapshot = snapshot_ref.clone(); // 正确地解除了借用
                         let total = snapshot.memory_available + snapshot.memory_used;
                         if total > 0 {
-                            // 内存进度条
+                            // ... 内存和 CPU 的 UI 更新逻辑 ...
                             let usage_ratio = snapshot.memory_used as f64 / total as f64;
                             if (usage_ratio - state.last_mem_fraction).abs() > 0.005 {
                                 state.last_mem_fraction = usage_ratio;
                                 app_clone.memory_progress.set_fraction(usage_ratio);
                             }
-                            // CPU 使用率绘制
+
                             let cpu_usage = snapshot.cpu_average as f64 / 100.0;
                             if (cpu_usage - state.last_cpu_usage).abs() > 0.01 {
                                 state.last_cpu_usage = cpu_usage;
@@ -247,6 +256,9 @@ impl TabBarApp {
                 ControlFlow::Continue
             });
         }
+
+        // 在创建时立即调用一次，避免启动时延迟显示
+        app_instance.update_time_display();
 
         app_instance
     }
