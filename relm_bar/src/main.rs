@@ -10,7 +10,6 @@ use relm4::abstractions::DrawHandler;
 use relm4::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmApp, RelmWidgetExt, SimpleComponent};
 use std::time::Duration;
-use tokio::sync::mpsc::{self, UnboundedSender};
 
 mod audio_manager;
 mod error;
@@ -46,7 +45,7 @@ pub struct AppModel {
     pub current_time: String,
 
     #[do_not_track]
-    command_sender: Option<mpsc::UnboundedSender<SharedCommand>>,
+    shared_buffer_opt: Option<SharedRingBuffer>,
     #[do_not_track]
     pub system_monitor: SystemMonitor,
     #[do_not_track]
@@ -364,15 +363,14 @@ impl SimpleComponent for AppModel {
         info!("Shared path: {}", shared_path);
 
         // 创建命令通道
-        let (command_sender, command_receiver) = mpsc::unbounded_channel();
-        let model = AppModel::new(command_sender);
+        let model = AppModel::new(shared_path.clone());
         let area = model.handler.drawing_area();
 
         // 应用CSS样式
         load_css();
 
         // 启动后台任务
-        spawn_background_tasks(sender.clone(), shared_path, command_receiver);
+        spawn_background_tasks(sender.clone(), shared_path);
 
         let widgets = view_output!();
 
@@ -436,7 +434,8 @@ impl SimpleComponent for AppModel {
 }
 
 impl AppModel {
-    pub fn new(command_sender: UnboundedSender<SharedCommand>) -> Self {
+    pub fn new(shared_path: String) -> Self {
+        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
         Self {
             active_tab: 0,
             layout_symbol: " ? ".to_string(),
@@ -447,7 +446,7 @@ impl AppModel {
             memory_usage: 0.,
             cpu_usage: 0.,
             current_time: "".to_string(),
-            command_sender: Some(command_sender),
+            shared_buffer_opt,
             system_monitor: SystemMonitor::new(1),
             tracker: 0,
             handler: DrawHandler::new(),
@@ -469,7 +468,7 @@ impl AppModel {
     }
 
     fn send_tag_command(&self, is_view: bool) {
-        if let Some(sender) = &self.command_sender {
+        if let Some(shared_buffer) = &self.shared_buffer_opt {
             if let Some(ref message) = self.last_shared_message {
                 let command = if is_view {
                     SharedCommand::view_tag(1 << self.active_tab, message.monitor_info.monitor_num)
@@ -480,7 +479,7 @@ impl AppModel {
                     )
                 };
 
-                if let Err(e) = sender.send(command) {
+                if let Err(e) = shared_buffer.send_command(command) {
                     error!("Failed to send tag command: {}", e);
                 }
             }
@@ -488,11 +487,11 @@ impl AppModel {
     }
 
     fn send_layout_command(&self, layout_index: u32) {
-        if let Some(sender) = &self.command_sender {
+        if let Some(shared_buffer) = &self.shared_buffer_opt {
             if let Some(ref message) = self.last_shared_message {
                 let monitor_id = message.monitor_info.monitor_num;
                 let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
-                if let Err(e) = sender.send(command) {
+                if let Err(e) = shared_buffer.send_command(command) {
                     error!("Failed to send layout command: {}", e);
                 }
             }
@@ -549,7 +548,6 @@ impl AppModel {
 }
 
 // CPU绘制函数
-#[allow(dead_code)]
 fn draw_cpu_usage(ctx: &Context, width: i32, height: i32, cpu_usage: f64) {
     let width_f = width as f64;
     let height_f = height as f64;
@@ -579,11 +577,7 @@ fn draw_cpu_usage(ctx: &Context, width: i32, height: i32, cpu_usage: f64) {
 }
 
 // 后台任务
-fn spawn_background_tasks(
-    sender: ComponentSender<AppModel>,
-    shared_path: String,
-    command_receiver: mpsc::UnboundedReceiver<SharedCommand>,
-) {
+fn spawn_background_tasks(sender: ComponentSender<AppModel>, shared_path: String) {
     // 系统监控任务
     let sender_clone = sender.clone();
     relm4::spawn(async move {
@@ -607,16 +601,12 @@ fn spawn_background_tasks(
     // 共享内存任务
     let sender_clone = sender.clone();
     relm4::spawn(async move {
-        shared_memory_worker(shared_path, sender_clone, command_receiver).await;
+        shared_memory_worker(shared_path, sender_clone).await;
     });
 }
 
 // 共享内存工作器
-async fn shared_memory_worker(
-    shared_path: String,
-    sender: ComponentSender<AppModel>,
-    mut command_receiver: mpsc::UnboundedReceiver<SharedCommand>,
-) {
+async fn shared_memory_worker(shared_path: String, sender: ComponentSender<AppModel>) {
     info!("Starting shared memory worker");
     let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
         warn!("No shared path provided, running without shared memory");
@@ -665,24 +655,6 @@ async fn shared_memory_worker(
                         Ok(_) => {}
                         Err(e) => {
                             error!("Ring buffer read error: {}", e);
-                        }
-                    }
-                }
-            }
-            command = command_receiver.recv() => {
-                if let Some(cmd) = command {
-                    info!("Processing command: {:?}", cmd);
-                    if let Some(ref shared_buffer) = shared_buffer_opt {
-                        match shared_buffer.send_command(cmd) {
-                            Ok(true) => {
-                                info!("Sent command: {:?} by shared_buffer", cmd);
-                            }
-                            Ok(false) => {
-                                warn!("Command buffer full, command dropped");
-                            }
-                            Err(e) => {
-                                error!("Failed to send command: {}", e);
-                            }
                         }
                     }
                 }
