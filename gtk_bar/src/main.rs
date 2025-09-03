@@ -1,9 +1,9 @@
+use async_channel::Sender;
 use cairo::Context;
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use gdk4::prelude::*;
 use gdk4_x11::x11::xlib::{XFlush, XMoveWindow};
-use glib::timeout_add_local;
 use gtk4::gio::{self};
 use gtk4::prelude::*;
 use gtk4::{
@@ -13,7 +13,6 @@ use log::{error, info, warn};
 use std::env;
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
 
 mod audio_manager;
 mod error;
@@ -24,11 +23,19 @@ use error::AppError;
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus};
 use system_monitor::SystemMonitor;
 
+use gtk4::glib::ControlFlow;
+
+enum AppEvent {
+    SharedMessage(SharedMessage),
+    // 如需可扩展其它事件，比如 SystemSnapshot, Audio 等
+}
+
 const STATUS_BAR_PREFIX: &str = "gtk_bar";
 
 // 使用 Arc<Mutex<>> 来共享状态
 type SharedAppState = Arc<Mutex<AppState>>;
 
+#[allow(dead_code)]
 struct AppState {
     // Application state
     active_tab: usize,
@@ -46,7 +53,8 @@ struct AppState {
     current_message: Option<SharedMessage>,
     shared_buffer_opt: Option<SharedRingBuffer>,
 
-    pending_messages: Vec<SharedMessage>,
+    last_cpu_usage: f64,
+    last_mem_fraction: f64,
 }
 
 struct TabBarApp {
@@ -118,7 +126,8 @@ impl TabBarApp {
             system_monitor: SystemMonitor::new(10),
             current_message: None,
             shared_buffer_opt,
-            pending_messages: Vec::new(),
+            last_cpu_usage: 0.0,
+            last_mem_fraction: 0.0,
         }));
 
         // 应用 CSS 样式
@@ -136,8 +145,84 @@ impl TabBarApp {
             state,
         });
 
+        // ========== 新增：事件通道 ==========
+        let (tx, rx) = async_channel::unbounded();
+        let app_clone = app_instance.clone();
+        glib::MainContext::default().spawn_local(async move {
+            while let Ok(event) = rx.recv().await {
+                match event {
+                    AppEvent::SharedMessage(message) => {
+                        if let Ok(mut state) = app_clone.state.lock() {
+                            state.current_message = Some(message.clone());
+                            state.layout_symbol = message.monitor_info.get_ltsymbol();
+                            state.monitor_num = message.monitor_info.monitor_num as u8;
+                            state.tag_status_vec = message.monitor_info.tag_status_vec.to_vec();
+                            // 更新活动标签
+                            for (index, tag_status) in
+                                message.monitor_info.tag_status_vec.iter().enumerate()
+                            {
+                                if tag_status.is_selected {
+                                    state.active_tab = index;
+                                    break;
+                                }
+                            }
+                        }
+                        app_clone.update_ui();
+                    }
+                }
+            }
+        }); // 收到消息则立刻更新 UI（主线程）
+
         // 设置事件处理器
         Self::setup_event_handlers(app_instance.clone());
+
+        // ========== 新增：启动后台线程时传入 Sender ==========
+        {
+            let app_state = app_instance.state.clone();
+            let shared_path_for_thread = shared_path.clone();
+            tokio::spawn(async move {
+                shared_memory_worker(shared_path_for_thread, app_state, tx).await;
+            });
+        }
+
+        // ========== 新增：精简定时器 ==========
+        // 时间显示每秒一次（成本很低），不再跑系统大循环
+        {
+            let app_clone = app_instance.clone();
+            glib::timeout_add_seconds_local(1, move || {
+                app_clone.update_time_display();
+                ControlFlow::Continue
+            });
+        }
+
+        // 系统监控/CPU绘图：按需（例如每1~2秒）更新，且“值变化才刷新”
+        {
+            let app_clone = app_instance.clone();
+            glib::timeout_add_seconds_local(1, move || {
+                if let Ok(mut state) = app_clone.state.lock() {
+                    state.system_monitor.update_if_needed();
+                    if let Some(snapshot) = state.system_monitor.get_snapshot() {
+                        let snapshot = snapshot.clone();
+                        let total = snapshot.memory_available + snapshot.memory_used;
+                        if total > 0 {
+                            // 内存进度条
+                            let usage_ratio = snapshot.memory_used as f64 / total as f64;
+                            if (usage_ratio - state.last_mem_fraction).abs() > 0.005 {
+                                state.last_mem_fraction = usage_ratio;
+                                app_clone.memory_progress.set_fraction(usage_ratio);
+                            }
+                            // CPU 使用率绘制
+                            let cpu_usage = snapshot.cpu_average as f64 / 100.0;
+                            if (cpu_usage - state.last_cpu_usage).abs() > 0.01 {
+                                state.last_cpu_usage = cpu_usage;
+                                app_clone.cpu_drawing_area.queue_draw();
+                            }
+                        }
+                    }
+                }
+                ControlFlow::Continue
+            });
+        }
 
         app_instance
     }
@@ -153,15 +238,6 @@ impl TabBarApp {
     }
 
     fn setup_event_handlers(app: Rc<Self>) {
-        // 设置定时器进行定期更新
-        timeout_add_local(Duration::from_millis(500), {
-            let app = app.clone();
-            move || {
-                Self::handle_tick(app.clone());
-                glib::ControlFlow::Continue
-            }
-        });
-
         // 设置标签按钮点击事件
         for (i, button) in app.tab_buttons.iter().enumerate() {
             button.connect_clicked({
@@ -253,28 +329,6 @@ impl TabBarApp {
             .arg("gui")
             .spawn()
             .ok();
-    }
-
-    fn handle_tick(app: Rc<Self>) {
-        // 更新系统监控
-        if let Ok(mut state) = app.state.lock() {
-            state.system_monitor.update_if_needed();
-            state.audio_manager.update_if_needed();
-
-            if let Some(snapshot) = state.system_monitor.get_snapshot() {
-                let total = snapshot.memory_available + snapshot.memory_used;
-                let usage_ratio = snapshot.memory_used as f64 / total as f64;
-
-                // 更新UI
-                app.memory_progress.set_fraction(usage_ratio);
-                app.cpu_drawing_area.queue_draw();
-            }
-        }
-
-        // 处理待处理的消息
-        app.process_pending_messages();
-
-        app.update_time_display();
     }
 
     // UI 更新方法保持不变
@@ -369,36 +423,6 @@ impl TabBarApp {
         }
     }
 
-    fn process_pending_messages(&self) {
-        let mut need_update = false;
-
-        if let Ok(mut state) = self.state.lock() {
-            let messages = state.pending_messages.drain(..).collect::<Vec<_>>();
-            if !messages.is_empty() {
-                need_update = true;
-            }
-
-            for message in &messages {
-                info!("Processing shared message: {:?}", message);
-                state.current_message = Some(message.clone());
-                state.layout_symbol = message.monitor_info.get_ltsymbol();
-                state.monitor_num = message.monitor_info.monitor_num as u8;
-                // 更新标签状态向量
-                state.tag_status_vec = message.monitor_info.tag_status_vec.to_vec();
-                // 更新活动标签
-                for (index, tag_status) in message.monitor_info.tag_status_vec.iter().enumerate() {
-                    if tag_status.is_selected {
-                        state.active_tab = index;
-                    }
-                }
-            }
-        }
-
-        if need_update {
-            self.update_ui();
-        }
-    }
-
     #[allow(dead_code)]
     fn resize_window_to_monitor(
         &self,
@@ -488,10 +512,13 @@ impl TabBarApp {
     }
 }
 
-async fn shared_memory_worker(shared_path: String, app_state: SharedAppState) {
+async fn shared_memory_worker(
+    shared_path: String,
+    app_state: SharedAppState,
+    tx: Sender<AppEvent>,
+) {
     info!("Starting shared memory worker task");
 
-    // 尝试打开或创建共享环形缓冲区
     let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
     let mut prev_timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
@@ -505,18 +532,23 @@ async fn shared_memory_worker(shared_path: String, app_state: SharedAppState) {
                     if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
                         if prev_timestamp != message.timestamp.into() {
                             prev_timestamp = message.timestamp.into();
-                            if let Ok(mut state) = app_state.lock() {
-                                let need_update = state
-                                    .current_message
-                                    .as_ref()
-                                    .map(|m| m.timestamp != message.timestamp)
-                                    .unwrap_or(true);
-                                if need_update {
-                                    info!("current_message: {:?}", message);
-                                    state.pending_messages.push(message);
+                            // 可选：加一层快速比较，避免重复发送相同消息
+                            let need_update = {
+                                if let Ok(state) = app_state.lock() {
+                                    state
+                                        .current_message
+                                        .as_ref()
+                                        .map(|m| m.timestamp != message.timestamp)
+                                        .unwrap_or(true)
+                                } else {
+                                    true
                                 }
-                            } else {
-                                warn!("Failed to lock shared state for message update");
+                            };
+                            if need_update {
+                                // 直接通过 channel 通知主线程更新 UI
+                                if let Err(e) = tx.send_blocking(AppEvent::SharedMessage(message)) {
+                                    warn!("Failed to send AppEvent::SharedMessage: {}", e);
+                                }
                             }
                         }
                     }
@@ -599,13 +631,6 @@ async fn main() -> glib::ExitCode {
         // 创建应用实例
         let shared_path_for_app = shared_path_clone.clone();
         let app_instance = TabBarApp::new(app, shared_path_for_app);
-
-        // 启动异步任务
-        let app_state = app_instance.state.clone();
-        let shared_path_for_thread = shared_path_clone.clone();
-        tokio::spawn(async move {
-            shared_memory_worker(shared_path_for_thread, app_state).await;
-        });
 
         // 显示窗口
         app_instance.show();

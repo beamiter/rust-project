@@ -24,3 +24,4 @@ alsa = "0.9.1"
 gdk4-x11 = { version = "0.9.6", features = ["xlib"] }
 gdk4 = { version = "0.9.6", features = ["v4_14"] }
 glib-build-tools = "0.21.0"
+async-channel = "2.5.0"
