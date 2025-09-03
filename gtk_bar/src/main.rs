@@ -147,58 +147,82 @@ impl TabBarApp {
 
         // ========== 新增：事件通道 ==========
         let (tx, rx) = async_channel::unbounded();
-        let app_clone = app_instance.clone();
-        glib::MainContext::default().spawn_local(async move {
-            while let Ok(event) = rx.recv().await {
-                match event {
-                    AppEvent::SharedMessage(message) => {
-                        if let Ok(mut state) = app_clone.state.lock() {
-                            state.current_message = Some(message.clone());
-                            state.layout_symbol = message.monitor_info.get_ltsymbol();
-                            state.monitor_num = message.monitor_info.monitor_num as u8;
-                            state.tag_status_vec = message.monitor_info.tag_status_vec.to_vec();
-                            // 更新活动标签
-                            for (index, tag_status) in
-                                message.monitor_info.tag_status_vec.iter().enumerate()
-                            {
-                                if tag_status.is_selected {
-                                    state.active_tab = index;
-                                    break;
+        {
+            let app_state_clone = app_instance.state.clone();
+            let shared_path_clone = shared_path.clone();
+            tokio::spawn(async move {
+                shared_memory_worker(shared_path_clone, app_state_clone, tx).await;
+            });
+        }
+        let use_main_context = false;
+        // 收到消息则立刻更新 UI（主线程）
+        if use_main_context {
+            let app_instance_clone = app_instance.clone();
+            glib::MainContext::default().spawn_local(async move {
+                while let Ok(event) = rx.recv().await {
+                    match event {
+                        AppEvent::SharedMessage(message) => {
+                            if let Ok(mut state) = app_instance_clone.state.lock() {
+                                state.current_message = Some(message.clone());
+                                state.layout_symbol = message.monitor_info.get_ltsymbol();
+                                state.monitor_num = message.monitor_info.monitor_num as u8;
+                                state.tag_status_vec = message.monitor_info.tag_status_vec.to_vec();
+                                // 更新活动标签
+                                for (index, tag_status) in
+                                    message.monitor_info.tag_status_vec.iter().enumerate()
+                                {
+                                    if tag_status.is_selected {
+                                        state.active_tab = index;
+                                        break;
+                                    }
                                 }
                             }
+                            app_instance_clone.update_ui();
                         }
-                        app_clone.update_ui();
                     }
                 }
-            }
-        }); // 收到消息则立刻更新 UI（主线程）
+            });
+        } else {
+            glib::spawn_future_local(glib::clone!(
+                #[weak]
+                app_instance,
+                async move {
+                    while let Ok(event) = rx.recv().await {
+                        match event {
+                            AppEvent::SharedMessage(message) => {
+                                if let Ok(mut state) = app_instance.state.lock() {
+                                    state.current_message = Some(message.clone());
+                                    state.layout_symbol = message.monitor_info.get_ltsymbol();
+                                    state.monitor_num = message.monitor_info.monitor_num as u8;
+                                    state.tag_status_vec =
+                                        message.monitor_info.tag_status_vec.to_vec();
+                                    // 更新活动标签
+                                    for (index, tag_status) in
+                                        message.monitor_info.tag_status_vec.iter().enumerate()
+                                    {
+                                        if tag_status.is_selected {
+                                            state.active_tab = index;
+                                            break;
+                                        }
+                                    }
+                                }
+                                app_instance.update_ui();
+                            }
+                        }
+                    }
+                }
+            ));
+        }
 
         // 设置事件处理器
         Self::setup_event_handlers(app_instance.clone());
 
-        // ========== 新增：启动后台线程时传入 Sender ==========
-        {
-            let app_state = app_instance.state.clone();
-            let shared_path_for_thread = shared_path.clone();
-            tokio::spawn(async move {
-                shared_memory_worker(shared_path_for_thread, app_state, tx).await;
-            });
-        }
-
-        // ========== 新增：精简定时器 ==========
-        // 时间显示每秒一次（成本很低），不再跑系统大循环
+        // 系统监控/CPU绘图：按需（例如每1~2秒）更新，且“值变化才刷新”
+        // 时间显示每秒一次（成本很低）
         {
             let app_clone = app_instance.clone();
             glib::timeout_add_seconds_local(1, move || {
                 app_clone.update_time_display();
-                ControlFlow::Continue
-            });
-        }
-
-        // 系统监控/CPU绘图：按需（例如每1~2秒）更新，且“值变化才刷新”
-        {
-            let app_clone = app_instance.clone();
-            glib::timeout_add_seconds_local(1, move || {
                 if let Ok(mut state) = app_clone.state.lock() {
                     state.system_monitor.update_if_needed();
                     if let Some(snapshot) = state.system_monitor.get_snapshot() {
