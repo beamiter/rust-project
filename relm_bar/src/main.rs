@@ -1,14 +1,18 @@
-// main.rs
 use cairo::Context;
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use gdk4_x11::x11::xlib::{XFlush, XMoveWindow};
+use gtk::glib;
 use gtk::prelude::*;
+use gtk4 as gtk;
 use gtk4::Window;
+use gtk4::glib::ControlFlow;
 use log::{error, info, warn};
 use relm4::abstractions::DrawHandler;
+use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDeque};
 use relm4::prelude::*;
-use relm4::{ComponentParts, ComponentSender, RelmApp, RelmWidgetExt, SimpleComponent};
+use relm4::{ComponentParts, ComponentSender, RelmApp, SimpleComponent};
+
 use std::time::Duration;
 
 mod audio_manager;
@@ -19,7 +23,88 @@ use error::AppError;
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus};
 use system_monitor::SystemMonitor;
 
-// 主应用消息
+// ========== 子项（Tab） ==========
+
+#[derive(Debug, Clone)]
+struct TabInit {
+    index: usize,
+    emoji: String,
+    status: Option<TagStatus>,
+}
+
+#[derive(Debug, Clone)]
+struct TabItem {
+    index: usize,
+    emoji: String,
+    status: Option<TagStatus>,
+}
+
+#[derive(Debug)]
+enum TabOutput {
+    Clicked(usize),
+}
+
+#[relm4::factory]
+impl FactoryComponent for TabItem {
+    type Init = TabInit;
+    type Input = ();
+    type Output = TabOutput;
+    type CommandOutput = ();
+    type ParentWidget = gtk::Box;
+
+    view! {
+        gtk::Button {
+            set_width_request: 40,
+            #[watch]
+            set_label: &self.emoji,
+            #[watch]
+            set_css_classes: &compute_tab_css_classes(self.status.as_ref()),
+            // 通过捕获值，避免直接在闭包里用 &self
+            connect_clicked[sender, tag_index = self.index] => move |_| {
+                let _ = sender.output(TabOutput::Clicked(tag_index));
+            }
+        }
+    }
+
+    fn init_model(init: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
+        Self {
+            index: init.index,
+            emoji: init.emoji,
+            status: init.status,
+        }
+    }
+
+    fn update(&mut self, _msg: Self::Input, _sender: FactorySender<Self>) {}
+}
+
+// 返回 &[&str] 兼容的 Vec<&'static str>
+fn compute_tab_css_classes(s: Option<&TagStatus>) -> Vec<&'static str> {
+    match s {
+        Some(st) if st.is_urg => vec!["tab-button", "urgent"],
+        Some(st) if st.is_filled => vec!["tab-button", "filled"],
+        Some(st) if st.is_selected => vec!["tab-button", "selected"],
+        Some(st) if st.is_occ => vec!["tab-button", "occupied"],
+        _ => vec!["tab-button", "empty"],
+    }
+}
+
+fn pick_emoji(i: usize) -> &'static str {
+    match i {
+        0 => "🍜",
+        1 => "🎨",
+        2 => "🍀",
+        3 => "🧿",
+        4 => "🌟",
+        5 => "🐐",
+        6 => "🏆",
+        7 => "🕊️",
+        8 => "🏡",
+        _ => "❔",
+    }
+}
+
+// ========== 主应用 ==========
+
 #[derive(Debug)]
 pub enum AppInput {
     TabSelected(usize),
@@ -31,7 +116,6 @@ pub enum AppInput {
     UpdateTime,
 }
 
-// 主应用模型
 #[tracker::track]
 pub struct AppModel {
     pub active_tab: usize,
@@ -50,6 +134,10 @@ pub struct AppModel {
     pub system_monitor: SystemMonitor,
     #[do_not_track]
     handler: DrawHandler,
+
+    // Factory：标签集合
+    #[do_not_track]
+    tabs: FactoryVecDeque<TabItem>,
 }
 
 #[relm4::component(pub)]
@@ -71,179 +159,17 @@ impl SimpleComponent for AppModel {
                 set_spacing: 3,
                 set_margin_all: 3,
 
-                // 标签栏
-                gtk::Box {
+                // 标签栏（Factory容器）
+                #[local_ref]
+                tabs_box -> gtk::Box {
                     set_orientation: gtk::Orientation::Horizontal,
                     set_spacing: 3,
-
-                    #[name = "tab_button_0"]
-                    gtk::Button {
-                        set_label: "🍜",
-                        set_width_request: 40,
-                        add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(0),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("occupied", model.tag_status_vec.get(0).map_or(false, |s| s.is_occ)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("urgent", model.tag_status_vec.get(0).map_or(false, |s| s.is_urg)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("filled", model.tag_status_vec.get(0).map_or(false, |s| s.is_filled)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("selected", model.tag_status_vec.get(0).map_or(false, |s| s.is_selected)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("empty", model.tag_status_vec.get(0).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
-                    },
-
-                    #[name = "tab_button_1"]
-                    gtk::Button {
-                        set_label: "🎨",
-                        set_width_request: 40,
-                        add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(1),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("occupied", model.tag_status_vec.get(1).map_or(false, |s| s.is_occ)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("urgent", model.tag_status_vec.get(1).map_or(false, |s| s.is_urg)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("filled", model.tag_status_vec.get(1).map_or(false, |s| s.is_filled)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("selected", model.tag_status_vec.get(1).map_or(false, |s| s.is_selected)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("empty", model.tag_status_vec.get(1).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
-                    },
-
-                    #[name = "tab_button_2"]
-                    gtk::Button {
-                        set_label: "🍀",
-                        set_width_request: 40,
-                        add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(2),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("occupied", model.tag_status_vec.get(2).map_or(false, |s| s.is_occ)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("urgent", model.tag_status_vec.get(2).map_or(false, |s| s.is_urg)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("filled", model.tag_status_vec.get(2).map_or(false, |s| s.is_filled)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("selected", model.tag_status_vec.get(2).map_or(false, |s| s.is_selected)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("empty", model.tag_status_vec.get(2).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
-                    },
-
-                    #[name = "tab_button_3"]
-                    gtk::Button {
-                        set_label: "🧿",
-                        set_width_request: 40,
-                        add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(3),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("occupied", model.tag_status_vec.get(3).map_or(false, |s| s.is_occ)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("urgent", model.tag_status_vec.get(3).map_or(false, |s| s.is_urg)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("filled", model.tag_status_vec.get(3).map_or(false, |s| s.is_filled)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("selected", model.tag_status_vec.get(3).map_or(false, |s| s.is_selected)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("empty", model.tag_status_vec.get(3).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
-                    },
-
-                    #[name = "tab_button_4"]
-                    gtk::Button {
-                        set_label: "🌟",
-                        set_width_request: 40,
-                        add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(4),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("occupied", model.tag_status_vec.get(4).map_or(false, |s| s.is_occ)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("urgent", model.tag_status_vec.get(4).map_or(false, |s| s.is_urg)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("filled", model.tag_status_vec.get(4).map_or(false, |s| s.is_filled)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("selected", model.tag_status_vec.get(4).map_or(false, |s| s.is_selected)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("empty", model.tag_status_vec.get(4).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
-                    },
-
-                    #[name = "tab_button_5"]
-                    gtk::Button {
-                        set_label: "🐐",
-                        set_width_request: 40,
-                        add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(5),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("occupied", model.tag_status_vec.get(5).map_or(false, |s| s.is_occ)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("urgent", model.tag_status_vec.get(5).map_or(false, |s| s.is_urg)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("filled", model.tag_status_vec.get(5).map_or(false, |s| s.is_filled)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("selected", model.tag_status_vec.get(5).map_or(false, |s| s.is_selected)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("empty", model.tag_status_vec.get(5).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
-                    },
-
-                    #[name = "tab_button_6"]
-                    gtk::Button {
-                        set_label: "🏆",
-                        set_width_request: 40,
-                        add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(6),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("occupied", model.tag_status_vec.get(6).map_or(false, |s| s.is_occ)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("urgent", model.tag_status_vec.get(6).map_or(false, |s| s.is_urg)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("filled", model.tag_status_vec.get(6).map_or(false, |s| s.is_filled)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("selected", model.tag_status_vec.get(6).map_or(false, |s| s.is_selected)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("empty", model.tag_status_vec.get(6).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
-                    },
-
-                    #[name = "tab_button_7"]
-                    gtk::Button {
-                        set_label: "🕊️",
-                        set_width_request: 40,
-                        add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(7),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("occupied", model.tag_status_vec.get(7).map_or(false, |s| s.is_occ)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("urgent", model.tag_status_vec.get(7).map_or(false, |s| s.is_urg)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("filled", model.tag_status_vec.get(7).map_or(false, |s| s.is_filled)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("selected", model.tag_status_vec.get(7).map_or(false, |s| s.is_selected)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("empty", model.tag_status_vec.get(7).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
-                    },
-
-                    #[name = "tab_button_8"]
-                    gtk::Button {
-                        set_label: "🏡",
-                        set_width_request: 40,
-                        add_css_class: "tab-button",
-                        connect_clicked => AppInput::TabSelected(8),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("occupied", model.tag_status_vec.get(8).map_or(false, |s| s.is_occ)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("urgent", model.tag_status_vec.get(8).map_or(false, |s| s.is_urg)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("filled", model.tag_status_vec.get(8).map_or(false, |s| s.is_filled)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("selected", model.tag_status_vec.get(8).map_or(false, |s| s.is_selected)),
-                        #[track(model.changed(AppModel::tag_status_vec()))]
-                        set_class_active: ("empty", model.tag_status_vec.get(8).map_or(false, |s| !(s.is_urg || s.is_filled || s.is_selected || s.is_occ))),
-                    },
                 },
 
                 // 布局标签
-                #[name = "layout_label"]
                 gtk::Label {
                     #[watch]
-                    set_text: &model.get_layout_symbol(),
+                    set_text: &model.layout_symbol,
                     set_width_request: 40,
                     set_halign: gtk::Align::Center,
                     add_css_class: "layout-label",
@@ -298,7 +224,6 @@ impl SimpleComponent for AppModel {
                         set_orientation: gtk::Orientation::Vertical,
                         set_spacing: 10,
 
-                        #[name = "memory_progress"]
                         gtk::ProgressBar {
                             set_halign: gtk::Align::Center,
                             set_valign: gtk::Align::Center,
@@ -327,7 +252,6 @@ impl SimpleComponent for AppModel {
                     },
 
                     // 时间显示
-                    #[name = "time_label"]
                     gtk::Button {
                         #[watch]
                         set_label: &model.current_time,
@@ -337,10 +261,9 @@ impl SimpleComponent for AppModel {
                     },
 
                     // 监视器标签
-                    #[name = "monitor_label"]
                     gtk::Label {
                         #[watch]
-                        set_text: &model.get_monitor_icon(),
+                        set_text: &monitor_num_to_icon(model.monitor_num),
                         set_width_request: 40,
                         set_halign: gtk::Align::Center,
                     },
@@ -351,33 +274,52 @@ impl SimpleComponent for AppModel {
 
     fn init(
         shared_path: Self::Init,
-        root: Self::Root,
+        _root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        // 初始化日志
-        if let Err(e) = initialize_logging(&shared_path) {
-            error!("Failed to initialize logging: {}", e);
-            std::process::exit(1);
-        }
-        info!("Starting Relm4 Bar v1.0");
-        info!("Shared path: {}", shared_path);
+        // 构建 Factory
+        let tabs = FactoryVecDeque::<TabItem>::builder()
+            .launch(gtk::Box::default())
+            .forward(sender.input_sender(), |out| match out {
+                TabOutput::Clicked(i) => AppInput::TabSelected(i),
+            });
 
-        // 创建命令通道
-        let model = AppModel::new(shared_path.clone());
-        let area = model.handler.drawing_area();
+        let mut model = AppModel::new(shared_path.clone(), tabs);
+
+        // 预创建9个“空状态”tab，先显示占位
+        {
+            let mut guard = model.tabs.guard();
+            for i in 0..9 {
+                guard.push_back(TabInit {
+                    index: i,
+                    emoji: pick_emoji(i).to_string(),
+                    status: None,
+                });
+            }
+        }
 
         // 应用CSS样式
         load_css();
 
+        // 首帧初始化（在获取 area 前完成所有对 model 的可变操作）
+        model.update_time_display();
+        sender.input(AppInput::SystemUpdate);
+
         // 启动后台任务
         spawn_background_tasks(sender.clone(), shared_path);
 
+        // DrawHandler 的 DrawingArea：clone 一份独立对象，避免持久借用 model
+        let area = model.handler.drawing_area().clone();
+
+        // Factory 父容器
+        let tabs_box = model.tabs.widget();
         let widgets = view_output!();
 
         ComponentParts { model, widgets }
     }
 
     fn update(&mut self, msg: Self::Input, _sender: ComponentSender<Self>) {
+        self.reset();
         match msg {
             AppInput::TabSelected(index) => {
                 info!("Tab selected: {}", index);
@@ -397,34 +339,49 @@ impl SimpleComponent for AppModel {
 
             AppInput::Screenshot => {
                 info!("Taking screenshot");
-                std::process::Command::new("flameshot")
-                    .arg("gui")
-                    .spawn()
-                    .ok();
+                if let Err(e) = std::process::Command::new("flameshot").arg("gui").spawn() {
+                    error!("Failed to launch flameshot: {}", e);
+                }
             }
 
             AppInput::SharedMessageReceived(message) => {
                 info!("SharedMessageReceived: {:?}", message);
                 self.process_shared_message(message);
+
+                // 用最新的 tag_status_vec 重建 9 个 Tab（简单可靠）
+                let statuses = self.tag_status_vec.clone();
+                let mut guard = self.tabs.guard();
+                guard.clear();
+                for i in 0..9 {
+                    let s_opt = statuses.get(i).cloned();
+                    guard.push_back(TabInit {
+                        index: i,
+                        emoji: pick_emoji(i).to_string(),
+                        status: s_opt,
+                    });
+                }
             }
 
             AppInput::SystemUpdate => {
-                // info!("SystemUpdate");
                 self.system_monitor.update_if_needed();
 
                 if let Some(snapshot) = self.system_monitor.get_snapshot() {
                     let total = snapshot.memory_available + snapshot.memory_used;
-                    self.memory_usage = snapshot.memory_used as f64 / total as f64;
-                    self.cpu_usage = snapshot.cpu_average as f64 / 100.0;
+                    if total > 0 {
+                        self.memory_usage = snapshot.memory_used as f64 / total as f64;
+                    } else {
+                        self.memory_usage = 0.0;
+                    }
+                    self.cpu_usage = (snapshot.cpu_average as f64 / 100.0).clamp(0.0, 1.0);
                 }
             }
 
             AppInput::UpdateTime => {
-                // info!("UpdateTime");
                 self.update_time_display();
             }
         }
 
+        // 更新CPU绘制
         let ctx = self.handler.get_context();
         draw_cpu_usage(
             &ctx,
@@ -436,7 +393,7 @@ impl SimpleComponent for AppModel {
 }
 
 impl AppModel {
-    pub fn new(shared_path: String) -> Self {
+    fn new(shared_path: String, tabs: FactoryVecDeque<TabItem>) -> Self {
         let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
         Self {
             active_tab: 0,
@@ -445,18 +402,15 @@ impl AppModel {
             show_seconds: false,
             tag_status_vec: Vec::new(),
             last_shared_message: None,
-            memory_usage: 0.,
-            cpu_usage: 0.,
+            memory_usage: 0.0,
+            cpu_usage: 0.0,
             current_time: "".to_string(),
             shared_buffer_opt,
             system_monitor: SystemMonitor::new(1),
             tracker: 0,
             handler: DrawHandler::new(),
+            tabs,
         }
-    }
-
-    fn get_monitor_icon(&self) -> String {
-        monitor_num_to_icon(self.monitor_num)
     }
 
     fn update_time_display(&mut self) {
@@ -516,7 +470,7 @@ impl AppModel {
             current_width, current_height, expected_width, expected_height
         );
         window.set_default_size(expected_width, expected_height);
-        let display = gtk4::gdk::Display::default().unwrap();
+        let display = gtk::gdk::Display::default().unwrap();
         unsafe {
             if let Some(x11_display) = display.downcast_ref::<gdk4_x11::X11Display>() {
                 let xdisplay = x11_display.xdisplay();
@@ -535,11 +489,7 @@ impl AppModel {
         self.layout_symbol = message.monitor_info.get_ltsymbol();
         self.monitor_num = message.monitor_info.monitor_num as u8;
         self.set_tag_status_vec(message.monitor_info.tag_status_vec.to_vec());
-        let app = relm4::main_application();
-        if let Some(window) = app.active_window() {
-            let _current_width = window.width();
-            let _current_height = window.height();
-        }
+
         // 更新活动标签
         for (index, tag_status) in message.monitor_info.tag_status_vec.iter().enumerate() {
             if tag_status.is_selected {
@@ -556,54 +506,48 @@ fn draw_cpu_usage(ctx: &Context, width: i32, height: i32, cpu_usage: f64) {
 
     // 清除背景
     ctx.set_source_rgba(0.0, 0.0, 0.0, 0.0);
-    ctx.paint().unwrap();
+    let _ = ctx.paint();
 
     // 绘制背景
     ctx.set_source_rgba(0.2, 0.2, 0.2, 0.3);
     ctx.rectangle(0.0, 0.0, width_f, height_f);
-    ctx.fill().unwrap();
+    let _ = ctx.fill();
 
     // 绘制CPU使用率条
     let used_height = height_f * cpu_usage;
     let y_offset = height_f - used_height;
 
-    // 设置渐变色
+    // 渐变
     let gradient = cairo::LinearGradient::new(0.0, 0.0, 0.0, height_f);
     gradient.add_color_stop_rgba(0.0, 1.0, 0.0, 0.0, 0.9);
     gradient.add_color_stop_rgba(0.5, 1.0, 1.0, 0.0, 0.9);
     gradient.add_color_stop_rgba(1.0, 0.0, 1.0, 1.0, 0.9);
 
-    ctx.set_source(&gradient).unwrap();
+    let _ = ctx.set_source(&gradient);
     ctx.rectangle(0.0, y_offset, width_f, used_height);
-    ctx.fill().unwrap();
+    let _ = ctx.fill();
 }
 
-// 后台任务
+// 后台任务：glib 定时器 + 共享内存线程
 fn spawn_background_tasks(sender: ComponentSender<AppModel>, shared_path: String) {
-    // 系统监控任务
-    let sender_clone = sender.clone();
-    relm4::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(2));
-        loop {
-            interval.tick().await;
-            sender_clone.input(AppInput::SystemUpdate);
-        }
+    // 系统监控任务（每2秒）
+    let sender1 = sender.clone();
+    glib::timeout_add_seconds_local(2, move || {
+        sender1.input(AppInput::SystemUpdate);
+        ControlFlow::Continue
     });
 
-    // 时间更新任务
-    let sender_clone = sender.clone();
-    relm4::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_secs(1));
-        loop {
-            interval.tick().await;
-            sender_clone.input(AppInput::UpdateTime);
-        }
+    // 时间更新任务（每1秒）
+    let sender2 = sender.clone();
+    glib::timeout_add_seconds_local(1, move || {
+        sender2.input(AppInput::UpdateTime);
+        ControlFlow::Continue
     });
 
     // 共享内存任务
-    let sender_clone = sender.clone();
+    let sender3 = sender.clone();
     std::thread::spawn(move || {
-        shared_memory_worker(shared_path, sender_clone);
+        shared_memory_worker(shared_path, sender3);
     });
 }
 
@@ -644,7 +588,7 @@ fn shared_memory_worker(shared_path: String, sender: ComponentSender<AppModel>) 
         .as_millis();
     if let Some(ref shared_buffer) = shared_buffer_opt {
         loop {
-            match shared_buffer.wait_for_message(Some(std::time::Duration::from_secs(2))) {
+            match shared_buffer.wait_for_message(Some(Duration::from_secs(2))) {
                 Ok(true) => {
                     if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
                         if prev_timestamp != message.timestamp.into() {
@@ -669,7 +613,7 @@ fn monitor_num_to_icon(monitor_num: u8) -> String {
         0 => "🥇".to_string(),
         1 => "🥈".to_string(),
         2 => "🥉".to_string(),
-        _ => "?".to_string(),
+        _ => "❔".to_string(),
     }
 }
 
@@ -723,12 +667,19 @@ fn initialize_logging(shared_path: &str) -> Result<(), Box<dyn std::error::Error
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
+
+    if let Err(e) = initialize_logging(&shared_path) {
+        eprintln!("Init logging failed: {e}");
+    }
+
+    // 构建稳定 App ID
     let mut instance_name = shared_path.replace("/dev/shm/monitor_", "relm_bar_");
     if instance_name.is_empty() {
         instance_name = "relm_bar".to_string();
     }
-    instance_name = format!("{}.{}", instance_name, instance_name);
-    info!("instance_name: {}", instance_name);
-    let app = RelmApp::new(&instance_name).with_args(vec![]); // 传递空参数避免文件处理
+    instance_name = format!("dev.you.{}", instance_name.replace('/', "_"));
+
+    info!("App ID: {}", instance_name);
+    let app = RelmApp::new(&instance_name).with_args(vec![]);
     app.run::<AppModel>(shared_path);
 }
