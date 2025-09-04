@@ -1,6 +1,5 @@
 //! Audio system management with improved error handling and caching
 
-use crate::constants::intervals;
 use crate::{AppError, Result};
 use alsa::mixer::{Mixer, Selem, SelemId};
 use log::{debug, error, info, warn};
@@ -78,7 +77,7 @@ impl AudioManager {
             devices: Vec::new(),
             device_cache: HashMap::new(),
             last_update: Instant::now(),
-            update_interval: Duration::from_millis(intervals::AUDIO_UPDATE),
+            update_interval: Duration::from_millis(500),
             last_error_time: None,
             error_count: 0,
             max_error_logs: 10,

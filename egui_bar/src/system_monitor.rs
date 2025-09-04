@@ -1,6 +1,5 @@
 //! System monitoring with caching and efficient updates
 
-use crate::constants::intervals;
 use crate::metrics::RollingAverage;
 use battery::Manager;
 use std::time::{Duration, Instant};
@@ -72,7 +71,7 @@ impl SystemMonitor {
         Self {
             system,
             last_update: Instant::now(),
-            update_interval: Duration::from_millis(intervals::SYSTEM_UPDATE),
+            update_interval: Duration::from_millis(1000),
             cpu_history: RollingAverage::new(history_length),
             memory_history: RollingAverage::new(history_length),
             last_snapshot: None,

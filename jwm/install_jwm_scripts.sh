@@ -2,7 +2,7 @@
 # install_jwm_scripts.sh - 安装JWM脚本
 
 sudo cp target/release/jwm /usr/local/bin/
-sudo cp jwm.desktop /usr/local/share/xsessions/
+sudo cp jwm.desktop /usr/share/xsessions/
 
 # 设置权限并复制脚本
 sudo cp jwm_daemon.sh /usr/local/bin/
