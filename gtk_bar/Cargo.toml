@@ -3,6 +3,9 @@ name = "gtk_bar"
 version = "0.1.0"
 edition = "2024"
 
+[features]
+x11 = []
+
 [dependencies]
 battery = "0.7.8"
 flexi_logger = { version = "0.31.2", features = ["colors"] }
@@ -25,3 +28,4 @@ gdk4-x11 = { version = "0.9.6", features = ["xlib"] }
 gdk4 = { version = "0.9.6", features = ["v4_14"] }
 glib-build-tools = "0.21.0"
 async-channel = "2.5.0"
+which = "8.0.0"

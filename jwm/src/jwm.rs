@@ -3390,6 +3390,7 @@ impl Jwm {
         };
         info!("Starting async event loop");
         while self.running.load(Ordering::SeqCst) {
+            info!("one loop begin");
             // 🔧 一次性处理所有事件
             let events_processed = self.process_all_x11_events(&mut event_count)?;
             self.process_commands_from_status_bar();
@@ -3413,6 +3414,7 @@ impl Jwm {
                     // 下次循环会处理新事件
                 }
             }
+            info!("one loop end");
         }
         Ok(())
     }
