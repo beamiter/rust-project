@@ -4,9 +4,7 @@ use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, Stream, StreamExt};
 use iced::time::{self, milliseconds};
 use iced::widget::container;
-use iced::widget::lazy;
-use iced::widget::scrollable::{Direction, Scrollbar};
-use iced::widget::{Scrollable, Space, button, progress_bar, rich_text, row};
+use iced::widget::{Space, button, progress_bar, rich_text};
 use iced::widget::{mouse_area, span};
 use iced::{gradient, stream, theme};
 
@@ -36,70 +34,11 @@ use system_monitor::SystemMonitor;
 
 static _START: Once = Once::new();
 
-#[allow(unused_macros)]
-macro_rules! create_tab_button {
-    ($self:expr, $index:expr) => {{
-        let label = $self.tabs[$index].clone();
-        lazy(&$self.active_tab, move |_active| {
-            mouse_area(
-                button(rich_text![span(label.clone())].on_link_click(std::convert::identity))
-                    .width(IcedBar::TAB_WIDTH),
-            )
-            .on_press(Message::TabSelected($index))
-        })
-    }};
-}
-
-macro_rules! tab_buttons {
-    (
-        $self:expr;
-        $($name:ident[$index:expr]),* $(,)?
-    ) => {
-        $(
-            let label = $self.tabs[$index].clone();
-            let $name = lazy(&$self.active_tab, move |_active| {
-                mouse_area(
-                    button(
-                        rich_text![span(label.clone())].on_link_click(std::convert::identity),
-                    )
-                    .width(IcedBar::TAB_WIDTH),
-                )
-                .on_press(Message::TabSelected($index))
-            });
-        )*
-    };
-
-    // 支持自定义属性
-    (
-        $self:expr;
-        $(
-            $(#[$attr:meta])*
-            $name:ident[$index:expr]
-        ),* $(,)?
-    ) => {
-        $(
-            let label = $self.tabs[$index].clone();
-            $(#[$attr])*
-            let $name = lazy(&$self.active_tab, move |_active| {
-                mouse_area(
-                    button(
-                        rich_text![span(label.clone())].on_link_click(std::convert::identity),
-                    )
-                    .width(IcedBar::TAB_WIDTH),
-                )
-                .on_press(Message::TabSelected($index))
-            });
-        )*
-    };
-}
-
 /// Initialize logging system
 fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
-    // 提前初始化，避免之后的 info!/warn! 被丢弃
     let tmp_now = Local::now();
     let timestamp = tmp_now.format("%Y-%m-%d_%H_%M_%S").to_string();
 
-    // 选择更健壮的日志目录
     let log_dir_candidates = [
         std::env::var("XDG_RUNTIME_DIR")
             .ok()
@@ -130,7 +69,6 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     };
 
     let log_filename = format!("{}_{}", file_name, timestamp);
-
     let log_spec = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
 
     Logger::try_with_str(log_spec)
@@ -157,7 +95,6 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 }
 
 fn main() -> iced::Result {
-    // 先 parse args，再初始化日志
     let args: Vec<String> = env::args().collect();
     let application_id = args.get(0).cloned().unwrap_or_default();
     let shared_path = args.get(1).cloned().unwrap_or_default();
@@ -184,11 +121,9 @@ fn main() -> iced::Result {
             level: window::Level::AlwaysOnTop,
             ..Default::default()
         })
-        // .font(include_bytes!("../fonts/NotoColorEmoji.ttf").as_slice())
         .subscription(IcedBar::subscription)
         .title("iced_bar")
         .scale_factor(IcedBar::scale_factor)
-        // .style(IcedBar::style)
         .theme(|_| Theme::Light)
         .run()
 }
@@ -203,6 +138,7 @@ enum Input {
 enum Message {
     TabSelected(usize),
     LayoutClicked(u32),
+    ToggleLayoutSelector,
     ShowSecondsToggle,
 
     GetWindowId,
@@ -243,16 +179,18 @@ struct IcedBar {
     target_window_pos: Option<Point>,
     target_window_size: Option<Size>,
 
-    /// Audio system
+    // Audio + System
     audio_manager: AudioManager,
-
-    /// System monitoring
     system_monitor: SystemMonitor,
+
     transparent: bool,
 
-    /// 节流
+    // throttle
     last_clock_update: Instant,
     last_monitor_update: Instant,
+
+    // layout selector
+    layout_selector_open: bool,
 }
 
 impl Default for IcedBar {
@@ -264,12 +202,10 @@ impl Default for IcedBar {
 impl IcedBar {
     const DEFAULT_COLOR: Color = color!(0x666666);
     const TAB_WIDTH: f32 = 40.0;
-    const TAB_HEIGHT: f32 = 32.0;
+    const TAB_HEIGHT: f32 = 28.0;
     const TAB_SPACING: f32 = 2.0;
-    const UNDERLINE_WIDTH: f32 = 28.0;
 
     fn new() -> Self {
-        // Parse command line arguments
         let args: Vec<String> = env::args().collect();
         let shared_path = args.get(1).cloned().unwrap_or_default();
 
@@ -304,26 +240,26 @@ impl IcedBar {
         Self {
             active_tab: 0,
             tabs: [
-                "🍜".to_string(),
-                "🎨".to_string(),
-                "🍀".to_string(),
-                "🧿".to_string(),
-                "🌟".to_string(),
-                "🐐".to_string(),
-                "🐢".to_string(),
-                "🦣".to_string(),
-                "🏡".to_string(),
+                "🏠".to_string(),
+                "💻".to_string(),
+                "🌐".to_string(),
+                "🎵".to_string(),
+                "📁".to_string(),
+                "🎮".to_string(),
+                "📧".to_string(),
+                "🔧".to_string(),
+                "📊".to_string(),
             ],
             tab_colors: [
-                color!(0xFF6B6B), // 红色
-                color!(0x4ECDC4), // 青色
-                color!(0x45B7D1), // 蓝色
-                color!(0x96CEB4), // 绿色
-                color!(0xFECA57), // 黄色
-                color!(0xFF9FF3), // 粉色
-                color!(0x54A0FF), // 淡蓝色
-                color!(0x5F27CD), // 紫色
-                color!(0x00D2D3), // 青绿色
+                color!(0xFF6B6B), // red
+                color!(0x4ECDC4), // cyan
+                color!(0x45B7D1), // blue
+                color!(0x96CEB4), // green
+                color!(0xFECA57), // yellow
+                color!(0xFF9FF3), // pink
+                color!(0x54A0FF), // light blue
+                color!(0x5F27CD), // purple
+                color!(0x00D2D3), // teal
             ],
             shared_buffer_opt,
             shared_path,
@@ -334,7 +270,7 @@ impl IcedBar {
             is_hovered: false,
             mouse_position: None,
             show_seconds: false,
-            layout_symbol: String::new(),
+            layout_symbol: "[]=".to_string(),
             monitor_num: 0,
             current_window_size: None,
             target_window_pos: None,
@@ -345,6 +281,7 @@ impl IcedBar {
             raw_window_id: 0,
             last_clock_update: Instant::now(),
             last_monitor_update: Instant::now(),
+            layout_selector_open: false,
         }
     }
 
@@ -396,7 +333,6 @@ impl IcedBar {
                                             .try_send(Message::SharedMemoryUpdated(message))
                                             .is_err()
                                         {
-                                            // 接收端可能已关闭
                                             break;
                                         }
                                     }
@@ -463,6 +399,12 @@ impl IcedBar {
             Message::LayoutClicked(layout_index) => {
                 self.send_layout_command(layout_index);
                 info!("Layout selected: {}", layout_index);
+                self.layout_selector_open = false;
+                Task::none()
+            }
+
+            Message::ToggleLayoutSelector => {
+                self.layout_selector_open = !self.layout_selector_open;
                 Task::none()
             }
 
@@ -511,7 +453,6 @@ impl IcedBar {
             Message::RightClick => Task::none(),
 
             Message::GetAndResizeWindowSize(window_size) => {
-                // 可选：节流与阈值判断，避免抖动
                 self.current_window_size = Some(window_size);
                 if let (
                     Some(current_window_id),
@@ -554,7 +495,6 @@ impl IcedBar {
             }
 
             Message::UpdateTime => {
-                // 1. 更新时间字符串（每秒）
                 if self.last_clock_update.elapsed() >= Duration::from_millis(900) {
                     let tmp_now = Local::now();
                     let format_str = if self.show_seconds {
@@ -566,7 +506,6 @@ impl IcedBar {
                     self.last_clock_update = Instant::now();
                 }
 
-                // 2. 系统/音频监控（每2秒节流）
                 if self.last_monitor_update.elapsed() >= Duration::from_secs(2) {
                     self.system_monitor.update_if_needed();
                     self.audio_manager.update_if_needed();
@@ -600,12 +539,9 @@ impl IcedBar {
 
     fn subscription(&self) -> Subscription<Message> {
         if self.current_window_id.is_none() {
-            // 仅触发一次窗口 ID 获取
             Subscription::run(Self::prepare_worker)
         } else {
-            // 时钟订阅
             let clock = time::every(milliseconds(1000)).map(|_| Message::UpdateTime);
-            // 共享内存订阅（仅当 shared_path 非空）
             let shared = if self.shared_path.is_empty() {
                 Subscription::none()
             } else {
@@ -633,57 +569,202 @@ impl IcedBar {
 
     fn monitor_num_to_icon(monitor_num: u8) -> &'static str {
         match monitor_num {
-            0 => "🥇",
-            1 => "🥈",
-            2 => "🥉",
+            0 => "󰎡",
+            1 => "󰎤",
             _ => "?",
         }
     }
 
-    fn view_work_space(&self) -> Element<'_, Message> {
-        tab_buttons! {
-            self;
-            button0[0],
-            button1[1],
-            button2[2],
-            button3[3],
-            button4[4],
-            button5[5],
-            button6[6],
-            button7[7],
-            button8[8],
+    // -------- Workspace pills --------
+    fn tag_visuals(&self, index: usize) -> (Color, f32, Color) {
+        // returns (background, border_width, border_color)
+        let tag_color = self
+            .tab_colors
+            .get(index)
+            .copied()
+            .unwrap_or(Self::DEFAULT_COLOR);
+
+        if let Some(monitor) = self.monitor_info_opt.as_ref() {
+            if let Some(status) = monitor.tag_status_vec.get(index) {
+                if status.is_urg {
+                    // urgent: red bg + bold violet border
+                    return (
+                        Color::from_rgba(1.0, 0.0, 0.0, 0.80),
+                        2.5,
+                        Color::from_rgba(0.54, 0.17, 0.89, 1.0), // violet
+                    );
+                } else if status.is_filled {
+                    // filled: solid tag color + bold border
+                    return (tag_color.scale_alpha(1.0), 2.0, tag_color);
+                } else if status.is_selected {
+                    // selected: semi tag color + thin border
+                    return (tag_color.scale_alpha(0.82), 1.5, tag_color);
+                } else if status.is_occ {
+                    // occupied: faint bg, no border
+                    return (tag_color.scale_alpha(0.70), 0.0, Color::TRANSPARENT);
+                }
+            }
         }
-        let tab_buttons = row![
-            button0, button1, button2, button3, button4, button5, button6, button7, button8,
-        ]
-        .spacing(Self::TAB_SPACING);
 
-        let layout_text = lazy(self.layout_symbol.clone(), |symbol: &String| {
-            container(rich_text![span(symbol.clone())].on_link_click(std::convert::identity))
-                .center_x(Length::Shrink)
-        });
+        // default: transparent bg, no border
+        (Color::TRANSPARENT, 0.0, Color::TRANSPARENT)
+    }
 
-        let scrollable_content = lazy(&self.layout_symbol, |_symbol: &&String| {
-            Scrollable::with_direction(
-                row![
-                    button("[]=").on_press(Message::LayoutClicked(0)),
-                    button("><>").on_press(Message::LayoutClicked(1)),
-                    button("[M]").on_press(Message::LayoutClicked(2)),
-                ]
-                .spacing(10)
-                .padding(0.0),
-                Direction::Horizontal(Scrollbar::new().scroller_width(3.0).width(1.)),
-            )
-            .width(50.0)
+    fn workspace_button<'a>(
+        &self,
+        index: usize,
+        label: &'a str,
+    ) -> iced::widget::Button<'a, Message> {
+        let (bg, border_w, border_c) = self.tag_visuals(index);
+
+        let radius = 6.0;
+        button(rich_text![span(label.to_string())].on_link_click(std::convert::identity))
+            .padding([2, 4])
+            .width(Self::TAB_WIDTH)
             .height(Self::TAB_HEIGHT)
-            .spacing(0.)
-        });
+            .style(move |_theme: &Theme, status: button::Status| {
+                let mut background = bg;
+                let mut border_width = border_w;
 
+                match status {
+                    button::Status::Hovered => {
+                        // stronger border on hover
+                        border_width = (border_w + 1.0).min(3.0);
+                        if background.a > 0.0 {
+                            background.a = (background.a + 0.08).min(1.0);
+                        } else {
+                            // subtle hover when transparent
+                            background = Color::from_rgba(1.0, 1.0, 1.0, 0.08);
+                        }
+                    }
+                    button::Status::Pressed => {
+                        // pressed -> slightly darker
+                        if background.a > 0.0 {
+                            background.a = (background.a + 0.12).min(1.0);
+                        } else {
+                            background = Color::from_rgba(0.9, 0.9, 0.9, 0.10);
+                        }
+                    }
+                    _ => {}
+                }
+
+                button::Style {
+                    background: Some(Background::Color(background)),
+                    text_color: Color::BLACK,
+                    border: Border {
+                        color: border_c,
+                        width: border_width,
+                        radius: border::Radius::from(radius),
+                    },
+                    ..Default::default()
+                }
+            })
+            .on_press(Message::TabSelected(index))
+    }
+
+    fn layout_toggle_button<'a>(&self) -> iced::widget::Button<'a, Message> {
+        let is_open = self.layout_selector_open;
+        let color_open = Color::from_rgb(0.24, 0.70, 0.44); // success
+        let color_close = Color::from_rgb(0.85, 0.33, 0.0); // error
+
+        let pill_color = if is_open { color_open } else { color_close };
+        let label = self.layout_symbol.clone();
+
+        button(rich_text![span(label)].on_link_click(std::convert::identity))
+            .padding([2, 8])
+            .style(move |_theme: &Theme, status: button::Status| {
+                let mut bg = pill_color.scale_alpha(0.85);
+                let mut border_w = 1.0;
+
+                if matches!(status, button::Status::Hovered) {
+                    bg.a = 1.0;
+                    border_w = 2.0;
+                }
+
+                button::Style {
+                    background: Some(Background::Color(bg)),
+                    text_color: Color::WHITE,
+                    border: Border {
+                        color: pill_color,
+                        width: border_w,
+                        radius: border::Radius::from(6.0),
+                    },
+                    ..Default::default()
+                }
+            })
+            .on_press(Message::ToggleLayoutSelector)
+    }
+
+    fn layout_options_row(&self) -> Element<'_, Message> {
+        // Available layouts: 0 = "[]=", 1 = "><>", 2 = "[M]"
+        let layouts: [(&str, u32); 3] = [("[]=", 0), ("><>", 1), ("[M]", 2)];
+        let current = self.layout_symbol.as_str();
+
+        let mut row = Row::new().spacing(4);
+        for (sym, idx) in layouts {
+            let is_current = sym == current;
+
+            let btn = button(text(sym))
+                .padding([1, 6])
+                .style(move |_theme: &Theme, status: button::Status| {
+                    let base = if is_current {
+                        Color::from_rgb(0.24, 0.70, 0.44) // success
+                    } else {
+                        Color::from_rgb(0.25, 0.41, 0.88) // royal blue
+                    };
+
+                    let mut bg = base.scale_alpha(0.85);
+                    let mut border_w = if is_current { 2.0 } else { 1.0 };
+
+                    if matches!(status, button::Status::Hovered) {
+                        bg.a = 1.0;
+                        border_w += 1.0;
+                    }
+
+                    button::Style {
+                        background: Some(Background::Color(bg)),
+                        text_color: Color::WHITE,
+                        border: Border {
+                            color: base,
+                            width: border_w,
+                            radius: border::Radius::from(6.0),
+                        },
+                        ..Default::default()
+                    }
+                })
+                .on_press(Message::LayoutClicked(idx));
+
+            row = row.push(btn);
+        }
+
+        row.into()
+    }
+
+    fn view_work_space(&self) -> Element<'_, Message> {
+        // Workspace pills
+        let mut tags_row = Row::new().spacing(Self::TAB_SPACING);
+        for (index, label) in self.tabs.iter().enumerate() {
+            tags_row = tags_row.push(self.workspace_button(index, label));
+        }
+
+        // Layout section: main button + optional selector row
+        let layout_button = self.layout_toggle_button();
+
+        let layout_selector = if self.layout_selector_open {
+            let selector = self.layout_options_row();
+            Row::new()
+                .spacing(6)
+                .push(selector)
+                .align_y(iced::Alignment::Center)
+        } else {
+            Row::new().into()
+        };
+
+        // Screenshot button with hover
         let cyan = Color::from_rgb(0.0, 1.0, 1.0);
         let dark_orange = Color::from_rgb(1.0, 0.5, 0.0);
-
-        // 关键：不要在 style 闭包里用 self；先复制需要的值
         let is_hovered = self.is_hovered;
+
         let screenshot_text = container(text(format!(" s {:.2} ", self.scale_factor)).center())
             .center_y(Length::Fill)
             .style(move |_theme: &Theme| {
@@ -710,7 +791,7 @@ impl IcedBar {
             })
             .padding(0.0);
 
-        let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
+        // CPU usage bar
         let cpu_usage = if let Some(snapshot) = self.system_monitor.get_snapshot() {
             snapshot.cpu_average
         } else {
@@ -719,9 +800,9 @@ impl IcedBar {
         let cpu_usage_bar = progress_bar(0.0..=100.0, (100.0 - cpu_usage).max(0.0))
             .style(move |theme: &Theme| progress_bar::Style {
                 background: Background::Gradient({
-                    let gradient = gradient::Linear::new(Radians::from(Degrees(90.0)))
-                        .add_stop(0.0, Color::from_rgb(1.0, 0., 0.))
-                        .add_stop(1.0, Color::from_rgb(0.0, 1.0, 1.0));
+                    let gradient = gradient::Linear::new(Radians::from(Degrees(-90.0)))
+                        .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
+                        .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
                     gradient.into()
                 }),
                 bar: Background::Color(theme.palette().primary),
@@ -730,6 +811,39 @@ impl IcedBar {
             .girth(Self::TAB_HEIGHT * 0.5)
             .length(100.);
 
+        // Memory usage bar
+        let (memory_total_gb, memory_used_gb) =
+            if let Some(snapshot) = self.system_monitor.get_snapshot() {
+                (
+                    snapshot.memory_total as f32 / 1e9,
+                    snapshot.memory_used as f32 / 1e9,
+                )
+            } else {
+                (0.0, 0.0)
+            };
+
+        let used_ratio = if memory_total_gb > 0.0 {
+            (memory_used_gb / memory_total_gb) * 100.0
+        } else {
+            0.0
+        };
+
+        let mem_bar = progress_bar(0.0..=100.0, (100.0 - used_ratio).max(0.0))
+            .style(move |theme: &Theme| progress_bar::Style {
+                background: Background::Gradient({
+                    let gradient = gradient::Linear::new(Radians::from(Degrees(-90.0)))
+                        .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
+                        .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
+                    gradient.into()
+                }),
+                bar: Background::Color(theme.palette().primary),
+                border: border::rounded(2.0),
+            })
+            .girth(Self::TAB_HEIGHT * 0.5)
+            .length(100.);
+
+        // Time + Monitor indicator
+        let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
         let monitor_num = if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
             monitor_info.monitor_num
         } else {
@@ -737,21 +851,23 @@ impl IcedBar {
         };
 
         Row::new()
-            .push(tab_buttons)
-            .push(Space::with_width(3))
-            .push(layout_text)
-            .push(Space::with_width(3))
-            .push(scrollable_content)
+            .push(tags_row)
+            .push(Space::with_width(6))
+            .push(layout_button)
+            .push(Space::with_width(6))
+            .push(layout_selector)
             .push(Space::with_width(Length::Fill))
             .push(cpu_usage_bar)
-            .push(Space::with_width(3))
+            .push(Space::with_width(6))
+            .push(mem_bar)
+            .push(Space::with_width(6))
             .push(
                 mouse_area(screenshot_text)
                     .on_enter(Message::MouseEnterScreenShot)
                     .on_exit(Message::MouseExitScreenShot)
                     .on_press(Message::LeftClick),
             )
-            .push(Space::with_width(3))
+            .push(Space::with_width(6))
             .push(time_button)
             .push(
                 rich_text([
@@ -764,170 +880,13 @@ impl IcedBar {
             .into()
     }
 
-    fn view_under_line(&self) -> Element<'_, Message> {
-        let mut underline_row = Row::new().spacing(Self::TAB_SPACING);
-        for (index, _) in self.tabs.iter().enumerate() {
-            // 关键：复制一个 Color 值，而不是借用 &Color
-            let tab_color: Color = self
-                .tab_colors
-                .get(index)
-                .copied()
-                .unwrap_or(Self::DEFAULT_COLOR);
-
-            if let Some(Some(tag_status)) = self
-                .monitor_info_opt
-                .as_ref()
-                .map(|s| s.tag_status_vec.get(index))
-            {
-                if !(tag_status.is_selected
-                    || tag_status.is_occ
-                    || tag_status.is_filled
-                    || tag_status.is_urg)
-                {
-                    let underline = container(text(" "))
-                        .width(Length::Fixed(Self::TAB_WIDTH))
-                        .height(Length::Fixed(3.0));
-                    underline_row = underline_row.push(underline);
-                    continue;
-                }
-                if tag_status.is_urg {
-                    let underline = container(
-                        container(text(" "))
-                            .width(Length::Fixed(Self::UNDERLINE_WIDTH))
-                            .height(Length::Fixed(4.0))
-                            .style(move |_theme: &Theme| container::Style {
-                                background: Some(Background::Color(Color::from_rgb(1., 0., 0.))),
-                                ..Default::default()
-                            }),
-                    )
-                    .center_x(Length::Fixed(Self::TAB_WIDTH));
-                    underline_row = underline_row.push(underline);
-                    continue;
-                }
-                if tag_status.is_filled {
-                    let underline = container(
-                        container(text(" "))
-                            .width(Length::Fixed(Self::UNDERLINE_WIDTH))
-                            .height(Length::Fixed(4.0))
-                            .style(move |_theme: &Theme| container::Style {
-                                background: Some(Background::Color(Color::from_rgb(0., 1., 0.))),
-                                ..Default::default()
-                            }),
-                    )
-                    .center_x(Length::Fixed(Self::TAB_WIDTH));
-                    underline_row = underline_row.push(underline);
-                    continue;
-                }
-                if tag_status.is_selected && !tag_status.is_occ {
-                    let underline = container(
-                        container(text(" "))
-                            .width(Length::Fixed(Self::UNDERLINE_WIDTH))
-                            .height(Length::Fixed(3.0))
-                            .style(move |_theme: &Theme| container::Style {
-                                background: Some(Background::Color(Self::DEFAULT_COLOR)),
-                                ..Default::default()
-                            }),
-                    )
-                    .center_x(Length::Fixed(Self::TAB_WIDTH));
-                    underline_row = underline_row.push(underline);
-                    continue;
-                }
-                if !tag_status.is_selected && tag_status.is_occ {
-                    let color_copy = tab_color; // 再拷贝一次也可以
-                    let underline = container(
-                        container(text(" "))
-                            .width(Length::Fixed(Self::UNDERLINE_WIDTH))
-                            .height(Length::Fixed(3.0))
-                            .style(move |_theme: &Theme| container::Style {
-                                background: Some(Background::Color(color_copy)),
-                                ..Default::default()
-                            }),
-                    )
-                    .center_x(Length::Fixed(Self::TAB_WIDTH));
-                    underline_row = underline_row.push(underline);
-                    continue;
-                }
-                if tag_status.is_selected && tag_status.is_occ {
-                    let color_copy = tab_color;
-                    let underline = container(
-                        container(text(" "))
-                            .width(Length::Fixed(Self::UNDERLINE_WIDTH))
-                            .height(Length::Fixed(3.0))
-                            .style(move |_theme: &Theme| container::Style {
-                                background: Some(Background::Color(color_copy)),
-                                ..Default::default()
-                            }),
-                    )
-                    .center_x(Length::Fixed(Self::TAB_WIDTH));
-                    underline_row = underline_row.push(underline);
-                    continue;
-                }
-            } else {
-                let is_active = index == self.active_tab;
-                let color_copy = tab_color;
-                let underline = if is_active {
-                    container(
-                        container(text(" "))
-                            .width(Length::Fixed(Self::UNDERLINE_WIDTH))
-                            .height(Length::Fixed(3.0))
-                            .style(move |_theme: &Theme| container::Style {
-                                background: Some(Background::Color(color_copy)),
-                                ..Default::default()
-                            }),
-                    )
-                    .center_x(Length::Fixed(Self::TAB_WIDTH))
-                } else {
-                    container(text(" "))
-                        .width(Length::Fixed(Self::TAB_WIDTH))
-                        .height(Length::Fixed(3.0))
-                };
-                underline_row = underline_row.push(underline);
-            }
-        }
-
-        let (memory_total_gb, memory_used_gb) =
-            if let Some(snapshot) = self.system_monitor.get_snapshot() {
-                (
-                    snapshot.memory_total as f32 / 1e9, // GB
-                    snapshot.memory_used as f32 / 1e9,  // GB
-                )
-            } else {
-                (0.0, 0.0)
-            };
-
-        let used_ratio = if memory_total_gb > 0.0 {
-            (memory_used_gb / memory_total_gb) * 100.0
-        } else {
-            0.0
-        };
-
-        underline_row = underline_row.push(Space::with_width(Length::Fill)).push(
-            progress_bar(0.0..=100.0, (100.0 - used_ratio).max(0.0))
-                .style(move |theme: &Theme| progress_bar::Style {
-                    background: Background::Gradient({
-                        let gradient = gradient::Linear::new(Radians::from(Degrees(90.0)))
-                            .add_stop(0.0, Color::from_rgb(1.0, 0., 0.))
-                            .add_stop(1.0, Color::from_rgb(0.0, 1.0, 1.0));
-                        gradient.into()
-                    }),
-                    bar: Background::Color(theme.palette().primary),
-                    border: border::rounded(2.0),
-                })
-                .girth(3.0)
-                .length(200.),
-        );
-        underline_row.into()
-    }
-
     fn view(&self) -> Element<'_, Message> {
         let work_space_row = self.view_work_space();
-        let under_line_row = self.view_under_line();
 
         Column::new()
             .padding(2)
             .spacing(Self::TAB_SPACING)
             .push(work_space_row)
-            .push(under_line_row)
             .into()
     }
 }
