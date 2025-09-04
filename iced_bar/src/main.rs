@@ -1,7 +1,7 @@
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-use iced::futures::channel::mpsc::{self};
-use iced::futures::{SinkExt, Stream};
+use iced::futures::channel::mpsc;
+use iced::futures::{SinkExt, Stream, StreamExt};
 use iced::time::{self, milliseconds};
 use iced::widget::container;
 use iced::widget::lazy;
@@ -17,52 +17,49 @@ use iced::{
     widget::{Column, Row, text},
     window,
 };
-mod error;
-pub use error::AppError;
-use log::debug;
-use log::{error, info, warn};
-use shared_structures::{CommandType, MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer};
+
+use log::{debug, error, info, warn};
 use std::env;
 use std::process::Command;
+use std::sync::Arc;
 use std::sync::Once;
-use std::sync::atomic::{AtomicI64, AtomicU64, Ordering};
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::{Duration, Instant};
 
-use crate::audio_manager::AudioManager;
-use crate::system_monitor::SystemMonitor;
-
-pub mod audio_manager;
-pub mod system_monitor;
+use audio_manager::AudioManager;
+pub use error::AppError;
+use shared_structures::{CommandType, MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer};
+use system_monitor::SystemMonitor;
 
 static _START: Once = Once::new();
 
 #[allow(unused_macros)]
 macro_rules! create_tab_button {
-    ($self:expr, $index:expr) => {
-        lazy(&$self.active_tab, |_| {
+    ($self:expr, $index:expr) => {{
+        let label = $self.tabs[$index].clone();
+        lazy(&$self.active_tab, move |_active| {
             mouse_area(
-                button(
-                    rich_text![span($self.tabs[$index].clone())]
-                        .on_link_click(std::convert::identity),
-                )
-                .width(Self::TAB_WIDTH),
+                button(rich_text![span(label.clone())].on_link_click(std::convert::identity))
+                    .width(IcedBar::TAB_WIDTH),
             )
             .on_press(Message::TabSelected($index))
         })
-    };
+    }};
 }
+
 macro_rules! tab_buttons {
     (
         $self:expr;
         $($name:ident[$index:expr]),* $(,)?
     ) => {
         $(
-            let $name = lazy(&$self.active_tab, |_| {
+            let label = $self.tabs[$index].clone();
+            let $name = lazy(&$self.active_tab, move |_active| {
                 mouse_area(
                     button(
-                        rich_text![span($self.tabs[$index].clone())].on_link_click(std::convert::identity),
+                        rich_text![span(label.clone())].on_link_click(std::convert::identity),
                     )
-                    .width(Self::TAB_WIDTH),
+                    .width(IcedBar::TAB_WIDTH),
                 )
                 .on_press(Message::TabSelected($index))
             });
@@ -78,13 +75,14 @@ macro_rules! tab_buttons {
         ),* $(,)?
     ) => {
         $(
+            let label = $self.tabs[$index].clone();
             $(#[$attr])*
-            let $name = lazy(&$self.active_tab, |_| {
+            let $name = lazy(&$self.active_tab, move |_active| {
                 mouse_area(
                     button(
-                        rich_text![span($self.tabs[$index].clone())].on_link_click(std::convert::identity),
+                        rich_text![span(label.clone())].on_link_click(std::convert::identity),
                     )
-                    .width(Self::TAB_WIDTH),
+                    .width(IcedBar::TAB_WIDTH),
                 )
                 .on_press(Message::TabSelected($index))
             });
@@ -94,8 +92,29 @@ macro_rules! tab_buttons {
 
 /// Initialize logging system
 fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
+    // 提前初始化，避免之后的 info!/warn! 被丢弃
     let tmp_now = Local::now();
     let timestamp = tmp_now.format("%Y-%m-%d_%H_%M_%S").to_string();
+
+    // 选择更健壮的日志目录
+    let log_dir_candidates = [
+        std::env::var("XDG_RUNTIME_DIR")
+            .ok()
+            .map(|p| format!("{}/iced_bar", p)),
+        std::env::var("TMPDIR")
+            .ok()
+            .map(|p| format!("{}/iced_bar", p)),
+        Some("/tmp/iced_bar".to_string()),
+    ];
+
+    let log_dir = log_dir_candidates
+        .into_iter()
+        .flatten()
+        .find(|p| {
+            std::fs::create_dir_all(p).ok();
+            std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false)
+        })
+        .unwrap_or_else(|| ".".to_string());
 
     let file_name = if shared_path.is_empty() {
         "iced_bar".to_string()
@@ -108,18 +127,20 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     };
 
     let log_filename = format!("{}_{}", file_name, timestamp);
-    info!("log_filename: {}", log_filename);
 
-    Logger::try_with_str("info")
+    let log_spec = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+
+    Logger::try_with_str(log_spec)
         .map_err(|e| AppError::config(format!("Failed to create logger: {}", e)))?
-        .format(flexi_logger::colored_opt_format)
+        .format_for_files(flexi_logger::detailed_format)
+        .format_for_stderr(flexi_logger::colored_opt_format)
         .log_to_file(
             FileSpec::default()
-                .directory("/var/tmp/jwm")
+                .directory(&log_dir)
                 .basename(log_filename)
                 .suffix("log"),
         )
-        .duplicate_to_stdout(Duplicate::Debug)
+        .duplicate_to_stdout(Duplicate::Info)
         .rotate(
             Criterion::Size(10_000_000), // 10MB
             Naming::Numbers,
@@ -128,23 +149,39 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
         .start()
         .map_err(|e| AppError::config(format!("Failed to start logger: {}", e)))?;
 
+    info!("Log directory: {}", log_dir);
     Ok(())
 }
 
 fn main() -> iced::Result {
+    // 先 parse args，再初始化日志
     let args: Vec<String> = env::args().collect();
     let application_id = args.get(0).cloned().unwrap_or_default();
-    info!("application_id: {application_id}");
+    let shared_path = args.get(1).cloned().unwrap_or_default();
+
+    if let Err(e) = initialize_logging(&shared_path) {
+        eprintln!("Failed to initialize logging: {}", e);
+        std::process::exit(1);
+    }
+
+    info!(
+        "Starting iced_bar v{}; application_id: {}; shared_path: {}",
+        1.0, application_id, shared_path
+    );
+
     iced::application(IcedBar::new, IcedBar::update, IcedBar::view)
         .window(window::Settings {
             platform_specific: window::settings::PlatformSpecific {
                 application_id,
                 ..Default::default()
             },
+            size: Size::from([800., 40.]),
+            decorations: false,
+            transparent: true,
+            level: window::Level::AlwaysOnTop,
             ..Default::default()
         })
         // .font(include_bytes!("../fonts/NotoColorEmoji.ttf").as_slice())
-        .window_size(Size::from([800., 40.]))
         .subscription(IcedBar::subscription)
         .title("iced_bar")
         .scale_factor(IcedBar::scale_factor)
@@ -191,8 +228,7 @@ struct IcedBar {
     shared_path: String,
     monitor_info_opt: Option<MonitorInfo>,
     formated_now: String,
-    heartbeat_timestamp: AtomicI64,
-    raw_window_id: AtomicU64,
+    raw_window_id: u64,
     current_window_id: Option<Id>,
     scale_factor: f32,
     is_hovered: bool,
@@ -210,6 +246,10 @@ struct IcedBar {
     /// System monitoring
     system_monitor: SystemMonitor,
     transparent: bool,
+
+    /// 节流
+    last_clock_update: Instant,
+    last_monitor_update: Instant,
 }
 
 impl Default for IcedBar {
@@ -229,12 +269,6 @@ impl IcedBar {
         // Parse command line arguments
         let args: Vec<String> = env::args().collect();
         let shared_path = args.get(1).cloned().unwrap_or_default();
-        // Initialize logging
-        if let Err(e) = initialize_logging(&shared_path) {
-            error!("Failed to initialize logging: {}", e);
-            std::process::exit(1);
-        }
-        info!("Starting iced_bar v{}, shared_path: {shared_path}", 1.0);
 
         let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
             warn!("No shared path provided, running without shared memory");
@@ -263,8 +297,6 @@ impl IcedBar {
                 }
             }
         };
-        let heartbeat_timestamp = AtomicI64::new(Local::now().timestamp());
-        let raw_window_id = AtomicU64::new(0);
 
         Self {
             active_tab: 0,
@@ -307,8 +339,9 @@ impl IcedBar {
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(10),
             transparent: true,
-            heartbeat_timestamp,
-            raw_window_id,
+            raw_window_id: 0,
+            last_clock_update: Instant::now(),
+            last_monitor_update: Instant::now(),
         }
     }
 
@@ -321,72 +354,68 @@ impl IcedBar {
     fn message_notify_subscription(shared_path: String) -> Subscription<Message> {
         Subscription::run_with(shared_path.clone(), move |path| {
             let path = path.clone();
-            stream::channel(100, move |mut output: mpsc::Sender<Message>| {
-                let path = path.clone();
-                async move {
-                    if path.is_empty() {
+            stream::channel(100, move |mut output: mpsc::Sender<Message>| async move {
+                if path.is_empty() {
+                    let _ = output
+                        .send(Message::SharedMemoryError("Empty shared path".to_string()))
+                        .await;
+                    return;
+                }
+
+                let shared_buffer = match SharedRingBuffer::open(&path, None) {
+                    Ok(buffer) => Arc::new(buffer),
+                    Err(e) => {
                         let _ = output
-                            .send(Message::SharedMemoryError("Empty shared path".to_string()))
+                            .send(Message::SharedMemoryError(format!(
+                                "Failed to open shared buffer: {}",
+                                e
+                            )))
                             .await;
                         return;
                     }
-                    // 使用 spawn_blocking 来处理阻塞操作
-                    let shared_buffer = match SharedRingBuffer::open(&path, None) {
-                        Ok(buffer) => buffer,
-                        Err(e) => {
-                            let _ = output
-                                .send(Message::SharedMemoryError(format!(
-                                    "Failed to open shared buffer: {}",
-                                    e
-                                )))
-                                .await;
-                            return;
-                        }
-                    };
+                };
 
-                    let shared_buffer = std::sync::Arc::new(shared_buffer);
-                    let buffer_clone = shared_buffer.clone();
+                let (mut tx, mut rx) = mpsc::channel::<Message>(100);
+                let buffer_clone = shared_buffer.clone();
+                let stop = Arc::new(AtomicBool::new(false));
+                let stop_c = stop.clone();
 
-                    let (tx, mut rx) = tokio::sync::mpsc::channel(100);
-
-                    tokio::task::spawn_blocking(move || {
-                        let mut prev_timestamp = SystemTime::now()
-                            .duration_since(UNIX_EPOCH)
-                            .unwrap()
-                            .as_millis();
-                        loop {
-                            match buffer_clone.wait_for_message(Some(time::Duration::from_secs(2)))
-                            {
-                                Ok(true) => {
-                                    if let Ok(Some(message)) =
-                                        buffer_clone.try_read_latest_message()
-                                    {
-                                        if prev_timestamp != message.timestamp.into() {
-                                            prev_timestamp = message.timestamp.into();
-                                            debug!(
-                                                "[notifier] Received State: {}",
-                                                message.timestamp
-                                            );
-                                            let _ = tx
-                                                .blocking_send(Message::SharedMemoryUpdated(
-                                                    message,
-                                                ))
-                                                .unwrap();
+                std::thread::spawn(move || {
+                    let mut prev_timestamp: u128 = 0;
+                    while !stop_c.load(Ordering::Relaxed) {
+                        match buffer_clone.wait_for_message(Some(Duration::from_secs(2))) {
+                            Ok(true) => {
+                                if let Ok(Some(message)) = buffer_clone.try_read_latest_message() {
+                                    let ts: u128 = message.timestamp as u128;
+                                    if prev_timestamp != ts {
+                                        prev_timestamp = ts;
+                                        if tx
+                                            .try_send(Message::SharedMemoryUpdated(message))
+                                            .is_err()
+                                        {
+                                            // 接收端可能已关闭
+                                            break;
                                         }
                                     }
                                 }
-                                Ok(false) => debug!("[notifier] Wait for message timed out."),
-                                Err(e) => {
-                                    error!("[notifier] Wait for message failed: {}", e);
-                                    break;
-                                }
+                            }
+                            Ok(false) => { /* timeout */ }
+                            Err(e) => {
+                                let _ = tx.try_send(Message::SharedMemoryError(format!(
+                                    "Wait for message failed: {}",
+                                    e
+                                )));
+                                break;
                             }
                         }
-                    });
-                    while let Some(msg) = rx.recv().await {
-                        let _ = output.send(msg).await;
                     }
+                });
+
+                while let Some(msg) = rx.next().await {
+                    let _ = output.send(msg).await;
                 }
+
+                stop.store(true, Ordering::Relaxed);
             })
         })
     }
@@ -401,15 +430,9 @@ impl IcedBar {
 
         if let Some(shared_buffer) = &self.shared_buffer_opt {
             match shared_buffer.send_command(command) {
-                Ok(true) => {
-                    info!("Sent command: {:?} by shared_buffer", command);
-                }
-                Ok(false) => {
-                    warn!("Command buffer full, command dropped");
-                }
-                Err(e) => {
-                    error!("Failed to send command: {}", e);
-                }
+                Ok(true) => info!("Sent command: {:?} by shared_buffer", command),
+                Ok(false) => warn!("Command buffer full, command dropped"),
+                Err(e) => error!("Failed to send command: {}", e),
             }
         }
     }
@@ -418,34 +441,25 @@ impl IcedBar {
         let command = SharedCommand::new(CommandType::SetLayout, layout_index, self.monitor_num);
         if let Some(shared_buffer) = &self.shared_buffer_opt {
             match shared_buffer.send_command(command) {
-                Ok(true) => {
-                    info!("Sent command: {:?} by shared_buffer", command);
-                }
-                Ok(false) => {
-                    warn!("Command buffer full, command dropped");
-                }
-                Err(e) => {
-                    error!("Failed to send command: {}", e);
-                }
+                Ok(true) => info!("Sent command: {:?} by shared_buffer", command),
+                Ok(false) => warn!("Command buffer full, command dropped"),
+                Err(e) => error!("Failed to send command: {}", e),
             }
         }
     }
 
     fn update(&mut self, message: Message) -> Task<Message> {
-        // info!("update");
         match message {
             Message::TabSelected(tab_index) => {
                 info!("Tab selected: {}", tab_index);
                 self.active_tab = tab_index;
                 self.send_tag_command(true);
-
                 Task::none()
             }
 
             Message::LayoutClicked(layout_index) => {
                 self.send_layout_command(layout_index);
                 info!("Layout selected: {}", layout_index);
-
                 Task::none()
             }
 
@@ -455,14 +469,17 @@ impl IcedBar {
             }
 
             Message::WindowIdReceived(window_id) => {
-                info!("WindowIdReceived");
-                self.current_window_id = window_id;
-                info!("current_window_id: {:?}", self.current_window_id);
-                let window_id = window_id.unwrap();
-                Task::batch([
-                    window::get_scale_factor(window_id).map(Message::GetScaleFactor),
-                    window::get_raw_id::<Message>(window_id).map(Message::RawIdReceived),
-                ])
+                if let Some(wid) = window_id {
+                    info!("WindowIdReceived: {:?}", wid);
+                    self.current_window_id = Some(wid);
+                    Task::batch([
+                        window::get_scale_factor(wid).map(Message::GetScaleFactor),
+                        window::get_raw_id::<Message>(wid).map(Message::RawIdReceived),
+                    ])
+                } else {
+                    warn!("WindowId not available yet");
+                    Task::none()
+                }
             }
 
             Message::MouseEnterScreenShot => {
@@ -482,14 +499,16 @@ impl IcedBar {
             }
 
             Message::LeftClick => {
-                let _ = Command::new("flameshot").arg("gui").spawn();
+                if let Err(e) = Command::new("flameshot").arg("gui").spawn() {
+                    warn!("Failed to spawn flameshot: {e}");
+                }
                 Task::none()
             }
 
             Message::RightClick => Task::none(),
 
             Message::GetAndResizeWindowSize(window_size) => {
-                // info!("window_size: {:?}", window_size);
+                // 可选：节流与阈值判断，避免抖动
                 self.current_window_size = Some(window_size);
                 if let (
                     Some(current_window_id),
@@ -526,34 +545,36 @@ impl IcedBar {
             }
 
             Message::RawIdReceived(raw_id) => {
-                // Use xwininfo to get window id.
-                // xdotool windowsize 0xc00004 800 40 work!
-                self.raw_window_id.store(raw_id, Ordering::Relaxed);
+                self.raw_window_id = raw_id;
                 info!("{}", format!("RawIdReceived: 0x{:X}", raw_id));
                 Task::none()
             }
 
             Message::UpdateTime => {
-                let tmp_now = Local::now();
-                let format_str = if self.show_seconds {
-                    "%Y-%m-%d %H:%M:%S"
-                } else {
-                    "%Y-%m-%d %H:%M"
-                };
-                self.heartbeat_timestamp
-                    .store(tmp_now.timestamp(), Ordering::Release);
-                self.formated_now = tmp_now.format(format_str).to_string();
+                // 1. 更新时间字符串（每秒）
+                if self.last_clock_update.elapsed() >= Duration::from_millis(900) {
+                    let tmp_now = Local::now();
+                    let format_str = if self.show_seconds {
+                        "%Y-%m-%d %H:%M:%S"
+                    } else {
+                        "%Y-%m-%d %H:%M"
+                    };
+                    self.formated_now = tmp_now.format(format_str).to_string();
+                    self.last_clock_update = Instant::now();
+                }
 
-                if tmp_now.timestamp() % 2 == 0 {
+                // 2. 系统/音频监控（每2秒节流）
+                if self.last_monitor_update.elapsed() >= Duration::from_secs(2) {
                     self.system_monitor.update_if_needed();
                     self.audio_manager.update_if_needed();
+                    self.last_monitor_update = Instant::now();
                 }
 
                 Task::none()
             }
 
             Message::SharedMemoryUpdated(message) => {
-                info!("SharedMemoryUpdated: {:?}", message);
+                debug!("SharedMemoryUpdated: {:?}", message.timestamp);
                 self.monitor_info_opt = Some(message.monitor_info);
                 if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
                     self.layout_symbol = monitor_info.get_ltsymbol();
@@ -564,32 +585,31 @@ impl IcedBar {
                         }
                     }
                 }
-                // let mut tasks = Vec::new();
-                // tasks.push(
-                //     window::get_size(self.current_window_id.unwrap())
-                //         .map(Message::GetAndResizeWindowSize),
-                // );
-                // Task::batch(tasks)
                 Task::none()
             }
 
             Message::SharedMemoryError(err) => {
-                info!("SharedMemoryError: {err}");
+                warn!("SharedMemoryError: {err}");
                 Task::none()
             }
         }
     }
 
     fn subscription(&self) -> Subscription<Message> {
-        let tick = if self.current_window_id.is_none() {
+        if self.current_window_id.is_none() {
+            // 仅触发一次窗口 ID 获取
             Subscription::run(Self::prepare_worker)
         } else {
-            Subscription::batch(vec![
-                time::every(milliseconds(1000)).map(|_| Message::UpdateTime),
-                Self::message_notify_subscription(self.shared_path.clone()),
-            ])
-        };
-        return tick;
+            // 时钟订阅
+            let clock = time::every(milliseconds(1000)).map(|_| Message::UpdateTime);
+            // 共享内存订阅（仅当 shared_path 非空）
+            let shared = if self.shared_path.is_empty() {
+                Subscription::none()
+            } else {
+                Self::message_notify_subscription(self.shared_path.clone())
+            };
+            Subscription::batch(vec![clock, shared])
+        }
     }
 
     #[allow(dead_code)]
@@ -604,7 +624,7 @@ impl IcedBar {
         }
     }
 
-    fn scale_factor(&self) -> f64 {
+    fn scale_factor(&self) -> f32 {
         1.0
     }
 
@@ -634,29 +654,14 @@ impl IcedBar {
             button0, button1, button2, button3, button4, button5, button6, button7, button8,
         ]
         .spacing(Self::TAB_SPACING);
-        // let tab_buttons = self.tabs.iter().enumerate().fold(
-        //     Row::new().spacing(Self::TAB_SPACING),
-        //     |row, (index, tab)| {
-        //         row.push(
-        //             mouse_area(
-        //                 button(rich_text![span(tab)].on_link_click(std::convert::identity))
-        //                     .width(Self::TAB_WIDTH),
-        //             )
-        //             .on_press(Message::TabSelected(index)),
-        //         )
-        //     },
-        // );
 
-        let layout_text = lazy(&self.layout_symbol, |_| {
-            let layout_text = container(
-                rich_text![span(self.layout_symbol.clone())].on_link_click(std::convert::identity),
-            )
-            .center_x(Length::Shrink);
-            layout_text
+        let layout_text = lazy(self.layout_symbol.clone(), |symbol: &String| {
+            container(rich_text![span(symbol.clone())].on_link_click(std::convert::identity))
+                .center_x(Length::Shrink)
         });
 
-        let scrollable_content = lazy(&self.layout_symbol, |_| {
-            let scrollable_content = Scrollable::with_direction(
+        let scrollable_content = lazy(&self.layout_symbol, |_symbol: &&String| {
+            Scrollable::with_direction(
                 row![
                     button("[]=").on_press(Message::LayoutClicked(0)),
                     button("><>").on_press(Message::LayoutClicked(1)),
@@ -668,16 +673,18 @@ impl IcedBar {
             )
             .width(50.0)
             .height(Self::TAB_HEIGHT)
-            .spacing(0.);
-            scrollable_content
+            .spacing(0.)
         });
 
-        let cyan = Color::from_rgb(0.0, 1.0, 1.0); // 青色
-        let dark_orange = Color::from_rgb(1.0, 0.5, 0.0); // 深橙色
+        let cyan = Color::from_rgb(0.0, 1.0, 1.0);
+        let dark_orange = Color::from_rgb(1.0, 0.5, 0.0);
+
+        // 关键：不要在 style 闭包里用 self；先复制需要的值
+        let is_hovered = self.is_hovered;
         let screenshot_text = container(text(format!(" s {:.2} ", self.scale_factor)).center())
             .center_y(Length::Fill)
             .style(move |_theme: &Theme| {
-                if self.is_hovered {
+                if is_hovered {
                     container::Style {
                         text_color: Some(dark_orange),
                         border: Border {
@@ -701,13 +708,12 @@ impl IcedBar {
             .padding(0.0);
 
         let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
-        let cpu_average = if let Some(snapshot) = self.system_monitor.get_snapshot() {
+        let cpu_usage = if let Some(snapshot) = self.system_monitor.get_snapshot() {
             snapshot.cpu_average
         } else {
             0.0
         };
-        // info!("cpu_average: {cpu_average}");
-        let cpu_usage_bar = progress_bar(0.0..=100.0, 100.0 - cpu_average)
+        let cpu_usage_bar = progress_bar(0.0..=100.0, cpu_usage)
             .style(move |theme: &Theme| progress_bar::Style {
                 background: Background::Gradient({
                     let gradient = gradient::Linear::new(Radians::from(Degrees(-90.0)))
@@ -726,7 +732,8 @@ impl IcedBar {
         } else {
             0
         };
-        let work_space_row = Row::new()
+
+        Row::new()
             .push(tab_buttons)
             .push(Space::with_width(3))
             .push(layout_text)
@@ -750,19 +757,20 @@ impl IcedBar {
                 ])
                 .on_link_click(std::convert::identity),
             )
-            .align_y(iced::Alignment::Center);
-
-        work_space_row.into()
+            .align_y(iced::Alignment::Center)
+            .into()
     }
 
     fn view_under_line(&self) -> Element<'_, Message> {
-        // 创建下划线行
         let mut underline_row = Row::new().spacing(Self::TAB_SPACING);
         for (index, _) in self.tabs.iter().enumerate() {
-            // 创建下划线
-            let tab_color = self.tab_colors.get(index).unwrap_or(&Self::DEFAULT_COLOR);
+            // 关键：复制一个 Color 值，而不是借用 &Color
+            let tab_color: Color = self
+                .tab_colors
+                .get(index)
+                .copied()
+                .unwrap_or(Self::DEFAULT_COLOR);
 
-            // 根据状态设置样式
             if let Some(Some(tag_status)) = self
                 .monitor_info_opt
                 .as_ref()
@@ -822,12 +830,13 @@ impl IcedBar {
                     continue;
                 }
                 if !tag_status.is_selected && tag_status.is_occ {
+                    let color_copy = tab_color; // 再拷贝一次也可以
                     let underline = container(
                         container(text(" "))
                             .width(Length::Fixed(Self::UNDERLINE_WIDTH))
                             .height(Length::Fixed(3.0))
                             .style(move |_theme: &Theme| container::Style {
-                                background: Some(Background::Color(*tab_color)),
+                                background: Some(Background::Color(color_copy)),
                                 ..Default::default()
                             }),
                     )
@@ -836,12 +845,13 @@ impl IcedBar {
                     continue;
                 }
                 if tag_status.is_selected && tag_status.is_occ {
+                    let color_copy = tab_color;
                     let underline = container(
                         container(text(" "))
                             .width(Length::Fixed(Self::UNDERLINE_WIDTH))
                             .height(Length::Fixed(3.0))
                             .style(move |_theme: &Theme| container::Style {
-                                background: Some(Background::Color(*tab_color)),
+                                background: Some(Background::Color(color_copy)),
                                 ..Default::default()
                             }),
                     )
@@ -850,22 +860,20 @@ impl IcedBar {
                     continue;
                 }
             } else {
-                // Use default logic.
                 let is_active = index == self.active_tab;
+                let color_copy = tab_color;
                 let underline = if is_active {
-                    // 激活状态：显示彩色下划线
                     container(
                         container(text(" "))
                             .width(Length::Fixed(Self::UNDERLINE_WIDTH))
                             .height(Length::Fixed(3.0))
                             .style(move |_theme: &Theme| container::Style {
-                                background: Some(Background::Color(*tab_color)),
+                                background: Some(Background::Color(color_copy)),
                                 ..Default::default()
                             }),
                     )
                     .center_x(Length::Fixed(Self::TAB_WIDTH))
                 } else {
-                    // 非激活状态：透明占位符
                     container(text(" "))
                         .width(Length::Fixed(Self::TAB_WIDTH))
                         .height(Length::Fixed(3.0))
@@ -873,41 +881,43 @@ impl IcedBar {
                 underline_row = underline_row.push(underline);
             }
         }
-        let (memory_available, memory_used) =
+
+        let (memory_total_gb, memory_used_gb) =
             if let Some(snapshot) = self.system_monitor.get_snapshot() {
                 (
-                    snapshot.memory_available as f32 / 1e9, // GB
-                    snapshot.memory_used as f32 / 1e9,      // GB
+                    snapshot.memory_total as f32 / 1e9, // GB
+                    snapshot.memory_used as f32 / 1e9,  // GB
                 )
             } else {
                 (0.0, 0.0)
             };
+
+        let used_ratio = if memory_total_gb > 0.0 {
+            (memory_used_gb / memory_total_gb) * 100.0
+        } else {
+            0.0
+        };
+
         underline_row = underline_row.push(Space::with_width(Length::Fill)).push(
-            progress_bar(
-                0.0..=100.0,
-                memory_available / (memory_available + memory_used) * 100.0,
-            )
-            .style(move |theme: &Theme| progress_bar::Style {
-                background: Background::Gradient({
-                    let gradient = gradient::Linear::new(Radians::from(Degrees(-90.0)))
-                        .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
-                        .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
-                    gradient.into()
-                }),
-                bar: Background::Color(theme.palette().primary),
-                border: border::rounded(2.0),
-            })
-            .girth(3.0)
-            .length(200.),
+            progress_bar(0.0..=100.0, used_ratio)
+                .style(move |theme: &Theme| progress_bar::Style {
+                    background: Background::Gradient({
+                        let gradient = gradient::Linear::new(Radians::from(Degrees(-90.0)))
+                            .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
+                            .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
+                        gradient.into()
+                    }),
+                    bar: Background::Color(theme.palette().primary),
+                    border: border::rounded(2.0),
+                })
+                .girth(3.0)
+                .length(200.),
         );
         underline_row.into()
     }
 
     fn view(&self) -> Element<'_, Message> {
-        // info!("view");
-        // let work_space_row = self.view_work_space().explain(Color::from_rgb(1., 0., 1.));
         let work_space_row = self.view_work_space();
-
         let under_line_row = self.view_under_line();
 
         Column::new()
@@ -916,5 +926,93 @@ impl IcedBar {
             .push(work_space_row)
             .push(under_line_row)
             .into()
+    }
+}
+
+// ------------------ 占位实现：error -------------------
+mod error {
+    use std::fmt::{Display, Formatter};
+
+    #[derive(Debug)]
+    pub enum AppError {
+        Config(String),
+        Other(String),
+    }
+
+    impl AppError {
+        pub fn config(msg: String) -> Self {
+            AppError::Config(msg)
+        }
+    }
+
+    impl Display for AppError {
+        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+            match self {
+                AppError::Config(s) => write!(f, "Config error: {}", s),
+                AppError::Other(s) => write!(f, "Error: {}", s),
+            }
+        }
+    }
+
+    impl std::error::Error for AppError {}
+}
+
+// ------------------ 占位实现：audio_manager -------------------
+mod audio_manager {
+    #[derive(Default)]
+    pub struct AudioManager;
+
+    impl AudioManager {
+        pub fn new() -> Self {
+            Self::default()
+        }
+
+        pub fn update_if_needed(&mut self) {
+            // TODO: 替换为真实音频状态更新逻辑
+        }
+    }
+}
+
+// ------------------ 占位实现：system_monitor -------------------
+mod system_monitor {
+    #[derive(Clone, Copy, Debug)]
+    pub struct Snapshot {
+        pub cpu_average: f32,  // 0..=100
+        pub memory_total: u64, // bytes
+        pub memory_used: u64,  // bytes
+    }
+
+    pub struct SystemMonitor {
+        // 窗口大小等配置（用于平滑/采样）
+        _window: usize,
+        last: Option<Snapshot>,
+        tick: u64,
+    }
+
+    impl SystemMonitor {
+        pub fn new(window: usize) -> Self {
+            SystemMonitor {
+                _window: window,
+                last: None,
+                tick: 0,
+            }
+        }
+
+        pub fn update_if_needed(&mut self) {
+            // 模拟数据（请替换为真实采样逻辑）
+            self.tick += 1;
+            let cpu = ((self.tick % 100) as f32).min(100.0);
+            let total = 16_u64 * 1024 * 1024 * 1024; // 16GB
+            let used = ((cpu as u64) * total) / 100;
+            self.last = Some(Snapshot {
+                cpu_average: cpu,
+                memory_total: total,
+                memory_used: used,
+            });
+        }
+
+        pub fn get_snapshot(&self) -> Option<Snapshot> {
+            self.last
+        }
     }
 }
