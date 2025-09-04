@@ -26,9 +26,12 @@ use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
+pub mod audio_manager;
 use audio_manager::AudioManager;
-pub use error::AppError;
+pub mod error;
+use error::AppError;
 use shared_structures::{CommandType, MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer};
+pub mod system_monitor;
 use system_monitor::SystemMonitor;
 
 static _START: Once = Once::new();
@@ -713,12 +716,12 @@ impl IcedBar {
         } else {
             0.0
         };
-        let cpu_usage_bar = progress_bar(0.0..=100.0, cpu_usage)
+        let cpu_usage_bar = progress_bar(0.0..=100.0, (100.0 - cpu_usage).max(0.0))
             .style(move |theme: &Theme| progress_bar::Style {
                 background: Background::Gradient({
-                    let gradient = gradient::Linear::new(Radians::from(Degrees(-90.0)))
-                        .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
-                        .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
+                    let gradient = gradient::Linear::new(Radians::from(Degrees(90.0)))
+                        .add_stop(0.0, Color::from_rgb(1.0, 0., 0.))
+                        .add_stop(1.0, Color::from_rgb(0.0, 1.0, 1.0));
                     gradient.into()
                 }),
                 bar: Background::Color(theme.palette().primary),
@@ -899,12 +902,12 @@ impl IcedBar {
         };
 
         underline_row = underline_row.push(Space::with_width(Length::Fill)).push(
-            progress_bar(0.0..=100.0, used_ratio)
+            progress_bar(0.0..=100.0, (100.0 - used_ratio).max(0.0))
                 .style(move |theme: &Theme| progress_bar::Style {
                     background: Background::Gradient({
-                        let gradient = gradient::Linear::new(Radians::from(Degrees(-90.0)))
-                            .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
-                            .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
+                        let gradient = gradient::Linear::new(Radians::from(Degrees(90.0)))
+                            .add_stop(0.0, Color::from_rgb(1.0, 0., 0.))
+                            .add_stop(1.0, Color::from_rgb(0.0, 1.0, 1.0));
                         gradient.into()
                     }),
                     bar: Background::Color(theme.palette().primary),
@@ -926,93 +929,5 @@ impl IcedBar {
             .push(work_space_row)
             .push(under_line_row)
             .into()
-    }
-}
-
-// ------------------ 占位实现：error -------------------
-mod error {
-    use std::fmt::{Display, Formatter};
-
-    #[derive(Debug)]
-    pub enum AppError {
-        Config(String),
-        Other(String),
-    }
-
-    impl AppError {
-        pub fn config(msg: String) -> Self {
-            AppError::Config(msg)
-        }
-    }
-
-    impl Display for AppError {
-        fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-            match self {
-                AppError::Config(s) => write!(f, "Config error: {}", s),
-                AppError::Other(s) => write!(f, "Error: {}", s),
-            }
-        }
-    }
-
-    impl std::error::Error for AppError {}
-}
-
-// ------------------ 占位实现：audio_manager -------------------
-mod audio_manager {
-    #[derive(Default)]
-    pub struct AudioManager;
-
-    impl AudioManager {
-        pub fn new() -> Self {
-            Self::default()
-        }
-
-        pub fn update_if_needed(&mut self) {
-            // TODO: 替换为真实音频状态更新逻辑
-        }
-    }
-}
-
-// ------------------ 占位实现：system_monitor -------------------
-mod system_monitor {
-    #[derive(Clone, Copy, Debug)]
-    pub struct Snapshot {
-        pub cpu_average: f32,  // 0..=100
-        pub memory_total: u64, // bytes
-        pub memory_used: u64,  // bytes
-    }
-
-    pub struct SystemMonitor {
-        // 窗口大小等配置（用于平滑/采样）
-        _window: usize,
-        last: Option<Snapshot>,
-        tick: u64,
-    }
-
-    impl SystemMonitor {
-        pub fn new(window: usize) -> Self {
-            SystemMonitor {
-                _window: window,
-                last: None,
-                tick: 0,
-            }
-        }
-
-        pub fn update_if_needed(&mut self) {
-            // 模拟数据（请替换为真实采样逻辑）
-            self.tick += 1;
-            let cpu = ((self.tick % 100) as f32).min(100.0);
-            let total = 16_u64 * 1024 * 1024 * 1024; // 16GB
-            let used = ((cpu as u64) * total) / 100;
-            self.last = Some(Snapshot {
-                cpu_average: cpu,
-                memory_total: total,
-                memory_used: used,
-            });
-        }
-
-        pub fn get_snapshot(&self) -> Option<Snapshot> {
-            self.last
-        }
     }
 }
