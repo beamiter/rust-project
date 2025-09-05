@@ -202,7 +202,7 @@ impl Default for IcedBar {
 impl IcedBar {
     const DEFAULT_COLOR: Color = color!(0x666666);
     const TAB_WIDTH: f32 = 40.0;
-    const TAB_HEIGHT: f32 = 28.0;
+    const TAB_HEIGHT: f32 = 32.0;
     const TAB_SPACING: f32 = 6.0;
 
     fn new() -> Self {
@@ -276,7 +276,7 @@ impl IcedBar {
             target_window_pos: None,
             target_window_size: None,
             audio_manager: AudioManager::new(),
-            system_monitor: SystemMonitor::new(10),
+            system_monitor: SystemMonitor::new(5),
             transparent: true,
             raw_window_id: 0,
             last_clock_update: Instant::now(),
@@ -618,10 +618,10 @@ impl IcedBar {
         let (bg, border_w, border_c) = self.tag_visuals(index);
 
         let radius = 6.0;
-        button(rich_text![span(label.to_string())].on_link_click(std::convert::identity))
-            .padding([1, 4])
+        button(rich_text![span(label.to_string())].size(18).on_link_click(std::convert::identity))
+            .padding([4, 8])
             .width(Self::TAB_WIDTH)
-            .height(Self::TAB_HEIGHT)
+            .height(Self::TAB_HEIGHT + 4.)
             .style(move |_theme: &Theme, status: button::Status| {
                 let mut background = bg;
                 let mut border_width = border_w;
@@ -744,7 +744,9 @@ impl IcedBar {
         // Workspace pills
         let mut tags_row = Row::new().spacing(Self::TAB_SPACING * 0.5);
         for (index, label) in self.tabs.iter().enumerate() {
-            tags_row = tags_row.push(self.workspace_button(index, label));
+            tags_row = tags_row
+                .push(self.workspace_button(index, label))
+                .align_y(iced::Alignment::Center);
         }
 
         // Layout section: main button + optional selector row
@@ -764,11 +766,11 @@ impl IcedBar {
         let is_hovered = self.is_hovered;
         let screenshot_pill = container(
             text(format!("📸 {:.2}", self.scale_factor))
-                .size(15)
+                .size(16)
                 .center(),
         )
         .height(Self::TAB_HEIGHT)
-        .padding([1, 8])
+        .padding([4, 8])
         .style(move |_theme: &Theme| {
             if is_hovered {
                 container::Style {
@@ -948,7 +950,7 @@ impl IcedBar {
         let work_space_row = self.view_work_space();
 
         Column::new()
-            .padding(8)
+            .padding(4)
             .spacing(Self::TAB_SPACING)
             .push(work_space_row)
             .into()
