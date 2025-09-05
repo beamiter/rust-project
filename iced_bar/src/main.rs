@@ -4,14 +4,14 @@ use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, Stream, StreamExt};
 use iced::time::{self, milliseconds};
 use iced::widget::container;
-use iced::widget::{Space, button, progress_bar, rich_text};
+use iced::widget::{Space, button, rich_text};
 use iced::widget::{mouse_area, span};
-use iced::{gradient, stream, theme};
+use iced::{stream, theme};
 
 use iced::window::Id;
 use iced::{
-    Background, Border, Color, Degrees, Element, Length, Point, Radians, Size, Subscription, Task,
-    Theme, border, color,
+    Background, Border, Color, Element, Length, Point, Size, Subscription, Task, Theme, border,
+    color,
     widget::{Column, Row, text},
     window,
 };
@@ -791,27 +791,16 @@ impl IcedBar {
             })
             .padding(0.0);
 
-        // CPU usage bar
+        // CPU usage pill
         let cpu_usage = if let Some(snapshot) = self.system_monitor.get_snapshot() {
             snapshot.cpu_average
         } else {
             0.0
         };
-        let cpu_usage_bar = progress_bar(0.0..=100.0, (100.0 - cpu_usage).max(0.0))
-            .style(move |theme: &Theme| progress_bar::Style {
-                background: Background::Gradient({
-                    let gradient = gradient::Linear::new(Radians::from(Degrees(-90.0)))
-                        .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
-                        .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
-                    gradient.into()
-                }),
-                bar: Background::Color(theme.palette().primary),
-                border: border::rounded(2.0),
-            })
-            .girth(Self::TAB_HEIGHT * 0.5)
-            .length(100.);
 
-        // Memory usage bar
+        let cpu_pill = self.create_usage_pill("CPU", cpu_usage);
+
+        // Memory usage pill
         let (memory_total_gb, memory_used_gb) =
             if let Some(snapshot) = self.system_monitor.get_snapshot() {
                 (
@@ -822,25 +811,13 @@ impl IcedBar {
                 (0.0, 0.0)
             };
 
-        let used_ratio = if memory_total_gb > 0.0 {
+        let memory_usage = if memory_total_gb > 0.0 {
             (memory_used_gb / memory_total_gb) * 100.0
         } else {
             0.0
         };
 
-        let mem_bar = progress_bar(0.0..=100.0, (100.0 - used_ratio).max(0.0))
-            .style(move |theme: &Theme| progress_bar::Style {
-                background: Background::Gradient({
-                    let gradient = gradient::Linear::new(Radians::from(Degrees(-90.0)))
-                        .add_stop(0.0, Color::from_rgb(0.0, 1.0, 1.0))
-                        .add_stop(1.0, Color::from_rgb(1.0, 0., 0.));
-                    gradient.into()
-                }),
-                bar: Background::Color(theme.palette().primary),
-                border: border::rounded(2.0),
-            })
-            .girth(Self::TAB_HEIGHT * 0.5)
-            .length(100.);
+        let memory_pill = self.create_usage_pill("MEM", memory_usage);
 
         // Time + Monitor indicator
         let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
@@ -857,9 +834,9 @@ impl IcedBar {
             .push(Space::with_width(6))
             .push(layout_selector)
             .push(Space::with_width(Length::Fill))
-            .push(cpu_usage_bar)
+            .push(cpu_pill)
             .push(Space::with_width(6))
-            .push(mem_bar)
+            .push(memory_pill)
             .push(Space::with_width(6))
             .push(
                 mouse_area(screenshot_text)
@@ -878,6 +855,56 @@ impl IcedBar {
             )
             .align_y(iced::Alignment::Center)
             .into()
+    }
+
+    // 新增辅助方法：创建使用率pill
+    fn create_usage_pill(&self, label: &str, usage_percent: f32) -> Element<'_, Message> {
+        let usage = usage_percent.clamp(0.0, 100.0);
+
+        // 根据使用率选择颜色
+        let (bg_color, text_color) = self.get_usage_colors(usage);
+
+        container(text(format!("{} {:.0}%", label, usage)).size(12).center())
+            .padding([4, 8])
+            .style(move |_theme: &Theme| {
+                container::Style {
+                    background: Some(Background::Color(bg_color)),
+                    text_color: Some(text_color),
+                    border: Border {
+                        radius: border::radius(12.0), // 圆角pill样式
+                        width: 1.0,
+                        color: bg_color,
+                    },
+                    ..Default::default()
+                }
+            })
+            .into()
+    }
+
+    // 新增辅助方法：根据使用率获取颜色
+    fn get_usage_colors(&self, usage_percent: f32) -> (Color, Color) {
+        match usage_percent {
+            // 0-30%: 绿色 (良好)
+            usage if usage <= 30.0 => (
+                Color::from_rgb(0.2, 0.8, 0.2), // 绿色背景
+                Color::WHITE,                   // 白色文字
+            ),
+            // 30-60%: 黄色 (注意)
+            usage if usage <= 60.0 => (
+                Color::from_rgb(1.0, 0.8, 0.0), // 黄色背景
+                Color::BLACK,                   // 黑色文字
+            ),
+            // 60-80%: 橙色 (警告)
+            usage if usage <= 80.0 => (
+                Color::from_rgb(1.0, 0.6, 0.0), // 橙色背景
+                Color::WHITE,                   // 白色文字
+            ),
+            // 80-100%: 红色 (危险)
+            _ => (
+                Color::from_rgb(0.9, 0.2, 0.2), // 红色背景
+                Color::WHITE,                   // 白色文字
+            ),
+        }
     }
 
     fn view(&self) -> Element<'_, Message> {
