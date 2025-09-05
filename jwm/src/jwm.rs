@@ -40,6 +40,7 @@ pub const WITHDRAWN_STATE: u8 = 0;
 pub const NORMAL_STATE: u8 = 1;
 pub const ICONIC_STATE: u8 = 2;
 pub const CLIENT_STORAGE_PATH: &str = "/var/tmp/jwm/client_storage.bin";
+pub const SHARED_PATH: &str = "/dev/shm/jwm_bar_global";
 
 pub type ClientKey = DefaultKey;
 pub type MonitorKey = DefaultKey;
@@ -473,9 +474,8 @@ impl WMClient {
     }
 
     /// 检查是否为状态栏（需要CONFIG常量）
+    // (TODO)
     pub fn is_status_bar(&self) -> bool {
-        // 这里需要根据你的CONFIG实现来调整
-        // 示例实现：
         self.name.contains("bar") || self.class.contains("bar")
     }
 
@@ -816,6 +816,7 @@ struct RestackOperation {
 pub type MonitorIndex = i32;
 
 pub struct Jwm {
+    // 基础/环境
     pub stext_max_len: usize,
     pub s_w: i32,
     pub s_h: i32,
@@ -827,36 +828,44 @@ pub struct Jwm {
     pub visual_id: Visualid,
     pub depth: u8,
     pub color_map: Colormap,
+
+    // 与状态栏进程通信的消息缓存（写到 ring buffer）
     pub message: SharedMessage,
 
-    // 新的SlotMap存储结构
+    // 客户端/显示器存储（SlotMap 体系）
     pub clients: SlotMap<ClientKey, WMClient>,
     pub monitors: SlotMap<MonitorKey, WMMonitor>,
-    // 维护顺序的向量
-    pub client_order: Vec<ClientKey>, // 客户端顺序（替代next链表）
-    pub client_stack_order: Vec<ClientKey>, // 堆栈顺序（替代stack_next链表）
-    pub monitor_order: Vec<MonitorKey>, // 监视器顺序
-    // 当前选中的监视器
+    pub client_order: Vec<ClientKey>,
+    pub client_stack_order: Vec<ClientKey>,
+    pub monitor_order: Vec<MonitorKey>,
     pub sel_mon: Option<MonitorKey>,
     pub motion_mon: Option<MonitorKey>,
-    // 每个监视器的客户端列表
     pub monitor_clients: SecondaryMap<MonitorKey, Vec<ClientKey>>,
     pub monitor_stack: SecondaryMap<MonitorKey, Vec<ClientKey>>,
 
-    // 状态栏专用管理
-    pub status_bar_shmem: HashMap<MonitorIndex, SharedRingBuffer>,
-    pub status_bar_child: HashMap<MonitorIndex, Child>,
-    pub status_bar_pid_to_monitor: HashMap<u32, MonitorIndex>,
+    // ——— 单实例状态栏（Single Bar）———
+    // 共享内存与子进程（单实例）
+    pub status_bar_shmem: Option<SharedRingBuffer>, // 全局唯一 ring buffer（例如 /dev/shm/jwm_bar_global）
+    pub status_bar_child: Option<Child>,            // 单个状态栏进程
+    pub status_bar_pid: Option<u32>,                // 子进程 PID（可选）
+
+    // 状态栏窗口（单实例）
+    pub status_bar_client: Option<ClientKey>, // 唯一的 bar 客户端
+    pub status_bar_window: Option<Window>,    // 唯一的 bar 窗口
+    pub current_bar_monitor_id: Option<i32>,  // bar 当前所在显示器的编号（monitor.num）
+
+    // per-monitor 的显示/隐藏标记与待刷新集合（仍按显示器维度存）
     pub status_bar_flags: HashMap<MonitorIndex, WMShowBarEnum>,
-    pub status_bar_clients: HashMap<MonitorIndex, ClientKey>,
-    pub status_bar_windows: HashMap<Window, MonitorIndex>,
     pub pending_bar_updates: HashSet<MonitorIndex>,
 
+    // X11rb 连接/根窗口/屏幕/Atoms
     pub x11rb_conn: RustConnection,
     pub x11rb_root: Window,
     pub x11rb_screen: Screen,
     pub atoms: Atoms,
-    keycode_cache: HashMap<u8, u32>,
+
+    // 其他运行时
+    pub keycode_cache: HashMap<u8, u32>,
     pub enable_move_cursor_to_client_center: bool,
     pub restored_clients_info: WMClientCollection,
 }
@@ -985,13 +994,14 @@ impl Jwm {
             visual_id: 0,
             depth: 0,
             color_map: 0,
-            status_bar_shmem: HashMap::new(),
-            status_bar_child: HashMap::new(),
-            status_bar_pid_to_monitor: HashMap::new(),
+            status_bar_shmem: None,
+            status_bar_child: None,
             message: SharedMessage::default(),
             status_bar_flags: HashMap::new(),
-            status_bar_clients: HashMap::new(),
-            status_bar_windows: HashMap::new(),
+            status_bar_client: None,
+            status_bar_window: None,
+            current_bar_monitor_id: None,
+            status_bar_pid: None,
             pending_bar_updates: HashSet::new(),
             x11rb_conn,
             x11rb_root,
@@ -1224,11 +1234,14 @@ impl Jwm {
     }
 
     pub fn wintoclient(&self, win: Window) -> Option<ClientKey> {
-        // 首先检查状态栏
-        if let Some(&monitor_id) = self.status_bar_windows.get(&win) {
-            return self.status_bar_clients.get(&monitor_id).map(|&key| key);
+        // 先检查是否为单实例状态栏窗口
+        if let Some(bar_win) = self.status_bar_window {
+            if bar_win == win {
+                return self.status_bar_client;
+            }
         }
-        // 查找常规客户端
+
+        // 再查找常规客户端
         self.clients
             .iter()
             .find(|(_, client)| client.win == win)
@@ -1758,49 +1771,63 @@ impl Jwm {
 
     /// 清理状态栏进程
     fn cleanup_statusbar_processes(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let statusbar_monitor_ids: Vec<i32> = self.status_bar_child.keys().cloned().collect();
-        for monitor_id in statusbar_monitor_ids {
-            if let Err(e) = self.terminate_status_bar_process_safe(monitor_id) {
-                warn!(
-                    "[cleanup_statusbar_processes] Failed to terminate statusbar {}: {}",
-                    monitor_id, e
-                );
+        let mut child = if let Some(child) = self.status_bar_child.take() {
+            child
+        } else {
+            return Ok(());
+        };
+        // 获取进程 ID
+        let pid = child.id();
+        let nix_pid = Pid::from_raw(pid as i32);
+        // 检查进程是否存在
+        match signal::kill(nix_pid, None) {
+            Err(_) => {
+                // 进程已经不存在
+                info!("Process already terminated",);
+                return Ok(());
             }
+            Ok(_) => {} // 进程存在，继续终止流程
         }
-        self.status_bar_clients.clear();
-        self.status_bar_windows.clear();
+        // 尝试优雅终止
+        if let Ok(_) = signal::kill(nix_pid, Signal::SIGTERM) {
+            let timeout = Duration::from_secs(3);
+            let start = Instant::now();
+            // 等待进程退出
+            while start.elapsed() < timeout {
+                match child.try_wait() {
+                    Ok(Some(status)) => {
+                        info!("Process exited gracefully: {:?}", status);
+                        return Ok(());
+                    }
+                    Ok(None) => {
+                        std::thread::sleep(Duration::from_millis(100));
+                    }
+                    Err(_) => {
+                        return Err("Error waiting".into());
+                    }
+                }
+            }
+            // 超时后强制终止
+            warn!("Graceful termination timeout, forcing kill");
+        }
+        // 强制终止
         self.status_bar_flags.clear();
+        self.status_bar_pid = None;
+        signal::kill(nix_pid, Signal::SIGKILL)?;
 
         Ok(())
     }
 
     /// 清理共享内存资源
     fn cleanup_shared_memory_resources(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 只清理需要显式处理的共享内存资源
-        let monitor_ids: Vec<i32> = self.status_bar_shmem.keys().cloned().collect();
-        for monitor_id in monitor_ids {
-            // 显式删除系统共享内存对象（如果需要）
-            self.cleanup_system_shared_memory(monitor_id)?;
+        if let Some(rb) = self.status_bar_shmem.take() {
+            drop(rb);
         }
-        // 清理映射表（Rust 会自动释放 SharedRingBuffer 对象）
-        self.status_bar_shmem.clear();
-        Ok(())
-    }
-
-    /// 清理系统级共享内存
-    fn cleanup_system_shared_memory(
-        &self,
-        monitor_id: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
         #[cfg(unix)]
         {
-            let shared_path = format!("/dev/shm/monitor_{}", monitor_id);
-            if std::path::Path::new(&shared_path).exists() {
-                if let Err(e) = std::fs::remove_file(&shared_path) {
-                    warn!(
-                        "[cleanup_system_shared_memory] Failed to remove {}: {}",
-                        shared_path, e
-                    );
+            if std::path::Path::new(&SHARED_PATH).exists() {
+                if let Err(e) = std::fs::remove_file(&SHARED_PATH) {
+                    warn!("Failed to remove {}: {}", SHARED_PATH, e);
                 }
             }
         }
@@ -2663,9 +2690,9 @@ impl Jwm {
         let client_key = self.wintoclient(e.window);
         if let Some(client_key) = client_key {
             // 检查是否是状态栏
-            if let Some(&monitor_id) = self.status_bar_windows.get(&e.window) {
-                info!("[configurerequest] statusbar on monitor {}", monitor_id);
-                self.handle_statusbar_configure_request(monitor_id, e)?;
+            if Some(e.window) == self.status_bar_window {
+                info!("[configurerequest] statusbar ");
+                self.handle_statusbar_configure_request(e)?;
             } else {
                 // 常规客户端的配置请求处理
                 self.handle_regular_configure_request(client_key, e)?;
@@ -2679,51 +2706,39 @@ impl Jwm {
 
     fn handle_statusbar_configure_request(
         &mut self,
-        monitor_id: i32,
         e: &ConfigureRequestEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        info!(
-            "[handle_statusbar_configure_request] StatusBar resize request for monitor {}",
-            monitor_id
-        );
-
         // 检查状态栏是否存在并获取基本信息
-        let statusbar_exists = self.status_bar_clients.contains_key(&monitor_id);
-        if !statusbar_exists {
-            error!(
-                "[handle_statusbar_configure_request] StatusBar not found for monitor {}",
-                monitor_id
-            );
+        if self.status_bar_client.is_none() {
+            error!("[handle_statusbar_configure_request] StatusBar not found",);
             return self.handle_unmanaged_configure_request(e);
         }
 
         // 更新状态栏几何信息（限制借用范围）
         {
-            if let Some(&bar_key) = self.status_bar_clients.get(&monitor_id) {
-                let statusbar_mut = self.clients.get_mut(bar_key).unwrap();
+            let bar_key = self.status_bar_client.unwrap();
+            let statusbar_mut = self.clients.get_mut(bar_key).unwrap();
 
-                // 更新几何信息
-                if e.value_mask.contains(ConfigWindow::X) {
-                    statusbar_mut.geometry.x = e.x as i32;
-                }
-                if e.value_mask.contains(ConfigWindow::Y) {
-                    statusbar_mut.geometry.y = e.y as i32;
-                }
-                if e.value_mask.contains(ConfigWindow::HEIGHT) {
-                    statusbar_mut.geometry.h =
-                        e.height.max(CONFIG.status_bar_height() as u16) as i32;
-                }
-
-                // 应用配置
-                let values = ConfigureWindowAux::new()
-                    .x(statusbar_mut.geometry.x)
-                    .y(statusbar_mut.geometry.y)
-                    .width(statusbar_mut.geometry.w as u32)
-                    .height(statusbar_mut.geometry.h as u32);
-
-                self.x11rb_conn.configure_window(e.window, &values)?;
-                self.x11rb_conn.flush()?;
+            // 更新几何信息
+            if e.value_mask.contains(ConfigWindow::X) {
+                statusbar_mut.geometry.x = e.x as i32;
             }
+            if e.value_mask.contains(ConfigWindow::Y) {
+                statusbar_mut.geometry.y = e.y as i32;
+            }
+            if e.value_mask.contains(ConfigWindow::HEIGHT) {
+                statusbar_mut.geometry.h = e.height.max(CONFIG.status_bar_height() as u16) as i32;
+            }
+
+            // 应用配置
+            let values = ConfigureWindowAux::new()
+                .x(statusbar_mut.geometry.x)
+                .y(statusbar_mut.geometry.y)
+                .width(statusbar_mut.geometry.w as u32)
+                .height(statusbar_mut.geometry.h as u32);
+
+            self.x11rb_conn.configure_window(e.window, &values)?;
+            self.x11rb_conn.flush()?;
         } // 确保 statusbar_mut 在这里被释放
 
         // 现在可以安全地进行其他操作
@@ -2734,7 +2749,7 @@ impl Jwm {
         }
 
         // 重新排列
-        let monitor_key = self.get_monitor_by_id(monitor_id);
+        let monitor_key = self.get_monitor_by_id(self.current_bar_monitor_id.unwrap());
         self.arrange(monitor_key);
 
         Ok(())
@@ -2966,59 +2981,15 @@ impl Jwm {
         }
     }
 
-    fn write_message(&mut self, num: i32, message: &SharedMessage) -> std::io::Result<()> {
-        if let Some(ring_buffer) = self.status_bar_shmem.get_mut(&num) {
-            match ring_buffer.try_write_message(&message) {
-                Ok(true) => {
-                    // info!("[write_message] {:?}", message);
-                    Ok(()) // Message written successfully
-                }
-                Ok(false) => {
-                    println!("缓冲区已满，等待空间...");
-                    Ok(()) // Or keep as Ok, depending on desired error propagation
-                }
-                Err(e) => {
-                    error!("写入错误: {}", e);
-                    Err(e) // Propagate the I/O error
-                }
+    fn ensure_bar_is_running(&mut self, shared_path: &str) {
+        if let Some(child) = self.status_bar_child.as_mut() {
+            if child.try_wait().ok().flatten().is_none() {
+                return; // 仍在运行
             }
-        } else {
-            // Ring buffer for this monitor number not found
-            Err(std::io::Error::new(
-                std::io::ErrorKind::NotFound,
-                format!("Ring buffer for monitor {} not found", num),
-            ))
-        }
-    }
-
-    fn monitor_to_bar_name(num: i32) -> String {
-        match num {
-            0 => CONFIG.status_bar_instance_0().to_string(),
-            1 => CONFIG.status_bar_instance_1().to_string(),
-            _ => String::new(),
-        }
-    }
-
-    fn ensure_bar_is_running(&mut self, monitor_id: i32, shared_path: &str) {
-        // 检查是否已经完全初始化
-        if self.status_bar_clients.contains_key(&monitor_id) {
-            return;
+            self.status_bar_child = None;
+            self.status_bar_pid = None;
         }
 
-        // 检查进程是否还在运行
-        if let Some(child) = self.status_bar_child.get_mut(&monitor_id) {
-            match child.try_wait() {
-                Ok(None) => return, // 进程还在运行
-                Ok(Some(_)) | Err(_) => {
-                    // 进程已退出，清理映射
-                    let pid = child.id();
-                    self.status_bar_pid_to_monitor.remove(&pid);
-                    self.status_bar_child.remove(&monitor_id);
-                }
-            }
-        }
-
-        // 启动新进程
         let mut command = if cfg!(feature = "nixgl") {
             let mut cmd = Command::new("nixGL");
             cmd.arg(CONFIG.status_bar_base_name());
@@ -3026,60 +2997,36 @@ impl Jwm {
         } else {
             Command::new(CONFIG.status_bar_base_name())
         };
-
         command.arg(shared_path);
 
         if let Ok(child) = command.spawn() {
-            let pid = child.id();
-            info!(
-                "[ensure_bar_is_running] Started process PID {} for monitor {}",
-                pid, monitor_id
-            );
-
-            // 记录 PID 到 monitor_id 的映射
-            self.status_bar_pid_to_monitor.insert(pid, monitor_id);
-            self.status_bar_child.insert(monitor_id, child);
+            self.status_bar_pid = Some(child.id());
+            self.status_bar_child = Some(child);
         }
     }
 
-    fn get_window_pid(&self, window: Window) -> Result<u32, Box<dyn std::error::Error>> {
-        let cookie = self.x11rb_conn.get_property(
-            false,
-            window,
-            self.atoms._NET_WM_PID,
-            AtomEnum::CARDINAL,
-            0,
-            1,
-        )?;
-        let reply = cookie.reply()?;
-        if let Some(mut values) = reply.value32() {
-            if let Some(pid) = values.next() {
-                return Ok(pid);
-            }
+    fn update_bar_message(&mut self, mon_key_opt: Option<MonitorKey>) {
+        // 只允许针对一个 monitor（聚焦 monitor）
+        let mon_key = match mon_key_opt {
+            Some(k) => k,
+            None => return,
+        };
+
+        // 准备消息（你现有的 update_bar_message_for_monitor 逻辑保留）
+        self.update_bar_message_for_monitor(Some(mon_key));
+
+        if self.status_bar_shmem.is_none() {
+            let ring_buffer = SharedRingBuffer::open(SHARED_PATH, None)
+                .or_else(|_| SharedRingBuffer::create(SHARED_PATH, None, None))
+                .expect("Create/open bar shmem failed");
+            self.status_bar_shmem = Some(ring_buffer);
         }
-        Err("No _NET_WM_PID property found".into())
-    }
 
-    pub fn update_bar_message(&mut self, mon_key_opt: Option<MonitorKey>) {
-        self.update_bar_message_for_monitor(mon_key_opt);
-        let num = self.message.monitor_info.monitor_num;
+        self.ensure_bar_is_running(SHARED_PATH);
 
-        let shared_path = format!("/dev/shm/monitor_{}", num);
-        if !self.status_bar_shmem.contains_key(&num) {
-            let ring_buffer = match SharedRingBuffer::open(&shared_path, None) {
-                Ok(rb) => rb,
-                Err(_) => {
-                    println!("创建新的共享环形缓冲区");
-                    SharedRingBuffer::create(&shared_path, None, None).unwrap()
-                }
-            };
-            self.status_bar_shmem.insert(num, ring_buffer);
+        if let Some(rb) = self.status_bar_shmem.as_mut() {
+            let _ = rb.try_write_message(&self.message);
         }
-        self.ensure_bar_is_running(num, shared_path.as_str());
-
-        // info!("[drawbar] num: {}", num);
-        // info!("[drawbar] message: {:?}", self.message);
-        let _ = self.write_message(num, &self.message.clone());
     }
 
     pub fn restack(
@@ -3203,7 +3150,10 @@ impl Jwm {
         &self,
         monitor_num: i32,
     ) -> Result<Option<RestackOperation>, Box<dyn std::error::Error>> {
-        if let Some(&bar_key) = self.status_bar_clients.get(&monitor_num) {
+        if self.current_bar_monitor_id != Some(monitor_num) {
+            return Ok(None);
+        }
+        if let Some(bar_key) = self.status_bar_client {
             let statusbar_win = self.clients.get(bar_key).unwrap().win;
             return Ok(Some(RestackOperation {
                 window: statusbar_win,
@@ -3292,41 +3242,61 @@ impl Jwm {
         if self.pending_bar_updates.is_empty() {
             return;
         }
-        // info!(
-        //     "[flush_pending_bar_updates] Updating {} monitors",
-        //     self.pending_bar_updates.len()
-        // );
-        for monitor_id in self.pending_bar_updates.clone() {
-            if let Some(monitor) = self.get_monitor_by_id(monitor_id) {
-                self.update_bar_message(Some(monitor));
+
+        // 1) 选择要更新状态栏消息的显示器：优先使用当前 bar 所在显示器，
+        //    其次使用当前选中显示器；如果两者都没有，则尝试从 pending 集合取一个。
+        let target_mon_id = self
+            .current_bar_monitor_id
+            .or_else(|| {
+                self.sel_mon
+                    .and_then(|k| self.monitors.get(k))
+                    .map(|m| m.num)
+            })
+            .or_else(|| self.pending_bar_updates.iter().copied().next());
+
+        if let Some(mon_id) = target_mon_id {
+            if let Some(mon_key) = self.get_monitor_by_id(mon_id) {
+                // 只针对一个 monitor 刷新 bar 消息（单实例 bar）
+                self.update_bar_message(Some(mon_key));
             }
         }
-        self.pending_bar_updates.clear();
-        // Show or hide status bar
-        let status_bar_flags = self.status_bar_flags.clone();
-        for (&mon_id, &show_bar_enum) in status_bar_flags.iter() {
-            match show_bar_enum {
-                WMShowBarEnum::Toggle(show_bar) => {
-                    let &bar_key = self.status_bar_clients.get(&mon_id).unwrap();
-                    if show_bar == true {
-                        info!("[flush_pending_bar_updates] show bar");
-                        let _ = self.show_statusbar(bar_key, mon_id);
-                    } else {
-                        info!("[flush_pending_bar_updates] hide bar");
-                        let _ = self.hide_statusbar(bar_key, mon_id);
+
+        // 2) 处理显示/隐藏：仅对当前 bar 所在显示器（或上面选定的目标显示器）应用；
+        //    其余显示器上的 Toggle 保留为 Toggle，待 bar 切过去时再应用。
+        let bar_key_opt = self.status_bar_client;
+        let current_id_opt = target_mon_id;
+
+        // 克隆一份快照，避免可变借用冲突
+        let status_bar_flags_snapshot = self.status_bar_flags.clone();
+        for (mon_id, show_enum) in status_bar_flags_snapshot.into_iter() {
+            if let WMShowBarEnum::Toggle(show_bar) = show_enum {
+                if Some(mon_id) == current_id_opt {
+                    if let Some(bar_key) = bar_key_opt {
+                        if show_bar {
+                            info!("[flush_pending_bar_updates] show bar on monitor {}", mon_id);
+                            let _ = self.show_statusbar(bar_key, mon_id);
+                        } else {
+                            info!("[flush_pending_bar_updates] hide bar on monitor {}", mon_id);
+                            let _ = self.hide_statusbar(bar_key, mon_id);
+                        }
+                        let _ = self.configure(bar_key);
                     }
-                    let _ = self.configure(bar_key);
-                    info!("[flush_pending_bar_updates] Updating workarea due to statusbar geometry change");
-                    // 重新排列该显示器上的其他客户端
-                    if let Some(monitor) = self.get_monitor_by_id(mon_id) {
-                        self.arrange(Some(monitor));
+                    info!("[flush_pending_bar_updates] Updating workarea due to statusbar geometry change (monitor {})", mon_id);
+                    if let Some(mon_key) = self.get_monitor_by_id(mon_id) {
+                        self.arrange(Some(mon_key));
                     }
+                    // 仅对当前生效的显示器把 Toggle 固化为 Keep
                     self.status_bar_flags
                         .insert(mon_id, WMShowBarEnum::Keep(show_bar));
+                } else {
+                    // 非当前显示器：保留 Toggle 状态，等 bar 切换过去时再应用
+                    // 不修改 self.status_bar_flags 对应项
                 }
-                _ => {}
             }
         }
+
+        // 3) 清空待更新集合
+        self.pending_bar_updates.clear();
     }
 
     fn show_statusbar(
@@ -3487,18 +3457,15 @@ impl Jwm {
     // 新增处理命令的方法
     fn process_commands_from_status_bar(&mut self) {
         // 创建一个临时向量来收集所有命令
-        let mut commands_to_process: Vec<(i32, SharedCommand)> = Vec::new();
+        let mut commands_to_process: Vec<SharedCommand> = Vec::new();
         // 第一步：遍历共享内存缓冲区并收集命令
-        for (&monitor_id, buffer) in &self.status_bar_shmem {
+        if let Some(buffer) = self.status_bar_shmem.as_mut() {
             while let Some(cmd) = buffer.receive_command() {
-                // 确保命令是给当前显示器的
-                if cmd.monitor_id == monitor_id {
-                    commands_to_process.push((monitor_id, cmd));
-                }
+                commands_to_process.push(cmd);
             }
         }
         // 第二步：处理收集到的命令
-        for (_monitor_id, cmd) in commands_to_process {
+        for cmd in commands_to_process {
             self.enable_move_cursor_to_client_center = false;
             match cmd.cmd_type.into() {
                 CommandType::ViewTag => {
@@ -4245,27 +4212,19 @@ impl Jwm {
 
     fn get_client_y_offset(&self, monitor: &WMMonitor) -> i32 {
         let monitor_id = monitor.num;
-        if self.status_bar_clients.get(&monitor_id).is_some() {
-            let offset = if *self
-                .status_bar_flags
-                .get(&monitor_id)
-                .unwrap_or(&WMShowBarEnum::Keep(true))
-                .show_bar()
-            {
-                CONFIG.status_bar_height() + CONFIG.status_bar_padding() * 2
-            } else {
-                0
-            };
-            info!(
-                "[get_client_y_offset] Monitor {}: offset = {} (height: {} + pad: {} x 2)",
-                monitor_id,
-                offset,
-                CONFIG.status_bar_height(),
-                CONFIG.status_bar_padding()
-            );
-            return offset.max(0);
+        // 必须是 bar 当前所在的显示器
+        if self.current_bar_monitor_id == Some(monitor_id) {
+            let show_bar = monitor
+                .pertag
+                .as_ref()
+                .and_then(|p| p.show_bars.get(p.cur_tag))
+                .copied()
+                .unwrap_or(true);
+            if show_bar {
+                return CONFIG.status_bar_height() + CONFIG.status_bar_padding() * 2;
+            }
         }
-        CONFIG.status_bar_height() + CONFIG.status_bar_padding() * 2
+        0
     }
 
     pub fn togglefloating(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
@@ -7014,9 +6973,11 @@ impl Jwm {
         &mut self,
         e: &EnterNotifyEvent,
     ) -> Result<bool, Box<dyn std::error::Error>> {
-        if let Some(&monitor_id) = self.status_bar_windows.get(&e.event) {
+        if Some(e.event) == self.status_bar_window {
             // 状态栏不改变焦点，但可能需要切换显示器
-            if let Some(target_monitor_key) = self.get_monitor_by_id(monitor_id) {
+            if let Some(target_monitor_key) =
+                self.get_monitor_by_id(self.current_bar_monitor_id.unwrap())
+            {
                 if Some(target_monitor_key) != self.sel_mon {
                     // 取消当前选中客户端的焦点
                     let current_sel = self.get_selected_client_key();
@@ -7084,6 +7045,21 @@ impl Jwm {
 
         if let Some(monitor) = self.monitors.get(target_monitor_key) {
             debug!("Switched to monitor {}", monitor.num);
+            let old_mon_id = self.current_bar_monitor_id;
+            let new_mon_id = monitor.num;
+
+            if old_mon_id != Some(new_mon_id) {
+                self.current_bar_monitor_id = Some(new_mon_id);
+                self.position_statusbar_on_monitor(new_mon_id)?;
+                // 旧屏与新屏都 arrange 一次，更新偏移
+                if let Some(old_id) = old_mon_id {
+                    if let Some(old_key) = self.get_monitor_by_id(old_id) {
+                        self.arrange(Some(old_key));
+                    }
+                }
+                self.arrange(Some(target_monitor_key));
+                self.restack(Some(target_monitor_key))?;
+            }
         }
 
         Ok(())
@@ -7236,7 +7212,7 @@ impl Jwm {
         // 如果传入的是状态栏客户端，忽略并寻找合适的替代
         if let Some(client_key) = client_key_opt {
             if let Some(client) = self.clients.get(client_key) {
-                if self.status_bar_windows.contains_key(&client.win) {
+                if Some(client.win) == self.status_bar_window {
                     client_key_opt = None; // 忽略状态栏
                 }
             }
@@ -7643,19 +7619,19 @@ impl Jwm {
 
     pub fn manage(
         &mut self,
-        w: Window,
+        win: Window,
         geom: &GetGeometryReply,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[manage] Managing window 0x{:x}", w);
+        info!("[manage] Managing window 0x{:x}", win);
         // 检查窗口是否已被管理
-        if self.wintoclient(w).is_some() {
-            warn!("[manage] Window 0x{:x} already managed", w);
+        if self.wintoclient(win).is_some() {
+            warn!("[manage] Window 0x{:x} already managed", win);
             return Ok(());
         }
         // 创建新的客户端对象
         let mut client = WMClient::new();
         // 设置窗口ID
-        client.win = w;
+        client.win = win;
         // 从几何信息中设置初始属性
         client.geometry.x = geom.x as i32;
         client.geometry.old_x = geom.x as i32;
@@ -7669,21 +7645,6 @@ impl Jwm {
         client.state.client_fact = 1.0;
         // 获取并设置窗口标题
         self.updatetitle_by_window(&mut client);
-        if client.name == CONFIG.status_bar_base_name() {
-            // 尝试通过 PID 识别状态栏
-            if let Ok(pid) = self.get_window_pid(w) {
-                if let Some(&monitor_id) = self.status_bar_pid_to_monitor.get(&pid) {
-                    info!(
-                        "[manage] Found statusbar: PID {} → monitor {}",
-                        pid, monitor_id
-                    );
-                    let instance_name = Self::monitor_to_bar_name(monitor_id);
-                    if !instance_name.is_empty() {
-                        let _ = self.set_class_info(&mut client, &instance_name, &instance_name);
-                    }
-                }
-            }
-        }
         self.update_class_info(&mut client);
 
         info!("[manage] {}", client);
@@ -7692,7 +7653,13 @@ impl Jwm {
             info!("[manage] Detected status bar, managing as statusbar");
             // 插入到SlotMap
             let client_key = self.insert_client(client);
-            return self.manage_statusbar(client_key);
+            // 绑定到当前聚焦显示器
+            let current_mon_id = self.get_sel_mon().map(|m| m.num).unwrap_or(0);
+            self.status_bar_client = Some(client_key);
+            self.status_bar_window = Some(win);
+            self.current_bar_monitor_id = Some(current_mon_id);
+
+            return self.manage_statusbar(client_key, win, current_mon_id);
         }
 
         // 插入到SlotMap
@@ -8275,140 +8242,76 @@ impl Jwm {
     fn manage_statusbar(
         &mut self,
         client_key: ClientKey,
+        win: Window,
+        current_mon_id: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 确定状态栏所属的显示器
-        let monitor_id = if let Some(client) = self.clients.get(client_key) {
-            self.determine_statusbar_monitor(client)
-        } else {
-            return Err("Client not found".into());
-        };
-
-        info!("[manage_statusbar] monitor_id: {}", monitor_id);
-
         // 配置状态栏客户端
-        let mon_key_opt = self.get_monitor_by_id(monitor_id);
+        let mon_key = self.get_monitor_by_id(current_mon_id);
         if let Some(client) = self.clients.get_mut(client_key) {
-            client.mon = mon_key_opt;
+            client.mon = mon_key;
             client.state.never_focus = true;
             client.state.is_floating = true;
-            client.state.tags = CONFIG.tagmask(); // 在所有标签可见
+            client.state.tags = CONFIG.tagmask();
             client.geometry.border_w = CONFIG.border_px() as i32;
         }
 
         // 调整状态栏位置（通常在顶部）
-        self.position_statusbar_by_key(client_key, monitor_id)?;
+        self.position_statusbar_on_monitor(current_mon_id)?;
 
         // 设置状态栏特有的窗口属性
         self.setup_statusbar_window_by_key(client_key)?;
 
-        let win = if let Some(client) = self.clients.get(client_key) {
-            client.win
-        } else {
-            return Err("Client not found after configuration".into());
-        };
-        // 注册状态栏到管理映射中
-        self.status_bar_clients.insert(monitor_id, client_key);
-        self.status_bar_windows.insert(win, monitor_id);
         self.status_bar_flags
-            .insert(monitor_id, WMShowBarEnum::Keep(true));
+            .insert(current_mon_id, WMShowBarEnum::Keep(true));
 
         // 映射状态栏窗口
-        if let Err(e) = self.x11rb_conn.map_window(win) {
-            error!(
-                "[manage_statusbar] Failed to map statusbar window 0x{:x}: {:?}",
-                win, e
-            );
-        } else {
-            debug!("[manage_statusbar] Mapped statusbar window 0x{:x}", win);
-        }
-
-        info!(
-            "[manage_statusbar] Successfully managed statusbar on monitor {}",
-            monitor_id
-        );
+        self.x11rb_conn.map_window(win)?;
+        self.x11rb_conn.flush()?;
         Ok(())
     }
 
-    /// 确定状态栏应该在哪个显示器（SlotMap适配版本）
-    fn determine_statusbar_monitor(&self, client: &WMClient) -> i32 {
-        info!("[determine_statusbar_monitor]: {}", client);
-
-        // 尝试从窗口名称中解析监视器ID
-        if let Some(suffix) = client
-            .name
-            .strip_prefix(&format!("{}_", CONFIG.status_bar_base_name()))
-        {
-            if let Ok(monitor_id) = suffix.parse::<i32>() {
-                return monitor_id;
-            }
-        }
-
-        // 尝试从类名中解析监视器ID
-        if let Some(suffix) = client
-            .class
-            .strip_prefix(&format!("{}_", CONFIG.status_bar_base_name()))
-        {
-            if let Ok(monitor_id) = suffix.parse::<i32>() {
-                return monitor_id;
-            }
-        }
-
-        // 尝试从实例名中解析监视器ID
-        if let Some(suffix) = client
-            .instance
-            .strip_prefix(&format!("{}_", CONFIG.status_bar_base_name()))
-        {
-            if let Ok(monitor_id) = suffix.parse::<i32>() {
-                return monitor_id;
-            }
-        }
-
-        // 默认使用当前选中的监视器
-        self.sel_mon
-            .and_then(|mon_key| self.monitors.get(mon_key))
-            .map(|monitor| monitor.num)
-            .unwrap_or(0)
-    }
-
-    /// 定位状态栏（SlotMap版本）
-    fn position_statusbar_by_key(
+    fn position_statusbar_on_monitor(
         &mut self,
-        client_key: ClientKey,
         monitor_id: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(monitor_key) = self.get_monitor_by_id(monitor_id) {
-            if let Some(monitor) = self.monitors.get(monitor_key) {
-                let bar_padding = CONFIG.status_bar_padding();
+        let client_key = match self.status_bar_client {
+            Some(k) => k,
+            None => return Ok(()),
+        };
+        let mon_key = match self.get_monitor_by_id(monitor_id) {
+            Some(k) => k,
+            None => return Ok(()),
+        };
+        let monitor = self.monitors.get(mon_key).unwrap();
 
-                // 计算状态栏位置
-                let x = monitor.geometry.m_x + bar_padding;
-                let y = monitor.geometry.m_y + bar_padding;
-                let w = monitor.geometry.m_w - 2 * bar_padding;
-                let h = CONFIG.status_bar_height();
+        // 当前 tag 是否显示 bar
+        let show_bar = monitor
+            .pertag
+            .as_ref()
+            .and_then(|p| p.show_bars.get(p.cur_tag))
+            .copied()
+            .unwrap_or(true);
 
-                // 更新客户端几何信息
-                if let Some(client) = self.clients.get_mut(client_key) {
-                    client.geometry.x = x;
-                    client.geometry.y = y;
-                    client.geometry.w = w;
-                    client.geometry.h = h;
-
-                    info!(
-                        "[position_statusbar_by_key] Positioned at ({}, {}) {}x{}",
-                        x, y, w, h
-                    );
-
-                    // 配置X11窗口
-                    let aux = ConfigureWindowAux::new()
-                        .x(x)
-                        .y(y)
-                        .width(w as u32)
-                        .height(h as u32);
-                    self.x11rb_conn.configure_window(client.win, &aux)?;
-                    self.x11rb_conn.flush()?;
-                }
+        if let Some(client) = self.clients.get_mut(client_key) {
+            if show_bar {
+                let pad = CONFIG.status_bar_padding();
+                client.geometry.x = monitor.geometry.m_x + pad;
+                client.geometry.y = monitor.geometry.m_y + pad;
+                client.geometry.w = monitor.geometry.m_w - 2 * pad;
+                client.geometry.h = CONFIG.status_bar_height();
+                let aux = ConfigureWindowAux::new()
+                    .x(client.geometry.x)
+                    .y(client.geometry.y)
+                    .width(client.geometry.w as u32)
+                    .height(client.geometry.h as u32);
+                self.x11rb_conn.configure_window(client.win, &aux)?;
+            } else {
+                // 隐藏
+                let aux = ConfigureWindowAux::new().x(-1000).y(-1000);
+                self.x11rb_conn.configure_window(client.win, &aux)?;
             }
         }
+        self.x11rb_conn.flush()?;
         Ok(())
     }
 
@@ -8454,6 +8357,7 @@ impl Jwm {
             .map(|(key, _)| key)
     }
 
+    #[allow(dead_code)]
     fn set_class_info(
         &mut self,
         client_mut: &mut WMClient,
@@ -8500,6 +8404,7 @@ impl Jwm {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn verify_class_info_set(
         &mut self,
         client: &WMClient,
@@ -8731,8 +8636,8 @@ impl Jwm {
         };
 
         // 检查是否是状态栏
-        if let Some(&monitor_id) = self.status_bar_windows.get(&win) {
-            self.unmanage_statusbar(monitor_id, destroyed)?;
+        if Some(win) == self.status_bar_window {
+            self.unmanage_statusbar(destroyed)?;
             return Ok(());
         }
 
@@ -8741,52 +8646,20 @@ impl Jwm {
         Ok(())
     }
 
-    fn unmanage_statusbar(
-        &mut self,
-        monitor_id: i32,
-        destroyed: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        info!(
-            "[unmanage_statusbar] Removing statusbar for monitor {}",
-            monitor_id
-        );
-        let statusbar = match self.status_bar_clients.remove(&monitor_id) {
-            Some(bar_key) => self.clients.get(bar_key).unwrap(),
-            None => {
-                warn!(
-                    "[unmanage_statusbar] No statusbar found for monitor {}",
-                    monitor_id
-                );
-                return Ok(());
-            }
-        };
-        let win = statusbar.win;
-        self.status_bar_windows.remove(&win);
+    fn unmanage_statusbar(&mut self, destroyed: bool) -> Result<(), Box<dyn std::error::Error>> {
         if !destroyed {
-            self.cleanup_statusbar_window(win)?;
+            self.cleanup_statusbar_window(self.status_bar_window.unwrap())?;
         }
         let cleanup_results = [
-            (
-                "terminate_process",
-                self.terminate_status_bar_process_safe(monitor_id),
-            ),
-            (
-                "cleanup_shared_memory",
-                self.cleanup_shared_memory_safe(monitor_id),
-            ),
+            ("terminate_process", self.cleanup_statusbar_processes()),
+            ("cleanup_shared_memory", self.cleanup_shared_memory_safe()),
         ];
         for (operation, result) in cleanup_results.iter() {
             if let Err(ref e) = result {
-                error!(
-                    "[unmanage_statusbar] {} failed for monitor {}: {}",
-                    operation, monitor_id, e
-                );
+                error!("[unmanage_statusbar] {} failed for {}", operation, e);
             }
         }
-        info!(
-            "[unmanage_statusbar] Successfully removed statusbar for monitor {}",
-            monitor_id
-        );
+        info!("[unmanage_statusbar] Successfully removed statusbar",);
         Ok(())
     }
 
@@ -8802,110 +8675,29 @@ impl Jwm {
         Ok(())
     }
 
-    fn terminate_status_bar_process_safe(&mut self, monitor_id: i32) -> Result<(), String> {
-        if let Some(mut child) = self.status_bar_child.remove(&monitor_id) {
-            info!(
-                "[terminate_status_bar_process_safe] Terminating process for monitor {}",
-                monitor_id
-            );
-            // 获取进程 ID
-            let pid = child.id();
-            self.status_bar_pid_to_monitor.remove(&pid);
-            let nix_pid = Pid::from_raw(pid as i32);
-            // 检查进程是否存在
-            match signal::kill(nix_pid, None) {
-                Err(_) => {
-                    // 进程已经不存在
-                    info!("[terminate_status_bar_process_safe] Process already terminated for monitor {}", monitor_id);
-                    return Ok(());
-                }
-                Ok(_) => {} // 进程存在，继续终止流程
-            }
-            // 尝试优雅终止
-            if let Ok(_) = signal::kill(nix_pid, Signal::SIGTERM) {
-                let timeout = Duration::from_secs(3);
-                let start = Instant::now();
-                // 等待进程退出
-                while start.elapsed() < timeout {
-                    match child.try_wait() {
-                        Ok(Some(status)) => {
-                            info!(
-                                "[terminate_status_bar_process_safe] Process exited gracefully: {:?}",
-                                status
-                            );
-                            return Ok(());
-                        }
-                        Ok(None) => {
-                            std::thread::sleep(Duration::from_millis(100));
-                        }
-                        Err(e) => {
-                            return Err(format!("Error waiting for process: {}", e));
-                        }
-                    }
-                }
-                // 超时后强制终止
-                warn!(
-                    "[terminate_status_bar_process_safe] Graceful termination timeout, forcing kill"
-                );
-            }
-            // 强制终止
-            match signal::kill(nix_pid, Signal::SIGKILL) {
-                Ok(_) => match child.wait() {
-                    Ok(status) => {
-                        info!(
-                            "[terminate_status_bar_process_safe] Process force killed: {:?}",
-                            status
-                        );
-                        Ok(())
-                    }
-                    Err(e) => Err(format!("Failed to wait for killed process: {}", e)),
-                },
-                Err(e) => Err(format!("Failed to send SIGKILL: {}", e)),
-            }
-        } else {
-            info!(
-                "[terminate_status_bar_process_safe] No process found for monitor {}",
-                monitor_id
-            );
-            Ok(())
-        }
-    }
-
     /// 安全的共享内存清理方法
-    fn cleanup_shared_memory_safe(&mut self, monitor_id: i32) -> Result<(), String> {
-        if let Some(shmem) = self.status_bar_shmem.remove(&monitor_id) {
-            info!(
-                "[cleanup_shared_memory_safe] Cleaning up shared memory for monitor {}",
-                monitor_id
-            );
-            // 释放共享内存对象
+    fn cleanup_shared_memory_safe(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(shmem) = self.status_bar_shmem.take() {
+            info!("[cleanup_shared_memory_safe] Cleaning up shared memory",);
             drop(shmem);
-            // 如果需要手动删除系统共享内存对象
             #[cfg(unix)]
             {
-                let shmem_name = format!("{}_{}", CONFIG.status_bar_base_name(), monitor_id);
-                if let Ok(c_name) = std::ffi::CString::new(shmem_name) {
+                if let Ok(c_name) = std::ffi::CString::new(SHARED_PATH) {
                     unsafe {
                         let result = libc::shm_unlink(c_name.as_ptr());
                         if result != 0 {
                             let errno = *libc::__errno_location();
                             if errno != libc::ENOENT {
-                                return Err(format!("shm_unlink failed with errno: {}", errno));
+                                return Ok(());
                             }
                         }
                     }
                 }
             }
-            info!(
-                "[cleanup_shared_memory_safe] Shared memory cleaned successfully for monitor {}",
-                monitor_id
-            );
+            info!("[cleanup_shared_memory_safe] Shared memory cleaned successfully",);
             Ok(())
         } else {
-            info!(
-                "[cleanup_shared_memory_safe] No shared memory found for monitor {}",
-                monitor_id
-            );
+            info!("[cleanup_shared_memory_safe] No shared memory found",);
             Ok(())
         }
     }
