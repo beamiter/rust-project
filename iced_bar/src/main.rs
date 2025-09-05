@@ -203,7 +203,7 @@ impl IcedBar {
     const DEFAULT_COLOR: Color = color!(0x666666);
     const TAB_WIDTH: f32 = 40.0;
     const TAB_HEIGHT: f32 = 28.0;
-    const TAB_SPACING: f32 = 2.0;
+    const TAB_SPACING: f32 = 6.0;
 
     fn new() -> Self {
         let args: Vec<String> = env::args().collect();
@@ -564,7 +564,7 @@ impl IcedBar {
     }
 
     fn scale_factor(&self) -> f32 {
-        1.0
+        1.0 / self.scale_factor
     }
 
     fn monitor_num_to_icon(monitor_num: u8) -> &'static str {
@@ -700,7 +700,7 @@ impl IcedBar {
         let layouts: [(&str, u32); 3] = [("[]=", 0), ("><>", 1), ("[M]", 2)];
         let current = self.layout_symbol.as_str();
 
-        let mut row = Row::new().spacing(4);
+        let mut row = Row::new().spacing(Self::TAB_SPACING);
         for (sym, idx) in layouts {
             let is_current = sym == current;
 
@@ -742,7 +742,7 @@ impl IcedBar {
 
     fn view_work_space(&self) -> Element<'_, Message> {
         // Workspace pills
-        let mut tags_row = Row::new().spacing(Self::TAB_SPACING);
+        let mut tags_row = Row::new().spacing(Self::TAB_SPACING * 0.5);
         for (index, label) in self.tabs.iter().enumerate() {
             tags_row = tags_row.push(self.workspace_button(index, label));
         }
@@ -753,43 +753,47 @@ impl IcedBar {
         let layout_selector = if self.layout_selector_open {
             let selector = self.layout_options_row();
             Row::new()
-                .spacing(6)
+                .spacing(Self::TAB_SPACING)
                 .push(selector)
                 .align_y(iced::Alignment::Center)
         } else {
             Row::new().into()
         };
 
-        // Screenshot button with hover
-        let cyan = Color::from_rgb(0.0, 1.0, 1.0);
-        let dark_orange = Color::from_rgb(1.0, 0.5, 0.0);
+        // Screenshot pill with hover effect
         let is_hovered = self.is_hovered;
-
-        let screenshot_text = container(text(format!(" s {:.2} ", self.scale_factor)).center())
-            .center_y(Length::Fill)
-            .style(move |_theme: &Theme| {
-                if is_hovered {
-                    container::Style {
-                        text_color: Some(dark_orange),
-                        border: Border {
-                            radius: border::radius(2.0),
-                            ..Default::default()
-                        },
-                        background: Some(Background::Color(cyan)),
-                        ..Default::default()
-                    }
-                } else {
-                    container::Style {
-                        border: Border {
-                            color: Color::WHITE,
-                            width: 0.5,
-                            radius: border::radius(2.0),
-                        },
-                        ..Default::default()
-                    }
+        let screenshot_pill = container(
+            text(format!("📸 {:.2}", self.scale_factor))
+                .size(15)
+                .center(),
+        )
+        .height(Self::TAB_HEIGHT)
+        .padding([1, 8])
+        .style(move |_theme: &Theme| {
+            if is_hovered {
+                container::Style {
+                    background: Some(Background::Color(Color::from_rgb(1.0, 0.5, 0.0))), // 橙色背景
+                    text_color: Some(Color::WHITE),
+                    border: Border {
+                        radius: border::radius(12.0),
+                        width: 1.0,
+                        color: Color::from_rgb(1.0, 0.5, 0.0),
+                    },
+                    ..Default::default()
                 }
-            })
-            .padding(0.0);
+            } else {
+                container::Style {
+                    background: Some(Background::Color(Color::from_rgb(0.0, 0.8, 0.8))), // 青色背景
+                    text_color: Some(Color::WHITE),
+                    border: Border {
+                        radius: border::radius(12.0),
+                        width: 1.0,
+                        color: Color::from_rgb(0.0, 0.8, 0.8),
+                    },
+                    ..Default::default()
+                }
+            }
+        });
 
         // CPU usage pill
         let cpu_usage = if let Some(snapshot) = self.system_monitor.get_snapshot() {
@@ -819,16 +823,50 @@ impl IcedBar {
 
         let memory_pill = self.create_usage_pill("MEM", memory_usage);
 
-        // Time + Monitor indicator
-        let time_button = button(self.formated_now.as_str())
-            .padding(1)
-            .height(Self::TAB_HEIGHT)
-            .on_press(Message::ShowSecondsToggle);
+        // Time pill with enhanced styling
+        let time_pill = container(text(format!("🕐 {}", self.formated_now)).size(18).center())
+            .padding([1, 8])
+            .style(|_theme: &Theme| {
+                container::Style {
+                    background: Some(Background::Color(Color::from_rgb(0.3, 0.6, 0.9))), // 蓝色背景
+                    text_color: Some(Color::WHITE),
+                    border: Border {
+                        radius: border::radius(12.0),
+                        width: 1.0,
+                        color: Color::from_rgb(0.3, 0.6, 0.9),
+                    },
+                    ..Default::default()
+                }
+            });
+
         let monitor_num = if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
             monitor_info.monitor_num
         } else {
             0
         };
+
+        // Monitor indicator pill
+        let monitor_pill = container(
+            text(format!(
+                "🖥️ {}",
+                Self::monitor_num_to_icon(monitor_num as u8)
+            ))
+            .size(18)
+            .center(),
+        )
+        .padding([1, 8])
+        .style(|_theme: &Theme| {
+            container::Style {
+                background: Some(Background::Color(Color::from_rgb(0.6, 0.4, 0.8))), // 紫色背景
+                text_color: Some(Color::WHITE),
+                border: Border {
+                    radius: border::radius(12.0),
+                    width: 1.0,
+                    color: Color::from_rgb(0.6, 0.4, 0.8),
+                },
+                ..Default::default()
+            }
+        });
 
         Row::new()
             .push(tags_row)
@@ -842,20 +880,15 @@ impl IcedBar {
             .push(memory_pill)
             .push(Space::with_width(6))
             .push(
-                mouse_area(screenshot_text)
+                mouse_area(screenshot_pill)
                     .on_enter(Message::MouseEnterScreenShot)
                     .on_exit(Message::MouseExitScreenShot)
                     .on_press(Message::LeftClick),
             )
             .push(Space::with_width(6))
-            .push(time_button)
-            .push(
-                rich_text([
-                    span(" "),
-                    span(Self::monitor_num_to_icon(monitor_num as u8)),
-                ])
-                .on_link_click(std::convert::identity),
-            )
+            .push(mouse_area(time_pill).on_press(Message::ShowSecondsToggle))
+            .push(Space::with_width(6))
+            .push(monitor_pill)
             .push(Space::with_width(6))
             .align_y(iced::Alignment::Center)
             .into()
@@ -868,7 +901,7 @@ impl IcedBar {
         // 根据使用率选择颜色
         let (bg_color, text_color) = self.get_usage_colors(usage);
 
-        container(text(format!("{} {:.0}%", label, usage)).size(12).center())
+        container(text(format!("{} {:.0}%", label, usage)).size(18).center())
             .padding([1, 8])
             .style(move |_theme: &Theme| {
                 container::Style {
@@ -915,7 +948,7 @@ impl IcedBar {
         let work_space_row = self.view_work_space();
 
         Column::new()
-            .padding(2)
+            .padding(8)
             .spacing(Self::TAB_SPACING)
             .push(work_space_row)
             .into()
