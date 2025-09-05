@@ -12,8 +12,14 @@ toml = "0.8.23"
 # shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
 shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
 time = "0.3.41"
-tokio = { version = "1.45.1", features = ["full", "time"] }
-iced = { git = "https://github.com/iced-rs/iced.git", branch = "master", features = ["advanced", "canvas", "debug", "lazy", "tokio", "wgpu"] }
+iced = { git = "https://github.com/iced-rs/iced.git", branch = "master", features = ["advanced", "debug", "lazy", "smol"] }
 sysinfo = "0.35.2"
 battery = "0.7.8"
 alsa = "0.9.1"
+
+[profile.release]
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+opt-level = 3

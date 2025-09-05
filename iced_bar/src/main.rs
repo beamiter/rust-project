@@ -124,7 +124,7 @@ fn main() -> iced::Result {
         .subscription(IcedBar::subscription)
         .title("iced_bar")
         .scale_factor(IcedBar::scale_factor)
-        .theme(|_| Theme::Light)
+        // .theme(|_| Theme::Light)
         .run()
 }
 
