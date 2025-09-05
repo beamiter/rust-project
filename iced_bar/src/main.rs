@@ -598,10 +598,10 @@ impl IcedBar {
                     return (tag_color.scale_alpha(1.0), 2.0, tag_color);
                 } else if status.is_selected {
                     // selected: semi tag color + thin border
-                    return (tag_color.scale_alpha(0.82), 1.5, tag_color);
+                    return (tag_color.scale_alpha(0.7), 1.5, tag_color);
                 } else if status.is_occ {
                     // occupied: faint bg, no border
-                    return (tag_color.scale_alpha(0.70), 0.0, Color::TRANSPARENT);
+                    return (tag_color.scale_alpha(0.4), 0.0, Color::TRANSPARENT);
                 }
             }
         }
@@ -619,7 +619,7 @@ impl IcedBar {
 
         let radius = 6.0;
         button(rich_text![span(label.to_string())].on_link_click(std::convert::identity))
-            .padding([2, 4])
+            .padding([1, 4])
             .width(Self::TAB_WIDTH)
             .height(Self::TAB_HEIGHT)
             .style(move |_theme: &Theme, status: button::Status| {
@@ -671,7 +671,7 @@ impl IcedBar {
         let label = self.layout_symbol.clone();
 
         button(rich_text![span(label)].on_link_click(std::convert::identity))
-            .padding([2, 8])
+            .padding([1, 8])
             .style(move |_theme: &Theme, status: button::Status| {
                 let mut bg = pill_color.scale_alpha(0.85);
                 let mut border_w = 1.0;
@@ -820,7 +820,10 @@ impl IcedBar {
         let memory_pill = self.create_usage_pill("MEM", memory_usage);
 
         // Time + Monitor indicator
-        let time_button = button(self.formated_now.as_str()).on_press(Message::ShowSecondsToggle);
+        let time_button = button(self.formated_now.as_str())
+            .padding(1)
+            .height(Self::TAB_HEIGHT)
+            .on_press(Message::ShowSecondsToggle);
         let monitor_num = if let Some(monitor_info) = self.monitor_info_opt.as_ref() {
             monitor_info.monitor_num
         } else {
@@ -853,6 +856,7 @@ impl IcedBar {
                 ])
                 .on_link_click(std::convert::identity),
             )
+            .push(Space::with_width(6))
             .align_y(iced::Alignment::Center)
             .into()
     }
@@ -865,7 +869,7 @@ impl IcedBar {
         let (bg_color, text_color) = self.get_usage_colors(usage);
 
         container(text(format!("{} {:.0}%", label, usage)).size(12).center())
-            .padding([4, 8])
+            .padding([1, 8])
             .style(move |_theme: &Theme| {
                 container::Style {
                     background: Some(Background::Color(bg_color)),
