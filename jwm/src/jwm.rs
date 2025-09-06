@@ -50,38 +50,9 @@ lazy_static::lazy_static! {
     pub static ref MOUSEMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WMClientRestore {
-    pub name: String,
-    pub class: String,
-    pub instance: String,
-    pub win: Window,
-    pub geometry: ClientGeometry,
-    pub size_hints: SizeHints,
-    pub state: ClientState,
-    pub monitor_num: u32,
-}
-
-impl WMClientRestore {
-    /// 从 WMClient 创建可序列化的版本
-    pub fn from_client(jwm: &Jwm, client: &WMClient) -> Self {
-        let monitor_num = jwm.monitors.get(client.mon.unwrap()).map_or(0, |v| v.num) as u32;
-        Self {
-            name: client.name.clone(),
-            class: client.class.clone(),
-            instance: client.instance.clone(),
-            win: client.win,
-            geometry: client.geometry.clone(),
-            size_hints: client.size_hints.clone(),
-            state: client.state.clone(),
-            monitor_num,
-        }
-    }
-}
-
 #[derive(Debug, Serialize, Deserialize)]
 pub struct WMClientCollection {
-    pub clients: HashMap<Window, WMClientRestore>, // 以 Window ID 为键
+    pub win_client_map: HashMap<Window, WMClient>, // 以 Window ID 为键
     pub timestamp: u64,                            // 保存时间戳
 }
 
@@ -89,7 +60,7 @@ impl WMClientCollection {
     /// 创建新的客户端集合
     pub fn new() -> Self {
         Self {
-            clients: HashMap::new(),
+            win_client_map: HashMap::new(),
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -98,14 +69,14 @@ impl WMClientCollection {
     }
 
     /// 从客户端向量创建集合
-    pub fn from_clients(clients: Vec<WMClientRestore>) -> Self {
+    pub fn from_clients(clients: Vec<WMClient>) -> Self {
         let mut client_map = HashMap::new();
         for client in clients {
             client_map.insert(client.win, client);
         }
 
         Self {
-            clients: client_map,
+            win_client_map: client_map,
             timestamp: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap()
@@ -114,24 +85,24 @@ impl WMClientCollection {
     }
 
     /// 添加客户端
-    pub fn add_client(&mut self, client: WMClientRestore) {
-        self.clients.insert(client.win, client);
+    pub fn add_client(&mut self, client: WMClient) {
+        self.win_client_map.insert(client.win, client);
         self.update_timestamp();
     }
 
     /// 根据 Window ID 获取客户端
-    pub fn get_client(&self, win_id: Window) -> Option<&WMClientRestore> {
-        self.clients.get(&win_id)
+    pub fn get_client(&self, win_id: Window) -> Option<&WMClient> {
+        self.win_client_map.get(&win_id)
     }
 
     /// 根据 Window ID 获取可变客户端引用
-    pub fn get_client_mut(&mut self, win_id: Window) -> Option<&mut WMClientRestore> {
-        self.clients.get_mut(&win_id)
+    pub fn get_client_mut(&mut self, win_id: Window) -> Option<&mut WMClient> {
+        self.win_client_map.get_mut(&win_id)
     }
 
     /// 移除客户端
-    pub fn remove_client(&mut self, win_id: Window) -> Option<WMClientRestore> {
-        let result = self.clients.remove(&win_id);
+    pub fn remove_client(&mut self, win_id: Window) -> Option<WMClient> {
+        let result = self.win_client_map.remove(&win_id);
         if result.is_some() {
             self.update_timestamp();
         }
@@ -140,27 +111,27 @@ impl WMClientCollection {
 
     /// 检查是否包含指定的窗口
     pub fn contains_window(&self, win_id: Window) -> bool {
-        self.clients.contains_key(&win_id)
+        self.win_client_map.contains_key(&win_id)
     }
 
     /// 获取所有客户端的引用
-    pub fn get_all_clients(&self) -> impl Iterator<Item = &WMClientRestore> {
-        self.clients.values()
+    pub fn get_all_clients(&self) -> impl Iterator<Item = &WMClient> {
+        self.win_client_map.values()
     }
 
     /// 获取所有窗口 ID
     pub fn get_all_window_ids(&self) -> impl Iterator<Item = &Window> {
-        self.clients.keys()
+        self.win_client_map.keys()
     }
 
     /// 获取客户端数量
     pub fn len(&self) -> usize {
-        self.clients.len()
+        self.win_client_map.len()
     }
 
     /// 检查是否为空
     pub fn is_empty(&self) -> bool {
-        self.clients.is_empty()
+        self.win_client_map.is_empty()
     }
 
     /// 更新时间戳
@@ -173,7 +144,7 @@ impl WMClientCollection {
 
     /// 清空所有客户端
     pub fn clear(&mut self) {
-        self.clients.clear();
+        self.win_client_map.clear();
         self.update_timestamp();
     }
 
@@ -198,7 +169,7 @@ impl WMClientCollection {
 
     /// 静态方法：从多个客户端保存到文件
     pub fn save_clients_to_file<P: AsRef<std::path::Path>>(
-        clients: &[WMClientRestore],
+        clients: &[WMClient],
         path: P,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let collection = Self::from_clients(clients.to_vec());
@@ -208,46 +179,46 @@ impl WMClientCollection {
     /// 静态方法：从文件加载并返回客户端向量
     pub fn load_clients_from_file<P: AsRef<std::path::Path>>(
         path: P,
-    ) -> Result<Vec<WMClientRestore>, Box<dyn std::error::Error>> {
+    ) -> Result<Vec<WMClient>, Box<dyn std::error::Error>> {
         let collection = Self::load_from_file(path)?;
-        Ok(collection.clients.into_values().collect())
+        Ok(collection.win_client_map.into_values().collect())
     }
 
     /// 静态方法：从文件加载并返回 HashMap
     pub fn load_clients_as_map<P: AsRef<std::path::Path>>(
         path: P,
-    ) -> Result<HashMap<Window, WMClientRestore>, Box<dyn std::error::Error>> {
+    ) -> Result<HashMap<Window, WMClient>, Box<dyn std::error::Error>> {
         let collection = Self::load_from_file(path)?;
-        Ok(collection.clients)
+        Ok(collection.win_client_map)
     }
 
     /// 根据类名查找客户端
-    pub fn find_by_class(&self, class: &str) -> Vec<&WMClientRestore> {
-        self.clients
+    pub fn find_by_class(&self, class: &str) -> Vec<&WMClient> {
+        self.win_client_map
             .values()
             .filter(|client| client.class == class)
             .collect()
     }
 
     /// 根据实例名查找客户端
-    pub fn find_by_instance(&self, instance: &str) -> Vec<&WMClientRestore> {
-        self.clients
+    pub fn find_by_instance(&self, instance: &str) -> Vec<&WMClient> {
+        self.win_client_map
             .values()
             .filter(|client| client.instance == instance)
             .collect()
     }
 
     /// 根据窗口名称查找客户端
-    pub fn find_by_name(&self, name: &str) -> Vec<&WMClientRestore> {
-        self.clients
+    pub fn find_by_name(&self, name: &str) -> Vec<&WMClient> {
+        self.win_client_map
             .values()
             .filter(|client| client.name.contains(name))
             .collect()
     }
 
     /// 根据状态过滤客户端
-    pub fn filter_by_state(&self, state: &ClientState) -> Vec<&WMClientRestore> {
-        self.clients
+    pub fn filter_by_state(&self, state: &ClientState) -> Vec<&WMClient> {
+        self.win_client_map
             .values()
             .filter(|client| &client.state == state)
             .collect()
@@ -256,7 +227,7 @@ impl WMClientCollection {
     /// 批量更新客户端状态
     pub fn batch_update_state(&mut self, win_ids: &[Window], new_state: ClientState) {
         for &win_id in win_ids {
-            if let Some(client) = self.clients.get_mut(&win_id) {
+            if let Some(client) = self.win_client_map.get_mut(&win_id) {
                 client.state = new_state.clone();
             }
         }
@@ -264,7 +235,7 @@ impl WMClientCollection {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WMClient {
     // === 基本信息 ===
     pub name: String,
@@ -281,6 +252,10 @@ pub struct WMClient {
 
     // === 链表和关联 ===
     pub mon: Option<MonitorKey>,
+
+    // === 重启时记录，方便映射到对应monitor ===
+    pub monitor_num: u32,
+    // let monitor_num = jwm.monitors.get(client.mon.unwrap()).map_or(0, |v| v.num) as u32;
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -460,6 +435,7 @@ impl WMClient {
             size_hints: SizeHints::default(),
             state: ClientState::default(),
             mon: None,
+            monitor_num: 1000,
         }
     }
 
@@ -473,10 +449,9 @@ impl WMClient {
         self.geometry.h + 2 * self.geometry.border_w
     }
 
-    /// 检查是否为状态栏（需要CONFIG常量）
-    // (TODO)
+    /// 检查是否为状态栏
     pub fn is_status_bar(&self) -> bool {
-        self.name.contains("bar") || self.class.contains("bar")
+        self.name == CONFIG.status_bar_name()
     }
 
     /// 获取客户端矩形区域
@@ -1897,13 +1872,18 @@ impl Jwm {
 
     fn store_all_clients(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[store_all_clients]");
-        let client_restores: Vec<WMClientRestore> = self
+        let client_restores: Vec<WMClient> = self
             .monitor_order
             .iter()
             .filter_map(|&mon_key| self.monitor_stack.get(mon_key))
             .flat_map(|stack_clients| stack_clients.iter())
             .filter_map(|&client_key| self.clients.get(client_key))
-            .map(|client| WMClientRestore::from_client(self, client))
+            .map(|client| {
+                let mut tmp = client.clone();
+                tmp.monitor_num =
+                    self.monitors.get(client.mon.unwrap()).map_or(0, |v| v.num) as u32;
+                tmp
+            })
             .collect();
         let client_store = WMClientCollection::from_clients(client_restores);
         client_store.save_to_file(CLIENT_STORAGE_PATH)?;
@@ -2992,10 +2972,10 @@ impl Jwm {
 
         let mut command = if cfg!(feature = "nixgl") {
             let mut cmd = Command::new("nixGL");
-            cmd.arg(CONFIG.status_bar_base_name());
+            cmd.arg(CONFIG.status_bar_name());
             cmd
         } else {
-            Command::new(CONFIG.status_bar_base_name())
+            Command::new(CONFIG.status_bar_name())
         };
         command.arg(shared_path);
 
@@ -5568,7 +5548,7 @@ impl Jwm {
     pub fn setup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Err(_) = Command::new("pkill")
             .arg("-9")
-            .arg(CONFIG.status_bar_base_name())
+            .arg(CONFIG.status_bar_name())
             .spawn()
         {
             error!("[new] Clear status bar failed");
@@ -7594,7 +7574,7 @@ impl Jwm {
 
     pub fn manage_restored(
         &mut self,
-        restored_client: &WMClientRestore,
+        restored_client: &WMClient,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[manage_restored]");
 
@@ -7812,7 +7792,7 @@ impl Jwm {
     fn manage_restored_client(
         &mut self,
         client_key: ClientKey,
-        restored_client: &WMClientRestore,
+        restored_client: &WMClient,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[manage_restored_client]");
 

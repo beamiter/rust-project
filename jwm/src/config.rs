@@ -74,26 +74,7 @@ pub struct BehaviorConfig {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusBarConfig {
-    pub base_name: String,
-}
-
-impl StatusBarConfig {
-    /// 获取带索引的状态栏名称
-    pub fn get_instance_name(&self, index: usize) -> String {
-        format!("{}_{}", self.base_name, index)
-    }
-    /// 获取状态栏 0 的名称
-    pub fn get_bar_instance_0(&self) -> String {
-        self.get_instance_name(0)
-    }
-    /// 获取状态栏 1 的名称
-    pub fn get_bar_instance_1(&self) -> String {
-        self.get_instance_name(1)
-    }
-    /// 获取基础名称
-    pub fn get_base_name(&self) -> &str {
-        &self.base_name
-    }
+    pub name: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -186,7 +167,7 @@ impl Default for Config {
                     lock_fullscreen: true,
                 },
                 status_bar: StatusBarConfig {
-                    base_name: STATUS_BAR_NAME.to_string(),
+                    name: STATUS_BAR_NAME.to_string(),
                 },
                 colors: ColorsConfig {
                     dark_sea_green1: "#afffd7".to_string(),
@@ -566,24 +547,12 @@ impl Config {
         &self.inner.appearance.dmenu_font
     }
 
-    pub fn status_bar_base_name(&self) -> &str {
-        &self.inner.status_bar.base_name
-    }
-
-    pub fn status_bar_instance_0(&self) -> String {
-        self.inner.status_bar.get_bar_instance_0()
-    }
-
-    pub fn status_bar_instance_1(&self) -> String {
-        self.inner.status_bar.get_bar_instance_1()
+    pub fn status_bar_name(&self) -> &str {
+        &self.inner.status_bar.name
     }
 
     pub fn status_bar_config(&self) -> &StatusBarConfig {
         &self.inner.status_bar
-    }
-
-    pub fn get_status_bar_instance_name(&self, index: usize) -> String {
-        self.inner.status_bar.get_instance_name(index)
     }
 
     pub fn colors(&self) -> &ColorsConfig {
