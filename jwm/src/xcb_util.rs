@@ -21,6 +21,7 @@ x11rb::atom_manager! {
         _NET_WM_WINDOW_TYPE,
         _NET_WM_WINDOW_TYPE_DIALOG,
         _NET_CLIENT_LIST,
+        _NET_CLIENT_LIST_STACKING,
         _NET_CLIENT_INFO,
 
         UTF8_STRING,

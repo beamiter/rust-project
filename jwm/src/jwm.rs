@@ -793,14 +793,6 @@ impl WMRule {
     }
 }
 
-/// 表示一个窗口重排操作
-#[derive(Debug, Clone)]
-struct RestackOperation {
-    window: Window,
-    stack_mode: StackMode,
-    sibling: Option<Window>,
-}
-
 pub type MonitorIndex = i32;
 
 pub struct Jwm {
@@ -3028,149 +3020,91 @@ impl Jwm {
         info!("[restack]");
 
         let mon_key = mon_key_opt.ok_or("Monitor is required for restack operation")?;
+        let monitor = self.monitors.get(mon_key).ok_or("Monitor not found")?;
+        let monitor_num = monitor.num;
 
-        // 检查监视器是否存在
-        let monitor_num = if let Some(monitor) = self.monitors.get(mon_key) {
-            monitor.num
-        } else {
-            return Err("Monitor not found".into());
-        };
+        // 1) 取出该 monitor 的堆栈（顶部优先）
+        let stack = self.monitor_stack.get(mon_key).cloned().unwrap_or_default();
+
+        // 2) 收集“从底到顶”的 tiled 与 floating（只收集可见的）
+        let mut tiled_bottom_to_top: Vec<Window> = Vec::new();
+        let mut floating_bottom_to_top: Vec<Window> = Vec::new();
+
+        for &ck in stack.iter().rev() {
+            if let Some(c) = self.clients.get(ck) {
+                if !self.is_client_visible_on_monitor(ck, mon_key) {
+                    continue;
+                }
+                if c.state.is_floating {
+                    floating_bottom_to_top.push(c.win);
+                } else {
+                    tiled_bottom_to_top.push(c.win);
+                }
+            }
+        }
+
+        // 3) 选中的浮动窗口（若存在）置于浮动层最顶端
+        if let Some(sel_ck) = monitor.sel {
+            if let Some(sel_c) = self.clients.get(sel_ck) {
+                if sel_c.state.is_floating {
+                    if let Some(idx) = floating_bottom_to_top.iter().position(|&w| w == sel_c.win) {
+                        let w = floating_bottom_to_top.remove(idx);
+                        floating_bottom_to_top.push(w);
+                    }
+                }
+            }
+        }
+
+        // 4) 合并最终叠放序列：tiled 在下，floating 在上（从底到顶）
+        let mut final_bottom_to_top: Vec<Window> =
+            Vec::with_capacity(tiled_bottom_to_top.len() + floating_bottom_to_top.len());
+        final_bottom_to_top.extend(tiled_bottom_to_top.into_iter());
+        final_bottom_to_top.extend(floating_bottom_to_top.into_iter());
+
+        // 5) 批量配置：把每个窗口 stack ABOVE 到它的前一个窗口（sibling 链）
+        if !final_bottom_to_top.is_empty() {
+            // 第一个（最底部）不指定 sibling；之后的都 ABOVE 前一个
+            for i in 0..final_bottom_to_top.len() {
+                let win = final_bottom_to_top[i];
+                let mut cfg = ConfigureWindowAux::new().stack_mode(StackMode::ABOVE);
+                if i > 0 {
+                    cfg = cfg.sibling(final_bottom_to_top[i - 1]);
+                }
+                self.x11rb_conn.configure_window(win, &cfg)?;
+            }
+        }
+
+        // 6) 如果 bar 在当前显示器且该 tag 需要显示 bar：把 bar 置顶
+        if self.current_bar_monitor_id == Some(monitor_num) {
+            if let Some(bar_key) = self.status_bar_client {
+                if let Some(bar_client) = self.clients.get(bar_key) {
+                    // 判断当前 tag 是否显示 bar（不显示则 bar 应该被 unmapped，略过）
+                    let show_bar = monitor
+                        .pertag
+                        .as_ref()
+                        .and_then(|p| p.show_bars.get(p.cur_tag))
+                        .copied()
+                        .unwrap_or(true);
+                    if show_bar {
+                        let cfg = ConfigureWindowAux::new().stack_mode(StackMode::ABOVE);
+                        self.x11rb_conn.configure_window(bar_client.win, &cfg)?;
+                    }
+                }
+            }
+        }
+
+        // 7) 单次 flush
+        self.x11rb_conn.flush()?;
+
+        // 8) Option：移动鼠标到选中 client 中心（取决于你的开关）
+        if let Some(sel_client_key) = monitor.sel {
+            self.move_cursor_to_client_center(sel_client_key)?;
+        }
+
+        // 标记需要刷新 bar（必要时）
         self.mark_bar_update_needed(Some(monitor_num));
 
-        // 收集并批量处理所有窗口重排操作
-        let restack_operations = self.collect_restack_operations(mon_key, monitor_num)?;
-        self.execute_restack_operations(restack_operations)?;
-
         info!("[restack] finish");
-        Ok(())
-    }
-
-    /// 收集所有需要重新排列的窗口操作
-    fn collect_restack_operations(
-        &self,
-        mon_key: MonitorKey,
-        monitor_num: i32,
-    ) -> Result<Vec<RestackOperation>, Box<dyn std::error::Error>> {
-        let mut operations = Vec::new();
-
-        // 1. 收集非浮动窗口（底层）
-        let non_floating_windows = self.collect_non_floating_windows(mon_key)?;
-        operations.extend(self.create_non_floating_operations(&non_floating_windows));
-
-        // 2. 添加选中的浮动窗口（中层）
-        if let Some(floating_op) = self.create_selected_floating_operation(mon_key)? {
-            operations.push(floating_op);
-        }
-
-        // 3. 添加状态栏（顶层）
-        if let Some(statusbar_op) = self.create_statusbar_operation(monitor_num)? {
-            operations.push(statusbar_op);
-        }
-
-        Ok(operations)
-    }
-
-    /// 收集所有非浮动可见窗口
-    fn collect_non_floating_windows(
-        &self,
-        mon_key: MonitorKey,
-    ) -> Result<Vec<Window>, Box<dyn std::error::Error>> {
-        let mut windows = Vec::new();
-
-        // 获取监视器的堆栈顺序客户端
-        if let Some(stack_clients) = self.monitor_stack.get(mon_key) {
-            for &client_key in stack_clients {
-                if let Some(client) = self.clients.get(client_key) {
-                    if !client.state.is_floating
-                        && self.is_client_visible_on_monitor(client_key, mon_key)
-                    {
-                        windows.push(client.win);
-                    }
-                }
-            }
-        }
-
-        Ok(windows)
-    }
-
-    /// 为非浮动窗口创建重排操作
-    fn create_non_floating_operations(&self, windows: &[Window]) -> Vec<RestackOperation> {
-        windows
-            .iter()
-            .enumerate()
-            .map(|(i, &win)| {
-                let sibling = if i == 0 { None } else { Some(windows[i - 1]) };
-                RestackOperation {
-                    window: win,
-                    stack_mode: StackMode::BELOW,
-                    sibling,
-                }
-            })
-            .collect()
-    }
-
-    /// 为选中的浮动窗口创建重排操作
-    fn create_selected_floating_operation(
-        &self,
-        mon_key: MonitorKey,
-    ) -> Result<Option<RestackOperation>, Box<dyn std::error::Error>> {
-        if let Some(monitor) = self.monitors.get(mon_key) {
-            if let Some(sel_client_key) = monitor.sel {
-                if let Some(client) = self.clients.get(sel_client_key) {
-                    if client.state.is_floating {
-                        return Ok(Some(RestackOperation {
-                            window: client.win,
-                            stack_mode: StackMode::ABOVE,
-                            sibling: None,
-                        }));
-                    }
-                }
-            }
-        }
-        Ok(None)
-    }
-
-    /// 为状态栏创建重排操作
-    fn create_statusbar_operation(
-        &self,
-        monitor_num: i32,
-    ) -> Result<Option<RestackOperation>, Box<dyn std::error::Error>> {
-        if self.current_bar_monitor_id != Some(monitor_num) {
-            return Ok(None);
-        }
-        if let Some(bar_key) = self.status_bar_client {
-            let statusbar_win = self.clients.get(bar_key).unwrap().win;
-            return Ok(Some(RestackOperation {
-                window: statusbar_win,
-                stack_mode: StackMode::ABOVE,
-                sibling: None,
-            }));
-        }
-        Ok(None)
-    }
-
-    /// 执行所有重排操作
-    fn execute_restack_operations(
-        &mut self,
-        operations: Vec<RestackOperation>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if operations.is_empty() {
-            return Ok(());
-        }
-
-        // 批量执行所有配置更改
-        for op in operations {
-            let mut config = ConfigureWindowAux::new().stack_mode(op.stack_mode);
-
-            if let Some(sibling_win) = op.sibling {
-                config = config.sibling(sibling_win);
-            }
-
-            self.x11rb_conn.configure_window(op.window, &config)?;
-        }
-
-        // 单次同步所有操作
-        self.x11rb_conn.flush()?;
         Ok(())
     }
 
@@ -5715,13 +5649,6 @@ impl Jwm {
     }
 
     pub fn setup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Err(_) = Command::new("pkill")
-            .arg("-9")
-            .arg(CONFIG.status_bar_name())
-            .spawn()
-        {
-            error!("[new] Clear status bar failed");
-        }
         info!("[setup]");
 
         // 初始化视觉效果
@@ -5793,7 +5720,7 @@ impl Jwm {
 
         // 如果优雅关闭失败，强制终止客户端
         info!("[killclient] WM_DELETE_WINDOW failed, force killing client");
-        self.force_kill_client_by_key(client_key)?;
+        self.force_kill_client(client_key)?;
 
         Ok(())
     }
@@ -5880,7 +5807,7 @@ impl Jwm {
     }
 
     /// 通过ClientKey强制终止客户端
-    fn force_kill_client_by_key(
+    fn force_kill_client(
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -5897,10 +5824,6 @@ impl Jwm {
 
         // 抓取服务器以确保操作的原子性
         self.x11rb_conn.grab_server()?;
-
-        // 设置关闭模式为销毁所有资源
-        self.x11rb_conn
-            .set_close_down_mode(CloseDown::DESTROY_ALL)?;
 
         // 强制终止客户端
         match self.x11rb_conn.kill_client(win) {
@@ -7606,36 +7529,55 @@ impl Jwm {
         Ok(())
     }
 
-    fn update_net_client_list(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn update_net_client_list(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         use x11rb::wrapper::ConnectionExt;
-        // 清空现有列表
-        let _ = self
-            .x11rb_conn
-            .delete_property(self.x11rb_root, self.atoms._NET_CLIENT_LIST);
-        // 收集所有客户端窗口ID
-        let mut all_windows = Vec::new();
+
+        // 1) _NET_CLIENT_LIST：按“初次管理顺序”（client_order）
+        let mut ordered: Vec<Window> = Vec::with_capacity(self.client_order.len());
+        for &key in &self.client_order {
+            if let Some(client) = self.clients.get(key) {
+                ordered.push(client.win);
+            }
+        }
+
+        self.x11rb_conn.change_property32(
+            PropMode::REPLACE,
+            self.x11rb_root,
+            self.atoms._NET_CLIENT_LIST,
+            AtomEnum::WINDOW,
+            &ordered,
+        )?;
+
+        // 2) _NET_CLIENT_LIST_STACKING：按“从底到顶”堆叠顺序
+        //    monitor_stack 的 0 通常是“顶部”（你 attachstack 是 insert(0,...)）
+        //    因此生成 stacking 时要反转（rev）来得到“底到顶”
+        let mut stacking: Vec<Window> = Vec::new();
+
+        // 将所有 monitor 的堆栈拼为全局堆栈（简单策略：按 monitor_order 依次拼接）
         for &mon_key in &self.monitor_order {
-            if let Some(client_keys) = self.monitor_clients.get(mon_key) {
-                for &client_key in client_keys {
-                    if let Some(client) = self.clients.get(client_key) {
-                        all_windows.push(client.win);
+            if let Some(stack) = self.monitor_stack.get(mon_key) {
+                // 当前栈 0 是 top，rev 后变 bottom -> top
+                for &ck in stack.iter().rev() {
+                    if let Some(c) = self.clients.get(ck) {
+                        stacking.push(c.win);
                     }
                 }
             }
         }
-        // 一次性设置所有窗口
-        if !all_windows.is_empty() {
-            self.x11rb_conn.change_property32(
-                PropMode::REPLACE,
-                self.x11rb_root,
-                self.atoms._NET_CLIENT_LIST,
-                AtomEnum::WINDOW,
-                &all_windows,
-            )?;
-        }
+
+        self.x11rb_conn.change_property32(
+            PropMode::REPLACE,
+            self.x11rb_root,
+            self.atoms._NET_CLIENT_LIST_STACKING,
+            AtomEnum::WINDOW,
+            &stacking,
+        )?;
+
+        // 统一 flush（一次）
+        self.x11rb_conn.flush()?;
         info!(
-            "[update_net_client_list] Updated _NET_CLIENT_LIST with {} windows",
-            all_windows.len()
+            "[update_net_client_list] Updated: client_list={}, client_list_stacking",
+            ordered.len(),
         );
         Ok(())
     }
@@ -7993,11 +7935,11 @@ impl Jwm {
         // 注册事件和抓取按钮
         self.register_client_events(client_key)?;
 
-        // 更新客户端列表
-        self.update_net_client_list()?;
-
         // 映射窗口
         self.map_client_window(client_key)?;
+
+        // 更新客户端列表
+        self.update_net_client_list()?;
 
         // 处理焦点
         self.handle_new_client_focus(client_key)?;
@@ -8031,11 +7973,11 @@ impl Jwm {
         // 注册事件和抓取按钮
         self.register_client_events(client_key)?;
 
-        // 更新客户端列表
-        self.update_net_client_list()?;
-
         // 映射窗口
         self.map_client_window(client_key)?;
+
+        // 更新客户端列表
+        self.update_net_client_list()?;
 
         // 处理焦点
         self.handle_new_client_focus(client_key)?;
@@ -8297,16 +8239,6 @@ impl Jwm {
 
         // 抓取按钮
         self.grabbuttons(client_key, false)?;
-
-        // 更新 EWMH _NET_CLIENT_LIST
-        use x11rb::wrapper::ConnectionExt;
-        self.x11rb_conn.change_property32(
-            PropMode::APPEND,
-            self.x11rb_root,
-            self.atoms._NET_CLIENT_LIST,
-            AtomEnum::WINDOW,
-            &[win],
-        )?;
 
         info!(
             "[register_client_events] Events registered for window 0x{:x}",

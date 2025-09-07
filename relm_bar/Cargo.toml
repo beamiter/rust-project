@@ -14,7 +14,6 @@ gtk4 = { version = "0.9.7", features = ["v4_14"] }
 log = "0.4.27"
 sysinfo = "0.35.2"
 thiserror = "2.0.12"
-tokio = { version = "1.45.1", features = ["full"] }
 toml = "0.8.23"
 # shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
 shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
