@@ -13,6 +13,7 @@ use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt;
+use std::mem::MaybeUninit;
 use std::os::fd::BorrowedFd;
 use std::os::fd::FromRawFd;
 use std::os::fd::OwnedFd;
@@ -1538,17 +1539,15 @@ impl Jwm {
         hints: &SizeHints,
     ) -> (i32, i32) {
         if hints.min_aspect > 0.0 && hints.max_aspect > 0.0 {
-            let current_ratio = w as f32 / h as f32;
-
-            if current_ratio > hints.max_aspect {
-                // 太宽，调整宽度
-                w = (h as f32 * hints.max_aspect + 0.5) as i32;
-            } else if current_ratio < 1.0 / hints.min_aspect {
-                // 太高，调整高度
-                h = (w as f32 * hints.min_aspect + 0.5) as i32;
+            if hints.min_aspect > 0.0 && hints.max_aspect > 0.0 {
+                let ratio = w as f32 / h as f32;
+                if ratio < hints.min_aspect {
+                    w = (h as f32 * hints.min_aspect + 0.5) as i32;
+                } else if ratio > hints.max_aspect {
+                    h = (w as f32 / hints.max_aspect + 0.5) as i32;
+                }
             }
         }
-
         (w, h)
     }
 
@@ -2412,7 +2411,7 @@ impl Jwm {
                 PropMode::REPLACE,
                 window,
                 AtomEnum::WM_HINTS,
-                AtomEnum::CARDINAL,
+                AtomEnum::WM_HINTS,
                 &data,
             )
             .and_then(|_| self.x11rb_conn.flush());
@@ -2430,7 +2429,7 @@ impl Jwm {
                 PropMode::REPLACE,
                 window,
                 AtomEnum::WM_HINTS,
-                AtomEnum::CARDINAL,
+                AtomEnum::WM_HINTS,
                 &data,
             )
             .and_then(|_| self.x11rb_conn.flush());
@@ -3411,57 +3410,187 @@ impl Jwm {
     }
 
     pub fn run_sync(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        use std::os::unix::io::AsRawFd;
+        // 确保连接上的挂起请求尽快发出
         self.x11rb_conn.flush()?;
         let mut event_count: u64 = 0;
-        info!("Starting sync event loop");
-        // 取出底层 X11 连接 fd（按值获取，不会悬挂借用）
+
+        // 1) 取出 X11 连接底层 fd
         let x_fd = self.x11rb_conn.stream().as_raw_fd();
-        // poll 的超时时间（毫秒）：10~20ms 之间都可以
-        let timeout_ms: i32 = 10;
-        // 准备 pollfd 结构
-        let mut pfd = libc::pollfd {
-            fd: x_fd,
-            events: libc::POLLIN,
-            revents: 0,
+
+        // 2) 创建 epoll 实例
+        let epfd = unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) };
+        if epfd < 0 {
+            return Err(std::io::Error::last_os_error().into());
+        }
+
+        // 3) 创建 timerfd：10ms 周期
+        let tfd = unsafe {
+            libc::timerfd_create(
+                libc::CLOCK_MONOTONIC,
+                libc::TFD_NONBLOCK | libc::TFD_CLOEXEC,
+            )
         };
+        if tfd < 0 {
+            let e = std::io::Error::last_os_error();
+            let _ = close(epfd);
+            return Err(e.into());
+        }
+
+        // 设置初始启动时间与间隔（10ms）
+        let to_timespec = |ms: u64| -> libc::timespec {
+            libc::timespec {
+                tv_sec: (ms / 1000) as libc::time_t,
+                tv_nsec: ((ms % 1000) * 1_000_000) as libc::c_long,
+            }
+        };
+        let its = libc::itimerspec {
+            it_interval: to_timespec(10),
+            it_value: to_timespec(10),
+        };
+        let rc = unsafe { libc::timerfd_settime(tfd, 0, &its as *const _, std::ptr::null_mut()) };
+        if rc < 0 {
+            let e = std::io::Error::last_os_error();
+            let _ = close(tfd);
+            let _ = close(epfd);
+            return Err(e.into());
+        }
+
+        // 4) 注册 X fd 与 timerfd 到 epoll
+        const X_TOKEN: u64 = 1;
+        const TFD_TOKEN: u64 = 2;
+
+        let mut ev_x = libc::epoll_event {
+            events: (libc::EPOLLIN) as u32,
+            u64: X_TOKEN,
+        };
+        let rc = unsafe { libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, x_fd, &mut ev_x as *mut _) };
+        if rc < 0 {
+            let e = std::io::Error::last_os_error();
+            let _ = close(tfd);
+            let _ = close(epfd);
+            return Err(e.into());
+        }
+
+        let mut ev_t = libc::epoll_event {
+            events: (libc::EPOLLIN) as u32,
+            u64: TFD_TOKEN,
+        };
+        let rc = unsafe { libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, tfd, &mut ev_t as *mut _) };
+        if rc < 0 {
+            let e = std::io::Error::last_os_error();
+            let _ = close(tfd);
+            let _ = close(epfd);
+            return Err(e.into());
+        }
+
+        // 5) 主循环
+        // 先准备一个固定容量的 events buffer
+        const EP_EVENTS_CAP: usize = 32;
+        let mut events: [libc::epoll_event; EP_EVENTS_CAP] =
+            unsafe { MaybeUninit::zeroed().assume_init() };
+
         while self.running.load(std::sync::atomic::Ordering::SeqCst) {
-            // 1) 抽干所有待处理的 X11 事件（非阻塞）
+            // 5.1 抽干所有已到达的 X 事件（非阻塞）
             while let Some(event) = self.x11rb_conn.poll_for_event()? {
                 event_count = event_count.wrapping_add(1);
-                // 建议用 debug 降低日志量
                 debug!(
                     "[run_sync] event_count: {}, event: {:?}",
                     event_count, event
                 );
                 let _ = self.handler(event);
             }
-            // 2) 处理状态栏命令与刷新
+
+            // 5.2 处理状态栏命令/刷新
             self.process_commands_from_status_bar();
             if !self.pending_bar_updates.is_empty() {
                 self.flush_pending_bar_updates();
             }
-            // 3) 使用 poll 等待 X fd，就算没事件也仅等待一个短超时
-            //    这保证了我们能定期回到循环处理命令/定时任务
-            unsafe {
-                pfd.revents = 0;
-                let ret = libc::poll(&mut pfd as *mut libc::pollfd, 1, timeout_ms);
-                if ret < 0 {
-                    let err = std::io::Error::last_os_error();
-                    // 常见 EINTR（信号中断）直接继续
-                    if let Some(code) = err.raw_os_error() {
-                        if code == libc::EINTR {
-                            continue;
+
+            // 5.3 阻塞等待 epoll 事件（X 可读 或 定时器 tick）
+            let nfds = loop {
+                let n = unsafe {
+                    libc::epoll_wait(
+                        epfd,
+                        events.as_mut_ptr(),
+                        EP_EVENTS_CAP as i32,
+                        -1, // 永久阻塞，依赖 timerfd 唤醒
+                    )
+                };
+                if n >= 0 {
+                    break n;
+                }
+                // 出错，若被信号打断则继续
+                let err = std::io::Error::last_os_error();
+                if let Some(code) = err.raw_os_error() {
+                    if code == libc::EINTR {
+                        continue;
+                    }
+                }
+                // 其他错误：打印告警，稍退避，继续循环
+                warn!("[run_sync] epoll_wait failed: {}", err);
+                std::thread::sleep(std::time::Duration::from_millis(5));
+                break 0;
+            };
+
+            // 5.4 处理就绪事件
+            for i in 0..(nfds as usize) {
+                let ev = events[i];
+                match ev.u64 {
+                    X_TOKEN => {
+                        // 抽干所有可用的 X 事件
+                        loop {
+                            match self.x11rb_conn.poll_for_event()? {
+                                Some(event) => {
+                                    event_count = event_count.wrapping_add(1);
+                                    let _ = self.handler(event);
+                                }
+                                None => break,
+                            }
                         }
                     }
-                    // 其他错误，打印告警并稍作退避
-                    warn!("[run_sync] poll failed: {}", err);
-                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    TFD_TOKEN => {
+                        // 读取 timerfd，清空到期计数
+                        let mut buf = [0u8; 8];
+                        loop {
+                            let r = unsafe {
+                                libc::read(tfd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+                            };
+                            if r == 8 {
+                                // 正常读到一次到期计数；处理周期任务
+                                self.process_commands_from_status_bar();
+                                if !self.pending_bar_updates.is_empty() {
+                                    self.flush_pending_bar_updates();
+                                }
+                                // 继续读，防止丢积压 tick
+                                continue;
+                            } else if r < 0 {
+                                let err = std::io::Error::last_os_error();
+                                // 非阻塞下，EAGAIN/EWOULDBLOCK 表示已无数据
+                                if let Some(code) = err.raw_os_error() {
+                                    if code == libc::EAGAIN || code == libc::EWOULDBLOCK {
+                                        break;
+                                    }
+                                }
+                                // 其他错误：记录并跳出
+                                warn!("[run_sync] timerfd read error: {}", err);
+                                break;
+                            } else {
+                                // 短读（不应发生），跳出
+                                break;
+                            }
+                        }
+                    }
+                    other => {
+                        // 未知 token（一般不会发生）
+                        debug!("[run_sync] unexpected epoll token: {}", other);
+                    }
                 }
-                // ret == 0 超时：没有事件，下一轮循环会继续处理命令与刷新
-                // ret > 0 可读：下一轮循环顶部会抽干事件
             }
         }
+
+        // 6) 清理
+        let _ = close(tfd);
+        let _ = close(epfd);
         Ok(())
     }
 
@@ -9246,28 +9375,118 @@ impl Jwm {
         Ok(monitors)
     }
 
+    // 读取 window 的全部 _NET_WM_STATE（如果没有则返回空 vec）
+    fn get_net_wm_state(&self, window: Window) -> Result<Vec<Atom>, Box<dyn std::error::Error>> {
+        let cookie = self.x11rb_conn.get_property(
+            false,                    // delete: 不删除
+            window,                   // window
+            self.atoms._NET_WM_STATE, // property
+            AtomEnum::ATOM,           // type: ATOM
+            0,                        // long_offset
+            u32::MAX,                 // long_length: 读全量
+        )?;
+
+        let reply = match cookie.reply() {
+            Ok(r) => r,
+            Err(ReplyError::X11Error(_)) => {
+                // 属性不存在或类型不匹配，按空处理
+                return Ok(Vec::new());
+            }
+            Err(e) => return Err(e.into()),
+        };
+
+        // 只有 format=32 时才有有效的 Atom 列表
+        if reply.format != 32 {
+            return Ok(Vec::new());
+        }
+
+        let atoms: Vec<Atom> = reply.value32().into_iter().flatten().collect();
+        Ok(atoms)
+    }
+
+    // 判定 window 是否包含指定的 _NET_WM_STATE 原子（如 _NET_WM_STATE_FULLSCREEN）
+    fn has_net_wm_state(
+        &self,
+        window: Window,
+        state_atom: Atom,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let states = self.get_net_wm_state(window)?;
+        Ok(states.iter().any(|&a| a == state_atom))
+    }
+
+    // 将某个 _NET_WM_STATE 原子加入（若已存在则不重复写入）
+    #[allow(dead_code)]
+    fn add_net_wm_state(
+        &mut self,
+        window: Window,
+        state_atom: Atom,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut states = self.get_net_wm_state(window)?;
+        if !states.iter().any(|&a| a == state_atom) {
+            states.push(state_atom);
+            use x11rb::wrapper::ConnectionExt;
+            self.x11rb_conn.change_property32(
+                PropMode::REPLACE,
+                window,
+                self.atoms._NET_WM_STATE,
+                AtomEnum::ATOM,
+                &states,
+            )?;
+            self.x11rb_conn.flush()?;
+        }
+        Ok(())
+    }
+
+    // 从 _NET_WM_STATE 列表移除某个原子（若不存在则不操作）
+    #[allow(dead_code)]
+    fn remove_net_wm_state(
+        &mut self,
+        window: Window,
+        state_atom: Atom,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut states = self.get_net_wm_state(window)?;
+        let len_before = states.len();
+        states.retain(|&a| a != state_atom);
+        if states.len() != len_before {
+            use x11rb::wrapper::ConnectionExt;
+            self.x11rb_conn.change_property32(
+                PropMode::REPLACE,
+                window,
+                self.atoms._NET_WM_STATE,
+                AtomEnum::ATOM,
+                &states,
+            )?;
+            self.x11rb_conn.flush()?;
+        }
+        Ok(())
+    }
+
     pub fn updatewindowtype(&mut self, client_key: ClientKey) {
-        // info!("[updatewindowtype]");
-        // 获取窗口ID
+        // 获取 window
         let win = if let Some(client) = self.clients.get(client_key) {
             client.win
         } else {
             warn!("[updatewindowtype] Client {:?} not found", client_key);
             return;
         };
-        // 获取窗口属性
-        let state = self.getatomprop_by_window(win, self.atoms._NET_WM_STATE.into());
-        let wtype = self.getatomprop_by_window(win, self.atoms._NET_WM_WINDOW_TYPE.into());
-        // 处理全屏状态
-        if state == self.atoms._NET_WM_STATE_FULLSCREEN {
+
+        // 1) 判定 FULLSCREEN 是否在 _NET_WM_STATE 列表中
+        if let Ok(true) = self.has_net_wm_state(win, self.atoms._NET_WM_STATE_FULLSCREEN) {
             let _ = self.setfullscreen(client_key, true);
         }
-        // 处理对话框类型
+
+        // 2) 读取 _NET_WM_WINDOW_TYPE（仍可保留你原有的单值或多值读取逻辑）
+        let wtype = self.getatomprop_by_window(win, self.atoms._NET_WM_WINDOW_TYPE.into());
         if wtype == self.atoms._NET_WM_WINDOW_TYPE_DIALOG {
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.state.is_floating = true;
             }
         }
+        // 你也可以扩展更多类型判断，如 STICKY/ABOVE/MAXIMIZED 等：
+        // if let Ok(true) = self.has_net_wm_state(win, self.atoms._NET_WM_STATE_ABOVE) { ... }
+        // if let Ok(true) = self.has_net_wm_state(win, self.atoms._NET_WM_STATE_STICKY) { ... }
+        // if let Ok(true) = self.has_net_wm_state(win, self.atoms._NET_WM_STATE_MAXIMIZED_VERT) { ... }
+        // if let Ok(true) = self.has_net_wm_state(win, self.atoms._NET_WM_STATE_MAXIMIZED_HORZ) { ... }
     }
 
     /// 根据窗口ID获取原子属性
@@ -9362,7 +9581,7 @@ impl Jwm {
                         PropMode::REPLACE,
                         win,
                         AtomEnum::WM_HINTS,
-                        AtomEnum::CARDINAL,
+                        AtomEnum::WM_HINTS,
                         &data,
                     )
                     .and_then(|_| self.x11rb_conn.flush());
