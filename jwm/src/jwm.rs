@@ -3657,38 +3657,57 @@ impl Jwm {
         let mut click_type = WMClickType::ClickRootWin;
         let window = e.event as u32;
 
-        // 处理监视器切换
+        // 处理监视器切换（保持你原有逻辑）
         if let Some(target_mon_key) = self.wintomon(window) {
             if Some(target_mon_key) != self.sel_mon {
                 let current_sel = self.get_selected_client_key();
-                self.unfocus(current_sel.unwrap(), true)?;
+                // 原代码这里 unwrap() 有 panic 风险，保守点可防御
+                if let Some(cur) = current_sel {
+                    self.unfocus(cur, true)?;
+                }
                 self.sel_mon = Some(target_mon_key);
                 self.focus(None)?;
             }
         }
 
-        // 处理客户端点击
+        // 是否点击在已管理客户端上
+        let mut is_client_click = false;
         if let Some(client_key) = self.wintoclient(window) {
+            is_client_click = true;
             self.focus(Some(client_key))?;
             let _ = self.restack(self.sel_mon);
-            self.x11rb_conn
-                .allow_events(Allow::REPLAY_POINTER, e.time)?;
             click_type = WMClickType::ClickClientWin;
         }
 
-        // 处理按钮配置
+        // 先判断是否有匹配绑定（而不是先 ReplayPointer）
         let event_mask = self.clean_mask(e.state.bits());
+        let mut handled_by_wm = false;
+
         for config in CONFIG.get_buttons().iter() {
             if config.click_type == click_type
                 && config.func.is_some()
                 && config.button == ButtonIndex::from(e.detail)
                 && self.clean_mask(config.mask.bits()) == event_mask
             {
+                handled_by_wm = true;
                 if let Some(ref func) = config.func {
                     info!("[buttonpress] Executing button action");
                     let _ = func(self, &config.arg);
-                    break;
                 }
+                break;
+            }
+        }
+
+        // 决定是否 Replay/AsyncPointer
+        // - 被 WM 处理的事件，不 Replay 给客户端，最多做 ASYNC_POINTER 解冻
+        // - 未被 WM 处理的事件，才 Replay 给客户端
+        if is_client_click {
+            if handled_by_wm {
+                // 解冻但不重放
+                let _ = self.x11rb_conn.allow_events(Allow::ASYNC_POINTER, e.time);
+            } else {
+                // 我们不处理，回放给客户端
+                let _ = self.x11rb_conn.allow_events(Allow::REPLAY_POINTER, e.time);
             }
         }
 
@@ -6147,8 +6166,8 @@ impl Jwm {
                 false,           // owner_events
                 self.x11rb_root, // grab_window
                 *MOUSEMASK,      // event_mask
-                GrabMode::ASYNC, // pointer_mode
-                GrabMode::ASYNC, // keyboard_mode
+                GrabMode::ASYNC, // pointer_mode：保持 ASYNC
+                GrabMode::ASYNC, // keyboard_mode：保持 ASYNC
                 0u32,            // confine_to
                 cursor,          // cursor
                 0u32,            // time
@@ -6175,19 +6194,17 @@ impl Jwm {
             initial_mouse_x, initial_mouse_y
         );
 
-        // 6. 进入移动循环
+        // 6. 进入移动循环（新增窗口ID、Esc、Destroy/Unmap、超时兜底）
         let result = self.move_loop(
             client_key,
+            window_id,
             original_x,
             original_y,
             initial_mouse_x as u16,
             initial_mouse_y as u16,
         );
 
-        // 7. 清理工作
-        if let Err(e) = self.x11rb_conn.ungrab_pointer(0u32) {
-            error!("[movemouse] Failed to ungrab pointer: {}", e);
-        }
+        // 7. 统一清理（这里不再 ungrab，由 cleanup_move 处理）
         self.cleanup_move(window_id, client_key)?;
 
         info!("[movemouse] completed");
@@ -6197,48 +6214,82 @@ impl Jwm {
     fn move_loop(
         &mut self,
         client_key: ClientKey,
+        window_being_moved: Window,
         original_x: i32,
         original_y: i32,
         initial_mouse_x: u16,
         initial_mouse_y: u16,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut last_motion_time = 0u32;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
 
         loop {
-            let event = self.x11rb_conn.wait_for_event()?;
+            // 先尽量使用非阻塞读取，避免永久卡住
+            match self.x11rb_conn.poll_for_event()? {
+                Some(event) => {
+                    match event {
+                        Event::ConfigureRequest(e) => {
+                            self.configurerequest(&e)?;
+                        }
+                        Event::Expose(e) => {
+                            self.expose(&e)?;
+                        }
+                        Event::MapRequest(e) => {
+                            self.maprequest(&e)?;
+                        }
+                        Event::DestroyNotify(e) => {
+                            if e.window == window_being_moved {
+                                debug!("Window destroyed during move, aborting move");
+                                break;
+                            }
+                        }
+                        Event::UnmapNotify(e) => {
+                            if e.window == window_being_moved {
+                                debug!("Window unmapped during move, aborting move");
+                                break;
+                            }
+                        }
+                        Event::KeyPress(e) => {
+                            // 支持 ESC 取消
+                            if self.get_keysym_from_keycode(e.detail).unwrap_or(0)
+                                == x11::keysym::XK_Escape
+                            {
+                                debug!("Move canceled by ESC");
+                                break;
+                            }
+                        }
+                        Event::MotionNotify(e) => {
+                            // 节流处理
+                            if e.time.wrapping_sub(last_motion_time) <= 16 {
+                                continue;
+                            }
+                            last_motion_time = e.time;
 
-            match event {
-                Event::ConfigureRequest(e) => {
-                    self.configurerequest(&e)?;
-                }
-                Event::Expose(e) => {
-                    self.expose(&e)?;
-                }
-                Event::MapRequest(e) => {
-                    self.maprequest(&e)?;
-                }
-                Event::MotionNotify(e) => {
-                    // 节流处理
-                    if e.time.wrapping_sub(last_motion_time) <= 16 {
-                        continue;
+                            self.handle_move_motion(
+                                client_key,
+                                &e,
+                                original_x,
+                                original_y,
+                                initial_mouse_x,
+                                initial_mouse_y,
+                            )?;
+                        }
+                        Event::ButtonRelease(_) => {
+                            debug!("Button released, ending move");
+                            break;
+                        }
+                        _ => {
+                            // 忽略其他事件
+                        }
                     }
-                    last_motion_time = e.time;
-
-                    self.handle_move_motion(
-                        client_key,
-                        &e,
-                        original_x,
-                        original_y,
-                        initial_mouse_x,
-                        initial_mouse_y,
-                    )?;
                 }
-                Event::ButtonRelease(_) => {
-                    debug!("Button released, ending move");
-                    break;
-                }
-                _ => {
-                    // 忽略其他事件
+                None => {
+                    // 无事件，短睡+超时兜底
+                    if std::time::Instant::now() > deadline {
+                        warn!("move_loop timeout, aborting");
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
                 }
             }
         }
@@ -6505,10 +6556,10 @@ impl Jwm {
             (current_h + border_width - 1) as i16,
         )?;
 
-        // 6. 进入调整大小循环
-        let result = self.resize_loop(client_key, original_x, original_y, border_width);
+        // 6. 进入调整大小循环（新增窗口ID、Esc、Destroy/Unmap、超时兜底）
+        let result = self.resize_loop(client_key, window_id, original_x, original_y, border_width);
 
-        // 7. 清理工作
+        // 7. 统一清理（这里不再 ungrab，由 cleanup_resize 处理）
         self.cleanup_resize(window_id, border_width)?;
 
         result
@@ -6517,46 +6568,77 @@ impl Jwm {
     fn resize_loop(
         &mut self,
         client_key: ClientKey,
+        window_being_resized: Window,
         original_x: i32,
         original_y: i32,
         border_width: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut last_motion_time = 0u32;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
 
         loop {
-            let event = self.x11rb_conn.wait_for_event()?;
-            match event {
-                Event::ConfigureRequest(e) => {
-                    self.configurerequest(&e)?;
-                }
-                Event::Expose(e) => {
-                    self.expose(&e)?;
-                }
-                Event::MapRequest(e) => {
-                    self.maprequest(&e)?;
-                }
-                Event::MotionNotify(e) => {
-                    // 节流处理
-                    if e.time.wrapping_sub(last_motion_time) <= 16 {
-                        // ~60 FPS
-                        continue;
-                    }
-                    last_motion_time = e.time;
+            match self.x11rb_conn.poll_for_event()? {
+                Some(event) => {
+                    match event {
+                        Event::ConfigureRequest(e) => {
+                            self.configurerequest(&e)?;
+                        }
+                        Event::Expose(e) => {
+                            self.expose(&e)?;
+                        }
+                        Event::MapRequest(e) => {
+                            self.maprequest(&e)?;
+                        }
+                        Event::DestroyNotify(e) => {
+                            if e.window == window_being_resized {
+                                debug!("Window destroyed during resize, aborting resize");
+                                break;
+                            }
+                        }
+                        Event::UnmapNotify(e) => {
+                            if e.window == window_being_resized {
+                                debug!("Window unmapped during resize, aborting resize");
+                                break;
+                            }
+                        }
+                        Event::KeyPress(e) => {
+                            if self.get_keysym_from_keycode(e.detail).unwrap_or(0)
+                                == x11::keysym::XK_Escape
+                            {
+                                debug!("Resize canceled by ESC");
+                                break;
+                            }
+                        }
+                        Event::MotionNotify(e) => {
+                            // 节流处理
+                            if e.time.wrapping_sub(last_motion_time) <= 16 {
+                                continue;
+                            }
+                            last_motion_time = e.time;
 
-                    self.handle_resize_motion(
-                        client_key,
-                        &e,
-                        original_x,
-                        original_y,
-                        border_width,
-                    )?;
+                            self.handle_resize_motion(
+                                client_key,
+                                &e,
+                                original_x,
+                                original_y,
+                                border_width,
+                            )?;
+                        }
+                        Event::ButtonRelease(_) => {
+                            debug!("Button released, ending resize");
+                            break;
+                        }
+                        _ => {
+                            // 忽略其他事件
+                        }
+                    }
                 }
-                Event::ButtonRelease(_) => {
-                    debug!("Button released, ending resize");
-                    break;
-                }
-                _ => {
-                    // 忽略其他事件
+                None => {
+                    if std::time::Instant::now() > deadline {
+                        warn!("resize_loop timeout, aborting");
+                        break;
+                    }
+                    std::thread::sleep(std::time::Duration::from_millis(5));
                 }
             }
         }
@@ -7125,7 +7207,7 @@ impl Jwm {
         Ok(())
     }
 
-    // 为客户端抓取按钮的SlotMap版本
+    // 为客户端抓取按钮（未聚焦时的兜底抓取用 ASYNC/ASYNC）
     fn grabbuttons_for_client(
         &mut self,
         client_key: ClientKey,
@@ -7146,12 +7228,13 @@ impl Jwm {
                 .ungrab_button(ButtonIndex::ANY, client_win_id, ModMask::ANY.into())?;
 
             if !focused {
+                // 兜底抓取改为 ASYNC，避免冻结
                 self.x11rb_conn.grab_button(
                     false, // owner_events
                     client_win_id,
                     *BUTTONMASK,
-                    GrabMode::SYNC,
-                    GrabMode::SYNC,
+                    GrabMode::ASYNC,
+                    GrabMode::ASYNC,
                     0u32, // confine_to
                     0u32, // cursor
                     ButtonIndex::ANY,
@@ -7180,6 +7263,65 @@ impl Jwm {
             self.x11rb_conn.flush()?;
         }
 
+        Ok(())
+    }
+
+    fn grabbuttons_by_key(
+        &mut self,
+        client_key: ClientKey,
+        focused: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let client_win_id = if let Some(client) = self.clients.get(client_key) {
+            client.win
+        } else {
+            return Err("Client not found".into());
+        };
+
+        let modifiers_to_try = [
+            KeyButMask::default(),
+            KeyButMask::LOCK,
+            self.numlock_mask,
+            self.numlock_mask | KeyButMask::LOCK,
+        ];
+
+        // 取消之前的按钮抓取
+        self.x11rb_conn
+            .ungrab_button(ButtonIndex::ANY, client_win_id, ModMask::ANY.into())?;
+
+        if !focused {
+            // 兜底抓取改为 ASYNC，避免冻结
+            self.x11rb_conn.grab_button(
+                false, // owner_events
+                client_win_id,
+                *BUTTONMASK,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+                0u32, // confine_to
+                0u32, // cursor
+                ButtonIndex::ANY,
+                ModMask::ANY.into(),
+            )?;
+        }
+
+        for button_config in CONFIG.get_buttons().iter() {
+            if button_config.click_type == WMClickType::ClickClientWin {
+                for &modifier_combo in modifiers_to_try.iter() {
+                    self.x11rb_conn.grab_button(
+                        false,
+                        client_win_id,
+                        *BUTTONMASK,
+                        GrabMode::ASYNC,
+                        GrabMode::ASYNC,
+                        0u32,
+                        0u32,
+                        button_config.button,
+                        ModMask::from(button_config.mask.bits() | modifier_combo.bits()),
+                    )?;
+                }
+            }
+        }
+
+        self.x11rb_conn.flush()?;
         Ok(())
     }
 
@@ -7340,64 +7482,6 @@ impl Jwm {
             self.x11rb_conn.flush()?;
         }
 
-        Ok(())
-    }
-
-    fn grabbuttons_by_key(
-        &mut self,
-        client_key: ClientKey,
-        focused: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let client_win_id = if let Some(client) = self.clients.get(client_key) {
-            client.win
-        } else {
-            return Err("Client not found".into());
-        };
-
-        let modifiers_to_try = [
-            KeyButMask::default(),
-            KeyButMask::LOCK,
-            self.numlock_mask,
-            self.numlock_mask | KeyButMask::LOCK,
-        ];
-
-        // 取消之前的按钮抓取
-        self.x11rb_conn
-            .ungrab_button(ButtonIndex::ANY, client_win_id, ModMask::ANY.into())?;
-
-        if !focused {
-            self.x11rb_conn.grab_button(
-                false, // owner_events
-                client_win_id,
-                *BUTTONMASK,
-                GrabMode::SYNC,
-                GrabMode::SYNC,
-                0u32, // confine_to
-                0u32, // cursor
-                ButtonIndex::ANY,
-                ModMask::ANY.into(),
-            )?;
-        }
-
-        for button_config in CONFIG.get_buttons().iter() {
-            if button_config.click_type == WMClickType::ClickClientWin {
-                for &modifier_combo in modifiers_to_try.iter() {
-                    self.x11rb_conn.grab_button(
-                        false,
-                        client_win_id,
-                        *BUTTONMASK,
-                        GrabMode::ASYNC,
-                        GrabMode::ASYNC,
-                        0u32,
-                        0u32,
-                        button_config.button,
-                        ModMask::from(button_config.mask.bits() | modifier_combo.bits()),
-                    )?;
-                }
-            }
-        }
-
-        self.x11rb_conn.flush()?;
         Ok(())
     }
 
