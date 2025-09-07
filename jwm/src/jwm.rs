@@ -1,9 +1,11 @@
-use libc::{close, setsid, sigaction, sigemptyset, SIGCHLD, SIG_DFL};
+use libc::{setsid, sigaction, sigemptyset, SIGCHLD, SIG_DFL};
 
 use log::info;
 use log::warn;
 use log::{debug, error};
 
+#[cfg(unix)]
+use nix::sys::eventfd::EventFd;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 
@@ -34,6 +36,32 @@ use crate::xcb_util::{test_all_cursors, Atoms, CursorManager, ThemeManager};
 use shared_structures::CommandType;
 use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
+
+// 新增导入
+use std::os::unix::io::{AsRawFd, RawFd};
+use tokio::io::unix::AsyncFd;
+
+// 这两个在 cfg(unix) 下使用
+#[cfg(unix)]
+use nix::fcntl::{fcntl, FcntlArg, OFlag};
+#[cfg(unix)]
+use nix::unistd::close;
+
+// 一个简单的“拥有型”FD守卫：构造时接管 dup 出来的 fd，Drop 时关闭
+struct FdGuard(RawFd);
+
+impl AsRawFd for FdGuard {
+    fn as_raw_fd(&self) -> RawFd {
+        self.0
+    }
+}
+
+impl Drop for FdGuard {
+    fn drop(&mut self) {
+        // 仅关闭我们 dup 出来的 fd，不影响原始 X 连接
+        let _ = close(self.0);
+    }
+}
 
 // definitions for initial window state.
 pub const WITHDRAWN_STATE: u8 = 0;
@@ -3329,38 +3357,84 @@ impl Jwm {
     pub async fn run_async(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.x11rb_conn.flush()?;
         let mut event_count: u64 = 0;
-        let mut update_timer = tokio::time::interval(Duration::from_millis(10));
-        // 🔧 创建一次性的 AsyncFd
-        let async_fd = {
-            use std::os::unix::io::AsRawFd;
-            use tokio::io::unix::AsyncFd;
-            let stream = self.x11rb_conn.stream();
-            let fd = stream.as_raw_fd();
-            AsyncFd::new(fd)?
-        };
-        info!("Starting async event loop");
-        while self.running.load(Ordering::SeqCst) {
-            // 🔧 一次性处理所有事件
-            let events_processed = self.process_all_x11_events(&mut event_count)?;
+        let mut update_timer = tokio::time::interval(std::time::Duration::from_millis(10));
+        // 1) 取出底层 RawFd（瞬时借用，不会悬挂）
+        let raw_fd = self.x11rb_conn.stream().as_raw_fd();
+        // 2) dup 一份 fd，后续 AsyncFd 使用这个“独立拥有”的 fd，避免借用 self
+        #[cfg(unix)]
+        let dup_fd: RawFd = fcntl(
+            EventFd::from_value(raw_fd as u32).unwrap(),
+            FcntlArg::F_DUPFD_CLOEXEC(0),
+        )?;
+        // 设置 dup fd 为非阻塞（不影响原始 X 连接）
+        #[cfg(unix)]
+        {
+            let flags = fcntl(
+                EventFd::from_value(dup_fd as u32).unwrap(),
+                FcntlArg::F_GETFL,
+            )?;
+            let new_flags = OFlag::from_bits_truncate(flags) | OFlag::O_NONBLOCK;
+            let _ = fcntl(
+                EventFd::from_value(dup_fd as u32).unwrap(),
+                FcntlArg::F_SETFL(new_flags),
+            );
+        }
+        // 3) 用我们“拥有”的 dup fd 包装成 AsyncFd
+        //    注意：AsyncFd 里持有的是我们自己的 FdGuard，不再借用 self
+        let fd_guard = FdGuard(dup_fd);
+        let async_fd = AsyncFd::new(fd_guard)?;
+        while self.running.load(std::sync::atomic::Ordering::SeqCst) {
+            // 先抽干所有已到达的 X 事件（非阻塞）
+            while let Some(event) = self.x11rb_conn.poll_for_event()? {
+                event_count = event_count.wrapping_add(1);
+                debug!(
+                    "[run_async] event_count: {}, event: {:?}",
+                    event_count, event
+                );
+                let _ = self.handler(event);
+            }
+            // 处理状态栏命令（非阻塞）
             self.process_commands_from_status_bar();
-            if events_processed || !self.pending_bar_updates.is_empty() {
+            // 刷新 bar
+            if !self.pending_bar_updates.is_empty() {
                 self.flush_pending_bar_updates();
             }
-            // 🔧 修复的 select 逻辑
             tokio::select! {
+                // 定时器：周期性刷新状态栏、处理命令
                 _ = update_timer.tick() => {
+                    self.process_commands_from_status_bar();
                     if !self.pending_bar_updates.is_empty() {
                         self.flush_pending_bar_updates();
                     }
                 }
-                // 替换方案
-                // _ = tokio::time::sleep(Duration::from_millis(1)) => {
-                // }
-                result = self.wait_for_x11_ready_fixed(&async_fd) => {
-                    if let Err(e) = result {
-                        warn!("X11 ready wait error: {}", e);
+                // 等待 dup fd 可读
+                ready = async_fd.readable() => {
+                    match ready {
+                        Ok(mut guard) => {
+                            // 在 readiness 期间尽可能抽干事件，然后再 clear_ready
+                            loop {
+                                let mut progressed = false;
+                                while let Some(event) = self.x11rb_conn.poll_for_event()? {
+                                    event_count = event_count.wrapping_add(1);
+                                    let _ = self.handler(event);
+                                    progressed = true;
+                                }
+                                if progressed {
+                                    // 刚处理过事件，可能仍有数据可读，礼貌让出调度
+                                    tokio::task::yield_now().await;
+                                } else {
+                                    // 没有更多事件，可以安全 clear_ready
+                                    guard.clear_ready();
+                                    break;
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            // 少见错误，打 log 并短暂退避
+                            log::warn!("AsyncFd readable() error: {}", e);
+                            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                        }
                     }
-                    // 下次循环会处理新事件
                 }
             }
         }
@@ -3368,69 +3442,57 @@ impl Jwm {
     }
 
     pub fn run_sync(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        use std::os::unix::io::AsRawFd;
         self.x11rb_conn.flush()?;
         let mut event_count: u64 = 0;
         info!("Starting sync event loop");
-        while self.running.load(Ordering::SeqCst) {
-            // 处理所有待处理的 X11 事件
+        // 取出底层 X11 连接 fd（按值获取，不会悬挂借用）
+        let x_fd = self.x11rb_conn.stream().as_raw_fd();
+        // poll 的超时时间（毫秒）：10~20ms 之间都可以
+        let timeout_ms: i32 = 10;
+        // 准备 pollfd 结构
+        let mut pfd = libc::pollfd {
+            fd: x_fd,
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        while self.running.load(std::sync::atomic::Ordering::SeqCst) {
+            // 1) 抽干所有待处理的 X11 事件（非阻塞）
             while let Some(event) = self.x11rb_conn.poll_for_event()? {
                 event_count = event_count.wrapping_add(1);
-                info!(
+                // 建议用 debug 降低日志量
+                debug!(
                     "[run_sync] event_count: {}, event: {:?}",
                     event_count, event
                 );
                 let _ = self.handler(event);
             }
-            // 处理状态栏命令
+            // 2) 处理状态栏命令与刷新
             self.process_commands_from_status_bar();
-            // 更新状态栏
             if !self.pending_bar_updates.is_empty() {
                 self.flush_pending_bar_updates();
             }
-            // 等待下一个事件
-            if let Some(event) = self.x11rb_conn.wait_for_event().ok() {
-                event_count = event_count.wrapping_add(1);
-                info!(
-                    "[run_sync] event_count: {}, event: {:?}",
-                    event_count, event
-                );
-                let _ = self.handler(event);
+            // 3) 使用 poll 等待 X fd，就算没事件也仅等待一个短超时
+            //    这保证了我们能定期回到循环处理命令/定时任务
+            unsafe {
+                pfd.revents = 0;
+                let ret = libc::poll(&mut pfd as *mut libc::pollfd, 1, timeout_ms);
+                if ret < 0 {
+                    let err = std::io::Error::last_os_error();
+                    // 常见 EINTR（信号中断）直接继续
+                    if let Some(code) = err.raw_os_error() {
+                        if code == libc::EINTR {
+                            continue;
+                        }
+                    }
+                    // 其他错误，打印告警并稍作退避
+                    warn!("[run_sync] poll failed: {}", err);
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                // ret == 0 超时：没有事件，下一轮循环会继续处理命令与刷新
+                // ret > 0 可读：下一轮循环顶部会抽干事件
             }
         }
-        Ok(())
-    }
-
-    // 🔧 统一的事件处理函数
-    fn process_all_x11_events(
-        &mut self,
-        event_count: &mut u64,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        let mut events_processed = false;
-        while let Some(event) = self.x11rb_conn.poll_for_event()? {
-            *event_count = event_count.wrapping_add(1);
-            // info!(
-            //     "[run_async] event_count: {}, event: {:?}",
-            //     event_count, event
-            // );
-            let _ = self.handler(event);
-            events_processed = true;
-        }
-
-        Ok(events_processed)
-    }
-
-    // 🔧 修复的 wait_for_x11_ready
-    async fn wait_for_x11_ready_fixed(
-        &self,
-        async_fd: &tokio::io::unix::AsyncFd<std::os::unix::io::RawFd>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // 添加超时保护
-        tokio::time::timeout(Duration::from_millis(100), async {
-            let mut guard = async_fd.readable().await?;
-            guard.clear_ready();
-            Ok::<(), Box<dyn std::error::Error>>(())
-        })
-        .await??;
         Ok(())
     }
 
@@ -3799,7 +3861,7 @@ impl Jwm {
             unsafe {
                 command.pre_exec(move || {
                     // 关闭继承的 X11 连接
-                    close(x11_fd);
+                    close(x11_fd)?;
                     setsid();
 
                     // 重置 SIGCHLD 信号处理
