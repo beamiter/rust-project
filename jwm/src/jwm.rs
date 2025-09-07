@@ -854,8 +854,9 @@ pub struct Jwm {
 
     // 其他运行时
     pub keycode_cache: HashMap<u8, u32>,
-    pub enable_move_cursor_to_client_center: bool,
     pub restored_clients_info: WMClientCollection,
+
+    pub suppress_mouse_focus_until: Option<std::time::Instant>,
 }
 
 impl Jwm {
@@ -996,8 +997,8 @@ impl Jwm {
             x11rb_screen,
             atoms,
             keycode_cache: HashMap::new(),
-            enable_move_cursor_to_client_center: false,
             restored_clients_info: WMClientCollection::new(),
+            suppress_mouse_focus_until: None,
         })
     }
 
@@ -3040,13 +3041,6 @@ impl Jwm {
         let restack_operations = self.collect_restack_operations(mon_key, monitor_num)?;
         self.execute_restack_operations(restack_operations)?;
 
-        // 移动光标到选中客户端中心
-        if let Some(monitor) = self.monitors.get(mon_key) {
-            if let Some(sel_client_key) = monitor.sel {
-                self.move_cursor_to_client_center(sel_client_key)?;
-            }
-        }
-
         info!("[restack] finish");
         Ok(())
     }
@@ -3181,14 +3175,11 @@ impl Jwm {
     }
 
     /// 将鼠标指针移动到客户端窗口的中心
+    #[allow(dead_code)]
     fn move_cursor_to_client_center(
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if !self.enable_move_cursor_to_client_center {
-            return Ok(());
-        }
-
         // 获取当前鼠标位置
         let query_cookie = self.x11rb_conn.query_pointer(self.x11rb_root)?;
         let query_reply = query_cookie.reply()?;
@@ -3606,7 +3597,6 @@ impl Jwm {
         }
         // 第二步：处理收集到的命令
         for cmd in commands_to_process {
-            self.enable_move_cursor_to_client_center = false;
             match cmd.cmd_type.into() {
                 CommandType::ViewTag => {
                     // 切换到指定标签
@@ -4863,6 +4853,10 @@ impl Jwm {
 
                 // 重新排列布局
                 self.arrange(self.sel_mon);
+
+                // 短暂屏蔽鼠标抢焦点（比如 150~200ms）
+                self.suppress_mouse_focus_until =
+                    Some(std::time::Instant::now() + std::time::Duration::from_millis(200));
             }
         }
 
@@ -4990,7 +4984,6 @@ impl Jwm {
 
         if let WMArgEnum::Float(f) = arg {
             let sel_mon_key = self.sel_mon.ok_or("No monitor selected")?;
-
             if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
                 // 计算新的mfact值
                 let new_mfact = if f < &1.0 {
@@ -4998,28 +4991,25 @@ impl Jwm {
                 } else {
                     f - 1.0
                 };
-
                 // 检查范围限制
                 if new_mfact < 0.05 || new_mfact > 0.95 {
                     return Ok(());
                 }
-
                 // 更新per-tag的mfact
                 if let Some(ref mut pertag) = monitor.pertag {
                     let cur_tag = pertag.cur_tag;
                     pertag.m_facts[cur_tag] = new_mfact;
-
                     // 更新当前布局的mfact
                     monitor.layout.m_fact = new_mfact;
-
                     info!(
                         "[setmfact] Updated m_fact to {} for tag {}",
                         new_mfact, cur_tag
                     );
                 }
             }
-
             self.arrange(Some(sel_mon_key));
+            self.suppress_mouse_focus_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_millis(200));
         }
 
         Ok(())
@@ -7172,8 +7162,22 @@ impl Jwm {
         true
     }
 
+    fn mouse_focus_blocked(&mut self) -> bool {
+        if let Some(deadline) = self.suppress_mouse_focus_until {
+            if std::time::Instant::now() < deadline {
+                return true;
+            }
+            // 超时后清掉标记
+            self.suppress_mouse_focus_until = None;
+        }
+        false
+    }
+
     pub fn enternotify(&mut self, e: &EnterNotifyEvent) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[enternotify]");
+        if self.mouse_focus_blocked() {
+            return Ok(());
+        }
         // 过滤不需要处理的事件
         if (e.mode != NotifyMode::NORMAL || e.detail == NotifyDetail::INFERIOR)
             && e.event != self.x11rb_root
@@ -7657,7 +7661,6 @@ impl Jwm {
 
     pub fn keypress(&mut self, e: &KeyPressEvent) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[keypress]");
-        self.enable_move_cursor_to_client_center = false;
         // 使用缓存的键盘映射转换keycode到keysym
         let keysym = self.get_keysym_from_keycode(e.detail)?;
         debug!(
@@ -8711,6 +8714,10 @@ impl Jwm {
         // info!("[motionnotify]");
         // 只处理根窗口上的鼠标移动事件
         if e.event != self.x11rb_root {
+            return Ok(());
+        }
+        // 新增：短路屏蔽
+        if self.mouse_focus_blocked() {
             return Ok(());
         }
 
