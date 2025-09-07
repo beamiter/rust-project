@@ -4,8 +4,6 @@ use log::info;
 use log::warn;
 use log::{debug, error};
 
-#[cfg(unix)]
-use nix::sys::eventfd::EventFd;
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 
@@ -15,6 +13,9 @@ use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt;
+use std::os::fd::BorrowedFd;
+use std::os::fd::FromRawFd;
+use std::os::fd::OwnedFd;
 use std::process::{Child, Command};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -38,30 +39,13 @@ use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 
 // 新增导入
-use std::os::unix::io::{AsRawFd, RawFd};
+use std::os::unix::io::AsRawFd;
 use tokio::io::unix::AsyncFd;
 
-// 这两个在 cfg(unix) 下使用
 #[cfg(unix)]
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::fcntl::{FcntlArg, OFlag};
 #[cfg(unix)]
 use nix::unistd::close;
-
-// 一个简单的“拥有型”FD守卫：构造时接管 dup 出来的 fd，Drop 时关闭
-struct FdGuard(RawFd);
-
-impl AsRawFd for FdGuard {
-    fn as_raw_fd(&self) -> RawFd {
-        self.0
-    }
-}
-
-impl Drop for FdGuard {
-    fn drop(&mut self) {
-        // 仅关闭我们 dup 出来的 fd，不影响原始 X 连接
-        let _ = close(self.0);
-    }
-}
 
 // definitions for initial window state.
 pub const WITHDRAWN_STATE: u8 = 0;
@@ -3358,33 +3342,25 @@ impl Jwm {
         self.x11rb_conn.flush()?;
         let mut event_count: u64 = 0;
         let mut update_timer = tokio::time::interval(std::time::Duration::from_millis(10));
-        // 1) 取出底层 RawFd（瞬时借用，不会悬挂）
+        // 1) 拿到底层原始 fd（只是借用）
         let raw_fd = self.x11rb_conn.stream().as_raw_fd();
-        // 2) dup 一份 fd，后续 AsyncFd 使用这个“独立拥有”的 fd，避免借用 self
-        #[cfg(unix)]
-        let dup_fd: RawFd = fcntl(
-            EventFd::from_value(raw_fd as u32).unwrap(),
-            FcntlArg::F_DUPFD_CLOEXEC(0),
-        )?;
-        // 设置 dup fd 为非阻塞（不影响原始 X 连接）
-        #[cfg(unix)]
+        // 2) 用 BorrowedFd 包装，再 F_DUPFD_CLOEXEC 复制一份真正的 X11 fd
+        let dup_owned: OwnedFd = {
+            let borrowed = unsafe { BorrowedFd::borrow_raw(raw_fd) };
+            let new_fd = nix::fcntl::fcntl(borrowed, FcntlArg::F_DUPFD_CLOEXEC(3))?;
+            // 把新 fd 变成 OwnedFd（Drop 时会自动 close）
+            unsafe { OwnedFd::from_raw_fd(new_fd) }
+        };
+        // 3) 把 dup 出来的 fd 设为非阻塞（只影响这份 dup，不影响原 fd）
         {
-            let flags = fcntl(
-                EventFd::from_value(dup_fd as u32).unwrap(),
-                FcntlArg::F_GETFL,
-            )?;
-            let new_flags = OFlag::from_bits_truncate(flags) | OFlag::O_NONBLOCK;
-            let _ = fcntl(
-                EventFd::from_value(dup_fd as u32).unwrap(),
-                FcntlArg::F_SETFL(new_flags),
-            );
+            let flags_bits = nix::fcntl::fcntl(&dup_owned, FcntlArg::F_GETFL)?;
+            let flags = OFlag::from_bits_truncate(flags_bits);
+            let _ = nix::fcntl::fcntl(&dup_owned, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK))?;
         }
-        // 3) 用我们“拥有”的 dup fd 包装成 AsyncFd
-        //    注意：AsyncFd 里持有的是我们自己的 FdGuard，不再借用 self
-        let fd_guard = FdGuard(dup_fd);
-        let async_fd = AsyncFd::new(fd_guard)?;
+        // 4) 用 OwnedFd 包装成 AsyncFd
+        let async_fd = AsyncFd::new(dup_owned)?;
         while self.running.load(std::sync::atomic::Ordering::SeqCst) {
-            // 先抽干所有已到达的 X 事件（非阻塞）
+            // 抽干所有可用事件（非阻塞）
             while let Some(event) = self.x11rb_conn.poll_for_event()? {
                 event_count = event_count.wrapping_add(1);
                 debug!(
@@ -3393,25 +3369,21 @@ impl Jwm {
                 );
                 let _ = self.handler(event);
             }
-            // 处理状态栏命令（非阻塞）
+            // 处理 bar 命令与刷新
             self.process_commands_from_status_bar();
-            // 刷新 bar
             if !self.pending_bar_updates.is_empty() {
                 self.flush_pending_bar_updates();
             }
             tokio::select! {
-                // 定时器：周期性刷新状态栏、处理命令
                 _ = update_timer.tick() => {
                     self.process_commands_from_status_bar();
                     if !self.pending_bar_updates.is_empty() {
                         self.flush_pending_bar_updates();
                     }
                 }
-                // 等待 dup fd 可读
                 ready = async_fd.readable() => {
                     match ready {
                         Ok(mut guard) => {
-                            // 在 readiness 期间尽可能抽干事件，然后再 clear_ready
                             loop {
                                 let mut progressed = false;
                                 while let Some(event) = self.x11rb_conn.poll_for_event()? {
@@ -3420,17 +3392,14 @@ impl Jwm {
                                     progressed = true;
                                 }
                                 if progressed {
-                                    // 刚处理过事件，可能仍有数据可读，礼貌让出调度
                                     tokio::task::yield_now().await;
                                 } else {
-                                    // 没有更多事件，可以安全 clear_ready
                                     guard.clear_ready();
                                     break;
                                 }
                             }
                         }
                         Err(e) => {
-                            // 少见错误，打 log 并短暂退避
                             log::warn!("AsyncFd readable() error: {}", e);
                             tokio::time::sleep(std::time::Duration::from_millis(5)).await;
                         }
