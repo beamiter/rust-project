@@ -7248,7 +7248,7 @@ impl Jwm {
             let win = client.win;
 
             // 抓取按钮（设为非焦点状态）
-            self.grabbuttons_for_client(client_key, false)?;
+            self.grabbuttons(client_key, false)?;
 
             // 设置边框颜色为非选中状态
             self.set_window_border_color(win, false)?;
@@ -7269,66 +7269,7 @@ impl Jwm {
         Ok(())
     }
 
-    // 为客户端抓取按钮（未聚焦时的兜底抓取用 ASYNC/ASYNC）
-    fn grabbuttons_for_client(
-        &mut self,
-        client_key: ClientKey,
-        focused: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = self.clients.get(client_key) {
-            let client_win_id = client.win;
-
-            let modifiers_to_try = [
-                KeyButMask::default(),
-                KeyButMask::LOCK,
-                self.numlock_mask,
-                self.numlock_mask | KeyButMask::LOCK,
-            ];
-
-            // 取消之前的按钮抓取
-            self.x11rb_conn
-                .ungrab_button(ButtonIndex::ANY, client_win_id, ModMask::ANY.into())?;
-
-            if !focused {
-                // 兜底抓取改为 ASYNC，避免冻结
-                self.x11rb_conn.grab_button(
-                    false, // owner_events
-                    client_win_id,
-                    *BUTTONMASK,
-                    GrabMode::ASYNC,
-                    GrabMode::ASYNC,
-                    0u32, // confine_to
-                    0u32, // cursor
-                    ButtonIndex::ANY,
-                    ModMask::ANY.into(),
-                )?;
-            }
-
-            for button_config in CONFIG.get_buttons().iter() {
-                if button_config.click_type == WMClickType::ClickClientWin {
-                    for &modifier_combo in modifiers_to_try.iter() {
-                        self.x11rb_conn.grab_button(
-                            false,
-                            client_win_id,
-                            *BUTTONMASK,
-                            GrabMode::ASYNC,
-                            GrabMode::ASYNC,
-                            0u32,
-                            0u32,
-                            button_config.button,
-                            ModMask::from(button_config.mask.bits() | modifier_combo.bits()),
-                        )?;
-                    }
-                }
-            }
-
-            self.x11rb_conn.flush()?;
-        }
-
-        Ok(())
-    }
-
-    fn grabbuttons_by_key(
+    fn grabbuttons(
         &mut self,
         client_key: ClientKey,
         focused: bool,
@@ -7491,7 +7432,7 @@ impl Jwm {
         self.attachstack(client_key);
 
         // 抓取按钮事件
-        self.grabbuttons_by_key(client_key, true)?;
+        self.grabbuttons(client_key, true)?;
 
         // 设置边框颜色为选中状态
         if let Some(client) = self.clients.get(client_key) {
@@ -7499,7 +7440,7 @@ impl Jwm {
         }
 
         // 设置焦点
-        self.setfocus_by_key(client_key)?;
+        self.setfocus(client_key)?;
 
         Ok(())
     }
@@ -7528,7 +7469,7 @@ impl Jwm {
             let win = client.win;
 
             // 抓取按钮（设为非焦点状态）
-            self.grabbuttons_by_key(client_key, false)?;
+            self.grabbuttons(client_key, false)?;
 
             // 设置边框颜色为非选中状态
             self.set_window_border_color(win, false)?;
@@ -7541,36 +7482,6 @@ impl Jwm {
                     .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW)?;
             }
 
-            self.x11rb_conn.flush()?;
-        }
-
-        Ok(())
-    }
-
-    // setfocus的SlotMap版本
-    fn setfocus_by_key(&mut self, client_key: ClientKey) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = self.clients.get(client_key) {
-            let win = client.win;
-            let never_focus = client.state.never_focus;
-
-            if !never_focus {
-                self.x11rb_conn.set_input_focus(
-                    InputFocus::POINTER_ROOT,
-                    win,
-                    0u32, // time
-                )?;
-
-                use x11rb::wrapper::ConnectionExt;
-                self.x11rb_conn.change_property32(
-                    PropMode::REPLACE,
-                    self.x11rb_root,
-                    self.atoms._NET_ACTIVE_WINDOW,
-                    AtomEnum::WINDOW,
-                    &[win],
-                )?;
-            }
-
-            self.sendevent_by_window(win, self.atoms.WM_TAKE_FOCUS);
             self.x11rb_conn.flush()?;
         }
 
@@ -8284,7 +8195,7 @@ impl Jwm {
         self.x11rb_conn.change_window_attributes(win, &aux)?;
 
         // 抓取按钮
-        self.grabbuttons_by_key(client_key, false)?;
+        self.grabbuttons(client_key, false)?;
 
         // 更新 EWMH _NET_CLIENT_LIST
         use x11rb::wrapper::ConnectionExt;

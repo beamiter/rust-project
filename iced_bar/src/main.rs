@@ -40,13 +40,7 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     let timestamp = tmp_now.format("%Y-%m-%d_%H_%M_%S").to_string();
 
     let log_dir_candidates = [
-        std::env::var("XDG_RUNTIME_DIR")
-            .ok()
-            .map(|p| format!("{}/iced_bar", p)),
-        std::env::var("TMPDIR")
-            .ok()
-            .map(|p| format!("{}/iced_bar", p)),
-        Some("/tmp/iced_bar".to_string()),
+        Some("/var/tmp/jwm".to_string()),
     ];
 
     let log_dir = log_dir_candidates
