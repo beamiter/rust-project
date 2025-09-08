@@ -2972,35 +2972,6 @@ impl Jwm {
         }
     }
 
-    fn update_bar_message(&mut self, mon_key_opt: Option<MonitorKey>) {
-        // 只允许针对一个 monitor
-        let mon_key = match mon_key_opt {
-            Some(k) => k,
-            None => return,
-        };
-
-        // 新增：bar 在该 monitor/当前 tag 下不可见，则无需更新消息
-        if !self.is_bar_visible_on_mon(mon_key) {
-            return;
-        }
-
-        // 继续原有流程：构造 message
-        self.update_bar_message_for_monitor(Some(mon_key));
-
-        if self.status_bar_shmem.is_none() {
-            let ring_buffer = SharedRingBuffer::open(SHARED_PATH, None)
-                .or_else(|_| SharedRingBuffer::create(SHARED_PATH, None, None))
-                .expect("Create/open bar shmem failed");
-            self.status_bar_shmem = Some(ring_buffer);
-        }
-
-        self.ensure_bar_is_running(SHARED_PATH);
-
-        if let Some(rb) = self.status_bar_shmem.as_mut() {
-            let _ = rb.try_write_message(&self.message);
-        }
-    }
-
     pub fn restack(
         &mut self,
         mon_key_opt: Option<MonitorKey>,
@@ -8330,7 +8301,7 @@ impl Jwm {
         use x11rb::wrapper::ConnectionExt;
 
         // 全屏幕坐标
-        let top = (mon.geometry.m_y + bar_height).max(0) as u32;
+        let _top = (mon.geometry.m_y + bar_height).max(0) as u32;
         let top_amount = bar_height.max(0) as u32;
         let top_start_x = mon.geometry.m_x.max(0) as u32;
         let top_end_x = (mon.geometry.m_x + mon.geometry.m_w - 1).max(0) as u32;
@@ -8397,7 +8368,6 @@ impl Jwm {
             None => return Ok(()),
         };
         let monitor = self.monitors.get(mon_key).unwrap();
-
         // 当前 tag 是否显示 bar
         let show_bar = monitor
             .pertag
@@ -8405,8 +8375,7 @@ impl Jwm {
             .and_then(|p| p.show_bars.get(p.cur_tag))
             .copied()
             .unwrap_or(true);
-
-        if let Some(client) = self.clients.get_mut(client_key) {
+        let (client_win, client_height) = if let Some(client) = self.clients.get_mut(client_key) {
             if show_bar {
                 let pad = CONFIG.status_bar_padding();
                 client.geometry.x = monitor.geometry.m_x + pad;
@@ -8419,15 +8388,26 @@ impl Jwm {
                     .width(client.geometry.w as u32)
                     .height(client.geometry.h as u32);
                 self.x11rb_conn.configure_window(client.win, &aux)?;
-                // 设置 strut 占位
-                // (TODO)
-                // self.set_bar_strut(client.win, monitor, client.geometry.h)?;
+                // 返回窗口句柄和高度，用于后续的 strut 设置
+                (client.win, Some(client.geometry.h))
             } else {
                 // 隐藏
                 let aux = ConfigureWindowAux::new().x(-1000).y(-1000);
                 self.x11rb_conn.configure_window(client.win, &aux)?;
-                // self.remove_bar_strut(client.win)?;
+                // 返回窗口句柄，高度设为 None 表示需要移除 strut
+                (client.win, None)
             }
+        } else {
+            // 如果客户端不存在，直接返回
+            self.x11rb_conn.flush()?;
+            return Ok(());
+        };
+        if let Some(height) = client_height {
+            // 设置 strut 占位
+            self.set_bar_strut(client_win, monitor, height)?;
+        } else {
+            // 移除 strut
+            self.remove_bar_strut(client_win)?;
         }
         self.x11rb_conn.flush()?;
         Ok(())
