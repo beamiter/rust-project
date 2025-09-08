@@ -33,7 +33,8 @@ use system_monitor::SystemMonitor;
 
 static _START: Once = Once::new();
 
-const NERD_FONT: Font = Font::with_name("SauceCodePro NerdFont Regular");
+// const NERD_FONT: Font = Font::with_name("SauceCodePro NerdFont Regular");
+const NERD_FONT: Font = Font::with_name("NotoEmoji Regular");
 
 /// Initialize logging system
 fn initialize_logging(shared_path: &str) -> Result<(), AppError> {

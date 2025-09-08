@@ -13,6 +13,7 @@ use std::cmp::{max, min};
 use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt;
+use std::io::Write;
 use std::mem::MaybeUninit;
 use std::os::fd::BorrowedFd;
 use std::os::fd::FromRawFd;
@@ -52,7 +53,7 @@ use nix::unistd::close;
 pub const WITHDRAWN_STATE: u8 = 0;
 pub const NORMAL_STATE: u8 = 1;
 pub const ICONIC_STATE: u8 = 2;
-pub const CLIENT_STORAGE_PATH: &str = "/var/tmp/jwm/client_storage.bin";
+pub const RESTART_SNAPSHOT_PATH: &str = "/var/tmp/jwm/restart_snapshot.bin";
 pub const SHARED_PATH: &str = "/dev/shm/jwm_bar_global";
 
 pub type ClientKey = DefaultKey;
@@ -64,188 +65,47 @@ lazy_static::lazy_static! {
 }
 
 #[derive(Debug, Serialize, Deserialize)]
-pub struct WMClientCollection {
-    pub win_client_map: HashMap<Window, WMClient>, // 以 Window ID 为键
-    pub timestamp: u64,                            // 保存时间戳
+pub struct RestartSnapshot {
+    pub version: u32,
+    pub timestamp: u64,
+
+    // 全局
+    pub sel_monitor_num: Option<i32>,
+    pub current_bar_monitor_id: Option<i32>,
+
+    // 按 monitor.num 排序或原有顺序保存
+    pub monitors: Vec<MonitorSnapshot>,
+
+    // Window -> WMClient（保留状态、tags、is_floating、client_fact、is_fullscreen、geometry 等）
+    pub clients: HashMap<Window, WMClient>,
 }
 
-impl WMClientCollection {
-    /// 创建新的客户端集合
-    pub fn new() -> Self {
-        Self {
-            win_client_map: HashMap::new(),
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        }
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct MonitorSnapshot {
+    pub num: i32,
 
-    /// 从客户端向量创建集合
-    pub fn from_clients(clients: Vec<WMClient>) -> Self {
-        let mut client_map = HashMap::new();
-        for client in clients {
-            client_map.insert(client.win, client);
-        }
+    // tag 集与当前选择
+    pub tag_set: [u32; 2],
+    pub sel_tags: usize,
 
-        Self {
-            win_client_map: client_map,
-            timestamp: std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_secs(),
-        }
-    }
+    // per-tag 信息
+    pub pertag: PertagSnapshot,
 
-    /// 添加客户端
-    pub fn add_client(&mut self, client: WMClient) {
-        self.win_client_map.insert(client.win, client);
-        self.update_timestamp();
-    }
+    // 顺序（使用 Window ID 表示）
+    pub monitor_clients_order: Vec<Window>, // 建议定义为“底->顶”（一致即可）
+    pub monitor_stack_order: Vec<Window>,   // 建议定义为“底->顶”（与 restack 对应）
+}
 
-    /// 根据 Window ID 获取客户端
-    pub fn get_client(&self, win_id: Window) -> Option<&WMClient> {
-        self.win_client_map.get(&win_id)
-    }
-
-    /// 根据 Window ID 获取可变客户端引用
-    pub fn get_client_mut(&mut self, win_id: Window) -> Option<&mut WMClient> {
-        self.win_client_map.get_mut(&win_id)
-    }
-
-    /// 移除客户端
-    pub fn remove_client(&mut self, win_id: Window) -> Option<WMClient> {
-        let result = self.win_client_map.remove(&win_id);
-        if result.is_some() {
-            self.update_timestamp();
-        }
-        result
-    }
-
-    /// 检查是否包含指定的窗口
-    pub fn contains_window(&self, win_id: Window) -> bool {
-        self.win_client_map.contains_key(&win_id)
-    }
-
-    /// 获取所有客户端的引用
-    pub fn get_all_clients(&self) -> impl Iterator<Item = &WMClient> {
-        self.win_client_map.values()
-    }
-
-    /// 获取所有窗口 ID
-    pub fn get_all_window_ids(&self) -> impl Iterator<Item = &Window> {
-        self.win_client_map.keys()
-    }
-
-    /// 获取客户端数量
-    pub fn len(&self) -> usize {
-        self.win_client_map.len()
-    }
-
-    /// 检查是否为空
-    pub fn is_empty(&self) -> bool {
-        self.win_client_map.is_empty()
-    }
-
-    /// 更新时间戳
-    pub fn update_timestamp(&mut self) {
-        self.timestamp = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs();
-    }
-
-    /// 清空所有客户端
-    pub fn clear(&mut self) {
-        self.win_client_map.clear();
-        self.update_timestamp();
-    }
-
-    /// 保存到文件
-    pub fn save_to_file<P: AsRef<std::path::Path>>(
-        &self,
-        path: P,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let encoded = bincode::serialize(self)?;
-        std::fs::write(path, encoded)?;
-        Ok(())
-    }
-
-    /// 从文件加载
-    pub fn load_from_file<P: AsRef<std::path::Path>>(
-        path: P,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let data = std::fs::read(path)?;
-        let decoded = bincode::deserialize(&data)?;
-        Ok(decoded)
-    }
-
-    /// 静态方法：从多个客户端保存到文件
-    pub fn save_clients_to_file<P: AsRef<std::path::Path>>(
-        clients: &[WMClient],
-        path: P,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let collection = Self::from_clients(clients.to_vec());
-        collection.save_to_file(path)
-    }
-
-    /// 静态方法：从文件加载并返回客户端向量
-    pub fn load_clients_from_file<P: AsRef<std::path::Path>>(
-        path: P,
-    ) -> Result<Vec<WMClient>, Box<dyn std::error::Error>> {
-        let collection = Self::load_from_file(path)?;
-        Ok(collection.win_client_map.into_values().collect())
-    }
-
-    /// 静态方法：从文件加载并返回 HashMap
-    pub fn load_clients_as_map<P: AsRef<std::path::Path>>(
-        path: P,
-    ) -> Result<HashMap<Window, WMClient>, Box<dyn std::error::Error>> {
-        let collection = Self::load_from_file(path)?;
-        Ok(collection.win_client_map)
-    }
-
-    /// 根据类名查找客户端
-    pub fn find_by_class(&self, class: &str) -> Vec<&WMClient> {
-        self.win_client_map
-            .values()
-            .filter(|client| client.class == class)
-            .collect()
-    }
-
-    /// 根据实例名查找客户端
-    pub fn find_by_instance(&self, instance: &str) -> Vec<&WMClient> {
-        self.win_client_map
-            .values()
-            .filter(|client| client.instance == instance)
-            .collect()
-    }
-
-    /// 根据窗口名称查找客户端
-    pub fn find_by_name(&self, name: &str) -> Vec<&WMClient> {
-        self.win_client_map
-            .values()
-            .filter(|client| client.name.contains(name))
-            .collect()
-    }
-
-    /// 根据状态过滤客户端
-    pub fn filter_by_state(&self, state: &ClientState) -> Vec<&WMClient> {
-        self.win_client_map
-            .values()
-            .filter(|client| &client.state == state)
-            .collect()
-    }
-
-    /// 批量更新客户端状态
-    pub fn batch_update_state(&mut self, win_ids: &[Window], new_state: ClientState) {
-        for &win_id in win_ids {
-            if let Some(client) = self.win_client_map.get_mut(&win_id) {
-                client.state = new_state.clone();
-            }
-        }
-        self.update_timestamp();
-    }
+#[derive(Debug, Serialize, Deserialize)]
+pub struct PertagSnapshot {
+    pub cur_tag: usize,
+    pub prev_tag: usize,
+    pub n_masters: Vec<u32>,
+    pub m_facts: Vec<f32>,
+    pub sel_lts: Vec<usize>,
+    pub lt_pairs: Vec<[u32; 2]>, // 每 tag 两个 layout 的编号：0=TILE,1=FLOAT,2=MONOCLE
+    pub show_bars: Vec<bool>,
+    pub sel_by_tag: Vec<Option<Window>>, // 每个 tag 的选中窗口（Window）
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -268,7 +128,6 @@ pub struct WMClient {
 
     // === 重启时记录，方便映射到对应monitor ===
     pub monitor_num: u32,
-    // let monitor_num = jwm.monitors.get(client.mon.unwrap()).map_or(0, |v| v.num) as u32;
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -836,7 +695,6 @@ pub struct Jwm {
 
     // 其他运行时
     pub keycode_cache: HashMap<u8, u32>,
-    pub restored_clients_info: WMClientCollection,
 
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
 }
@@ -981,9 +839,293 @@ impl Jwm {
             x11rb_screen,
             atoms,
             keycode_cache: HashMap::new(),
-            restored_clients_info: WMClientCollection::new(),
             suppress_mouse_focus_until: None,
         })
+    }
+
+    fn layout_to_id(l: &LayoutEnum) -> u32 {
+        match *l {
+            LayoutEnum::TILE => 0,
+            LayoutEnum::FLOAT => 1,
+            LayoutEnum::MONOCLE => 2,
+            _ => 0,
+        }
+    }
+    fn id_to_layout(id: u32) -> Rc<LayoutEnum> {
+        Rc::new(LayoutEnum::from(id))
+    }
+
+    fn atomic_write(path: &str, data: &[u8]) -> std::io::Result<()> {
+        let tmp = format!("{}.tmp", path);
+        {
+            let mut f = std::fs::File::create(&tmp)?;
+            f.write_all(data)?;
+            f.sync_all()?;
+        }
+        std::fs::rename(&tmp, path)?;
+        Ok(())
+    }
+
+    fn unix_ts() -> u64 {
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_secs()
+    }
+
+    pub fn save_restart_snapshot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let mut snapshot = RestartSnapshot {
+            version: 1,
+            timestamp: Self::unix_ts(),
+            sel_monitor_num: self
+                .sel_mon
+                .and_then(|k| self.monitors.get(k))
+                .map(|m| m.num),
+            current_bar_monitor_id: self.current_bar_monitor_id,
+            monitors: Vec::new(),
+            clients: HashMap::new(),
+        };
+
+        // 监视器快照
+        for &mon_key in &self.monitor_order {
+            let m = self.monitors.get(mon_key).unwrap();
+
+            // pertag 拆出
+            let pertag_snap = if let Some(p) = m.pertag.as_ref() {
+                let mut lt_pairs = Vec::with_capacity(p.lt_idxs.len());
+                for i in 0..p.lt_idxs.len() {
+                    let id0 = p.lt_idxs[i][0]
+                        .as_ref()
+                        .map(|rc| Self::layout_to_id(&*rc))
+                        .unwrap_or(0);
+                    let id1 = p.lt_idxs[i][1]
+                        .as_ref()
+                        .map(|rc| Self::layout_to_id(&*rc))
+                        .unwrap_or(1);
+                    lt_pairs.push([id0, id1]);
+                }
+                let sel_by_tag = p
+                    .sel
+                    .iter()
+                    .map(|opt_ck| opt_ck.and_then(|ck| self.clients.get(ck)).map(|c| c.win))
+                    .collect();
+
+                PertagSnapshot {
+                    cur_tag: p.cur_tag,
+                    prev_tag: p.prev_tag,
+                    n_masters: p.n_masters.clone(),
+                    m_facts: p.m_facts.clone(),
+                    sel_lts: p.sel_lts.clone(),
+                    lt_pairs,
+                    show_bars: p.show_bars.clone(),
+                    sel_by_tag,
+                }
+            } else {
+                // fallback：按 tags_length()+1 填入基本值
+                let len = CONFIG.tags_length() + 1;
+                PertagSnapshot {
+                    cur_tag: 1,
+                    prev_tag: 1,
+                    n_masters: vec![m.layout.n_master; len],
+                    m_facts: vec![m.layout.m_fact; len],
+                    sel_lts: vec![m.sel_lt; len],
+                    lt_pairs: vec![[0, 1]; len],
+                    show_bars: vec![true; len],
+                    sel_by_tag: vec![None; len],
+                }
+            };
+
+            // 顺序（Window）
+            let mc_order = self
+                .monitor_clients
+                .get(mon_key)
+                .map(|v| {
+                    v.iter()
+                        .filter_map(|&ck| self.clients.get(ck).map(|c| c.win))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+            let ms_order = self
+                .monitor_stack
+                .get(mon_key)
+                .map(|v| {
+                    v.iter()
+                        .filter_map(|&ck| self.clients.get(ck).map(|c| c.win))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default();
+
+            snapshot.monitors.push(MonitorSnapshot {
+                num: m.num,
+                tag_set: m.tag_set,
+                sel_tags: m.sel_tags,
+                pertag: pertag_snap,
+                monitor_clients_order: mc_order,
+                monitor_stack_order: ms_order,
+            });
+        }
+
+        // 客户端快照（Window -> WMClient）
+        for (_, c) in self.clients.iter() {
+            let mut cc = c.clone();
+            cc.monitor_num = c
+                .mon
+                .and_then(|mk| self.monitors.get(mk))
+                .map(|m| m.num as u32)
+                .unwrap_or(0);
+            cc.mon = None; // 快照不存 SlotMap 键
+            snapshot.clients.insert(cc.win, cc);
+        }
+
+        // 写盘（原子）
+        let data = bincode::serialize(&snapshot)?;
+        Self::atomic_write(RESTART_SNAPSHOT_PATH, &data)?;
+        Ok(())
+    }
+
+    pub fn load_restart_snapshot() -> Option<RestartSnapshot> {
+        let path = std::path::Path::new(RESTART_SNAPSHOT_PATH);
+        if !path.exists() {
+            return None;
+        }
+        let data = std::fs::read(path).ok()?;
+        bincode::deserialize(&data).ok()
+    }
+
+    pub fn apply_snapshot(&mut self, snap: &RestartSnapshot) {
+        // 0) 先把 snapshot 中的 client 状态应用到已管理的 clients（tags、is_floating、client_fact、fullscreen、geometry 等）
+        for (win, sc) in &snap.clients {
+            if let Some(ck) = self.wintoclient(*win) {
+                let mon_key_opt = self.get_monitor_by_id(sc.monitor_num as i32);
+                if let Some(c) = self.clients.get_mut(ck) {
+                    c.state = sc.state.clone();
+                    c.geometry = sc.geometry.clone();
+                    c.size_hints = sc.size_hints.clone();
+                    // 监视器先根据 monitor_num 设置，后续在重建顺序时会覆盖
+                    if mon_key_opt.is_some() {
+                        c.mon = mon_key_opt;
+                    }
+                }
+            }
+        }
+
+        // 1) 恢复 monitor 的 tag_set/sel_tags 与 pertag（layout、nmaster、mfact、show_bar）
+        for ms in &snap.monitors {
+            if let Some(mon_key) = self.get_monitor_by_id(ms.num) {
+                if let Some(m) = self.monitors.get_mut(mon_key) {
+                    m.tag_set = ms.tag_set;
+                    m.sel_tags = ms.sel_tags;
+
+                    if let Some(p) = m.pertag.as_mut() {
+                        p.cur_tag = ms.pertag.cur_tag;
+                        p.prev_tag = ms.pertag.prev_tag;
+                        p.n_masters = ms.pertag.n_masters.clone();
+                        p.m_facts = ms.pertag.m_facts.clone();
+                        p.sel_lts = ms.pertag.sel_lts.clone();
+                        p.show_bars = ms.pertag.show_bars.clone();
+                        // 重建 lt_idxs
+                        for i in 0..p.lt_idxs.len().min(ms.pertag.lt_pairs.len()) {
+                            let [id0, id1] = ms.pertag.lt_pairs[i];
+                            p.lt_idxs[i][0] = Some(Self::id_to_layout(id0));
+                            p.lt_idxs[i][1] = Some(Self::id_to_layout(id1));
+                        }
+                        // 应用当前 tag 的选择到 WMMonitor
+                        let cur = p.cur_tag;
+                        m.layout.n_master = p.n_masters[cur];
+                        m.layout.m_fact = p.m_facts[cur];
+                        m.sel_lt = p.sel_lts[cur];
+                        m.lt[0] = p.lt_idxs[cur][0].as_ref().unwrap().clone();
+                        m.lt[1] = p.lt_idxs[cur][1].as_ref().unwrap().clone();
+                    }
+                }
+            }
+        }
+
+        // 2) 清空并按快照重建 monitor_clients/monitor_stack（保持顺序）
+        for &mon_key in &self.monitor_order {
+            if let Some(v) = self.monitor_clients.get_mut(mon_key) {
+                v.clear();
+            }
+            if let Some(v) = self.monitor_stack.get_mut(mon_key) {
+                v.clear();
+            }
+        }
+        for ms in &snap.monitors {
+            if let Some(mon_key) = self.get_monitor_by_id(ms.num) {
+                // clients 顺序
+                for &win in &ms.monitor_clients_order {
+                    if let Some(ck) = self.wintoclient(win) {
+                        self.attach_to_monitor_end(ck, mon_key);
+                    }
+                }
+                // stack 顺序
+                for &win in &ms.monitor_stack_order {
+                    if let Some(ck) = self.wintoclient(win) {
+                        self.attach_to_monitor_stack_end(ck, mon_key);
+                    }
+                }
+            }
+        }
+
+        // 3) 恢复 per-tag 的选中 client 与 monitor.sel
+        for ms in &snap.monitors {
+            if let Some(mon_key) = self.get_monitor_by_id(ms.num) {
+                // 收集所有需要的信息
+                let mut updates = Vec::new();
+                for (i, &win_opt) in ms.pertag.sel_by_tag.iter().enumerate() {
+                    let client_key = win_opt.and_then(|w| self.wintoclient(w));
+                    updates.push((i, client_key));
+                }
+                let next_visible = self.find_next_visible_client_by_mon(mon_key);
+                // 现在安全地更新
+                if let Some(m) = self.monitors.get_mut(mon_key) {
+                    if let Some(p) = m.pertag.as_mut() {
+                        // 应用更新
+                        for (i, client_key) in updates {
+                            if i < p.sel.len() {
+                                p.sel[i] = client_key;
+                            }
+                        }
+                        let cur = p.cur_tag;
+                        m.sel = p.sel.get(cur).copied().flatten().or(next_visible);
+                    }
+                }
+            }
+        }
+
+        // 4) 恢复 sel_mon 与 bar monitor
+        if let Some(id) = snap.sel_monitor_num {
+            self.sel_mon = self.get_monitor_by_id(id);
+        }
+        if let Some(id) = snap.current_bar_monitor_id {
+            self.current_bar_monitor_id = Some(id);
+            let _ = self.position_statusbar_on_monitor(id);
+        }
+
+        // 5) 一次性布局/叠放/焦点
+        self.arrange(None);
+        let _ = self.restack(self.sel_mon);
+        let _ = self.focus(None);
+        self.mark_bar_update_needed_if_visible(None);
+    }
+
+    // 尾插：保持快照顺序
+    fn attach_to_monitor_end(&mut self, ck: ClientKey, mon: MonitorKey) {
+        if let Some(v) = self.monitor_clients.get_mut(mon) {
+            if !v.iter().any(|&k| k == ck) {
+                v.push(ck);
+            }
+        }
+        if let Some(c) = self.clients.get_mut(ck) {
+            c.mon = Some(mon);
+        }
+    }
+    fn attach_to_monitor_stack_end(&mut self, ck: ClientKey, mon: MonitorKey) {
+        if let Some(v) = self.monitor_stack.get_mut(mon) {
+            if !v.iter().any(|&k| k == ck) {
+                v.push(ck);
+            }
+        }
     }
 
     // 创建新的客户端
@@ -1258,12 +1400,15 @@ impl Jwm {
         }
     }
 
-    /// 简化的重启方法 - 使用信号机制
     pub fn restart(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[restart] Preparing for restart via signal");
+        info!("[restart] Preparing seamless restart");
+        // 先保存快照
+        if let Err(e) = self.save_restart_snapshot() {
+            warn!("[restart] save_restart_snapshot failed: {:?}", e);
+        }
+        // 标记重启，退出主循环
         self.running.store(false, Ordering::SeqCst);
         self.is_restarting.store(true, Ordering::SeqCst);
-        info!("[restart] Restart prepared, main loop will exit");
         Ok(())
     }
 
@@ -1619,11 +1764,6 @@ impl Jwm {
     pub fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[cleanup] Starting essential cleanup (letting Rust handle memory)");
 
-        // 1. 保存客户端状态（在清理 X11 资源之前）
-        if let Err(e) = self.store_all_clients() {
-            warn!("[cleanup] Failed to store client state: {:?}", e);
-        }
-
         // 2. 清理 X11 相关资源（必须手动处理）
         self.cleanup_x11_resources()?;
 
@@ -1671,51 +1811,49 @@ impl Jwm {
         Ok(())
     }
 
-    /// 清理所有客户端的 X11 状态（不是为了释放内存，而是为了恢复窗口状态）
     fn cleanup_all_clients_x11_state(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[cleanup_all_clients_x11_state] Restoring client window states");
-        let mut clients_to_cleanup = Vec::new();
-        // 收集所有需要清理的客户端
+        info!("[cleanup_all_clients_x11_state]");
+        let restarting = self.is_restarting.load(Ordering::SeqCst);
+
+        // 先收集所有需要处理的客户端信息
+        let mut clients_to_process = Vec::new();
         for &mon_key in &self.monitor_order {
-            if let Some(stack_clients) = self.monitor_stack.get(mon_key) {
-                for &client_key in stack_clients {
-                    clients_to_cleanup.push(client_key);
+            if let Some(stack) = self.monitor_stack.get(mon_key) {
+                for &ck in stack {
+                    if let Some(c) = self.clients.get(ck) {
+                        // 收集需要的信息而不是直接操作
+                        clients_to_process.push((c.win, c.geometry.old_border_w, ck));
+                    }
                 }
             }
         }
-
-        // 批量清理客户端 X11 状态
-        for client_key in clients_to_cleanup {
-            let client_opt = self.clients.get(client_key).cloned();
-            if let Some(client) = client_opt {
-                if let Err(e) = self.cleanup_single_client_x11_state(&client) {
-                    warn!(
-                        "[cleanup_all_clients_x11_state] Failed to cleanup client {}: {:?}",
-                        client.win, e
+        // 现在可以安全地进行操作
+        for (win, old_border_w, ck) in clients_to_process {
+            if let Some(_) = self.clients.get(ck) {
+                if restarting {
+                    // 重启：尽量不改变窗口可见属性，避免闪烁
+                    // 仅取消抓取与事件监听，保留现状
+                    let _ =
+                        self.x11rb_conn
+                            .ungrab_button(ButtonIndex::ANY, win, ModMask::ANY.into());
+                    let _ = self.x11rb_conn.change_window_attributes(
+                        win,
+                        &ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT),
                     );
-                    // 继续处理其他客户端，不要因为一个失败就停止
+                } else {
+                    // 抓取服务器确保操作原子性
+                    self.x11rb_conn.grab_server()?;
+
+                    // 正常退出：执行完整恢复
+                    let _ = self.restore_client_x11_state(win, old_border_w);
+
+                    // 无论成功失败都要释放服务器
+                    let _ = self.x11rb_conn.ungrab_server();
                 }
             }
         }
+
         Ok(())
-    }
-
-    /// 清理单个客户端的 X11 状态
-    fn cleanup_single_client_x11_state(
-        &mut self,
-        client: &WMClient,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let (win, old_border_w) = (client.win, client.geometry.old_border_w);
-
-        // 抓取服务器确保操作原子性
-        self.x11rb_conn.grab_server()?;
-
-        let result = self.restore_client_x11_state(win, old_border_w, client);
-
-        // 无论成功失败都要释放服务器
-        let _ = self.x11rb_conn.ungrab_server();
-
-        result
     }
 
     /// 恢复客户端的 X11 状态
@@ -1723,39 +1861,26 @@ impl Jwm {
         &mut self,
         win: Window,
         old_border_w: i32,
-        client: &WMClient,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 取消事件选择
         let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT);
         if let Err(e) = self.x11rb_conn.change_window_attributes(win, &aux) {
-            warn!(
-                "[restore_client_x11_state] Failed to clear events for {}: {:?}",
-                win, e
-            );
+            warn!("Failed to clear events for {}: {:?}", win, e);
         }
         // 恢复原始边框宽度
         if let Err(e) = self.set_window_border_width(win, old_border_w as u32) {
-            warn!(
-                "[restore_client_x11_state] Failed to restore border for {}: {:?}",
-                win, e
-            );
+            warn!("Failed to restore border for {}: {:?}", win, e);
         }
         // 取消按钮抓取
         if let Err(e) = self
             .x11rb_conn
             .ungrab_button(ButtonIndex::ANY, win, ModMask::ANY.into())
         {
-            warn!(
-                "[restore_client_x11_state] Failed to ungrab buttons for {}: {:?}",
-                win, e
-            );
+            warn!("Failed to ungrab buttons for {}: {:?}", win, e);
         }
         // 设置客户端状态为 WithdrawnState
-        if let Err(e) = self.setclientstate(client, WITHDRAWN_STATE as i64) {
-            warn!(
-                "[restore_client_x11_state] Failed to set withdrawn state for {}: {:?}",
-                win, e
-            );
+        if let Err(e) = self.setclientstate(win, WITHDRAWN_STATE as i64) {
+            warn!("Failed to set withdrawn state for {}: {:?}", win, e);
         }
         Ok(())
     }
@@ -1873,35 +1998,6 @@ impl Jwm {
                 );
             }
         }
-        Ok(())
-    }
-
-    fn restore_all_clients(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.restored_clients_info = match WMClientCollection::load_from_file(CLIENT_STORAGE_PATH) {
-            Ok(val) => val,
-            _ => return Ok(()),
-        };
-        info!("[restore_all_clients] {:?}", self.restored_clients_info);
-        Ok(())
-    }
-
-    fn store_all_clients(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[store_all_clients]");
-        let client_restores: Vec<WMClient> = self
-            .monitor_order
-            .iter()
-            .filter_map(|&mon_key| self.monitor_stack.get(mon_key))
-            .flat_map(|stack_clients| stack_clients.iter())
-            .filter_map(|&client_key| self.clients.get(client_key))
-            .map(|client| {
-                let mut tmp = client.clone();
-                tmp.monitor_num =
-                    self.monitors.get(client.mon.unwrap()).map_or(0, |v| v.num) as u32;
-                tmp
-            })
-            .collect();
-        let client_store = WMClientCollection::from_clients(client_restores);
-        client_store.save_to_file(CLIENT_STORAGE_PATH)?;
         Ok(())
     }
 
@@ -3506,11 +3602,6 @@ impl Jwm {
         let tree_reply = self.x11rb_conn.query_tree(self.x11rb_root)?.reply()?;
         let mut cookies = Vec::with_capacity(tree_reply.children.len());
         for win in tree_reply.children {
-            let restored_client = self.restored_clients_info.get_client(win).cloned();
-            if let Some(restored_client) = restored_client {
-                self.manage_restored(&restored_client)?;
-                continue;
-            }
             let attr = self.get_window_attributes(win)?;
             let geom = Self::get_and_query_window_geom(&self.x11rb_conn, win)?;
             let trans = self.get_transient_for(win);
@@ -5623,16 +5714,11 @@ impl Jwm {
     pub fn setup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[setup]");
 
-        // 初始化视觉效果
+        // 初始化视觉/几何/EWMH/根窗口事件/keys
         self.xinit_visual()?;
-
-        // 更新几何信息
         self.updategeom();
-
-        // 设置 EWMH
         self.setup_ewmh()?;
 
-        // 选择根窗口事件
         let aux = ChangeWindowAttributesAux::new()
             .event_mask(
                 EventMask::SUBSTRUCTURE_REDIRECT
@@ -5647,19 +5733,25 @@ impl Jwm {
                 self.cursor_manager
                     .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::LeftPtr)?,
             );
-
         self.x11rb_conn
             .change_window_attributes(self.x11rb_root, &aux)?;
-
-        // 抓取按键
         self.grabkeys()?;
-
-        // 设置焦点
         self.focus(None)?;
-
         self.x11rb_conn.flush()?;
 
-        self.restore_all_clients()?;
+        // 读取快照（如果存在）
+        let snapshot_opt = Self::load_restart_snapshot();
+
+        self.scan()?; // 把当前所有窗口纳管
+
+        if let Some(snap) = snapshot_opt {
+            info!("[setup] applying snapshot...");
+            self.apply_snapshot(&snap);
+        } else {
+            self.arrange(None);
+            let _ = self.restack(self.sel_mon);
+            let _ = self.focus(None);
+        }
         Ok(())
     }
 
@@ -7538,12 +7630,11 @@ impl Jwm {
 
     pub fn setclientstate(
         &self,
-        client: &WMClient,
+        win: Window,
         state: i64,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[setclientstate]");
         let data_to_set: [u32; 2] = [state as u32, 0]; // 0 代表 None (无图标窗口)
-        let win = client.win;
         use x11rb::wrapper::ConnectionExt;
         self.x11rb_conn.change_property32(
             PropMode::REPLACE,
@@ -7624,31 +7715,6 @@ impl Jwm {
     pub fn clear_keycode_cache(&mut self) {
         self.keycode_cache.clear();
         info!("Keycode cache cleared");
-    }
-
-    pub fn manage_restored(
-        &mut self,
-        restored_client: &WMClient,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[manage_restored]");
-
-        // 创建新的客户端
-        let mut client = WMClient::new();
-        client.win = restored_client.win;
-        client.name = restored_client.name.clone();
-        client.instance = restored_client.instance.clone();
-        client.class = restored_client.class.clone();
-        client.geometry = restored_client.geometry.clone();
-        client.state = restored_client.state.clone();
-        client.size_hints = restored_client.size_hints.clone();
-
-        info!("[manage_restored] {}", client);
-
-        // 插入到SlotMap并获取key
-        let client_key = self.insert_client(client);
-
-        // 管理恢复的客户端
-        self.manage_restored_client(client_key, restored_client)
     }
 
     pub fn manage(
@@ -7751,7 +7817,7 @@ impl Jwm {
 
         // 5. 设置客户端的 WM_STATE 为 NormalState
         if let Some(client) = self.clients.get(client_key) {
-            self.setclientstate(client, NORMAL_STATE as i64)?;
+            self.setclientstate(client.win, NORMAL_STATE as i64)?;
         }
 
         // 6. 同步所有操作
@@ -7840,64 +7906,6 @@ impl Jwm {
                 }
             }
         }
-
-        Ok(())
-    }
-
-    fn manage_restored_client(
-        &mut self,
-        client_key: ClientKey,
-        restored_client: &WMClient,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[manage_restored_client]");
-
-        // 查找匹配的监视器
-        let target_monitor_key = self
-            .monitor_order
-            .iter()
-            .find(|&&mon_key| {
-                if let Some(monitor) = self.monitors.get(mon_key) {
-                    monitor.num == restored_client.monitor_num as i32
-                } else {
-                    false
-                }
-            })
-            .copied();
-
-        if let Some(mon_key) = target_monitor_key {
-            if let Some(client) = self.clients.get_mut(client_key) {
-                client.mon = Some(mon_key);
-                info!(
-                    "[manage_restored_client] set monitor number: {}",
-                    restored_client.monitor_num
-                );
-            }
-        }
-
-        // 调整窗口位置
-        self.adjust_client_position(client_key);
-
-        // 设置窗口属性
-        self.setup_client_window(client_key)?;
-
-        // 更新窗口提示
-        self.updatewmhints(client_key);
-
-        // 添加到管理结构
-        self.attach(client_key);
-        self.attachstack(client_key);
-
-        // 注册事件和抓取按钮
-        self.register_client_events(client_key)?;
-
-        // 映射窗口
-        self.map_client_window(client_key)?;
-
-        // 更新客户端列表
-        self.update_net_client_list()?;
-
-        // 处理焦点
-        self.handle_new_client_focus(client_key)?;
 
         Ok(())
     }
@@ -9089,7 +9097,7 @@ impl Jwm {
             }
 
             // 设置客户端状态为 WithdrawnState
-            if let Err(e) = self.setclientstate(client, WITHDRAWN_STATE as i64) {
+            if let Err(e) = self.setclientstate(client.win, WITHDRAWN_STATE as i64) {
                 warn!("[cleanup_window_state] Failed to set client state: {:?}", e);
             }
 
@@ -9125,7 +9133,7 @@ impl Jwm {
                 } else {
                     return Ok(());
                 };
-                self.setclientstate(client, WITHDRAWN_STATE as i64)?;
+                self.setclientstate(client.win, WITHDRAWN_STATE as i64)?;
             } else {
                 // 这是真正的窗口销毁或隐藏
                 debug!("Real unmap for window {}, unmanaging", e.window);
