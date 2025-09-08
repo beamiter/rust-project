@@ -6,12 +6,11 @@ use iced::time::{self, milliseconds};
 use iced::widget::container;
 use iced::widget::{Space, button, rich_text};
 use iced::widget::{mouse_area, span};
-use iced::{stream, theme};
+use iced::{Font, stream, theme};
 
 use iced::window::Id;
 use iced::{
-    Background, Border, Color, Element, Length, Point, Size, Subscription, Task, Theme, border,
-    color,
+    Background, Border, Color, Element, Length, Size, Subscription, Task, Theme, border, color,
     widget::{Column, Row, text},
     window,
 };
@@ -34,14 +33,14 @@ use system_monitor::SystemMonitor;
 
 static _START: Once = Once::new();
 
+const NERD_FONT: Font = Font::with_name("SauceCodePro NerdFont Regular");
+
 /// Initialize logging system
 fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     let tmp_now = Local::now();
     let timestamp = tmp_now.format("%Y-%m-%d_%H_%M_%S").to_string();
 
-    let log_dir_candidates = [
-        Some("/var/tmp/jwm".to_string()),
-    ];
+    let log_dir_candidates = [Some("/var/tmp/jwm".to_string())];
 
     let log_dir = log_dir_candidates
         .into_iter()
@@ -115,6 +114,7 @@ fn main() -> iced::Result {
             level: window::Level::AlwaysOnTop,
             ..Default::default()
         })
+        .default_font(NERD_FONT)
         .subscription(IcedBar::subscription)
         .title("iced_bar")
         .scale_factor(IcedBar::scale_factor)
@@ -138,10 +138,7 @@ enum Message {
     GetWindowId,
     WindowIdReceived(Option<Id>),
 
-    GetAndResizeWindowSize(Size),
-
     GetScaleFactor(f32),
-    RawIdReceived(u64),
 
     MouseEnterScreenShot,
     MouseExitScreenShot,
@@ -161,7 +158,6 @@ struct IcedBar {
     shared_path: String,
     monitor_info_opt: Option<MonitorInfo>,
     formated_now: String,
-    raw_window_id: u64,
     current_window_id: Option<Id>,
     scale_factor: f32,
     is_hovered: bool,
@@ -169,9 +165,6 @@ struct IcedBar {
     show_seconds: bool,
     layout_symbol: String,
     monitor_num: i32,
-    current_window_size: Option<Size>,
-    target_window_pos: Option<Point>,
-    target_window_size: Option<Size>,
 
     // Audio + System
     audio_manager: AudioManager,
@@ -266,13 +259,9 @@ impl IcedBar {
             show_seconds: false,
             layout_symbol: "[]=".to_string(),
             monitor_num: 0,
-            current_window_size: None,
-            target_window_pos: None,
-            target_window_size: None,
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(5),
             transparent: true,
-            raw_window_id: 0,
             last_clock_update: Instant::now(),
             last_monitor_update: Instant::now(),
             layout_selector_open: false,
@@ -404,17 +393,14 @@ impl IcedBar {
 
             Message::GetWindowId => {
                 info!("GetWindowId");
-                window::get_latest().map(Message::WindowIdReceived)
+                window::latest().map(Message::WindowIdReceived)
             }
 
             Message::WindowIdReceived(window_id) => {
                 if let Some(wid) = window_id {
                     info!("WindowIdReceived: {:?}", wid);
                     self.current_window_id = Some(wid);
-                    Task::batch([
-                        window::get_scale_factor(wid).map(Message::GetScaleFactor),
-                        window::get_raw_id::<Message>(wid).map(Message::RawIdReceived),
-                    ])
+                    Task::batch([window::scale_factor(wid).map(Message::GetScaleFactor)])
                 } else {
                     warn!("WindowId not available yet");
                     Task::none()
@@ -446,45 +432,9 @@ impl IcedBar {
 
             Message::RightClick => Task::none(),
 
-            Message::GetAndResizeWindowSize(window_size) => {
-                self.current_window_size = Some(window_size);
-                if let (
-                    Some(current_window_id),
-                    Some(current_window_size),
-                    Some(target_window_size),
-                    Some(target_window_pos),
-                ) = (
-                    self.current_window_id,
-                    self.current_window_size,
-                    self.target_window_size,
-                    self.target_window_pos,
-                ) {
-                    if (current_window_size.width - target_window_size.width).abs() > 10.
-                        || (current_window_size.height - target_window_size.height).abs() > 5.
-                    {
-                        info!(
-                            "current_window_size: {:?}, target_window_size: {:?}",
-                            self.current_window_size, self.target_window_size
-                        );
-                        return Task::batch([
-                            window::move_to(current_window_id, target_window_pos),
-                            window::resize(current_window_id, target_window_size),
-                        ]);
-                    }
-                }
-
-                Task::none()
-            }
-
             Message::GetScaleFactor(scale_factor) => {
                 info!("scale_factor: {}", scale_factor);
                 self.scale_factor = scale_factor;
-                Task::none()
-            }
-
-            Message::RawIdReceived(raw_id) => {
-                self.raw_window_id = raw_id;
-                info!("{}", format!("RawIdReceived: 0x{:X}", raw_id));
                 Task::none()
             }
 
@@ -612,48 +562,52 @@ impl IcedBar {
         let (bg, border_w, border_c) = self.tag_visuals(index);
 
         let radius = 6.0;
-        button(rich_text![span(label.to_string())].size(18).on_link_click(std::convert::identity))
-            .padding([4, 8])
-            .width(Self::TAB_WIDTH)
-            .height(Self::TAB_HEIGHT + 4.)
-            .style(move |_theme: &Theme, status: button::Status| {
-                let mut background = bg;
-                let mut border_width = border_w;
+        button(
+            rich_text![span(label.to_string())]
+                .size(18)
+                .on_link_click(std::convert::identity),
+        )
+        .padding([4, 8])
+        .width(Self::TAB_WIDTH)
+        .height(Self::TAB_HEIGHT + 4.)
+        .style(move |_theme: &Theme, status: button::Status| {
+            let mut background = bg;
+            let mut border_width = border_w;
 
-                match status {
-                    button::Status::Hovered => {
-                        // stronger border on hover
-                        border_width = (border_w + 1.0).min(3.0);
-                        if background.a > 0.0 {
-                            background.a = (background.a + 0.08).min(1.0);
-                        } else {
-                            // subtle hover when transparent
-                            background = Color::from_rgba(1.0, 1.0, 1.0, 0.08);
-                        }
+            match status {
+                button::Status::Hovered => {
+                    // stronger border on hover
+                    border_width = (border_w + 1.0).min(3.0);
+                    if background.a > 0.0 {
+                        background.a = (background.a + 0.08).min(1.0);
+                    } else {
+                        // subtle hover when transparent
+                        background = Color::from_rgba(1.0, 1.0, 1.0, 0.08);
                     }
-                    button::Status::Pressed => {
-                        // pressed -> slightly darker
-                        if background.a > 0.0 {
-                            background.a = (background.a + 0.12).min(1.0);
-                        } else {
-                            background = Color::from_rgba(0.9, 0.9, 0.9, 0.10);
-                        }
-                    }
-                    _ => {}
                 }
+                button::Status::Pressed => {
+                    // pressed -> slightly darker
+                    if background.a > 0.0 {
+                        background.a = (background.a + 0.12).min(1.0);
+                    } else {
+                        background = Color::from_rgba(0.9, 0.9, 0.9, 0.10);
+                    }
+                }
+                _ => {}
+            }
 
-                button::Style {
-                    background: Some(Background::Color(background)),
-                    text_color: Color::BLACK,
-                    border: Border {
-                        color: border_c,
-                        width: border_width,
-                        radius: border::Radius::from(radius),
-                    },
-                    ..Default::default()
-                }
-            })
-            .on_press(Message::TabSelected(index))
+            button::Style {
+                background: Some(Background::Color(background)),
+                text_color: Color::BLACK,
+                border: Border {
+                    color: border_c,
+                    width: border_width,
+                    radius: border::Radius::from(radius),
+                },
+                ..Default::default()
+            }
+        })
+        .on_press(Message::TabSelected(index))
     }
 
     fn layout_toggle_button<'a>(&self) -> iced::widget::Button<'a, Message> {
