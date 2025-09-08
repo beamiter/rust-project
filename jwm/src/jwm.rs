@@ -629,20 +629,6 @@ pub enum WMArgEnum {
     Layout(Rc<LayoutEnum>),
 }
 
-#[derive(Debug, Clone, PartialEq, Copy)]
-pub enum WMShowBarEnum {
-    Keep(bool),
-    Toggle(bool),
-}
-impl WMShowBarEnum {
-    pub fn show_bar(&self) -> &bool {
-        match self {
-            Self::Keep(val) => val,
-            Self::Toggle(val) => val,
-        }
-    }
-}
-
 #[derive(Debug, Clone)]
 pub struct WMButton {
     pub click_type: WMClickType,
@@ -834,8 +820,7 @@ pub struct Jwm {
     pub status_bar_window: Option<Window>,    // 唯一的 bar 窗口
     pub current_bar_monitor_id: Option<i32>,  // bar 当前所在显示器的编号（monitor.num）
 
-    // per-monitor 的显示/隐藏标记与待刷新集合（仍按显示器维度存）
-    pub status_bar_flags: HashMap<MonitorIndex, WMShowBarEnum>,
+    // per-monitor 的待刷新集合（仍按显示器维度存）
     pub pending_bar_updates: HashSet<MonitorIndex>,
 
     // X11rb 连接/根窗口/屏幕/Atoms
@@ -978,7 +963,6 @@ impl Jwm {
             status_bar_shmem: None,
             status_bar_child: None,
             message: SharedMessage::default(),
-            status_bar_flags: HashMap::new(),
             status_bar_client: None,
             status_bar_window: None,
             current_bar_monitor_id: None,
@@ -1790,7 +1774,6 @@ impl Jwm {
             warn!("Graceful termination timeout, forcing kill");
         }
         // 强制终止
-        self.status_bar_flags.clear();
         self.status_bar_pid = None;
         signal::kill(nix_pid, Signal::SIGKILL)?;
 
@@ -3155,10 +3138,8 @@ impl Jwm {
         if self.pending_bar_updates.is_empty() {
             return;
         }
-        // info!("[flush_pending_bar_updates]");
 
-        // 1) 选择要更新状态栏消息的显示器：优先使用当前 bar 所在显示器，
-        //    其次使用当前选中显示器；如果两者都没有，则尝试从 pending 集合取一个。
+        // 优先用当前 bar 所在 monitor，其次选中 monitor，否则任意一个
         let target_mon_id = self
             .current_bar_monitor_id
             .or_else(|| {
@@ -3170,82 +3151,11 @@ impl Jwm {
 
         if let Some(mon_id) = target_mon_id {
             if let Some(mon_key) = self.get_monitor_by_id(mon_id) {
-                // 只针对一个 monitor 刷新 bar 消息（单实例 bar）
                 self.update_bar_message(Some(mon_key));
             }
         }
 
-        // 2) 处理显示/隐藏：仅对当前 bar 所在显示器（或上面选定的目标显示器）应用；
-        //    其余显示器上的 Toggle 保留为 Toggle，待 bar 切过去时再应用。
-        let bar_key_opt = self.status_bar_client;
-        let current_id_opt = target_mon_id;
-
-        // 克隆一份快照，避免可变借用冲突
-        let status_bar_flags_snapshot = self.status_bar_flags.clone();
-        for (mon_id, show_enum) in status_bar_flags_snapshot.into_iter() {
-            if let WMShowBarEnum::Toggle(show_bar) = show_enum {
-                if Some(mon_id) == current_id_opt {
-                    if let Some(bar_key) = bar_key_opt {
-                        if show_bar {
-                            info!("[flush_pending_bar_updates] show bar on monitor {}", mon_id);
-                            let _ = self.show_statusbar(bar_key, mon_id);
-                        } else {
-                            info!("[flush_pending_bar_updates] hide bar on monitor {}", mon_id);
-                            let _ = self.hide_statusbar(bar_key, mon_id);
-                        }
-                        let _ = self.configure(bar_key);
-                    }
-                    info!("[flush_pending_bar_updates] Updating workarea due to statusbar geometry change (monitor {})", mon_id);
-                    if let Some(mon_key) = self.get_monitor_by_id(mon_id) {
-                        self.arrange(Some(mon_key));
-                    }
-                    // 仅对当前生效的显示器把 Toggle 固化为 Keep
-                    self.status_bar_flags
-                        .insert(mon_id, WMShowBarEnum::Keep(show_bar));
-                } else {
-                    // 非当前显示器：保留 Toggle 状态，等 bar 切换过去时再应用
-                    // 不修改 self.status_bar_flags 对应项
-                }
-            }
-        }
-
-        // 3) 清空待更新集合
         self.pending_bar_updates.clear();
-    }
-
-    fn show_statusbar(
-        &mut self,
-        client_key: ClientKey,
-        monitor_id: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(_monitor) = self.get_monitor_by_id(monitor_id) {
-            if let Some(client_mut) = self.clients.get_mut(client_key) {
-                // 将状态栏放在显示器顶部
-                let x = client_mut.geometry.x;
-                let y = client_mut.geometry.y;
-                let win = client_mut.win;
-                info!("[show_statusbar] Show at ({}, {})", x, y,);
-                self.move_window(win, x, y)?;
-            }
-        }
-        Ok(())
-    }
-
-    fn hide_statusbar(
-        &mut self,
-        client_key: ClientKey,
-        monitor_id: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(_monitor) = self.get_monitor_by_id(monitor_id) {
-            if let Some(client_mut) = self.clients.get_mut(client_key) {
-                let hidden_x = -1000;
-                let hidden_y = -1000;
-                info!("[hide_statusbar] Hide at ({}, {})", hidden_x, hidden_y,);
-                let win = client_mut.win;
-                self.move_window(win, hidden_x, hidden_y)?;
-            }
-        }
-        Ok(())
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -4651,37 +4561,67 @@ impl Jwm {
         Ok(None)
     }
 
-    pub fn togglebar(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn togglebar(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[togglebar]");
 
-        if let WMArgEnum::Int(_) = arg {
-            let sel_mon_key = match self.sel_mon {
-                Some(key) => key,
-                None => return Ok(()),
-            };
+        let sel_mon_key = match self.sel_mon {
+            Some(key) => key,
+            None => return Ok(()),
+        };
 
-            let monitor_num = if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+        // 先在一个小作用域中完成对 pertag.show_bars 的修改，并取出 monitor_num
+        let mut monitor_num_opt: Option<i32> = None;
+        {
+            if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
                 if let Some(ref mut pertag) = monitor.pertag {
                     let cur_tag = pertag.cur_tag;
                     if let Some(show_bar) = pertag.show_bars.get_mut(cur_tag) {
                         *show_bar = !*show_bar;
-                        info!("[togglebar] show_bar: {}", show_bar);
-                        Some(monitor.num)
-                    } else {
-                        None
+                        info!(
+                            "[togglebar] show_bar[mon={}, tag={}] -> {}",
+                            monitor.num, cur_tag, show_bar
+                        );
+                        monitor_num_opt = Some(monitor.num);
                     }
-                } else {
-                    None
                 }
-            } else {
-                None
-            };
-
-            if let Some(num) = monitor_num {
-                self.mark_bar_update_needed(Some(num));
             }
+        } // 到这里，monitor 的可变借用生命周期已结束
+
+        // 现在可以安全调用 &mut self 方法
+        if let Some(mon_num) = monitor_num_opt {
+            if self.current_bar_monitor_id == Some(mon_num) {
+                self.position_statusbar_on_monitor(mon_num)?;
+                self.arrange(Some(sel_mon_key));
+                let _ = self.restack(Some(sel_mon_key));
+            }
+            self.mark_bar_update_needed(Some(mon_num));
         }
 
+        Ok(())
+    }
+
+    fn refresh_bar_visibility_on_selected_monitor(
+        &mut self,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 先读取必要信息并结束借用
+        let (sel_mon_key, mon_num) = match self.sel_mon {
+            Some(k) => {
+                if let Some(m) = self.monitors.get(k) {
+                    (k, m.num)
+                } else {
+                    return Ok(());
+                }
+            }
+            None => return Ok(()),
+        };
+
+        // 再调用需要 &mut self 的方法
+        if self.current_bar_monitor_id == Some(mon_num) {
+            self.position_statusbar_on_monitor(mon_num)?;
+            self.arrange(Some(sel_mon_key));
+            let _ = self.restack(Some(sel_mon_key));
+            self.mark_bar_update_needed(Some(mon_num));
+        }
         Ok(())
     }
 
@@ -5143,6 +5083,8 @@ impl Jwm {
         self.focus(sel_opt)?;
         self.arrange(self.sel_mon.clone());
 
+        self.refresh_bar_visibility_on_selected_monitor()?;
+
         Ok(())
     }
 
@@ -5217,6 +5159,8 @@ impl Jwm {
         // 更新焦点和布局
         self.focus(sel_opt)?;
         self.arrange(self.sel_mon.clone());
+
+        self.refresh_bar_visibility_on_selected_monitor()?;
 
         Ok(())
     }
@@ -5386,6 +5330,8 @@ impl Jwm {
         // 更新焦点和布局
         self.focus(None)?;
         self.arrange(Some(sel_mon_key));
+
+        self.refresh_bar_visibility_on_selected_monitor()?;
 
         Ok(())
     }
@@ -8334,9 +8280,6 @@ impl Jwm {
         // 设置状态栏特有的窗口属性
         self.setup_statusbar_window_by_key(client_key)?;
 
-        self.status_bar_flags
-            .insert(current_mon_id, WMShowBarEnum::Keep(true));
-
         // 映射状态栏窗口
         self.x11rb_conn.map_window(win)?;
         self.x11rb_conn.flush()?;
@@ -9603,7 +9546,6 @@ impl Jwm {
         let (occupied_tags_mask, urgent_tags_mask) = self.calculate_tag_masks(mon_key);
 
         // 处理标签状态
-        let mut current_tag_index = 0;
         for i in 0..CONFIG.tags_length() {
             let tag_bit = 1 << i;
 
@@ -9625,15 +9567,8 @@ impl Jwm {
                 is_occupied_tag,
             );
 
-            if is_selected_tag {
-                current_tag_index = i + 1;
-            }
-
             monitor_info_for_message.set_tag_status(i, tag_status);
         }
-
-        // 处理状态栏显示状态
-        self.update_status_bar_visibility(mon_key, current_tag_index);
 
         // 设置选中客户端名称
         let selected_client_name = self.get_selected_client_name(mon_key);
@@ -9679,33 +9614,6 @@ impl Jwm {
         }
 
         false
-    }
-
-    /// 更新状态栏可见性
-    fn update_status_bar_visibility(&mut self, mon_key: MonitorKey, current_tag_index: usize) {
-        let monitor_num = if let Some(monitor) = self.monitors.get(mon_key) {
-            monitor.num
-        } else {
-            return;
-        };
-
-        let current_show_bar = if let Some(monitor) = self.monitors.get(mon_key) {
-            monitor
-                .pertag
-                .as_ref()
-                .and_then(|pertag| pertag.show_bars.get(current_tag_index))
-                .copied()
-                .unwrap_or(true)
-        } else {
-            true
-        };
-
-        if let Some(show_bar_enum) = self.status_bar_flags.get_mut(&monitor_num) {
-            let prev_show_bar = *show_bar_enum.show_bar();
-            if current_show_bar != prev_show_bar {
-                *show_bar_enum = WMShowBarEnum::Toggle(current_show_bar);
-            }
-        }
     }
 
     /// 获取选中客户端的名称
