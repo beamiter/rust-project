@@ -2020,6 +2020,7 @@ impl Jwm {
     }
 
     fn handle_screen_geometry_change(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        // info!("[handle_screen_geometry_change]");
         // 遍历所有显示器
         for &mon_key in self.monitor_order.clone().iter() {
             self.update_fullscreen_clients_on_monitor(mon_key)?;
@@ -2697,6 +2698,7 @@ impl Jwm {
             error!("[handle_statusbar_configure_request] StatusBar not found",);
             return self.handle_unmanaged_configure_request(e);
         }
+        // info!("[handle_statusbar_configure_request]");
 
         // 更新状态栏几何信息（限制借用范围）
         {
@@ -3096,11 +3098,6 @@ impl Jwm {
         // 7) 单次 flush
         self.x11rb_conn.flush()?;
 
-        // 8) Option：移动鼠标到选中 client 中心（取决于你的开关）
-        if let Some(sel_client_key) = monitor.sel {
-            self.move_cursor_to_client_center(sel_client_key)?;
-        }
-
         // 标记需要刷新 bar（必要时）
         self.mark_bar_update_needed(Some(monitor_num));
 
@@ -3158,6 +3155,7 @@ impl Jwm {
         if self.pending_bar_updates.is_empty() {
             return;
         }
+        // info!("[flush_pending_bar_updates]");
 
         // 1) 选择要更新状态栏消息的显示器：优先使用当前 bar 所在显示器，
         //    其次使用当前选中显示器；如果两者都没有，则尝试从 pending 集合取一个。
@@ -3728,7 +3726,7 @@ impl Jwm {
                 }
             },
             None => {
-                debug!(
+                info!(
                     "[wintomon] Window {} not managed, returning selected monitor",
                     w
                 );
@@ -4763,6 +4761,7 @@ impl Jwm {
     }
 
     pub fn movestack(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
+        // info!("[movestack]");
         // 提取并验证参数
         let direction = match arg {
             WMArgEnum::Int(i) => *i,
@@ -5193,6 +5192,7 @@ impl Jwm {
     }
 
     pub fn view(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
+        // info!("[view]");
         // 提取并验证参数
         let ui = match arg {
             WMArgEnum::UInt(val) => *val,
@@ -6038,6 +6038,7 @@ impl Jwm {
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // info!("[handle_transient_for_change]");
         let (is_floating, win, client_name) = if let Some(client) = self.clients.get(client_key) {
             (client.state.is_floating, client.win, client.name.clone())
         } else {
@@ -7172,7 +7173,7 @@ impl Jwm {
         }
 
         // 处理客户端焦点切换
-        if self.should_focus_client_slotmap(client_key_opt, is_on_selected_monitor) {
+        if self.should_focus_client(client_key_opt, is_on_selected_monitor) {
             self.focus(client_key_opt)?;
         }
 
@@ -7183,6 +7184,7 @@ impl Jwm {
         &mut self,
         target_monitor_key: MonitorKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // info!("[switch_to_monitor]");
         // 获取旧选中显示器上的选中客户端
         let previously_selected_client_opt = self.get_selected_client_key();
 
@@ -7193,7 +7195,7 @@ impl Jwm {
         self.sel_mon = Some(target_monitor_key);
 
         if let Some(monitor) = self.monitors.get(target_monitor_key) {
-            debug!("Switched to monitor {}", monitor.num);
+            info!("Switched to monitor {}", monitor.num);
             let old_mon_id = self.current_bar_monitor_id;
             let new_mon_id = monitor.num;
 
@@ -7214,7 +7216,7 @@ impl Jwm {
         Ok(())
     }
 
-    fn should_focus_client_slotmap(
+    fn should_focus_client(
         &self,
         client_key_opt: Option<ClientKey>,
         is_on_selected_monitor: bool,
@@ -7813,6 +7815,7 @@ impl Jwm {
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // info!("[handle_new_client_focus]");
         // 检查新窗口所在的显示器是否是当前选中的显示器
         let (client_mon_key, is_never_focus) = if let Some(client) = self.clients.get(client_key) {
             (client.mon, client.state.never_focus)
