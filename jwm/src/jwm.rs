@@ -820,6 +820,11 @@ pub struct Jwm {
     pub status_bar_window: Option<Window>,    // 唯一的 bar 窗口
     pub current_bar_monitor_id: Option<i32>,  // bar 当前所在显示器的编号（monitor.num）
 
+    // 去抖/差异更新
+    pub last_bar_payload: Option<Vec<u8>>,
+    pub last_bar_update_at: Option<std::time::Instant>,
+    pub bar_min_interval: std::time::Duration,
+
     // per-monitor 的待刷新集合（仍按显示器维度存）
     pub pending_bar_updates: HashSet<MonitorIndex>,
 
@@ -966,6 +971,9 @@ impl Jwm {
             status_bar_client: None,
             status_bar_window: None,
             current_bar_monitor_id: None,
+            last_bar_payload: None,
+            last_bar_update_at: None,
+            bar_min_interval: std::time::Duration::from_millis(30),
             status_bar_pid: None,
             pending_bar_updates: HashSet::new(),
             x11rb_conn,
@@ -2117,7 +2125,6 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let aux = ConfigureWindowAux::new().border_width(border_width);
         self.x11rb_conn.configure_window(window, &aux)?;
-        self.x11rb_conn.flush()?;
         Ok(())
     }
 
@@ -2217,7 +2224,7 @@ impl Jwm {
 
         if fullscreen && !is_fullscreen {
             // 设置全屏逻辑
-            self.set_x11_fullscreen_property(win, true)?;
+            self.set_x11_wm_state_fullscreen(win, true)?;
 
             // 更新客户端状态
             if let Some(client) = self.clients.get_mut(client_key) {
@@ -2247,7 +2254,7 @@ impl Jwm {
             self.x11rb_conn.flush()?;
         } else if !fullscreen && is_fullscreen {
             // 取消全屏逻辑
-            self.set_x11_fullscreen_property(win, false)?;
+            self.set_x11_wm_state_fullscreen(win, false)?;
 
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.state.is_fullscreen = false;
@@ -2304,35 +2311,6 @@ impl Jwm {
 
         // 设置X11 urgent hint
         self.set_x11_urgent_hint(win, urgent)?;
-
-        Ok(())
-    }
-
-    /// 辅助方法：设置X11全屏属性
-    fn set_x11_fullscreen_property(
-        &mut self,
-        win: Window,
-        fullscreen: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        use x11rb::wrapper::ConnectionExt;
-
-        if fullscreen {
-            self.x11rb_conn.change_property32(
-                PropMode::REPLACE,
-                win,
-                self.atoms._NET_WM_STATE,
-                AtomEnum::ATOM,
-                &[self.atoms._NET_WM_STATE_FULLSCREEN],
-            )?;
-        } else {
-            self.x11rb_conn.change_property32(
-                PropMode::REPLACE,
-                win,
-                self.atoms._NET_WM_STATE,
-                AtomEnum::ATOM,
-                &[],
-            )?;
-        }
 
         Ok(())
     }
@@ -3164,7 +3142,7 @@ impl Jwm {
             return;
         }
 
-        // 优先用当前 bar 所在 monitor，其次选中 monitor，否则任意一个
+        // 选择目标 monitor
         let target_mon_id = self
             .current_bar_monitor_id
             .or_else(|| {
@@ -3176,12 +3154,55 @@ impl Jwm {
 
         if let Some(mon_id) = target_mon_id {
             if let Some(mon_key) = self.get_monitor_by_id(mon_id) {
-                // 新增：如果当前 tag 不显示 bar，直接跳过（不更新消息/不触发 bar）
                 if !self.is_bar_visible_on_mon(mon_key) {
                     self.pending_bar_updates.clear();
                     return;
                 }
-                self.update_bar_message(Some(mon_key));
+
+                // 1) 构造消息（更新 self.message）
+                self.update_bar_message_for_monitor(Some(mon_key));
+
+                // 2) 序列化用于差异比较
+                let payload = match bincode::serialize(&self.message) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        self.pending_bar_updates.clear();
+                        return;
+                    }
+                };
+
+                // 3) 去抖：时间间隔
+                let now = std::time::Instant::now();
+                if let Some(last) = self.last_bar_update_at {
+                    if now.duration_since(last) < self.bar_min_interval {
+                        // 未到发送间隔，先保留 pending，下个 tick 再发
+                        return;
+                    }
+                }
+
+                // 4) 差异比较：相同则跳过
+                if self.last_bar_payload.as_ref().map(|p| &**p) == Some(&payload[..]) {
+                    self.pending_bar_updates.clear();
+                    return;
+                }
+
+                // 5) 确保 ring buffer 与进程
+                if self.status_bar_shmem.is_none() {
+                    let ring_buffer = SharedRingBuffer::open(SHARED_PATH, None)
+                        .or_else(|_| SharedRingBuffer::create(SHARED_PATH, None, None))
+                        .expect("Create/open bar shmem failed");
+                    self.status_bar_shmem = Some(ring_buffer);
+                }
+                self.ensure_bar_is_running(SHARED_PATH);
+
+                // 6) 写消息
+                if let Some(rb) = self.status_bar_shmem.as_mut() {
+                    let _ = rb.try_write_message(&self.message);
+                }
+
+                // 7) 记录发送状态
+                self.last_bar_payload = Some(payload);
+                self.last_bar_update_at = Some(now);
             }
         }
 
@@ -5211,7 +5232,11 @@ impl Jwm {
         target_tag: u32,
         ui: u32,
     ) -> Result<usize, Box<dyn std::error::Error>> {
-        let sel_mon_mut = if let Some(sel_mon) = self.monitors.get_mut(self.sel_mon.unwrap()) {
+        let sel_mon_key = match self.sel_mon {
+            Some(k) => k,
+            None => return Ok(0),
+        };
+        let sel_mon_mut = if let Some(sel_mon) = self.monitors.get_mut(sel_mon_key) {
             sel_mon
         } else {
             return Ok(0);
@@ -6787,37 +6812,23 @@ impl Jwm {
         window_id: Window,
         border_width: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 将鼠标定位到最终位置
-        let (final_w, final_h) = {
-            let client_key = self.get_selected_client_key();
-            if let Some(key) = client_key {
-                if let Some(client) = self.clients.get(key) {
-                    (client.geometry.w, client.geometry.h)
-                } else {
-                    return Ok(());
-                }
-            } else {
-                return Ok(());
+        // 将鼠标定位到最终位置（若无选中客户端则跳过）
+        if let Some(key) = self.get_selected_client_key() {
+            if let Some(client) = self.clients.get(key) {
+                self.x11rb_conn.warp_pointer(
+                    0u32,
+                    window_id,
+                    0,
+                    0,
+                    0,
+                    0,
+                    (client.geometry.w + border_width - 1) as i16,
+                    (client.geometry.h + border_width - 1) as i16,
+                )?;
             }
-        };
-
-        self.x11rb_conn.warp_pointer(
-            0u32,
-            window_id,
-            0,
-            0,
-            0,
-            0,
-            (final_w + border_width - 1) as i16,
-            (final_h + border_width - 1) as i16,
-        )?;
-
-        // 释放鼠标抓取
+        }
         self.x11rb_conn.ungrab_pointer(0u32)?;
-
-        // 检查是否需要移动到不同的显示器
         self.check_monitor_change_after_resize()?;
-
         Ok(())
     }
 
@@ -7100,25 +7111,19 @@ impl Jwm {
         e: &EnterNotifyEvent,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         if Some(e.event) == self.status_bar_window {
-            // 状态栏不改变焦点，但可能需要切换显示器
-            if let Some(target_monitor_key) =
-                self.get_monitor_by_id(self.current_bar_monitor_id.unwrap())
-            {
-                if Some(target_monitor_key) != self.sel_mon {
-                    // 取消当前选中客户端的焦点
-                    let current_sel = self.get_selected_client_key();
-                    self.unfocus_client_opt(current_sel, true)?;
-
-                    // 切换到目标监视器
-                    self.sel_mon = Some(target_monitor_key);
-
-                    // 重新设置焦点
-                    self.focus(None)?;
+            if let Some(cur_bar_mon_id) = self.current_bar_monitor_id {
+                if let Some(target_monitor_key) = self.get_monitor_by_id(cur_bar_mon_id) {
+                    if Some(target_monitor_key) != self.sel_mon {
+                        let current_sel = self.get_selected_client_key();
+                        self.unfocus_client_opt(current_sel, true)?;
+                        self.sel_mon = Some(target_monitor_key);
+                        self.focus(None)?;
+                    }
                 }
             }
-            return Ok(true); // 已处理状态栏事件
+            return Ok(true);
         }
-        Ok(false) // 不是状态栏事件
+        Ok(false)
     }
 
     fn handle_regular_enter(
@@ -8316,6 +8321,69 @@ impl Jwm {
         Ok(())
     }
 
+    fn set_bar_strut(
+        &self,
+        bar_win: Window,
+        mon: &WMMonitor,
+        bar_height: i32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use x11rb::wrapper::ConnectionExt;
+
+        // 全屏幕坐标
+        let top = (mon.geometry.m_y + bar_height).max(0) as u32;
+        let top_amount = bar_height.max(0) as u32;
+        let top_start_x = mon.geometry.m_x.max(0) as u32;
+        let top_end_x = (mon.geometry.m_x + mon.geometry.m_w - 1).max(0) as u32;
+
+        // _NET_WM_STRUT: [left, right, top, bottom]
+        let strut = [0u32, 0u32, top_amount, 0u32];
+        self.x11rb_conn.change_property32(
+            PropMode::REPLACE,
+            bar_win,
+            self.atoms._NET_WM_STRUT,
+            AtomEnum::CARDINAL,
+            &strut,
+        )?;
+
+        // _NET_WM_STRUT_PARTIAL:
+        // [left, right, top, bottom, left_start_y, left_end_y,
+        //  right_start_y, right_end_y, top_start_x, top_end_x,
+        //  bottom_start_x, bottom_end_x]
+        let strut_partial = [
+            0,
+            0,
+            top_amount,
+            0,
+            0,
+            0,
+            0,
+            0,
+            top_start_x,
+            top_end_x,
+            0,
+            0,
+        ];
+        self.x11rb_conn.change_property32(
+            PropMode::REPLACE,
+            bar_win,
+            self.atoms._NET_WM_STRUT_PARTIAL,
+            AtomEnum::CARDINAL,
+            &strut_partial,
+        )?;
+
+        Ok(())
+    }
+
+    fn remove_bar_strut(&self, bar_win: Window) -> Result<(), Box<dyn std::error::Error>> {
+        let _ = self
+            .x11rb_conn
+            .delete_property(bar_win, self.atoms._NET_WM_STRUT);
+        let _ = self
+            .x11rb_conn
+            .delete_property(bar_win, self.atoms._NET_WM_STRUT_PARTIAL);
+        Ok(())
+    }
+
     fn position_statusbar_on_monitor(
         &mut self,
         monitor_id: i32,
@@ -8351,10 +8419,14 @@ impl Jwm {
                     .width(client.geometry.w as u32)
                     .height(client.geometry.h as u32);
                 self.x11rb_conn.configure_window(client.win, &aux)?;
+                // 设置 strut 占位
+                // (TODO)
+                // self.set_bar_strut(client.win, monitor, client.geometry.h)?;
             } else {
                 // 隐藏
                 let aux = ConfigureWindowAux::new().x(-1000).y(-1000);
                 self.x11rb_conn.configure_window(client.win, &aux)?;
+                // self.remove_bar_strut(client.win)?;
             }
         }
         self.x11rb_conn.flush()?;
@@ -8475,11 +8547,12 @@ impl Jwm {
         &mut self,
         e: &MappingNotifyEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[mappingnotify]");
         match e.request {
-            Mapping::KEYBOARD => {
+            Mapping::KEYBOARD | Mapping::MODIFIER => {
+                self.clear_keycode_cache();
                 self.grabkeys()?;
             }
+            Mapping::POINTER => { /* 忽略或按需处理 */ }
             _ => {}
         }
         Ok(())
@@ -9266,30 +9339,45 @@ impl Jwm {
     }
 
     fn get_monitors_randr(&self) -> Result<Vec<(i32, i32, i32, i32)>, Box<dyn std::error::Error>> {
-        use x11rb::protocol::randr::ConnectionExt;
-        // 首先检查 RandR 扩展是否可用
-        let version = self.x11rb_conn.randr_query_version(1, 2)?;
-        let _version_reply = version.reply()?;
+        use x11rb::protocol::randr::ConnectionExt as RandrExt;
+
+        // 先探测 randr 版本
+        let v = self.x11rb_conn.randr_query_version(1, 5)?.reply()?;
+        if (v.major_version > 1) || (v.major_version == 1 && v.minor_version >= 5) {
+            // RandR 1.5: 使用 GetMonitors
+            if let Ok(reply) = self
+                .x11rb_conn
+                .randr_get_monitors(self.x11rb_root, true)?
+                .reply()
+            {
+                let mut mons = Vec::new();
+                for m in reply.monitors {
+                    // 注意 m.x/y/width/height 即为 root 下的几何
+                    if m.width > 0 && m.height > 0 {
+                        mons.push((m.x as i32, m.y as i32, m.width as i32, m.height as i32));
+                    }
+                }
+                mons.dedup();
+                if !mons.is_empty() {
+                    return Ok(mons);
+                }
+            }
+        }
+
+        // 回退 RandR 1.2：get_screen_resources + get_crtc_info
         let resources = self
             .x11rb_conn
             .randr_get_screen_resources(self.x11rb_root)?
             .reply()?;
-        let mut monitors = Vec::new();
+        let mut mons = Vec::new();
         for crtc in resources.crtcs {
-            let crtc_info = self.x11rb_conn.randr_get_crtc_info(crtc, 0)?.reply()?;
-
-            if crtc_info.width > 0 && crtc_info.height > 0 {
-                monitors.push((
-                    crtc_info.x as i32,
-                    crtc_info.y as i32,
-                    crtc_info.width as i32,
-                    crtc_info.height as i32,
-                ));
+            let ci = self.x11rb_conn.randr_get_crtc_info(crtc, 0)?.reply()?;
+            if ci.width > 0 && ci.height > 0 {
+                mons.push((ci.x as i32, ci.y as i32, ci.width as i32, ci.height as i32));
             }
         }
-        monitors.dedup();
-
-        Ok(monitors)
+        mons.dedup();
+        Ok(mons)
     }
 
     // 读取 window 的全部 _NET_WM_STATE（如果没有则返回空 vec）
@@ -9329,6 +9417,19 @@ impl Jwm {
     ) -> Result<bool, Box<dyn std::error::Error>> {
         let states = self.get_net_wm_state(window)?;
         Ok(states.iter().any(|&a| a == state_atom))
+    }
+
+    fn set_x11_wm_state_fullscreen(
+        &mut self,
+        win: Window,
+        on: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if on {
+            self.add_net_wm_state(win, self.atoms._NET_WM_STATE_FULLSCREEN)?;
+        } else {
+            self.remove_net_wm_state(win, self.atoms._NET_WM_STATE_FULLSCREEN)?;
+        }
+        Ok(())
     }
 
     // 将某个 _NET_WM_STATE 原子加入（若已存在则不重复写入）

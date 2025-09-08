@@ -132,7 +132,7 @@ impl MonitorInfo {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 pub struct SharedMessage {
     pub timestamp: u64,
     pub monitor_info: MonitorInfo,

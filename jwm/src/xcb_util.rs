@@ -23,6 +23,8 @@ x11rb::atom_manager! {
         _NET_CLIENT_LIST,
         _NET_CLIENT_LIST_STACKING,
         _NET_CLIENT_INFO,
+        _NET_WM_STRUT,
+        _NET_WM_STRUT_PARTIAL,
 
         UTF8_STRING,
         COMPOUND_TEXT,
