@@ -694,7 +694,7 @@ pub struct Pertag {
     pub sel: Vec<Option<ClientKey>>,
 }
 impl Pertag {
-    pub fn new() -> Self {
+    pub fn new(show_bar: bool) -> Self {
         Self {
             cur_tag: 0,
             prev_tag: 0,
@@ -702,7 +702,7 @@ impl Pertag {
             m_facts: vec![0.; CONFIG.tags_length() + 1],
             sel_lts: vec![0; CONFIG.tags_length() + 1],
             lt_idxs: vec![vec![None; 2]; CONFIG.tags_length() + 1],
-            show_bars: vec![true; CONFIG.tags_length() + 1],
+            show_bars: vec![show_bar; CONFIG.tags_length() + 1],
             sel: vec![None; CONFIG.tags_length() + 1],
         }
     }
@@ -1259,12 +1259,32 @@ impl Jwm {
         Ok(())
     }
 
-    fn mark_bar_update_needed(&mut self, monitor_id: Option<i32>) {
-        if let Some(id) = monitor_id {
-            self.pending_bar_updates.insert(id);
-        } else {
-            for val in self.monitors.values() {
-                self.pending_bar_updates.insert(val.num);
+    fn is_bar_visible_on_mon(&self, mon_key: MonitorKey) -> bool {
+        if let Some(m) = self.monitors.get(mon_key) {
+            if let Some(p) = m.pertag.as_ref() {
+                if let Some(&show) = p.show_bars.get(p.cur_tag) {
+                    return show;
+                }
+            }
+        }
+        // 没有 pertag 或越界时，保守返回 true（与现有默认行为一致）
+        true
+    }
+    fn mark_bar_update_needed_if_visible(&mut self, monitor_id: Option<i32>) {
+        match monitor_id {
+            Some(id) => {
+                if let Some(mon_key) = self.get_monitor_by_id(id) {
+                    if self.is_bar_visible_on_mon(mon_key) {
+                        self.pending_bar_updates.insert(id);
+                    }
+                }
+            }
+            None => {
+                for (key, m) in self.monitors.iter() {
+                    if self.is_bar_visible_on_mon(key) {
+                        self.pending_bar_updates.insert(m.num);
+                    }
+                }
             }
         }
     }
@@ -2855,7 +2875,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn createmon(&mut self) -> WMMonitor {
+    pub fn createmon(&mut self, show_bar: bool) -> WMMonitor {
         // info!("[createmon]");
         let mut m: WMMonitor = WMMonitor::new();
         m.tag_set[0] = 1;
@@ -2865,7 +2885,7 @@ impl Jwm {
         m.lt[0] = Rc::new(LayoutEnum::TILE);
         m.lt[1] = Rc::new(LayoutEnum::FLOAT);
         m.lt_symbol = m.lt[0].symbol().to_string();
-        m.pertag = Some(Pertag::new());
+        m.pertag = Some(Pertag::new(show_bar));
         let ref_pertag = m.pertag.as_mut().unwrap();
         ref_pertag.cur_tag = 1;
         ref_pertag.prev_tag = 1;
@@ -2975,13 +2995,18 @@ impl Jwm {
     }
 
     fn update_bar_message(&mut self, mon_key_opt: Option<MonitorKey>) {
-        // 只允许针对一个 monitor（聚焦 monitor）
+        // 只允许针对一个 monitor
         let mon_key = match mon_key_opt {
             Some(k) => k,
             None => return,
         };
 
-        // 准备消息（你现有的 update_bar_message_for_monitor 逻辑保留）
+        // 新增：bar 在该 monitor/当前 tag 下不可见，则无需更新消息
+        if !self.is_bar_visible_on_mon(mon_key) {
+            return;
+        }
+
+        // 继续原有流程：构造 message
         self.update_bar_message_for_monitor(Some(mon_key));
 
         if self.status_bar_shmem.is_none() {
@@ -3082,7 +3107,7 @@ impl Jwm {
         self.x11rb_conn.flush()?;
 
         // 标记需要刷新 bar（必要时）
-        self.mark_bar_update_needed(Some(monitor_num));
+        self.mark_bar_update_needed_if_visible(Some(monitor_num));
 
         info!("[restack] finish");
         Ok(())
@@ -3151,6 +3176,11 @@ impl Jwm {
 
         if let Some(mon_id) = target_mon_id {
             if let Some(mon_key) = self.get_monitor_by_id(mon_id) {
+                // 新增：如果当前 tag 不显示 bar，直接跳过（不更新消息/不触发 bar）
+                if !self.is_bar_visible_on_mon(mon_key) {
+                    self.pending_bar_updates.clear();
+                    return;
+                }
                 self.update_bar_message(Some(mon_key));
             }
         }
@@ -4594,7 +4624,7 @@ impl Jwm {
                 self.arrange(Some(sel_mon_key));
                 let _ = self.restack(Some(sel_mon_key));
             }
-            self.mark_bar_update_needed(Some(mon_num));
+            self.mark_bar_update_needed_if_visible(Some(mon_num));
         }
 
         Ok(())
@@ -4620,7 +4650,7 @@ impl Jwm {
             self.position_statusbar_on_monitor(mon_num)?;
             self.arrange(Some(sel_mon_key));
             let _ = self.restack(Some(sel_mon_key));
-            self.mark_bar_update_needed(Some(mon_num));
+            self.mark_bar_update_needed_if_visible(Some(mon_num));
         }
         Ok(())
     }
@@ -4902,7 +4932,7 @@ impl Jwm {
         if should_arrange {
             self.arrange(Some(sel_mon_key));
         } else {
-            self.mark_bar_update_needed(mon_num);
+            self.mark_bar_update_needed_if_visible(mon_num);
         }
 
         Ok(())
@@ -6036,7 +6066,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.updatewmhints(client_key);
         // WM_HINTS 改变可能影响紧急状态，需要重绘状态栏
-        self.mark_bar_update_needed(None);
+        self.mark_bar_update_needed_if_visible(None);
 
         if let Some(client) = self.clients.get(client_key) {
             debug!("WM hints updated for window 0x{:x}", client.win);
@@ -6117,7 +6147,7 @@ impl Jwm {
                 .map(|monitor| monitor.num);
 
             if let Some(id) = monitor_id {
-                self.mark_bar_update_needed(Some(id));
+                self.mark_bar_update_needed_if_visible(Some(id));
 
                 if let Some(client) = self.clients.get(client_key) {
                     debug!(
@@ -7192,7 +7222,7 @@ impl Jwm {
         // 检查窗口所在的显示器并标记状态栏需要更新
         if let Some(monitor_key) = self.wintomon(e.window) {
             if let Some(monitor) = self.monitors.get(monitor_key) {
-                self.mark_bar_update_needed(Some(monitor.num));
+                self.mark_bar_update_needed_if_visible(Some(monitor.num));
             }
         }
 
@@ -7340,7 +7370,7 @@ impl Jwm {
         self.update_monitor_selection_by_key(client_key_opt);
 
         // 标记状态栏需要更新
-        self.mark_bar_update_needed(None);
+        self.mark_bar_update_needed_if_visible(None);
 
         Ok(())
     }
@@ -9087,7 +9117,7 @@ impl Jwm {
         let mut dirty = false;
 
         if self.monitor_order.is_empty() {
-            let new_monitor = self.createmon();
+            let new_monitor = self.createmon(true);
             let mon_key = self.insert_monitor(new_monitor);
             self.sel_mon = Some(mon_key);
             dirty = true;
@@ -9121,8 +9151,10 @@ impl Jwm {
         // 如果检测到的显示器数量多于当前管理的数量，创建新的显示器
         if num_detected_monitors > current_num_monitors {
             dirty = true;
+            let mut show_bar = true;
             for _ in current_num_monitors..num_detected_monitors {
-                let new_monitor = self.createmon();
+                let new_monitor = self.createmon(show_bar);
+                show_bar = false;
                 let mon_key = self.insert_monitor(new_monitor);
                 info!(
                     "[setup_multiple_monitors] Created new monitor {:?}",
