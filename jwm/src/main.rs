@@ -80,25 +80,9 @@ fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
 
     jwm.run()?;
 
-    let is_restarting = jwm.is_restarting.load(Ordering::SeqCst);
-
     jwm.cleanup()?;
 
-    // if is_restarting {
-    //     if let Err(_) = Command::new("jwmc").arg("restart").spawn() {
-    //         error!("[new] Failted to quit jwmc");
-    //     }
-    // } else {
-    //     if let Err(_) = Command::new("jwmc").arg("quit").spawn() {
-    //         error!("[new] Failted to quit jwmc");
-    //     }
-    // }
-
-    if is_restarting {
-        if let Err(_) = Command::new("jwm-tool").arg("restart").spawn() {
-            error!("[new] Failted to quit daemon");
-        }
-    } else {
+    if !jwm.is_restarting.load(Ordering::SeqCst) {
         if let Err(_) = Command::new("jwm-tool").arg("quit").spawn() {
             error!("[new] Failted to quit jwm daemon");
         }
