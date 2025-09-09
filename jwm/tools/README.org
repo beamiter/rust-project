@@ -1,0 +1,24 @@
+* 使用方法
+** 构建与安装
+- cargo build --release
+- 可将 target/release/jwm-tool 放入 PATH，例如：
+  - sudo cp target/release/jwm-tool /usr/local/bin/
+** 启动守护进程
+- jwm-tool daemon
+  - 指定 JWM 可执行文件路径：
+  - jwm-tool daemon --jwm-binary /path/to/jwm
+  - 或环境变量：JWM_BINARY=/path/to/jwm jwm-tool daemon
+** 控制命令
+- jwm-tool start
+- jwm-tool stop
+- jwm-tool restart
+- jwm-tool status
+- jwm-tool quit
+** 守护进程管理
+- jwm-tool daemon-check
+- jwm-tool daemon-restart
+** 构建并重启 JWM（与脚本行为一致）
+- jwm-tool rebuild --jwm-dir /path/to/jwm
+- 或设置环境变量 JWM_DIR
+** 调试信息
+- jwm-tool debug
