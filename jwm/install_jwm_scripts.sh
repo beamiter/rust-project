@@ -26,6 +26,3 @@ sudo cp jwm.desktop /usr/share/xsessions/
 # echo "  daemon-check      - 检查守护进程状态"
 # echo "  daemon-restart    - 强制重启守护进程"
 # echo "  help              - 显示此帮助信息"
-
-sudo cp jwm_tool.sh /usr/local/bin/
-sudo chmod +x /usr/local/bin/jwm_tool.sh
