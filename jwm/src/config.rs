@@ -75,6 +75,7 @@ pub struct BehaviorConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct StatusBarConfig {
     pub name: String,
+    pub show_bar: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -168,6 +169,7 @@ impl Default for Config {
                 },
                 status_bar: StatusBarConfig {
                     name: STATUS_BAR_NAME.to_string(),
+                    show_bar: true,
                 },
                 colors: ColorsConfig {
                     dark_sea_green1: "#afffd7".to_string(),
@@ -545,6 +547,10 @@ impl Config {
 
     pub fn dmenu_font(&self) -> &str {
         &self.inner.appearance.dmenu_font
+    }
+
+    pub fn show_bar(&self) -> bool {
+        self.inner.status_bar.show_bar
     }
 
     pub fn status_bar_name(&self) -> &str {

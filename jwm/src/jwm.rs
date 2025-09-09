@@ -697,6 +697,8 @@ pub struct Jwm {
     pub keycode_cache: HashMap<u8, u32>,
 
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
+
+    pub restoring_from_snapshot: bool, // 新增：是否处于重启恢复模式
 }
 
 impl Jwm {
@@ -831,7 +833,7 @@ impl Jwm {
             current_bar_monitor_id: None,
             last_bar_payload: None,
             last_bar_update_at: None,
-            bar_min_interval: std::time::Duration::from_millis(30),
+            bar_min_interval: std::time::Duration::from_millis(10),
             status_bar_pid: None,
             pending_bar_updates: HashSet::new(),
             x11rb_conn,
@@ -840,6 +842,8 @@ impl Jwm {
             atoms,
             keycode_cache: HashMap::new(),
             suppress_mouse_focus_until: None,
+
+            restoring_from_snapshot: false,
         })
     }
 
@@ -1102,8 +1106,11 @@ impl Jwm {
             let _ = self.position_statusbar_on_monitor(id);
         }
 
-        // 5) 一次性布局/叠放/焦点
-        self.arrange(None);
+        // 5) 一次性更新“可见性 + 叠放 + 焦点”，不要触发布局计算以免改动几何
+        // self.arrange(None);
+        for &mon_key in self.monitor_order.clone().iter() {
+            self.showhide_monitor(mon_key); // 只根据 tag 显示/隐藏，不改变尺寸
+        }
         let _ = self.restack(self.sel_mon);
         let _ = self.focus(None);
         self.mark_bar_update_needed_if_visible(None);
@@ -2644,7 +2651,6 @@ impl Jwm {
         }
     }
 
-    /// 更新 resize 方法签名以使用 ClientKey
     fn resize_client(
         &mut self,
         client_key: ClientKey,
@@ -4314,7 +4320,8 @@ impl Jwm {
         )
     }
 
-    fn get_client_y_offset(&self, monitor: &WMMonitor) -> i32 {
+    #[allow(dead_code)]
+    fn get_client_y_offset_regard_to_monitor(&self, monitor: &WMMonitor) -> i32 {
         let monitor_id = monitor.num;
         // 必须是 bar 当前所在的显示器
         if self.current_bar_monitor_id == Some(monitor_id) {
@@ -4329,6 +4336,22 @@ impl Jwm {
             }
         }
         0
+    }
+
+    fn get_client_y_offset(&self, monitor: &WMMonitor) -> i32 {
+        // 只按该 monitor 当前 tag 的 show_bars 决定是否保留顶部 gap
+        let show_bar = monitor
+            .pertag
+            .as_ref()
+            .and_then(|p| p.show_bars.get(p.cur_tag))
+            .copied()
+            .unwrap_or(true);
+
+        if show_bar {
+            CONFIG.status_bar_height() + CONFIG.status_bar_padding() * 2
+        } else {
+            0
+        }
     }
 
     pub fn togglefloating(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
@@ -4439,26 +4462,19 @@ impl Jwm {
     }
 
     pub fn focusmon(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[focusmon]");
-        // 检查是否只有一个监视器
         if self.monitor_order.len() <= 1 {
             return Ok(());
         }
 
         if let WMArgEnum::Int(i) = arg {
-            let target_mon = self.dirtomon(i);
-
-            if let Some(target_mon_key) = target_mon {
+            if let Some(target_mon_key) = self.dirtomon(i) {
+                // 已经在目标屏则无动作
                 if Some(target_mon_key) == self.sel_mon {
                     return Ok(());
                 }
-
-                // 取消当前监视器上选中客户端的焦点
-                let current_sel = self.get_selected_client_key();
-                self.unfocus(current_sel.unwrap(), false)?;
-
-                // 切换到目标监视器
-                self.sel_mon = Some(target_mon_key);
+                // 统一走切屏逻辑：会更新 current_bar_monitor_id 并移动状态栏
+                self.switch_to_monitor(target_mon_key)?;
+                // 切屏后在目标屏上重新评估焦点
                 self.focus(None)?;
             }
         }
@@ -5741,6 +5757,9 @@ impl Jwm {
 
         // 读取快照（如果存在）
         let snapshot_opt = Self::load_restart_snapshot();
+
+        // 标记本次启动为“恢复模式”
+        self.restoring_from_snapshot = snapshot_opt.is_some();
 
         self.scan()?; // 把当前所有窗口纳管
 
@@ -7780,52 +7799,48 @@ impl Jwm {
 
         info!("[setup_client_window] Setting up window 0x{:x}", win);
 
-        // 1. 设置边框宽度
+        // 1) 边框宽度
         if let Some(client) = self.clients.get_mut(client_key) {
             client.geometry.border_w = CONFIG.border_px() as i32;
         }
-
         let border_w = self.clients.get(client_key).unwrap().geometry.border_w;
         self.set_window_border_width(win, border_w as u32)?;
 
-        // 2. 设置边框颜色为"正常"状态的颜色
+        // 2) 边框颜色
         self.set_window_border_color(win, true)?;
 
-        // 3. 发送 ConfigureNotify 事件给客户端
+        // 3) 发送 ConfigureNotify（不改动几何）
         self.configure_client(client_key)?;
 
-        // 4. 设置窗口在屏幕外的临时位置（避免闪烁）
-        let (x, y, w, h) = if let Some(client) = self.clients.get(client_key) {
-            let offscreen_x = client.geometry.x + 2 * self.s_w; // 移到屏幕外
-            (
-                offscreen_x,
-                client.geometry.y,
-                client.geometry.w,
-                client.geometry.h,
-            )
-        } else {
-            return Err("Client not found".into());
-        };
+        // 4) 恢复模式下：不要把窗口挪到屏幕外
+        if !self.restoring_from_snapshot {
+            // 原来的“屏幕外临时位置”逻辑，仅在非恢复模式执行
+            let (x, y, w, h) = if let Some(client) = self.clients.get(client_key) {
+                let offscreen_x = client.geometry.x + 2 * self.s_w;
+                (
+                    offscreen_x,
+                    client.geometry.y,
+                    client.geometry.w,
+                    client.geometry.h,
+                )
+            } else {
+                return Err("Client not found".into());
+            };
+            let aux = ConfigureWindowAux::new()
+                .x(x)
+                .y(y)
+                .width(w as u32)
+                .height(h as u32);
+            self.x11rb_conn.configure_window(win, &aux)?;
+            self.x11rb_conn.flush()?;
+        }
 
-        let aux = ConfigureWindowAux::new()
-            .x(x)
-            .y(y)
-            .width(w as u32)
-            .height(h as u32);
-        self.x11rb_conn.configure_window(win, &aux)?;
-        self.x11rb_conn.flush()?;
-
-        // 5. 设置客户端的 WM_STATE 为 NormalState
+        // 5) 设置 NormalState
         if let Some(client) = self.clients.get(client_key) {
             self.setclientstate(client.win, NORMAL_STATE as i64)?;
         }
 
-        // 6. 同步所有操作
         self.x11rb_conn.flush()?;
-        info!(
-            "[setup_client_window] Window setup completed for 0x{:x}",
-            win
-        );
         Ok(())
     }
 
@@ -7937,7 +7952,16 @@ impl Jwm {
         self.register_client_events(client_key)?;
 
         // 映射窗口
-        self.map_client_window(client_key)?;
+        // 已映射窗口避免再次 map
+        let already_mapped = {
+            let win = self.clients.get(client_key).unwrap().win;
+            self.get_window_attributes(win)
+                .map(|a| a.map_state == MapState::VIEWABLE)
+                .unwrap_or(false)
+        };
+        if !already_mapped {
+            self.map_client_window(client_key)?;
+        }
 
         // 更新客户端列表
         self.update_net_client_list()?;
@@ -9178,7 +9202,7 @@ impl Jwm {
         let mut dirty = false;
 
         if self.monitor_order.is_empty() {
-            let new_monitor = self.createmon(true);
+            let new_monitor = self.createmon(CONFIG.show_bar());
             let mon_key = self.insert_monitor(new_monitor);
             self.sel_mon = Some(mon_key);
             dirty = true;
@@ -9212,10 +9236,8 @@ impl Jwm {
         // 如果检测到的显示器数量多于当前管理的数量，创建新的显示器
         if num_detected_monitors > current_num_monitors {
             dirty = true;
-            let mut show_bar = true;
             for _ in current_num_monitors..num_detected_monitors {
-                let new_monitor = self.createmon(show_bar);
-                show_bar = false;
+                let new_monitor = self.createmon(CONFIG.show_bar());
                 let mon_key = self.insert_monitor(new_monitor);
                 info!(
                     "[setup_multiple_monitors] Created new monitor {:?}",
