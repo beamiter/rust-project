@@ -3,6 +3,7 @@
 
 sudo cp target/release/jwm /usr/local/bin/
 sudo cp target/release/jwm-tool /usr/local/bin/
+sudo cp jwm.desktop /usr/local/share/xsessions/
 sudo cp jwm.desktop /usr/share/xsessions/
 
 # # 设置权限并复制脚本
