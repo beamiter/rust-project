@@ -27,7 +27,7 @@ use std::usize;
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyError;
 use x11rb::properties::WmSizeHints;
-use x11rb::protocol::render::Pictforminfo;
+use x11rb::protocol::render::{self, ConnectionExt as RenderExt};
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
@@ -106,6 +106,22 @@ pub struct PertagSnapshot {
     pub lt_pairs: Vec<[u32; 2]>, // 每 tag 两个 layout 的编号：0=TILE,1=FLOAT,2=MONOCLE
     pub show_bars: Vec<bool>,
     pub sel_by_tag: Vec<Option<Window>>, // 每个 tag 的选中窗口（Window）
+}
+
+#[derive(Debug, Clone)]
+#[allow(dead_code)]
+struct DragContext {
+    client_key: ClientKey,
+    window: Window,
+    // 窗口开始拖拽时的几何
+    start_x: i32,
+    start_y: i32,
+    start_w: i32,
+    start_h: i32,
+    border_w: i32,
+    // 鼠标起始位置（root 坐标）
+    initial_mouse_x: u16,
+    initial_mouse_y: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -699,6 +715,8 @@ pub struct Jwm {
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
 
     pub restoring_from_snapshot: bool, // 新增：是否处于重启恢复模式
+
+    pub last_stacking: SecondaryMap<MonitorKey, Vec<Window>>,
 }
 
 impl Jwm {
@@ -844,6 +862,7 @@ impl Jwm {
             suppress_mouse_focus_until: None,
 
             restoring_from_snapshot: false,
+            last_stacking: SecondaryMap::new(),
         })
     }
 
@@ -3122,8 +3141,13 @@ impl Jwm {
         final_bottom_to_top.extend(tiled_bottom_to_top.into_iter());
         final_bottom_to_top.extend(floating_bottom_to_top.into_iter());
 
-        // 5) 批量配置：把每个窗口 stack ABOVE 到它的前一个窗口（sibling 链）
-        if !final_bottom_to_top.is_empty() {
+        // 5) 如果堆叠序列与上次相同，跳过窗口重排
+        let need_restack_windows = match self.last_stacking.get(mon_key) {
+            Some(prev) => prev.as_slice() != final_bottom_to_top.as_slice(),
+            None => true,
+        };
+
+        if need_restack_windows {
             // 第一个（最底部）不指定 sibling；之后的都 ABOVE 前一个
             for i in 0..final_bottom_to_top.len() {
                 let win = final_bottom_to_top[i];
@@ -3133,13 +3157,15 @@ impl Jwm {
                 }
                 self.x11rb_conn.configure_window(win, &cfg)?;
             }
+            // 更新缓存
+            self.last_stacking
+                .insert(mon_key, final_bottom_to_top.clone());
         }
 
-        // 6) 如果 bar 在当前显示器且该 tag 需要显示 bar：把 bar 置顶
+        // 6) 如果 bar 在当前显示器且当前 tag 显示 bar：把 bar 置顶
         if self.current_bar_monitor_id == Some(monitor_num) {
             if let Some(bar_key) = self.status_bar_client {
                 if let Some(bar_client) = self.clients.get(bar_key) {
-                    // 判断当前 tag 是否显示 bar（不显示则 bar 应该被 unmapped，略过）
                     let show_bar = monitor
                         .pertag
                         .as_ref()
@@ -3147,6 +3173,7 @@ impl Jwm {
                         .copied()
                         .unwrap_or(true);
                     if show_bar {
+                        // 即便窗口序列没变，也补一次把 bar 置顶（更稳妥）
                         let cfg = ConfigureWindowAux::new().stack_mode(StackMode::ABOVE);
                         self.x11rb_conn.configure_window(bar_client.win, &cfg)?;
                     }
@@ -3941,71 +3968,60 @@ impl Jwm {
         Ok(())
     }
 
+    /// 在 render_query_pict_formats 的结果中，查找给定 Visualid 对应的 Pictforminfo
+    fn find_visual_format_local<'a>(
+        &self,
+        formats: &'a render::QueryPictFormatsReply,
+        visual: Visualid,
+    ) -> Option<&'a render::Pictforminfo> {
+        // 步骤：在 screens[..].depths[..].visuals[..] 里找到与 visual 匹配的 Pictvisual，
+        // 再用它的 format 字段去 formats.formats 里找 Pictforminfo
+        for screen in &formats.screens {
+            for depth in &screen.depths {
+                for v in &depth.visuals {
+                    if v.visual == visual {
+                        let fmt = v.format;
+                        return formats.formats.iter().find(|f| f.id == fmt);
+                    }
+                }
+            }
+        }
+        None
+    }
+
     fn xinit_visual(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 首先尝试找到支持 alpha 通道的 32 位视觉效果
-        for depth in self.x11rb_screen.allowed_depths.clone() {
+        // 查询 render pict formats
+        let formats = self.x11rb_conn.render_query_pict_formats()?.reply()?;
+
+        // 优先寻找 32-bit TRUE_COLOR + 有 alpha 的 visual
+        for depth in self.x11rb_screen.allowed_depths.iter().cloned() {
             if depth.depth != 32 {
                 continue;
             }
-
             for visualtype in &depth.visuals {
                 if visualtype.class != VisualClass::TRUE_COLOR {
                     continue;
                 }
-
-                // 检查 render 扩展中是否有对应的格式
-                match self.find_render_format_for_visual(visualtype.visual_id) {
-                    Ok(Some(format)) if self.has_alpha_channel(&format) => {
-                        // 找到了支持 alpha 的格式
-                        return self.setup_argb_visual(visualtype, &format);
-                    }
-                    Ok(_) => continue, // 格式不支持 alpha，继续查找
-                    Err(e) => {
-                        warn!("[xinit_visual] Failed to query render format: {:?}", e);
-                        continue;
+                if let Some(info) = self.find_visual_format_local(&formats, visualtype.visual_id) {
+                    if info.direct.alpha_mask != 0 {
+                        return self.setup_argb_visual(visualtype);
                     }
                 }
             }
         }
 
-        // 如果没找到 32 位 ARGB 视觉效果，回退到默认
+        // 没找到 32-bit ARGB，回退默认
         info!("[xinit_visual] No 32-bit ARGB visual found. Falling back to default.");
         self.setup_default_visual()
-    }
-
-    fn find_render_format_for_visual(
-        &self,
-        visual_id: Visualid,
-    ) -> Result<Option<Pictforminfo>, Box<dyn std::error::Error>> {
-        use x11rb::protocol::render::ConnectionExt;
-
-        let format_cookie = self.x11rb_conn.render_query_pict_formats()?;
-        let format_reply = format_cookie.reply()?;
-
-        // 查找匹配的 PictFormat
-        for format in &format_reply.formats {
-            if format.id == visual_id {
-                return Ok(Some(*format));
-            }
-        }
-
-        Ok(None)
-    }
-
-    fn has_alpha_channel(&self, format: &Pictforminfo) -> bool {
-        // 检查是否有 alpha 通道
-        format.direct.alpha_mask > 0
     }
 
     fn setup_argb_visual(
         &mut self,
         visualtype: &Visualtype,
-        _format: &Pictforminfo,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.visual_id = visualtype.visual_id;
         self.depth = 32;
 
-        // 创建 colormap
         let colormap_id = self.x11rb_conn.generate_id()?;
         self.x11rb_conn
             .create_colormap(
@@ -4018,16 +4034,16 @@ impl Jwm {
 
         self.color_map = colormap_id.into();
 
-        // 测试颜色分配（使用更安全的颜色值）
         match self.test_color_allocation(colormap_id) {
             Ok(_) => {
-                info!("[xinit_visual] Successfully set up 32-bit ARGB visual. VisualID: 0x{:x}, ColormapID: 0x{:x}",
-                  self.visual_id, self.color_map);
+                info!(
+                "[xinit_visual] Successfully set up 32-bit ARGB visual. VisualID: 0x{:x}, ColormapID: 0x{:x}",
+                self.visual_id, self.color_map
+            );
                 Ok(())
             }
             Err(e) => {
                 warn!("[xinit_visual] Color allocation test failed: {:?}", e);
-                // 清理失败的 colormap
                 let _ = self.x11rb_conn.free_colormap(colormap_id);
                 self.setup_default_visual()
             }
@@ -6279,58 +6295,39 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn movemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[movemouse]");
-
-        // 1. 获取当前选中的客户端
-        let client_key = match self.get_selected_client_key() {
-            Some(key) => key,
-            None => {
-                debug!("No selected client for move");
-                return Ok(());
-            }
-        };
-
-        // 2. 全屏检查
-        if let Some(client) = self.clients.get(client_key) {
-            if client.state.is_fullscreen {
-                debug!("Cannot move fullscreen window");
-                return Ok(());
-            }
-        } else {
-            return Ok(());
-        }
-
-        // 3. 准备工作
-        self.restack(self.sel_mon)?;
-
-        // 保存窗口开始移动时的信息
-        let (original_x, original_y, window_id) = if let Some(client) = self.clients.get(client_key)
-        {
-            (client.geometry.x, client.geometry.y, client.win)
-        } else {
-            return Ok(());
-        };
-
-        // 4. 抓取鼠标指针
-        let cursor = self
-            .cursor_manager
-            .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Hand1)?;
-
+    /// 通用的指针拖拽循环
+    ///
+    /// - grab_cursor: 拖拽时显示的鼠标光标
+    /// - warp_to: 可选，若为 Some(x, y) 则在开始前 warp 到窗口内该位置（相对窗口坐标）
+    /// - on_motion: 每次 MotionNotify 调用的回调，内部应用具体的移动/缩放逻辑
+    fn pointer_drag_loop<F>(
+        &mut self,
+        ctx: &DragContext,
+        grab_cursor: u32,
+        warp_to: Option<(i16, i16)>,
+        mut on_motion: F,
+    ) -> Result<(), Box<dyn std::error::Error>>
+    where
+        F: FnMut(
+            &mut Jwm,
+            &MotionNotifyEvent,
+            &DragContext,
+        ) -> Result<(), Box<dyn std::error::Error>>,
+    {
+        // 抓取指针
         let grab_reply = self
             .x11rb_conn
             .grab_pointer(
-                false,           // owner_events
-                self.x11rb_root, // grab_window
-                *MOUSEMASK,      // event_mask
-                GrabMode::ASYNC, // pointer_mode：保持 ASYNC
-                GrabMode::ASYNC, // keyboard_mode：保持 ASYNC
-                0u32,            // confine_to
-                cursor,          // cursor
-                0u32,            // time
+                false,
+                self.x11rb_root,
+                *MOUSEMASK,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+                0u32,
+                grab_cursor,
+                0u32,
             )?
             .reply()?;
-
         if grab_reply.status != GrabStatus::SUCCESS {
             let status_str = match grab_reply.status {
                 GrabStatus::ALREADY_GRABBED => "AlreadyGrabbed",
@@ -6342,108 +6339,72 @@ impl Jwm {
             return Err(format!("Failed to grab pointer: {}", status_str).into());
         }
 
-        // 5. 获取鼠标初始位置
-        let query_reply = self.x11rb_conn.query_pointer(self.x11rb_root)?.reply()?;
-        let (initial_mouse_x, initial_mouse_y) = (query_reply.root_x, query_reply.root_y);
+        // 可选 warp（用于 resize 把鼠标移到窗口右下角）
+        if let Some((wx, wy)) = warp_to {
+            self.x11rb_conn.warp_pointer(
+                0u32,       // src_window
+                ctx.window, // dst_window
+                0, 0, 0, 0, // src_* ignored
+                wx, wy, // 目标位置（相对窗口）
+            )?;
+        }
+        self.x11rb_conn.flush()?;
 
-        info!(
-            "[movemouse] initial mouse (root): x={}, y={}",
-            initial_mouse_x, initial_mouse_y
-        );
-
-        // 6. 进入移动循环（新增窗口ID、Esc、Destroy/Unmap、超时兜底）
-        let result = self.move_loop(
-            client_key,
-            window_id,
-            original_x,
-            original_y,
-            initial_mouse_x as u16,
-            initial_mouse_y as u16,
-        );
-
-        // 7. 统一清理（这里不再 ungrab，由 cleanup_move 处理）
-        self.cleanup_move(window_id, client_key)?;
-
-        info!("[movemouse] completed");
-        result
-    }
-
-    fn move_loop(
-        &mut self,
-        client_key: ClientKey,
-        window_being_moved: Window,
-        original_x: i32,
-        original_y: i32,
-        initial_mouse_x: u16,
-        initial_mouse_y: u16,
-    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut last_motion_time = 0u32;
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
 
         loop {
-            // 先尽量使用非阻塞读取，避免永久卡住
             match self.x11rb_conn.poll_for_event()? {
-                Some(event) => {
-                    match event {
-                        Event::ConfigureRequest(e) => {
-                            self.configurerequest(&e)?;
-                        }
-                        Event::Expose(e) => {
-                            self.expose(&e)?;
-                        }
-                        Event::MapRequest(e) => {
-                            self.maprequest(&e)?;
-                        }
-                        Event::DestroyNotify(e) => {
-                            if e.window == window_being_moved {
-                                debug!("Window destroyed during move, aborting move");
-                                break;
-                            }
-                        }
-                        Event::UnmapNotify(e) => {
-                            if e.window == window_being_moved {
-                                debug!("Window unmapped during move, aborting move");
-                                break;
-                            }
-                        }
-                        Event::KeyPress(e) => {
-                            // 支持 ESC 取消
-                            if self.get_keysym_from_keycode(e.detail).unwrap_or(0)
-                                == x11::keysym::XK_Escape
-                            {
-                                debug!("Move canceled by ESC");
-                                break;
-                            }
-                        }
-                        Event::MotionNotify(e) => {
-                            // 节流处理
-                            if e.time.wrapping_sub(last_motion_time) <= 16 {
-                                continue;
-                            }
-                            last_motion_time = e.time;
-
-                            self.handle_move_motion(
-                                client_key,
-                                &e,
-                                original_x,
-                                original_y,
-                                initial_mouse_x,
-                                initial_mouse_y,
-                            )?;
-                        }
-                        Event::ButtonRelease(_) => {
-                            debug!("Button released, ending move");
+                Some(event) => match event {
+                    Event::ConfigureRequest(e) => {
+                        self.configurerequest(&e)?;
+                    }
+                    Event::Expose(e) => {
+                        self.expose(&e)?;
+                    }
+                    Event::MapRequest(e) => {
+                        self.maprequest(&e)?;
+                    }
+                    Event::DestroyNotify(e) => {
+                        if e.window == ctx.window {
+                            debug!("Window destroyed during drag, aborting");
                             break;
                         }
-                        _ => {
-                            // 忽略其他事件
+                    }
+                    Event::UnmapNotify(e) => {
+                        if e.window == ctx.window {
+                            debug!("Window unmapped during drag, aborting");
+                            break;
                         }
                     }
-                }
+                    Event::KeyPress(e) => {
+                        // ESC 取消
+                        if self.get_keysym_from_keycode(e.detail).unwrap_or(0)
+                            == x11::keysym::XK_Escape
+                        {
+                            debug!("Drag canceled by ESC");
+                            break;
+                        }
+                    }
+                    Event::MotionNotify(e) => {
+                        // 节流（~16ms）
+                        if e.time.wrapping_sub(last_motion_time) <= 16 {
+                            continue;
+                        }
+                        last_motion_time = e.time;
+                        on_motion(self, &e, ctx)?;
+                    }
+                    Event::ButtonRelease(_) => {
+                        debug!("Button released, ending drag");
+                        break;
+                    }
+                    _ => {
+                        // 忽略其他事件
+                    }
+                },
                 None => {
-                    // 无事件，短睡+超时兜底
                     if std::time::Instant::now() > deadline {
-                        warn!("move_loop timeout, aborting");
+                        warn!("pointer_drag_loop timeout, aborting");
                         break;
                     }
                     std::thread::sleep(std::time::Duration::from_millis(5));
@@ -6451,6 +6412,82 @@ impl Jwm {
             }
         }
 
+        Ok(())
+    }
+
+    pub fn movemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[movemouse]");
+
+        // 1. 获取当前选中的客户端
+        let client_key = match self.get_selected_client_key() {
+            Some(key) => key,
+            None => return Ok(()),
+        };
+
+        // 2. 全屏检查
+        if let Some(client) = self.clients.get(client_key) {
+            if client.state.is_fullscreen {
+                return Ok(());
+            }
+        } else {
+            return Ok(());
+        }
+
+        // 3. 准备工作
+        self.restack(self.sel_mon)?;
+
+        // 保存窗口开始移动时的信息
+        let (start_x, start_y, start_w, start_h, border_w, window_id) = {
+            let c = self.clients.get(client_key).unwrap();
+            (
+                c.geometry.x,
+                c.geometry.y,
+                c.geometry.w,
+                c.geometry.h,
+                c.geometry.border_w,
+                c.win,
+            )
+        };
+
+        // 4. 获取鼠标初始位置
+        let query_reply = self.x11rb_conn.query_pointer(self.x11rb_root)?.reply()?;
+        let (initial_mouse_x, initial_mouse_y) =
+            (query_reply.root_x as u16, query_reply.root_y as u16);
+
+        // 5. 获取拖拽时的光标
+        let cursor = self
+            .cursor_manager
+            .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Hand1)?;
+
+        // 6. 组装上下文并进入通用循环
+        let ctx = DragContext {
+            client_key,
+            window: window_id,
+            start_x,
+            start_y,
+            start_w,
+            start_h,
+            border_w,
+            initial_mouse_x,
+            initial_mouse_y,
+        };
+
+        // 注意：move 不需要 warp_pointer
+        self.pointer_drag_loop(&ctx, cursor, None, |this, e, c| {
+            this.handle_move_motion(
+                c.client_key,
+                e,
+                c.start_x,
+                c.start_y,
+                c.initial_mouse_x,
+                c.initial_mouse_y,
+            )
+        })?;
+
+        // 7. 清理与跨屏检查
+        self.cleanup_move(window_id, client_key)?;
+
+        info!("[movemouse] completed");
         Ok(())
     }
 
@@ -6642,164 +6679,64 @@ impl Jwm {
     pub fn resizemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[resizemouse]");
 
-        // 1. 获取当前选中的客户端
         let client_key = match self.get_selected_client_key() {
             Some(key) => key,
-            None => {
-                debug!("No selected client for resize");
-                return Ok(());
-            }
+            None => return Ok(()),
         };
 
-        // 2. 全屏检查
         if let Some(client) = self.clients.get(client_key) {
             if client.state.is_fullscreen {
-                debug!("Cannot resize fullscreen window");
                 return Ok(());
             }
         } else {
             return Err("Selected client not found".into());
         }
 
-        // 3. 准备工作
         self.restack(self.sel_mon)?;
 
-        // 保存窗口开始调整大小时的信息
-        let (original_x, original_y, border_width, window_id, current_w, current_h) = {
-            let client = self.clients.get(client_key).unwrap();
+        let (start_x, start_y, border_w, window_id, start_w, start_h) = {
+            let c = self.clients.get(client_key).unwrap();
             (
-                client.geometry.x,
-                client.geometry.y,
-                client.geometry.border_w,
-                client.win,
-                client.geometry.w,
-                client.geometry.h,
+                c.geometry.x,
+                c.geometry.y,
+                c.geometry.border_w,
+                c.win,
+                c.geometry.w,
+                c.geometry.h,
             )
         };
 
-        // 4. 抓取鼠标指针
+        // 准备 warp 到窗口右下角
+        let warp_pos = (
+            (start_w + border_w - 1) as i16,
+            (start_h + border_w - 1) as i16,
+        );
+
+        // 读取初始鼠标位置（并不强依赖）
+        let q = self.x11rb_conn.query_pointer(self.x11rb_root)?.reply()?;
+        let (initial_mouse_x, initial_mouse_y) = (q.root_x as u16, q.root_y as u16);
+
         let cursor = self
             .cursor_manager
             .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Fleur)?;
 
-        let grab_reply = self
-            .x11rb_conn
-            .grab_pointer(
-                false,
-                self.x11rb_root,
-                *MOUSEMASK,
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-                0u32,
-                cursor,
-                0u32,
-            )?
-            .reply()?;
+        let ctx = DragContext {
+            client_key,
+            window: window_id,
+            start_x,
+            start_y,
+            start_w,
+            start_h,
+            border_w,
+            initial_mouse_x,
+            initial_mouse_y,
+        };
 
-        if grab_reply.status != GrabStatus::SUCCESS {
-            debug!("Failed to grab pointer for resize");
-            return Ok(());
-        }
+        self.pointer_drag_loop(&ctx, cursor, Some(warp_pos), |this, e, c| {
+            this.handle_resize_motion(c.client_key, e, c.start_x, c.start_y, c.border_w)
+        })?;
 
-        // 5. 将鼠标移动到窗口右下角
-        self.x11rb_conn.warp_pointer(
-            0u32,
-            window_id,
-            0,
-            0,
-            0,
-            0,
-            (current_w + border_width - 1) as i16,
-            (current_h + border_width - 1) as i16,
-        )?;
-
-        // 6. 进入调整大小循环（新增窗口ID、Esc、Destroy/Unmap、超时兜底）
-        let result = self.resize_loop(client_key, window_id, original_x, original_y, border_width);
-
-        // 7. 统一清理（这里不再 ungrab，由 cleanup_resize 处理）
-        self.cleanup_resize(window_id, border_width)?;
-
-        result
-    }
-
-    fn resize_loop(
-        &mut self,
-        client_key: ClientKey,
-        window_being_resized: Window,
-        original_x: i32,
-        original_y: i32,
-        border_width: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut last_motion_time = 0u32;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-
-        loop {
-            match self.x11rb_conn.poll_for_event()? {
-                Some(event) => {
-                    match event {
-                        Event::ConfigureRequest(e) => {
-                            self.configurerequest(&e)?;
-                        }
-                        Event::Expose(e) => {
-                            self.expose(&e)?;
-                        }
-                        Event::MapRequest(e) => {
-                            self.maprequest(&e)?;
-                        }
-                        Event::DestroyNotify(e) => {
-                            if e.window == window_being_resized {
-                                debug!("Window destroyed during resize, aborting resize");
-                                break;
-                            }
-                        }
-                        Event::UnmapNotify(e) => {
-                            if e.window == window_being_resized {
-                                debug!("Window unmapped during resize, aborting resize");
-                                break;
-                            }
-                        }
-                        Event::KeyPress(e) => {
-                            if self.get_keysym_from_keycode(e.detail).unwrap_or(0)
-                                == x11::keysym::XK_Escape
-                            {
-                                debug!("Resize canceled by ESC");
-                                break;
-                            }
-                        }
-                        Event::MotionNotify(e) => {
-                            // 节流处理
-                            if e.time.wrapping_sub(last_motion_time) <= 16 {
-                                continue;
-                            }
-                            last_motion_time = e.time;
-
-                            self.handle_resize_motion(
-                                client_key,
-                                &e,
-                                original_x,
-                                original_y,
-                                border_width,
-                            )?;
-                        }
-                        Event::ButtonRelease(_) => {
-                            debug!("Button released, ending resize");
-                            break;
-                        }
-                        _ => {
-                            // 忽略其他事件
-                        }
-                    }
-                }
-                None => {
-                    if std::time::Instant::now() > deadline {
-                        warn!("resize_loop timeout, aborting");
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(5));
-                }
-            }
-        }
-
+        self.cleanup_resize(window_id, border_w)?;
         Ok(())
     }
 
