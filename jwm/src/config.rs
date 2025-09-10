@@ -493,22 +493,14 @@ impl Config {
     // 获取默认规则
     fn get_default_rules() -> Vec<RuleConfig> {
         vec![
-            RuleConfig {
-                class: "meeting".to_string(),
-                instance: "".to_string(),
-                name: "飞书会议".to_string(),
-                tags_mask: 0,
-                is_floating: true,
-                monitor: -1,
-            },
-            RuleConfig {
-                class: "meeting".to_string(),
-                instance: "".to_string(),
-                name: "飞书会议".to_string(),
-                tags_mask: 0,
-                is_floating: true,
-                monitor: -1,
-            },
+            // RuleConfig {
+            //     class: "meeting".to_string(),
+            //     instance: "".to_string(),
+            //     name: "飞书会议".to_string(),
+            //     tags_mask: 0,
+            //     is_floating: true,
+            //     monitor: -1,
+            // },
         ]
     }
 
