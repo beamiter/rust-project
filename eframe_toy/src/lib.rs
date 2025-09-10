@@ -9,3 +9,6 @@ pub use filer::Filer;
 
 mod image_viewer;
 pub use image_viewer::ImageViewerApp;
+
+pub mod editor_installer;
+pub use editor_installer::EditorsInstallerApp;
