@@ -1,18 +1,95 @@
 #![warn(clippy::all, rust_2018_idioms)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")] // hide console window on Windows in release
 
-use clap::Parser;
+// 移除 clap 依赖
+// use clap::Parser;
 
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    #[arg(short, long, default_value_t = 1)]
-    instance: u8,
+#[derive(serde::Deserialize, serde::Serialize, Clone, Copy, PartialEq, Eq)]
+enum ActiveApp {
+    SSHCommander,
+    Filer,
+    ImageViewer,
 }
 
-// When compiling natively:
-#[cfg(not(target_arch = "wasm32"))]
-fn main() -> eframe::Result {
+struct AppShell {
+    active: ActiveApp,
+    ssh: toy::SSHCommander,
+    filer: toy::Filer,
+    viewer: toy::ImageViewerApp,
+}
+
+impl AppShell {
+    fn new(cc: &eframe::CreationContext<'_>) -> Self {
+        // 全局字体样式统一配置（之前在 main 中为 Filer/ImageViewer 配置）
+        toy::configure_text_styles(&cc.egui_ctx);
+
+        // SSHCommander 支持从 storage 恢复，沿用其 new(cc) 逻辑
+        let ssh = toy::SSHCommander::new(cc);
+        let filer = toy::Filer::default();
+        let viewer = toy::ImageViewerApp::default();
+
+        Self {
+            // 默认打开哪个应用可按需调整
+            active: ActiveApp::Filer,
+            ssh,
+            filer,
+            viewer,
+        }
+    }
+}
+
+impl eframe::App for AppShell {
+    fn save(&mut self, storage: &mut dyn eframe::Storage) {
+        // 将 SSHCommander 的状态保存到原先使用的 APP_KEY
+        // 这样 SSHCommander::new(cc) 仍能从相同 key 恢复
+        eframe::set_value(storage, eframe::APP_KEY, &self.ssh);
+    }
+
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        // 顶部“应用选择”条
+        egui::TopBottomPanel::top("app_selector_top").show(ctx, |ui| {
+            egui::menu::bar(ui, |ui| {
+                ui.menu_button("eframe_toy", |ui| {
+                    if ui.button("Quit").clicked() {
+                        ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    }
+                });
+                ui.add_space(16.0);
+                egui::ComboBox::from_label("select toy here")
+                    .selected_text(match self.active {
+                        ActiveApp::SSHCommander => "SSH Commander",
+                        ActiveApp::Filer => "Filer",
+                        ActiveApp::ImageViewer => "Image Viewer",
+                    })
+                    .show_ui(ui, |ui| {
+                        ui.selectable_value(
+                            &mut self.active,
+                            ActiveApp::SSHCommander,
+                            "SSH Commander",
+                        );
+                        ui.selectable_value(&mut self.active, ActiveApp::Filer, "Filer");
+                        ui.selectable_value(
+                            &mut self.active,
+                            ActiveApp::ImageViewer,
+                            "Image Viewer",
+                        );
+                    });
+                ui.separator();
+                ui.add_space(16.0);
+                egui::widgets::global_theme_preference_buttons(ui);
+            });
+        });
+
+        // 转发给当前激活的子应用
+        match self.active {
+            ActiveApp::SSHCommander => self.ssh.update(ctx, frame),
+            ActiveApp::Filer => self.filer.update(ctx, frame),
+            ActiveApp::ImageViewer => self.viewer.update(ctx, frame),
+        }
+    }
+}
+
+fn main() -> eframe::Result<()> {
     let native_options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([800.0, 600.0])
@@ -20,83 +97,9 @@ fn main() -> eframe::Result {
         ..Default::default()
     };
 
-    let args = Args::parse();
-    match args.instance {
-        0 => eframe::run_native(
-            "ssh commander",
-            native_options,
-            Box::new(|cc| Ok(Box::new(toy::SSHCommander::new(cc)))),
-        ),
-        1 => eframe::run_native(
-            "image processor",
-            native_options,
-            Box::new(|cc| Ok(Box::new(toy::ImageProcessor::new(cc)))),
-        ),
-        2 => eframe::run_native(
-            "filer",
-            native_options,
-            Box::new(|cc| {
-                toy::configure_text_styles(&cc.egui_ctx);
-                Ok(Box::<toy::Filer>::default())
-            }),
-        ),
-        3 => eframe::run_native(
-            "image viewer",
-            native_options,
-            Box::new(|cc| {
-                toy::configure_text_styles(&cc.egui_ctx);
-                Ok(Box::<toy::ImageViewerApp>::default())
-            }),
-        ),
-        _ => {
-            panic!("unsupported instance");
-        }
-    }
-}
-
-// When compiling to web using trunk:
-#[cfg(target_arch = "wasm32")]
-fn main() {
-    use eframe::wasm_bindgen::JsCast as _;
-
-    // Redirect `log` message to `console.log` and friends:
-    eframe::WebLogger::init(log::LevelFilter::Debug).ok();
-
-    let web_options = eframe::WebOptions::default();
-
-    wasm_bindgen_futures::spawn_local(async {
-        let document = web_sys::window()
-            .expect("No window")
-            .document()
-            .expect("No document");
-
-        let canvas = document
-            .get_element_by_id("the_canvas_id")
-            .expect("Failed to find the_canvas_id")
-            .dyn_into::<web_sys::HtmlCanvasElement>()
-            .expect("the_canvas_id was not a HtmlCanvasElement");
-
-        let start_result = eframe::WebRunner::new()
-            .start(
-                canvas,
-                web_options,
-                Box::new(|cc| Ok(Box::new(toy::SSHCommander::new(cc)))),
-            )
-            .await;
-
-        // Remove the loading text and spinner:
-        if let Some(loading_text) = document.get_element_by_id("loading_text") {
-            match start_result {
-                Ok(_) => {
-                    loading_text.remove();
-                }
-                Err(e) => {
-                    loading_text.set_inner_html(
-                        "<p> The app has crashed. See the developer console for details. </p>",
-                    );
-                    panic!("Failed to start eframe: {e:?}");
-                }
-            }
-        }
-    });
+    eframe::run_native(
+        "eframe_toy",
+        native_options,
+        Box::new(|cc| Ok(Box::new(AppShell::new(cc)))),
+    )
 }
