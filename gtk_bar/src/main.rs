@@ -1,4 +1,3 @@
-use cairo::Context;
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use gdk4::prelude::*;
@@ -6,9 +5,7 @@ use gdk4::prelude::*;
 use gdk4_x11::x11::xlib::{XFlush, XMoveWindow};
 use gtk4::gio::{self};
 use gtk4::prelude::*;
-use gtk4::{
-    Application, ApplicationWindow, Builder, Button, DrawingArea, Label, ProgressBar, glib,
-};
+use gtk4::{Application, ApplicationWindow, Builder, Button, Label, glib};
 use log::{error, info, warn};
 use std::cell::{Cell, RefCell};
 use std::env;
@@ -43,6 +40,11 @@ const STATUS_BAR_PREFIX: &str = "gtk_bar";
 const LOG_DIR: &str = "/var/tmp/jwm";
 const CPU_REDRAW_THRESHOLD: f64 = 0.01; // 1%
 const MEM_REDRAW_THRESHOLD: f64 = 0.005; // 0.5%
+
+// 胶囊颜色阈值（占用比例）
+const LEVEL_WARN: f64 = 0.50; // 50%
+const LEVEL_HIGH: f64 = 0.75; // 75%
+const LEVEL_CRIT: f64 = 0.90; // 90%
 
 // CSS 类 bit 掩码
 const CLS_SELECTED: u8 = 1 << 0;
@@ -96,6 +98,30 @@ impl AppState {
 
 type SharedAppState = Rc<RefCell<AppState>>;
 
+// ========= Metric 工具 =========
+fn usage_to_level_class(ratio: f64) -> &'static str {
+    if ratio >= LEVEL_CRIT {
+        "level-crit"
+    } else if ratio >= LEVEL_HIGH {
+        "level-high"
+    } else if ratio >= LEVEL_WARN {
+        "level-warn"
+    } else {
+        "level-ok"
+    }
+}
+
+// 统一更新“胶囊”标签：文本 + 颜色 class
+fn set_metric_capsule(label: &Label, title: &str, ratio: f64) {
+    let percent = (ratio * 100.0).round().clamp(0.0, 100.0) as i32;
+    label.set_text(&format!("{} {}%", title, percent));
+
+    for cls in ["level-ok", "level-warn", "level-high", "level-crit"] {
+        label.remove_css_class(cls);
+    }
+    label.add_css_class(usage_to_level_class(ratio));
+}
+
 // ========= 背景线程句柄 =========
 struct WorkerHandle {
     thread: Option<thread::JoinHandle<()>>,
@@ -136,8 +162,8 @@ struct TabBarApp {
     layout_label: Label,
     time_button: Button,
     monitor_label: Label,
-    memory_progress: ProgressBar,
-    cpu_drawing_area: DrawingArea,
+    memory_label: Label,
+    cpu_label: Label,
 
     // Shared state
     state: SharedAppState,
@@ -148,10 +174,6 @@ struct TabBarApp {
     // Cached UI-applied values for diff
     ui_last_layout_symbol: RefCell<String>,
     ui_last_monitor_num: Cell<u8>,
-
-    // Cached gradient for CPU
-    cpu_gradient: RefCell<Option<cairo::LinearGradient>>,
-    cpu_gradient_h: Cell<i32>,
 }
 
 impl TabBarApp {
@@ -185,12 +207,12 @@ impl TabBarApp {
         let monitor_label: Label = builder
             .object("monitor_label")
             .expect("Failed to get monitor_label from builder");
-        let memory_progress: ProgressBar = builder
-            .object("memory_progress")
-            .expect("Failed to get memory_progress from builder");
-        let cpu_drawing_area: DrawingArea = builder
-            .object("cpu_drawing_area")
-            .expect("Failed to get cpu_drawing_area from builder");
+        let memory_label: Label = builder
+            .object("memory_label")
+            .expect("Failed to get memory_label from builder");
+        let cpu_label: Label = builder
+            .object("cpu_label")
+            .expect("Failed to get cpu_label from builder");
 
         // 状态
         let state: SharedAppState = Rc::new(RefCell::new(AppState::new()));
@@ -211,15 +233,17 @@ impl TabBarApp {
             layout_label,
             time_button,
             monitor_label,
-            memory_progress,
-            cpu_drawing_area,
+            memory_label,
+            cpu_label,
             state,
             worker,
             ui_last_layout_symbol: RefCell::new(String::new()),
             ui_last_monitor_num: Cell::new(255),
-            cpu_gradient: RefCell::new(None),
-            cpu_gradient_h: Cell::new(0),
         });
+
+        // 为 CPU/内存标签添加基础胶囊样式
+        app_instance.cpu_label.add_css_class("metric-label");
+        app_instance.memory_label.add_css_class("metric-label");
 
         // 使用 glib::spawn_future_local 在主线程消费异步通道
         {
@@ -246,7 +270,7 @@ impl TabBarApp {
                 ControlFlow::Continue
             });
         }
-        // 定时器：每2秒更新系统资源
+        // 定时器：每2秒更新系统资源（含阈值和等级变化检测）
         {
             let app_clone = app_instance.clone();
             glib::timeout_add_seconds_local(2, move || {
@@ -256,17 +280,29 @@ impl TabBarApp {
                         let snapshot = snapshot_ref.clone();
                         let total = snapshot.memory_available + snapshot.memory_used;
                         if total > 0 {
-                            let usage_ratio = snapshot.memory_used as f64 / total as f64;
-                            if (usage_ratio - st.last_mem_fraction).abs() > MEM_REDRAW_THRESHOLD {
-                                st.last_mem_fraction = usage_ratio;
-                                app_clone
-                                    .memory_progress
-                                    .set_fraction(usage_ratio.clamp(0.0, 1.0));
+                            // 内存占用比例
+                            let mem_ratio =
+                                (snapshot.memory_used as f64 / total as f64).clamp(0.0, 1.0);
+                            let prev_mem = st.last_mem_fraction;
+                            let mem_level_changed =
+                                usage_to_level_class(mem_ratio) != usage_to_level_class(prev_mem);
+                            if (mem_ratio - prev_mem).abs() > MEM_REDRAW_THRESHOLD
+                                || mem_level_changed
+                            {
+                                st.last_mem_fraction = mem_ratio;
+                                set_metric_capsule(&app_clone.memory_label, "MEM", mem_ratio);
                             }
-                            let cpu_usage = snapshot.cpu_average as f64 / 100.0;
-                            if (cpu_usage - st.last_cpu_usage).abs() > CPU_REDRAW_THRESHOLD {
-                                st.last_cpu_usage = cpu_usage;
-                                app_clone.cpu_drawing_area.queue_draw();
+
+                            // CPU 占用比例（0~1）
+                            let cpu_ratio = (snapshot.cpu_average as f64 / 100.0).clamp(0.0, 1.0);
+                            let prev_cpu = st.last_cpu_usage;
+                            let cpu_level_changed =
+                                usage_to_level_class(cpu_ratio) != usage_to_level_class(prev_cpu);
+                            if (cpu_ratio - prev_cpu).abs() > CPU_REDRAW_THRESHOLD
+                                || cpu_level_changed
+                            {
+                                st.last_cpu_usage = cpu_ratio;
+                                set_metric_capsule(&app_clone.cpu_label, "CPU", cpu_ratio);
                             }
                         }
                     }
@@ -283,6 +319,7 @@ impl TabBarApp {
 
     fn apply_styles() {
         let provider = gtk4::CssProvider::new();
+        // 确保样式文件命名为 styles.css
         provider.load_from_string(include_str!("styles.css"));
         if let Some(display) = gtk4::gdk::Display::default() {
             gtk4::style_context_add_provider_for_display(
@@ -335,14 +372,6 @@ impl TabBarApp {
                 }
             });
         }
-
-        // CPU 绘制（缓存渐变）
-        app.cpu_drawing_area.set_draw_func({
-            let app = app.clone();
-            move |_, ctx, width, height| {
-                Self::draw_cpu_usage(app.clone(), ctx, width, height);
-            }
-        });
     }
 
     // ========= Worker事件处理 =========
@@ -389,7 +418,7 @@ impl TabBarApp {
 
     fn handle_layout_clicked(app: Rc<Self>, layout_index: u32) {
         if let Ok(st) = app.state.try_borrow() {
-            let monitor_id = st.monitor_num as u32;
+            let monitor_id = st.monitor_num as i32;
             let command =
                 SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id as i32);
             app.worker.send_command(AppCommand::SendCommand(command));
@@ -485,52 +514,6 @@ impl TabBarApp {
         self.time_button.set_label(&formatted_time);
     }
 
-    fn draw_cpu_usage(app: Rc<Self>, ctx: &Context, width: i32, height: i32) {
-        let cpu_usage = if let Ok(st) = app.state.try_borrow() {
-            if let Some(snapshot) = st.system_monitor.get_snapshot() {
-                snapshot.cpu_average as f64 / 100.0
-            } else {
-                0.0
-            }
-        } else {
-            0.0
-        };
-
-        let width_f = width as f64;
-        let height_f = height as f64;
-
-        // 清屏（透明）
-        ctx.set_source_rgba(0.0, 0.0, 0.0, 0.0);
-        let _ = ctx.paint();
-
-        // 背景
-        ctx.set_source_rgba(0.0, 0.0, 0.0, 0.3);
-        ctx.rectangle(0.0, 0.0, width_f, height_f);
-        let _ = ctx.fill();
-
-        // 渐变缓存
-        {
-            let cached_h = app.cpu_gradient_h.get();
-            if cached_h != height || app.cpu_gradient.borrow().is_none() {
-                let gradient = cairo::LinearGradient::new(0.0, 0.0, 0.0, height_f);
-                gradient.add_color_stop_rgba(0.0, 1.0, 0.0, 0.0, 0.9);
-                gradient.add_color_stop_rgba(0.5, 1.0, 1.0, 0.0, 0.9);
-                gradient.add_color_stop_rgba(1.0, 0.0, 1.0, 1.0, 0.9);
-                *app.cpu_gradient.borrow_mut() = Some(gradient);
-                app.cpu_gradient_h.set(height);
-            }
-        }
-
-        let used_height = height_f * cpu_usage.clamp(0.0, 1.0);
-        let y_offset = height_f - used_height;
-
-        if let Some(gradient) = app.cpu_gradient.borrow().as_ref() {
-            let _ = ctx.set_source(gradient);
-        }
-        ctx.rectangle(0.0, y_offset, width_f, used_height);
-        let _ = ctx.fill();
-    }
-
     // ========= 工具 =========
     fn monitor_num_to_icon(monitor_num: u8) -> &'static str {
         match monitor_num {
@@ -567,8 +550,11 @@ impl TabBarApp {
     }
 
     fn build_tag_command(state: &AppState, is_view: bool) -> Option<SharedCommand> {
-        // 9 个标签足够 u32；若未来扩展请改用 u64 并调整 SharedCommand
-        let tag_bit: u32 = 1u32.checked_shl(state.active_tab as u32).unwrap_or(0);
+        // 避免位移溢出
+        if state.active_tab >= 32 {
+            return None;
+        }
+        let tag_bit: u32 = 1u32 << (state.active_tab as u32);
         let monitor_id = state.monitor_num as i32;
         let cmd = if is_view {
             SharedCommand::view_tag(tag_bit, monitor_id)

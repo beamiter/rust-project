@@ -11,7 +11,6 @@ window {
   border: 1px solid transparent;
   background-image: none;
   color: #333;
-  transition: all 0.2s ease;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
@@ -19,7 +18,12 @@ window {
 .tab-button:hover {
   transform: scale(1.02);
   box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
-  transition: all 0.2s ease;
+}
+
+/* 统一过渡，避免重复声明 */
+.tab-button,
+.tab-button:hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 /* ==================== 按索引位置的颜色定义 ==================== */
@@ -362,75 +366,126 @@ window {
   }
 }
 
-/* ==================== 其他现有样式保持不变 ==================== */
-.time-button {
-  border-radius: 2px;
-  border: 1px solid white;
-  margin: 0px 2px;
-  padding: 0px;
-  background-color: rgba(255, 254, 253, 0.8);
-  background-image: none;
-}
-
-.time-button:hover {
-  background-color: cyan;
-  background-image: none;
-  color: darkorange;
-}
-
 .layout-button {
   margin: 0px 2px;
   padding: 0px;
   font-size: 12px;
 }
 
-.screenshot-button {
-  margin: 0px 2px;
-  padding: 0px;
-  border-radius: 2px;
-  border: 0.5px solid white;
-  background-color: rgba(255, 254, 253, 0.8);
-  background-image: none;
-}
-
-.screenshot-button:hover {
-  background-color: cyan;
-  background-image: none;
-  color: darkorange;
-}
-
 .layout-label {
   color: orange;
 }
 
-/* 彩虹渐变 */
-.rainbow-progress progress {
-  background: linear-gradient(
-    to left,
-    #ff0000,
-    #ff8000,
-    #ffff00,
-    #00ff00,
-    #0080ff,
-    #8000ff
-  );
-  border-radius: 1px;
+/* ==================== Metric 胶囊标签 ==================== */
+.metric-label {
+  padding: 2px 10px;
+  border-radius: 999px;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  border: 1px solid rgba(0,0,0,0.06);
+  background-color: #f5f7fa;
+  color: #333;
+  transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
+  box-shadow: inset 0 0 0 0 rgba(0, 0, 0, 0), 0 1px 2px rgba(0,0,0,0.05);
 }
 
-/* 金属质感 */
-.metal-progress progress {
-  background: linear-gradient(
-    to left,
-    #c0c0c0 0%,
-    #808080 50%,
-    #404040 51%,
-    #c0c0c0 100%
-  );
-  border: 1px solid #666;
+/* 等级颜色：根据占用百分比动态切换 */
+.metric-label.level-ok {
+  background-color: #e6f7ea;     /* 低占用：柔和绿 */
+  color: #18794e;
+  border-color: #c9eed5;
+}
+.metric-label.level-warn {
+  background-color: #fff8e6;     /* 中占用：浅黄 */
+  color: #8a5d00;
+  border-color: #ffeab8;
+}
+.metric-label.level-high {
+  background-color: #fff2e8;     /* 高占用：浅橙 */
+  color: #9f3a0d;
+  border-color: #ffd3bf;
+}
+.metric-label.level-crit {
+  background-color: #ffeaea;     /* 危险：浅红 */
+  color: #a8071a;
+  border-color: #ffc1c1;
+  box-shadow: 0 1px 6px rgba(168, 7, 26, 0.12);
 }
 
-/* 霓虹效果 */
-.neon-progress progress {
-  background: linear-gradient(to left, #ff00ff, #00ffff);
-  border-radius: 1px;
+/* 可选：悬停微动效（若需要） */
+.metric-label:hover {
+  box-shadow: 0 2px 6px rgba(0,0,0,0.30);
+}
+
+/* Time 胶囊样式（柔和中性色调） */
+.time-button {
+  margin: 0 2px;
+  padding: 2px 12px;            /* 胶囊内边距 */
+  border-radius: 999px;         /* 胶囊圆角 */
+  border: 1px solid #e5e7eb;    /* #e5e7eb = neutral 边框 */
+  background-color: #BABC7F;    /* #f9fafb = 非纯白，更柔和 */
+  color: #374151;               /* #374151 = slate-700 */
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  background-image: none;
+  transition: background-color 160ms ease, color 160ms ease,
+              border-color 160ms ease, box-shadow 160ms ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+
+.time-button:hover {
+  background-color: #f3f4f6;    /* hover 略深一点的灰白 */
+  border-color: #d1d5db;
+  box-shadow: 0 2px 6px rgba(0,0,0,0.08);
+  color: #111827;               /* #111827 = 更深的文字 */
+}
+
+.time-button:active {
+  background-color: #e5e7eb;    /* active 压下去更深 */
+  border-color: #cfd3da;
+  box-shadow: inset 0 1px 2px rgba(0,0,0,0.12);
+}
+
+.time-button:focus-visible {
+  outline: none;
+  border-color: #93c5fd;        /* 焦点边框偏蓝 */
+  box-shadow: 0 0 0 3px rgba(59,130,246,0.25); /* focus ring */
+}
+
+/* Screenshot 胶囊样式（略带冷色强调） */
+.screenshot-button {
+  margin: 0 2px;
+  padding: 2px 12px;            /* 胶囊内边距 */
+  border-radius: 999px;         /* 胶囊圆角 */
+  border: 1px solid #c7ecf5;    /* 冷色系边框 */
+  background-color: #eefbff;    /* 柔和浅蓝青底 */
+  color: #0e7490;               /* teal-700 文字 */
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  background-image: none;
+  transition: background-color 160ms ease, color 160ms ease,
+              border-color 160ms ease, box-shadow 160ms ease;
+  box-shadow: 0 1px 2px rgba(14, 116, 144, 0.06);
+}
+
+.screenshot-button:hover {
+  background-color: #e6f8ff;    /* hover 略深 */
+  border-color: #b3e6f2;
+  color: #0a5161;
+  box-shadow: 0 2px 6px rgba(14, 116, 144, 0.12);
+}
+
+.screenshot-button:active {
+  background-color: #dbf3ff;    /* active 再深一点 */
+  border-color: #a6deea;
+  box-shadow: inset 0 1px 2px rgba(14, 116, 144, 0.18);
+}
+
+.screenshot-button:focus-visible {
+  outline: none;
+  border-color: #67e8f9;        /* 更亮的冷色焦点 */
+  box-shadow: 0 0 0 3px rgba(103, 232, 249, 0.35);
 }

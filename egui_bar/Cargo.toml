@@ -28,16 +28,15 @@ font-kit = "0.11"
 # 共享内存（原项目依赖）
 # shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
 shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
-egui = "0.31.1"
-egui_plot = "0.32.1"
-eframe = { version = "0.31.1", features = ["persistence"] }
 thiserror = "2.0.12"
 tempfile = "3.20.0"
 battery = "0.7.8"
-egui_extras = { version = "0.31.1", features = ["all_loaders"] }
 image = "0.25.6"
 once = "0.3.4"
 tokio = { version = "1.47.1", features = ["full"] }
+eframe = { version = "0.32.2", features = ["persistence"] }
+egui_plot = "0.33.0"
+egui = "0.32.2"
 
 [features]
 default = []

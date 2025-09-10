@@ -40,8 +40,6 @@ async fn main() -> eframe::Result<()> {
         native_options,
         Box::new(move |cc| match EguiBarApp::new(cc, shared_path) {
             Ok(app) => {
-                // don't do this every frame - only when the app is created!
-                egui_extras::install_image_loaders(&cc.egui_ctx);
                 info!("Application created successfully");
                 Ok(Box::new(app))
             }

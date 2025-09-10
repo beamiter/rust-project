@@ -1,5 +1,5 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<!-- Created with Cambalache 0.94.1 -->
+<!-- Created with Cambalache 0.96.1 -->
 <interface>
   <!-- interface-name main_layout.ui -->
   <requires lib="gtk" version="4.0"/>
@@ -24,6 +24,7 @@
             <property name="spacing">3</property>
             <child>
               <object class="GtkButton" id="tab_button_0">
+                <property name="height-request">32</property>
                 <property name="label">🍜</property>
                 <property name="width-request">40</property>
                 <style>
@@ -33,6 +34,7 @@
             </child>
             <child>
               <object class="GtkButton" id="tab_button_1">
+                <property name="height-request">32</property>
                 <property name="label">🎨</property>
                 <property name="width-request">40</property>
                 <style>
@@ -42,6 +44,7 @@
             </child>
             <child>
               <object class="GtkButton" id="tab_button_2">
+                <property name="height-request">32</property>
                 <property name="label">🍀</property>
                 <property name="width-request">40</property>
                 <style>
@@ -51,6 +54,7 @@
             </child>
             <child>
               <object class="GtkButton" id="tab_button_3">
+                <property name="height-request">32</property>
                 <property name="label">🧿</property>
                 <property name="width-request">40</property>
                 <style>
@@ -60,6 +64,7 @@
             </child>
             <child>
               <object class="GtkButton" id="tab_button_4">
+                <property name="height-request">32</property>
                 <property name="label">🌟</property>
                 <property name="width-request">40</property>
                 <style>
@@ -69,6 +74,7 @@
             </child>
             <child>
               <object class="GtkButton" id="tab_button_5">
+                <property name="height-request">32</property>
                 <property name="label">🐐</property>
                 <property name="width-request">40</property>
                 <style>
@@ -78,6 +84,7 @@
             </child>
             <child>
               <object class="GtkButton" id="tab_button_6">
+                <property name="height-request">32</property>
                 <property name="label">🏆</property>
                 <property name="width-request">40</property>
                 <style>
@@ -87,6 +94,7 @@
             </child>
             <child>
               <object class="GtkButton" id="tab_button_7">
+                <property name="height-request">32</property>
                 <property name="label">🕊️</property>
                 <property name="width-request">40</property>
                 <style>
@@ -96,6 +104,7 @@
             </child>
             <child>
               <object class="GtkButton" id="tab_button_8">
+                <property name="height-request">32</property>
                 <property name="label">🏡</property>
                 <property name="width-request">40</property>
                 <style>
@@ -108,6 +117,7 @@
         <child>
           <object class="GtkLabel" id="layout_label">
             <property name="halign">center</property>
+            <property name="height-request">32</property>
             <property name="label"> ? </property>
             <property name="width-request">40</property>
             <style>
@@ -117,29 +127,33 @@
         </child>
         <child>
           <object class="GtkScrolledWindow" id="layout_scroll">
+            <property name="height-request">32</property>
             <property name="hscrollbar-policy">automatic</property>
             <property name="vscrollbar-policy">never</property>
-            <property name="width-request">60</property>
+            <property name="width-request">120</property>
             <child>
               <object class="GtkBox" id="layout_box">
                 <property name="orientation">horizontal</property>
                 <property name="spacing">5</property>
                 <child>
                   <object class="GtkButton" id="layout_button_1">
+                    <property name="height-request">28</property>
                     <property name="label">[]=</property>
-                    <property name="width-request">40</property>
+                    <property name="width-request">38</property>
                   </object>
                 </child>
                 <child>
                   <object class="GtkButton" id="layout_button_2">
+                    <property name="height-request">28</property>
                     <property name="label">&lt;&gt;&lt;</property>
-                    <property name="width-request">40</property>
+                    <property name="width-request">38</property>
                   </object>
                 </child>
                 <child>
                   <object class="GtkButton" id="layout_button_3">
+                    <property name="height-request">28</property>
                     <property name="label">[M]</property>
-                    <property name="width-request">40</property>
+                    <property name="width-request">38</property>
                   </object>
                 </child>
               </object>
@@ -158,30 +172,22 @@
             <property name="orientation">horizontal</property>
             <property name="spacing">3</property>
             <child>
-              <object class="GtkBox" id="memory_vbox">
-                <property name="orientation">vertical</property>
-                <property name="spacing">10</property>
-                <child>
-                  <object class="GtkProgressBar" id="memory_progress">
-                    <property name="halign">center</property>
-                    <property name="valign">center</property>
-                    <property name="vexpand">True</property>
-                    <property name="width-request">200</property>
-                    <style>
-                      <class name="neon-progress"/>
-                    </style>
-                  </object>
-                </child>
+              <object class="GtkLabel" id="cpu_label">
+                <property name="justify">center</property>
+                <property name="label">0%</property>
+                <property name="width-request">40</property>
               </object>
             </child>
             <child>
-              <object class="GtkDrawingArea" id="cpu_drawing_area">
-                <property name="width-request">64</property>
+              <object class="GtkLabel" id="memory_label">
+                <property name="label">0%</property>
+                <property name="width-request">40</property>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="screenshot_button">
-                <property name="label"> s 1.0 </property>
+                <property name="height-request">32</property>
+                <property name="label"> 🎥 1.0 </property>
                 <property name="width-request">60</property>
                 <style>
                   <class name="screenshot-button"/>
@@ -190,6 +196,7 @@
             </child>
             <child>
               <object class="GtkButton" id="time_label">
+                <property name="height-request">32</property>
                 <property name="label">--:--</property>
                 <property name="width-request">60</property>
                 <style>
@@ -200,8 +207,9 @@
             <child>
               <object class="GtkLabel" id="monitor_label">
                 <property name="halign">center</property>
+                <property name="height-request">32</property>
                 <property name="label">🥇</property>
-                <property name="width-request">40</property>
+                <property name="width-request">30</property>
               </object>
             </child>
           </object>
