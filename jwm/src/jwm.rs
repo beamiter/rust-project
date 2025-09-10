@@ -2849,6 +2849,7 @@ impl Jwm {
         e: &ConfigureRequestEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[handle_regular_configure_request]");
+        let is_popup = self.is_popup_like(client_key);
 
         // 获取客户端基本信息
         let (is_floating, mon_key, _win) = if let Some(client) = self.clients.get(client_key) {
@@ -2898,6 +2899,22 @@ impl Jwm {
                 if e.value_mask.contains(ConfigWindow::HEIGHT) {
                     client.geometry.old_h = client.geometry.h;
                     client.geometry.h = e.height as i32;
+                }
+
+                if is_popup {
+                    // 最小干预：仅回 ACK/按应用请求配置
+                    if let Some(client) = self.clients.get(client_key) {
+                        self.x11rb_conn.configure_window(
+                            client.win,
+                            &ConfigureWindowAux::new()
+                                .x(client.geometry.x)
+                                .y(client.geometry.y)
+                                .width(client.geometry.w as u32)
+                                .height(client.geometry.h as u32),
+                        )?;
+                        self.x11rb_conn.flush()?;
+                    }
+                    return Ok(());
                 }
 
                 // 确保窗口不超出显示器边界
@@ -7728,6 +7745,19 @@ impl Jwm {
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if self.is_popup_like(client_key) {
+            if let Some(client) = self.clients.get_mut(client_key) {
+                client.geometry.border_w = 0;
+            }
+            let win = self.clients.get(client_key).unwrap().win;
+            self.set_window_border_width(win, 0)?;
+            // 不设置选中边框色
+            self.configure_client(client_key)?;
+            self.setclientstate(win, NORMAL_STATE as i64)?;
+            self.x11rb_conn.flush()?;
+            return Ok(());
+        }
+
         let win = if let Some(client) = self.clients.get(client_key) {
             client.win
         } else {
@@ -7786,6 +7816,21 @@ impl Jwm {
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[handle_new_client_focus]");
+        if self.is_popup_like(client_key) {
+            // 不更新 monitor.sel，不抢焦点
+            // 需要的话，只做一次 restack 提到父窗口之上
+            if let Some(c) = self.clients.get(client_key) {
+                self.x11rb_conn.configure_window(
+                    c.win,
+                    &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
+                )?;
+                self.x11rb_conn.flush()?;
+            }
+            // 维持父窗口焦点
+            self.focus(None)?;
+            return Ok(());
+        }
+
         // 检查新窗口所在的显示器是否是当前选中的显示器
         let (client_mon_key, is_never_focus) = if let Some(client) = self.clients.get(client_key) {
             (client.mon, client.state.never_focus)
@@ -8774,7 +8819,52 @@ impl Jwm {
         }
     }
 
+    fn get_window_types(&self, window: Window) -> Vec<Atom> {
+        if let Ok(reply) = self.x11rb_conn.get_property(
+            false,
+            window,
+            self.atoms._NET_WM_WINDOW_TYPE,
+            AtomEnum::ATOM,
+            0,
+            u32::MAX,
+        ) {
+            if let Ok(rep) = reply.reply() {
+                if rep.format == 32 {
+                    return rep.value32().into_iter().flatten().collect::<Vec<_>>();
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    fn is_popup_like(&self, client_key: ClientKey) -> bool {
+        let c = if let Some(c) = self.clients.get(client_key) {
+            c
+        } else {
+            return false;
+        };
+        let types = self.get_window_types(c.win);
+        let is_type_popup = types.iter().any(|&a| {
+            a == self.atoms._NET_WM_WINDOW_TYPE_POPUP_MENU
+                || a == self.atoms._NET_WM_WINDOW_TYPE_DROPDOWN_MENU
+                || a == self.atoms._NET_WM_WINDOW_TYPE_MENU
+                || a == self.atoms._NET_WM_WINDOW_TYPE_TOOLTIP
+                || a == self.atoms._NET_WM_WINDOW_TYPE_COMBO
+                || a == self.atoms._NET_WM_WINDOW_TYPE_NOTIFICATION
+        });
+        // 容错：有些应用只设置了 transient_for，不设置 window_type
+        let is_small_transient =
+            self.get_transient_for(c.win).is_some() && (c.geometry.w <= 700 && c.geometry.h <= 700);
+
+        is_type_popup || is_small_transient
+    }
+
     fn adjust_client_position(&mut self, client_key: ClientKey) {
+        if self.is_popup_like(client_key) {
+            // 对弹出式窗口完全不做位置修正，让应用自己控制锚点/偏移
+            return;
+        }
+
         let (client_total_width, client_mon_key_opt, win) =
             if let Some(client) = self.clients.get(client_key) {
                 (client.total_width(), client.mon, client.win)
