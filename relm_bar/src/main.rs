@@ -1,4 +1,3 @@
-use cairo::Context;
 use chrono::Local;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use gdk4_x11::x11::xlib::{XFlush, XMoveWindow};
@@ -8,7 +7,6 @@ use gtk4 as gtk;
 use gtk4::Window;
 use gtk4::glib::ControlFlow;
 use log::{error, info, warn};
-use relm4::abstractions::DrawHandler;
 use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDeque};
 use relm4::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmApp, SimpleComponent};
@@ -88,6 +86,21 @@ fn compute_tab_css_classes(s: Option<&TagStatus>) -> Vec<&'static str> {
     }
 }
 
+// Metric 胶囊的动态等级类
+fn metric_css_classes(usage: f64) -> Vec<&'static str> {
+    // usage: 0.0 ~ 1.0
+    let lvl = if usage < 0.50 {
+        "level-ok"
+    } else if usage < 0.70 {
+        "level-warn"
+    } else if usage < 0.85 {
+        "level-high"
+    } else {
+        "level-crit"
+    };
+    vec!["metric-label", lvl]
+}
+
 fn pick_emoji(i: usize) -> &'static str {
     match i {
         0 => "🍜",
@@ -132,8 +145,6 @@ pub struct AppModel {
     shared_buffer_opt: Option<SharedRingBuffer>,
     #[do_not_track]
     pub system_monitor: SystemMonitor,
-    #[do_not_track]
-    handler: DrawHandler,
 
     // Factory：标签集合
     #[do_not_track]
@@ -179,7 +190,7 @@ impl SimpleComponent for AppModel {
                 gtk::ScrolledWindow {
                     set_hscrollbar_policy: gtk::PolicyType::Automatic,
                     set_vscrollbar_policy: gtk::PolicyType::Never,
-                    set_width_request: 60,
+                    set_width_request: 120,
 
                     gtk::Box {
                         set_orientation: gtk::Orientation::Horizontal,
@@ -187,21 +198,24 @@ impl SimpleComponent for AppModel {
 
                         gtk::Button {
                             set_label: "[]=",
-                            set_width_request: 40,
+                            set_height_request: 28,
+                            set_width_request: 38,
                             add_css_class: "layout-button",
                             connect_clicked => AppInput::LayoutChanged(0),
                         },
 
                         gtk::Button {
                             set_label: "<><",
-                            set_width_request: 40,
+                            set_height_request: 28,
+                            set_width_request: 38,
                             add_css_class: "layout-button",
                             connect_clicked => AppInput::LayoutChanged(1),
                         },
 
                         gtk::Button {
                             set_label: "[M]",
-                            set_width_request: 40,
+                            set_height_request: 28,
+                            set_width_request: 38,
                             add_css_class: "layout-button",
                             connect_clicked => AppInput::LayoutChanged(2),
                         },
@@ -219,28 +233,28 @@ impl SimpleComponent for AppModel {
                     set_orientation: gtk::Orientation::Horizontal,
                     set_spacing: 3,
 
-                    // 内存进度条
-                    gtk::Box {
-                        set_orientation: gtk::Orientation::Vertical,
-                        set_spacing: 10,
-
-                        gtk::ProgressBar {
-                            set_halign: gtk::Align::Center,
-                            set_valign: gtk::Align::Center,
-                            set_vexpand: true,
-                            set_width_request: 200,
-                            #[watch]
-                            set_fraction: model.memory_usage,
-                            add_css_class: "neon-progress",
-                        },
+                    // 内存（胶囊标签）
+                    gtk::Label {
+                        #[watch]
+                        set_label: &format!("MEM {:>3}%", (model.memory_usage * 100.0).round() as u32),
+                        #[watch]
+                        set_css_classes: &metric_css_classes(model.memory_usage),
+                        set_height_request: 32,
+                        set_width_request: 86,
+                        set_halign: gtk::Align::Center,
+                        set_valign: gtk::Align::Center,
                     },
 
-                    // CPU使用率绘制区域
-                    #[local_ref]
-                    area -> gtk::DrawingArea {
-                      set_vexpand: true,
-                      set_hexpand: true,
-                      set_width_request: 64,
+                    // CPU（胶囊标签）
+                    gtk::Label {
+                        #[watch]
+                        set_label: &format!("CPU {:>3}%", (model.cpu_usage * 100.0).round() as u32),
+                        #[watch]
+                        set_css_classes: &metric_css_classes(model.cpu_usage),
+                        set_width_request: 86,
+                        set_height_request: 32,
+                        set_halign: gtk::Align::Center,
+                        set_valign: gtk::Align::Center,
                     },
 
                     // 截图按钮
@@ -301,15 +315,12 @@ impl SimpleComponent for AppModel {
         // 应用CSS样式
         load_css();
 
-        // 首帧初始化（在获取 area 前完成所有对 model 的可变操作）
+        // 首帧初始化
         model.update_time_display();
         sender.input(AppInput::SystemUpdate);
 
         // 启动后台任务
         spawn_background_tasks(sender.clone(), shared_path);
-
-        // DrawHandler 的 DrawingArea：clone 一份独立对象，避免持久借用 model
-        let area = model.handler.drawing_area().clone();
 
         // Factory 父容器
         let tabs_box = model.tabs.widget();
@@ -380,15 +391,6 @@ impl SimpleComponent for AppModel {
                 self.update_time_display();
             }
         }
-
-        // 更新CPU绘制
-        let ctx = self.handler.get_context();
-        draw_cpu_usage(
-            &ctx,
-            self.handler.width(),
-            self.handler.height(),
-            self.cpu_usage,
-        );
     }
 }
 
@@ -408,7 +410,6 @@ impl AppModel {
             shared_buffer_opt,
             system_monitor: SystemMonitor::new(1),
             tracker: 0,
-            handler: DrawHandler::new(),
             tabs,
         }
     }
@@ -497,35 +498,6 @@ impl AppModel {
             }
         }
     }
-}
-
-// CPU绘制函数
-fn draw_cpu_usage(ctx: &Context, width: i32, height: i32, cpu_usage: f64) {
-    let width_f = width as f64;
-    let height_f = height as f64;
-
-    // 清除背景
-    ctx.set_source_rgba(0.0, 0.0, 0.0, 0.0);
-    let _ = ctx.paint();
-
-    // 绘制背景
-    ctx.set_source_rgba(0.2, 0.2, 0.2, 0.3);
-    ctx.rectangle(0.0, 0.0, width_f, height_f);
-    let _ = ctx.fill();
-
-    // 绘制CPU使用率条
-    let used_height = height_f * cpu_usage;
-    let y_offset = height_f - used_height;
-
-    // 渐变
-    let gradient = cairo::LinearGradient::new(0.0, 0.0, 0.0, height_f);
-    gradient.add_color_stop_rgba(0.0, 1.0, 0.0, 0.0, 0.9);
-    gradient.add_color_stop_rgba(0.5, 1.0, 1.0, 0.0, 0.9);
-    gradient.add_color_stop_rgba(1.0, 0.0, 1.0, 1.0, 0.9);
-
-    let _ = ctx.set_source(&gradient);
-    ctx.rectangle(0.0, y_offset, width_f, used_height);
-    let _ = ctx.fill();
 }
 
 // 后台任务：glib 定时器 + 共享内存线程
