@@ -259,7 +259,7 @@ impl SimpleComponent for AppModel {
 
                     // 截图按钮
                     gtk::Button {
-                        set_label: " s 1.0 ",
+                        set_label: " 🎥 1.0 ",
                         set_width_request: 60,
                         add_css_class: "screenshot-button",
                         connect_clicked => AppInput::Screenshot,
