@@ -545,9 +545,9 @@ impl AppModel {
         // 与 UI 文件一致：仅显示百分比
         let cpu_pct = (self.cpu_usage * 100.0).round() as u32;
         let mem_pct = (self.memory_usage * 100.0).round() as u32;
-        self.cpu_label_widget.set_label(&format!("{:>3}%", cpu_pct));
+        self.cpu_label_widget.set_label(&format!("CPU {:>3}%", cpu_pct));
         self.memory_label_widget
-            .set_label(&format!("{:>3}%", mem_pct));
+            .set_label(&format!("MEM {:>3}%", mem_pct));
 
         // 应用等级类
         apply_metric_classes(&self.cpu_label_widget, self.cpu_usage);
