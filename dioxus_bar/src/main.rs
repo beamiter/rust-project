@@ -104,13 +104,19 @@ fn send_tag_command(
     is_view: bool,
 ) {
     let tag_bit = 1 << active_tab;
-    let cmd = if is_view {
-        SharedCommand::view_tag(tag_bit, monitor_id)
-    } else {
-        SharedCommand::toggle_tag(tag_bit, monitor_id)
-    };
+    the_cmd_send(
+        shared_buffer,
+        if is_view {
+            SharedCommand::view_tag(tag_bit, monitor_id)
+        } else {
+            SharedCommand::toggle_tag(tag_bit, monitor_id)
+        },
+    );
+}
+
+fn the_cmd_send(shared_buffer: &SharedRingBuffer, cmd: SharedCommand) {
     match shared_buffer.send_command(cmd) {
-        Ok(true) => info!("Sent command: {:?} by shared_buffer", cmd),
+        Ok(true) => info!("Sent command: by shared_buffer"),
         Ok(false) => warn!("Command buffer full, command dropped"),
         Err(e) => error!("Failed to send command: {}", e),
     }
@@ -118,11 +124,7 @@ fn send_tag_command(
 
 fn send_layout_command(shared_buffer: &SharedRingBuffer, monitor_id: i32, layout_index: u32) {
     let cmd = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
-    match shared_buffer.send_command(cmd) {
-        Ok(true) => info!("Sent layout command: {:?} by shared_buffer", cmd),
-        Ok(false) => warn!("Command buffer full, command dropped"),
-        Err(e) => error!("Failed to send layout command: {}", e),
-    }
+    the_cmd_send(shared_buffer, cmd);
 }
 
 /// 格式化字节为人类可读的格式
@@ -184,7 +186,7 @@ fn ScreenshotButton() -> Element {
             class: "pill screenshot-pill",
             onclick: take_screenshot,
             title: "截图 (Flameshot)",
-            if is_taking_screenshot() { "⏳" } else { "📸" }
+            { if is_taking_screenshot() { "⏳" } else { "📸" } }
         }
     }
 }
@@ -218,23 +220,32 @@ fn SystemInfoDisplay(snapshot: Option<SystemSnapshot>) -> Element {
             "usage-danger"
         };
 
-        let battery_icon = if s.is_charging { "🔌" } else { "🔋" };
+        let cpu_cls = format!("pill usage-pill {}", cpu_class);
+        let mem_cls = format!("pill usage-pill {}", mem_class);
+        let batt_cls = format!("pill usage-pill {}", batt_class);
+
+        let mem_title = format!(
+            "内存使用: {} / {}",
+            format_bytes(s.memory_used),
+            format_bytes(s.memory_total)
+        );
+        let batt_title = if s.is_charging {
+            format!("电池充电中: {:.1}%", s.battery_percent)
+        } else {
+            format!("电池电量: {:.1}%", s.battery_percent)
+        };
+        let batt_icon = if s.is_charging { "🔌" } else { "🔋" };
 
         rsx! {
             div { class: "system-info-container",
-                div { class: "pill usage-pill {cpu_class}", title: "CPU 平均使用率",
+                div { class: "{cpu_cls}", title: "CPU 平均使用率",
                     {format!("CPU {:.0}%", s.cpu_average)}
                 }
-                div { class: "pill usage-pill {mem_class}", title: format!("内存使用: {} / {}", format_bytes(s.memory_used), format_bytes(s.memory_total)),
+                div { class: "{mem_cls}", title: "{mem_title}",
                     {format!("MEM {:.0}%", s.memory_usage_percent)}
                 }
-                div { class: "pill usage-pill {batt_class}",
-                    title: if s.is_charging {
-                        format!("电池充电中: {:.1}%", s.battery_percent)
-                    } else {
-                        format!("电池电量: {:.1}%", s.battery_percent)
-                    },
-                    {format!("{} {:.0}%", battery_icon, s.battery_percent)}
+                div { class: "{batt_cls}", title: "{batt_title}",
+                    {format!("{} {:.0}%", batt_icon, s.battery_percent)}
                 }
             }
         }
@@ -281,7 +292,7 @@ fn TimeText(show_seconds: bool) -> Element {
     rsx! { span { "{time_str}" } }
 }
 
-// 将按钮数据定义为静态常量（换成更语义化的 emoji）
+// 将按钮数据定义为静态常量（可改为你的动物 emoji，以保持样式不变，这里用更语义化的）
 const BUTTONS: &[&str] = &["🏠", "💻", "🌐", "🎵", "📁", "🎮", "📧", "🔧", "📊"];
 
 // 定义按钮状态枚举
@@ -531,7 +542,7 @@ fn App() -> Element {
         div { class: "button-row",
 
             div { class: "buttons-container",
-                // 工作区按钮
+                // 工作区按钮（Tag）
                 for (i, emoji) in BUTTONS.iter().enumerate() {
                     {
                         let base_class = get_button_class(i, &button_states());
@@ -560,7 +571,7 @@ fn App() -> Element {
                     }
                 }
 
-                // 布局切换 + 选项
+                // 布局切换 + 选项（Pill）
                 div { class: "layout-controls",
                     // 开关按钮
                     {
@@ -612,7 +623,7 @@ fn App() -> Element {
             // 中间撑开
             div { class: "spacer" }
 
-            // 右侧信息
+            // 右侧信息（Pill）
             div { class: "right-info-container",
                 SystemInfoDisplay { snapshot: system_snapshot() }
                 ScreenshotButton {}

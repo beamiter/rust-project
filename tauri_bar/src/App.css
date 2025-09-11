@@ -740,3 +740,130 @@ body {
     transform: scale(0.95) !important;
   }
 }
+
+/* ========= 新增：通用 pill 样式 ========= */
+.pill {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 12px;
+  padding: 4px 10px;
+  font-size: 14px;
+  line-height: 1;
+  border: 1px solid transparent;
+  transition: all 120ms ease-in-out;
+  white-space: nowrap;
+}
+
+/* ========= 新增：系统指标 pill 颜色等级 ========= */
+.system-info-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.usage-pill {
+  color: #fff;
+  border-width: 1px;
+}
+
+.usage-good {
+  background: rgba(31, 191, 81, 0.90);
+  border-color: #1fbf51;
+}
+.usage-warn {
+  background: rgba(244, 194, 13, 0.90);
+  border-color: #f4c20d;
+  color: #000;
+}
+.usage-caution {
+  background: rgba(255, 140, 26, 0.90);
+  border-color: #ff8c1a;
+}
+.usage-danger {
+  background: rgba(229, 57, 53, 0.90);
+  border-color: #e53935;
+}
+
+/* ========= 新增：布局开关与选项 ========= */
+.layout-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
+}
+
+.layout-toggle {
+  cursor: pointer;
+  color: #fff;
+}
+
+.layout-toggle.open {
+  background: rgba(60, 179, 113, 0.85); /* 绿色 */
+  border-color: #3cb371;
+}
+.layout-toggle.closed {
+  background: rgba(211, 84, 0, 0.85); /* 橙色 */
+  border-color: #d35400;
+}
+.layout-toggle:hover {
+  filter: brightness(1.05);
+  border-width: 2px;
+}
+
+.layout-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.layout-option {
+  cursor: pointer;
+  color: #fff;
+  background: rgba(65, 105, 225, 0.85); /* royal blue */
+  border-color: #4169e1;
+}
+.layout-option.current {
+  background: rgba(60, 179, 113, 0.9); /* open 绿 */
+  border-color: #3cb371;
+  border-width: 2px;
+}
+.layout-option:hover {
+  filter: brightness(1.05);
+  border-width: 2px;
+}
+
+/* ========= 新增：截图/时间/显示器/缩放 pill ========= */
+.screenshot-pill {
+  cursor: pointer;
+  color: #fff;
+  background: rgba(0, 204, 204, 0.9);
+  border-color: #00cccc;
+}
+.screenshot-pill:hover {
+  background: rgba(255, 136, 0, 0.95);
+  border-color: #ff8800;
+}
+
+.time-pill {
+  color: #fff;
+  background: rgba(77, 163, 255, 0.90);
+  border-color: #4da3ff;
+  cursor: pointer;
+}
+
+.monitor-pill {
+  color: #fff;
+  background: rgba(155, 89, 182, 0.90);
+  border-color: #9b59b6;
+}
+
+.scale-pill {
+  color: #fff;
+  background: rgba(120, 120, 120, 0.88);
+  border-color: #777;
+}
+
+/* 中间撑开（如果没有的话新增） */
+.spacer {
+  flex: 1 1 auto;
+}

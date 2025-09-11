@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import "./App.css"; // 导入我们的样式
+import "./App.css";
 
 // --- 类型定义，与后端 Rust 结构体对应 ---
 interface TagStatus {
@@ -19,7 +19,7 @@ interface MonitorInfoSnapshot {
   monitor_y: number;
   tag_status_vec: TagStatus[];
   client_name: string;
-  ltsymbol: string;
+  ltsymbol: string; // 形如: "[]=" 或 "[]=" + " s: 1.00, m: 0"
 }
 
 interface SystemSnapshot {
@@ -36,7 +36,7 @@ interface UiState {
   system_snapshot: SystemSnapshot | null;
 }
 
-// --- 帮助函数 (从 Rust 移植到 JS) ---
+// --- 帮助函数 ---
 const BUTTONS = ["🐖", "🐄", "🐂", "🐃", "🦥", "🦣", "🐏", "🦆", "🐢"];
 
 const getButtonClass = (tagStatus: TagStatus): string => {
@@ -55,6 +55,23 @@ const formatBytes = (bytes: number): string => {
   return `${size}${UNITS[i]}`;
 };
 
+// 解析 ltsymbol：提取布局符号与缩放因子
+function parseLtSymbol(lts: string | undefined) {
+  if (!lts) return { symbol: "[]=", scale: undefined };
+  const symbolMatch = lts.match(/^(\S+)/);
+  const scaleMatch = lts.match(/s:\s*([0-9.]+)/i);
+  const symbol = symbolMatch ? symbolMatch[1] : "[]=";
+  const scale = scaleMatch ? parseFloat(scaleMatch[1]) : undefined;
+  return { symbol, scale };
+}
+
+function monitorIcon(num: number) {
+  // Nerd Font 字体存在时会显示图标，否则你可以改为 `M${num}`
+  if (num === 0) return "󰎡";
+  if (num === 1) return "󰎤";
+  return `M${num}`;
+}
+
 // --- 子组件 ---
 
 const TagButtons = (
@@ -72,19 +89,18 @@ const TagButtons = (
       tagIndex: index,
       isView: true,
       monitorId: monitorNum,
-    });
+    }).catch((e) => console.error(e));
   };
 
   return (
     <>
       {BUTTONS.map((emoji, i) => {
-        const tagStatus = tags[i] ||
-          {
-            is_selected: false,
-            is_urg: false,
-            is_filled: false,
-            is_occ: false,
-          };
+        const tagStatus = tags[i] || {
+          is_selected: false,
+          is_urg: false,
+          is_filled: false,
+          is_occ: false,
+        };
         const baseClass = getButtonClass(tagStatus);
         const isPressed = pressedButton === i;
         const buttonClass = isPressed ? `${baseClass} pressed` : baseClass;
@@ -105,70 +121,49 @@ const TagButtons = (
   );
 };
 
-const SystemInfoDisplay = (
-  { snapshot }: { snapshot: SystemSnapshot | null },
-) => {
+const SystemInfoDisplay = ({ snapshot }: { snapshot: SystemSnapshot | null }) => {
   if (!snapshot) {
-    // 渲染占位符
     return (
       <div className="system-info-container">
-        {/* ... 省略占位符 JSX ... */}
+        <div className="pill usage-pill usage-warn">CPU --%</div>
+        <div className="pill usage-pill usage-warn">MEM --%</div>
+        <div className="pill usage-pill usage-warn">🔋 --%</div>
       </div>
     );
   }
 
-  const getCpuColor = (avg: number) =>
-    avg > 80 ? "#dc3545" : avg > 60 ? "#ffc107" : "#28a745";
-  const getMemColor = (perc: number) =>
-    perc > 85 ? "#dc3545" : perc > 70 ? "#ffc107" : "#28a745";
-  const getBatteryColor = (perc: number) =>
-    perc > 50 ? "#28a745" : perc > 20 ? "#ffc107" : "#dc3545";
-  const getBatteryIcon = (perc: number, isCharging: boolean) => {
-    if (isCharging) return "🔌";
-    if (perc > 75) return "🔋";
-    return "🪫";
-  };
+  const sev = (p: number) =>
+    p <= 30 ? "usage-good" : p <= 60 ? "usage-warn" : p <= 80 ? "usage-caution" : "usage-danger";
+
+  const cpuClass = sev(snapshot.cpu_average);
+  const memClass = sev(snapshot.memory_usage_percent);
+  const battClass = snapshot.battery_percent > 50
+    ? "usage-good"
+    : snapshot.battery_percent > 20
+    ? "usage-warn"
+    : "usage-danger";
+  const batteryIcon = snapshot.is_charging ? "🔌" : "🔋";
 
   return (
     <div className="system-info-container">
-      <div className="system-metric" title="CPU 平均使用率">
-        <span className="metric-icon">💻</span>
-        <span
-          className="metric-value"
-          style={{ color: getCpuColor(snapshot.cpu_average) }}
-        >
-          {snapshot.cpu_average.toFixed(1)}%
-        </span>
+      <div className={`pill usage-pill ${cpuClass}`} title="CPU 平均使用率">
+        {`CPU ${snapshot.cpu_average.toFixed(0)}%`}
       </div>
       <div
-        className="system-metric"
-        title={`内存使用: ${formatBytes(snapshot.memory_used)} / ${
-          formatBytes(snapshot.memory_total)
-        }`}
+        className={`pill usage-pill ${memClass}`}
+        title={`内存使用: ${formatBytes(snapshot.memory_used)} / ${formatBytes(snapshot.memory_total)}`}
       >
-        <span className="metric-icon">🧠</span>
-        <span
-          className="metric-value"
-          style={{ color: getMemColor(snapshot.memory_usage_percent) }}
-        >
-          {snapshot.memory_usage_percent.toFixed(1)}%
-        </span>
+        {`MEM ${snapshot.memory_usage_percent.toFixed(0)}%`}
       </div>
       <div
-        className="system-metric"
-        title={snapshot.is_charging
-          ? `电池充电中: ${snapshot.battery_percent.toFixed(1)}%`
-          : `电池电量: ${snapshot.battery_percent.toFixed(1)}%`}
+        className={`pill usage-pill ${battClass}`}
+        title={
+          snapshot.is_charging
+            ? `电池充电中: ${snapshot.battery_percent.toFixed(1)}%`
+            : `电池电量: ${snapshot.battery_percent.toFixed(1)}%`
+        }
       >
-        <span className="metric-icon">
-          {getBatteryIcon(snapshot.battery_percent, snapshot.is_charging)}
-        </span>
-        <span
-          className="metric-value"
-          style={{ color: getBatteryColor(snapshot.battery_percent) }}
-        >
-          {snapshot.battery_percent.toFixed(0)}%
-        </span>
+        {`${batteryIcon} ${snapshot.battery_percent.toFixed(0)}%`}
       </div>
     </div>
   );
@@ -185,24 +180,18 @@ const ScreenshotButton = () => {
     } catch (e) {
       console.error(e);
     } finally {
-      // 添加一个短暂延迟以改善用户体验
       setTimeout(() => setIsTaking(false), 500);
     }
   };
 
-  const buttonClass = isTaking
-    ? "screenshot-button taking"
-    : "screenshot-button";
-
   return (
-    <button
-      className={buttonClass}
+    <div
+      className={`pill screenshot-pill ${isTaking ? "taking" : ""}`}
       onClick={handleClick}
       title="截图 (Flameshot)"
-      disabled={isTaking}
     >
-      <span className="screenshot-icon">{isTaking ? "⏳" : "📷"}</span>
-    </button>
+      {isTaking ? "⏳" : "📸"}
+    </div>
   );
 };
 
@@ -211,28 +200,66 @@ const TimeDisplay = () => {
   const [time, setTime] = useState(new Date());
 
   useEffect(() => {
-    const interval = setInterval(() => {
-      setTime(new Date());
-    }, showSeconds ? 1000 : 60000);
+    const interval = setInterval(() => setTime(new Date()), showSeconds ? 1000 : 60000);
     return () => clearInterval(interval);
   }, [showSeconds]);
 
-  const format = (d: Date) => {
-    const pad = (n: number) => n.toString().padStart(2, "0");
-    const timeStr = `${pad(d.getHours())}:${pad(d.getMinutes())}${
+  const pad = (n: number) => n.toString().padStart(2, "0");
+  const formatted = useMemo(() => {
+    const d = time;
+    const ts = `${pad(d.getHours())}:${pad(d.getMinutes())}${
       showSeconds ? `:${pad(d.getSeconds())}` : ""
     }`;
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${
-      pad(d.getDate())
-    } ${timeStr}`;
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${ts}`;
+  }, [time, showSeconds]);
+
+  return (
+    <div className="pill time-pill" onClick={() => setShowSeconds(!showSeconds)} title="点击切换秒显示">
+      {formatted}
+    </div>
+  );
+};
+
+const LayoutControls = ({
+  ltsymbol,
+  monitorNum,
+}: {
+  ltsymbol: string;
+  monitorNum: number;
+}) => {
+  const [open, setOpen] = useState(false);
+  const { symbol } = parseLtSymbol(ltsymbol);
+
+  const toggleClass = `pill layout-toggle ${open ? "open" : "closed"}`;
+  const optClass = (sym: string) =>
+    `pill layout-option ${symbol === sym ? "current" : ""}`;
+
+  const onSelect = (idx: number) => {
+    setOpen(false);
+    invoke("send_layout_command", {
+      layoutIndex: idx,
+      monitorId: monitorNum,
+    }).catch((e) => console.error(e));
   };
 
   return (
-    <div
-      className="time-container"
-      onClick={() => setShowSeconds(!showSeconds)}
-    >
-      <div className="time-display">{format(time)}</div>
+    <div className="layout-controls">
+      <div className={toggleClass} onClick={() => setOpen(!open)} title="切换布局">
+        {symbol}
+      </div>
+      {open && (
+        <div className="layout-selector">
+          <div className={optClass("[]=")} onClick={() => onSelect(0)}>
+            []=
+          </div>
+          <div className={optClass("><>")} onClick={() => onSelect(1)}>
+            <>{"><>"}</>
+          </div>
+          <div className={optClass("[M]")} onClick={() => onSelect(2)}>
+            [M]
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -247,55 +274,46 @@ function App() {
   useEffect(() => {
     console.log("Tauri React frontend has loaded.");
 
-    // 监听监视器信息更新
-    const unlistenMonitor = listen<MonitorInfoSnapshot>(
-      "monitor-update",
-      (event) => {
-        console.log("Received monitor update:", event.payload);
-        setAppState((prev) => ({
-          ...prev,
-          monitor_info_snapshot: event.payload,
-        }));
-      },
-    );
-
-    // 监听系统信息更新
-    const unlistenSystem = listen<SystemSnapshot>("system-update", (event) => {
-      console.log("Received system update:", event.payload);
-      setAppState((prev) => ({
-        ...prev,
-        system_snapshot: event.payload,
-      }));
+    const unlistenMonitor = listen<MonitorInfoSnapshot>("monitor-update", (event) => {
+      setAppState((prev) => ({ ...prev, monitor_info_snapshot: event.payload }));
     });
 
-    // 组件卸载时清理监听器
+    const unlistenSystem = listen<SystemSnapshot>("system-update", (event) => {
+      setAppState((prev) => ({ ...prev, system_snapshot: event.payload }));
+    });
+
     return () => {
       unlistenMonitor.then((f) => f());
       unlistenSystem.then((f) => f());
     };
   }, []);
 
-  // 如果监视器信息还没加载，显示加载状态
   if (!appState.monitor_info_snapshot) {
     return <div className="button-row">Loading...</div>;
   }
 
+  const mis = appState.monitor_info_snapshot;
+  const { scale } = parseLtSymbol(mis.ltsymbol);
+
   return (
     <div className="button-row">
       <div className="buttons-container">
-        <TagButtons
-          tags={appState.monitor_info_snapshot.tag_status_vec}
-          monitorNum={appState.monitor_info_snapshot.monitor_num}
-        />
-        <span className="layout-symbol" title="当前布局">
-          {appState.monitor_info_snapshot.ltsymbol}
-        </span>
+        <TagButtons tags={mis.tag_status_vec} monitorNum={mis.monitor_num} />
+        <LayoutControls ltsymbol={mis.ltsymbol} monitorNum={mis.monitor_num} />
       </div>
+
+      <div className="spacer" />
 
       <div className="right-info-container">
         <SystemInfoDisplay snapshot={appState.system_snapshot} />
         <ScreenshotButton />
         <TimeDisplay />
+        <div className="pill monitor-pill" title="显示器">
+          {"🖥️ " + monitorIcon(mis.monitor_num)}
+        </div>
+        <div className="pill scale-pill" title="Scale Factor">
+          {scale !== undefined ? `s: ${scale.toFixed(2)}` : "s: --"}
+        </div>
       </div>
     </div>
   );

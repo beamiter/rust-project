@@ -86,7 +86,7 @@ body, html {
   white-space: nowrap;
 }
 
-/* 工作区按钮 */
+/* 工作区按钮（保持不变） */
 .emoji-button {
   width: 40px;
   height: 30px;
@@ -112,45 +112,16 @@ body, html {
 .buttons-container .emoji-button:nth-child(8)  { --tag-color: var(--tag-8); }
 .buttons-container .emoji-button:nth-child(9)  { --tag-color: var(--tag-9); }
 
-.emoji-button.state-default {
-  background: transparent;
-  border-color: transparent;
-}
-.emoji-button.state-occupied {
-  /* 模拟“淡色占用” */
-  background: rgba(127,127,127,0.12);
-  border-color: transparent;
-}
-.emoji-button.state-selected {
-  background: rgba(127,127,127,0.22);
-  border-color: var(--tag-color);
-  border-width: 1.5px;
-}
-.emoji-button.state-filtered {
-  /* 对应 iced 的 filled：更实的颜色和更粗边框 */
-  background: var(--tag-color);
-  border-color: var(--tag-color);
-  border-width: 2px;
-  color: #000;
-}
-.emoji-button.state-urgent {
-  background: rgba(255, 0, 0, 0.8);
-  border-color: #8a2be2; /* violet */
-  border-width: 2.5px;
-  color: #fff;
-}
+.emoji-button.state-default { background: transparent; border-color: transparent; }
+.emoji-button.state-occupied { background: rgba(127,127,127,0.12); border-color: transparent; }
+.emoji-button.state-selected { background: rgba(127,127,127,0.22); border-color: var(--tag-color); border-width: 1.5px; }
+.emoji-button.state-filtered { background: var(--tag-color); border-color: var(--tag-color); border-width: 2px; color: #000; }
+.emoji-button.state-urgent { background: rgba(255, 0, 0, 0.8); border-color: #8a2be2; border-width: 2.5px; color: #fff; }
 
-/* hover/press */
-.emoji-button:hover {
-  filter: brightness(1.05);
-  border-width: 2px;
-}
-.emoji-button.pressed {
-  transform: translateY(1px) scale(0.98);
-  filter: brightness(0.95);
-}
+.emoji-button:hover { filter: brightness(1.05); border-width: 2px; }
+.emoji-button.pressed { transform: translateY(1px) scale(0.98); filter: brightness(0.95); }
 
-/* 布局开关 & 选项 */
+/* 布局开关 & 选项（与 tauri_bar 优化版一致） */
 .layout-controls {
   display: inline-flex;
   align-items: center;
@@ -158,88 +129,32 @@ body, html {
   margin-left: 6px;
 }
 
-.layout-toggle {
-  cursor: pointer;
-  color: #fff;
-}
-.layout-toggle.open {
-  background: rgba(60, 179, 113, 0.85); /* var(--layout-open) */
-  border-color: #3cb371;
-}
-.layout-toggle.closed {
-  background: rgba(211, 84, 0, 0.85); /* var(--layout-closed) */
-  border-color: #d35400;
-}
-.layout-toggle:hover {
-  filter: brightness(1.05);
-  border-width: 2px;
-}
+.layout-toggle { cursor: pointer; color: #fff; }
+.layout-toggle.open   { background: rgba(60, 179, 113, 0.85); border-color: #3cb371; }
+.layout-toggle.closed { background: rgba(211, 84, 0, 0.85);  border-color: #d35400; }
+.layout-toggle:hover { filter: brightness(1.05); border-width: 2px; }
 
-.layout-selector {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
-.layout-option {
-  cursor: pointer;
-  color: #fff;
-  background: rgba(65, 105, 225, 0.85); /* royal blue */
-  border-color: #4169e1;
-}
-.layout-option.current {
-  background: rgba(60, 179, 113, 0.9); /* var(--layout-open) */
-  border-color: #3cb371;
-  border-width: 2px;
-}
-.layout-option:hover {
-  filter: brightness(1.05);
-  border-width: 2px;
-}
+.layout-selector { display: inline-flex; align-items: center; gap: 6px; }
+.layout-option { cursor: pointer; color: #fff; background: rgba(65, 105, 225, 0.85); border-color: #4169e1; }
+.layout-option.current { background: rgba(60, 179, 113, 0.9); border-color: #3cb371; border-width: 2px; }
+.layout-option:hover { filter: brightness(1.05); border-width: 2px; }
 
-/* 系统指标（CPU/MEM/电池） */
-.system-info-container {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-}
+/* 系统指标（CPU/MEM/电池） pill */
+.system-info-container { display: inline-flex; align-items: center; gap: 6px; }
 
-.usage-pill {
-  color: #fff;
-  border-width: 1px;
-}
+.usage-pill { color: #fff; border-width: 1px; }
 .usage-good    { background: rgba(31, 191, 81, 0.90);  border-color: #1fbf51; }
 .usage-warn    { background: rgba(244, 194, 13, 0.90); border-color: #f4c20d; color: #000; }
 .usage-caution { background: rgba(255, 140, 26, 0.90); border-color: #ff8c1a; }
 .usage-danger  { background: rgba(229, 57, 53, 0.90);  border-color: #e53935; }
 
 /* 截图 pill */
-.screenshot-pill {
-  cursor: pointer;
-  color: #fff;
-  background: rgba(0, 204, 204, 0.9);
-  border-color: #00cccc;
-}
-.screenshot-pill:hover {
-  background: rgba(255, 136, 0, 0.95);
-  border-color: #ff8800;
-}
+.screenshot-pill { cursor: pointer; color: #fff; background: rgba(0, 204, 204, 0.9); border-color: #00cccc; }
+.screenshot-pill:hover { background: rgba(255, 136, 0, 0.95); border-color: #ff8800; }
 
 /* 时间 pill */
-.time-pill {
-  color: #fff;
-  background: rgba(77, 163, 255, 0.90);
-  border-color: #4da3ff;
-  cursor: pointer;
-}
+.time-pill { color: #fff; background: rgba(77, 163, 255, 0.90); border-color: #4da3ff; cursor: pointer; }
 
 /* 监视器/缩放 pill */
-.monitor-pill {
-  color: #fff;
-  background: rgba(155, 89, 182, 0.90);
-  border-color: #9b59b6;
-}
-.scale-pill {
-  color: #fff;
-  background: rgba(120, 120, 120, 0.88);
-  border-color: #777;
-}
+.monitor-pill { color: #fff; background: rgba(155, 89, 182, 0.90); border-color: #9b59b6; }
+.scale-pill   { color: #fff; background: rgba(120, 120, 120, 0.88); border-color: #777; }

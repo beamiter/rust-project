@@ -16,7 +16,7 @@ use tokio::time::sleep;
 mod error;
 use error::AppError;
 mod system_monitor;
-use shared_structures::{MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer};
+use shared_structures::{MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer, CommandType};
 use system_monitor::{SystemMonitor, SystemSnapshot};
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -176,6 +176,23 @@ fn send_tag_command(
     }
 }
 
+/// Tauri 命令：切换布局
+#[tauri::command]
+fn send_layout_command(
+    layout_index: u32,
+    monitor_id: i32,
+    state: tauri::State<'_, AppState>,
+) {
+    let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
+    if let Some(shared_buffer) = state.shared_buffer.as_ref() {
+        match shared_buffer.send_command(command) {
+            Ok(true) => info!("Sent layout command: {:?} by shared_buffer", command),
+            Ok(false) => warn!("Command buffer full, command dropped"),
+            Err(e) => error!("Failed to send layout command: {}", e),
+        }
+    }
+}
+
 /// Tauri 命令：执行截图
 #[tauri::command]
 async fn take_screenshot() -> Result<(), String> {
@@ -303,19 +320,6 @@ async fn main() {
         eprintln!("Failed to initialize logging: {}", e);
     }
 
-    let mut instance_name = shared_path.replace("/dev/shm/monitor_", "tauri_bar_");
-    if instance_name.is_empty() {
-        instance_name = "tauri_bar".to_string();
-    }
-
-    let mut context = tauri::generate_context!();
-    context.config_mut().product_name = Some(instance_name.clone());
-    info!("product_name: {:?}", context.config_mut().product_name);
-
-    instance_name = format!("{}.{}", instance_name, instance_name);
-    info!("instance_name: {}", instance_name);
-    context.config_mut().identifier = instance_name;
-
     info!("=== Environment Debug Info ===");
     let shared_path_clone = shared_path.clone();
 
@@ -333,7 +337,11 @@ async fn main() {
 
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![send_tag_command, take_screenshot])
-        .run(context)
+        .invoke_handler(tauri::generate_handler![
+            send_tag_command,
+            send_layout_command,
+            take_screenshot
+        ])
+        .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
