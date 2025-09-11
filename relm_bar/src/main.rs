@@ -7,8 +7,6 @@ use gtk4 as gtk;
 use gtk4::Window;
 use gtk4::glib::ControlFlow;
 use log::{error, info, warn};
-use relm4::factory::{DynamicIndex, FactoryComponent, FactorySender, FactoryVecDeque};
-use relm4::prelude::*;
 use relm4::{ComponentParts, ComponentSender, RelmApp, SimpleComponent};
 
 use std::time::Duration;
@@ -21,85 +19,7 @@ use error::AppError;
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus};
 use system_monitor::SystemMonitor;
 
-// ========== 子项（Tab） ==========
-
-#[derive(Debug, Clone)]
-struct TabInit {
-    index: usize,
-    emoji: String,
-    status: Option<TagStatus>,
-}
-
-#[derive(Debug, Clone)]
-struct TabItem {
-    index: usize,
-    emoji: String,
-    status: Option<TagStatus>,
-}
-
-#[derive(Debug)]
-enum TabOutput {
-    Clicked(usize),
-}
-
-#[relm4::factory]
-impl FactoryComponent for TabItem {
-    type Init = TabInit;
-    type Input = ();
-    type Output = TabOutput;
-    type CommandOutput = ();
-    type ParentWidget = gtk::Box;
-
-    view! {
-        gtk::Button {
-            set_width_request: 40,
-            #[watch]
-            set_label: &self.emoji,
-            #[watch]
-            set_css_classes: &compute_tab_css_classes(self.status.as_ref()),
-            // 通过捕获值，避免直接在闭包里用 &self
-            connect_clicked[sender, tag_index = self.index] => move |_| {
-                let _ = sender.output(TabOutput::Clicked(tag_index));
-            }
-        }
-    }
-
-    fn init_model(init: Self::Init, _index: &DynamicIndex, _sender: FactorySender<Self>) -> Self {
-        Self {
-            index: init.index,
-            emoji: init.emoji,
-            status: init.status,
-        }
-    }
-
-    fn update(&mut self, _msg: Self::Input, _sender: FactorySender<Self>) {}
-}
-
-// 返回 &[&str] 兼容的 Vec<&'static str>
-fn compute_tab_css_classes(s: Option<&TagStatus>) -> Vec<&'static str> {
-    match s {
-        Some(st) if st.is_urg => vec!["tab-button", "urgent"],
-        Some(st) if st.is_filled => vec!["tab-button", "filled"],
-        Some(st) if st.is_selected => vec!["tab-button", "selected"],
-        Some(st) if st.is_occ => vec!["tab-button", "occupied"],
-        _ => vec!["tab-button", "empty"],
-    }
-}
-
-// Metric 胶囊的动态等级类
-fn metric_css_classes(usage: f64) -> Vec<&'static str> {
-    // usage: 0.0 ~ 1.0
-    let lvl = if usage < 0.50 {
-        "level-ok"
-    } else if usage < 0.70 {
-        "level-warn"
-    } else if usage < 0.85 {
-        "level-high"
-    } else {
-        "level-crit"
-    };
-    vec!["metric-label", lvl]
-}
+// ========== 工具与常量 ==========
 
 fn pick_emoji(i: usize) -> &'static str {
     match i {
@@ -116,7 +36,77 @@ fn pick_emoji(i: usize) -> &'static str {
     }
 }
 
-// ========== 主应用 ==========
+fn monitor_num_to_icon(monitor_num: u8) -> String {
+    match monitor_num {
+        0 => "🥇".to_string(),
+        1 => "🥈".to_string(),
+        2 => "🥉".to_string(),
+        _ => "❔".to_string(),
+    }
+}
+
+// 用于 Tab 状态样式
+fn compute_tab_css_classes(s: Option<&TagStatus>) -> Vec<&'static str> {
+    match s {
+        Some(st) if st.is_urg => vec!["tab-button", "urgent"],
+        Some(st) if st.is_filled => vec!["tab-button", "filled"],
+        Some(st) if st.is_selected => vec!["tab-button", "selected"],
+        Some(st) if st.is_occ => vec!["tab-button", "occupied"],
+        _ => vec!["tab-button", "empty"],
+    }
+}
+
+// 设置指标等级类
+fn metric_level_class(usage: f64) -> &'static str {
+    if usage < 0.50 {
+        "level-ok"
+    } else if usage < 0.70 {
+        "level-warn"
+    } else if usage < 0.85 {
+        "level-high"
+    } else {
+        "level-crit"
+    }
+}
+
+// 将指标类应用到某个 Widget（清除旧等级类后再添加新的）
+fn apply_metric_classes<W: IsA<gtk::Widget>>(w: &W, usage: f64) {
+    static LEVELS: [&str; 4] = ["level-ok", "level-warn", "level-high", "level-crit"];
+    let widget = w.as_ref();
+    for c in LEVELS {
+        widget.remove_css_class(c);
+    }
+    // 可选：如果你在样式里用到了 metric-label，可确保它在
+    // widget.add_css_class("metric-label");
+    widget.add_css_class(metric_level_class(usage));
+}
+
+// 应用 Tab 状态类
+fn apply_tab_state_classes(button: &gtk::Button, status: Option<&TagStatus>) {
+    static TAB_STATES: [&str; 5] = ["urgent", "filled", "selected", "occupied", "empty"];
+    let w = button.upcast_ref::<gtk::Widget>();
+    // 保留 tab-button，不清除
+    for s in TAB_STATES {
+        w.remove_css_class(s);
+    }
+    for c in compute_tab_css_classes(status) {
+        w.add_css_class(c);
+    }
+}
+
+fn load_css() {
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(include_str!("styles.css"));
+    if let Some(display) = gtk::gdk::Display::default() {
+        gtk::style_context_add_provider_for_display(
+            &display,
+            &provider,
+            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
+        );
+    }
+}
+
+// ========== App 定义 ==========
 
 #[derive(Debug)]
 pub enum AppInput {
@@ -146,9 +136,19 @@ pub struct AppModel {
     #[do_not_track]
     pub system_monitor: SystemMonitor,
 
-    // Factory：标签集合
+    // 由 Builder 获取并保存在 model 中，便于 update 时根据变化更新 UI
     #[do_not_track]
-    tabs: FactoryVecDeque<TabItem>,
+    layout_label_widget: gtk::Label,
+    #[do_not_track]
+    cpu_label_widget: gtk::Label,
+    #[do_not_track]
+    memory_label_widget: gtk::Label,
+    #[do_not_track]
+    time_button_widget: gtk::Button,
+    #[do_not_track]
+    monitor_label_widget: gtk::Label,
+    #[do_not_track]
+    tab_buttons: Vec<gtk::Button>,
 }
 
 #[relm4::component(pub)]
@@ -165,124 +165,8 @@ impl SimpleComponent for AppModel {
             set_resizable: true,
             add_css_class: "main-window",
 
-            gtk::Box {
-                set_orientation: gtk::Orientation::Horizontal,
-                set_spacing: 3,
-                set_margin_all: 3,
-
-                // 标签栏（Factory容器）
-                #[local_ref]
-                tabs_box -> gtk::Box {
-                    set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 3,
-                },
-
-                // 布局标签
-                gtk::Label {
-                    #[watch]
-                    set_text: &model.layout_symbol,
-                    set_width_request: 40,
-                    set_halign: gtk::Align::Center,
-                    add_css_class: "layout-label",
-                },
-
-                // 布局按钮
-                gtk::ScrolledWindow {
-                    set_hscrollbar_policy: gtk::PolicyType::Automatic,
-                    set_vscrollbar_policy: gtk::PolicyType::Never,
-                    set_width_request: 120,
-
-                    gtk::Box {
-                        set_orientation: gtk::Orientation::Horizontal,
-                        set_spacing: 5,
-
-                        gtk::Button {
-                            set_label: "[]=",
-                            set_height_request: 28,
-                            set_width_request: 38,
-                            add_css_class: "layout-button",
-                            connect_clicked => AppInput::LayoutChanged(0),
-                        },
-
-                        gtk::Button {
-                            set_label: "<><",
-                            set_height_request: 28,
-                            set_width_request: 38,
-                            add_css_class: "layout-button",
-                            connect_clicked => AppInput::LayoutChanged(1),
-                        },
-
-                        gtk::Button {
-                            set_label: "[M]",
-                            set_height_request: 28,
-                            set_width_request: 38,
-                            add_css_class: "layout-button",
-                            connect_clicked => AppInput::LayoutChanged(2),
-                        },
-                    }
-                },
-
-                // 中间间隔
-                gtk::Box {
-                    set_hexpand: true,
-                },
-
-                // 系统信息区域
-                gtk::Box {
-                    set_halign: gtk::Align::End,
-                    set_orientation: gtk::Orientation::Horizontal,
-                    set_spacing: 3,
-
-                    // 内存（胶囊标签）
-                    gtk::Label {
-                        #[watch]
-                        set_label: &format!("MEM {:>3}%", (model.memory_usage * 100.0).round() as u32),
-                        #[watch]
-                        set_css_classes: &metric_css_classes(model.memory_usage),
-                        set_height_request: 32,
-                        set_width_request: 86,
-                        set_halign: gtk::Align::Center,
-                        set_valign: gtk::Align::Center,
-                    },
-
-                    // CPU（胶囊标签）
-                    gtk::Label {
-                        #[watch]
-                        set_label: &format!("CPU {:>3}%", (model.cpu_usage * 100.0).round() as u32),
-                        #[watch]
-                        set_css_classes: &metric_css_classes(model.cpu_usage),
-                        set_width_request: 86,
-                        set_height_request: 32,
-                        set_halign: gtk::Align::Center,
-                        set_valign: gtk::Align::Center,
-                    },
-
-                    // 截图按钮
-                    gtk::Button {
-                        set_label: " 🎥 1.0 ",
-                        set_width_request: 60,
-                        add_css_class: "screenshot-button",
-                        connect_clicked => AppInput::Screenshot,
-                    },
-
-                    // 时间显示
-                    gtk::Button {
-                        #[watch]
-                        set_label: &model.current_time,
-                        set_width_request: 60,
-                        add_css_class: "time-button",
-                        connect_clicked => AppInput::ToggleSeconds,
-                    },
-
-                    // 监视器标签
-                    gtk::Label {
-                        #[watch]
-                        set_text: &monitor_num_to_icon(model.monitor_num),
-                        set_width_request: 40,
-                        set_halign: gtk::Align::Center,
-                    },
-                },
-            }
+            // 将 UI 文件中的 top_hbox 作为唯一子控件挂载进来
+            set_child: Some(&top_hbox),
         }
     }
 
@@ -291,113 +175,73 @@ impl SimpleComponent for AppModel {
         _root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        // 构建 Factory
-        let tabs = FactoryVecDeque::<TabItem>::builder()
-            .launch(gtk::Box::default())
-            .forward(sender.input_sender(), |out| match out {
-                TabOutput::Clicked(i) => AppInput::TabSelected(i),
-            });
+        // 1) 加载 UI 文件
+        let builder = gtk::Builder::from_string(include_str!("resources/main_layout.ui"));
 
-        let mut model = AppModel::new(shared_path.clone(), tabs);
+        // 2) 取出要挂载的根容器（不是 UI 的窗口，避免重复窗口）
+        let top_hbox: gtk::Box = builder
+            .object("top_hbox")
+            .expect("Missing top_hbox in UI file");
+        top_hbox.unparent();
 
-        // 预创建9个“空状态”tab，先显示占位
+        // 3) 获取需要动态更新的控件
+        let layout_label_widget: gtk::Label = builder
+            .object("layout_label")
+            .expect("Missing layout_label");
+        let cpu_label_widget: gtk::Label = builder.object("cpu_label").expect("Missing cpu_label");
+        let memory_label_widget: gtk::Label = builder
+            .object("memory_label")
+            .expect("Missing memory_label");
+        let time_button_widget: gtk::Button =
+            builder.object("time_label").expect("Missing time_label");
+        let monitor_label_widget: gtk::Label = builder
+            .object("monitor_label")
+            .expect("Missing monitor_label");
+
+        // 4) 连接静态按钮的信号
+        // 布局按钮
+        if let Some(btn) = builder.object::<gtk::Button>("layout_button_1") {
+            let s = sender.clone();
+            btn.connect_clicked(move |_| s.input(AppInput::LayoutChanged(0)));
+        }
+        if let Some(btn) = builder.object::<gtk::Button>("layout_button_2") {
+            let s = sender.clone();
+            btn.connect_clicked(move |_| s.input(AppInput::LayoutChanged(1)));
+        }
+        if let Some(btn) = builder.object::<gtk::Button>("layout_button_3") {
+            let s = sender.clone();
+            btn.connect_clicked(move |_| s.input(AppInput::LayoutChanged(2)));
+        }
+
+        // 截图按钮
+        if let Some(btn) = builder.object::<gtk::Button>("screenshot_button") {
+            let s = sender.clone();
+            btn.connect_clicked(move |_| s.input(AppInput::Screenshot));
+        }
+
+        // 时间按钮
         {
-            let mut guard = model.tabs.guard();
-            for i in 0..9 {
-                guard.push_back(TabInit {
-                    index: i,
-                    emoji: pick_emoji(i).to_string(),
-                    status: None,
-                });
+            let s = sender.clone();
+            time_button_widget.connect_clicked(move |_| s.input(AppInput::ToggleSeconds));
+        }
+
+        // Tab 按钮与初始 emoji
+        let mut tab_buttons = Vec::with_capacity(9);
+        for i in 0..9 {
+            let id = format!("tab_button_{}", i);
+            if let Some(btn) = builder.object::<gtk::Button>(&id) {
+                btn.set_label(pick_emoji(i));
+                let s = sender.clone();
+                btn.connect_clicked(move |_| s.input(AppInput::TabSelected(i)));
+                tab_buttons.push(btn);
+            } else {
+                warn!("Missing {}", id);
             }
         }
 
-        // 应用CSS样式
-        load_css();
-
-        // 首帧初始化
-        model.update_time_display();
-        sender.input(AppInput::SystemUpdate);
-
-        // 启动后台任务
-        spawn_background_tasks(sender.clone(), shared_path);
-
-        // Factory 父容器
-        let tabs_box = model.tabs.widget();
-        let widgets = view_output!();
-
-        ComponentParts { model, widgets }
-    }
-
-    fn update(&mut self, msg: Self::Input, _sender: ComponentSender<Self>) {
-        self.reset();
-        match msg {
-            AppInput::TabSelected(index) => {
-                info!("Tab selected: {}", index);
-                self.active_tab = index;
-                self.send_tag_command(true);
-            }
-
-            AppInput::LayoutChanged(layout_index) => {
-                info!("Layout changed: {}", layout_index);
-                self.send_layout_command(layout_index);
-            }
-
-            AppInput::ToggleSeconds => {
-                self.show_seconds = !self.show_seconds;
-                self.update_time_display();
-            }
-
-            AppInput::Screenshot => {
-                info!("Taking screenshot");
-                if let Err(e) = std::process::Command::new("flameshot").arg("gui").spawn() {
-                    error!("Failed to launch flameshot: {}", e);
-                }
-            }
-
-            AppInput::SharedMessageReceived(message) => {
-                info!("SharedMessageReceived: {:?}", message);
-                self.process_shared_message(message);
-
-                // 用最新的 tag_status_vec 重建 9 个 Tab（简单可靠）
-                let statuses = self.tag_status_vec.clone();
-                let mut guard = self.tabs.guard();
-                guard.clear();
-                for i in 0..9 {
-                    let s_opt = statuses.get(i).cloned();
-                    guard.push_back(TabInit {
-                        index: i,
-                        emoji: pick_emoji(i).to_string(),
-                        status: s_opt,
-                    });
-                }
-            }
-
-            AppInput::SystemUpdate => {
-                self.system_monitor.update_if_needed();
-
-                if let Some(snapshot) = self.system_monitor.get_snapshot() {
-                    let total = snapshot.memory_available + snapshot.memory_used;
-                    if total > 0 {
-                        self.memory_usage = snapshot.memory_used as f64 / total as f64;
-                    } else {
-                        self.memory_usage = 0.0;
-                    }
-                    self.cpu_usage = (snapshot.cpu_average as f64 / 100.0).clamp(0.0, 1.0);
-                }
-            }
-
-            AppInput::UpdateTime => {
-                self.update_time_display();
-            }
-        }
-    }
-}
-
-impl AppModel {
-    fn new(shared_path: String, tabs: FactoryVecDeque<TabItem>) -> Self {
+        // 5) 构建 model
         let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
-        Self {
+        let mut model = AppModel {
             active_tab: 0,
             layout_symbol: " ? ".to_string(),
             monitor_num: 0,
@@ -410,10 +254,96 @@ impl AppModel {
             shared_buffer_opt,
             system_monitor: SystemMonitor::new(1),
             tracker: 0,
-            tabs,
-        }
+
+            layout_label_widget,
+            cpu_label_widget,
+            memory_label_widget,
+            time_button_widget,
+            monitor_label_widget,
+            tab_buttons,
+        };
+
+        // 6) 样式、首帧数据与后台任务
+        load_css();
+        model.update_time_display();
+
+        // 先把 UI 设为初始状态
+        model.sync_full_ui_once();
+
+        // 定时器与共享线程
+        spawn_background_tasks(sender.clone(), shared_path);
+
+        // 触发一次系统监控刷新
+        sender.input(AppInput::SystemUpdate);
+
+        let widgets = view_output!();
+        ComponentParts { model, widgets }
     }
 
+    fn update(&mut self, msg: Self::Input, _sender: ComponentSender<Self>) {
+        self.reset();
+        match msg {
+            AppInput::TabSelected(index) => {
+                info!("Tab selected: {}", index);
+                self.active_tab = index;
+                self.send_tag_command(true);
+                // Tab 状态类更新
+                self.sync_tabs_ui();
+            }
+
+            AppInput::LayoutChanged(layout_index) => {
+                info!("Layout changed: {}", layout_index);
+                self.send_layout_command(layout_index);
+            }
+
+            AppInput::ToggleSeconds => {
+                self.show_seconds = !self.show_seconds;
+                self.update_time_display();
+                // 时间立即刷新
+                self.sync_time_ui();
+            }
+
+            AppInput::Screenshot => {
+                info!("Taking screenshot");
+                if let Err(e) = std::process::Command::new("flameshot").arg("gui").spawn() {
+                    error!("Failed to launch flameshot: {}", e);
+                }
+            }
+
+            AppInput::SharedMessageReceived(message) => {
+                info!("SharedMessageReceived: {:?}", message);
+                self.process_shared_message(message);
+                // 刷新 tab、布局符号、监视器图标
+                self.sync_tabs_ui();
+                self.sync_layout_and_monitor_ui();
+            }
+
+            AppInput::SystemUpdate => {
+                self.system_monitor.update_if_needed();
+                if let Some(snapshot) = self.system_monitor.get_snapshot() {
+                    let total = snapshot.memory_available + snapshot.memory_used;
+                    self.memory_usage = if total > 0 {
+                        snapshot.memory_used as f64 / total as f64
+                    } else {
+                        0.0
+                    };
+                    self.cpu_usage = (snapshot.cpu_average as f64 / 100.0).clamp(0.0, 1.0);
+                }
+                // 刷新 CPU/MEM
+                self.sync_metrics_ui();
+            }
+
+            AppInput::UpdateTime => {
+                self.update_time_display();
+                self.sync_time_ui();
+            }
+        }
+    }
+}
+
+// ========== AppModel 实现 ==========
+
+impl AppModel {
     fn update_time_display(&mut self) {
         let now = Local::now();
         let format_str = if self.show_seconds {
@@ -435,7 +365,6 @@ impl AppModel {
                         message.monitor_info.monitor_num,
                     )
                 };
-
                 if let Err(e) = shared_buffer.send_command(command) {
                     error!("Failed to send tag command: {}", e);
                 }
@@ -498,9 +427,52 @@ impl AppModel {
             }
         }
     }
+
+    // ========== UI 同步（基于 tracker 的 “watch” 思路） ==========
+
+    fn sync_full_ui_once(&self) {
+        // 首次同步各区域
+        self.sync_layout_and_monitor_ui();
+        self.sync_time_ui();
+        self.sync_metrics_ui();
+        self.sync_tabs_ui();
+    }
+
+    fn sync_layout_and_monitor_ui(&self) {
+        self.layout_label_widget.set_label(&self.layout_symbol);
+        self.monitor_label_widget
+            .set_label(&monitor_num_to_icon(self.monitor_num));
+    }
+
+    fn sync_time_ui(&self) {
+        self.time_button_widget.set_label(&self.current_time);
+    }
+
+    fn sync_metrics_ui(&self) {
+        // 与 UI 文件一致：仅显示百分比
+        let cpu_pct = (self.cpu_usage * 100.0).round() as u32;
+        let mem_pct = (self.memory_usage * 100.0).round() as u32;
+        self.cpu_label_widget.set_label(&format!("{:>3}%", cpu_pct));
+        self.memory_label_widget
+            .set_label(&format!("{:>3}%", mem_pct));
+
+        // 应用等级类
+        apply_metric_classes(&self.cpu_label_widget, self.cpu_usage);
+        apply_metric_classes(&self.memory_label_widget, self.memory_usage);
+    }
+
+    fn sync_tabs_ui(&self) {
+        // 更新9个 Tab 的样式与 emoji（emoji 固定一次即可，也可以在这里再次设置以确保一致）
+        for (i, btn) in self.tab_buttons.iter().enumerate() {
+            btn.set_label(pick_emoji(i));
+            let status = self.tag_status_vec.get(i);
+            apply_tab_state_classes(btn, status);
+        }
+    }
 }
 
-// 后台任务：glib 定时器 + 共享内存线程
+// ========== 后台任务 ==========
+
 fn spawn_background_tasks(sender: ComponentSender<AppModel>, shared_path: String) {
     // 系统监控任务（每2秒）
     let sender1 = sender.clone();
@@ -523,7 +495,6 @@ fn spawn_background_tasks(sender: ComponentSender<AppModel>, shared_path: String
     });
 }
 
-// 共享内存工作器
 fn shared_memory_worker(shared_path: String, sender: ComponentSender<AppModel>) {
     info!("Starting shared memory worker");
     let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
@@ -579,27 +550,7 @@ fn shared_memory_worker(shared_path: String, sender: ComponentSender<AppModel>) 
     }
 }
 
-// 工具函数
-fn monitor_num_to_icon(monitor_num: u8) -> String {
-    match monitor_num {
-        0 => "🥇".to_string(),
-        1 => "🥈".to_string(),
-        2 => "🥉".to_string(),
-        _ => "❔".to_string(),
-    }
-}
-
-fn load_css() {
-    let provider = gtk::CssProvider::new();
-    provider.load_from_string(include_str!("styles.css"));
-    if let Some(display) = gtk::gdk::Display::default() {
-        gtk::style_context_add_provider_for_display(
-            &display,
-            &provider,
-            gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-        );
-    }
-}
+// ========== 日志与入口 ==========
 
 fn initialize_logging(shared_path: &str) -> Result<(), Box<dyn std::error::Error>> {
     let now = Local::now();
@@ -653,5 +604,6 @@ fn main() {
 
     info!("App ID: {}", instance_name);
     let app = RelmApp::new(&instance_name).with_args(vec![]);
+
     app.run::<AppModel>(shared_path);
 }
