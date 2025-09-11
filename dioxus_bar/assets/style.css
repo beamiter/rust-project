@@ -1,742 +1,245 @@
-/* 重置所有默认样式 */
+:root {
+  --bg: transparent;
+  --text: #202124;
+
+  /* tag 基础色（按顺序 1~9），对应 iced_bar 的 tab_colors */
+  --tag-1: #FF6B6B;
+  --tag-2: #4ECDC4;
+  --tag-3: #45B7D1;
+  --tag-4: #96CEB4;
+  --tag-5: #FECA57;
+  --tag-6: #FF9FF3;
+  --tag-7: #54A0FF;
+  --tag-8: #5F27CD;
+  --tag-9: #00D2D3;
+
+  --pill-radius: 12px;
+  --pill-padding-y: 4px;
+  --pill-padding-x: 10px;
+  --pill-font-size: 14px;
+
+  --good: #1fbf51;
+  --warn: #f4c20d;
+  --caution: #ff8c1a;
+  --danger: #e53935;
+
+  --layout-open: #3cb371; /* 绿色 */
+  --layout-closed: #d35400; /* 橙色 */
+
+  --scr-cyan: #00cccc;
+  --scr-orange: #ff8800;
+
+  --time-blue: #4da3ff;
+  --monitor-purple: #9b59b6;
+}
+
 * {
-  margin: 0;
-  padding: 0;
   box-sizing: border-box;
 }
 
-html,
-body {
+body, html {
   margin: 0;
-  padding: 0;
-  height: 40px !important;
-  overflow: hidden;
-  font-family:
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    "Segoe UI",
-    Roboto,
-    sans-serif;
-  background: transparent;
-}
-
-#main,
-#app {
-  margin: 0;
-  padding: 0;
-  height: 40px !important;
-  overflow: hidden;
+  background: var(--bg);
+  color: var(--text);
+  font-family: system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, "Noto Sans", "Noto Color Emoji", "Apple Color Emoji", "Segoe UI Emoji", Arial, sans-serif;
+  font-size: 14px;
 }
 
 .button-row {
   display: flex;
-  flex-direction: row;
   align-items: center;
-  justify-content: space-between;
-  margin: 0;
-  padding: 1px 6px;
-  gap: 8px;
-  width: 100vw;
-  height: 40px;
-  min-height: 40px;
-  max-height: 40px;
-  background: rgba(255, 255, 255, 0.95);
-  box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
-  position: relative;
-  overflow: visible;
-  box-sizing: border-box;
+  padding: 4px 6px;
+  gap: 6px;
+  user-select: none;
 }
 
+/* 左侧容器：工作区 + 布局切换 */
 .buttons-container {
-  display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 1;
-  flex-grow: 0;
-  min-width: 0;
-  overflow: visible;
-  padding: 2px 0; /* 为阴影留出空间 */
-}
-
-/* 右侧信息容器 */
-.right-info-container {
-  display: flex;
-  align-items: center;
-  gap: 10px; /* 稍微减小gap以容纳更多内容 */
-  flex-shrink: 0;
-  flex-grow: 0;
-  margin-left: auto;
-}
-
-/* 系统信息容器 */
-.system-info-container {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  flex-shrink: 0;
-}
-
-/* 单个系统指标 */
-.system-metric {
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 3px 6px;
-  background: rgba(248, 249, 250, 0.8);
-  border-radius: 6px;
-  border: 1px solid rgba(222, 226, 230, 0.8);
-  transition: all 0.2s ease;
-  cursor: default;
-  user-select: none;
 }
 
-.system-metric:hover {
-  background: rgba(233, 236, 239, 0.9);
-  border-color: rgba(173, 181, 189, 0.8);
-  transform: scale(1.02);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-/* 指标图标 */
-.metric-icon {
-  font-size: 14px;
-  line-height: 1;
-}
-
-/* 指标数值 */
-.metric-value {
-  font-family:
-    "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", Consolas,
-    monospace;
-  font-size: 13px;
-  font-weight: 600;
-  min-width: 40px;
-  text-align: right;
-}
-
-/* 截图按钮样式 */
-.screenshot-button {
+/* 右侧容器：系统指标 + 截图 + 时间 + 显示器 */
+.right-info-container {
   display: flex;
   align-items: center;
-  justify-content: center;
-  width: 40px;
-  height: 40px;
-  min-width: 40px;
-  min-height: 40px;
-  background: rgba(248, 249, 250, 0.8);
-  border: 1px solid rgba(222, 226, 230, 0.8);
-  border-radius: 8px;
-  cursor: pointer;
-  transition: all 0.2s ease;
-  user-select: none;
-  flex-shrink: 0;
+  gap: 6px;
 }
 
-.screenshot-button:hover {
-  background: rgba(233, 236, 239, 0.9);
-  border-color: rgba(173, 181, 189, 0.8);
-  transform: scale(1.05);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+/* 中间撑开 */
+.spacer {
+  flex: 1 1 auto;
 }
 
-.screenshot-button:active {
-  transform: scale(0.98);
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-}
-
-/* 截图按钮执行状态 */
-.screenshot-button.taking {
-  background: linear-gradient(135deg, #007bff, #0056b3);
-  border-color: #004085;
-  color: white;
-  cursor: not-allowed;
-}
-
-.screenshot-button.taking:hover {
-  transform: none;
-  background: linear-gradient(135deg, #007bff, #0056b3);
-}
-
-/* 截图图标 */
-.screenshot-icon {
-  font-size: 20px;
-  line-height: 1;
-}
-
-/* 时间容器 */
-.time-container {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  flex-shrink: 0;
-  flex-grow: 0;
-  cursor: pointer;
-  transition: all 0.2s ease;
-}
-
-.time-container:hover {
-  background: rgba(0, 0, 0, 0.05);
-  border-radius: 4px;
-}
-
-/* 时间显示样式 */
-.time-display {
-  font-family:
-    "JetBrains Mono", "Fira Code", "Cascadia Code", "SF Mono", Consolas,
-    monospace;
-  font-size: 16px;
-  font-weight: 500;
-  color: #495057;
-  padding: 6px 12px;
-  background: rgba(248, 249, 250, 0.8);
-  border-radius: 6px;
-  border: 1px solid rgba(222, 226, 230, 0.8);
-  text-align: center;
-  user-select: none;
-  transition: all 0.2s ease;
-  white-space: nowrap;
-  min-width: 65px; /* HH:MM 最小宽度 */
-  width: auto !important;
-}
-
-.time-display:hover {
-  background: rgba(233, 236, 239, 0.9);
-  border-color: rgba(173, 181, 189, 0.8);
-  transform: scale(1.02);
-  box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-}
-
-/* 布局符号样式 */
-.layout-symbol {
-  color: #000000;
-  font-size: 14px;
-  padding: 4px 8px;
-  background-color: rgba(255, 255, 255, 0.1);
-  border-radius: 4px;
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  min-width: 20px;
-  text-align: center;
-  margin-left: 8px;
+/* 通用 pill 基础 */
+.pill {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  border-radius: var(--pill-radius);
+  padding: var(--pill-padding-y) var(--pill-padding-x);
+  font-size: var(--pill-font-size);
+  line-height: 1;
+  border: 1px solid transparent;
+  transition: all 120ms ease-in-out;
+  white-space: nowrap;
 }
 
-/* ==================== 按钮基础样式 ==================== */
-
+/* 工作区按钮 */
 .emoji-button {
   width: 40px;
-  height: 38px;
-  min-width: 38;
-  min-height: 38;
-  max-width: 38;
-  max-height: 38;
-  font-size: 20px;
+  height: 30px;
+  border-radius: 8px;
   border: 1px solid transparent;
-  border-radius: 6px;
   background: transparent;
   cursor: pointer;
-  transition: all 0.2s ease;
-  position: relative;
-  display: flex;
+  font-size: 18px;
+  display: inline-flex;
   align-items: center;
   justify-content: center;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
-  user-select: none;
-  flex-shrink: 0;
-  overflow: hidden;
+  transition: all 120ms ease-in-out;
 }
 
-/* 禁用按钮样式 */
-.emoji-button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-  filter: grayscale(50%);
-}
-
-/* 确保emoji在效果层之上 */
-.emoji-button > * {
-  position: relative;
-  z-index: 2;
-}
-
-/* ==================== 默认状态样式 ==================== */
+/* nth-child 为每个按钮设定 --tag-color（循环顺序与 HTML 渲染一致） */
+.buttons-container .emoji-button:nth-child(1)  { --tag-color: var(--tag-1); }
+.buttons-container .emoji-button:nth-child(2)  { --tag-color: var(--tag-2); }
+.buttons-container .emoji-button:nth-child(3)  { --tag-color: var(--tag-3); }
+.buttons-container .emoji-button:nth-child(4)  { --tag-color: var(--tag-4); }
+.buttons-container .emoji-button:nth-child(5)  { --tag-color: var(--tag-5); }
+.buttons-container .emoji-button:nth-child(6)  { --tag-color: var(--tag-6); }
+.buttons-container .emoji-button:nth-child(7)  { --tag-color: var(--tag-7); }
+.buttons-container .emoji-button:nth-child(8)  { --tag-color: var(--tag-8); }
+.buttons-container .emoji-button:nth-child(9)  { --tag-color: var(--tag-9); }
 
 .emoji-button.state-default {
-  background: #ffffff;
-  border-color: #dee2e6;
+  background: transparent;
+  border-color: transparent;
 }
-
-.emoji-button.state-default:hover:not(:disabled):not(.pressed):not(:active) {
-  background: #f8f9fa;
-  border-color: #adb5bd;
-  transform: scale(1.02);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+.emoji-button.state-occupied {
+  /* 模拟“淡色占用” */
+  background: rgba(127,127,127,0.12);
+  border-color: transparent;
 }
-
-/* ==================== 各索引位置的颜色状态 ==================== */
-
-/* 第1个按钮 (索引0) - 红色 #FF6B6B */
-.emoji-button:nth-child(1).state-occupied {
-  background: rgba(255, 107, 107, 0.3) !important;
-  border-color: rgba(255, 107, 107, 0.6) !important;
-  color: #333 !important;
+.emoji-button.state-selected {
+  background: rgba(127,127,127,0.22);
+  border-color: var(--tag-color);
+  border-width: 1.5px;
 }
-
-.emoji-button:nth-child(1).state-selected {
-  background: rgba(255, 107, 107, 0.7) !important;
-  border-color: rgba(255, 107, 107, 0.9) !important;
-  color: white !important;
-}
-
-.emoji-button:nth-child(1).state-filtered {
-  background: rgba(255, 107, 107, 1) !important;
-  border-color: rgba(255, 107, 107, 1) !important;
-  color: white !important;
-  box-shadow: 0 2px 8px rgba(255, 107, 107, 0.4);
-}
-
-/* 第2个按钮 (索引1) - 青色 #4ECDC4 */
-.emoji-button:nth-child(2).state-occupied {
-  background: rgba(78, 205, 196, 0.3) !important;
-  border-color: rgba(78, 205, 196, 0.6) !important;
-  color: #333 !important;
-}
-
-.emoji-button:nth-child(2).state-selected {
-  background: rgba(78, 205, 196, 0.7) !important;
-  border-color: rgba(78, 205, 196, 0.9) !important;
-  color: white !important;
-}
-
-.emoji-button:nth-child(2).state-filtered {
-  background: rgba(78, 205, 196, 1) !important;
-  border-color: rgba(78, 205, 196, 1) !important;
-  color: white !important;
-  box-shadow: 0 2px 8px rgba(78, 205, 196, 0.4);
-}
-
-/* 第3个按钮 (索引2) - 蓝色 #45B7D1 */
-.emoji-button:nth-child(3).state-occupied {
-  background: rgba(69, 183, 209, 0.3) !important;
-  border-color: rgba(69, 183, 209, 0.6) !important;
-  color: #333 !important;
-}
-
-.emoji-button:nth-child(3).state-selected {
-  background: rgba(69, 183, 209, 0.7) !important;
-  border-color: rgba(69, 183, 209, 0.9) !important;
-  color: white !important;
-}
-
-.emoji-button:nth-child(3).state-filtered {
-  background: rgba(69, 183, 209, 1) !important;
-  border-color: rgba(69, 183, 209, 1) !important;
-  color: white !important;
-  box-shadow: 0 2px 8px rgba(69, 183, 209, 0.4);
-}
-
-/* 第4个按钮 (索引3) - 绿色 #96CEB4 */
-.emoji-button:nth-child(4).state-occupied {
-  background: rgba(150, 206, 180, 0.3) !important;
-  border-color: rgba(150, 206, 180, 0.6) !important;
-  color: #333 !important;
-}
-
-.emoji-button:nth-child(4).state-selected {
-  background: rgba(150, 206, 180, 0.7) !important;
-  border-color: rgba(150, 206, 180, 0.9) !important;
-  color: white !important;
-}
-
-.emoji-button:nth-child(4).state-filtered {
-  background: rgba(150, 206, 180, 1) !important;
-  border-color: rgba(150, 206, 180, 1) !important;
-  color: white !important;
-  box-shadow: 0 2px 8px rgba(150, 206, 180, 0.4);
-}
-
-/* 第5个按钮 (索引4) - 黄色 #FECA57 */
-.emoji-button:nth-child(5).state-occupied {
-  background: rgba(254, 202, 87, 0.3) !important;
-  border-color: rgba(254, 202, 87, 0.6) !important;
-  color: #333 !important;
-}
-
-.emoji-button:nth-child(5).state-selected {
-  background: rgba(254, 202, 87, 0.7) !important;
-  border-color: rgba(254, 202, 87, 0.9) !important;
-  color: #333 !important; /* 黄色背景用深色文字更清晰 */
-}
-
-.emoji-button:nth-child(5).state-filtered {
-  background: rgba(254, 202, 87, 1) !important;
-  border-color: rgba(254, 202, 87, 1) !important;
-  color: #333 !important; /* 黄色背景用深色文字更清晰 */
-  box-shadow: 0 2px 8px rgba(254, 202, 87, 0.4);
-}
-
-/* 第6个按钮 (索引5) - 粉色 #FF9FF3 */
-.emoji-button:nth-child(6).state-occupied {
-  background: rgba(255, 159, 243, 0.3) !important;
-  border-color: rgba(255, 159, 243, 0.6) !important;
-  color: #333 !important;
-}
-
-.emoji-button:nth-child(6).state-selected {
-  background: rgba(255, 159, 243, 0.7) !important;
-  border-color: rgba(255, 159, 243, 0.9) !important;
-  color: white !important;
-}
-
-.emoji-button:nth-child(6).state-filtered {
-  background: rgba(255, 159, 243, 1) !important;
-  border-color: rgba(255, 159, 243, 1) !important;
-  color: white !important;
-  box-shadow: 0 2px 8px rgba(255, 159, 243, 0.4);
-}
-
-/* 第7个按钮 (索引6) - 淡蓝色 #54A0FF */
-.emoji-button:nth-child(7).state-occupied {
-  background: rgba(84, 160, 255, 0.3) !important;
-  border-color: rgba(84, 160, 255, 0.6) !important;
-  color: #333 !important;
-}
-
-.emoji-button:nth-child(7).state-selected {
-  background: rgba(84, 160, 255, 0.7) !important;
-  border-color: rgba(84, 160, 255, 0.9) !important;
-  color: white !important;
-}
-
-.emoji-button:nth-child(7).state-filtered {
-  background: rgba(84, 160, 255, 1) !important;
-  border-color: rgba(84, 160, 255, 1) !important;
-  color: white !important;
-  box-shadow: 0 2px 8px rgba(84, 160, 255, 0.4);
-}
-
-/* 第8个按钮 (索引7) - 紫色 #5F27CD */
-.emoji-button:nth-child(8).state-occupied {
-  background: rgba(95, 39, 205, 0.3) !important;
-  border-color: rgba(95, 39, 205, 0.6) !important;
-  color: #333 !important;
-}
-
-.emoji-button:nth-child(8).state-selected {
-  background: rgba(95, 39, 205, 0.7) !important;
-  border-color: rgba(95, 39, 205, 0.9) !important;
-  color: white !important;
-}
-
-.emoji-button:nth-child(8).state-filtered {
-  background: rgba(95, 39, 205, 1) !important;
-  border-color: rgba(95, 39, 205, 1) !important;
-  color: white !important;
-  box-shadow: 0 2px 8px rgba(95, 39, 205, 0.4);
-}
-
-/* 第9个按钮 (索引8) - 青绿色 #00D2D3 */
-.emoji-button:nth-child(9).state-occupied {
-  background: rgba(0, 210, 211, 0.3) !important;
-  border-color: rgba(0, 210, 211, 0.6) !important;
-  color: #333 !important;
-}
-
-.emoji-button:nth-child(9).state-selected {
-  background: rgba(0, 210, 211, 0.7) !important;
-  border-color: rgba(0, 210, 211, 0.9) !important;
-  color: white !important;
-}
-
-.emoji-button:nth-child(9).state-filtered {
-  background: rgba(0, 210, 211, 1) !important;
-  border-color: rgba(0, 210, 211, 1) !important;
-  color: white !important;
-  box-shadow: 0 2px 8px rgba(0, 210, 211, 0.4);
-}
-
-/* ==================== Urgent 状态保持原有样式 ==================== */
-.emoji-button.state-urgent {
-  background: linear-gradient(135deg, #dc3545, #c82333) !important;
-  border-color: #bd2130 !important;
-  color: white !important;
-}
-
-.emoji-button.state-urgent::after {
-  content: "U";
-  position: absolute;
-  top: -3px;
-  right: -3px;
-  background: #ffc107;
-  border-radius: 50%;
-  width: 12px;
-  height: 12px;
-  border: 1px solid white;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.3);
-  font-size: 8px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+.emoji-button.state-filtered {
+  /* 对应 iced 的 filled：更实的颜色和更粗边框 */
+  background: var(--tag-color);
+  border-color: var(--tag-color);
+  border-width: 2px;
   color: #000;
-  font-weight: bold;
+}
+.emoji-button.state-urgent {
+  background: rgba(255, 0, 0, 0.8);
+  border-color: #8a2be2; /* violet */
+  border-width: 2.5px;
+  color: #fff;
 }
 
-/* ==================== 状态指示器优化 ==================== */
-
-/* Filtered状态指示器 */
-.emoji-button.state-filtered::after {
-  content: "●";
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 10px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-  font-weight: bold;
+/* hover/press */
+.emoji-button:hover {
+  filter: brightness(1.05);
+  border-width: 2px;
+}
+.emoji-button.pressed {
+  transform: translateY(1px) scale(0.98);
+  filter: brightness(0.95);
 }
 
-/* Selected状态指示器 */
-.emoji-button.state-selected::after {
-  content: "◆";
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  color: rgba(255, 255, 255, 0.9);
-  font-size: 8px;
-  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.5);
-  font-weight: bold;
+/* 布局开关 & 选项 */
+.layout-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: 6px;
 }
 
-/* 黄色按钮的特殊处理 */
-.emoji-button:nth-child(5).state-selected::after,
-.emoji-button:nth-child(5).state-filtered::after {
-  color: rgba(51, 51, 51, 0.8);
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.3);
+.layout-toggle {
+  cursor: pointer;
+  color: #fff;
+}
+.layout-toggle.open {
+  background: rgba(60, 179, 113, 0.85); /* var(--layout-open) */
+  border-color: #3cb371;
+}
+.layout-toggle.closed {
+  background: rgba(211, 84, 0, 0.85); /* var(--layout-closed) */
+  border-color: #d35400;
+}
+.layout-toggle:hover {
+  filter: brightness(1.05);
+  border-width: 2px;
 }
 
-/* Occupied状态指示器 */
-.emoji-button.state-occupied::after {
-  content: "○";
-  position: absolute;
-  top: 2px;
-  right: 2px;
-  color: rgba(51, 51, 51, 0.7);
-  font-size: 8px;
-  text-shadow: 0 1px 1px rgba(255, 255, 255, 0.3);
-  font-weight: bold;
+.layout-selector {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.layout-option {
+  cursor: pointer;
+  color: #fff;
+  background: rgba(65, 105, 225, 0.85); /* royal blue */
+  border-color: #4169e1;
+}
+.layout-option.current {
+  background: rgba(60, 179, 113, 0.9); /* var(--layout-open) */
+  border-color: #3cb371;
+  border-width: 2px;
+}
+.layout-option:hover {
+  filter: brightness(1.05);
+  border-width: 2px;
 }
 
-/* ==================== 动画效果 ==================== */
-
-@keyframes filtered-glow {
-  0%,
-  100% {
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.2);
-    transform: scale(1);
-  }
-  50% {
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.3);
-    transform: scale(1.02);
-  }
+/* 系统指标（CPU/MEM/电池） */
+.system-info-container {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 
-@keyframes selected-pulse {
-  0%,
-  100% {
-    opacity: 1;
-  }
-  50% {
-    opacity: 0.9;
-    transform: scale(1.01);
-  }
+.usage-pill {
+  color: #fff;
+  border-width: 1px;
+}
+.usage-good    { background: rgba(31, 191, 81, 0.90);  border-color: #1fbf51; }
+.usage-warn    { background: rgba(244, 194, 13, 0.90); border-color: #f4c20d; color: #000; }
+.usage-caution { background: rgba(255, 140, 26, 0.90); border-color: #ff8c1a; }
+.usage-danger  { background: rgba(229, 57, 53, 0.90);  border-color: #e53935; }
+
+/* 截图 pill */
+.screenshot-pill {
+  cursor: pointer;
+  color: #fff;
+  background: rgba(0, 204, 204, 0.9);
+  border-color: #00cccc;
+}
+.screenshot-pill:hover {
+  background: rgba(255, 136, 0, 0.95);
+  border-color: #ff8800;
 }
 
-@keyframes urgent-blink {
-  0%,
-  50%,
-  100% {
-    opacity: 1;
-    box-shadow: 0 1px 3px rgba(220, 53, 69, 0.5);
-  }
-  25%,
-  75% {
-    opacity: 0.9;
-    box-shadow: 0 2px 8px rgba(220, 53, 69, 0.8);
-    transform: scale(1.04);
-  }
+/* 时间 pill */
+.time-pill {
+  color: #fff;
+  background: rgba(77, 163, 255, 0.90);
+  border-color: #4da3ff;
+  cursor: pointer;
 }
 
-/* ==================== 按下效果 ==================== */
-
-/* 按下波纹效果基础 */
-.emoji-button::before {
-  content: "";
-  position: absolute;
-  top: 50%;
-  left: 50%;
-  width: 0;
-  height: 0;
-  border-radius: 50%;
-  background: radial-gradient(
-    circle,
-    rgba(255, 255, 255, 0.6) 0%,
-    rgba(255, 255, 255, 0) 70%
-  );
-  transform: translate(-50%, -50%);
-  opacity: 0;
-  pointer-events: none;
-  z-index: 1;
-  transition: all 0.3s ease;
+/* 监视器/缩放 pill */
+.monitor-pill {
+  color: #fff;
+  background: rgba(155, 89, 182, 0.90);
+  border-color: #9b59b6;
 }
-
-.emoji-button.pressed::before,
-
-/* 基础按钮按下效果 */
-.emoji-button.pressed,
-.emoji-button:active {
-  transform: scale(0.92) !important;
-  box-shadow:
-    inset 0 2px 6px rgba(0, 0, 0, 0.3),
-    0 1px 2px rgba(0, 0, 0, 0.2) !important;
-  transition: all 0.1s ease !important;
-}
-
-/* 各状态按下效果 */
-.emoji-button.state-default.pressed,
-.emoji-button.state-default:active {
-  background: #dee2e6 !important;
-  border-color: #6c757d !important;
-}
-
-.emoji-button.state-occupied.pressed,
-.emoji-button.state-selected.pressed,
-.emoji-button.state-filtered.pressed {
-  opacity: 0.8;
-  transform: scale(0.92) !important;
-  box-shadow: inset 0 2px 6px rgba(0, 0, 0, 0.3) !important;
-}
-
-/* ==================== 悬停效果（仅默认状态） ==================== */
-
-.emoji-button:nth-child(1):hover:not(:disabled):not(.pressed):not(:active):not(
-    .state-occupied
-  ):not(.state-selected):not(.state-filtered):not(.state-urgent) {
-  border-color: #ff6b6b !important;
-  border-width: 2px !important;
-  box-shadow: 0 0 6px rgba(255, 107, 107, 0.4);
-  background: rgba(255, 107, 107, 0.1);
-}
-
-.emoji-button:nth-child(2):hover:not(:disabled):not(.pressed):not(:active):not(
-    .state-occupied
-  ):not(.state-selected):not(.state-filtered):not(.state-urgent) {
-  border-color: #4ecdc4 !important;
-  border-width: 2px !important;
-  box-shadow: 0 0 6px rgba(78, 205, 196, 0.4);
-  background: rgba(78, 205, 196, 0.1);
-}
-
-.emoji-button:nth-child(3):hover:not(:disabled):not(.pressed):not(:active):not(
-    .state-occupied
-  ):not(.state-selected):not(.state-filtered):not(.state-urgent) {
-  border-color: #45b7d1 !important;
-  border-width: 2px !important;
-  box-shadow: 0 0 6px rgba(69, 183, 209, 0.4);
-  background: rgba(69, 183, 209, 0.1);
-}
-
-.emoji-button:nth-child(4):hover:not(:disabled):not(.pressed):not(:active):not(
-    .state-occupied
-  ):not(.state-selected):not(.state-filtered):not(.state-urgent) {
-  border-color: #96ceb4 !important;
-  border-width: 2px !important;
-  box-shadow: 0 0 6px rgba(150, 206, 180, 0.4);
-  background: rgba(150, 206, 180, 0.1);
-}
-
-.emoji-button:nth-child(5):hover:not(:disabled):not(.pressed):not(:active):not(
-    .state-occupied
-  ):not(.state-selected):not(.state-filtered):not(.state-urgent) {
-  border-color: #feca57 !important;
-  border-width: 2px !important;
-  box-shadow: 0 0 6px rgba(254, 202, 87, 0.4);
-  background: rgba(254, 202, 87, 0.1);
-}
-
-.emoji-button:nth-child(6):hover:not(:disabled):not(.pressed):not(:active):not(
-    .state-occupied
-  ):not(.state-selected):not(.state-filtered):not(.state-urgent) {
-  border-color: #ff9ff3 !important;
-  border-width: 2px !important;
-  box-shadow: 0 0 6px rgba(255, 159, 243, 0.4);
-  background: rgba(255, 159, 243, 0.1);
-}
-
-.emoji-button:nth-child(7):hover:not(:disabled):not(.pressed):not(:active):not(
-    .state-occupied
-  ):not(.state-selected):not(.state-filtered):not(.state-urgent) {
-  border-color: #54a0ff !important;
-  border-width: 2px !important;
-  box-shadow: 0 0 6px rgba(84, 160, 255, 0.4);
-  background: rgba(84, 160, 255, 0.1);
-}
-
-.emoji-button:nth-child(8):hover:not(:disabled):not(.pressed):not(:active):not(
-    .state-occupied
-  ):not(.state-selected):not(.state-filtered):not(.state-urgent) {
-  border-color: #5f27cd !important;
-  border-width: 2px !important;
-  box-shadow: 0 0 6px rgba(95, 39, 205, 0.4);
-  background: rgba(95, 39, 205, 0.1);
-}
-
-.emoji-button:nth-child(9):hover:not(:disabled):not(.pressed):not(:active):not(
-    .state-occupied
-  ):not(.state-selected):not(.state-filtered):not(.state-urgent) {
-  border-color: #00d2d3 !important;
-  border-width: 2px !important;
-  box-shadow: 0 0 6px rgba(0, 210, 211, 0.4);
-  background: rgba(0, 210, 211, 0.1);
-}
-
-/* 优化过渡效果 */
-.emoji-button {
-  transition:
-    all 0.2s ease,
-    border-color 0.15s ease,
-    box-shadow 0.15s ease;
-}
-
-/* 正常悬停效果 - 不与按下效果冲突 */
-.emoji-button:hover:not(.pressed):not(:active) {
-  transform: scale(1.05);
-  transition: all 0.2s ease;
-}
-
-/* ==================== 禁用状态优化 ==================== */
-
-.emoji-button:disabled.pressed,
-.emoji-button:disabled:active {
-  transform: none !important;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1) !important;
-  background: #f8f9fa !important;
-}
-
-.emoji-button:disabled::before {
-  display: none;
-}
-
-/* 触摸设备优化 */
-@media (hover: none) {
-  .emoji-button:hover {
-    transform: none;
-  }
-
-  .emoji-button.pressed,
-  .emoji-button:active {
-    transform: scale(0.95) !important;
-  }
+.scale-pill {
+  color: #fff;
+  background: rgba(120, 120, 120, 0.88);
+  border-color: #777;
 }
