@@ -81,7 +81,7 @@ impl eframe::App for AppShell {
     fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
         // 顶部“应用选择”条
         egui::TopBottomPanel::top("app_selector_top").show(ctx, |ui| {
-            egui::menu::bar(ui, |ui| {
+            egui::MenuBar::new().ui(ui, |ui| {
                 ui.menu_button("Eframe Toy", |ui| {
                     if ui.button("Quit").clicked() {
                         ctx.send_viewport_cmd(egui::ViewportCommand::Close);

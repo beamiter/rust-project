@@ -322,7 +322,7 @@ impl Filer {
                                 response.context_menu(|ui| {
                                     if ui.button("Copy full path").clicked() {
                                         ui.ctx().copy_text(item.path.display().to_string());
-                                        ui.close_menu();
+                                        ui.close();
                                     }
                                     if ui.button("Open in file manager").clicked() {
                                         let path = item.path.clone();
@@ -344,7 +344,7 @@ impl Filer {
                                                 .arg(&path)
                                                 .spawn();
                                         }
-                                        ui.close_menu();
+                                        ui.close();
                                     }
                                 });
                             }
