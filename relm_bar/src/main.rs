@@ -76,8 +76,6 @@ fn apply_metric_classes<W: IsA<gtk::Widget>>(w: &W, usage: f64) {
     for c in LEVELS {
         widget.remove_css_class(c);
     }
-    // 可选：如果你在样式里用到了 metric-label，可确保它在
-    // widget.add_css_class("metric-label");
     widget.add_css_class(metric_level_class(usage));
 }
 
@@ -189,9 +187,11 @@ impl SimpleComponent for AppModel {
             .object("layout_label")
             .expect("Missing layout_label");
         let cpu_label_widget: gtk::Label = builder.object("cpu_label").expect("Missing cpu_label");
+        cpu_label_widget.add_css_class("metric-label");
         let memory_label_widget: gtk::Label = builder
             .object("memory_label")
             .expect("Missing memory_label");
+        memory_label_widget.add_css_class("metric-label");
         let time_button_widget: gtk::Button =
             builder.object("time_label").expect("Missing time_label");
         let monitor_label_widget: gtk::Label = builder
