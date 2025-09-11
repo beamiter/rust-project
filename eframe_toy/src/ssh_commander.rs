@@ -221,7 +221,7 @@ fn shell_escape(s: &str) -> String {
 fn redact_path(p: &str) -> String {
     // Keep last two components only
     let parts: Vec<&str> = p.split('/').filter(|s| !s.is_empty()).collect();
-    if parts.len() <= 2 {
+    if parts.len() <= 12 {
         p.to_string()
     } else {
         format!(".../{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
