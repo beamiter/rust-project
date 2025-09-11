@@ -1,15 +1,13 @@
 <?xml version='1.0' encoding='UTF-8'?>
-<!-- Created with Cambalache 0.96.1 -->
+<!-- Created with Cambalache -->
 <interface>
-  <!-- interface-name main_layout.ui -->
   <requires lib="gtk" version="4.0"/>
-  <!-- 主窗口 -->
   <object class="GtkApplicationWindow" id="main_window">
     <property name="decorated">false</property>
     <property name="default-height">40</property>
     <property name="default-width">1000</property>
     <property name="resizable">true</property>
-    <property name="title">relm_bar</property>
+    <property name="title">gtk_bar</property>
     <child>
       <object class="GtkBox" id="top_hbox">
         <property name="margin-bottom">3</property>
@@ -22,14 +20,14 @@
           <object class="GtkBox" id="tab_box">
             <property name="orientation">horizontal</property>
             <property name="spacing">3</property>
+
+            <!-- 9 个工作区按钮 -->
             <child>
               <object class="GtkButton" id="tab_button_0">
                 <property name="height-request">32</property>
                 <property name="label">🍜</property>
                 <property name="width-request">40</property>
-                <style>
-                  <class name="tab-button"/>
-                </style>
+                <style><class name="tab-button"/></style>
               </object>
             </child>
             <child>
@@ -37,9 +35,7 @@
                 <property name="height-request">32</property>
                 <property name="label">🎨</property>
                 <property name="width-request">40</property>
-                <style>
-                  <class name="tab-button"/>
-                </style>
+                <style><class name="tab-button"/></style>
               </object>
             </child>
             <child>
@@ -47,9 +43,7 @@
                 <property name="height-request">32</property>
                 <property name="label">🍀</property>
                 <property name="width-request">40</property>
-                <style>
-                  <class name="tab-button"/>
-                </style>
+                <style><class name="tab-button"/></style>
               </object>
             </child>
             <child>
@@ -57,9 +51,7 @@
                 <property name="height-request">32</property>
                 <property name="label">🧿</property>
                 <property name="width-request">40</property>
-                <style>
-                  <class name="tab-button"/>
-                </style>
+                <style><class name="tab-button"/></style>
               </object>
             </child>
             <child>
@@ -67,9 +59,7 @@
                 <property name="height-request">32</property>
                 <property name="label">🌟</property>
                 <property name="width-request">40</property>
-                <style>
-                  <class name="tab-button"/>
-                </style>
+                <style><class name="tab-button"/></style>
               </object>
             </child>
             <child>
@@ -77,9 +67,7 @@
                 <property name="height-request">32</property>
                 <property name="label">🐐</property>
                 <property name="width-request">40</property>
-                <style>
-                  <class name="tab-button"/>
-                </style>
+                <style><class name="tab-button"/></style>
               </object>
             </child>
             <child>
@@ -87,9 +75,7 @@
                 <property name="height-request">32</property>
                 <property name="label">🏆</property>
                 <property name="width-request">40</property>
-                <style>
-                  <class name="tab-button"/>
-                </style>
+                <style><class name="tab-button"/></style>
               </object>
             </child>
             <child>
@@ -97,9 +83,7 @@
                 <property name="height-request">32</property>
                 <property name="label">🕊️</property>
                 <property name="width-request">40</property>
-                <style>
-                  <class name="tab-button"/>
-                </style>
+                <style><class name="tab-button"/></style>
               </object>
             </child>
             <child>
@@ -107,101 +91,107 @@
                 <property name="height-request">32</property>
                 <property name="label">🏡</property>
                 <property name="width-request">40</property>
-                <style>
-                  <class name="tab-button"/>
-                </style>
+                <style><class name="tab-button"/></style>
               </object>
             </child>
           </object>
         </child>
+
+        <!-- 布局开关（pill） -->
         <child>
-          <object class="GtkLabel" id="layout_label">
-            <property name="halign">center</property>
+          <object class="GtkButton" id="layout_toggle">
             <property name="height-request">32</property>
-            <property name="label"> ? </property>
-            <property name="width-request">40</property>
+            <property name="width-request">48</property>
+            <property name="label">[]=</property>
             <style>
-              <class name="layout-label"/>
+              <class name="layout-toggle"/>
+              <class name="closed"/>
             </style>
           </object>
         </child>
+
+        <!-- 可展开的布局选项（GtkRevealer 动画） -->
         <child>
-          <object class="GtkScrolledWindow" id="layout_scroll">
-            <property name="height-request">32</property>
-            <property name="hscrollbar-policy">automatic</property>
-            <property name="vscrollbar-policy">never</property>
-            <property name="width-request">120</property>
+          <object class="GtkRevealer" id="layout_revealer">
+            <property name="reveal-child">false</property>
+            <property name="transition-type">slide-right</property>
+            <property name="transition-duration">120</property>
             <child>
-              <object class="GtkBox" id="layout_box">
+              <object class="GtkBox" id="layout_selector_box">
                 <property name="orientation">horizontal</property>
                 <property name="spacing">5</property>
+                <style><class name="layout-selector"/></style>
                 <child>
-                  <object class="GtkButton" id="layout_button_1">
+                  <object class="GtkButton" id="layout_option_tiled">
                     <property name="height-request">28</property>
+                    <property name="width-request">40</property>
                     <property name="label">[]=</property>
-                    <property name="width-request">38</property>
+                    <style><class name="layout-option"/></style>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkButton" id="layout_button_2">
+                  <object class="GtkButton" id="layout_option_floating">
                     <property name="height-request">28</property>
-                    <property name="label">&lt;&gt;&lt;</property>
-                    <property name="width-request">38</property>
+                    <property name="width-request">40</property>
+                    <property name="label">&gt;&lt;&gt;</property>
+                    <style><class name="layout-option"/></style>
                   </object>
                 </child>
                 <child>
-                  <object class="GtkButton" id="layout_button_3">
+                  <object class="GtkButton" id="layout_option_monocle">
                     <property name="height-request">28</property>
+                    <property name="width-request">40</property>
                     <property name="label">[M]</property>
-                    <property name="width-request">38</property>
+                    <style><class name="layout-option"/></style>
                   </object>
                 </child>
               </object>
             </child>
           </object>
         </child>
+
+        <!-- 中间撑开 -->
         <child>
           <object class="GtkBox" id="spacer">
             <property name="hexpand">true</property>
             <property name="orientation">horizontal</property>
           </object>
         </child>
+
+        <!-- 右侧信息：CPU/MEM/截图/时间/监视器 -->
         <child>
           <object class="GtkBox" id="right_box">
             <property name="halign">end</property>
             <property name="orientation">horizontal</property>
             <property name="spacing">3</property>
+
             <child>
               <object class="GtkLabel" id="cpu_label">
                 <property name="justify">center</property>
-                <property name="label">0%</property>
-                <property name="width-request">40</property>
+                <property name="label">CPU</property>
+                <property name="width-request">60</property>
               </object>
             </child>
             <child>
               <object class="GtkLabel" id="memory_label">
-                <property name="label">0%</property>
-                <property name="width-request">40</property>
+                <property name="label">MEM</property>
+                <property name="width-request">60</property>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="screenshot_button">
                 <property name="height-request">32</property>
-                <property name="label"> 🎥 1.0 </property>
+                <property name="label"> 📸 </property>
                 <property name="width-request">60</property>
-                <style>
-                  <class name="screenshot-button"/>
-                </style>
+                <style><class name="screenshot-button"/></style>
               </object>
             </child>
             <child>
               <object class="GtkButton" id="time_label">
                 <property name="height-request">32</property>
                 <property name="label">--:--</property>
-                <property name="width-request">60</property>
-                <style>
-                  <class name="time-button"/>
-                </style>
+                <property name="width-request">120</property>
+                <style><class name="time-button"/></style>
               </object>
             </child>
             <child>
@@ -218,4 +208,3 @@
     </child>
   </object>
 </interface>
-

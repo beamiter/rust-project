@@ -5,7 +5,7 @@ use gdk4::prelude::*;
 use gdk4_x11::x11::xlib::{XFlush, XMoveWindow};
 use gtk4::gio::{self};
 use gtk4::prelude::*;
-use gtk4::{Application, ApplicationWindow, Builder, Button, Label, glib};
+use gtk4::{Application, ApplicationWindow, Builder, Button, Label, Revealer, glib};
 use log::{error, info, warn};
 use std::cell::{Cell, RefCell};
 use std::env;
@@ -59,6 +59,7 @@ struct AppState {
     // UI state
     active_tab: usize,
     layout_symbol: String,
+    layout_open: bool,
     monitor_num: u8,
     show_seconds: bool,
     tag_status_vec: Vec<TagStatus>,
@@ -83,6 +84,7 @@ impl AppState {
         Self {
             active_tab: 0,
             layout_symbol: " ? ".to_string(),
+            layout_open: false,
             monitor_num: 0,
             show_seconds: false,
             tag_status_vec: Vec::new(),
@@ -159,11 +161,17 @@ struct TabBarApp {
     builder: Builder,
     window: ApplicationWindow,
     tab_buttons: Vec<Button>,
-    layout_label: Label,
     time_button: Button,
     monitor_label: Label,
     memory_label: Label,
     cpu_label: Label,
+
+    // 新增：布局开关 + 展开选项
+    layout_toggle: Button,
+    layout_revealer: Revealer,
+    layout_btn_tiled: Button,
+    layout_btn_floating: Button,
+    layout_btn_monocle: Button,
 
     // Shared state
     state: SharedAppState,
@@ -172,7 +180,6 @@ struct TabBarApp {
     worker: WorkerHandle,
 
     // Cached UI-applied values for diff
-    ui_last_layout_symbol: RefCell<String>,
     ui_last_monitor_num: Cell<u8>,
 }
 
@@ -198,9 +205,6 @@ impl TabBarApp {
         }
 
         // 其他组件
-        let layout_label: Label = builder
-            .object("layout_label")
-            .expect("Failed to get layout_label from builder");
         let time_button: Button = builder
             .object("time_label")
             .expect("Failed to get time_label from builder");
@@ -213,6 +217,23 @@ impl TabBarApp {
         let cpu_label: Label = builder
             .object("cpu_label")
             .expect("Failed to get cpu_label from builder");
+
+        // 布局开关 + 选项
+        let layout_toggle: Button = builder
+            .object("layout_toggle")
+            .expect("Failed to get layout_toggle");
+        let layout_revealer: Revealer = builder
+            .object("layout_revealer")
+            .expect("Failed to get layout_revealer");
+        let layout_btn_tiled: Button = builder
+            .object("layout_option_tiled")
+            .expect("Failed to get layout_option_tiled");
+        let layout_btn_floating: Button = builder
+            .object("layout_option_floating")
+            .expect("Failed to get layout_option_floating");
+        let layout_btn_monocle: Button = builder
+            .object("layout_option_monocle")
+            .expect("Failed to get layout_option_monocle");
 
         // 状态
         let state: SharedAppState = Rc::new(RefCell::new(AppState::new()));
@@ -230,14 +251,17 @@ impl TabBarApp {
             builder,
             window,
             tab_buttons,
-            layout_label,
             time_button,
             monitor_label,
             memory_label,
             cpu_label,
+            layout_toggle,
+            layout_revealer,
+            layout_btn_tiled,
+            layout_btn_floating,
+            layout_btn_monocle,
             state,
             worker,
-            ui_last_layout_symbol: RefCell::new(String::new()),
             ui_last_monitor_num: Cell::new(255),
         });
 
@@ -313,13 +337,14 @@ impl TabBarApp {
 
         // 首次时间显示
         app_instance.update_time_display();
+        // 首次布局 UI 同步（默认 closed）
+        app_instance.update_layout_ui();
 
         app_instance
     }
 
     fn apply_styles() {
         let provider = gtk4::CssProvider::new();
-        // 确保样式文件命名为 styles.css
         provider.load_from_data(include_str!("styles.css"));
         if let Some(display) = gtk4::gdk::Display::default() {
             gtk4::style_context_add_provider_for_display(
@@ -341,19 +366,36 @@ impl TabBarApp {
             });
         }
 
-        // 布局按钮
-        for i in 1..=3 {
-            let button_id = format!("layout_button_{}", i);
-            if let Some(button) = app.builder.object::<Button>(&button_id) {
-                button.connect_clicked({
-                    let app = app.clone();
-                    let layout_index = (i - 1) as u32;
-                    move |_| {
-                        Self::handle_layout_clicked(app.clone(), layout_index);
-                    }
-                });
+        // 布局开关
+        app.layout_toggle.connect_clicked({
+            let app = app.clone();
+            move |_| {
+                if let Ok(mut st) = app.state.try_borrow_mut() {
+                    st.layout_open = !st.layout_open;
+                }
+                app.update_layout_ui();
             }
-        }
+        });
+
+        // 布局选项
+        app.layout_btn_tiled.connect_clicked({
+            let app = app.clone();
+            move |_| {
+                Self::handle_layout_clicked(app.clone(), 0);
+            }
+        });
+        app.layout_btn_floating.connect_clicked({
+            let app = app.clone();
+            move |_| {
+                Self::handle_layout_clicked(app.clone(), 1);
+            }
+        });
+        app.layout_btn_monocle.connect_clicked({
+            let app = app.clone();
+            move |_| {
+                Self::handle_layout_clicked(app.clone(), 2);
+            }
+        });
 
         // 时间按钮
         app.time_button.connect_clicked({
@@ -402,6 +444,7 @@ impl TabBarApp {
         }
         // 更新 UI（差量）
         self.update_ui();
+        self.update_layout_ui();
     }
 
     // ========= 交互 =========
@@ -419,11 +462,14 @@ impl TabBarApp {
     fn handle_layout_clicked(app: Rc<Self>, layout_index: u32) {
         if let Ok(st) = app.state.try_borrow() {
             let monitor_id = st.monitor_num as i32;
-            let command =
-                SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id as i32);
+            let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
             app.worker.send_command(AppCommand::SendCommand(command));
             info!("Sent SetLayout command: layout_index={}", layout_index);
         }
+        if let Ok(mut st) = app.state.try_borrow_mut() {
+            st.layout_open = false; // 选择后收起
+        }
+        app.update_layout_ui();
     }
 
     fn handle_toggle_seconds(app: Rc<Self>) {
@@ -441,11 +487,6 @@ impl TabBarApp {
     // ========= UI 更新 =========
     fn update_ui(&self) {
         if let Ok(st) = self.state.try_borrow() {
-            // layout_label 差量
-            if *self.ui_last_layout_symbol.borrow() != st.layout_symbol {
-                self.layout_label.set_text(&st.layout_symbol);
-                *self.ui_last_layout_symbol.borrow_mut() = st.layout_symbol.clone();
-            }
             // monitor_label 差量
             if self.ui_last_monitor_num.get() != st.monitor_num {
                 let monitor_icon = Self::monitor_num_to_icon(st.monitor_num);
@@ -497,6 +538,43 @@ impl TabBarApp {
         }
     }
 
+    // 新增：布局 UI 更新（切换 open/closed、高亮当前布局、更新 toggle 文本）
+    fn update_layout_ui(&self) {
+        if let Ok(st) = self.state.try_borrow() {
+            // 开关按钮文本：显示当前布局符号
+            self.layout_toggle.set_label(&st.layout_symbol);
+
+            // revealer 展开/收起
+            self.layout_revealer.set_reveal_child(st.layout_open);
+
+            // 开关按钮 open/closed 类
+            self.layout_toggle.remove_css_class("open");
+            self.layout_toggle.remove_css_class("closed");
+            self.layout_toggle
+                .add_css_class(if st.layout_open { "open" } else { "closed" });
+
+            // 当前布局高亮
+            let is_tiled = st.layout_symbol.contains("[]=");
+            let is_floating = st.layout_symbol.contains("><>");
+            let is_monocle = st.layout_symbol.contains("[M]");
+
+            for b in [
+                &self.layout_btn_tiled,
+                &self.layout_btn_floating,
+                &self.layout_btn_monocle,
+            ] {
+                b.remove_css_class("current");
+            }
+            if is_tiled {
+                self.layout_btn_tiled.add_css_class("current");
+            } else if is_floating {
+                self.layout_btn_floating.add_css_class("current");
+            } else if is_monocle {
+                self.layout_btn_monocle.add_css_class("current");
+            }
+        }
+    }
+
     fn update_time_display(&self) {
         let now = Local::now();
         let show_seconds = if let Ok(st) = self.state.try_borrow() {
@@ -540,7 +618,6 @@ impl TabBarApp {
                 CLS_EMPTY
             }
         } else {
-            // 没有该索引的标签状态时的回退：仅依据是否为当前活动索引
             if is_active_index {
                 CLS_SELECTED
             } else {
@@ -550,7 +627,6 @@ impl TabBarApp {
     }
 
     fn build_tag_command(state: &AppState, is_view: bool) -> Option<SharedCommand> {
-        // 避免位移溢出
         if state.active_tab >= 32 {
             return None;
         }
@@ -648,7 +724,6 @@ fn worker_thread(
                     let ts: u128 = message.timestamp.into();
                     if ts != prev_timestamp {
                         prev_timestamp = ts;
-                        // 尝试发送到 UI，若通道繁忙则丢弃本次（避免堆积）
                         if let Err(e) = ui_sender.try_send(AppEvent::SharedMessage(message)) {
                             if !e.is_full() {
                                 warn!("Failed to send SharedMessage to UI: {}", e);
@@ -658,7 +733,7 @@ fn worker_thread(
                 }
             }
             Ok(false) => {
-                // timeout，继续以处理命令为主
+                // timeout
             }
             Err(e) => {
                 error!("[worker] wait_for_message failed: {}", e);
@@ -716,7 +791,6 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 }
 
 fn sanitize_application_id(shared_path: &str) -> String {
-    // 允许 [A-Za-z0-9._-]，确保至少一个 '.'，限制长度
     let mut base = shared_path.replace("/dev/shm/monitor_", "gtk_bar_");
     if base.is_empty() {
         base = "gtk_bar".to_string();
@@ -765,7 +839,7 @@ fn main() -> glib::ExitCode {
 
     let application_id = sanitize_application_id(&shared_path);
     info!("application_id: {}", application_id);
-    info!("Starting GTK4 Bar v1.1 (GLib main loop + std::thread worker + async_channel)");
+    info!("Starting GTK4 Bar (layout selector optimized like iced_bar)");
 
     // GTK 应用
     let app = Application::builder()

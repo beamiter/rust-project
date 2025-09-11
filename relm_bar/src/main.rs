@@ -110,6 +110,7 @@ fn load_css() {
 pub enum AppInput {
     TabSelected(usize),
     LayoutChanged(u32),
+    ToggleLayoutPanel,
     ToggleSeconds,
     Screenshot,
     SharedMessageReceived(SharedMessage),
@@ -121,6 +122,7 @@ pub enum AppInput {
 pub struct AppModel {
     pub active_tab: usize,
     pub layout_symbol: String,
+    pub layout_open: bool,
     pub monitor_num: u8,
     pub show_seconds: bool,
     pub tag_status_vec: Vec<TagStatus>,
@@ -134,9 +136,7 @@ pub struct AppModel {
     #[do_not_track]
     pub system_monitor: SystemMonitor,
 
-    // 由 Builder 获取并保存在 model 中，便于 update 时根据变化更新 UI
-    #[do_not_track]
-    layout_label_widget: gtk::Label,
+    // 来自 UI 的控件引用
     #[do_not_track]
     cpu_label_widget: gtk::Label,
     #[do_not_track]
@@ -147,6 +147,18 @@ pub struct AppModel {
     monitor_label_widget: gtk::Label,
     #[do_not_track]
     tab_buttons: Vec<gtk::Button>,
+
+    // 新增：布局开关与选项（与 gtk_bar 的 UI/样式一致）
+    #[do_not_track]
+    layout_toggle_widget: gtk::Button,
+    #[do_not_track]
+    layout_revealer_widget: gtk::Revealer,
+    #[do_not_track]
+    layout_btn_tiled_widget: gtk::Button,
+    #[do_not_track]
+    layout_btn_floating_widget: gtk::Button,
+    #[do_not_track]
+    layout_btn_monocle_widget: gtk::Button,
 }
 
 #[relm4::component(pub)]
@@ -173,7 +185,7 @@ impl SimpleComponent for AppModel {
         _root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
-        // 1) 加载 UI 文件
+        // 1) 加载 UI 文件（复用 gtk_bar 的 main_layout.ui）
         let builder = gtk::Builder::from_string(include_str!("resources/main_layout.ui"));
 
         // 2) 取出要挂载的根容器（不是 UI 的窗口，避免重复窗口）
@@ -183,9 +195,6 @@ impl SimpleComponent for AppModel {
         top_hbox.unparent();
 
         // 3) 获取需要动态更新的控件
-        let layout_label_widget: gtk::Label = builder
-            .object("layout_label")
-            .expect("Missing layout_label");
         let cpu_label_widget: gtk::Label = builder.object("cpu_label").expect("Missing cpu_label");
         cpu_label_widget.add_css_class("metric-label");
         let memory_label_widget: gtk::Label = builder
@@ -198,19 +207,42 @@ impl SimpleComponent for AppModel {
             .object("monitor_label")
             .expect("Missing monitor_label");
 
+        // 布局开关 + 选项（复用 gtk_bar 定义）
+        let layout_toggle_widget: gtk::Button = builder
+            .object("layout_toggle")
+            .expect("Missing layout_toggle");
+        let layout_revealer_widget: gtk::Revealer = builder
+            .object("layout_revealer")
+            .expect("Missing layout_revealer");
+        let layout_btn_tiled_widget: gtk::Button = builder
+            .object("layout_option_tiled")
+            .expect("Missing layout_option_tiled");
+        let layout_btn_floating_widget: gtk::Button = builder
+            .object("layout_option_floating")
+            .expect("Missing layout_option_floating");
+        let layout_btn_monocle_widget: gtk::Button = builder
+            .object("layout_option_monocle")
+            .expect("Missing layout_option_monocle");
+
         // 4) 连接静态按钮的信号
-        // 布局按钮
-        if let Some(btn) = builder.object::<gtk::Button>("layout_button_1") {
+        // 布局开关
+        {
             let s = sender.clone();
-            btn.connect_clicked(move |_| s.input(AppInput::LayoutChanged(0)));
+            layout_toggle_widget.connect_clicked(move |_| s.input(AppInput::ToggleLayoutPanel));
         }
-        if let Some(btn) = builder.object::<gtk::Button>("layout_button_2") {
+        // 布局选项
+        {
             let s = sender.clone();
-            btn.connect_clicked(move |_| s.input(AppInput::LayoutChanged(1)));
+            layout_btn_tiled_widget.connect_clicked(move |_| s.input(AppInput::LayoutChanged(0)));
         }
-        if let Some(btn) = builder.object::<gtk::Button>("layout_button_3") {
+        {
             let s = sender.clone();
-            btn.connect_clicked(move |_| s.input(AppInput::LayoutChanged(2)));
+            layout_btn_floating_widget
+                .connect_clicked(move |_| s.input(AppInput::LayoutChanged(1)));
+        }
+        {
+            let s = sender.clone();
+            layout_btn_monocle_widget.connect_clicked(move |_| s.input(AppInput::LayoutChanged(2)));
         }
 
         // 截图按钮
@@ -243,7 +275,8 @@ impl SimpleComponent for AppModel {
         let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
         let mut model = AppModel {
             active_tab: 0,
-            layout_symbol: " ? ".to_string(),
+            layout_symbol: "[]=".to_string(),
+            layout_open: false,
             monitor_num: 0,
             show_seconds: false,
             tag_status_vec: Vec::new(),
@@ -255,12 +288,17 @@ impl SimpleComponent for AppModel {
             system_monitor: SystemMonitor::new(1),
             tracker: 0,
 
-            layout_label_widget,
             cpu_label_widget,
             memory_label_widget,
             time_button_widget,
             monitor_label_widget,
             tab_buttons,
+
+            layout_toggle_widget,
+            layout_revealer_widget,
+            layout_btn_tiled_widget,
+            layout_btn_floating_widget,
+            layout_btn_monocle_widget,
         };
 
         // 6) 样式、首帧数据与后台任务
@@ -287,19 +325,25 @@ impl SimpleComponent for AppModel {
                 info!("Tab selected: {}", index);
                 self.active_tab = index;
                 self.send_tag_command(true);
-                // Tab 状态类更新
                 self.sync_tabs_ui();
             }
 
             AppInput::LayoutChanged(layout_index) => {
                 info!("Layout changed: {}", layout_index);
                 self.send_layout_command(layout_index);
+                // 选择后收起，并刷新布局 UI（高亮 current）
+                self.layout_open = false;
+                self.sync_layout_ui();
+            }
+
+            AppInput::ToggleLayoutPanel => {
+                self.layout_open = !self.layout_open;
+                self.sync_layout_ui();
             }
 
             AppInput::ToggleSeconds => {
                 self.show_seconds = !self.show_seconds;
                 self.update_time_display();
-                // 时间立即刷新
                 self.sync_time_ui();
             }
 
@@ -313,7 +357,7 @@ impl SimpleComponent for AppModel {
             AppInput::SharedMessageReceived(message) => {
                 info!("SharedMessageReceived: {:?}", message);
                 self.process_shared_message(message);
-                // 刷新 tab、布局符号、监视器图标
+                // 刷新 tab、布局开关与选项、监视器图标
                 self.sync_tabs_ui();
                 self.sync_layout_and_monitor_ui();
             }
@@ -329,7 +373,6 @@ impl SimpleComponent for AppModel {
                     };
                     self.cpu_usage = (snapshot.cpu_average as f64 / 100.0).clamp(0.0, 1.0);
                 }
-                // 刷新 CPU/MEM
                 self.sync_metrics_ui();
             }
 
@@ -428,20 +471,70 @@ impl AppModel {
         }
     }
 
-    // ========== UI 同步（基于 tracker 的 “watch” 思路） ==========
+    // ========== UI 同步 ==========
 
     fn sync_full_ui_once(&self) {
-        // 首次同步各区域
         self.sync_layout_and_monitor_ui();
         self.sync_time_ui();
         self.sync_metrics_ui();
         self.sync_tabs_ui();
     }
 
+    // 布局 + 监视器图标
     fn sync_layout_and_monitor_ui(&self) {
-        self.layout_label_widget.set_label(&self.layout_symbol);
+        // 布局开关：文本为当前布局
+        self.layout_toggle_widget.set_label(&self.layout_symbol);
+        // 根据 layout_open 切换 open/closed 类，并控制 revealer 展开
+        self.sync_layout_open_state_ui();
+
+        // 当前布局选项高亮
+        self.sync_layout_current_option_ui();
+
+        // 监视器图标
         self.monitor_label_widget
             .set_label(&monitor_num_to_icon(self.monitor_num));
+    }
+
+    // 仅同步布局开关的 open/closed 与 revealer 展开状态
+    fn sync_layout_open_state_ui(&self) {
+        let w = self.layout_toggle_widget.upcast_ref::<gtk::Widget>();
+        w.remove_css_class("open");
+        w.remove_css_class("closed");
+        w.add_css_class(if self.layout_open { "open" } else { "closed" });
+        self.layout_revealer_widget
+            .set_reveal_child(self.layout_open);
+    }
+
+    // 根据 layout_symbol 高亮当前布局选项
+    fn sync_layout_current_option_ui(&self) {
+        let tiled = self.layout_symbol.contains("[]=");
+        let floating = self.layout_symbol.contains("><>");
+        let monocle = self.layout_symbol.contains("[M]");
+
+        for b in [
+            &self.layout_btn_tiled_widget,
+            &self.layout_btn_floating_widget,
+            &self.layout_btn_monocle_widget,
+        ] {
+            b.remove_css_class("current");
+        }
+        if tiled {
+            self.layout_btn_tiled_widget.add_css_class("current");
+        } else if floating {
+            self.layout_btn_floating_widget.add_css_class("current");
+        } else if monocle {
+            self.layout_btn_monocle_widget.add_css_class("current");
+        }
+    }
+
+    // 仅在 ToggleLayoutPanel 或 LayoutChanged 后调用
+    fn sync_layout_ui(&self) {
+        // 更新 toggle 文本为当前布局
+        self.layout_toggle_widget.set_label(&self.layout_symbol);
+        // 更新开关样式与 revealer 展开
+        self.sync_layout_open_state_ui();
+        // 高亮当前选项
+        self.sync_layout_current_option_ui();
     }
 
     fn sync_time_ui(&self) {
@@ -462,7 +555,6 @@ impl AppModel {
     }
 
     fn sync_tabs_ui(&self) {
-        // 更新9个 Tab 的样式与 emoji（emoji 固定一次即可，也可以在这里再次设置以确保一致）
         for (i, btn) in self.tab_buttons.iter().enumerate() {
             btn.set_label(pick_emoji(i));
             let status = self.tag_status_vec.get(i);
