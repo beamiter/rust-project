@@ -96,7 +96,7 @@ fn apply_tab_state_classes(button: &gtk::Button, status: Option<&TagStatus>) {
 
 fn load_css() {
     let provider = gtk::CssProvider::new();
-    provider.load_from_string(include_str!("styles.css"));
+    provider.load_from_data(include_str!("styles.css"));
     if let Some(display) = gtk::gdk::Display::default() {
         gtk::style_context_add_provider_for_display(
             &display,

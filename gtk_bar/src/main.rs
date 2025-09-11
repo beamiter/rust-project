@@ -320,7 +320,7 @@ impl TabBarApp {
     fn apply_styles() {
         let provider = gtk4::CssProvider::new();
         // 确保样式文件命名为 styles.css
-        provider.load_from_string(include_str!("styles.css"));
+        provider.load_from_data(include_str!("styles.css"));
         if let Some(display) = gtk4::gdk::Display::default() {
             gtk4::style_context_add_provider_for_display(
                 &display,
@@ -804,7 +804,7 @@ fn main() -> glib::ExitCode {
         let args = command_line.arguments();
         info!("Command line arguments: {:?}", args);
         app.activate();
-        0
+        0.into()
     });
 
     app.run()

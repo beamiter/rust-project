@@ -1,0 +1,221 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<!-- Created with Cambalache 0.96.1 -->
+<interface>
+  <!-- interface-name main_layout.ui -->
+  <requires lib="gtk" version="4.0"/>
+  <!-- 主窗口 -->
+  <object class="GtkApplicationWindow" id="main_window">
+    <property name="decorated">false</property>
+    <property name="default-height">40</property>
+    <property name="default-width">1000</property>
+    <property name="resizable">true</property>
+    <property name="title">relm_bar</property>
+    <child>
+      <object class="GtkBox" id="top_hbox">
+        <property name="margin-bottom">3</property>
+        <property name="margin-end">3</property>
+        <property name="margin-start">3</property>
+        <property name="margin-top">3</property>
+        <property name="orientation">horizontal</property>
+        <property name="spacing">3</property>
+        <child>
+          <object class="GtkBox" id="tab_box">
+            <property name="orientation">horizontal</property>
+            <property name="spacing">3</property>
+            <child>
+              <object class="GtkButton" id="tab_button_0">
+                <property name="height-request">32</property>
+                <property name="label">🍜</property>
+                <property name="width-request">40</property>
+                <style>
+                  <class name="tab-button"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="tab_button_1">
+                <property name="height-request">32</property>
+                <property name="label">🎨</property>
+                <property name="width-request">40</property>
+                <style>
+                  <class name="tab-button"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="tab_button_2">
+                <property name="height-request">32</property>
+                <property name="label">🍀</property>
+                <property name="width-request">40</property>
+                <style>
+                  <class name="tab-button"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="tab_button_3">
+                <property name="height-request">32</property>
+                <property name="label">🧿</property>
+                <property name="width-request">40</property>
+                <style>
+                  <class name="tab-button"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="tab_button_4">
+                <property name="height-request">32</property>
+                <property name="label">🌟</property>
+                <property name="width-request">40</property>
+                <style>
+                  <class name="tab-button"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="tab_button_5">
+                <property name="height-request">32</property>
+                <property name="label">🐐</property>
+                <property name="width-request">40</property>
+                <style>
+                  <class name="tab-button"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="tab_button_6">
+                <property name="height-request">32</property>
+                <property name="label">🏆</property>
+                <property name="width-request">40</property>
+                <style>
+                  <class name="tab-button"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="tab_button_7">
+                <property name="height-request">32</property>
+                <property name="label">🕊️</property>
+                <property name="width-request">40</property>
+                <style>
+                  <class name="tab-button"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="tab_button_8">
+                <property name="height-request">32</property>
+                <property name="label">🏡</property>
+                <property name="width-request">40</property>
+                <style>
+                  <class name="tab-button"/>
+                </style>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkLabel" id="layout_label">
+            <property name="halign">center</property>
+            <property name="height-request">32</property>
+            <property name="label"> ? </property>
+            <property name="width-request">40</property>
+            <style>
+              <class name="layout-label"/>
+            </style>
+          </object>
+        </child>
+        <child>
+          <object class="GtkScrolledWindow" id="layout_scroll">
+            <property name="height-request">32</property>
+            <property name="hscrollbar-policy">automatic</property>
+            <property name="vscrollbar-policy">never</property>
+            <property name="width-request">120</property>
+            <child>
+              <object class="GtkBox" id="layout_box">
+                <property name="orientation">horizontal</property>
+                <property name="spacing">5</property>
+                <child>
+                  <object class="GtkButton" id="layout_button_1">
+                    <property name="height-request">28</property>
+                    <property name="label">[]=</property>
+                    <property name="width-request">38</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="layout_button_2">
+                    <property name="height-request">28</property>
+                    <property name="label">&lt;&gt;&lt;</property>
+                    <property name="width-request">38</property>
+                  </object>
+                </child>
+                <child>
+                  <object class="GtkButton" id="layout_button_3">
+                    <property name="height-request">28</property>
+                    <property name="label">[M]</property>
+                    <property name="width-request">38</property>
+                  </object>
+                </child>
+              </object>
+            </child>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="spacer">
+            <property name="hexpand">true</property>
+            <property name="orientation">horizontal</property>
+          </object>
+        </child>
+        <child>
+          <object class="GtkBox" id="right_box">
+            <property name="halign">end</property>
+            <property name="orientation">horizontal</property>
+            <property name="spacing">3</property>
+            <child>
+              <object class="GtkLabel" id="cpu_label">
+                <property name="justify">center</property>
+                <property name="label">0%</property>
+                <property name="width-request">40</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="memory_label">
+                <property name="label">0%</property>
+                <property name="width-request">40</property>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="screenshot_button">
+                <property name="height-request">32</property>
+                <property name="label"> 🎥 1.0 </property>
+                <property name="width-request">60</property>
+                <style>
+                  <class name="screenshot-button"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkButton" id="time_label">
+                <property name="height-request">32</property>
+                <property name="label">--:--</property>
+                <property name="width-request">60</property>
+                <style>
+                  <class name="time-button"/>
+                </style>
+              </object>
+            </child>
+            <child>
+              <object class="GtkLabel" id="monitor_label">
+                <property name="halign">center</property>
+                <property name="height-request">32</property>
+                <property name="label">🥇</property>
+                <property name="width-request">30</property>
+              </object>
+            </child>
+          </object>
+        </child>
+      </object>
+    </child>
+  </object>
+</interface>
+
