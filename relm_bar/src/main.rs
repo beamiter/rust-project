@@ -687,15 +687,7 @@ fn main() {
         eprintln!("Init logging failed: {e}");
     }
 
-    // 构建稳定 App ID
-    let mut instance_name = shared_path.replace("/dev/shm/monitor_", "relm_bar_");
-    if instance_name.is_empty() {
-        instance_name = "relm_bar".to_string();
-    }
-    instance_name = format!("dev.you.{}", instance_name.replace('/', "_"));
-
-    info!("App ID: {}", instance_name);
-    let app = RelmApp::new(&instance_name).with_args(vec![]);
+    let app = RelmApp::new("dev.relm.bar").with_args(vec![]);
 
     app.run::<AppModel>(shared_path);
 }

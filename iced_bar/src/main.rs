@@ -90,18 +90,13 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 
 fn main() -> iced::Result {
     let args: Vec<String> = env::args().collect();
-    let application_id = args.get(0).cloned().unwrap_or_default();
+    let application_id = "dev.iced.bar";
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
     if let Err(e) = initialize_logging(&shared_path) {
         eprintln!("Failed to initialize logging: {}", e);
         std::process::exit(1);
     }
-
-    info!(
-        "Starting iced_bar v{}; application_id: {}; shared_path: {}",
-        1.0, application_id, shared_path
-    );
 
     iced::application(IcedBar::new, IcedBar::update, IcedBar::view)
         .window(window::Settings {

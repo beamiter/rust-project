@@ -790,31 +790,6 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
     Ok(())
 }
 
-fn sanitize_application_id(shared_path: &str) -> String {
-    let mut base = shared_path.replace("/dev/shm/monitor_", "gtk_bar_");
-    if base.is_empty() {
-        base = "gtk_bar".to_string();
-    }
-    let mut id: String = base
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect();
-
-    if !id.contains('.') {
-        id = format!("com.example.{}", id);
-    }
-    if id.len() > 200 {
-        id.truncate(200);
-    }
-    id
-}
-
 fn sanitize_filename(name: &str) -> String {
     name.chars()
         .map(|c| {
@@ -837,13 +812,11 @@ fn main() -> glib::ExitCode {
         std::process::exit(1);
     }
 
-    let application_id = sanitize_application_id(&shared_path);
-    info!("application_id: {}", application_id);
     info!("Starting GTK4 Bar (layout selector optimized like iced_bar)");
 
     // GTK 应用
     let app = Application::builder()
-        .application_id(&application_id)
+        .application_id("dev.gtk.bar")
         .flags(gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
 
