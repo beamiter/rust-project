@@ -90,7 +90,7 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 
 fn main() -> iced::Result {
     let args: Vec<String> = env::args().collect();
-    let application_id = "dev.iced.bar";
+    let application_id = "dev.iced.bar".to_string();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
     if let Err(e) = initialize_logging(&shared_path) {
