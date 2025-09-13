@@ -6,6 +6,7 @@ edition = "2021"
 [features]
 use-eventfd = []
 use-semaphore = []
+use-futex = []
 
 [dependencies]
 cfg-if = "1.0.1"
