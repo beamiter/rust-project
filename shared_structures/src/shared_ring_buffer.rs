@@ -891,6 +891,7 @@ impl SharedRingBuffer {
                     fd
                 );
             }
+            panic!("eventfd is not valid");
             return Ok(has_data());
         }
 

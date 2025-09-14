@@ -26,8 +26,9 @@ chrono = { version = "0.4", features = ["serde"] }
 font-kit = "0.11"
 
 # 共享内存（原项目依赖）
-# shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
-shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
+shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
+# shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
+# shared_structures = { path = "../shared_structures", features = ["use-futex"] }
 thiserror = "2.0.12"
 tempfile = "3.20.0"
 battery = "0.7.8"

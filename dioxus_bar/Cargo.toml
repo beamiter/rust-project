@@ -14,8 +14,9 @@ flexi_logger = "0.31.0"
 log = "0.4.27"
 thiserror = "2.0.12"
 toml = "0.8.23"
-# shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
-shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
+shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
+# shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
+# shared_structures = { path = "../shared_structures", features = ["use-futex"] }
 time = "0.3.41"
 sysinfo = "0.35.2"
 battery = "0.7.8"
