@@ -1,7 +1,6 @@
 // benches/ring_buffer_bench.rs
-use criterion::{
-    black_box, criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput,
-};
+use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion, Throughput};
+use std::hint::black_box;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Barrier};
 use std::thread;
@@ -124,6 +123,10 @@ fn bench_throughput_varying_sizes(c: &mut Criterion) {
 }
 
 // 4) 生产者-消费者（复用段与线程：一次样本内只创建一次）
+// 修复点：
+// - 不再让生产者在环满时调用 try_read_next_message（严格 SPSC）
+// - 不再按“每轮读满 message_count”退出；改为按总目标条目数收敛（iters * message_count）
+// - 用原子计数 sent/received 统计总量，消费者持续 wait+drain 直到达到目标
 fn bench_producer_consumer(c: &mut Criterion) {
     let mut group = c.benchmark_group("producer_consumer");
     group.sample_size(10);
@@ -136,79 +139,78 @@ fn bench_producer_consumer(c: &mut Criterion) {
                 let test_path = mk_path(&format!("bench_pc_{}", spins));
                 let _ = std::fs::remove_file(&test_path);
 
-                // 使用 iter_custom：每个样本只创建一次共享段与线程，执行 iters 轮数据传输
                 b.iter_custom(|iters| {
-                    // 构建共享段
+                    // 构建共享段（生产者创建，消费者打开）
                     let producer = Arc::new(
-                        SharedRingBuffer::create(&test_path, Some(1024), Some(spins)).unwrap(),
+                        SharedRingBuffer::create(&test_path, Some(2048), Some(spins)).unwrap(),
                     );
                     thread::sleep(Duration::from_millis(5));
                     let consumer =
                         Arc::new(SharedRingBuffer::open(&test_path, Some(spins)).unwrap());
 
-                    let barrier = Arc::new(Barrier::new(2));
-                    let rounds = Arc::new(AtomicU64::new(0));
-                    let rounds_target = iters; // 每个样本进行 iters 轮
+                    // 一次样本内的固定总工作量
+                    let message_count_per_round = 1000usize;
+                    let total_to_send = (iters as usize) * message_count_per_round;
 
-                    // 每轮的消息数
-                    let message_count = 1000usize;
-                    let messages = Arc::new(prebuild_messages(message_count, 30_000));
+                    // 预构建一批消息，循环复用，避免热路径分配
+                    let messages = Arc::new(prebuild_messages(message_count_per_round, 30_000));
 
-                    let p = producer.clone();
+                    // 计数与启动同步
+                    let start_barrier = Arc::new(Barrier::new(2));
+                    let sent = Arc::new(AtomicU64::new(0));
+                    let received = Arc::new(AtomicU64::new(0));
+
+                    // 消费者线程：持续 wait + drain，直到收满 total_to_send
                     let cns = consumer.clone();
-                    let b1 = barrier.clone();
-                    let b2 = barrier.clone();
-                    let msgs_for_consumer = messages.clone();
-                    let msgs_for_producer = messages.clone();
-                    let rounds_c = rounds.clone();
-                    let rounds_p = rounds.clone();
-
-                    let start = Instant::now();
-
-                    // 消费者线程（持续工作到达 rounds_target 轮）
-                    let h_cons = thread::spawn(move || {
-                        b1.wait();
-                        let mut received_in_round = 0usize;
-                        let mut current_round = 0u64;
-
-                        loop {
-                            if current_round >= rounds_target {
-                                break;
-                            }
-                            // 等待/拉取消息
-                            let _ = cns.wait_for_message(Some(Duration::from_millis(2)));
+                    let start_c = start_barrier.clone();
+                    let recv_cnt = received.clone();
+                    let total_target = total_to_send as u64;
+                    let h_cons = std::thread::spawn(move || {
+                        start_c.wait();
+                        while recv_cnt.load(Ordering::Acquire) < total_target {
+                            // 避免空转，等待最多1ms
+                            let _ = cns.wait_for_message(Some(Duration::from_millis(1)));
+                            // 尽可能多地读取
                             while let Ok(Some(_)) = cns.try_read_next_message() {
-                                received_in_round += 1;
-                                if received_in_round >= msgs_for_consumer.len() {
-                                    // 一轮结束
-                                    current_round += 1;
-                                    received_in_round = 0;
+                                recv_cnt.fetch_add(1, Ordering::Release);
+                                if recv_cnt.load(Ordering::Acquire) >= total_target {
+                                    break;
                                 }
                             }
                         }
                     });
 
-                    // 生产者线程
-                    let h_prod = thread::spawn(move || {
-                        b2.wait();
-                        let mut current_round = 0u64;
-                        while current_round < rounds_target {
-                            // 每轮先清空
-                            drain_all(&p);
-                            for m in msgs_for_producer.iter() {
-                                while !p.try_write_message(m).unwrap_or(false) {
-                                    let _ = p.try_read_next_message();
-                                }
+                    // 生产者线程：严格 SPSC，只写不读，直到发满 total_to_send
+                    let p = producer.clone();
+                    let start_p = start_barrier.clone();
+                    let sent_cnt = sent.clone();
+                    let msgs = messages.clone();
+                    let h_prod = std::thread::spawn(move || {
+                        start_p.wait();
+                        let mut idx = 0usize;
+                        while sent_cnt.load(Ordering::Acquire) < total_target {
+                            let m = &msgs[idx];
+                            // 若满则忙等等待消费者清空（不可读！）
+                            while !p.try_write_message(m).unwrap_or(false) {
+                                std::hint::spin_loop();
                             }
-                            current_round += 1;
-                            rounds_p.store(current_round, Ordering::Release);
+                            sent_cnt.fetch_add(1, Ordering::Release);
+                            idx += 1;
+                            if idx == msgs.len() {
+                                idx = 0;
+                            }
                         }
                     });
 
+                    // 启动后才计时
+                    let t0 = Instant::now();
                     let _ = h_prod.join();
                     let _ = h_cons.join();
+                    let elapsed = t0.elapsed();
 
-                    let elapsed = start.elapsed();
+                    // 基本校验（不打印）
+                    debug_assert_eq!(sent.load(Ordering::Acquire), total_to_send as u64);
+                    debug_assert_eq!(received.load(Ordering::Acquire), total_to_send as u64);
 
                     // 清理
                     drop(producer);

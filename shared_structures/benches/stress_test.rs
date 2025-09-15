@@ -1,13 +1,13 @@
 // benches/stress_test.rs
 use criterion::{criterion_group, criterion_main, BatchSize, BenchmarkId, Criterion};
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
+use std::hint::black_box;
 use std::sync::{
-    atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     mpsc, Arc, Barrier,
 };
 use std::thread;
 use std::time::{Duration, Instant};
-use std::hint::black_box;
 
 fn mk_path(name: &str) -> String {
     format!("/tmp/{}_{}", name, std::process::id())
@@ -53,8 +53,9 @@ fn bench_high_frequency_updates(c: &mut Criterion) {
                     let test_path = mk_path(&format!("stress_high_freq_{}", spin_count));
                     let _ = std::fs::remove_file(&test_path);
 
-                    let buffer =
-                        Arc::new(SharedRingBuffer::create(&test_path, Some(4096), Some(spin_count)).unwrap());
+                    let buffer = Arc::new(
+                        SharedRingBuffer::create(&test_path, Some(4096), Some(spin_count)).unwrap(),
+                    );
                     // 常驻消费者线程：不断拉取，避免写端顶满
                     let stop = Arc::new(AtomicBool::new(false));
                     let b_cons = buffer.clone();
@@ -121,10 +122,12 @@ fn bench_concurrent_stress(c: &mut Criterion) {
                     let _ = std::fs::remove_file(&test_path);
 
                     // SPSC 环：单写者 + 单读者
-                    let writer_rb =
-                        Arc::new(SharedRingBuffer::create(&test_path, Some(4096), Some(5000)).unwrap());
+                    let writer_rb = Arc::new(
+                        SharedRingBuffer::create(&test_path, Some(4096), Some(5000)).unwrap(),
+                    );
                     thread::sleep(Duration::from_millis(5));
-                    let reader_rb = Arc::new(SharedRingBuffer::open(&test_path, Some(5000)).unwrap());
+                    let reader_rb =
+                        Arc::new(SharedRingBuffer::open(&test_path, Some(5000)).unwrap());
 
                     // MPSC 管道：多生产者 -> 单聚合写者
                     let (tx, rx) = mpsc::channel::<u32>();
@@ -254,8 +257,9 @@ fn bench_memory_pressure(c: &mut Criterion) {
                         let test_path = mk_path(&format!("stress_memory_{}", size));
                         let _ = std::fs::remove_file(&test_path);
 
-                        let buffer =
-                            Arc::new(SharedRingBuffer::create(&test_path, Some(size), Some(2000)).unwrap());
+                        let buffer = Arc::new(
+                            SharedRingBuffer::create(&test_path, Some(size), Some(2000)).unwrap(),
+                        );
                         let reader = buffer.clone();
 
                         // 常驻读者线程：持续拉取
@@ -321,7 +325,8 @@ fn bench_command_stress(c: &mut Criterion) {
             let test_path = mk_path("stress_commands");
             let _ = std::fs::remove_file(&test_path);
 
-            let sender = Arc::new(SharedRingBuffer::create(&test_path, Some(1024), Some(3000)).unwrap());
+            let sender =
+                Arc::new(SharedRingBuffer::create(&test_path, Some(1024), Some(3000)).unwrap());
             thread::sleep(Duration::from_millis(5));
             let receiver = Arc::new(SharedRingBuffer::open(&test_path, Some(3000)).unwrap());
 
@@ -334,7 +339,9 @@ fn bench_command_stress(c: &mut Criterion) {
             let running_c = running.clone();
             let consumer = thread::spawn(move || {
                 while running_c.load(Ordering::Acquire) {
-                    if r.wait_for_command(Some(Duration::from_millis(1))).unwrap_or(false) {
+                    if r.wait_for_command(Some(Duration::from_millis(1)))
+                        .unwrap_or(false)
+                    {
                         while let Some(_) = r.receive_command() {
                             recv_c.fetch_add(1, Ordering::Relaxed);
                         }
