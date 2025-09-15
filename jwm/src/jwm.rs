@@ -4514,6 +4514,11 @@ impl Jwm {
         Ok(())
     }
 
+    pub fn take_screenshot(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
+        let _ = std::process::Command::new("flameshot").arg("gui").spawn();
+        return Ok(());
+    }
+
     pub fn tag(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[tag]");
         if let WMArgEnum::UInt(ui) = *arg {

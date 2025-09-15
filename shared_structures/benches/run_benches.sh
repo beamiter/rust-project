@@ -19,3 +19,4 @@ echo "Done. Open target/criterion/report/index.html to view comparisons."
 
 critcmp futex eventfd
 critcmp futex semaphore
+critcmp eventfd semaphore

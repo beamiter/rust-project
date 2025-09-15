@@ -436,6 +436,12 @@ impl Config {
                 argument: ArgumentConfig::Int(1),
             },
             KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "s".to_string(),
+                function: "take_screenshot".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            KeyConfig {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
                 key: "comma".to_string(),
                 function: "tagmon".to_string(),
@@ -671,6 +677,7 @@ impl Config {
             "spawn" => Some(Jwm::spawn),
             "focusstack" => Some(Jwm::focusstack),
             "focusmon" => Some(Jwm::focusmon),
+            "take_screenshot" => Some(Jwm::take_screenshot),
             "quit" => Some(Jwm::quit),
             "restart" => Some(Jwm::restart),
             "killclient" => Some(Jwm::killclient),
