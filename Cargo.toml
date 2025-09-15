@@ -1,0 +1,14 @@
+[workspace]
+resolver = "3"
+
+# 使用 "members" 列表明确指定要包含的项目
+# Cargo 会在这些路径下寻找 Cargo.toml 文件
+members = [
+    "jwm",
+    "relm_bar",
+]
+
+# (可选) 如果你的项目都在一个子目录（如 crates/），可以使用 glob 模式
+# members = [
+#     "crates/*",
+# ]

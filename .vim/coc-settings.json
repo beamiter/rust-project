@@ -1,6 +1,0 @@
-{
-  "rust-analyzer.linkedProjects": [
-    "/home/mm/projects/rust-project/shared_structures/Cargo.toml",
-    "/home/mm/projects/rust-project/jwm/Cargo.toml",
-  ]
-}
