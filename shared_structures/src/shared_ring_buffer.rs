@@ -29,7 +29,7 @@ cfg_if! {
         use nix::poll::{poll, PollFd, PollFlags};
         use nix::sys::eventfd::{EventFd, EfdFlags};
         use nix::unistd;
-        use std::os::unix::io::{AsRawFd};
+        use std::os::unix::io::AsRawFd;
         use std::os::fd::BorrowedFd;
         use std::sync::atomic::AtomicI32;
         use std::sync::Arc;
@@ -208,6 +208,7 @@ cfg_if! {
         #[repr(C, align(128))]
         #[derive(Debug)]
         pub struct RingBufferHeader {
+            // 热点字段（生产/消费相关）
             magic: AtomicU64,
             version: AtomicU64,
             write_idx: AtomicU32,
@@ -216,14 +217,17 @@ cfg_if! {
             message_size: u32,
             last_timestamp: AtomicU64,
 
-            // futex 序列计数器：共享内存中可供任意进程 wait/wake
+            // futex 等待/唤醒相关字段，尽量与热点隔离，降低 false sharing
             message_seq: AtomicU32,
+            message_waiters: AtomicU32,
+
             command_seq: AtomicU32,
+            command_waiters: AtomicU32,
 
             cmd_write_idx: AtomicU32,
             cmd_read_idx: AtomicU32,
             is_destroyed: AtomicBool,
-            _padding: [u8; 32],
+            _padding: [u8; 16],
         }
 
         #[inline]
@@ -241,7 +245,7 @@ cfg_if! {
                 libc::syscall(
                     libc::SYS_futex,
                     uaddr,
-                    libc::FUTEX_WAIT, // 跨进程可用
+                    libc::FUTEX_WAIT, // FUTEX_WAIT: 当 *uaddr == expected 时才睡眠
                     expected as i32,
                     ts_ptr,
                     std::ptr::null::<libc::c_void>(),
@@ -249,7 +253,7 @@ cfg_if! {
                 )
             };
             if ret == 0 {
-                Ok(true)
+                Ok(true) // 被唤醒或超时返回 0 的语义取决于内核；这里统一为 true 表示唤醒/返回
             } else {
                 let err = std::io::Error::last_os_error();
                 match err.raw_os_error() {
@@ -259,7 +263,7 @@ cfg_if! {
             }
         }
 
-        // 在 futex 分支下补这个类型别名，供 SharedRingBuffer 中的字段使用
+        // futex 分支下不需要本地 SyncPrimitive 对象
         type SyncPrimitive = ();
 
         #[inline]
@@ -269,7 +273,7 @@ cfg_if! {
                 libc::syscall(
                     libc::SYS_futex,
                     uaddr,
-                    libc::FUTEX_WAKE, // 跨进程可用
+                    libc::FUTEX_WAKE,
                     n,
                     std::ptr::null::<libc::c_void>(),
                     std::ptr::null::<libc::c_void>(),
@@ -292,7 +296,7 @@ cfg_if! {
 // =============================================================================
 
 const RING_BUFFER_MAGIC: u64 = 0x52494E47_42554646;
-const RING_BUFFER_VERSION: u64 = 6;
+const RING_BUFFER_VERSION: u64 = 7; // 升级版本，避免旧段误用
 const DEFAULT_BUFFER_SIZE: usize = 16;
 const CMD_BUFFER_SIZE: usize = 16; // 命令环固定大小
 const DEFAULT_ADAPTIVE_POLL_SPINS: u32 = 400;
@@ -377,9 +381,9 @@ pub struct SharedRingBuffer {
 
     // eventfd 有效性日志标志（仅在 eventfd 分支使用）
     #[cfg(feature = "use-eventfd")]
-    eventfd_msg_warned: AtomicBool,
+    eventfd_msg_warned: std::sync::atomic::AtomicBool,
     #[cfg(feature = "use-eventfd")]
-    eventfd_cmd_warned: AtomicBool,
+    eventfd_cmd_warned: std::sync::atomic::AtomicBool,
 }
 
 #[repr(C)]
@@ -481,8 +485,8 @@ impl SharedRingBuffer {
         let (message_sync, command_sync) = {
             cfg_if! {
                 if #[cfg(feature = "use-eventfd")] {
-                    let message_efd = Arc::new(SyncPrimitiveWrapper::new()?);
-                    let command_efd = Arc::new(SyncPrimitiveWrapper::new()?);
+                    let message_efd = std::sync::Arc::new(SyncPrimitiveWrapper::new()?);
+                    let command_efd = std::sync::Arc::new(SyncPrimitiveWrapper::new()?);
 
                     unsafe {
                         (*header).message_event_fd.store(message_efd.as_raw_fd(), Ordering::Release);
@@ -503,8 +507,8 @@ impl SharedRingBuffer {
                             return Err(Error::last_os_error());
                         }
 
-                        let message_wrapper = Arc::new(SyncPrimitiveWrapper::from_shared(message_sem_ptr));
-                        let command_wrapper = Arc::new(SyncPrimitiveWrapper::from_shared(command_sem_ptr));
+                        let message_wrapper = std::sync::Arc::new(SyncPrimitiveWrapper::from_shared(message_sem_ptr));
+                        let command_wrapper = std::sync::Arc::new(SyncPrimitiveWrapper::from_shared(command_sem_ptr));
 
                         (Some(message_wrapper), Some(command_wrapper))
                     }
@@ -532,6 +536,8 @@ impl SharedRingBuffer {
             {
                 (*header).message_seq.store(0, Ordering::Release);
                 (*header).command_seq.store(0, Ordering::Release);
+                (*header).message_waiters.store(0, Ordering::Release);
+                (*header).command_waiters.store(0, Ordering::Release);
             }
         }
 
@@ -545,9 +551,9 @@ impl SharedRingBuffer {
             command_sync,
             adaptive_poll_spins,
             #[cfg(feature = "use-eventfd")]
-            eventfd_msg_warned: AtomicBool::new(false),
+            eventfd_msg_warned: std::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "use-eventfd")]
-            eventfd_cmd_warned: AtomicBool::new(false),
+            eventfd_cmd_warned: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -600,8 +606,8 @@ impl SharedRingBuffer {
                         let message_sem_ptr = &mut (*header).message_sem as *mut libc::sem_t;
                         let command_sem_ptr = &mut (*header).command_sem as *mut libc::sem_t;
 
-                        let message_wrapper = Arc::new(SyncPrimitiveWrapper::from_shared(message_sem_ptr));
-                        let command_wrapper = Arc::new(SyncPrimitiveWrapper::from_shared(command_sem_ptr));
+                        let message_wrapper = std::sync::Arc::new(SyncPrimitiveWrapper::from_shared(message_sem_ptr));
+                        let command_wrapper = std::sync::Arc::new(SyncPrimitiveWrapper::from_shared(command_sem_ptr));
 
                         (Some(message_wrapper), Some(command_wrapper))
                     }
@@ -621,9 +627,9 @@ impl SharedRingBuffer {
             command_sync,
             adaptive_poll_spins: adaptive_poll_spins.unwrap_or(DEFAULT_ADAPTIVE_POLL_SPINS),
             #[cfg(feature = "use-eventfd")]
-            eventfd_msg_warned: AtomicBool::new(false),
+            eventfd_msg_warned: std::sync::atomic::AtomicBool::new(false),
             #[cfg(feature = "use-eventfd")]
-            eventfd_cmd_warned: AtomicBool::new(false),
+            eventfd_cmd_warned: std::sync::atomic::AtomicBool::new(false),
         })
     }
 
@@ -889,11 +895,11 @@ impl SharedRingBuffer {
             if !warned {
                 warn!(
                     "eventfd {} is not valid in this process; falling back to polling. \
-                 This usually means the fd was not inherited or not passed via SCM_RIGHTS.",
+                     This usually means the fd was not inherited or not passed via SCM_RIGHTS.",
                     fd
                 );
             }
-            panic!("eventfd is not valid");
+            // 直接退化为轮询路径
             return Ok(has_data());
         }
 
@@ -910,11 +916,8 @@ impl SharedRingBuffer {
             Ok(0) => Ok(has_data()),
             Ok(_) => {
                 // drain 一次，防止计数粘连
-                use std::os::fd::BorrowedFd;
                 let mut buf = [0u8; 8];
-                unsafe {
-                    let _ = unistd::read(BorrowedFd::borrow_raw(fd), &mut buf); // 注意这里传 raw fd
-                }
+                let _ = nix::unistd::read(borrowed_fd, &mut buf);
                 Ok(true)
             }
             Err(e) => {
@@ -959,17 +962,34 @@ impl SharedRingBuffer {
         has_data: impl Fn() -> bool,
     ) -> Result<bool> {
         unsafe {
-            let fut = if is_message {
-                &(*self.header).message_seq
+            let (seq, waiters) = if is_message {
+                (&(*self.header).message_seq, &(*self.header).message_waiters)
             } else {
-                &(*self.header).command_seq
+                (&(*self.header).command_seq, &(*self.header).command_waiters)
             };
-            // 获取快照，避免丢唤醒
-            let snapshot = fut.load(Ordering::Acquire);
+
+            // 快路径再检查
             if has_data() || self.is_destroyed() {
                 return Ok(has_data());
             }
-            match futex_wait(fut, snapshot, timeout) {
+
+            // 标记等待者
+            waiters.fetch_add(1, Ordering::AcqRel);
+
+            // 再次检查，避免丢唤醒
+            if has_data() || self.is_destroyed() {
+                waiters.fetch_sub(1, Ordering::AcqRel);
+                return Ok(has_data());
+            }
+
+            // 记录快照后进入 futex_wait
+            let snapshot = seq.load(Ordering::Acquire);
+            let res = futex_wait(seq, snapshot, timeout);
+
+            // 撤销等待者标记
+            waiters.fetch_sub(1, Ordering::AcqRel);
+
+            match res {
                 Ok(_) => Ok(has_data()),
                 Err(e) => {
                     warn!("futex_wait error: {}. Fallback to polling path", e);
@@ -996,8 +1016,11 @@ impl SharedRingBuffer {
                 if let Some(ref sync) = self.message_sync { sync.signal() } else { Ok(()) }
             } else if #[cfg(feature = "use-futex")] {
                 unsafe {
-                    let _ = (*self.header).message_seq.fetch_add(1, Ordering::Release);
-                    let _ = futex_wake(&(*self.header).message_seq, 1);
+                    // 仅当确实有等待者时才唤醒，避免高吞吐场景下的无用系统调用
+                    if (*self.header).message_waiters.load(Ordering::Acquire) > 0 {
+                        let _ = (*self.header).message_seq.fetch_add(1, Ordering::Release);
+                        let _ = futex_wake(&(*self.header).message_seq, 1);
+                    }
                 }
                 Ok(())
             }
@@ -1020,8 +1043,10 @@ impl SharedRingBuffer {
                 if let Some(ref sync) = self.command_sync { sync.signal() } else { Ok(()) }
             } else if #[cfg(feature = "use-futex")] {
                 unsafe {
-                    let _ = (*self.header).command_seq.fetch_add(1, Ordering::Release);
-                    let _ = futex_wake(&(*self.header).command_seq, 1);
+                    if (*self.header).command_waiters.load(Ordering::Acquire) > 0 {
+                        let _ = (*self.header).command_seq.fetch_add(1, Ordering::Release);
+                        let _ = futex_wake(&(*self.header).command_seq, 1);
+                    }
                 }
                 Ok(())
             }
@@ -1038,11 +1063,10 @@ impl Drop for SharedRingBuffer {
 
         cfg_if! {
             if #[cfg(feature = "use-eventfd")] {
-                // 释放本地持有的 eventfd，无法唤醒对端（非创建者本就没有）。
+                // 释放本地持有的 eventfd
                 self.message_sync = None;
                 self.command_sync = None;
             } else if #[cfg(feature = "use-semaphore")] {
-                // 不在此处 destroy 内嵌 sem_t（避免对端仍在等待的竞态），让 OS 回收。
                 self.message_sync = None;
                 self.command_sync = None;
             } else if #[cfg(feature = "use-futex")] {
@@ -1210,5 +1234,148 @@ mod tests {
         msg.get_monitor_info_mut().monitor_num = 42;
         assert!(rb_creator.try_write_message(&msg).unwrap());
         let _ = rb_open.try_read_latest_message().unwrap();
+    }
+
+    // ===========================
+    // 性能统计用测试
+    // ===========================
+
+    #[test]
+    fn test_spsc_stats_busy_poll() {
+        let shared_path = mk_path("spsc_stats_busy");
+        let _ = std::fs::remove_file(&shared_path);
+        // 使用较大的环和0自旋（纯忙等场景更明确）
+        let rb = Arc::new(SharedRingBuffer::create(&shared_path, Some(1024), Some(0)).unwrap());
+
+        let n: usize = 200_000;
+        let rb_w = rb.clone();
+        let writer = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let mut sent = 0usize;
+            let mut msg = SharedMessage::default();
+            while sent < n {
+                msg.get_monitor_info_mut().monitor_num = sent as i32;
+                msg.update_timestamp(); // 用于端到端延迟统计
+                if rb_w.try_write_message(&msg).unwrap() {
+                    sent += 1;
+                } else {
+                    std::thread::yield_now();
+                }
+            }
+            let elapsed = start.elapsed();
+            let per_msg_ns = (elapsed.as_nanos() as f64) / (n as f64);
+            (elapsed, per_msg_ns)
+        });
+
+        let rb_r = rb.clone();
+        let reader = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let mut got = 0usize;
+            let mut last = -1i32;
+            let mut sum_lat_ns: u128 = 0;
+
+            while got < n {
+                if let Ok(Some(m)) = rb_r.try_read_next_message() {
+                    let now = now_millis();
+                    // 将消息内部 timestamp 视为发送时间（毫秒），这里粗略换算为纳秒统计
+                    let sent_ms = m.get_timestamp() as u128;
+                    let now_ms = now as u128;
+                    let lat_ns = (now_ms.saturating_sub(sent_ms)) * 1_000_000;
+                    sum_lat_ns += lat_ns;
+
+                    let cur = m.get_monitor_info().monitor_num;
+                    if cur != last {
+                        got += 1;
+                        last = cur;
+                    }
+                } else {
+                    std::thread::yield_now();
+                }
+            }
+            let elapsed = start.elapsed();
+            let per_msg_ns = (elapsed.as_nanos() as f64) / (n as f64);
+            let avg_lat_ns = (sum_lat_ns as f64) / (got.max(1) as f64);
+            (elapsed, per_msg_ns, avg_lat_ns)
+        });
+
+        let (w_elapsed, w_per_ns) = writer.join().unwrap();
+        let (r_elapsed, r_per_ns, avg_lat_ns) = reader.join().unwrap();
+
+        println!(
+            "[BUSY] feature={} | N={} | writer: {:?}, {:.0} ns/msg | reader: {:?}, {:.0} ns/msg | avg e2e latency ≈ {:.0} ns",
+            if cfg!(feature="use-semaphore") {"semaphore"}
+            else if cfg!(feature="use-eventfd") {"eventfd"}
+            else if cfg!(feature="use-futex") {"futex"} else {"unknown"},
+            n, w_elapsed, w_per_ns, r_elapsed, r_per_ns, avg_lat_ns
+        );
+    }
+
+    #[test]
+    fn test_spsc_stats_waiting() {
+        let shared_path = mk_path("spsc_stats_wait");
+        let _ = std::fs::remove_file(&shared_path);
+        // 保留一定自旋后再等待，覆盖 wait 路径
+        let rb = Arc::new(SharedRingBuffer::create(&shared_path, Some(1024), Some(200)).unwrap());
+
+        let n: usize = 50_000;
+        let rb_w = rb.clone();
+        let writer = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let mut sent = 0usize;
+            let mut msg = SharedMessage::default();
+            while sent < n {
+                msg.get_monitor_info_mut().monitor_num = sent as i32;
+                msg.update_timestamp();
+
+                // 队列满了就稍微让一下 CPU
+                while !rb_w.try_write_message(&msg).unwrap() {
+                    std::thread::yield_now();
+                }
+                sent += 1;
+            }
+            start.elapsed()
+        });
+
+        let rb_r = rb.clone();
+        let reader = std::thread::spawn(move || {
+            let start = std::time::Instant::now();
+            let mut got = 0usize;
+            let mut sum_lat_ns: u128 = 0;
+
+            while got < n {
+                // 使用等待接口，考察睡眠/唤醒路径
+                if rb_r
+                    .wait_for_message(Some(std::time::Duration::from_millis(50)))
+                    .unwrap()
+                {
+                    while let Ok(Some(m)) = rb_r.try_read_next_message() {
+                        let now = now_millis() as u128;
+                        let sent_ms = m.get_timestamp() as u128;
+                        sum_lat_ns += (now.saturating_sub(sent_ms)) * 1_000_000;
+                        got += 1;
+                        if got >= n {
+                            break;
+                        }
+                    }
+                }
+            }
+            let elapsed = start.elapsed();
+            let avg_lat_ns = (sum_lat_ns as f64) / (got.max(1) as f64);
+            (elapsed, avg_lat_ns)
+        });
+
+        let w_elapsed = writer.join().unwrap();
+        let (r_elapsed, avg_lat_ns) = reader.join().unwrap();
+
+        let per_msg_writer = (w_elapsed.as_nanos() as f64) / (n as f64);
+        let per_msg_reader = (r_elapsed.as_nanos() as f64) / (n as f64);
+
+        println!(
+            "[WAIT] feature={} | N={} | writer: {:?}, {:.0} ns/msg | reader: {:?}, {:.0} ns/msg | avg e2e latency ≈ {:.0} ns",
+            if cfg!(feature="use-semaphore") {"semaphore"}
+            else if cfg!(feature="use-eventfd") {"eventfd"}
+            else if cfg!(feature="use-futex") {"futex"} else {"unknown"},
+            n, w_elapsed, per_msg_writer, r_elapsed, per_msg_reader, avg_lat_ns
+        );
     }
 }
