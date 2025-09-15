@@ -1,10 +1,9 @@
 use cfg_if::cfg_if;
-use log::{debug, error, info, warn};
+use log::{error, info, warn};
 use std::hint;
 use std::io::{Error, ErrorKind, Result};
 use std::mem::size_of;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::shared_message::{SharedCommand, SharedMessage};
@@ -33,6 +32,7 @@ cfg_if! {
         use std::os::unix::io::{AsRawFd};
         use std::os::fd::BorrowedFd;
         use std::sync::atomic::AtomicI32;
+        use std::sync::Arc;
 
         struct SyncPrimitiveWrapper {
             event_fd: EventFd,
@@ -41,7 +41,7 @@ cfg_if! {
         impl SyncPrimitiveWrapper {
             fn new() -> Result<Self> {
                 // 非阻塞 + CLOEXEC，避免阻塞与 exec 继承
-                let efd = EventFd::new()
+                let efd = EventFd::from_flags(EfdFlags::EFD_NONBLOCK | EfdFlags::EFD_CLOEXEC)
                     .map_err(|e| Error::new(ErrorKind::Other, format!("EventFd::new: {}", e)))?;
                 Ok(Self { event_fd: efd })
             }
@@ -91,6 +91,7 @@ cfg_if! {
 
     } else if #[cfg(feature = "use-semaphore")] {
         use libc::{sem_destroy, sem_init, sem_post, sem_t, sem_timedwait, sem_wait};
+        use std::sync::Arc;
 
         struct SyncPrimitiveWrapper {
             sem: *mut sem_t,
@@ -360,6 +361,7 @@ fn calculate_message_checksum(m: &SharedMessage) -> u32 {
 // 主结构体定义
 // =============================================================================
 
+#[allow(dead_code)]
 pub struct SharedRingBuffer {
     shmem: Shmem,
     header: *mut RingBufferHeader,
