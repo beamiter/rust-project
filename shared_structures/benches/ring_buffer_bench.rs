@@ -7,28 +7,18 @@ use std::sync::{Arc, Barrier};
 use std::thread;
 use std::time::{Duration, Instant};
 
-// 请根据实际情况调整模块路径
+// 根据你的工程路径
 use shared_structures::{SharedCommand, SharedMessage, SharedRingBuffer};
 
-// 统一的辅助函数与工具
+// 统一工具
 fn mk_path(name: &str) -> String {
     format!("/tmp/{}_{}", name, std::process::id())
 }
 
 fn drain_all(buffer: &SharedRingBuffer) {
-    // 使用“顺序读取”避免 latest 的跳跃行为带来的歧义，且可完全清空
     while let Ok(Some(_)) = buffer.try_read_next_message() {}
 }
 
-fn prebuild_messages(count: usize, base_id: i32) -> Vec<SharedMessage> {
-    let mut v = Vec::with_capacity(count);
-    for i in 0..count {
-        v.push(create_test_message(base_id + i as i32));
-    }
-    v
-}
-
-// 辅助函数：构建一个测试消息（仅构建一次，避免循环内格式化分配）
 fn create_test_message(id: i32) -> SharedMessage {
     let mut message = SharedMessage::default();
     message.get_monitor_info_mut().monitor_num = id;
@@ -39,7 +29,15 @@ fn create_test_message(id: i32) -> SharedMessage {
     message
 }
 
-// 1) 单线程写入基准：预先构造 100 条消息，每次迭代清空 -> 写入
+fn prebuild_messages(count: usize, base_id: i32) -> Vec<SharedMessage> {
+    let mut v = Vec::with_capacity(count);
+    for i in 0..count {
+        v.push(create_test_message(base_id + i as i32));
+    }
+    v
+}
+
+// 1) 单线程写入
 fn bench_single_threaded_write(c: &mut Criterion) {
     let test_path = mk_path("bench_single_write");
     let _ = std::fs::remove_file(&test_path);
@@ -51,7 +49,6 @@ fn bench_single_threaded_write(c: &mut Criterion) {
         b.iter(|| {
             drain_all(&buffer);
             for m in &messages {
-                // 持续重试，必要时读取一条释放空间
                 while !buffer.try_write_message(black_box(m)).unwrap_or(false) {
                     let _ = buffer.try_read_next_message();
                 }
@@ -60,12 +57,11 @@ fn bench_single_threaded_write(c: &mut Criterion) {
         })
     });
 
-    // 清理
     drop(buffer);
     let _ = std::fs::remove_file(&test_path);
 }
 
-// 2) 单线程读取基准：使用 iter_batched，将“填充阶段”和“读取阶段”分离
+// 2) 单线程读取
 fn bench_single_threaded_read(c: &mut Criterion) {
     let test_path = mk_path("bench_single_read");
     let _ = std::fs::remove_file(&test_path);
@@ -82,11 +78,8 @@ fn bench_single_threaded_read(c: &mut Criterion) {
                         let _ = buffer.try_read_next_message();
                     }
                 }
-                // 返回引用或轻量数据作为测量阶段的输入
-                ()
             },
             |_| {
-                // 纯读取阶段
                 while let Ok(Some(_)) = buffer.try_read_next_message() {}
             },
             BatchSize::SmallInput,
@@ -97,7 +90,7 @@ fn bench_single_threaded_read(c: &mut Criterion) {
     let _ = std::fs::remove_file(&test_path);
 }
 
-// 3) 吞吐量（不同消息数）基准：预构建消息向量，迭代内只读写
+// 3) 写吞吐（不同消息数）
 fn bench_throughput_varying_sizes(c: &mut Criterion) {
     let mut group = c.benchmark_group("throughput_by_message_count");
 
@@ -130,7 +123,7 @@ fn bench_throughput_varying_sizes(c: &mut Criterion) {
     group.finish();
 }
 
-// 4) 生产者-消费者：更稳健的实现，去掉热路径中的 eprintln，预先构建消息
+// 4) 生产者-消费者（复用段与线程：一次样本内只创建一次）
 fn bench_producer_consumer(c: &mut Criterion) {
     let mut group = c.benchmark_group("producer_consumer");
     group.sample_size(10);
@@ -143,81 +136,86 @@ fn bench_producer_consumer(c: &mut Criterion) {
                 let test_path = mk_path(&format!("bench_pc_{}", spins));
                 let _ = std::fs::remove_file(&test_path);
 
+                // 使用 iter_custom：每个样本只创建一次共享段与线程，执行 iters 轮数据传输
                 b.iter_custom(|iters| {
-                    // 每次样本测量使用 iter_custom，重复 iters 轮，每轮发送固定消息数
-                    // 注意：线程创建仍在样本热路径中，如需更纯粹测量可改为“持久线程+Barrier 多轮”方案。
-                    let mut total = Duration::ZERO;
+                    // 构建共享段
+                    let producer = Arc::new(
+                        SharedRingBuffer::create(&test_path, Some(1024), Some(spins)).unwrap(),
+                    );
+                    thread::sleep(Duration::from_millis(5));
+                    let consumer =
+                        Arc::new(SharedRingBuffer::open(&test_path, Some(spins)).unwrap());
+
+                    let barrier = Arc::new(Barrier::new(2));
+                    let rounds = Arc::new(AtomicU64::new(0));
+                    let rounds_target = iters; // 每个样本进行 iters 轮
+
+                    // 每轮的消息数
                     let message_count = 1000usize;
-                    let messages = prebuild_messages(message_count, 30_000);
+                    let messages = Arc::new(prebuild_messages(message_count, 30_000));
 
-                    for _ in 0..iters {
-                        // 创建共享缓冲区（生产者）
-                        let producer = Arc::new(
-                            SharedRingBuffer::create(&test_path, Some(1024), Some(spins)).unwrap(),
-                        );
+                    let p = producer.clone();
+                    let cns = consumer.clone();
+                    let b1 = barrier.clone();
+                    let b2 = barrier.clone();
+                    let msgs_for_consumer = messages.clone();
+                    let msgs_for_producer = messages.clone();
+                    let rounds_c = rounds.clone();
+                    let rounds_p = rounds.clone();
 
-                        // 稍等，确保创建完成
-                        thread::sleep(Duration::from_millis(5));
+                    let start = Instant::now();
 
-                        // 打开消费者
-                        let consumer =
-                            Arc::new(SharedRingBuffer::open(&test_path, Some(spins)).unwrap());
+                    // 消费者线程（持续工作到达 rounds_target 轮）
+                    let h_cons = thread::spawn(move || {
+                        b1.wait();
+                        let mut received_in_round = 0usize;
+                        let mut current_round = 0u64;
 
-                        let barrier = Arc::new(Barrier::new(2));
-                        let sent = Arc::new(AtomicU64::new(0));
-                        let recv = Arc::new(AtomicU64::new(0));
-
-                        let b1 = barrier.clone();
-                        let b2 = barrier.clone();
-                        let p = producer.clone();
-                        let cns = consumer.clone();
-                        let sent_c = sent.clone();
-                        let recv_c = recv.clone();
-                        let msgs_for_consumer = messages.clone();
-
-                        let t0 = Instant::now();
-
-                        // 消费者
-                        let h_cons = thread::spawn(move || {
-                            b1.wait();
-                            let mut value = msgs_for_consumer.len();
-                            while recv_c.load(Ordering::Acquire) < value as u64 {
-                                // 等待/或获取可用消息
-                                let _ = cns.wait_for_message(Some(Duration::from_millis(1)));
-                                while let Ok(Some(_)) = cns.try_read_next_message() {
-                                    recv_c.fetch_add(1, Ordering::Release);
+                        loop {
+                            if current_round >= rounds_target {
+                                break;
+                            }
+                            // 等待/拉取消息
+                            let _ = cns.wait_for_message(Some(Duration::from_millis(2)));
+                            while let Ok(Some(_)) = cns.try_read_next_message() {
+                                received_in_round += 1;
+                                if received_in_round >= msgs_for_consumer.len() {
+                                    // 一轮结束
+                                    current_round += 1;
+                                    received_in_round = 0;
                                 }
                             }
-                        });
+                        }
+                    });
 
-                        // 生产者
-                        let msgs_for_product = messages.clone();
-                        let h_prod = thread::spawn(move || {
-                            b2.wait();
-                            for m in &msgs_for_product {
+                    // 生产者线程
+                    let h_prod = thread::spawn(move || {
+                        b2.wait();
+                        let mut current_round = 0u64;
+                        while current_round < rounds_target {
+                            // 每轮先清空
+                            drain_all(&p);
+                            for m in msgs_for_producer.iter() {
                                 while !p.try_write_message(m).unwrap_or(false) {
-                                    // 让出
                                     let _ = p.try_read_next_message();
                                 }
-                                sent_c.fetch_add(1, Ordering::Release);
                             }
-                        });
+                            current_round += 1;
+                            rounds_p.store(current_round, Ordering::Release);
+                        }
+                    });
 
-                        let _ = h_prod.join();
-                        let _ = h_cons.join();
+                    let _ = h_prod.join();
+                    let _ = h_cons.join();
 
-                        total += t0.elapsed();
+                    let elapsed = start.elapsed();
 
-                        // 清理
-                        drop(producer);
-                        drop(consumer);
-                        let _ = std::fs::remove_file(&test_path);
+                    // 清理
+                    drop(producer);
+                    drop(consumer);
+                    let _ = std::fs::remove_file(&test_path);
 
-                        // 基本校验（不在热路径打印）
-                        debug_assert_eq!(sent.load(Ordering::Acquire), message_count as u64);
-                        debug_assert_eq!(recv.load(Ordering::Acquire), message_count as u64);
-                    }
-                    total
+                    elapsed
                 });
             },
         );
@@ -225,7 +223,7 @@ fn bench_producer_consumer(c: &mut Criterion) {
     group.finish();
 }
 
-// 5) 命令往返时延：保持简单，移除热路径中的 I/O
+// 5) 命令往返
 fn bench_command_latency(c: &mut Criterion) {
     let test_path = mk_path("bench_cmd_latency");
     let _ = std::fs::remove_file(&test_path);
@@ -238,7 +236,6 @@ fn bench_command_latency(c: &mut Criterion) {
         b.iter(|| {
             let command = black_box(SharedCommand::view_tag(1 << 3, 0));
             if sender.send_command(command).unwrap_or(false) {
-                // 等待并接收
                 let _ = receiver.wait_for_command(Some(Duration::from_millis(5)));
                 let _ = receiver.receive_command();
             }
@@ -250,7 +247,7 @@ fn bench_command_latency(c: &mut Criterion) {
     let _ = std::fs::remove_file(&test_path);
 }
 
-// 6) 布局与容量压力测试：预构建消息，减少打印
+// 6) 内存布局压力
 fn bench_memory_layout_efficiency(c: &mut Criterion) {
     let mut group = c.benchmark_group("memory_layout");
 
@@ -269,8 +266,8 @@ fn bench_memory_layout_efficiency(c: &mut Criterion) {
                     let alternation_msgs = prebuild_messages(100, 41_000);
 
                     b.iter(|| {
-                        // 预填充至 75%
                         drain_all(&buffer);
+                        // 预填充至 75%
                         for m in &prefill_msgs {
                             if !buffer.try_write_message(black_box(m)).unwrap_or(false) {
                                 break;
@@ -279,10 +276,7 @@ fn bench_memory_layout_efficiency(c: &mut Criterion) {
 
                         // 交替读写
                         for m in &alternation_msgs {
-                            // 尝试读一条
                             let _ = buffer.try_read_next_message();
-
-                            // 尝试写入（失败则先读一条再重试一次）
                             if !buffer.try_write_message(black_box(m)).unwrap_or(false) {
                                 let _ = buffer.try_read_next_message();
                                 let _ = buffer.try_write_message(black_box(m));
@@ -299,7 +293,7 @@ fn bench_memory_layout_efficiency(c: &mut Criterion) {
     group.finish();
 }
 
-// 7) 突发性能：预构建突发消息，简化逻辑，减少 I/O
+// 7) 突发性能
 fn bench_burst_performance(c: &mut Criterion) {
     let mut group = c.benchmark_group("burst_performance");
 
@@ -315,14 +309,13 @@ fn bench_burst_performance(c: &mut Criterion) {
                 let burst_msgs = prebuild_messages(size, 50_000);
 
                 b.iter(|| {
-                    // 突发写入
                     drain_all(&buffer);
+                    // 突发写入
                     for m in &burst_msgs {
                         while !buffer.try_write_message(black_box(m)).unwrap_or(false) {
                             let _ = buffer.try_read_next_message();
                         }
                     }
-
                     // 突发读取
                     let mut read_count = 0usize;
                     while let Ok(Some(_)) = buffer.try_read_next_message() {
@@ -342,67 +335,14 @@ fn bench_burst_performance(c: &mut Criterion) {
     group.finish();
 }
 
-// 8) 自适应轮询效果：保持结构，但减少迭代中分配、构造
-fn bench_adaptive_polling_effectiveness(c: &mut Criterion) {
-    let mut group = c.benchmark_group("adaptive_polling");
-
-    for &spins in &[0u32, 100, 1000, 5000, 10_000] {
-        group.bench_with_input(
-            BenchmarkId::new("spin_effectiveness", spins),
-            &spins,
-            |b, &spins| {
-                let test_path = mk_path(&format!("bench_adaptive_{}", spins));
-                let _ = std::fs::remove_file(&test_path);
-
-                let writer =
-                    Arc::new(SharedRingBuffer::create(&test_path, Some(512), Some(spins)).unwrap());
-                thread::sleep(Duration::from_millis(5));
-                let reader = Arc::new(SharedRingBuffer::open(&test_path, Some(spins)).unwrap());
-
-                let msg = create_test_message(42);
-
-                b.iter(|| {
-                    let w = writer.clone();
-                    let r = reader.clone();
-                    let barrier = Arc::new(Barrier::new(2));
-                    let b1 = barrier.clone();
-                    let b2 = barrier.clone();
-
-                    // 写入线程
-                    let hw = thread::spawn(move || {
-                        b1.wait();
-                        let _ = w.try_write_message(black_box(&msg));
-                    });
-
-                    // 读取线程
-                    let hr = thread::spawn(move || {
-                        b2.wait();
-                        let _ = r.wait_for_message(Some(Duration::from_millis(5)));
-                        let _ = r.try_read_next_message();
-                    });
-
-                    let _ = hw.join();
-                    let _ = hr.join();
-                });
-
-                drop(writer);
-                drop(reader);
-                let _ = std::fs::remove_file(&test_path);
-            },
-        );
-    }
-    group.finish();
-}
-
 criterion_group!(
     benches,
-    // bench_single_threaded_write,
-    // bench_single_threaded_read,
-    // bench_throughput_varying_sizes,
+    bench_single_threaded_write,
+    bench_single_threaded_read,
+    bench_throughput_varying_sizes,
     bench_producer_consumer,
-    // bench_command_latency,
-    // bench_memory_layout_efficiency,
-    // bench_burst_performance,
-    // bench_adaptive_polling_effectiveness
+    bench_command_latency,
+    bench_memory_layout_efficiency,
+    bench_burst_performance,
 );
 criterion_main!(benches);

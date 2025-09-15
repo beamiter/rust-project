@@ -7,7 +7,7 @@ use std::sync::{
 };
 use std::thread;
 use std::time::{Duration, Instant};
-std::hint::black_box;
+use std::hint::black_box;
 
 fn mk_path(name: &str) -> String {
     format!("/tmp/{}_{}", name, std::process::id())
