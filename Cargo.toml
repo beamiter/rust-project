@@ -5,7 +5,8 @@ resolver = "3"
 # Cargo 会在这些路径下寻找 Cargo.toml 文件
 members = [
     "jwm",
-    "relm_bar",
+    # "relm_bar",
+    "shared_structures",
 ]
 
 # (可选) 如果你的项目都在一个子目录（如 crates/），可以使用 glob 模式

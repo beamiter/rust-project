@@ -38,6 +38,7 @@ use crate::xcb_util::SchemeType;
 use crate::xcb_util::{test_all_cursors, Atoms, CursorManager, ThemeManager};
 use shared_structures::CommandType;
 use shared_structures::SharedCommand;
+use shared_structures::SyncStrategy;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 
 // 新增导入
