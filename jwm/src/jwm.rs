@@ -38,7 +38,6 @@ use crate::xcb_util::SchemeType;
 use crate::xcb_util::{test_all_cursors, Atoms, CursorManager, ThemeManager};
 use shared_structures::CommandType;
 use shared_structures::SharedCommand;
-use shared_structures::SyncStrategy;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 
 // 新增导入
@@ -3306,8 +3305,8 @@ impl Jwm {
 
                 // 5) 确保 ring buffer 与进程
                 if self.status_bar_shmem.is_none() {
-                    let ring_buffer = SharedRingBuffer::open(SHARED_PATH, None)
-                        .or_else(|_| SharedRingBuffer::create(SHARED_PATH, None, None))
+                    let ring_buffer = SharedRingBuffer::open_aux(SHARED_PATH, None)
+                        .or_else(|_| SharedRingBuffer::create_aux(SHARED_PATH, None, None))
                         .expect("Create/open bar shmem failed");
                     self.status_bar_shmem = Some(ring_buffer);
                 }

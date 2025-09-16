@@ -124,6 +124,9 @@ impl SharedRingBuffer {
     // --- 构造与析构 ---
 
     /// 一个便捷的工厂函数，尝试打开一个已存在的缓冲区，如果失败则创建一个新的。
+    pub fn create_shared_ring_buffer_aux(shared_path: &str) -> Option<Self> {
+        return Self::create_shared_ring_buffer(shared_path, Self::get_default_strategy());
+    }
     pub fn create_shared_ring_buffer(shared_path: &str, strategy: SyncStrategy) -> Option<Self> {
         if shared_path.is_empty() {
             warn!("No shared path provided, cannot use shared ring buffer.");
@@ -154,6 +157,18 @@ impl SharedRingBuffer {
     }
 
     /// 创建一个新的共享内存环形缓冲区。
+    pub fn create_aux(
+        path: &str,
+        buffer_size: Option<usize>,
+        adaptive_poll_spins: Option<u32>,
+    ) -> Result<Self> {
+        return Self::create(
+            path,
+            Self::get_default_strategy(),
+            buffer_size,
+            adaptive_poll_spins,
+        );
+    }
     pub fn create(
         path: &str,
         strategy: SyncStrategy,
@@ -227,6 +242,27 @@ impl SharedRingBuffer {
     }
 
     /// 打开一个已存在的共享内存环形缓冲区。
+    #[allow(unreachable_code)]
+    fn get_default_strategy() -> SyncStrategy {
+        #[cfg(feature = "use-eventfd")]
+        {
+            return SyncStrategy::EventFd;
+        }
+        #[cfg(feature = "use-futex")]
+        {
+            return SyncStrategy::Futex;
+        }
+        #[cfg(feature = "use-semaphore")]
+        {
+            return SyncStrategy::Semaphore;
+        }
+        return SyncStrategy::Futex;
+    }
+
+    pub fn open_aux(path: &str, adaptive_poll_spins: Option<u32>) -> Result<Self> {
+        return Self::open(path, Self::get_default_strategy(), adaptive_poll_spins);
+    }
+
     pub fn open(
         path: &str,
         strategy: SyncStrategy,
@@ -272,7 +308,7 @@ impl SharedRingBuffer {
 
         // 创建并初始化后端（作为打开者）
         let mut backend = Self::new_backend(strategy);
-        backend.init(false, backend_ptr)?;
+        backend.init(true, backend_ptr)?;
 
         Ok(Self {
             shmem,

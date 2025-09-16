@@ -25,6 +25,10 @@ eventfd = ["dep:nix"]
 # default = ["eventfd"]
 default = ["futex", "semaphore", "eventfd"]
 
+use-eventfd = []
+use-futex = []
+use-semaphore = []
+
 [[bench]]
 name = "ring_buffer_bench"
 harness = false

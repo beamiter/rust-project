@@ -61,7 +61,6 @@ toml = "0.9.5"
 x11 = { version = "2.21.0", features = ["all"] }
 x11rb = { version = "0.13.1", features = ["all-extensions"] }
 x11rb-protocol = "0.13.1"
-# yeslogic-fontconfig-sys = "6.0.0"
 
 [build-dependencies]
 bindgen = "0.70.1"

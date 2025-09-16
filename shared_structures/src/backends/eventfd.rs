@@ -8,7 +8,7 @@ use nix::sys::eventfd::{self, EfdFlags};
 use nix::unistd;
 use std::hint;
 use std::io::{Error, ErrorKind, Result};
-use std::os::fd::{AsRawFd, BorrowedFd, FromRawFd};
+use std::os::fd::{AsRawFd, BorrowedFd};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
 use std::time::Duration;
 
@@ -87,12 +87,11 @@ impl EventFdBackend {
         let borrowed_fd = unsafe { BorrowedFd::borrow_raw(fd) };
         let poll_fd = PollFd::new(borrowed_fd, PollFlags::POLLIN);
 
-        let timeout_ms = timeout.map_or(-1, |d| d.as_millis() as i32);
-
         use nix::poll::PollTimeout;
-        use nix::sys::epoll::EpollTimeout;
-        // (todo) fix here
-        match poll(&mut [poll_fd], timeout_ms as u16) {
+        let timeout_ms = timeout.map_or(PollTimeout::NONE, |d| {
+            PollTimeout::try_from(d.as_millis()).expect("failed to convert")
+        });
+        match poll(&mut [poll_fd], timeout_ms) {
             Ok(0) => Ok(has_data()), // Timeout
             Ok(_) => {
                 let mut buf = [0u8; 8];

@@ -272,7 +272,7 @@ impl SimpleComponent for AppModel {
         }
 
         // 5) 构建 model
-        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
+        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path);
         let mut model = AppModel {
             active_tab: 0,
             layout_symbol: "[]=".to_string(),
@@ -545,7 +545,8 @@ impl AppModel {
         // 与 UI 文件一致：仅显示百分比
         let cpu_pct = (self.cpu_usage * 100.0).round() as u32;
         let mem_pct = (self.memory_usage * 100.0).round() as u32;
-        self.cpu_label_widget.set_label(&format!("CPU {:>3}%", cpu_pct));
+        self.cpu_label_widget
+            .set_label(&format!("CPU {:>3}%", cpu_pct));
         self.memory_label_widget
             .set_label(&format!("MEM {:>3}%", mem_pct));
 
@@ -593,7 +594,7 @@ fn shared_memory_worker(shared_path: String, sender: ComponentSender<AppModel>) 
         warn!("No shared path provided, running without shared memory");
         None
     } else {
-        match SharedRingBuffer::open(&shared_path, None) {
+        match SharedRingBuffer::open_aux(&shared_path, None) {
             Ok(shared_buffer) => {
                 info!("Successfully opened shared ring buffer: {}", shared_path);
                 Some(shared_buffer)
@@ -603,7 +604,7 @@ fn shared_memory_worker(shared_path: String, sender: ComponentSender<AppModel>) 
                     "Failed to open shared ring buffer: {}, attempting to create new one",
                     e
                 );
-                match SharedRingBuffer::create(&shared_path, None, None) {
+                match SharedRingBuffer::create_aux(&shared_path, None, None) {
                     Ok(shared_buffer) => {
                         info!("Created new shared ring buffer: {}", shared_path);
                         Some(shared_buffer)
