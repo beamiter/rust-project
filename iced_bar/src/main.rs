@@ -150,7 +150,7 @@ struct IcedBar {
     active_tab: usize,
     tabs: [String; 9],
     tab_colors: [Color; 9],
-    shared_buffer_opt: Option<SharedRingBuffer>,
+    shared_buffer_rc: Option<Arc<SharedRingBuffer>>,
     shared_path: String,
     monitor_info_opt: Option<MonitorInfo>,
     formated_now: String,
@@ -192,8 +192,8 @@ impl IcedBar {
         let args: Vec<String> = env::args().collect();
         let shared_path = args.get(1).cloned().unwrap_or_default();
 
-        let shared_buffer_opt =
-            SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path);
+        let shared_buffer_rc =
+            SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(Arc::new);
 
         Self {
             active_tab: 0,
@@ -219,7 +219,7 @@ impl IcedBar {
                 color!(0x5F27CD), // purple
                 color!(0x00D2D3), // teal
             ],
-            shared_buffer_opt,
+            shared_buffer_rc,
             shared_path,
             monitor_info_opt: None,
             formated_now: String::new(),
@@ -245,28 +245,25 @@ impl IcedBar {
         })
     }
 
-    fn message_notify_subscription(shared_path: String) -> Subscription<Message> {
-        Subscription::run_with(shared_path.clone(), move |path| {
-            let path = path.clone();
+    fn message_notify_subscription(
+        shared_buffer_rc: Option<Arc<SharedRingBuffer>>,
+    ) -> Subscription<Message> {
+        Subscription::run_with(shared_buffer_rc, |shared_buffer_rc_ref| {
+            // `shared_buffer_rc_ref` 的类型是 `&Option<Arc<SharedRingBuffer>>`，这是一个临时借用。
+            // 【关键】为了让 async 块拥有 'static 生命周期，我们必须克隆 Arc，获得一个所有权值。
+            let owned_shared_buffer_rc = shared_buffer_rc_ref.clone();
             stream::channel(100, move |mut output: mpsc::Sender<Message>| async move {
-                if path.is_empty() {
+                // `owned_shared_buffer_rc` (类型是 Option<Arc<...>>) 被 move 进这个 async 块，
+                // 它现在拥有数据的所有权，因此满足 'static 要求。
+                let shared_buffer = if let Some(shared_buffer) = owned_shared_buffer_rc {
+                    shared_buffer
+                } else {
                     let _ = output
-                        .send(Message::SharedMemoryError("Empty shared path".to_string()))
+                        .send(Message::SharedMemoryError(
+                            "Empty shared buffer".to_string(),
+                        ))
                         .await;
                     return;
-                }
-
-                let shared_buffer = match SharedRingBuffer::open_aux(&path, None) {
-                    Ok(buffer) => Arc::new(buffer),
-                    Err(e) => {
-                        let _ = output
-                            .send(Message::SharedMemoryError(format!(
-                                "Failed to open shared buffer: {}",
-                                e
-                            )))
-                            .await;
-                        return;
-                    }
                 };
 
                 let (mut tx, mut rx) = mpsc::channel::<Message>(100);
@@ -305,7 +302,9 @@ impl IcedBar {
                 });
 
                 while let Some(msg) = rx.next().await {
-                    let _ = output.send(msg).await;
+                    if output.send(msg).await.is_err() {
+                        break;
+                    }
                 }
 
                 stop.store(true, Ordering::Relaxed);
@@ -321,7 +320,7 @@ impl IcedBar {
             SharedCommand::toggle_tag(tag_bit, self.monitor_num)
         };
 
-        if let Some(shared_buffer) = &self.shared_buffer_opt {
+        if let Some(shared_buffer) = &self.shared_buffer_rc {
             match shared_buffer.send_command(command) {
                 Ok(true) => info!("Sent command: {:?} by shared_buffer", command),
                 Ok(false) => warn!("Command buffer full, command dropped"),
@@ -332,7 +331,7 @@ impl IcedBar {
 
     fn send_layout_command(&mut self, layout_index: u32) {
         let command = SharedCommand::new(CommandType::SetLayout, layout_index, self.monitor_num);
-        if let Some(shared_buffer) = &self.shared_buffer_opt {
+        if let Some(shared_buffer) = &self.shared_buffer_rc {
             match shared_buffer.send_command(command) {
                 Ok(true) => info!("Sent command: {:?} by shared_buffer", command),
                 Ok(false) => warn!("Command buffer full, command dropped"),
@@ -460,7 +459,7 @@ impl IcedBar {
             let shared = if self.shared_path.is_empty() {
                 Subscription::none()
             } else {
-                Self::message_notify_subscription(self.shared_path.clone())
+                Self::message_notify_subscription(self.shared_buffer_rc.clone())
             };
             Subscription::batch(vec![clock, shared])
         }

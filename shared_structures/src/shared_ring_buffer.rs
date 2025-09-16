@@ -100,6 +100,23 @@ pub struct SharedRingBuffer {
     // --- 修改点 2：将 backend 类型改为 AnySyncBackend ---
     backend: AnySyncBackend,
 }
+impl std::hash::Hash for SharedRingBuffer {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        // 核心逻辑：我们通过 get_os_id() 获取共享内存的唯一标识符（一个字符串），
+        // 然后对这个标识符进行哈希。
+        // 这确保了所有指向同一块共享内存的 SharedRingBuffer 实例都具有相同的哈希值。
+        self.shmem.get_os_id().hash(state);
+    }
+}
+impl PartialEq for SharedRingBuffer {
+    fn eq(&self, other: &Self) -> bool {
+        // 保持与 Hash 一致：两个 SharedRingBuffer 相等，当且仅当
+        // 它们引用的共享内存的唯一标识符相同。
+        self.shmem.get_os_id() == other.shmem.get_os_id()
+    }
+}
+// 因为 PartialEq 的实现满足了自反性、对称性和传递性，所以我们可以安全地实现 Eq。
+impl Eq for SharedRingBuffer {}
 
 unsafe impl Send for SharedRingBuffer {}
 unsafe impl Sync for SharedRingBuffer {}

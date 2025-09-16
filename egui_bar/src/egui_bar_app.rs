@@ -386,14 +386,13 @@ pub struct EguiBarApp {
     /// Color cache for performance
     color_cache: Vec<Color32>,
     /// Shared buffer for communication
-    shared_buffer_opt: Option<SharedRingBuffer>,
+    shared_buffer_rc: Option<Arc<SharedRingBuffer>>,
 }
 
 impl EguiBarApp {
     /// Create new application instance
     pub fn new(cc: &eframe::CreationContext<'_>, shared_path: String) -> crate::Result<Self> {
         cc.egui_ctx.set_theme(egui::Theme::Light);
-
         let state = AppState::new();
         let shared_state = Arc::new(Mutex::new(SharedAppState::new()));
 
@@ -406,16 +405,21 @@ impl EguiBarApp {
         Self::setup_custom_fonts(&cc.egui_ctx)?;
         Self::configure_text_styles(&cc.egui_ctx);
 
-        // Start background tasks (std::thread, no tokio)
-        Self::start_background_tasks(&shared_state, &cc.egui_ctx, &shared_path);
+        let shared_buffer_rc =
+            SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(Arc::new);
 
-        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
+        // Start background tasks (std::thread, no tokio)
+        Self::start_background_tasks(
+            &shared_state,
+            &cc.egui_ctx,
+            shared_buffer_rc.clone(),
+        );
 
         Ok(Self {
             state,
             shared_state,
             color_cache: Vec::new(),
-            shared_buffer_opt,
+            shared_buffer_rc,
         })
     }
 
@@ -423,17 +427,17 @@ impl EguiBarApp {
     fn start_background_tasks(
         shared_state: &Arc<Mutex<SharedAppState>>,
         egui_ctx: &egui::Context,
-        shared_path: &str,
+        shared_buffer_rc: Option<Arc<SharedRingBuffer>>,
     ) {
         // Shared memory worker
         {
             let shared_state_clone = Arc::clone(shared_state);
             let egui_ctx_clone = egui_ctx.clone();
-            let shared_path_clone = shared_path.to_string();
-
-            thread::spawn(move || {
-                Self::shared_memory_worker(shared_path_clone, shared_state_clone, egui_ctx_clone);
-            });
+            if let Some(shared_buffer) = shared_buffer_rc {
+                thread::spawn(move || {
+                    Self::shared_memory_worker(shared_buffer, shared_state_clone, egui_ctx_clone);
+                });
+            }
         }
 
         // Periodic update task
@@ -447,50 +451,45 @@ impl EguiBarApp {
 
     /// Shared memory worker task (blocking loop)
     fn shared_memory_worker(
-        shared_path: String,
+        shared_buffer: Arc<SharedRingBuffer>,
         shared_state: Arc<Mutex<SharedAppState>>,
         egui_ctx: egui::Context,
     ) {
         info!("Starting shared memory worker task");
-
-        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
         let mut prev_timestamp = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .unwrap()
             .as_millis();
-
-        if let Some(ref shared_buffer) = shared_buffer_opt {
-            loop {
-                match shared_buffer.wait_for_message(Some(Duration::from_secs(2))) {
-                    Ok(true) => {
-                        if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
-                            if prev_timestamp != message.timestamp.into() {
-                                prev_timestamp = message.timestamp.into();
-                                if let Ok(mut state) = shared_state.lock() {
-                                    let need_update = state
-                                        .current_message
-                                        .as_ref()
-                                        .map(|m| m.timestamp != message.timestamp)
-                                        .unwrap_or(true);
-                                    if need_update {
-                                        info!("current_message: {:?}", message);
-                                        state.current_message = Some(message);
-                                        state.last_update = Instant::now();
-                                        egui_ctx.request_repaint();
-                                    }
-                                } else {
-                                    warn!("Failed to lock shared state for message update");
+        loop {
+            match shared_buffer.wait_for_message(Some(Duration::from_secs(2))) {
+                Ok(true) => {
+                    if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
+                        if prev_timestamp != message.timestamp.into() {
+                            prev_timestamp = message.timestamp.into();
+                            if let Ok(mut state) = shared_state.lock() {
+                                let need_update = state
+                                    .current_message
+                                    .as_ref()
+                                    .map(|m| m.timestamp != message.timestamp)
+                                    .unwrap_or(true);
+                                if need_update {
+                                    info!("current_message: {:?}", message);
+                                    state.current_message = Some(message);
+                                    state.last_update = Instant::now();
+                                    egui_ctx.request_repaint();
                                 }
+                            } else {
+                                warn!("Failed to lock shared state for message update");
                             }
                         }
                     }
-                    Ok(false) => {
-                        debug!("[notifier] Wait for message timed out.");
-                    }
-                    Err(e) => {
-                        error!("[notifier] Wait for message failed: {}", e);
-                        break;
-                    }
+                }
+                Ok(false) => {
+                    debug!("[notifier] Wait for message timed out.");
+                }
+                Err(e) => {
+                    error!("[notifier] Wait for message failed: {}", e);
+                    break;
                 }
             }
         }
@@ -854,7 +853,7 @@ impl EguiBarApp {
                 SharedCommand::toggle_tag(tag_bit, monitor_id)
             };
 
-            if let Some(shared_buffer) = &self.shared_buffer_opt {
+            if let Some(shared_buffer) = &self.shared_buffer_rc {
                 match shared_buffer.send_command(command) {
                     Ok(true) => info!("Sent command: {:?} by shared_buffer", command),
                     Ok(false) => warn!("Command buffer full, command dropped"),
@@ -870,7 +869,7 @@ impl EguiBarApp {
             let monitor_id = message.monitor_info.monitor_num;
             let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
 
-            if let Some(shared_buffer) = &self.shared_buffer_opt {
+            if let Some(shared_buffer) = &self.shared_buffer_rc {
                 match shared_buffer.send_command(command) {
                     Ok(true) => info!("Sent command: {:?} by shared_buffer", command),
                     Ok(false) => warn!("Command buffer full, command dropped"),

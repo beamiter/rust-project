@@ -273,13 +273,8 @@ impl SimpleComponent for AppModel {
         }
 
         // 5) 构建 model
-        let shared_arc = if let Some(shared_buffer) =
-            SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path)
-        {
-            Some(Arc::new(shared_buffer))
-        } else {
-            None
-        };
+        let shared_arc =
+            SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(Arc::new);
         let mut model = AppModel {
             active_tab: 0,
             layout_symbol: "[]=".to_string(),
