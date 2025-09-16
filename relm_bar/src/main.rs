@@ -9,6 +9,7 @@ use gtk4::glib::ControlFlow;
 use log::{error, info, warn};
 use relm4::{ComponentParts, ComponentSender, RelmApp, SimpleComponent};
 
+use std::sync::Arc;
 use std::time::Duration;
 
 mod audio_manager;
@@ -132,7 +133,7 @@ pub struct AppModel {
     pub current_time: String,
 
     #[do_not_track]
-    shared_buffer_opt: Option<SharedRingBuffer>,
+    shared_buffer_opt: Option<Arc<SharedRingBuffer>>,
     #[do_not_track]
     pub system_monitor: SystemMonitor,
 
@@ -272,7 +273,13 @@ impl SimpleComponent for AppModel {
         }
 
         // 5) 构建 model
-        let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path);
+        let shared_arc = if let Some(shared_buffer) =
+            SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path)
+        {
+            Some(Arc::new(shared_buffer))
+        } else {
+            None
+        };
         let mut model = AppModel {
             active_tab: 0,
             layout_symbol: "[]=".to_string(),
@@ -284,7 +291,7 @@ impl SimpleComponent for AppModel {
             memory_usage: 0.0,
             cpu_usage: 0.0,
             current_time: "".to_string(),
-            shared_buffer_opt,
+            shared_buffer_opt: shared_arc.clone(),
             system_monitor: SystemMonitor::new(1),
             tracker: 0,
 
@@ -309,7 +316,7 @@ impl SimpleComponent for AppModel {
         model.sync_full_ui_once();
 
         // 定时器与共享线程
-        spawn_background_tasks(sender.clone(), shared_path);
+        spawn_background_tasks(sender.clone(), shared_arc);
 
         // 触发一次系统监控刷新
         sender.input(AppInput::SystemUpdate);
@@ -566,7 +573,10 @@ impl AppModel {
 
 // ========== 后台任务 ==========
 
-fn spawn_background_tasks(sender: ComponentSender<AppModel>, shared_path: String) {
+fn spawn_background_tasks(
+    sender: ComponentSender<AppModel>,
+    shared_buffer: Option<Arc<SharedRingBuffer>>,
+) {
     // 系统监控任务（每2秒）
     let sender1 = sender.clone();
     glib::timeout_add_seconds_local(2, move || {
@@ -582,62 +592,39 @@ fn spawn_background_tasks(sender: ComponentSender<AppModel>, shared_path: String
     });
 
     // 共享内存任务
-    let sender3 = sender.clone();
-    std::thread::spawn(move || {
-        shared_memory_worker(shared_path, sender3);
-    });
+    // 共享内存任务：仅当有 shared 才启动线程
+    if let Some(shared_buffer) = shared_buffer {
+        let sender3 = sender.clone();
+        std::thread::spawn(move || {
+            shared_memory_worker(shared_buffer, sender3);
+        });
+    } else {
+        log::warn!("No shared buffer, shared memory worker not started");
+    }
 }
 
-fn shared_memory_worker(shared_path: String, sender: ComponentSender<AppModel>) {
+fn shared_memory_worker(shared: Arc<SharedRingBuffer>, sender: ComponentSender<AppModel>) {
     info!("Starting shared memory worker");
-    let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
-        warn!("No shared path provided, running without shared memory");
-        None
-    } else {
-        match SharedRingBuffer::open_aux(&shared_path, None) {
-            Ok(shared_buffer) => {
-                info!("Successfully opened shared ring buffer: {}", shared_path);
-                Some(shared_buffer)
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to open shared ring buffer: {}, attempting to create new one",
-                    e
-                );
-                match SharedRingBuffer::create_aux(&shared_path, None, None) {
-                    Ok(shared_buffer) => {
-                        info!("Created new shared ring buffer: {}", shared_path);
-                        Some(shared_buffer)
-                    }
-                    Err(create_err) => {
-                        error!("Failed to create shared ring buffer: {}", create_err);
-                        None
-                    }
-                }
-            }
-        }
-    };
 
     let mut prev_timestamp = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap()
         .as_millis();
-    if let Some(ref shared_buffer) = shared_buffer_opt {
-        loop {
-            match shared_buffer.wait_for_message(Some(Duration::from_secs(2))) {
-                Ok(true) => {
-                    if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
-                        if prev_timestamp != message.timestamp.into() {
-                            prev_timestamp = message.timestamp.into();
-                            sender.input(AppInput::SharedMessageReceived(message));
-                        }
+
+    loop {
+        match shared.wait_for_message(Some(Duration::from_secs(2))) {
+            Ok(true) => {
+                if let Ok(Some(message)) = shared.try_read_latest_message() {
+                    if prev_timestamp != message.timestamp.into() {
+                        prev_timestamp = message.timestamp.into();
+                        sender.input(AppInput::SharedMessageReceived(message));
                     }
                 }
-                Ok(false) => log::debug!("[notifier] Wait for message timed out."),
-                Err(e) => {
-                    error!("[notifier] Wait for message failed: {}", e);
-                    break;
-                }
+            }
+            Ok(false) => log::debug!("[notifier] Wait for message timed out."),
+            Err(e) => {
+                error!("[notifier] Wait for message failed: {}", e);
+                break;
             }
         }
     }
