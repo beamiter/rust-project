@@ -2,8 +2,9 @@
 #![cfg(feature = "eventfd")]
 
 use super::common::SyncBackend;
+use log::info;
 use nix::errno::Errno;
-use nix::fcntl::{fcntl, FcntlArg, OFlag};
+use nix::fcntl::{fcntl, FcntlArg, FdFlag, OFlag};
 use nix::poll::{poll, PollFd, PollFlags};
 use nix::sys::socket::{
     accept, bind, connect, listen, recvmsg, sendmsg, socket, AddressFamily, Backlog,
@@ -157,43 +158,49 @@ impl EventFdBackend {
         if sock_path.exists() {
             let _ = std::fs::remove_file(&sock_path);
         }
+
         let srv = socket(
             AddressFamily::Unix,
             SockType::Stream,
-            SockFlag::SOCK_CLOEXEC,
+            SockFlag::SOCK_CLOEXEC, // 监听 socket 本身 CLOEXEC 即可
             None,
         )
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
-        let addr = UnixAddr::new(&sock_path).map_err(|e| Error::new(ErrorKind::Other, e))?;
 
+        let addr = UnixAddr::new(&sock_path).map_err(|e| Error::new(ErrorKind::Other, e))?;
         bind(srv.as_raw_fd(), &addr).map_err(|e| Error::new(ErrorKind::Other, e))?;
         listen(&srv, Backlog::new(8)?).map_err(|e| Error::new(ErrorKind::Other, e))?;
-        // 非阻塞 accept 循环
-        let _ = fcntl(
-            &srv,
-            FcntlArg::F_SETFL(OFlag::O_NONBLOCK | OFlag::O_CLOEXEC),
-        );
 
-        let msg_fd_raw = msg_fd.as_raw_fd();
-        let cmd_fd_raw = cmd_fd.as_raw_fd();
+        // 监听 socket 非阻塞；CLOEXEC 应该通过 F_SETFD 设置，而非 F_SETFL
+        let _ = fcntl(&srv, FcntlArg::F_SETFL(OFlag::O_NONBLOCK));
+        let _ = fcntl(&srv, FcntlArg::F_SETFD(FdFlag::FD_CLOEXEC));
 
+        // 把 OwnedFd 移入线程闭包，保证其生命周期覆盖整个线程
         std::thread::Builder::new()
             .name("srb_eventfd_fdpass".to_string())
             .spawn(move || {
+                // 在闭包内部再取 raw fd
+                let msg_fd_raw = msg_fd.as_raw_fd();
+                let cmd_fd_raw = cmd_fd.as_raw_fd();
+
                 while !stop.load(Ordering::Relaxed) {
                     match accept(srv.as_raw_fd()) {
                         Ok(cli_fd) => {
-                            // 发送 1 字节 payload + 两个 fd
                             let iov = [IoSlice::new(&[0xE5])];
                             let fds = [msg_fd_raw, cmd_fd_raw];
                             let cmsg = [ControlMessage::ScmRights(&fds)];
-                            let _ = sendmsg::<nix::sys::socket::UnixAddr>(
+
+                            // 检查返回值，记录错误，必要时可考虑重试一次
+                            if let Err(e) = sendmsg::<nix::sys::socket::UnixAddr>(
                                 cli_fd,
                                 &iov,
                                 &cmsg,
                                 MsgFlags::empty(),
-                                None, // 已连接，不需要地址
-                            );
+                                None,
+                            ) {
+                                log::warn!("sendmsg(SCM_RIGHTS) failed: {e}");
+                            }
+
                             let _ = unistd::close(cli_fd);
                         }
                         Err(Errno::EAGAIN) => {
@@ -205,7 +212,8 @@ impl EventFdBackend {
                         }
                     }
                 }
-                // 退出时自动 drop srv（OwnedFd），并删除 socket 文件
+
+                // 退出时自动 drop srv 和 msg_fd/cmd_fd，并删除 socket 文件
                 let _ = std::fs::remove_file(&sock_path);
             })
             .map_err(|e| Error::new(ErrorKind::Other, e))?;
@@ -214,15 +222,32 @@ impl EventFdBackend {
     }
 
     fn receive_fds_from_server(sock_path: &Path) -> Result<(OwnedFd, OwnedFd)> {
-        let cli = socket(
-            AddressFamily::Unix,
-            SockType::Stream,
-            SockFlag::SOCK_CLOEXEC,
-            None,
-        )
-        .map_err(|e| Error::new(ErrorKind::Other, e))?;
-        let addr = UnixAddr::new(sock_path).map_err(|e| Error::new(ErrorKind::Other, e))?;
-        connect(cli.as_raw_fd(), &addr).map_err(|e| Error::new(ErrorKind::Other, e))?;
+        // 连接重试：最多 200ms，避免 creator 刚发布路径但尚未 listen 的窗口
+        let deadline = std::time::Instant::now() + Duration::from_millis(200);
+        let cli = loop {
+            match socket(
+                AddressFamily::Unix,
+                SockType::Stream,
+                SockFlag::SOCK_CLOEXEC,
+                None,
+            ) {
+                Ok(cli) => {
+                    let addr =
+                        UnixAddr::new(sock_path).map_err(|e| Error::new(ErrorKind::Other, e))?;
+                    match connect(cli.as_raw_fd(), &addr) {
+                        Ok(()) => break cli,
+                        Err(e) => {
+                            if std::time::Instant::now() >= deadline {
+                                return Err(Error::new(ErrorKind::Other, e));
+                            }
+                            std::thread::sleep(Duration::from_millis(10));
+                            continue;
+                        }
+                    }
+                }
+                Err(e) => return Err(Error::new(ErrorKind::Other, e)),
+            }
+        };
 
         let mut buf = [0u8; 1];
         let mut iov = [IoSliceMut::new(&mut buf)];
@@ -236,12 +261,27 @@ impl EventFdBackend {
         )
         .map_err(|e| Error::new(ErrorKind::Other, e))?;
 
+        // 校验：必须读到 1 字节 payload，且没有控制消息截断
+        if msg.bytes == 0 {
+            return Err(Error::new(
+                ErrorKind::UnexpectedEof,
+                "server closed before sending fds",
+            ));
+        }
+        if msg.flags.contains(MsgFlags::MSG_CTRUNC) {
+            return Err(Error::new(
+                ErrorKind::InvalidData,
+                "ancillary data truncated",
+            ));
+        }
+
         let mut fds: Vec<RawFd> = Vec::new();
         if let Ok(mut cmsg) = msg.cmsgs() {
             while let Some(ControlMessageOwned::ScmRights(recv_fds)) = cmsg.next() {
                 fds.extend(recv_fds);
             }
         }
+        info!("fds: {:?}", fds);
 
         if fds.len() < 2 {
             return Err(Error::new(
@@ -304,6 +344,7 @@ impl SyncBackend for EventFdBackend {
         self.is_creator = is_creator;
 
         if is_creator {
+            info!("is creator");
             // 1) 创建一对 eventfd（本进程留用）
             let msg_fd = Self::create_eventfd_owned()?;
             let cmd_fd = Self::create_eventfd_owned()?;
@@ -331,6 +372,7 @@ impl SyncBackend for EventFdBackend {
             self.listener_stop = Some(stop);
             self.sock_path = Some(sock_path);
         } else {
+            info!("is not creator");
             // 打开者：等待路径 ready，再连接接收 2 个 fd
             // 自旋等待 ready（通常很快）
             for _ in 0..10_000 {

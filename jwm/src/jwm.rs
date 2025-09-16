@@ -3305,9 +3305,9 @@ impl Jwm {
 
                 // 5) 确保 ring buffer 与进程
                 if self.status_bar_shmem.is_none() {
-                    let ring_buffer = SharedRingBuffer::open_aux(SHARED_PATH, None)
-                        .or_else(|_| SharedRingBuffer::create_aux(SHARED_PATH, None, None))
-                        .expect("Create/open bar shmem failed");
+                    let ring_buffer = SharedRingBuffer::create_aux(SHARED_PATH, None, None)
+                        .expect("Create bar shmem failed");
+                    info!("Create bar shmem");
                     self.status_bar_shmem = Some(ring_buffer);
                 }
                 self.ensure_bar_is_running(SHARED_PATH);
