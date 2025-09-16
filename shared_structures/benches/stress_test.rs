@@ -54,7 +54,8 @@ fn bench_high_frequency_updates(c: &mut Criterion) {
                     let _ = std::fs::remove_file(&test_path);
 
                     let buffer = Arc::new(
-                        SharedRingBuffer::create(&test_path, Some(4096), Some(spin_count)).unwrap(),
+                        SharedRingBuffer::create_aux(&test_path, Some(4096), Some(spin_count))
+                            .unwrap(),
                     );
                     // 常驻消费者线程：不断拉取，避免写端顶满
                     let stop = Arc::new(AtomicBool::new(false));
@@ -123,11 +124,11 @@ fn bench_concurrent_stress(c: &mut Criterion) {
 
                     // SPSC 环：单写者 + 单读者
                     let writer_rb = Arc::new(
-                        SharedRingBuffer::create(&test_path, Some(4096), Some(5000)).unwrap(),
+                        SharedRingBuffer::create_aux(&test_path, Some(4096), Some(5000)).unwrap(),
                     );
                     thread::sleep(Duration::from_millis(5));
                     let reader_rb =
-                        Arc::new(SharedRingBuffer::open(&test_path, Some(5000)).unwrap());
+                        Arc::new(SharedRingBuffer::open_aux(&test_path, Some(5000)).unwrap());
 
                     // MPSC 管道：多生产者 -> 单聚合写者
                     let (tx, rx) = mpsc::channel::<u32>();
@@ -258,7 +259,8 @@ fn bench_memory_pressure(c: &mut Criterion) {
                         let _ = std::fs::remove_file(&test_path);
 
                         let buffer = Arc::new(
-                            SharedRingBuffer::create(&test_path, Some(size), Some(2000)).unwrap(),
+                            SharedRingBuffer::create_aux(&test_path, Some(size), Some(2000))
+                                .unwrap(),
                         );
                         let reader = buffer.clone();
 
@@ -326,9 +328,9 @@ fn bench_command_stress(c: &mut Criterion) {
             let _ = std::fs::remove_file(&test_path);
 
             let sender =
-                Arc::new(SharedRingBuffer::create(&test_path, Some(1024), Some(3000)).unwrap());
+                Arc::new(SharedRingBuffer::create_aux(&test_path, Some(1024), Some(3000)).unwrap());
             thread::sleep(Duration::from_millis(5));
-            let receiver = Arc::new(SharedRingBuffer::open(&test_path, Some(3000)).unwrap());
+            let receiver = Arc::new(SharedRingBuffer::open_aux(&test_path, Some(3000)).unwrap());
 
             let recv_counter = Arc::new(AtomicUsize::new(0));
             let running = Arc::new(AtomicBool::new(true));
@@ -396,8 +398,9 @@ fn bench_long_running_stability(c: &mut Criterion) {
             || {
                 let test_path = mk_path("stress_long_running");
                 let _ = std::fs::remove_file(&test_path);
-                let buffer =
-                    Arc::new(SharedRingBuffer::create(&test_path, Some(1024), Some(4000)).unwrap());
+                let buffer = Arc::new(
+                    SharedRingBuffer::create_aux(&test_path, Some(1024), Some(4000)).unwrap(),
+                );
                 (test_path, buffer)
             },
             |(test_path, buffer)| {

@@ -41,7 +41,7 @@ fn bench_single_threaded_write(c: &mut Criterion) {
     let test_path = mk_path("bench_single_write");
     let _ = std::fs::remove_file(&test_path);
 
-    let buffer = SharedRingBuffer::create(&test_path, Some(1024), Some(0)).unwrap();
+    let buffer = SharedRingBuffer::create_aux(&test_path, Some(1024), Some(0)).unwrap();
     let messages = prebuild_messages(100, 0);
 
     c.bench_function("single_threaded_write", |b| {
@@ -65,7 +65,7 @@ fn bench_single_threaded_read(c: &mut Criterion) {
     let test_path = mk_path("bench_single_read");
     let _ = std::fs::remove_file(&test_path);
 
-    let buffer = SharedRingBuffer::create(&test_path, Some(1024), Some(0)).unwrap();
+    let buffer = SharedRingBuffer::create_aux(&test_path, Some(1024), Some(0)).unwrap();
     let messages = prebuild_messages(100, 10_000);
 
     c.bench_function("single_threaded_read", |b| {
@@ -102,7 +102,8 @@ fn bench_throughput_varying_sizes(c: &mut Criterion) {
                 let test_path = mk_path(&format!("bench_throughput_{}", count));
                 let _ = std::fs::remove_file(&test_path);
 
-                let buffer = SharedRingBuffer::create(&test_path, Some(16_384), Some(0)).unwrap();
+                let buffer =
+                    SharedRingBuffer::create_aux(&test_path, Some(16_384), Some(0)).unwrap();
                 let messages = prebuild_messages(count, 20_000);
 
                 b.iter(|| {
@@ -142,11 +143,11 @@ fn bench_producer_consumer(c: &mut Criterion) {
                 b.iter_custom(|iters| {
                     // 构建共享段（生产者创建，消费者打开）
                     let producer = Arc::new(
-                        SharedRingBuffer::create(&test_path, Some(2048), Some(spins)).unwrap(),
+                        SharedRingBuffer::create_aux(&test_path, Some(2048), Some(spins)).unwrap(),
                     );
                     thread::sleep(Duration::from_millis(5));
                     let consumer =
-                        Arc::new(SharedRingBuffer::open(&test_path, Some(spins)).unwrap());
+                        Arc::new(SharedRingBuffer::open_aux(&test_path, Some(spins)).unwrap());
 
                     // 一次样本内的固定总工作量
                     let message_count_per_round = 1000usize;
@@ -230,9 +231,9 @@ fn bench_command_latency(c: &mut Criterion) {
     let test_path = mk_path("bench_cmd_latency");
     let _ = std::fs::remove_file(&test_path);
 
-    let sender = SharedRingBuffer::create(&test_path, Some(1024), Some(1000)).unwrap();
+    let sender = SharedRingBuffer::create_aux(&test_path, Some(1024), Some(1000)).unwrap();
     thread::sleep(Duration::from_millis(5));
-    let receiver = SharedRingBuffer::open(&test_path, Some(1000)).unwrap();
+    let receiver = SharedRingBuffer::open_aux(&test_path, Some(1000)).unwrap();
 
     c.bench_function("command_round_trip", |b| {
         b.iter(|| {
@@ -263,7 +264,7 @@ fn bench_memory_layout_efficiency(c: &mut Criterion) {
                     let _ = std::fs::remove_file(&test_path);
 
                     let buffer =
-                        SharedRingBuffer::create(&test_path, Some(size), Some(1000)).unwrap();
+                        SharedRingBuffer::create_aux(&test_path, Some(size), Some(1000)).unwrap();
                     let prefill_msgs = prebuild_messages((size * 3) / 4, 40_000);
                     let alternation_msgs = prebuild_messages(100, 41_000);
 
@@ -307,7 +308,7 @@ fn bench_burst_performance(c: &mut Criterion) {
                 let test_path = mk_path(&format!("bench_burst_{}", size));
                 let _ = std::fs::remove_file(&test_path);
 
-                let buffer = SharedRingBuffer::create(&test_path, Some(2048), Some(0)).unwrap();
+                let buffer = SharedRingBuffer::create_aux(&test_path, Some(2048), Some(0)).unwrap();
                 let burst_msgs = prebuild_messages(size, 50_000);
 
                 b.iter(|| {
