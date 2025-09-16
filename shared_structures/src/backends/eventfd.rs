@@ -126,11 +126,6 @@ impl SyncBackend for EventFdBackend {
             }
             self.local_message_fd = Some(msg_efd);
             self.local_command_fd = Some(cmd_efd);
-        } else {
-            unsafe {
-                (*self.header).message_fd.store(-1, Ordering::Release);
-                (*self.header).command_fd.store(-1, Ordering::Release);
-            }
         }
         Ok(())
     }

@@ -308,7 +308,7 @@ impl SharedRingBuffer {
 
         // 创建并初始化后端（作为打开者）
         let mut backend = Self::new_backend(strategy);
-        backend.init(true, backend_ptr)?;
+        backend.init(false, backend_ptr)?;
 
         Ok(Self {
             shmem,
