@@ -421,7 +421,7 @@ fn App() -> Element {
             "(SIGNAL-INIT) Creating shared ring buffer for path: {}",
             shared_path
         );
-        SharedRingBuffer::create_shared_ring_buffer(&shared_path).map(Arc::new)
+        SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(Arc::new)
     });
 
     // 监视器图标

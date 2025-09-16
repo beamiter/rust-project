@@ -192,33 +192,8 @@ impl IcedBar {
         let args: Vec<String> = env::args().collect();
         let shared_path = args.get(1).cloned().unwrap_or_default();
 
-        let shared_buffer_opt: Option<SharedRingBuffer> = if shared_path.is_empty() {
-            warn!("No shared path provided, running without shared memory");
-            None
-        } else {
-            match SharedRingBuffer::open(&shared_path, None) {
-                Ok(shared_buffer) => {
-                    info!("Successfully opened shared ring buffer: {}", shared_path);
-                    Some(shared_buffer)
-                }
-                Err(e) => {
-                    warn!(
-                        "Failed to open shared ring buffer: {}, attempting to create new one",
-                        e
-                    );
-                    match SharedRingBuffer::create(&shared_path, None, None) {
-                        Ok(shared_buffer) => {
-                            info!("Created new shared ring buffer: {}", shared_path);
-                            Some(shared_buffer)
-                        }
-                        Err(create_err) => {
-                            error!("Failed to create shared ring buffer: {}", create_err);
-                            None
-                        }
-                    }
-                }
-            }
-        };
+        let shared_buffer_opt =
+            SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path);
 
         Self {
             active_tab: 0,
@@ -281,7 +256,7 @@ impl IcedBar {
                     return;
                 }
 
-                let shared_buffer = match SharedRingBuffer::open(&path, None) {
+                let shared_buffer = match SharedRingBuffer::open_aux(&path, None) {
                     Ok(buffer) => Arc::new(buffer),
                     Err(e) => {
                         let _ = output

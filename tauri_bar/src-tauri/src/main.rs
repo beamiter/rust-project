@@ -260,37 +260,17 @@ async fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
     info!("Starting background worker coordinator");
 
     // 初始化共享内存
-    let shared_buffer_opt: Option<Arc<SharedRingBuffer>> = if shared_path.is_empty() {
-        warn!("No shared path provided, running without shared memory");
-        None
+    let shared_arc = if let Some(shared_buffer) =
+        SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path)
+    {
+        Some(Arc::new(shared_buffer))
     } else {
-        match SharedRingBuffer::open(&shared_path, None) {
-            Ok(shared_buffer) => {
-                info!("Successfully opened shared ring buffer: {}", shared_path);
-                Some(Arc::new(shared_buffer))
-            }
-            Err(e) => {
-                warn!(
-                    "Failed to open shared ring buffer: {}, attempting to create new one",
-                    e
-                );
-                match SharedRingBuffer::create(&shared_path, None, None) {
-                    Ok(shared_buffer) => {
-                        info!("Created new shared ring buffer: {}", shared_path);
-                        Some(Arc::new(shared_buffer))
-                    }
-                    Err(create_err) => {
-                        error!("Failed to create shared ring buffer: {}", create_err);
-                        None
-                    }
-                }
-            }
-        }
+        None
     };
 
     // 设置应用状态用于命令处理
     app_handle.manage(AppState {
-        shared_buffer: shared_buffer_opt.clone(),
+        shared_buffer: shared_arc.clone(),
     });
 
     // 创建共享应用状态
@@ -300,7 +280,7 @@ async fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
     system_monitor_task(shared_state.clone()).await;
 
     // 如果有共享内存，启动共享内存监控任务
-    if let Some(shared_buffer) = shared_buffer_opt {
+    if let Some(shared_buffer) = shared_arc {
         shared_memory_monitor_task(shared_state.clone(), shared_buffer).await;
     } else {
         // 如果没有共享内存，保持主任务运行

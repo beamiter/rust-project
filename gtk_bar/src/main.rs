@@ -692,7 +692,7 @@ fn worker_thread(
     cmd_rx: Receiver<AppCommand>,
 ) {
     info!("Worker thread starting with shared_path={}", shared_path);
-    let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer(&shared_path);
+    let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path);
 
     if shared_buffer_opt.is_none() {
         error!("Failed to create/open SharedRingBuffer at {}", shared_path);
