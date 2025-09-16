@@ -16,7 +16,7 @@ use tokio::time::sleep;
 mod error;
 use error::AppError;
 mod system_monitor;
-use shared_structures::{MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer, CommandType};
+use shared_structures::{CommandType, MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer};
 use system_monitor::{SystemMonitor, SystemSnapshot};
 
 #[derive(Clone, Debug, serde::Serialize)]
@@ -178,11 +178,7 @@ fn send_tag_command(
 
 /// Tauri 命令：切换布局
 #[tauri::command]
-fn send_layout_command(
-    layout_index: u32,
-    monitor_id: i32,
-    state: tauri::State<'_, AppState>,
-) {
+fn send_layout_command(layout_index: u32, monitor_id: i32, state: tauri::State<'_, AppState>) {
     let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
     if let Some(shared_buffer) = state.shared_buffer.as_ref() {
         match shared_buffer.send_command(command) {
@@ -260,13 +256,7 @@ async fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
     info!("Starting background worker coordinator");
 
     // 初始化共享内存
-    let shared_arc = if let Some(shared_buffer) =
-        SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path)
-    {
-        Some(Arc::new(shared_buffer))
-    } else {
-        None
-    };
+    let shared_arc = SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(Arc::new);
 
     // 设置应用状态用于命令处理
     app_handle.manage(AppState {
