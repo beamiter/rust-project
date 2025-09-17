@@ -1,0 +1,23 @@
+# rust-project/Cargo.toml
+
+[workspace]
+# 列出所有属于该工作区的成员 crate
+members = [
+    "egui_bar",
+    "iced_bar",
+    "gtk_bar",
+    "relm_bar",
+    "dioxus_bar",
+    "tauri_bar/src-tauri",
+    "jwm",
+    "shared_structures", # 最好也把共享库本身加进来
+]
+resolver = "2" # 推荐使用最新的依赖解析器
+
+# [IMPORTANT] 在这里集中定义所有共享的依赖项！
+[workspace.dependencies]
+shared_structures = { path = "shared_structures", features = ["use-futex"] }
+# 如果将来有其他共享依赖，也放在这里，例如：
+# anyhow = "1.0"
+# log = "0.4"
+# ...等等
