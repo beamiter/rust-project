@@ -26,7 +26,7 @@ use system_monitor::SystemMonitor;
 
 use shared_structures::{CommandType, MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer};
 
-// ---------------- 日志初始化（直接复用 iced_bar 逻辑） ----------------
+// ---------------- 日志初始化----------------
 use chrono::Local as ChronoLocal;
 use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 
@@ -276,16 +276,12 @@ fn open_font_best_effort(conn: &RustConnection) -> Result<(Font, u16)> {
 }
 
 fn text_width(conn: &RustConnection, font: Font, s: &str) -> Result<i16> {
-    let bytes: Vec<u8> = s.bytes().collect();
-    let char2b_string: Vec<x11rb::protocol::xproto::Char2b> = bytes
-        .chunks_exact(2)
-        .map(|chunk| x11rb::protocol::xproto::Char2b {
-            byte1: chunk[0],
-            byte2: chunk[1],
-        })
+    // 对于 8-bit 字体，byte1=0，byte2=字符
+    let chars: Vec<x11rb::protocol::xproto::Char2b> = s
+        .bytes()
+        .map(|b| x11rb::protocol::xproto::Char2b { byte1: 0, byte2: b })
         .collect();
-
-    let reply = conn.query_text_extents(font, &char2b_string)?.reply()?;
+    let reply = conn.query_text_extents(font, &chars)?.reply()?;
     Ok(reply.overall_width as i16)
 }
 
@@ -335,7 +331,7 @@ fn set_dock_properties(
     atoms: &Atoms,
     screen: &Screen,
     win: Window,
-    w: u16,
+    _w: u16,
     h: u16,
 ) -> Result<()> {
     conn.change_property32(
@@ -391,6 +387,7 @@ fn set_dock_properties(
 }
 
 // ---------------- 状态与逻辑 ----------------
+#[allow(dead_code)]
 struct Colors {
     bg: u32,
     text: u32,
@@ -485,20 +482,9 @@ impl AppState {
         }
     }
 
+    #[allow(dead_code)]
     fn send_tag_command(&mut self, is_view: bool) {
-        let tag_bit = 1 << self.active_tab;
-        let cmd = if is_view {
-            SharedCommand::view_tag(tag_bit, self.monitor_num)
-        } else {
-            SharedCommand::toggle_tag(tag_bit, self.monitor_num)
-        };
-        if let Some(buf) = &self.shared_buffer {
-            match buf.send_command(cmd) {
-                Ok(true) => info!("Sent command: {:?} by shared_buffer", cmd),
-                Ok(false) => warn!("Command buffer full, command dropped"),
-                Err(e) => error!("Failed to send command: {}", e),
-            }
-        }
+        self.send_tag_command_index(self.active_tab, is_view);
     }
 
     fn send_tag_command_index(&mut self, idx: usize, is_view: bool) {
@@ -584,9 +570,10 @@ fn tag_visuals(
 }
 
 // 绘制完整 bar，返回窗口宽度（用于更新某些布局）
+#[allow(unused_assignments)]
 fn draw_bar(
     conn: &RustConnection,
-    screen: &Screen,
+    _screen: &Screen,
     win: Window,
     gc: Gcontext,
     font: Font,
@@ -687,7 +674,7 @@ fn draw_bar(
             ("><>", 1, colors.blue),
             ("[M]", 2, colors.purple),
         ];
-        for (i, (sym, idx, base_color)) in layouts.iter().enumerate() {
+        for (i, (sym, _idx, base_color)) in layouts.iter().enumerate() {
             let tw = text_width(conn, font, sym)? as i16;
             let w = (tw + 2 * (PILL_HPADDING - 2)).max(32);
             stroke_round_rect(
@@ -927,6 +914,7 @@ fn spawn_shared_listener(
 }
 
 // ---------------- 主程序 ----------------
+#[allow(unused_assignments)]
 fn main() -> Result<()> {
     // 参数：共用内存路径
     let args: Vec<String> = env::args().collect();
@@ -954,16 +942,16 @@ fn main() -> Result<()> {
     let (font, line_height) = open_font_best_effort(&conn)?;
 
     // 创建 dock 窗口
-    let width = screen.width_in_pixels;
-    let height = BAR_HEIGHT;
+    let mut current_width = screen.width_in_pixels;
+    let mut current_height = BAR_HEIGHT;
     conn.create_window(
         x11rb::COPY_FROM_PARENT as u8,
         win,
         screen.root,
         0,
         0,
-        width,
-        height,
+        current_width,
+        current_height,
         0,
         WindowClass::INPUT_OUTPUT,
         0,
@@ -980,7 +968,7 @@ fn main() -> Result<()> {
             ),
     )?;
     let atoms = intern_atoms(&conn)?;
-    set_dock_properties(&conn, &atoms, screen, win, width, height)?;
+    set_dock_properties(&conn, &atoms, screen, win, current_width, current_height)?;
     conn.map_window(win)?;
     conn.flush()?;
 
@@ -1012,6 +1000,11 @@ fn main() -> Result<()> {
         teal: alloc_rgb(&conn, screen, 0, 180, 180)?,
         time: alloc_rgb(&conn, screen, 80, 150, 220)?,
     };
+    use x11rb::protocol::xproto::ChangeWindowAttributesAux;
+    conn.change_window_attributes(
+        win,
+        &ChangeWindowAttributesAux::new().background_pixel(colors.bg),
+    )?;
 
     // 初始状态
     let mut state = AppState::new(shared_buffer);
@@ -1026,17 +1019,18 @@ fn main() -> Result<()> {
         line_height,
         &colors,
         &mut state,
-        width,
+        current_width,
     )?;
-
-    // 时钟
-    let mut last_tick = Instant::now();
 
     loop {
         // 处理 X 事件
         while let Some(event) = conn.poll_for_event()? {
             match event {
                 Event::Expose(_e) => {
+                    if let Ok(geo) = conn.get_geometry(win)?.reply() {
+                        current_width = geo.width;
+                        current_height = geo.height;
+                    }
                     draw_bar(
                         &conn,
                         screen,
@@ -1046,11 +1040,13 @@ fn main() -> Result<()> {
                         line_height,
                         &colors,
                         &mut state,
-                        width,
+                        current_width,
                     )?;
                 }
                 Event::ConfigureNotify(e) => {
                     if e.window == win {
+                        current_width = e.width as u16;
+                        current_height = e.height as u16;
                         draw_bar(
                             &conn,
                             screen,
@@ -1060,7 +1056,7 @@ fn main() -> Result<()> {
                             line_height,
                             &colors,
                             &mut state,
-                            e.width as u16,
+                            current_width,
                         )?;
                     }
                 }
@@ -1077,7 +1073,7 @@ fn main() -> Result<()> {
                             line_height,
                             &colors,
                             &mut state,
-                            width,
+                            current_width,
                         )?;
                     }
                 }
@@ -1102,7 +1098,7 @@ fn main() -> Result<()> {
                                 line_height,
                                 &colors,
                                 &mut state,
-                                width,
+                                current_width,
                             )?;
                             break;
                         }
@@ -1119,7 +1115,7 @@ fn main() -> Result<()> {
                             line_height,
                             &colors,
                             &mut state,
-                            width,
+                            current_width,
                         )?;
                     }
                     // 布局选项
@@ -1136,7 +1132,7 @@ fn main() -> Result<()> {
                                 line_height,
                                 &colors,
                                 &mut state,
-                                width,
+                                current_width,
                             )?;
                             break;
                         }
@@ -1159,7 +1155,7 @@ fn main() -> Result<()> {
                             line_height,
                             &colors,
                             &mut state,
-                            width,
+                            current_width,
                         )?;
                     }
                 }
@@ -1183,7 +1179,7 @@ fn main() -> Result<()> {
                             line_height,
                             &colors,
                             &mut state,
-                            width,
+                            current_width,
                         )?;
                     }
                     Ok(SharedEvt::Error(err_msg)) => {
@@ -1196,8 +1192,8 @@ fn main() -> Result<()> {
         }
 
         // 定时刷新（时间每秒，系统信息/音频每 2 秒）
-        if last_tick.elapsed() >= Duration::from_millis(1000) {
-            last_tick = Instant::now();
+        if state.last_clock_update.elapsed() >= Duration::from_millis(1000) {
+            state.last_clock_update = Instant::now();
 
             // 节流：系统监控/音频
             if state.last_monitor_update.elapsed() >= Duration::from_secs(2) {
@@ -1216,7 +1212,7 @@ fn main() -> Result<()> {
                 line_height,
                 &colors,
                 &mut state,
-                width,
+                current_width,
             )?;
         }
 
