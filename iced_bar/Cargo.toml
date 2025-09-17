@@ -4,17 +4,22 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-chrono = "0.4.41"
-flexi_logger = "0.31.0"
-log = "0.4.27"
-thiserror = "2.0.12"
-toml = "0.8.23"
-shared_structures = { workspace = true }
 # shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
 # shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
 # shared_structures = { path = "../shared_structures", features = ["use-futex"] }
+
 time = "0.3.41"
 iced = { git = "https://github.com/iced-rs/iced.git", branch = "master", features = ["advanced", "debug", "lazy", "smol"] }
-sysinfo = "0.35.2"
-battery = "0.7.8"
-alsa = "0.9.1"
+
+# --- 外部依赖 (External Crates) ---
+alsa = { workspace = true }
+battery = { workspace = true }
+chrono = { workspace = true }
+flexi_logger = { workspace = true }
+log = { workspace = true }
+sysinfo = { workspace = true }
+thiserror = { workspace = true }
+toml = { workspace = true }
+
+# --- 工作区内部依赖 (Internal Workspace Crates) ---
+shared_structures = { workspace = true }

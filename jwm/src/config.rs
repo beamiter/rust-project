@@ -23,14 +23,10 @@ macro_rules! status_bar_config {
             $(
                 if #[cfg(feature = $feature)] {
                     pub const STATUS_BAR_NAME: &str = $name;
-                    pub const STATUS_BAR_0: &str = concat!($name, "_0");
-                    pub const STATUS_BAR_1: &str = concat!($name, "_1");
                 } else
             )*
             {
                 pub const STATUS_BAR_NAME: &str = "egui_bar";
-                pub const STATUS_BAR_0: &str = "egui_bar_0";
-                pub const STATUS_BAR_1: &str = "egui_bar_1";
             }
         }
     };
@@ -42,6 +38,7 @@ status_bar_config!(
     "gtk_bar" => "gtk_bar",
     "relm_bar" => "relm_bar",
     "tauri_bar" => "tauri_bar",
+    "x11rb_bar" => "x11rb_bar",
 );
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

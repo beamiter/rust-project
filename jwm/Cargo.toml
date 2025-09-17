@@ -12,6 +12,7 @@ dioxus_bar = []
 tauri_bar = []
 gtk_bar = []
 relm_bar = []
+x11rb_bar = []
 nixgl = []
 cairo = []
 

@@ -11,6 +11,7 @@ members = [
     "tauri_bar/src-tauri",
     "jwm",
     "shared_structures",
+    "x11rb_bar",
 ]
 resolver = "2" # 推荐使用最新的依赖解析器
 
@@ -19,10 +20,15 @@ resolver = "2" # 推荐使用最新的依赖解析器
 shared_structures = { path = "shared_structures", features = ["use-futex"] }
 # shared_structures = { path = "shared_structures", features = ["use-eventfd"] }
 # shared_structures = { path = "shared_structures", features = ["use-semaphore"] }
-# 如果将来有其他共享依赖，也放在这里，例如：
-# anyhow = "1.0"
-# log = "0.4"
-# ...等等
+anyhow = "1.0.99"
+chrono = "0.4.42"
+sysinfo = { version = "0.37.0", features = ["multithread"] }
+alsa = "0.10.0"
+log = "0.4.28"
+flexi_logger = "0.31.2"
+battery = "0.7.8"
+thiserror = "2.0.16"
+toml = "0.9.6"
 
 [profile.release]
 opt-level = 3       # 优化级别 (0-3, s, z)
