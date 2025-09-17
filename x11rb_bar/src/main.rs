@@ -85,7 +85,7 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 const BAR_HEIGHT: u16 = 40;
 const PADDING_X: i16 = 8;
 const PADDING_Y: i16 = 4;
-const PILL_RADIUS: i16 = 6; // 斜切距离（原先用于圆角半径）
+const PILL_RADIUS: i16 = 5; // 斜切距离
 const TAG_SPACING: i16 = 6;
 const PILL_HPADDING: i16 = 10; // pill 左右内边距
 
@@ -129,7 +129,7 @@ fn set_font(conn: &RustConnection, gc: Gcontext, font: Font) -> Result<()> {
     Ok(())
 }
 
-// 斜切角八边形的顶点
+// ========== 斜切角八边形（chamfered rectangle）==========
 fn chamfer_points(x: i16, y: i16, w: u16, h: u16, k: i16) -> [Point; 8] {
     let w_i = w as i16;
     let h_i = h as i16;
@@ -147,10 +147,9 @@ fn chamfer_points(x: i16, y: i16, w: u16, h: u16, k: i16) -> [Point; 8] {
     ]
 }
 
-// 填充斜切角八边形
 fn fill_chamfer_rect(
     conn: &RustConnection,
-    win: Window,
+    dst: Drawable,
     gc: Gcontext,
     x: i16,
     y: i16,
@@ -161,22 +160,20 @@ fn fill_chamfer_rect(
     let k = k.min((w as i16) / 2).min((h as i16) / 2).max(0);
     if k == 0 {
         conn.poly_fill_rectangle(
-            win,
+            dst,
             gc,
             &[Rectangle { x, y, width: w, height: h }],
         )?;
         return Ok(());
     }
-
     let pts = chamfer_points(x, y, w, h, k);
-    conn.fill_poly(win, gc, PolyShape::CONVEX, CoordMode::ORIGIN, &pts)?;
+    conn.fill_poly(dst, gc, PolyShape::CONVEX, CoordMode::ORIGIN, &pts)?;
     Ok(())
 }
 
-// 画一个带“边框”的斜切角八边形：外层边框色，再画内层填充
 fn stroke_chamfer_rect(
     conn: &RustConnection,
-    win: Window,
+    dst: Drawable,
     gc: Gcontext,
     x: i16,
     y: i16,
@@ -190,13 +187,13 @@ fn stroke_chamfer_rect(
     if border_w <= 0 {
         if let Some(fill) = fill_color {
             set_fg(conn, gc, fill)?;
-            fill_chamfer_rect(conn, win, gc, x, y, w, h, k)?;
+            fill_chamfer_rect(conn, dst, gc, x, y, w, h, k)?;
         }
         return Ok(());
     }
     // 外边框
     set_fg(conn, gc, border_color)?;
-    fill_chamfer_rect(conn, win, gc, x, y, w, h, k)?;
+    fill_chamfer_rect(conn, dst, gc, x, y, w, h, k)?;
 
     // 内部填充
     if let Some(fill) = fill_color {
@@ -207,7 +204,7 @@ fn stroke_chamfer_rect(
         if w2 > 0 && h2 > 0 {
             let k2 = (k - border_w).max(0);
             set_fg(conn, gc, fill)?;
-            fill_chamfer_rect(conn, win, gc, x2, y2, w2, h2, k2)?;
+            fill_chamfer_rect(conn, dst, gc, x2, y2, w2, h2, k2)?;
         }
     }
     Ok(())
@@ -235,7 +232,6 @@ fn open_font_best_effort(conn: &RustConnection) -> Result<(Font, u16)> {
 }
 
 fn text_width(conn: &RustConnection, font: Font, s: &str) -> Result<i16> {
-    // 对于 8-bit 字体，byte1=0，byte2=字符
     let chars: Vec<x11rb::protocol::xproto::Char2b> = s
         .bytes()
         .map(|b| x11rb::protocol::xproto::Char2b { byte1: 0, byte2: b })
@@ -246,14 +242,14 @@ fn text_width(conn: &RustConnection, font: Font, s: &str) -> Result<i16> {
 
 fn draw_text(
     conn: &RustConnection,
-    win: Window,
+    dst: Drawable,
     gc: Gcontext,
     x: i16,
     baseline_y: i16,
     s: &str,
 ) -> Result<()> {
     let bytes: Vec<u8> = s.bytes().collect();
-    conn.image_text8(win, gc, x, baseline_y, &bytes)?;
+    conn.image_text8(dst, gc, x, baseline_y, &bytes)?;
     Ok(())
 }
 
@@ -514,30 +510,64 @@ fn tag_visuals(
     if let Some(monitor) = mi {
         if let Some(status) = monitor.tag_status_vec.get(idx) {
             if status.is_urg {
-                // 紧急：红底白字，边框加粗
                 return (colors.red, 2, colors.red, colors.white, true);
             } else if status.is_selected {
-                // 当前选中：主题色底，边框略粗
                 return (tag_color, 2, tag_color, colors.black, true);
             } else if status.is_filled {
-                // 有窗口（更强提示）：主题色底，但边框稍细
                 return (tag_color, 1, tag_color, colors.black, true);
             } else if status.is_occ {
-                // 占用但未选中：灰底白字
-                return (colors.gray, 1, colors.gray, true as u32 as u32, true);
+                return (colors.gray, 1, colors.gray, colors.white, true);
             }
         }
     }
-    // 空 tag：仅描边 + 灰字，填充用 bar 背景色，始终绘制 pill
     (colors.bg, 1, colors.gray, colors.gray, true)
 }
 
-// 绘制完整 bar，返回窗口宽度（用于更新某些布局）
+// ---------------- 后备缓冲（Pixmap） ----------------
+struct BackBuffer {
+    pm: Pixmap,
+    width: u16,
+    height: u16,
+    depth: u8,
+}
+impl BackBuffer {
+    fn new(conn: &RustConnection, screen: &Screen, win: Window, w: u16, h: u16) -> Result<Self> {
+        let pm = conn.generate_id()?;
+        conn.create_pixmap(screen.root_depth, pm, win, w, h)?;
+        Ok(Self {
+            pm,
+            width: w,
+            height: h,
+            depth: screen.root_depth,
+        })
+    }
+    fn resize_if_needed(&mut self, conn: &RustConnection, win: Window, w: u16, h: u16) -> Result<()> {
+        if self.width == w && self.height == h {
+            return Ok(());
+        }
+        conn.free_pixmap(self.pm)?;
+        let pm = conn.generate_id()?;
+        conn.create_pixmap(self.depth, pm, win, w, h)?;
+        self.pm = pm;
+        self.width = w;
+        self.height = h;
+        Ok(())
+    }
+    fn drawable(&self) -> Drawable {
+        self.pm
+    }
+    fn blit_to_window(&self, conn: &RustConnection, win: Window, gc: Gcontext) -> Result<()> {
+        conn.copy_area(self.pm, win, gc, 0, 0, 0, 0, self.width, self.height)?;
+        Ok(())
+    }
+}
+
+// 绘制完整 bar 到任意 Drawable（这里我们传入 BackBuffer.pixmap）
 #[allow(unused_assignments)]
 fn draw_bar(
     conn: &RustConnection,
     _screen: &Screen,
-    win: Window,
+    dst: Drawable,
     gc: Gcontext,
     font: Font,
     line_height: u16,
@@ -548,7 +578,7 @@ fn draw_bar(
     // 背景
     set_fg(conn, gc, colors.bg)?;
     conn.poly_fill_rectangle(
-        win,
+        dst,
         gc,
         &[Rectangle {
             x: 0,
@@ -577,7 +607,7 @@ fn draw_bar(
         if draw_bg {
             stroke_chamfer_rect(
                 conn,
-                win,
+                dst,
                 gc,
                 x,
                 PADDING_Y,
@@ -589,9 +619,9 @@ fn draw_bar(
                 Some(bg),
             )?;
             set_fg(conn, gc, txt_color)?;
-            set_bg(conn, gc, bg)?; // 文本背景设为当前底色
+            set_bg(conn, gc, bg)?;
             let tx = x + (w - tw) / 2;
-            draw_text(conn, win, gc, tx, baseline, label)?;
+            draw_text(conn, dst, gc, tx, baseline, label)?;
         }
         state.tag_rects[i] = Rect {
             x,
@@ -608,7 +638,7 @@ fn draw_bar(
     let lw_total = lw + 2 * PILL_HPADDING;
     stroke_chamfer_rect(
         conn,
-        win,
+        dst,
         gc,
         x,
         PADDING_Y,
@@ -621,7 +651,7 @@ fn draw_bar(
     )?;
     set_fg(conn, gc, colors.white)?;
     set_bg(conn, gc, colors.green)?;
-    draw_text(conn, win, gc, x + PILL_HPADDING, baseline, layout_label)?;
+    draw_text(conn, dst, gc, x + PILL_HPADDING, baseline, layout_label)?;
     state.layout_button_rect = Rect {
         x,
         y: PADDING_Y,
@@ -643,7 +673,7 @@ fn draw_bar(
             let w = (tw + 2 * (PILL_HPADDING - 2)).max(32);
             stroke_chamfer_rect(
                 conn,
-                win,
+                dst,
                 gc,
                 opt_x,
                 PADDING_Y,
@@ -656,7 +686,7 @@ fn draw_bar(
             )?;
             set_fg(conn, gc, colors.white)?;
             set_bg(conn, gc, *base_color)?;
-            draw_text(conn, win, gc, opt_x + (w - tw) / 2, baseline, sym)?;
+            draw_text(conn, dst, gc, opt_x + (w - tw) / 2, baseline, sym)?;
             state.layout_option_rects[i] = Rect {
                 x: opt_x,
                 y: PADDING_Y,
@@ -679,7 +709,7 @@ fn draw_bar(
     right_x -= mon_w + TAG_SPACING;
     stroke_chamfer_rect(
         conn,
-        win,
+        dst,
         gc,
         right_x,
         PADDING_Y,
@@ -692,7 +722,7 @@ fn draw_bar(
     )?;
     set_fg(conn, gc, colors.white)?;
     set_bg(conn, gc, colors.purple)?;
-    draw_text(conn, win, gc, right_x + PILL_HPADDING, baseline, &mon_label)?;
+    draw_text(conn, dst, gc, right_x + PILL_HPADDING, baseline, &mon_label)?;
 
     // 时间 pill
     let time_str = state.format_time();
@@ -701,7 +731,7 @@ fn draw_bar(
     right_x -= time_w + TAG_SPACING;
     stroke_chamfer_rect(
         conn,
-        win,
+        dst,
         gc,
         right_x,
         PADDING_Y,
@@ -714,14 +744,7 @@ fn draw_bar(
     )?;
     set_fg(conn, gc, colors.white)?;
     set_bg(conn, gc, colors.time)?;
-    draw_text(
-        conn,
-        win,
-        gc,
-        right_x + PILL_HPADDING,
-        baseline,
-        &time_label,
-    )?;
+    draw_text(conn, dst, gc, right_x + PILL_HPADDING, baseline, &time_label)?;
     state.time_rect = Rect {
         x: right_x,
         y: PADDING_Y,
@@ -730,7 +753,7 @@ fn draw_bar(
     };
 
     // 截图 pill（hover 变色）
-    let ss_label = if state.is_ss_hover { "Screenshot" } else { "Screenshot" };
+    let ss_label = "Screenshot";
     let ss_w = text_width(conn, font, ss_label)? as i16 + 2 * PILL_HPADDING;
     right_x -= ss_w + TAG_SPACING;
     let ss_color = if state.is_ss_hover {
@@ -740,7 +763,7 @@ fn draw_bar(
     };
     stroke_chamfer_rect(
         conn,
-        win,
+        dst,
         gc,
         right_x,
         PADDING_Y,
@@ -753,7 +776,7 @@ fn draw_bar(
     )?;
     set_fg(conn, gc, colors.white)?;
     set_bg(conn, gc, ss_color)?;
-    draw_text(conn, win, gc, right_x + PILL_HPADDING, baseline, ss_label)?;
+    draw_text(conn, dst, gc, right_x + PILL_HPADDING, baseline, ss_label)?;
     state.ss_rect = Rect {
         x: right_x,
         y: PADDING_Y,
@@ -784,7 +807,7 @@ fn draw_bar(
     let mem_fg = usage_text_color(colors, mem_usage);
     stroke_chamfer_rect(
         conn,
-        win,
+        dst,
         gc,
         right_x,
         PADDING_Y,
@@ -797,7 +820,7 @@ fn draw_bar(
     )?;
     set_fg(conn, gc, mem_fg)?;
     set_bg(conn, gc, mem_bg)?;
-    draw_text(conn, win, gc, right_x + PILL_HPADDING, baseline, &mem_label)?;
+    draw_text(conn, dst, gc, right_x + PILL_HPADDING, baseline, &mem_label)?;
 
     // CPU pill
     let cpu_label = format!("CPU {:.0}%", cpu_avg.clamp(0.0, 100.0));
@@ -807,7 +830,7 @@ fn draw_bar(
     let cpu_fg = usage_text_color(colors, cpu_avg);
     stroke_chamfer_rect(
         conn,
-        win,
+        dst,
         gc,
         right_x,
         PADDING_Y,
@@ -820,9 +843,8 @@ fn draw_bar(
     )?;
     set_fg(conn, gc, cpu_fg)?;
     set_bg(conn, gc, cpu_bg)?;
-    draw_text(conn, win, gc, right_x + PILL_HPADDING, baseline, &cpu_label)?;
+    draw_text(conn, dst, gc, right_x + PILL_HPADDING, baseline, &cpu_label)?;
 
-    conn.flush()?;
     Ok(())
 }
 
@@ -907,7 +929,7 @@ fn main() -> Result<()> {
     conn.create_gc(gc, screen.root, &CreateGCAux::new())?;
     let (font, line_height) = open_font_best_effort(&conn)?;
 
-    // 创建 dock 窗口
+    // 创建 dock 窗口（注意：背景设为 NONE，避免服务器自动清空导致闪烁）
     let mut current_width = screen.width_in_pixels;
     let mut current_height = BAR_HEIGHT;
     conn.create_window(
@@ -922,7 +944,7 @@ fn main() -> Result<()> {
         WindowClass::INPUT_OUTPUT,
         0,
         &CreateWindowAux::new()
-            .background_pixel(screen.black_pixel)
+            .background_pixmap(x11rb::NONE) // 关键：不让 Xserver 自动清背景
             .event_mask(
                 EventMask::EXPOSURE
                     | EventMask::STRUCTURE_NOTIFY
@@ -966,20 +988,25 @@ fn main() -> Result<()> {
         teal: alloc_rgb(&conn, screen, 0, 180, 180)?,
         time: alloc_rgb(&conn, screen, 80, 150, 220)?,
     };
+
+    // 再次确认窗口属性：确保背景不被清空
     use x11rb::protocol::xproto::ChangeWindowAttributesAux;
     conn.change_window_attributes(
         win,
-        &ChangeWindowAttributesAux::new().background_pixel(colors.bg),
+        &ChangeWindowAttributesAux::new().background_pixmap(x11rb::NONE),
     )?;
+
+    // 后备缓冲
+    let mut back = BackBuffer::new(&conn, screen, win, current_width, current_height)?;
 
     // 初始状态
     let mut state = AppState::new(shared_buffer);
 
-    // 初次绘制
+    // 初次绘制：画到后备缓冲 -> 拷贝到窗口
     draw_bar(
         &conn,
         screen,
-        win,
+        back.drawable(),
         gc,
         font,
         line_height,
@@ -987,36 +1014,33 @@ fn main() -> Result<()> {
         &mut state,
         current_width,
     )?;
+    back.blit_to_window(&conn, win, gc)?;
+    conn.flush()?;
 
     loop {
         // 处理 X 事件
         while let Some(event) = conn.poll_for_event()? {
             match event {
-                Event::Expose(_e) => {
-                    if let Ok(geo) = conn.get_geometry(win)?.reply() {
-                        current_width = geo.width;
-                        current_height = geo.height;
+                Event::Expose(e) => {
+                    // 仅在最后一个 Expose 到来时回灌（避免重复中途渲染）
+                    if e.count == 0 {
+                        back.blit_to_window(&conn, win, gc)?;
+                        conn.flush()?;
                     }
-                    draw_bar(
-                        &conn,
-                        screen,
-                        win,
-                        gc,
-                        font,
-                        line_height,
-                        &colors,
-                        &mut state,
-                        current_width,
-                    )?;
                 }
                 Event::ConfigureNotify(e) => {
                     if e.window == win {
                         current_width = e.width as u16;
                         current_height = e.height as u16;
+
+                        // 重新创建/调整后备缓冲
+                        back.resize_if_needed(&conn, win, current_width, current_height)?;
+
+                        // 重绘到后备缓冲，再一次性拷贝
                         draw_bar(
                             &conn,
                             screen,
-                            win,
+                            back.drawable(),
                             gc,
                             font,
                             line_height,
@@ -1024,16 +1048,19 @@ fn main() -> Result<()> {
                             &mut state,
                             current_width,
                         )?;
+                        back.blit_to_window(&conn, win, gc)?;
+                        conn.flush()?;
                     }
                 }
                 Event::MotionNotify(e) => {
                     let hovered = state.ss_rect.contains(e.event_x, e.event_y);
                     if hovered != state.is_ss_hover {
                         state.is_ss_hover = hovered;
+
                         draw_bar(
                             &conn,
                             screen,
-                            win,
+                            back.drawable(),
                             gc,
                             font,
                             line_height,
@@ -1041,6 +1068,8 @@ fn main() -> Result<()> {
                             &mut state,
                             current_width,
                         )?;
+                        back.blit_to_window(&conn, win, gc)?;
+                        conn.flush()?;
                     }
                 }
                 Event::ButtonPress(e) => {
@@ -1058,7 +1087,7 @@ fn main() -> Result<()> {
                             draw_bar(
                                 &conn,
                                 screen,
-                                win,
+                                back.drawable(),
                                 gc,
                                 font,
                                 line_height,
@@ -1066,6 +1095,8 @@ fn main() -> Result<()> {
                                 &mut state,
                                 current_width,
                             )?;
+                            back.blit_to_window(&conn, win, gc)?;
+                            conn.flush()?;
                             break;
                         }
                     }
@@ -1075,7 +1106,7 @@ fn main() -> Result<()> {
                         draw_bar(
                             &conn,
                             screen,
-                            win,
+                            back.drawable(),
                             gc,
                             font,
                             line_height,
@@ -1083,6 +1114,8 @@ fn main() -> Result<()> {
                             &mut state,
                             current_width,
                         )?;
+                        back.blit_to_window(&conn, win, gc)?;
+                        conn.flush()?;
                     }
                     // 布局选项
                     for (idx, r) in state.layout_option_rects.iter().enumerate() {
@@ -1092,7 +1125,7 @@ fn main() -> Result<()> {
                             draw_bar(
                                 &conn,
                                 screen,
-                                win,
+                                back.drawable(),
                                 gc,
                                 font,
                                 line_height,
@@ -1100,6 +1133,8 @@ fn main() -> Result<()> {
                                 &mut state,
                                 current_width,
                             )?;
+                            back.blit_to_window(&conn, win, gc)?;
+                            conn.flush()?;
                             break;
                         }
                     }
@@ -1115,7 +1150,7 @@ fn main() -> Result<()> {
                         draw_bar(
                             &conn,
                             screen,
-                            win,
+                            back.drawable(),
                             gc,
                             font,
                             line_height,
@@ -1123,6 +1158,8 @@ fn main() -> Result<()> {
                             &mut state,
                             current_width,
                         )?;
+                        back.blit_to_window(&conn, win, gc)?;
+                        conn.flush()?;
                     }
                 }
                 _ => {}
@@ -1135,11 +1172,11 @@ fn main() -> Result<()> {
                 match rx.try_recv() {
                     Ok(SharedEvt::Updated(msg)) => {
                         state.update_from_shared(msg);
-                        // 立即重绘
+                        // 立即重绘（先到后备缓冲，再拷贝至窗口）
                         draw_bar(
                             &conn,
                             screen,
-                            win,
+                            back.drawable(),
                             gc,
                             font,
                             line_height,
@@ -1147,6 +1184,8 @@ fn main() -> Result<()> {
                             &mut state,
                             current_width,
                         )?;
+                        back.blit_to_window(&conn, win, gc)?;
+                        conn.flush()?;
                     }
                     Ok(SharedEvt::Error(err_msg)) => {
                         warn!("SharedMemoryError: {err_msg}");
@@ -1168,11 +1207,11 @@ fn main() -> Result<()> {
                 state.last_monitor_update = Instant::now();
             }
 
-            // 每秒重绘（时间）
+            // 每秒重绘（时间）：先画后备缓冲，再一次复制
             draw_bar(
                 &conn,
                 screen,
-                win,
+                back.drawable(),
                 gc,
                 font,
                 line_height,
@@ -1180,6 +1219,8 @@ fn main() -> Result<()> {
                 &mut state,
                 current_width,
             )?;
+            back.blit_to_window(&conn, win, gc)?;
+            conn.flush()?;
         }
 
         thread::sleep(Duration::from_millis(10));
