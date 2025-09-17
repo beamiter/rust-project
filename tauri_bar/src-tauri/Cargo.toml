@@ -28,7 +28,6 @@ chrono = "0.4.41"
 thiserror = "2.0.12"
 sysinfo = "0.36.0"
 battery = "0.7.8"
-shared_memory = "0.12.4"
 bincode = "2.0.1"
 tokio = { version = "1.46.1", features = ["full"] }
 toml = "0.9.1"

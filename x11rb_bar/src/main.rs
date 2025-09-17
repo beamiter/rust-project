@@ -85,7 +85,7 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
 const BAR_HEIGHT: u16 = 40;
 const PADDING_X: i16 = 8;
 const PADDING_Y: i16 = 4;
-const PILL_RADIUS: i16 = 12;
+const PILL_RADIUS: i16 = 6; // 斜切距离（原先用于圆角半径）
 const TAG_SPACING: i16 = 6;
 const PILL_HPADDING: i16 = 10; // pill 左右内边距
 
@@ -129,8 +129,26 @@ fn set_font(conn: &RustConnection, gc: Gcontext, font: Font) -> Result<()> {
     Ok(())
 }
 
-// 圆角矩形（填充）
-fn fill_round_rect(
+// 斜切角八边形的顶点
+fn chamfer_points(x: i16, y: i16, w: u16, h: u16, k: i16) -> [Point; 8] {
+    let w_i = w as i16;
+    let h_i = h as i16;
+    let k = k.min(w_i / 2).min(h_i / 2).max(0);
+
+    [
+        Point { x: x + k,       y },
+        Point { x: x + w_i - k, y },
+        Point { x: x + w_i,     y: y + k },
+        Point { x: x + w_i,     y: y + h_i - k },
+        Point { x: x + w_i - k, y: y + h_i },
+        Point { x: x + k,       y: y + h_i },
+        Point { x,              y: y + h_i - k },
+        Point { x,              y: y + k },
+    ]
+}
+
+// 填充斜切角八边形
+fn fill_chamfer_rect(
     conn: &RustConnection,
     win: Window,
     gc: Gcontext,
@@ -138,90 +156,25 @@ fn fill_round_rect(
     y: i16,
     w: u16,
     h: u16,
-    r: i16,
+    k: i16,
 ) -> Result<()> {
-    let r = r.min(h as i16 / 2).min(w as i16 / 2).max(0);
-    if r == 0 {
+    let k = k.min((w as i16) / 2).min((h as i16) / 2).max(0);
+    if k == 0 {
         conn.poly_fill_rectangle(
             win,
             gc,
-            &[Rectangle {
-                x,
-                y,
-                width: w,
-                height: h,
-            }],
+            &[Rectangle { x, y, width: w, height: h }],
         )?;
         return Ok(());
     }
-    let w_i = w as i16;
-    let h_i = h as i16;
 
-    // 中间+两侧矩形
-    let rects = &[
-        Rectangle {
-            x: x + r,
-            y,
-            width: (w_i - 2 * r) as u16,
-            height: h,
-        },
-        Rectangle {
-            x,
-            y: y + r,
-            width: r as u16,
-            height: (h_i - 2 * r) as u16,
-        },
-        Rectangle {
-            x: x + w_i - r,
-            y: y + r,
-            width: r as u16,
-            height: (h_i - 2 * r) as u16,
-        },
-    ];
-    conn.poly_fill_rectangle(win, gc, rects)?;
-
-    // 四个角
-    let ang90: i16 = 90 * 64;
-    let arcs = &[
-        Arc {
-            x,
-            y,
-            width: (2 * r) as u16,
-            height: (2 * r) as u16,
-            angle1: ang90,
-            angle2: ang90,
-        },
-        Arc {
-            x: x + w_i - 2 * r,
-            y,
-            width: (2 * r) as u16,
-            height: (2 * r) as u16,
-            angle1: 0,
-            angle2: ang90,
-        },
-        Arc {
-            x,
-            y: y + h_i - 2 * r,
-            width: (2 * r) as u16,
-            height: (2 * r) as u16,
-            angle1: ang90 * 2,
-            angle2: ang90,
-        },
-        Arc {
-            x: x + w_i - 2 * r,
-            y: y + h_i - 2 * r,
-            width: (2 * r) as u16,
-            height: (2 * r) as u16,
-            angle1: ang90 * 3,
-            angle2: ang90,
-        },
-    ];
-    conn.poly_fill_arc(win, gc, arcs)?;
+    let pts = chamfer_points(x, y, w, h, k);
+    conn.fill_poly(win, gc, PolyShape::CONVEX, CoordMode::ORIGIN, &pts)?;
     Ok(())
 }
 
-// 画一个带“边框”的圆角矩形：通过先画边框色的外层，再画内层填充来模拟
-fn stroke_round_rect(
+// 画一个带“边框”的斜切角八边形：外层边框色，再画内层填充
+fn stroke_chamfer_rect(
     conn: &RustConnection,
     win: Window,
     gc: Gcontext,
@@ -229,7 +182,7 @@ fn stroke_round_rect(
     y: i16,
     w: u16,
     h: u16,
-    r: i16,
+    k: i16,           // 斜切距离
     border_w: i16,
     border_color: u32,
     fill_color: Option<u32>,
@@ -237,13 +190,14 @@ fn stroke_round_rect(
     if border_w <= 0 {
         if let Some(fill) = fill_color {
             set_fg(conn, gc, fill)?;
-            fill_round_rect(conn, win, gc, x, y, w, h, r)?;
+            fill_chamfer_rect(conn, win, gc, x, y, w, h, k)?;
         }
         return Ok(());
     }
     // 外边框
     set_fg(conn, gc, border_color)?;
-    fill_round_rect(conn, win, gc, x, y, w, h, r)?;
+    fill_chamfer_rect(conn, win, gc, x, y, w, h, k)?;
+
     // 内部填充
     if let Some(fill) = fill_color {
         let x2 = x + border_w;
@@ -251,8 +205,9 @@ fn stroke_round_rect(
         let w2 = w.saturating_sub((border_w * 2) as u16);
         let h2 = h.saturating_sub((border_w * 2) as u16);
         if w2 > 0 && h2 > 0 {
+            let k2 = (k - border_w).max(0);
             set_fg(conn, gc, fill)?;
-            fill_round_rect(conn, win, gc, x2, y2, w2, h2, (r - border_w).max(0))?;
+            fill_chamfer_rect(conn, win, gc, x2, y2, w2, h2, k2)?;
         }
     }
     Ok(())
@@ -569,7 +524,7 @@ fn tag_visuals(
                 return (tag_color, 1, tag_color, colors.black, true);
             } else if status.is_occ {
                 // 占用但未选中：灰底白字
-                return (colors.gray, 1, colors.gray, colors.white, true);
+                return (colors.gray, 1, colors.gray, true as u32 as u32, true);
             }
         }
     }
@@ -620,7 +575,7 @@ fn draw_bar(
         let (bg, bw, bc, txt_color, draw_bg) = tag_visuals(colors, state.monitor_info.as_ref(), i);
 
         if draw_bg {
-            stroke_round_rect(
+            stroke_chamfer_rect(
                 conn,
                 win,
                 gc,
@@ -634,7 +589,7 @@ fn draw_bar(
                 Some(bg),
             )?;
             set_fg(conn, gc, txt_color)?;
-            set_bg(conn, gc, bg)?; // 关键：把文本背景设为当前 pill 底色
+            set_bg(conn, gc, bg)?; // 文本背景设为当前底色
             let tx = x + (w - tw) / 2;
             draw_text(conn, win, gc, tx, baseline, label)?;
         }
@@ -651,7 +606,7 @@ fn draw_bar(
     let layout_label = state.layout_symbol.as_str();
     let lw = text_width(conn, font, layout_label)? as i16;
     let lw_total = lw + 2 * PILL_HPADDING;
-    stroke_round_rect(
+    stroke_chamfer_rect(
         conn,
         win,
         gc,
@@ -686,7 +641,7 @@ fn draw_bar(
         for (i, (sym, _idx, base_color)) in layouts.iter().enumerate() {
             let tw = text_width(conn, font, sym)? as i16;
             let w = (tw + 2 * (PILL_HPADDING - 2)).max(32);
-            stroke_round_rect(
+            stroke_chamfer_rect(
                 conn,
                 win,
                 gc,
@@ -722,7 +677,7 @@ fn draw_bar(
     let mon_label = AppState::monitor_num_to_label(state.monitor_num);
     let mon_w = text_width(conn, font, &mon_label)? as i16 + 2 * PILL_HPADDING;
     right_x -= mon_w + TAG_SPACING;
-    stroke_round_rect(
+    stroke_chamfer_rect(
         conn,
         win,
         gc,
@@ -744,7 +699,7 @@ fn draw_bar(
     let time_label = format!("TIME {}", time_str);
     let time_w = text_width(conn, font, &time_label)? as i16 + 2 * PILL_HPADDING;
     right_x -= time_w + TAG_SPACING;
-    stroke_round_rect(
+    stroke_chamfer_rect(
         conn,
         win,
         gc,
@@ -775,11 +730,7 @@ fn draw_bar(
     };
 
     // 截图 pill（hover 变色）
-    let ss_label = if state.is_ss_hover {
-        "Screenshot"
-    } else {
-        "Screenshot"
-    };
+    let ss_label = if state.is_ss_hover { "Screenshot" } else { "Screenshot" };
     let ss_w = text_width(conn, font, ss_label)? as i16 + 2 * PILL_HPADDING;
     right_x -= ss_w + TAG_SPACING;
     let ss_color = if state.is_ss_hover {
@@ -787,7 +738,7 @@ fn draw_bar(
     } else {
         colors.teal
     };
-    stroke_round_rect(
+    stroke_chamfer_rect(
         conn,
         win,
         gc,
@@ -831,7 +782,7 @@ fn draw_bar(
     right_x -= mem_w + TAG_SPACING;
     let mem_bg = usage_bg_color(colors, mem_usage);
     let mem_fg = usage_text_color(colors, mem_usage);
-    stroke_round_rect(
+    stroke_chamfer_rect(
         conn,
         win,
         gc,
@@ -854,7 +805,7 @@ fn draw_bar(
     right_x -= cpu_w + TAG_SPACING;
     let cpu_bg = usage_bg_color(colors, cpu_avg);
     let cpu_fg = usage_text_color(colors, cpu_avg);
-    stroke_round_rect(
+    stroke_chamfer_rect(
         conn,
         win,
         gc,
