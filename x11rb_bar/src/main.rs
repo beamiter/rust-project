@@ -120,6 +120,10 @@ fn set_fg(conn: &RustConnection, gc: Gcontext, pixel: u32) -> Result<()> {
     conn.change_gc(gc, &ChangeGCAux::new().foreground(pixel))?;
     Ok(())
 }
+fn set_bg(conn: &RustConnection, gc: Gcontext, pixel: u32) -> Result<()> {
+    conn.change_gc(gc, &ChangeGCAux::new().background(pixel))?;
+    Ok(())
+}
 fn set_font(conn: &RustConnection, gc: Gcontext, font: Font) -> Result<()> {
     conn.change_gc(gc, &ChangeGCAux::new().font(font))?;
     Ok(())
@@ -625,6 +629,7 @@ fn draw_bar(
                 Some(bg),
             )?;
             set_fg(conn, gc, txt_color)?;
+            set_bg(conn, gc, bg)?;
             let tx = x + (w - tw) / 2;
             draw_text(conn, win, gc, tx, baseline, label)?;
         } else {
@@ -657,6 +662,7 @@ fn draw_bar(
         Some(colors.green),
     )?;
     set_fg(conn, gc, colors.white)?;
+    set_bg(conn, gc, colors.green)?;
     draw_text(conn, win, gc, x + PILL_HPADDING, baseline, layout_label)?;
     state.layout_button_rect = Rect {
         x,
@@ -691,6 +697,7 @@ fn draw_bar(
                 Some(*base_color),
             )?;
             set_fg(conn, gc, colors.white)?;
+            set_bg(conn, gc, *base_color)?;
             draw_text(conn, win, gc, opt_x + (w - tw) / 2, baseline, sym)?;
             state.layout_option_rects[i] = Rect {
                 x: opt_x,
@@ -726,6 +733,7 @@ fn draw_bar(
         Some(colors.purple),
     )?;
     set_fg(conn, gc, colors.white)?;
+    set_bg(conn, gc, colors.purple)?;
     draw_text(conn, win, gc, right_x + PILL_HPADDING, baseline, &mon_label)?;
 
     // 时间 pill
@@ -747,6 +755,7 @@ fn draw_bar(
         Some(colors.time),
     )?;
     set_fg(conn, gc, colors.white)?;
+    set_bg(conn, gc, colors.time)?;
     draw_text(
         conn,
         win,
@@ -764,7 +773,7 @@ fn draw_bar(
 
     // 截图 pill（hover 变色）
     let ss_label = if state.is_ss_hover {
-        "Screenshot!"
+        "Screenshot"
     } else {
         "Screenshot"
     };
@@ -789,6 +798,7 @@ fn draw_bar(
         Some(ss_color),
     )?;
     set_fg(conn, gc, colors.white)?;
+    set_bg(conn, gc, ss_color)?;
     draw_text(conn, win, gc, right_x + PILL_HPADDING, baseline, ss_label)?;
     state.ss_rect = Rect {
         x: right_x,
@@ -832,6 +842,7 @@ fn draw_bar(
         Some(mem_bg),
     )?;
     set_fg(conn, gc, mem_fg)?;
+    set_bg(conn, gc, mem_bg)?;
     draw_text(conn, win, gc, right_x + PILL_HPADDING, baseline, &mem_label)?;
 
     // CPU pill
@@ -854,6 +865,7 @@ fn draw_bar(
         Some(cpu_bg),
     )?;
     set_fg(conn, gc, cpu_fg)?;
+    set_bg(conn, gc, cpu_bg)?;
     draw_text(conn, win, gc, right_x + PILL_HPADDING, baseline, &cpu_label)?;
 
     conn.flush()?;
