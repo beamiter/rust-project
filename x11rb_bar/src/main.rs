@@ -559,18 +559,22 @@ fn tag_visuals(
     if let Some(monitor) = mi {
         if let Some(status) = monitor.tag_status_vec.get(idx) {
             if status.is_urg {
-                return (colors.red, 3, colors.purple, colors.white, true);
-            } else if status.is_filled {
-                return (tag_color, 2, tag_color, colors.black, true);
+                // 紧急：红底白字，边框加粗
+                return (colors.red, 2, colors.red, colors.white, true);
             } else if status.is_selected {
+                // 当前选中：主题色底，边框略粗
+                return (tag_color, 2, tag_color, colors.black, true);
+            } else if status.is_filled {
+                // 有窗口（更强提示）：主题色底，但边框稍细
                 return (tag_color, 1, tag_color, colors.black, true);
             } else if status.is_occ {
-                return (colors.gray, 0, colors.gray, colors.white, true);
+                // 占用但未选中：灰底白字
+                return (colors.gray, 1, colors.gray, colors.white, true);
             }
         }
     }
-    // 默认不绘制（空）
-    (0, 0, 0, colors.white, false)
+    // 空 tag：仅描边 + 灰字，填充用 bar 背景色，始终绘制 pill
+    (colors.bg, 1, colors.gray, colors.gray, true)
 }
 
 // 绘制完整 bar，返回窗口宽度（用于更新某些布局）
@@ -612,6 +616,7 @@ fn draw_bar(
     for (i, label) in tags.iter().enumerate() {
         let tw = text_width(conn, font, label)? as i16;
         let w = (tw + 2 * PILL_HPADDING).max(40);
+
         let (bg, bw, bc, txt_color, draw_bg) = tag_visuals(colors, state.monitor_info.as_ref(), i);
 
         if draw_bg {
@@ -629,11 +634,9 @@ fn draw_bar(
                 Some(bg),
             )?;
             set_fg(conn, gc, txt_color)?;
-            set_bg(conn, gc, bg)?;
+            set_bg(conn, gc, bg)?; // 关键：把文本背景设为当前 pill 底色
             let tx = x + (w - tw) / 2;
             draw_text(conn, win, gc, tx, baseline, label)?;
-        } else {
-            // 不绘制 pill，仅为点击保留区域
         }
         state.tag_rects[i] = Rect {
             x,
