@@ -44,14 +44,3 @@ egui = "0.32.2"
 default = []
 
 debug_mode = []
-
-[profile.release]
-lto = true
-codegen-units = 1
-panic = "abort"
-strip = true
-opt-level = 3
-
-[profile.dev]
-debug = 1
-opt-level = 1

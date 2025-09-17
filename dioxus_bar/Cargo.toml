@@ -25,15 +25,3 @@ alsa = "0.9.1"
 serde = { version = "1.0.219", features = ["derive"] }
 libc = "0.2.174"
 dioxus-desktop = "0.6.3"
-
-[profile]
-
-[profile.wasm-dev]
-inherits = "dev"
-opt-level = 1
-
-[profile.server-dev]
-inherits = "dev"
-
-[profile.android-dev]
-inherits = "dev"
