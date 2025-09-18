@@ -20,4 +20,7 @@ cairo-rs = { version = "0.21.2", features = ["xcb"] }
 pango = "0.21.2"
 pangocairo = "0.21.2"
 xcb = "1.6.0"
+crossbeam = "0.8.4"
+crossbeam-channel = "0.5.15"
+libc = "0.2.175"
 

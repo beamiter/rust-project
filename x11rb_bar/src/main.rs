@@ -4,18 +4,21 @@ use chrono::Local;
 use log::{debug, error, info, warn};
 use pangocairo::functions::{create_layout, show_layout};
 use std::env;
-use std::process::Command;
+use std::os::fd::{AsFd, AsRawFd};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, TryRecvError};
 use std::thread;
 use std::time::{Duration, Instant};
 
 use x11rb::connection::Connection;
-use x11rb::protocol::Event;
 use x11rb::protocol::xproto::*;
 use x11rb::wrapper::ConnectionExt as _;
 
+use std::{mem::MaybeUninit, sync::Arc};
 use x11rb::xcb_ffi::XCBConnection;
+
+use libc;
+use x11rb::protocol::xproto::{CreateGCAux, CreateWindowAux, EventMask, WindowClass};
 
 // Cairo/Pango
 use cairo::{Context, XCBConnection as CairoXCBConnection, XCBDrawable, XCBSurface, XCBVisualType};
@@ -203,12 +206,12 @@ fn build_cairo_xcb(xcb_conn: &XCBConnection, screen_num: usize) -> Result<CairoX
     // 查找与 root_visual_id + root_depth 匹配的 visualtype
     let visual = find_visual_by_id_and_depth(&conn, screen_num, root_visual_id, root_depth)
         .ok_or_else(|| anyhow::anyhow!("Could not find visualtype for root_visual"))?;
-    println!("Found a suitable visual!");
-    println!("  - Visual ID: {}", visual.visual_id());
-    println!("  - Red Mask:   0x{:08x}", visual.red_mask());
-    println!("  - Green Mask: 0x{:08x}", visual.green_mask());
-    println!("  - Blue Mask:  0x{:08x}", visual.blue_mask());
-    println!("  - class:  {:?}", visual.class());
+    info!("Found a suitable visual!");
+    info!("  - Visual ID: {}", visual.visual_id());
+    info!("  - Red Mask:   0x{:08x}", visual.red_mask());
+    info!("  - Green Mask: 0x{:08x}", visual.green_mask());
+    info!("  - Blue Mask:  0x{:08x}", visual.blue_mask());
+    info!("  - class:  {:?}", visual.class());
     // 封装成 Cairo 的 XCBVisualType
     let boxed = Box::new(visual);
     let ptr = Box::into_raw(boxed);
@@ -928,32 +931,53 @@ fn spawn_shared_listener(
     Some(rx)
 }
 
+use x11rb::protocol::xproto::{Gcontext, Window};
+
+fn redraw(
+    cairo_xcb: &CairoXcb,
+    conn: &XCBConnection,
+    back: &mut BackBuffer,
+    win: Window,
+    gc: Gcontext,
+    width: u16,
+    height: u16,
+    colors: &Colors,
+    state: &mut AppState,
+    font: &FontDescription,
+) -> Result<()> {
+    // 只在调用期间借用这些参数
+    draw_bar(cairo_xcb, back.pm, width, height, colors, state, font)?;
+    back.blit_to_window(conn, win, gc)?;
+    conn.flush()?;
+    Ok(())
+}
+
 // ---------------- 主程序 ----------------
 #[allow(unused_assignments)]
+
 fn main() -> Result<()> {
-    // 参数：共享内存路径
+    // 参数
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
     // 日志
     if let Err(e) = initialize_logging(&shared_path) {
-        eprintln!("Failed to initialize logging: {}", e);
+        log::error!("Failed to initialize logging: {}", e);
         std::process::exit(1);
     }
 
     // 共享内存
-    let shared_buffer =
-        SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(std::sync::Arc::new);
+    let shared_buffer = SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(Arc::new);
     let shared_rx = spawn_shared_listener(shared_buffer.clone());
 
     // X 连接（xcb_ffi）
     let (conn, screen_num) = XCBConnection::connect(None)?;
     let screen = &conn.setup().roots[screen_num];
 
-    // Cairo XCB 桥接对象（从 x11rb Screen 构造 visual）
+    // Cairo XCB 桥接对象
     let cairo_xcb = build_cairo_xcb(&conn, screen_num)?;
 
-    // 窗口与 GC
+    // 窗口 + GC
     let win = conn.generate_id()?;
     let gc = conn.generate_id()?;
     conn.create_gc(gc, screen.root, &CreateGCAux::new())?;
@@ -996,13 +1020,12 @@ fn main() -> Result<()> {
         &ChangeWindowAttributesAux::new().background_pixmap(x11rb::NONE),
     )?;
 
-    // 颜色（Cairo）
+    // 颜色
     let colors = Colors {
         bg: Color::rgb(17, 17, 17),
         text: Color::rgb(255, 255, 255),
         white: Color::rgb(255, 255, 255),
         black: Color::rgb(0, 0, 0),
-
         tag_colors: [
             Color::rgb(255, 107, 107), // red
             Color::rgb(78, 205, 196),  // cyan
@@ -1025,8 +1048,7 @@ fn main() -> Result<()> {
         time: Color::rgb(80, 150, 220),
     };
 
-    // 字体描述（请确保系统安装了对应 Nerd Font）
-    // 可替换为 "FiraCode Nerd Font 11" 等
+    // 字体
     let font = FontDescription::from_string("JetBrainsMono Nerd Font 11");
 
     // 后备缓冲
@@ -1035,152 +1057,123 @@ fn main() -> Result<()> {
     // 状态
     let mut state = AppState::new(shared_buffer);
 
-    // 初次绘制
-    draw_bar(
+    // 首次绘制
+    redraw(
         &cairo_xcb,
-        back.pm,
+        &conn,
+        &mut back,
+        win,
+        gc,
         current_width,
         current_height,
         &colors,
         &mut state,
         &font,
     )?;
-    back.blit_to_window(&conn, win, gc)?;
-    conn.flush()?;
 
-    loop {
-        // 处理 X 事件
-        while let Some(event) = conn.poll_for_event()? {
-            match event {
-                Event::Expose(e) => {
-                    if e.count == 0 {
-                        back.blit_to_window(&conn, win, gc)?;
-                        conn.flush()?;
-                    }
-                }
-                Event::ConfigureNotify(e) => {
-                    if e.window == win {
-                        current_width = e.width as u16;
-                        current_height = e.height as u16;
-                        back.resize_if_needed(&conn, win, current_width, current_height)?;
-                        draw_bar(
-                            &cairo_xcb,
-                            back.pm,
-                            current_width,
-                            current_height,
-                            &colors,
-                            &mut state,
-                            &font,
-                        )?;
-                        back.blit_to_window(&conn, win, gc)?;
-                        conn.flush()?;
-                    }
-                }
-                Event::MotionNotify(e) => {
-                    let hovered = state.ss_rect.contains(e.event_x, e.event_y);
-                    if hovered != state.is_ss_hover {
-                        state.is_ss_hover = hovered;
-                        draw_bar(
-                            &cairo_xcb,
-                            back.pm,
-                            current_width,
-                            current_height,
-                            &colors,
-                            &mut state,
-                            &font,
-                        )?;
-                        back.blit_to_window(&conn, win, gc)?;
-                        conn.flush()?;
-                    }
-                }
-                Event::ButtonPress(e) => {
-                    let px = e.event_x;
-                    let py = e.event_y;
-                    // 左侧 tag：左键 view，右键 toggle
-                    let mut redrawn = false;
-                    for (i, rect) in state.tag_rects.iter().enumerate() {
-                        if rect.contains(px, py) {
-                            if e.detail == 1 {
-                                state.active_tab = i;
-                                state.send_tag_command_index(i, true);
-                            } else if e.detail == 3 {
-                                state.send_tag_command_index(i, false);
-                            }
-                            redrawn = true;
-                            break;
-                        }
-                    }
-                    // 布局按钮
-                    if state.layout_button_rect.contains(px, py) && e.detail == 1 {
-                        state.layout_selector_open = !state.layout_selector_open;
-                        redrawn = true;
-                    }
-                    // 布局选项
-                    for (idx, r) in state.layout_option_rects.iter().enumerate() {
-                        if r.w > 0 && r.contains(px, py) && e.detail == 1 {
-                            state.send_layout_command(idx as u32);
-                            state.layout_selector_open = false;
-                            redrawn = true;
-                            break;
-                        }
-                    }
-                    // 截图
-                    if state.ss_rect.contains(px, py) && e.detail == 1 {
-                        if let Err(e) = Command::new("flameshot").arg("gui").spawn() {
-                            warn!("Failed to spawn flameshot: {e}");
-                        }
-                    }
-                    // 时间
-                    if state.time_rect.contains(px, py) && e.detail == 1 {
-                        state.show_seconds = !state.show_seconds;
-                        redrawn = true;
-                    }
-                    if redrawn {
-                        draw_bar(
-                            &cairo_xcb,
-                            back.pm,
-                            current_width,
-                            current_height,
-                            &colors,
-                            &mut state,
-                            &font,
-                        )?;
-                        back.blit_to_window(&conn, win, gc)?;
-                        conn.flush()?;
-                    }
-                }
-                _ => {}
-            }
+    // ============ epoll + timerfd ============
+    // 1) X fd
+    let x_fd = conn.as_fd().as_raw_fd();
+
+    // 2) epoll
+    let epfd = unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) };
+    if epfd < 0 {
+        return Err(std::io::Error::last_os_error().into());
+    }
+
+    // 3) timerfd：10ms 周期
+    let tfd = unsafe {
+        libc::timerfd_create(
+            libc::CLOCK_MONOTONIC,
+            libc::TFD_NONBLOCK | libc::TFD_CLOEXEC,
+        )
+    };
+    if tfd < 0 {
+        let e = std::io::Error::last_os_error();
+        unsafe { libc::close(epfd) };
+        return Err(e.into());
+    }
+    let to_timespec = |ms: u64| -> libc::timespec {
+        libc::timespec {
+            tv_sec: (ms / 1000) as libc::time_t,
+            tv_nsec: ((ms % 1000) * 1_000_000) as libc::c_long,
         }
+    };
+    let its = libc::itimerspec {
+        it_interval: to_timespec(10),
+        it_value: to_timespec(10),
+    };
+    let rc = unsafe { libc::timerfd_settime(tfd, 0, &its as *const _, std::ptr::null_mut()) };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error();
+        unsafe {
+            libc::close(tfd);
+            libc::close(epfd);
+        }
+        return Err(e.into());
+    }
 
-        // 处理共享内存更新
+    // 4) 注册 epoll 事件
+    const X_TOKEN: u64 = 1;
+    const TFD_TOKEN: u64 = 2;
+
+    let mut ev_x = libc::epoll_event {
+        events: libc::EPOLLIN as u32,
+        u64: X_TOKEN,
+    };
+    let rc = unsafe { libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, x_fd, &mut ev_x as *mut _) };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error();
+        unsafe {
+            libc::close(tfd);
+            libc::close(epfd);
+        }
+        return Err(e.into());
+    }
+
+    let mut ev_t = libc::epoll_event {
+        events: libc::EPOLLIN as u32,
+        u64: TFD_TOKEN,
+    };
+    let rc = unsafe { libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, tfd, &mut ev_t as *mut _) };
+    if rc < 0 {
+        let e = std::io::Error::last_os_error();
+        unsafe {
+            libc::close(tfd);
+            libc::close(epfd);
+        }
+        return Err(e.into());
+    }
+
+    // 5) 主循环
+    const EP_EVENTS_CAP: usize = 32;
+    let mut events: [libc::epoll_event; EP_EVENTS_CAP] =
+        unsafe { MaybeUninit::zeroed().assume_init() };
+
+    // 将“共享内存更新”抽干成一个闭包，返回是否需要重绘
+    let drain_shared_updates = |state: &mut AppState| -> bool {
+        let mut need_redraw = false;
         if let Some(rx) = &shared_rx {
             loop {
                 match rx.try_recv() {
                     Ok(SharedEvt::Updated(msg)) => {
                         state.update_from_shared(msg);
-                        draw_bar(
-                            &cairo_xcb,
-                            back.pm,
-                            current_width,
-                            current_height,
-                            &colors,
-                            &mut state,
-                            &font,
-                        )?;
-                        back.blit_to_window(&conn, win, gc)?;
-                        conn.flush()?;
+                        need_redraw = true;
                     }
                     Ok(SharedEvt::Error(err_msg)) => {
-                        warn!("SharedMemoryError: {err_msg}");
+                        log::warn!("SharedMemoryError: {err_msg}");
                     }
-                    Err(TryRecvError::Empty) => break,
-                    Err(TryRecvError::Disconnected) => break,
+                    Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
                 }
             }
         }
+        need_redraw
+    };
 
-        // 定时刷新（时间每秒，系统信息/音频每 2 秒）
+    // 把“周期性任务 + 可能重绘”抽成闭包，在 timer tick 时调用
+    let periodic_tick = |state: &mut AppState| -> Result<bool> {
+        let mut need_redraw = false;
+
         if state.last_clock_update.elapsed() >= Duration::from_millis(1000) {
             state.last_clock_update = Instant::now();
 
@@ -1189,20 +1182,341 @@ fn main() -> Result<()> {
                 state.audio_manager.update_if_needed();
                 state.last_monitor_update = Instant::now();
             }
+            need_redraw = true;
+        }
+        Ok(need_redraw)
+    };
 
-            draw_bar(
+    loop {
+        // 5.1 抽干所有已到达的 X 事件（非阻塞）
+        while let Some(event) = conn.poll_for_event()? {
+            match event {
+                x11rb::protocol::Event::Expose(e) => {
+                    if e.count == 0 {
+                        back.blit_to_window(&conn, win, gc)?;
+                        conn.flush()?;
+                    }
+                }
+                x11rb::protocol::Event::ConfigureNotify(e) => {
+                    if e.window == win {
+                        current_width = e.width as u16;
+                        current_height = e.height as u16;
+                        back.resize_if_needed(&conn, win, current_width, current_height)?;
+                        redraw(
+                            &cairo_xcb,
+                            &conn,
+                            &mut back,
+                            win,
+                            gc,
+                            current_width,
+                            current_height,
+                            &colors,
+                            &mut state,
+                            &font,
+                        )?;
+                    }
+                }
+                x11rb::protocol::Event::MotionNotify(e) => {
+                    let hovered = state.ss_rect.contains(e.event_x, e.event_y);
+                    if hovered != state.is_ss_hover {
+                        state.is_ss_hover = hovered;
+                        redraw(
+                            &cairo_xcb,
+                            &conn,
+                            &mut back,
+                            win,
+                            gc,
+                            current_width,
+                            current_height,
+                            &colors,
+                            &mut state,
+                            &font,
+                        )?;
+                    }
+                }
+                x11rb::protocol::Event::ButtonPress(e) => {
+                    let px = e.event_x;
+                    let py = e.event_y;
+                    let mut need_redraw = false;
+
+                    // 左侧 tag：左键 view，右键 toggle
+                    for (i, rect) in state.tag_rects.iter().enumerate() {
+                        if rect.contains(px, py) {
+                            if e.detail == 1 {
+                                state.active_tab = i;
+                                state.send_tag_command_index(i, true);
+                            } else if e.detail == 3 {
+                                state.send_tag_command_index(i, false);
+                            }
+                            need_redraw = true;
+                            break;
+                        }
+                    }
+                    // 布局按钮
+                    if state.layout_button_rect.contains(px, py) && e.detail == 1 {
+                        state.layout_selector_open = !state.layout_selector_open;
+                        need_redraw = true;
+                    }
+                    // 布局选项
+                    for (idx, r) in state.layout_option_rects.iter().enumerate() {
+                        if r.w > 0 && r.contains(px, py) && e.detail == 1 {
+                            state.send_layout_command(idx as u32);
+                            state.layout_selector_open = false;
+                            need_redraw = true;
+                            break;
+                        }
+                    }
+                    // 截图
+                    if state.ss_rect.contains(px, py) && e.detail == 1 {
+                        if let Err(e) = std::process::Command::new("flameshot").arg("gui").spawn() {
+                            log::warn!("Failed to spawn flameshot: {e}");
+                        }
+                    }
+                    // 时间
+                    if state.time_rect.contains(px, py) && e.detail == 1 {
+                        state.show_seconds = !state.show_seconds;
+                        need_redraw = true;
+                    }
+
+                    if need_redraw {
+                        redraw(
+                            &cairo_xcb,
+                            &conn,
+                            &mut back,
+                            win,
+                            gc,
+                            current_width,
+                            current_height,
+                            &colors,
+                            &mut state,
+                            &font,
+                        )?;
+                    }
+                }
+                _ => {}
+            }
+        }
+
+        // 5.2 处理共享内存更新（非阻塞）
+        if drain_shared_updates(&mut state) {
+            redraw(
                 &cairo_xcb,
-                back.pm,
+                &conn,
+                &mut back,
+                win,
+                gc,
                 current_width,
                 current_height,
                 &colors,
                 &mut state,
                 &font,
             )?;
-            back.blit_to_window(&conn, win, gc)?;
-            conn.flush()?;
         }
 
-        thread::sleep(Duration::from_millis(10));
+        // 5.3 阻塞等待 epoll（被 X 或 timer 唤醒）
+        let nfds = loop {
+            let n = unsafe {
+                libc::epoll_wait(
+                    epfd,
+                    events.as_mut_ptr(),
+                    EP_EVENTS_CAP as i32,
+                    -1, // 永久阻塞，依赖 timerfd + X 唤醒
+                )
+            };
+            if n >= 0 {
+                break n;
+            }
+            let err = std::io::Error::last_os_error();
+            if let Some(code) = err.raw_os_error() {
+                if code == libc::EINTR {
+                    continue;
+                }
+            }
+            // 其他错误：告警并继续
+            log::warn!("[main] epoll_wait failed: {}", err);
+            thread::sleep(Duration::from_millis(5));
+            break 0;
+        };
+
+        // 5.4 处理就绪事件
+        for i in 0..(nfds as usize) {
+            let ev = events[i];
+            match ev.u64 {
+                X_TOKEN => {
+                    // 抽干所有 X 事件
+                    loop {
+                        match conn.poll_for_event()? {
+                            Some(event) => match event {
+                                x11rb::protocol::Event::Expose(e) => {
+                                    if e.count == 0 {
+                                        back.blit_to_window(&conn, win, gc)?;
+                                        conn.flush()?;
+                                    }
+                                }
+                                x11rb::protocol::Event::ConfigureNotify(e) => {
+                                    if e.window == win {
+                                        current_width = e.width as u16;
+                                        current_height = e.height as u16;
+                                        back.resize_if_needed(
+                                            &conn,
+                                            win,
+                                            current_width,
+                                            current_height,
+                                        )?;
+                                        redraw(
+                                            &cairo_xcb,
+                                            &conn,
+                                            &mut back,
+                                            win,
+                                            gc,
+                                            current_width,
+                                            current_height,
+                                            &colors,
+                                            &mut state,
+                                            &font,
+                                        )?;
+                                    }
+                                }
+                                x11rb::protocol::Event::MotionNotify(e) => {
+                                    let hovered = state.ss_rect.contains(e.event_x, e.event_y);
+                                    if hovered != state.is_ss_hover {
+                                        state.is_ss_hover = hovered;
+                                        redraw(
+                                            &cairo_xcb,
+                                            &conn,
+                                            &mut back,
+                                            win,
+                                            gc,
+                                            current_width,
+                                            current_height,
+                                            &colors,
+                                            &mut state,
+                                            &font,
+                                        )?;
+                                    }
+                                }
+                                x11rb::protocol::Event::ButtonPress(e) => {
+                                    let px = e.event_x;
+                                    let py = e.event_y;
+                                    let mut need_redraw = false;
+
+                                    for (i, rect) in state.tag_rects.iter().enumerate() {
+                                        if rect.contains(px, py) {
+                                            if e.detail == 1 {
+                                                state.active_tab = i;
+                                                state.send_tag_command_index(i, true);
+                                            } else if e.detail == 3 {
+                                                state.send_tag_command_index(i, false);
+                                            }
+                                            need_redraw = true;
+                                            break;
+                                        }
+                                    }
+                                    if state.layout_button_rect.contains(px, py) && e.detail == 1 {
+                                        state.layout_selector_open = !state.layout_selector_open;
+                                        need_redraw = true;
+                                    }
+                                    for (idx, r) in state.layout_option_rects.iter().enumerate() {
+                                        if r.w > 0 && r.contains(px, py) && e.detail == 1 {
+                                            state.send_layout_command(idx as u32);
+                                            state.layout_selector_open = false;
+                                            need_redraw = true;
+                                            break;
+                                        }
+                                    }
+                                    if state.ss_rect.contains(px, py) && e.detail == 1 {
+                                        if let Err(e) = std::process::Command::new("flameshot")
+                                            .arg("gui")
+                                            .spawn()
+                                        {
+                                            log::warn!("Failed to spawn flameshot: {e}");
+                                        }
+                                    }
+                                    if state.time_rect.contains(px, py) && e.detail == 1 {
+                                        state.show_seconds = !state.show_seconds;
+                                        need_redraw = true;
+                                    }
+
+                                    if need_redraw {
+                                        redraw(
+                                            &cairo_xcb,
+                                            &conn,
+                                            &mut back,
+                                            win,
+                                            gc,
+                                            current_width,
+                                            current_height,
+                                            &colors,
+                                            &mut state,
+                                            &font,
+                                        )?;
+                                    }
+                                }
+                                _ => {}
+                            },
+                            None => break,
+                        }
+                    }
+                }
+                TFD_TOKEN => {
+                    // 读取 timerfd（抽干）
+                    let mut buf = [0u8; 8];
+                    loop {
+                        let r = unsafe {
+                            libc::read(tfd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
+                        };
+                        if r == 8 {
+                            // 正常读到一次到期计数；处理周期任务 + 共享更新
+                            let mut need_redraw = false;
+
+                            if periodic_tick(&mut state)? {
+                                need_redraw = true;
+                            }
+                            if drain_shared_updates(&mut state) {
+                                need_redraw = true;
+                            }
+                            if need_redraw {
+                                redraw(
+                                    &cairo_xcb,
+                                    &conn,
+                                    &mut back,
+                                    win,
+                                    gc,
+                                    current_width,
+                                    current_height,
+                                    &colors,
+                                    &mut state,
+                                    &font,
+                                )?;
+                            }
+                            // 继续读，抽干积压 tick
+                            continue;
+                        } else if r < 0 {
+                            let err = std::io::Error::last_os_error();
+                            if let Some(code) = err.raw_os_error() {
+                                if code == libc::EAGAIN || code == libc::EWOULDBLOCK {
+                                    break;
+                                }
+                            }
+                            log::warn!("[main] timerfd read error: {}", err);
+                            break;
+                        } else {
+                            break; // 短读（不应发生）
+                        }
+                    }
+                }
+                other => {
+                    log::debug!("[main] unexpected epoll token: {}", other);
+                }
+            }
+        }
     }
+
+    // 6) 清理（通常不会到达这里）
+    // 安全起见，仍加上
+    // unsafe {
+    //     libc::close(tfd);
+    //     libc::close(epfd);
+    // }
+    // Ok(())
 }
