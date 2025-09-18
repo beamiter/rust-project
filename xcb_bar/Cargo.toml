@@ -1,0 +1,25 @@
+[package]
+name = "xcb_bar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1.0.99"
+chrono = "0.4.42"
+sysinfo = { version = "0.37.0", features = ["multithread"] }
+
+shared_structures = { workspace = true }
+alsa = "0.10.0"
+log = "0.4.28"
+flexi_logger = "0.31.2"
+battery = "0.7.8"
+thiserror = "2.0.16"
+toml = "0.9.6"
+cairo-rs = { version = "0.21.2", features = ["xcb"] }
+pango = "0.21.2"
+pangocairo = "0.21.2"
+xcb = "1.6.0"
+crossbeam = "0.8.4"
+crossbeam-channel = "0.5.15"
+libc = "0.2.175"
+
