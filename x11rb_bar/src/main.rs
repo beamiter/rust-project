@@ -23,7 +23,6 @@ use libc;
 use cairo::{Context, XCBConnection as CairoXCBConnection, XCBDrawable, XCBSurface, XCBVisualType};
 use pango::FontDescription;
 
-// 使用 xcb crate 来枚举 visualtype
 use xcb;
 
 // ---------------- 外部模块 ----------------
@@ -160,18 +159,15 @@ struct CairoXcb {
     _visual_owner: Box<xcb::x::Visualtype>, // 真正所有权，延长生命周期
 }
 
-fn find_visual_by_id_and_depth(
-    conn: &xcb::Connection,
-    screen_num: usize,
+fn find_visual_by_id_and_depth_by_ffi(
+    screen: &Screen,
     target_visual_id: u32,
     target_depth: u8,
-) -> Option<xcb::x::Visualtype> {
-    let setup = conn.get_setup();
-    let screen = setup.roots().nth(screen_num as usize)?;
-    for depth in screen.allowed_depths() {
-        if depth.depth() == target_depth {
-            for visual in depth.visuals() {
-                if visual.visual_id() == target_visual_id {
+) -> Option<x11rb::protocol::xproto::Visualtype> {
+    for depth in &screen.allowed_depths {
+        if depth.depth == target_depth {
+            for visual in &depth.visuals {
+                if visual.visual_id == target_visual_id {
                     return Some(visual.clone());
                 }
             }
@@ -180,37 +176,31 @@ fn find_visual_by_id_and_depth(
     None
 }
 
-fn build_cairo_xcb(xcb_conn: &XCBConnection, screen_num: usize) -> Result<CairoXcb> {
-    // 取 raw xcb_connection_t
-    let raw = xcb_conn.get_raw_xcb_connection();
-    let conn = unsafe { xcb::Connection::from_raw_conn(raw as *mut xcb::ffi::xcb_connection_t) };
-
-    // 找到对应 screen
-    let setup = conn.get_setup();
-    let screen = setup
-        .roots()
-        .nth(screen_num)
-        .ok_or_else(|| anyhow::anyhow!("No screen"))?;
-    let root_visual_id = screen.root_visual();
-    let root_depth = screen.root_depth();
-
-    // 查找与 root_visual_id + root_depth 匹配的 visualtype
-    let visual = find_visual_by_id_and_depth(&conn, screen_num, root_visual_id, root_depth)
+fn build_cairo_xcb_by_ffi(xcb_conn: &XCBConnection, screen: &Screen) -> Result<CairoXcb> {
+    let root_visual_id = screen.root_visual;
+    let root_depth = screen.root_depth;
+    let visual = find_visual_by_id_and_depth_by_ffi(screen, root_visual_id, root_depth)
         .ok_or_else(|| anyhow::anyhow!("Could not find visualtype for root_visual"))?;
-    debug!(
+    info!(
         "Found visual id={} class={:?}",
-        visual.visual_id(),
-        visual.class()
+        visual.visual_id, visual.class,
+    );
+    let raw_visual = xcb::x::Visualtype::new(
+        visual.visual_id,
+        unsafe { std::mem::transmute(u32::from(visual.class)) },
+        visual.bits_per_rgb_value,
+        visual.colormap_entries,
+        visual.red_mask,
+        visual.green_mask,
+        visual.blue_mask,
     );
 
     // 复制一份，由我们持有
-    let visual_owner = Box::new(visual);
+    let visual_owner = Box::new(raw_visual);
     let ptr = (&*visual_owner) as *const xcb::x::Visualtype as *mut xcb_visualtype_t;
     let cxcb_vis = unsafe { XCBVisualType::from_raw_none(ptr) };
+    let raw = xcb_conn.get_raw_xcb_connection();
     let cxcb_conn = unsafe { CairoXCBConnection::from_raw_none(raw as *mut xcb_connection_t) };
-
-    // 避免 xcb::Connection 析构关闭底层 fd
-    std::mem::forget(conn);
 
     Ok(CairoXcb {
         cxcb_conn,
@@ -1174,8 +1164,8 @@ fn main() -> Result<()> {
     let (conn, screen_num) = XCBConnection::connect(None)?;
     let screen = &conn.setup().roots[screen_num];
 
-    // Cairo XCB 桥接对象（修复 Visual 生命周期）
-    let cairo_xcb = build_cairo_xcb(&conn, screen_num)?;
+    // Cairo XCB 桥接对象
+    let cairo_xcb = build_cairo_xcb_by_ffi(&conn, screen)?;
 
     // 窗口 + GC
     let win = conn.generate_id()?;
