@@ -152,7 +152,7 @@ impl Rect {
 }
 
 // ========== Cairo XCB 桥接 ==========
-// 修复：持有 Visualtype 的所有权，避免内存泄漏/悬垂
+// 持有 Visualtype 的所有权，避免内存泄漏/悬垂
 struct CairoXcb {
     cxcb_conn: CairoXCBConnection,
     visual: XCBVisualType,                  // 非拥有指针包装
@@ -195,7 +195,6 @@ fn build_cairo_xcb_by_ffi(xcb_conn: &XCBConnection, screen: &Screen) -> Result<C
         visual.blue_mask,
     );
 
-    // 复制一份，由我们持有
     let visual_owner = Box::new(raw_visual);
     let ptr = (&*visual_owner) as *const xcb::x::Visualtype as *mut xcb_visualtype_t;
     let cxcb_vis = unsafe { XCBVisualType::from_raw_none(ptr) };
@@ -951,7 +950,6 @@ fn spawn_shared_eventfd_notifier(
     }
 
     std::thread::spawn(move || {
-        // 只做“等待并通知”，不消费共享区消息
         loop {
             match buf.wait_for_message(None) {
                 Ok(true) => {
@@ -972,18 +970,14 @@ fn spawn_shared_eventfd_notifier(
                             }
                         }
                     }
-                    // 切记：不要在这里读取/清空共享缓冲区！
                 }
-                Ok(false) => {
-                    // 根据实现，可能不会返回 false；保留完整性
-                }
+                Ok(false) => {}
                 Err(e) => {
                     log::warn!("Shared wait failed: {}", e);
                     break;
                 }
             }
         }
-        // 不在这里 close(efd)，交给主线程/进程回收
     });
 
     Some(efd)
@@ -1462,7 +1456,6 @@ fn main() -> Result<()> {
                             }
                         }
 
-                        // 关键修复：克隆 Arc，避免对 state 的不可变借用跨越后续对 state 的可变借用
                         let mut need_redraw = false;
                         if let Some(buf_arc) = state.shared_buffer.as_ref().cloned() {
                             // 抽干共享缓冲，保留最后一条（也可以边读边更新，但保留最后一条通常语义更合理）
@@ -1508,7 +1501,4 @@ fn main() -> Result<()> {
             }
         }
     }
-
-    // 通常不会到达这里。留给 OS 回收 fd。
-    // 如果需要优雅退出，请在合适时机关闭 tfd/epfd/shared_efd 并 unmap 窗口。
 }
