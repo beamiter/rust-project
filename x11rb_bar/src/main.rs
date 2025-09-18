@@ -15,14 +15,12 @@ use x11rb::protocol::Event;
 use x11rb::protocol::xproto::*;
 use x11rb::wrapper::ConnectionExt as _;
 
-// 使用 xcb_ffi 以便拿到 raw xcb_connection_t 并创建 Cairo XCB surface
 use x11rb::xcb_ffi::XCBConnection;
 
 // Cairo/Pango
 use cairo::{Context, XCBConnection as CairoXCBConnection, XCBDrawable, XCBSurface, XCBVisualType};
 use pango::FontDescription;
 
-// 复用你现有工程模块
 pub mod audio_manager;
 use audio_manager::AudioManager;
 
@@ -114,9 +112,10 @@ impl Color {
     }
 }
 #[derive(Clone)]
+#[allow(dead_code)]
 struct Colors {
     bg: Color,
-    _text: Color,
+    text: Color,
     white: Color,
     black: Color,
     tag_colors: [Color; 9],
@@ -148,10 +147,6 @@ impl Rect {
 }
 
 // ========== Cairo XCB 桥接 ==========
-// 注意：我们不再使用 xcb crate 的 FFI，而是：
-// 1) 用 x11rb 拿到 Screen/Visual 数据；
-// 2) 构造一个 cairo_sys::xcb_visualtype_t（堆分配），交给 XCBVisualType 持有；
-// 3) 用 get_raw_xcb_connection() 返回的 *mut c_void 转为 cairo_sys::xcb_connection_t。
 struct CairoXcb {
     cxcb_conn: CairoXCBConnection,
     visual: XCBVisualType, // 拥有指针的封装，Drop 时自动释放
@@ -190,7 +185,6 @@ fn build_cairo_xcb(xcb_conn: &XCBConnection, screen_num: usize) -> Result<CairoX
             println!("  - Red Mask:   0x{:08x}", visual.red_mask());
             println!("  - Green Mask: 0x{:08x}", visual.green_mask());
             println!("  - Blue Mask:  0x{:08x}", visual.blue_mask());
-            // 这个 visual.visual_id() 就是你在 create_window 时需要用到的！
             let boxed = Box::new(visual);
             let ptr = Box::into_raw(boxed);
             let cxcb_vis = unsafe { XCBVisualType::from_raw_none(ptr as *mut xcb_visualtype_t) };
