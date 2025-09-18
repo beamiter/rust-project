@@ -151,59 +151,77 @@ struct CairoXcb {
     cxcb_conn: CairoXCBConnection,
     visual: XCBVisualType, // 拥有指针的封装，Drop 时自动释放
 }
+
+#[allow(dead_code)]
 fn find_32bit_visual(conn: &xcb::Connection, screen_num: usize) -> Option<xcb::x::Visualtype> {
     let setup = conn.get_setup();
     let screen = setup.roots().nth(screen_num as usize)?;
-
-    // 遍历所有深度
     for depth in screen.allowed_depths() {
-        // 我们只对 32 位深度感兴趣
         if depth.depth() == 32 {
-            // 在这个深度下寻找 TrueColor 类型的 visual
             for visual in depth.visuals() {
                 if visual.class() == xcb::x::VisualClass::TrueColor {
-                    // 找到了！返回它。
-                    // .clone() 是必要的，因为 visual 是对迭代器内部数据的引用
                     return Some(visual.clone());
                 }
             }
         }
     }
-
-    // 没有找到
+    None
+}
+// 替换：使用 root_visual 对应的 visualtype
+fn find_visual_by_id_and_depth(
+    conn: &xcb::Connection,
+    screen_num: usize,
+    target_visual_id: u32,
+    target_depth: u8,
+) -> Option<xcb::x::Visualtype> {
+    let setup = conn.get_setup();
+    let screen = setup.roots().nth(screen_num as usize)?;
+    for depth in screen.allowed_depths() {
+        if depth.depth() == target_depth {
+            for visual in depth.visuals() {
+                if visual.visual_id() == target_visual_id {
+                    return Some(visual.clone());
+                }
+            }
+        }
+    }
     None
 }
 
 fn build_cairo_xcb(xcb_conn: &XCBConnection, screen_num: usize) -> Result<CairoXcb> {
+    // 取 raw xcb_connection_t
     let raw = xcb_conn.get_raw_xcb_connection();
     let conn = unsafe { xcb::Connection::from_raw_conn(raw as *mut xcb::ffi::xcb_connection_t) };
-    println!("Searching for a 32-bit TrueColor visual...");
-    match find_32bit_visual(&conn, screen_num) {
-        Some(visual) => {
-            println!("Found a suitable visual!");
-            println!("  - Visual ID: {}", visual.visual_id());
-            println!("  - Red Mask:   0x{:08x}", visual.red_mask());
-            println!("  - Green Mask: 0x{:08x}", visual.green_mask());
-            println!("  - Blue Mask:  0x{:08x}", visual.blue_mask());
-            let boxed = Box::new(visual);
-            let ptr = Box::into_raw(boxed);
-            let cxcb_vis = unsafe { XCBVisualType::from_raw_none(ptr as *mut xcb_visualtype_t) };
-            let cxcb_conn =
-                unsafe { CairoXCBConnection::from_raw_none(raw as *mut xcb_connection_t) };
+    // 找到对应 screen
+    let setup = conn.get_setup();
+    let screen = setup
+        .roots()
+        .nth(screen_num)
+        .ok_or_else(|| anyhow::anyhow!("No screen"))?;
+    let root_visual_id = screen.root_visual();
+    let root_depth = screen.root_depth();
+    // 查找与 root_visual_id + root_depth 匹配的 visualtype
+    let visual = find_visual_by_id_and_depth(&conn, screen_num, root_visual_id, root_depth)
+        .ok_or_else(|| anyhow::anyhow!("Could not find visualtype for root_visual"))?;
+    println!("Found a suitable visual!");
+    println!("  - Visual ID: {}", visual.visual_id());
+    println!("  - Red Mask:   0x{:08x}", visual.red_mask());
+    println!("  - Green Mask: 0x{:08x}", visual.green_mask());
+    println!("  - Blue Mask:  0x{:08x}", visual.blue_mask());
+    println!("  - class:  {:?}", visual.class());
+    // 封装成 Cairo 的 XCBVisualType
+    let boxed = Box::new(visual);
+    let ptr = Box::into_raw(boxed);
+    let cxcb_vis = unsafe { XCBVisualType::from_raw_none(ptr as *mut xcb_visualtype_t) };
+    let cxcb_conn = unsafe { CairoXCBConnection::from_raw_none(raw as *mut xcb_connection_t) };
 
-            std::mem::forget(conn);
-            return Ok(CairoXcb {
-                cxcb_conn,
-                visual: cxcb_vis,
-            });
-        }
-        None => {
-            let error_message = "Could not find a 32-bit TrueColor visual on this screen.";
-            println!("{}", error_message);
-            use anyhow::bail;
-            bail!(error_message);
-        }
-    }
+    // 避免双重释放
+    std::mem::forget(conn);
+
+    Ok(CairoXcb {
+        cxcb_conn,
+        visual: cxcb_vis,
+    })
 }
 
 // ---------------- 文本测量/绘制（Pango）与形状（Cairo） ----------------
