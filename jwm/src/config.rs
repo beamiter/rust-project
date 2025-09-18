@@ -39,6 +39,7 @@ status_bar_config!(
     "relm_bar" => "relm_bar",
     "tauri_bar" => "tauri_bar",
     "x11rb_bar" => "x11rb_bar",
+    "xcb_bar" => "xcb_bar",
 );
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

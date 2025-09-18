@@ -6,6 +6,7 @@ use pangocairo::functions::{create_layout, show_layout};
 use std::env;
 use std::thread;
 use std::time::{Duration, Instant};
+use xcb::x::Pixmap;
 
 use std::os::fd::AsRawFd as _;
 
@@ -53,13 +54,13 @@ fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
         .unwrap_or_else(|| ".".to_string());
 
     let file_name = if shared_path.is_empty() {
-        "x11rb_bar".to_string()
+        "xcb_bar".to_string()
     } else {
         std::path::Path::new(shared_path)
             .file_name()
             .and_then(|name| name.to_str())
-            .map(|name| format!("x11rb_bar_{}", name))
-            .unwrap_or_else(|| "x11rb_bar".to_string())
+            .map(|name| format!("xcb_bar_{}", name))
+            .unwrap_or_else(|| "xcb_bar".to_string())
     };
 
     let log_filename = format!("{}_{}", file_name, timestamp);
@@ -462,13 +463,7 @@ fn set_dock_properties(
     change_property_32(conn, win, atoms.net_wm_strut, atoms.cardinal, &strut)?;
 
     // _NET_WM_NAME UTF8
-    change_property_8(
-        conn,
-        win,
-        atoms.net_wm_name,
-        atoms.utf8_string,
-        b"x11rb_bar",
-    )?;
+    change_property_8(conn, win, atoms.net_wm_name, atoms.utf8_string, b"xcb_bar")?;
     Ok(())
 }
 
@@ -952,7 +947,7 @@ fn redraw(
     draw_bar(cr, width, height, colors, state, font)?;
     back.flush();
     back.blit_to_window(conn, win, gc)?;
-    conn.flush();
+    conn.flush()?;
     Ok(())
 }
 
@@ -1090,7 +1085,7 @@ fn handle_x_event(
         xcb::Event::X(x::Event::Expose(e)) => {
             if e.count() == 0 {
                 back.blit_to_window(conn, win, gc)?;
-                conn.flush();
+                conn.flush()?;
             }
         }
         xcb::Event::X(x::Event::ConfigureNotify(e)) => {
@@ -1224,17 +1219,15 @@ fn main() -> Result<()> {
 
     // 创建窗口，背景 None，设置事件掩码
     let cw_values = &[
-        (x::Cw::BackPixmap, x::BackPixmap::NONE as u32),
-        (
-            x::Cw::EventMask,
-            (x::EventMask::EXPOSURE
+        x::Cw::BackPixmap(Pixmap::none()),
+        x::Cw::EventMask(
+            x::EventMask::EXPOSURE
                 | x::EventMask::STRUCTURE_NOTIFY
                 | x::EventMask::BUTTON_PRESS
                 | x::EventMask::BUTTON_RELEASE
                 | x::EventMask::POINTER_MOTION
                 | x::EventMask::ENTER_WINDOW
-                | x::EventMask::LEAVE_WINDOW)
-                .bits(),
+                | x::EventMask::LEAVE_WINDOW,
         ),
     ];
     conn.send_and_check_request(&x::CreateWindow {
@@ -1254,12 +1247,12 @@ fn main() -> Result<()> {
     let atoms = intern_atoms(&conn)?;
     set_dock_properties(&conn, &atoms, &screen, win, current_width, current_height)?;
     conn.send_and_check_request(&x::MapWindow { window: win })?;
-    conn.flush();
+    conn.flush()?;
 
     // 明确背景不自动清空（再次设置 BackPixmap=None）
     conn.send_and_check_request(&x::ChangeWindowAttributes {
         window: win,
-        value_list: &[(x::Cw::BackPixmap, x::BackPixmap::NONE as u32)],
+        value_list: &[x::Cw::BackPixmap(Pixmap::none())],
     })?;
 
     // 颜色
