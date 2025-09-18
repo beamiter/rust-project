@@ -116,7 +116,7 @@ impl Color {
 #[derive(Clone)]
 struct Colors {
     bg: Color,
-    text: Color,
+    _text: Color,
     white: Color,
     black: Color,
     tag_colors: [Color; 9],
@@ -156,43 +156,60 @@ struct CairoXcb {
     cxcb_conn: CairoXCBConnection,
     visual: XCBVisualType, // 拥有指针的封装，Drop 时自动释放
 }
-fn build_cairo_xcb(conn: &XCBConnection, screen: &Screen) -> Result<CairoXcb> {
-    // 1) 连接指针
-    let raw = conn.get_raw_xcb_connection();
-    let cxcb_conn = unsafe { CairoXCBConnection::from_raw_none(raw as *mut xcb_connection_t) };
+fn find_32bit_visual(conn: &xcb::Connection, screen_num: usize) -> Option<xcb::x::Visualtype> {
+    let setup = conn.get_setup();
+    let screen = setup.roots().nth(screen_num as usize)?;
 
-    // 2) 构造 cairo 的 XCBVisualType（通过复制 x11rb 的 Visualtype 数据）
-    let visual = make_cairo_visual_from_screen(screen, screen.root_visual)
-        .ok_or_else(|| anyhow::anyhow!("Failed to build cairo XCBVisualType"))?;
-
-    Ok(CairoXcb { cxcb_conn, visual })
-}
-
-fn make_cairo_visual_from_screen(screen: &Screen, visual_id: u32) -> Option<XCBVisualType> {
-    // 遍历 allowed_depths -> visuals，找到与 screen.root_visual 匹配的 Visualtype
-    for depth in &screen.allowed_depths {
-        for v in &depth.visuals {
-            if v.visual_id == visual_id {
-                // 堆分配并转移所有权给 XCBVisualType
-                let raw = xcb_visualtype_t {
-                    visual_id: v.visual_id,
-                    _class: u8::from(v.class),
-                    bits_per_rgb_value: v.bits_per_rgb_value,
-                    colormap_entries: v.colormap_entries,
-                    red_mask: v.red_mask,
-                    green_mask: v.green_mask,
-                    blue_mask: v.blue_mask,
-                    pad0: [0; 4],
-                };
-                // 堆分配并转移所有权给 XCBVisualType
-                let boxed = Box::new(raw);
-                let ptr = Box::into_raw(boxed);
-                let visual = unsafe { XCBVisualType::from_raw_full(ptr) };
-                return Some(visual);
+    // 遍历所有深度
+    for depth in screen.allowed_depths() {
+        // 我们只对 32 位深度感兴趣
+        if depth.depth() == 32 {
+            // 在这个深度下寻找 TrueColor 类型的 visual
+            for visual in depth.visuals() {
+                if visual.class() == xcb::x::VisualClass::TrueColor {
+                    // 找到了！返回它。
+                    // .clone() 是必要的，因为 visual 是对迭代器内部数据的引用
+                    return Some(visual.clone());
+                }
             }
         }
     }
+
+    // 没有找到
     None
+}
+
+fn build_cairo_xcb(xcb_conn: &XCBConnection, screen_num: usize) -> Result<CairoXcb> {
+    let raw = xcb_conn.get_raw_xcb_connection();
+    let conn = unsafe { xcb::Connection::from_raw_conn(raw as *mut xcb::ffi::xcb_connection_t) };
+    println!("Searching for a 32-bit TrueColor visual...");
+    match find_32bit_visual(&conn, screen_num) {
+        Some(visual) => {
+            println!("Found a suitable visual!");
+            println!("  - Visual ID: {}", visual.visual_id());
+            println!("  - Red Mask:   0x{:08x}", visual.red_mask());
+            println!("  - Green Mask: 0x{:08x}", visual.green_mask());
+            println!("  - Blue Mask:  0x{:08x}", visual.blue_mask());
+            // 这个 visual.visual_id() 就是你在 create_window 时需要用到的！
+            let boxed = Box::new(visual);
+            let ptr = Box::into_raw(boxed);
+            let cxcb_vis = unsafe { XCBVisualType::from_raw_none(ptr as *mut xcb_visualtype_t) };
+            let cxcb_conn =
+                unsafe { CairoXCBConnection::from_raw_none(raw as *mut xcb_connection_t) };
+
+            std::mem::forget(conn);
+            return Ok(CairoXcb {
+                cxcb_conn,
+                visual: cxcb_vis,
+            });
+        }
+        None => {
+            let error_message = "Could not find a 32-bit TrueColor visual on this screen.";
+            println!("{}", error_message);
+            use anyhow::bail;
+            bail!(error_message);
+        }
+    }
 }
 
 // ---------------- 文本测量/绘制（Pango）与形状（Cairo） ----------------
@@ -410,7 +427,7 @@ fn set_dock_properties(
         AtomEnum::CARDINAL,
         &strut,
     )?;
-    let title = b"x11rb_bar_pango_cairo";
+    let title = b"x11rb_bar";
     conn.change_property8(
         PropMode::REPLACE,
         win,
@@ -922,7 +939,7 @@ fn main() -> Result<()> {
     let screen = &conn.setup().roots[screen_num];
 
     // Cairo XCB 桥接对象（从 x11rb Screen 构造 visual）
-    let cairo_xcb = build_cairo_xcb(&conn, screen)?;
+    let cairo_xcb = build_cairo_xcb(&conn, screen_num)?;
 
     // 窗口与 GC
     let win = conn.generate_id()?;
