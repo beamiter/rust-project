@@ -3401,7 +3401,7 @@ impl Jwm {
                         }
                         Err(e) => {
                             log::warn!("AsyncFd readable() error: {}", e);
-                            tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
                         }
                     }
                 }
@@ -3529,7 +3529,7 @@ impl Jwm {
                 }
                 // 其他错误：打印告警，稍退避，继续循环
                 warn!("[run_sync] epoll_wait failed: {}", err);
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                std::thread::sleep(std::time::Duration::from_millis(10));
                 break 0;
             };
 
@@ -6429,7 +6429,7 @@ impl Jwm {
                         warn!("pointer_drag_loop timeout, aborting");
                         break;
                     }
-                    std::thread::sleep(std::time::Duration::from_millis(5));
+                    std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             }
         }

@@ -1173,10 +1173,8 @@ fn main() -> Result<()> {
     // 把“周期性任务 + 可能重绘”抽成闭包，在 timer tick 时调用
     let periodic_tick = |state: &mut AppState| -> Result<bool> {
         let mut need_redraw = false;
-
         if state.last_clock_update.elapsed() >= Duration::from_millis(1000) {
             state.last_clock_update = Instant::now();
-
             if state.last_monitor_update.elapsed() >= Duration::from_secs(2) {
                 state.system_monitor.update_if_needed();
                 state.audio_manager.update_if_needed();
@@ -1334,7 +1332,7 @@ fn main() -> Result<()> {
             }
             // 其他错误：告警并继续
             log::warn!("[main] epoll_wait failed: {}", err);
-            thread::sleep(Duration::from_millis(5));
+            thread::sleep(Duration::from_millis(10));
             break 0;
         };
 
@@ -1468,7 +1466,6 @@ fn main() -> Result<()> {
                         if r == 8 {
                             // 正常读到一次到期计数；处理周期任务 + 共享更新
                             let mut need_redraw = false;
-
                             if periodic_tick(&mut state)? {
                                 need_redraw = true;
                             }
