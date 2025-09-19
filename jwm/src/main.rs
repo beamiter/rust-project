@@ -1,5 +1,4 @@
 // use bar::StatusBar;
-use coredump::register_panic_handler;
 use jwm::{jwm::SHARED_PATH, Jwm};
 use log::{error, info, warn};
 use std::{env, process::Command, sync::atomic::Ordering};
@@ -31,7 +30,6 @@ pub fn setup_locale() {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let _ = register_panic_handler();
     setup_locale();
     jwm::miscellaneous::init_auto_command();
     jwm::miscellaneous::init_auto_start();

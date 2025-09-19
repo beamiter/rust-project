@@ -564,7 +564,7 @@ pub fn run_old_wm_benchmark(
     num_clients: usize,
     operation_count: usize,
 ) -> BenchmarkResults {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     // === 设置阶段 ===
     let setup_start = Instant::now();
@@ -584,7 +584,7 @@ pub fn run_old_wm_benchmark(
     let mut client_wins = Vec::new();
 
     for i in 0..num_clients {
-        let mon_index = rng.gen_range(0..num_monitors);
+        let mon_index = rng.random_range(0..num_monitors);
         let win = i as u32;
         old_wm.add_client(win, &monitor_refs[mon_index]);
         client_wins.push(win);
@@ -597,7 +597,7 @@ pub fn run_old_wm_benchmark(
     let mut found_count = 0;
 
     for _ in 0..operation_count {
-        let win = client_wins[rng.gen_range(0..client_wins.len())];
+        let win = client_wins[rng.random_range(0..client_wins.len())];
         if old_wm.find_client(win).is_some() {
             found_count += 1;
         }
@@ -610,12 +610,12 @@ pub fn run_old_wm_benchmark(
     let mut updated_count = 0;
 
     for _ in 0..operation_count {
-        let win = client_wins[rng.gen_range(0..client_wins.len())];
+        let win = client_wins[rng.random_range(0..client_wins.len())];
         let new_geometry = ClientGeometry {
-            x: rng.gen_range(0..1000),
-            y: rng.gen_range(0..1000),
-            w: rng.gen_range(100..500),
-            h: rng.gen_range(100..500),
+            x: rng.random_range(0..1000),
+            y: rng.random_range(0..1000),
+            w: rng.random_range(100..500),
+            h: rng.random_range(100..500),
         };
         if old_wm.update_client_geometry(win, new_geometry) {
             updated_count += 1;
@@ -635,8 +635,8 @@ pub fn run_old_wm_benchmark(
 
     for _ in 0..operation_count / 10 {
         // 减少交换操作次数
-        let idx1 = rng.gen_range(0..client_wins.len());
-        let idx2 = rng.gen_range(0..client_wins.len());
+        let idx1 = rng.random_range(0..client_wins.len());
+        let idx2 = rng.random_range(0..client_wins.len());
         let win1 = client_wins[idx1];
         let win2 = client_wins[idx2];
 
@@ -688,7 +688,7 @@ pub fn run_jwm_benchmark(
     num_clients: usize,
     operation_count: usize,
 ) -> BenchmarkResults {
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
 
     // === 设置阶段 ===
     let setup_start = Instant::now();
@@ -708,7 +708,7 @@ pub fn run_jwm_benchmark(
     let mut client_wins = Vec::new();
 
     for i in 0..num_clients {
-        let mon_index = rng.gen_range(0..num_monitors);
+        let mon_index = rng.random_range(0..num_monitors);
         let win = i as u32;
         jwm.add_client(win, monitor_keys[mon_index]);
         client_wins.push(win);
@@ -721,7 +721,7 @@ pub fn run_jwm_benchmark(
     let mut found_count = 0;
 
     for _ in 0..operation_count {
-        let win = client_wins[rng.gen_range(0..client_wins.len())];
+        let win = client_wins[rng.random_range(0..client_wins.len())];
         if jwm.find_client(win).is_some() {
             found_count += 1;
         }
@@ -734,12 +734,12 @@ pub fn run_jwm_benchmark(
     let mut updated_count = 0;
 
     for _ in 0..operation_count {
-        let win = client_wins[rng.gen_range(0..client_wins.len())];
+        let win = client_wins[rng.random_range(0..client_wins.len())];
         let new_geometry = ClientGeometry {
-            x: rng.gen_range(0..1000),
-            y: rng.gen_range(0..1000),
-            w: rng.gen_range(100..500),
-            h: rng.gen_range(100..500),
+            x: rng.random_range(0..1000),
+            y: rng.random_range(0..1000),
+            w: rng.random_range(100..500),
+            h: rng.random_range(100..500),
         };
         if jwm.update_client_geometry(win, new_geometry) {
             updated_count += 1;
@@ -759,8 +759,8 @@ pub fn run_jwm_benchmark(
 
     for _ in 0..operation_count / 10 {
         // 减少交换操作次数
-        let idx1 = rng.gen_range(0..client_wins.len());
-        let idx2 = rng.gen_range(0..client_wins.len());
+        let idx1 = rng.random_range(0..client_wins.len());
+        let idx2 = rng.random_range(0..client_wins.len());
         let win1 = client_wins[idx1];
         let win2 = client_wins[idx2];
 

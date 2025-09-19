@@ -15,7 +15,6 @@ xbar_core = { workspace = true }
 # shared_structures = { path = "../shared_structures", features = ["use-futex"] }
 chrono = { workspace = true }
 
-once_cell = "1.21.3"
 async-channel = "2.5.0"
-gtk4 = "0.10.0"
-gdk4 = "0.10.0"
+gtk4 = "0.10.1"
+gdk4 = "0.10.1"

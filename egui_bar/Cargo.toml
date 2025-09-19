@@ -24,13 +24,10 @@ shared_structures = { workspace = true }
 xbar_core = { workspace = true }
 tokio = { workspace = true }
 
-dirs = "5.0"
-font-kit = "0.11"
-tempfile = "3.20.0"
-once = "0.3.4"
-eframe = { version = "0.32.2", features = ["persistence"] }
+font-kit = "0.14"
+eframe = { version = "0.32.3", features = ["persistence"] }
 egui_plot = "0.33.0"
-egui = "0.32.2"
+egui = "0.32.3"
 
 [features]
 default = []
