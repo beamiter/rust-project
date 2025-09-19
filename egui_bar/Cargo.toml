@@ -7,17 +7,15 @@ description = "A modern system status bar built with egui"
 
 [dependencies]
 # 序列化
-serde = { version = "1.0", features = ["derive"] }
-toml = "0.8"
+serde = { workspace = true }
+toml = { workspace = true }
 
 # 日志
-log = "0.4"
-anyhow = "1.0"
+log = { workspace = true }
+anyhow = { workspace = true }
 
 # 实用工具
-dirs = "5.0"
-chrono = { version = "0.4", features = ["serde"] }
-font-kit = "0.11"
+chrono = { workspace = true }
 
 # 共享内存（原项目依赖）
 shared_structures = { workspace = true }
@@ -25,11 +23,12 @@ shared_structures = { workspace = true }
 # shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
 # shared_structures = { path = "../shared_structures", features = ["use-futex"] }
 xbar_core = { workspace = true }
-thiserror = "2.0.12"
+tokio = { workspace = true }
+
+dirs = "5.0"
+font-kit = "0.11"
 tempfile = "3.20.0"
-image = "0.25.6"
 once = "0.3.4"
-tokio = { version = "1.47.1", features = ["full"] }
 eframe = { version = "0.32.2", features = ["persistence"] }
 egui_plot = "0.33.0"
 egui = "0.32.2"

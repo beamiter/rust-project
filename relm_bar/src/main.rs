@@ -1,5 +1,4 @@
 use chrono::Local;
-use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use gdk4_x11::x11::xlib::{XFlush, XMoveWindow};
 use gtk::glib;
 use gtk::prelude::*;
@@ -12,13 +11,9 @@ use relm4::{ComponentParts, ComponentSender, RelmApp, SimpleComponent};
 use std::sync::Arc;
 use std::time::Duration;
 
-mod audio_manager;
-mod error;
-mod system_monitor;
-
-use error::AppError;
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus};
-use system_monitor::SystemMonitor;
+use xbar_core::initialize_logging;
+use xbar_core::system_monitor::SystemMonitor;
 
 // ========== 工具与常量 ==========
 
@@ -625,48 +620,11 @@ fn shared_memory_worker(shared: Arc<SharedRingBuffer>, sender: ComponentSender<A
     }
 }
 
-// ========== 日志与入口 ==========
-
-fn initialize_logging(shared_path: &str) -> Result<(), Box<dyn std::error::Error>> {
-    let now = Local::now();
-    let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
-
-    let file_name = if shared_path.is_empty() {
-        "relm_bar".to_string()
-    } else {
-        std::path::Path::new(shared_path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(|name| format!("relm_bar_{}", name))
-            .unwrap_or_else(|| "relm_bar".to_string())
-    };
-
-    let log_filename = format!("{}_{}", file_name, timestamp);
-
-    Logger::try_with_str("info")?
-        .format(flexi_logger::colored_opt_format)
-        .log_to_file(
-            FileSpec::default()
-                .directory("/var/tmp/jwm")
-                .basename(log_filename)
-                .suffix("log"),
-        )
-        .duplicate_to_stdout(Duplicate::Debug)
-        .rotate(
-            Criterion::Size(10_000_000),
-            Naming::Numbers,
-            Cleanup::KeepLogFiles(5),
-        )
-        .start()?;
-
-    Ok(())
-}
-
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
-    if let Err(e) = initialize_logging(&shared_path) {
+    if let Err(e) = initialize_logging("relm_bar", &shared_path) {
         eprintln!("Init logging failed: {e}");
     }
 

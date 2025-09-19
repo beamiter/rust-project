@@ -8,18 +8,15 @@ edition = "2024"
 # shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
 # shared_structures = { path = "../shared_structures", features = ["use-futex"] }
 
-time = "0.3.41"
 iced = { git = "https://github.com/iced-rs/iced.git", branch = "master", features = ["advanced", "debug", "lazy", "smol"] }
 
 # --- 外部依赖 (External Crates) ---
-alsa = { workspace = true }
-battery = { workspace = true }
 chrono = { workspace = true }
-flexi_logger = { workspace = true }
 log = { workspace = true }
-sysinfo = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 
 # --- 工作区内部依赖 (Internal Workspace Crates) ---
 shared_structures = { workspace = true }
+xbar_core = { workspace = true }
+anyhow.workspace = true

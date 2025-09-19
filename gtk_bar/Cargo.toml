@@ -7,17 +7,15 @@ edition = "2024"
 x11 = []
 
 [dependencies]
-battery = "0.7.8"
-flexi_logger = { version = "0.31.2", features = ["colors"] }
-log = "0.4.27"
-thiserror = "2.0.12"
-toml = "0.8.23"
+log = { workspace = true }
+toml = { workspace = true }
 shared_structures = { workspace = true }
 xbar_core = { workspace = true }
 # shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
 # shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
 # shared_structures = { path = "../shared_structures", features = ["use-futex"] }
-chrono = "0.4.41"
+chrono = { workspace = true }
+
 once_cell = "1.21.3"
 async-channel = "2.5.0"
 gtk4 = "0.10.0"

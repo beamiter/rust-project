@@ -1,23 +1,19 @@
 // Prevents additional console window on Windows in release, DO NOT REMOVE!!
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use chrono::Local;
-use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use log::debug;
 use log::{error, info, warn};
-use shared_structures::TagStatus;
 use tauri::Emitter;
 use tauri::Manager;
 
 use std::{env, sync::Arc, time::Duration};
 use tokio::time::sleep;
 
-// 引入我们的模块
-mod error;
-use error::AppError;
-mod system_monitor;
+use shared_structures::TagStatus;
 use shared_structures::{CommandType, MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer};
-use system_monitor::{SystemMonitor, SystemSnapshot};
+use xbar_core::initialize_logging;
+use xbar_core::system_monitor::SystemMonitor;
+use xbar_core::system_monitor::SystemSnapshot;
 
 #[derive(Clone, Debug, serde::Serialize)]
 pub struct MonitorInfoSnapshot {
@@ -106,44 +102,6 @@ impl SharedAppState {
         self.app_handle.emit("system-update", snapshot)?;
         Ok(())
     }
-}
-
-/// 初始化日志系统 (与原版相同)
-fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
-    let now = Local::now();
-    let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
-
-    let file_name = if shared_path.is_empty() {
-        "tauri_bar".to_string()
-    } else {
-        std::path::Path::new(shared_path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(|name| format!("tauri_bar_{}", name))
-            .unwrap_or_else(|| "tauri_bar".to_string())
-    };
-
-    let log_filename = format!("{}_{}", file_name, timestamp);
-    info!("log_filename: {}", log_filename);
-
-    Logger::try_with_str("info")
-        .map_err(|e| AppError::config(format!("Failed to create logger: {}", e)))?
-        .format(flexi_logger::colored_opt_format)
-        .log_to_file(
-            FileSpec::default()
-                .directory("/var/tmp/jwm")
-                .basename(log_filename)
-                .suffix("log"),
-        )
-        .duplicate_to_stdout(Duplicate::Debug)
-        .rotate(
-            Criterion::Size(10_000_000), // 10MB
-            Naming::Numbers,
-            Cleanup::KeepLogFiles(5),
-        )
-        .start()
-        .map_err(|e| AppError::config(format!("Failed to start logger: {}", e)))?;
-    Ok(())
 }
 
 /// Tauri 命令：发送标签操作
@@ -286,7 +244,7 @@ async fn main() {
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
-    if let Err(e) = initialize_logging(&shared_path) {
+    if let Err(e) = initialize_logging("tauri_bar", &shared_path) {
         eprintln!("Failed to initialize logging: {}", e);
     }
 

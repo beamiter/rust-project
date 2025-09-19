@@ -6,22 +6,19 @@ edition = "2024"
 [dependencies]
 dioxus = { version = "0.6.3", features = ["desktop"] }
 
-tokio = { version = "1.45.1", features = ["full"] }
 wasm-bindgen = "0.2.100"
 web-sys = "0.3.77"
-chrono = "0.4.41"
-flexi_logger = "0.31.0"
-log = "0.4.27"
-thiserror = "2.0.12"
-toml = "0.8.23"
+
+tokio = { workspace = true }
+chrono = { workspace = true }
+log = { workspace = true }
+toml = { workspace = true }
+xbar_core = { workspace = true }
 shared_structures = { workspace = true }
 # shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
 # shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
 # shared_structures = { path = "../shared_structures", features = ["use-futex"] }
-time = "0.3.41"
-sysinfo = "0.35.2"
-battery = "0.7.8"
-alsa = "0.9.1"
-serde = { version = "1.0.219", features = ["derive"] }
-libc = "0.2.174"
+serde = { workspace = true }
+libc = { workspace = true }
+
 dioxus-desktop = "0.6.3"

@@ -3,9 +3,7 @@ use dioxus::{
     desktop::{Config, LogicalPosition, WindowBuilder, use_window},
     prelude::*,
 };
-use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use log::{debug, error, info, warn};
-use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
 use std::{
     env,
     process::Command,
@@ -14,52 +12,13 @@ use std::{
     time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
-mod error;
-pub use error::AppError;
-mod system_monitor;
-use system_monitor::{SystemMonitor, SystemSnapshot};
+use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
+use xbar_core::initialize_logging;
+use xbar_core::system_monitor::SystemMonitor;
+use xbar_core::system_monitor::SystemSnapshot;
 
 // 在编译时直接包含CSS文件
 const STYLE_CSS: &str = include_str!("../assets/style.css");
-
-/// Initialize logging system
-fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
-    let now = Local::now();
-    let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
-
-    let file_name = if shared_path.is_empty() {
-        "dioxus_bar".to_string()
-    } else {
-        std::path::Path::new(shared_path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(|name| format!("dioxus_bar_{}", name))
-            .unwrap_or_else(|| "dioxus_bar".to_string())
-    };
-
-    let log_filename = format!("{}_{}", file_name, timestamp);
-    info!("log_filename: {}", log_filename);
-
-    Logger::try_with_str("info")
-        .map_err(|e| AppError::config(format!("Failed to create logger: {}", e)))?
-        .format(flexi_logger::colored_opt_format)
-        .log_to_file(
-            FileSpec::default()
-                .directory("/var/tmp/jwm")
-                .basename(log_filename)
-                .suffix("log"),
-        )
-        .duplicate_to_stdout(Duplicate::Debug)
-        .rotate(
-            Criterion::Size(10_000_000), // 10MB
-            Naming::Numbers,
-            Cleanup::KeepLogFiles(5),
-        )
-        .start()
-        .map_err(|e| AppError::config(format!("Failed to start logger: {}", e)))?;
-
-    Ok(())
-}
 
 // 优化的共享内存工作线程 - 降低CPU使用率
 fn shared_memory_worker(
@@ -357,7 +316,7 @@ fn get_button_class(index: usize, button_states: &[ButtonStateData]) -> &'static
 fn main() {
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
-    if let Err(e) = initialize_logging(&shared_path) {
+    if let Err(e) = initialize_logging("dioxus_bar", &shared_path) {
         error!("Failed to initialize logging: {}", e);
         std::process::exit(1);
     }

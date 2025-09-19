@@ -1,6 +1,7 @@
 //! System monitoring with caching and efficient updates
 
 use battery::Manager;
+use serde::Serialize;
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
 use sysinfo::System;
@@ -52,7 +53,7 @@ impl RollingAverage {
 }
 
 /// System information snapshot
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct SystemSnapshot {
     pub cpu_usage: Vec<f32>,
     pub cpu_average: f32,
@@ -62,6 +63,7 @@ pub struct SystemSnapshot {
     pub memory_usage_percent: f32,
     pub uptime: u64,
     pub load_average: LoadAverage,
+    #[serde(skip)]
     pub timestamp: Instant,
 
     // 新增电池相关字段
@@ -70,7 +72,7 @@ pub struct SystemSnapshot {
 }
 
 /// System load averages
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct LoadAverage {
     pub one_minute: f64,
     pub five_minutes: f64,

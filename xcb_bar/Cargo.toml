@@ -4,17 +4,17 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
-anyhow = "1.0.99"
-chrono = "0.4.42"
-
+anyhow = { workspace = true }
+chrono = { workspace = true }
+sysinfo = { workspace = true }
 xbar_core = { workspace = true }
 shared_structures = { workspace = true }
-log = "0.4.28"
-thiserror = "2.0.16"
-toml = "0.9.6"
+libc = { workspace = true }
+log = { workspace = true }
+toml = { workspace = true }
+
 cairo-rs = { version = "0.21.2", features = ["xcb"] }
 pango = "0.21.2"
 pangocairo = "0.21.2"
 xcb = "1.6.0"
-libc = "0.2.175"
 

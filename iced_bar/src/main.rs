@@ -1,5 +1,4 @@
 use chrono::Local;
-use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, Stream, StreamExt};
 use iced::time::{self, milliseconds};
@@ -23,77 +22,22 @@ use std::sync::Once;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 
-pub mod audio_manager;
-use audio_manager::AudioManager;
-pub mod error;
-use error::AppError;
 use shared_structures::{CommandType, MonitorInfo, SharedCommand, SharedMessage, SharedRingBuffer};
-pub mod system_monitor;
-use system_monitor::SystemMonitor;
+use xbar_core::audio_manager::AudioManager;
+use xbar_core::initialize_logging;
+use xbar_core::system_monitor::SystemMonitor;
 
 static _START: Once = Once::new();
 
 // const NERD_FONT: Font = Font::with_name("SauceCodePro NerdFont Regular");
 const NERD_FONT: Font = Font::with_name("NotoEmoji Regular");
 
-/// Initialize logging system
-fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
-    let tmp_now = Local::now();
-    let timestamp = tmp_now.format("%Y-%m-%d_%H_%M_%S").to_string();
-
-    let log_dir_candidates = [Some("/var/tmp/jwm".to_string())];
-
-    let log_dir = log_dir_candidates
-        .into_iter()
-        .flatten()
-        .find(|p| {
-            std::fs::create_dir_all(p).ok();
-            std::fs::metadata(p).map(|m| m.is_dir()).unwrap_or(false)
-        })
-        .unwrap_or_else(|| ".".to_string());
-
-    let file_name = if shared_path.is_empty() {
-        "iced_bar".to_string()
-    } else {
-        std::path::Path::new(shared_path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(|name| format!("iced_bar_{}", name))
-            .unwrap_or_else(|| "iced_bar".to_string())
-    };
-
-    let log_filename = format!("{}_{}", file_name, timestamp);
-    let log_spec = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
-
-    Logger::try_with_str(log_spec)
-        .map_err(|e| AppError::config(format!("Failed to create logger: {}", e)))?
-        .format_for_files(flexi_logger::detailed_format)
-        .format_for_stderr(flexi_logger::colored_opt_format)
-        .log_to_file(
-            FileSpec::default()
-                .directory(&log_dir)
-                .basename(log_filename)
-                .suffix("log"),
-        )
-        .duplicate_to_stdout(Duplicate::Info)
-        .rotate(
-            Criterion::Size(10_000_000), // 10MB
-            Naming::Numbers,
-            Cleanup::KeepLogFiles(5),
-        )
-        .start()
-        .map_err(|e| AppError::config(format!("Failed to start logger: {}", e)))?;
-
-    info!("Log directory: {}", log_dir);
-    Ok(())
-}
-
 fn main() -> iced::Result {
     let args: Vec<String> = env::args().collect();
     let application_id = "dev.iced.bar".to_string();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
-    if let Err(e) = initialize_logging(&shared_path) {
+    if let Err(e) = initialize_logging("iced_bar", &shared_path) {
         eprintln!("Failed to initialize logging: {}", e);
         std::process::exit(1);
     }

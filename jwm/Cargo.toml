@@ -30,7 +30,6 @@ name = "jwm-tool"
 path = "tools/jwm_tool.rs"
 
 [dependencies]
-bincode = "1.3.3"
 cfg-if = "1.0.1"
 clap = { version = "4.5.45", features = ["derive", "env"] }
 coredump = "0.1.2"
@@ -40,20 +39,21 @@ dirs-next = "2.0.0"
 fastrand = "2.3.0"
 glob = "0.3.3"
 lazy_static = "1.5.0"
-libc = "0.2.158"
 nix = { version = "0.30.1", features = ["signal"] }
 once_cell = "1.19.0"
 rand = "0.8.5"
 regex = "1.11.0"
-serde = { version = "1.0.217", features = ["derive"] }
-serde_json = "1.0.143"
 signal-hook = "0.3.18"
 slotmap = { version = "1.0.7", features = ["serde"] }
-tokio = { version = "1.47.1", features = ["full"] }
 x11 = { version = "2.21.0", features = ["all"] }
 x11rb = { version = "0.13.1", features = ["all-extensions"] }
 x11rb-protocol = "0.13.1"
 
+libc = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+bincode = { workspace = true }
 # shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
 shared_structures = { workspace = true }
 # shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }

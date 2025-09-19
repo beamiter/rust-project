@@ -1,5 +1,4 @@
 use chrono::Local;
-use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
 use gdk4::prelude::*;
 #[cfg(all(target_os = "linux", feature = "x11"))]
 use gdk4_x11::x11::xlib::{XFlush, XMoveWindow};
@@ -14,16 +13,10 @@ use std::sync::mpsc::{self, Receiver, Sender as StdSender};
 use std::thread;
 use std::time::Duration;
 
-mod audio_manager;
-mod error;
-mod system_monitor;
-
-use audio_manager::AudioManager;
-use error::AppError;
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer, TagStatus};
-use system_monitor::SystemMonitor;
-
+use xbar_core::audio_manager::AudioManager;
 use xbar_core::initialize_logging;
+use xbar_core::system_monitor::SystemMonitor;
 
 use gtk4::glib::ControlFlow;
 
@@ -38,8 +31,6 @@ enum AppCommand {
 }
 
 // ========= 常量 =========
-const STATUS_BAR_PREFIX: &str = "gtk_bar";
-const LOG_DIR: &str = "/var/tmp/jwm";
 const CPU_REDRAW_THRESHOLD: f64 = 0.01; // 1%
 const MEM_REDRAW_THRESHOLD: f64 = 0.005; // 0.5%
 
@@ -745,23 +736,6 @@ fn worker_thread(
     }
 
     info!("Worker thread exited");
-}
-
-// ========= 日志与应用 ID =========
-fn ensure_log_dir(dir: &str) -> std::io::Result<()> {
-    std::fs::create_dir_all(dir)
-}
-
-fn sanitize_filename(name: &str) -> String {
-    name.chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
-                c
-            } else {
-                '_'
-            }
-        })
-        .collect()
 }
 
 // ========= main =========
