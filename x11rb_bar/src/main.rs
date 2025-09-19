@@ -23,7 +23,15 @@ use libc;
 use cairo::{Context, XCBConnection as CairoXCBConnection, XCBDrawable, XCBSurface, XCBVisualType};
 use pango::FontDescription;
 
+use std::f64::consts::{FRAC_PI_2, PI};
 use xcb;
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug)]
+enum ShapeStyle {
+    Chamfer,
+    Pill,
+}
 
 // ---------------- 外部模块 ----------------
 pub mod audio_manager;
@@ -251,6 +259,86 @@ fn pango_draw_text_left(
     show_layout(cr, &layout);
 }
 
+fn cairo_path_round_rect(cr: &Context, x: f64, y: f64, w: f64, h: f64, r: f64) {
+    let r = r.min(w / 2.0).min(h / 2.0).max(0.0);
+    cr.new_path();
+    // 从上边开始，顺时针连四个弧形
+    cr.move_to(x + r, y);
+    cr.line_to(x + w - r, y);
+    cr.arc(x + w - r, y + r, r, -FRAC_PI_2, 0.0);
+    cr.line_to(x + w, y + h - r);
+    cr.arc(x + w - r, y + h - r, r, 0.0, FRAC_PI_2);
+    cr.line_to(x + r, y + h);
+    cr.arc(x + r, y + h - r, r, FRAC_PI_2, PI);
+    cr.line_to(x, y + r);
+    cr.arc(x + r, y + r, r, PI, 3.0 * FRAC_PI_2);
+    cr.close_path();
+}
+
+fn fill_round(cr: &Context, x: f64, y: f64, w: f64, h: f64, r: f64, color: Color) -> Result<()> {
+    cairo_path_round_rect(cr, x, y, w, h, r);
+    cr.set_source_rgb(color.r, color.g, color.b);
+    cr.fill()
+        .map_err(|e| anyhow::anyhow!("cairo fill failed: {:?}", e))
+}
+
+fn stroke_round_with_fill(
+    cr: &Context,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    r: f64,
+    border_w: f64,
+    border_color: Color,
+    fill_color: Option<Color>,
+) -> Result<()> {
+    if border_w <= 0.0 {
+        if let Some(fill) = fill_color {
+            fill_round(cr, x, y, w, h, r, fill)?;
+        }
+        return Ok(());
+    }
+    // 外边框
+    fill_round(cr, x, y, w, h, r, border_color)?;
+    // 内填充
+    if let Some(fill) = fill_color {
+        let x2 = x + border_w;
+        let y2 = y + border_w;
+        let w2 = (w - 2.0 * border_w).max(0.0);
+        let h2 = (h - 2.0 * border_w).max(0.0);
+        if w2 > 0.0 && h2 > 0.0 {
+            let r2 = (r - border_w).max(0.0);
+            fill_round(cr, x2, y2, w2, h2, r2, fill)?;
+        }
+    }
+    Ok(())
+}
+
+/// 统一的“按钮形状绘制”封装：根据样式选择 chamfer 或 pill（圆角胶囊）
+fn stroke_shape_with_fill(
+    cr: &Context,
+    style: ShapeStyle,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    k: f64,
+    border_w: f64,
+    border_color: Color,
+    fill_color: Option<Color>,
+) -> Result<()> {
+    match style {
+        ShapeStyle::Chamfer => {
+            stroke_chamfer_with_fill(cr, x, y, w, h, k, border_w, border_color, fill_color)
+        }
+        ShapeStyle::Pill => {
+            let r = k.min(h / 2.0).floor();
+            stroke_round_with_fill(cr, x, y, w, h, r, border_w, border_color, fill_color)
+        }
+    }
+}
+
 fn cairo_path_chamfer(cr: &Context, x: f64, y: f64, w: f64, h: f64, k: f64) {
     let k = k.min(w / 2.0).min(h / 2.0).max(0.0);
     cr.new_path();
@@ -460,6 +548,8 @@ struct AppState {
 
     last_clock_update: Instant,
     last_monitor_update: Instant,
+
+    shape_style: ShapeStyle,
 }
 impl AppState {
     fn new(shared_buffer: Option<Arc<SharedRingBuffer>>) -> Self {
@@ -485,6 +575,8 @@ impl AppState {
 
             last_clock_update: Instant::now(),
             last_monitor_update: Instant::now(),
+
+            shape_style: ShapeStyle::Pill,
         }
     }
     fn monitor_num_to_label(num: i32) -> String {
@@ -632,7 +724,18 @@ fn draw_bar(
 
         let (bg, bw, bc, txt_color, draw_bg) = tag_visuals(colors, state.monitor_info.as_ref(), i);
         if draw_bg {
-            stroke_chamfer_with_fill(cr, x, PADDING_Y, w, pill_h, PILL_RADIUS, bw, bc, Some(bg))?;
+            stroke_shape_with_fill(
+                cr,
+                state.shape_style,
+                x,
+                PADDING_Y,
+                w,
+                pill_h,
+                PILL_RADIUS,
+                bw,
+                bc,
+                Some(bg),
+            )?;
             pango_draw_text_centered(cr, font, txt_color, x, PADDING_Y, w, pill_h, label);
         }
         state.tag_rects[i] = Rect {
@@ -648,8 +751,9 @@ fn draw_bar(
     let layout_label = state.layout_symbol.as_str();
     let (lw, lh) = pango_text_size(cr, font, layout_label);
     let lw_total = lw as f64 + 2.0 * PILL_HPADDING;
-    stroke_chamfer_with_fill(
+    stroke_shape_with_fill(
         cr,
+        state.shape_style,
         x,
         PADDING_Y,
         lw_total,
@@ -681,8 +785,9 @@ fn draw_bar(
         for (i, (sym, _idx, base_color)) in layouts.iter().enumerate() {
             let (tw, _th) = pango_text_size(cr, font, sym);
             let w = ((tw as f64) + 2.0 * (PILL_HPADDING - 2.0)).max(32.0);
-            stroke_chamfer_with_fill(
+            stroke_shape_with_fill(
                 cr,
+                state.shape_style,
                 opt_x,
                 PADDING_Y,
                 w,
@@ -714,8 +819,9 @@ fn draw_bar(
     let (mon_w, mon_h) = pango_text_size(cr, font, &mon_label);
     let mon_total = mon_w as f64 + 2.0 * PILL_HPADDING;
     right_x -= mon_total + TAG_SPACING;
-    stroke_chamfer_with_fill(
+    stroke_shape_with_fill(
         cr,
+        state.shape_style,
         right_x,
         PADDING_Y,
         mon_total,
@@ -741,8 +847,9 @@ fn draw_bar(
     let (time_w, time_h) = pango_text_size(cr, font, &time_label);
     let time_total = time_w as f64 + 2.0 * PILL_HPADDING;
     right_x -= time_total + TAG_SPACING;
-    stroke_chamfer_with_fill(
+    stroke_shape_with_fill(
         cr,
+        state.shape_style,
         right_x,
         PADDING_Y,
         time_total,
@@ -778,8 +885,9 @@ fn draw_bar(
     } else {
         colors.teal
     };
-    stroke_chamfer_with_fill(
+    stroke_shape_with_fill(
         cr,
+        state.shape_style,
         right_x,
         PADDING_Y,
         ss_total,
