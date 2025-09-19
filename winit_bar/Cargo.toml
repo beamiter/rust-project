@@ -1,0 +1,17 @@
+[package]
+name = "winit_bar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+libc.workspace = true
+xbar_core = { workspace = true }
+shared_structures = { workspace = true }
+x11rb = "0.13.2"
+softbuffer = "0.4.6"
+pango = "0.21.2"
+cairo-rs = "0.21.2"
+log.workspace = true
+winit = "0.30.12"
+anyhow.workspace = true
+bytemuck = "1.23.2"

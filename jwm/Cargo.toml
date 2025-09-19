@@ -14,16 +14,9 @@ gtk_bar = []
 relm_bar = []
 x11rb_bar = []
 xcb_bar = []
+winit_bar = []
 nixgl = []
 cairo = []
-
-[[bin]]
-name = "jwm_test"
-path = "tests/integration_test.rs"
-
-[[bin]]
-name = "slotmap_test"
-path = "tests/slot_map_test.rs"
 
 [[bin]]
 name = "jwm-tool"

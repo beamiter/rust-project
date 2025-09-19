@@ -40,6 +40,7 @@ status_bar_config!(
     "tauri_bar" => "tauri_bar",
     "x11rb_bar" => "x11rb_bar",
     "xcb_bar" => "xcb_bar",
+    "winit_bar" => "winit_bar",
 );
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
