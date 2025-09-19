@@ -7,7 +7,7 @@ edition = "2024"
 anyhow = "1.0.99"
 chrono = "0.4.42"
 
-xbar_core = { path = "../xbar_core" }
+xbar_core = { workspace = true }
 shared_structures = { workspace = true }
 log = "0.4.28"
 thiserror = "2.0.16"

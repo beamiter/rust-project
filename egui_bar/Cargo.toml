@@ -6,18 +6,12 @@ authors = ["Your Name <your.email@example.com>"]
 description = "A modern system status bar built with egui"
 
 [dependencies]
-
-# 系统信息
-sysinfo = "0.30"
-alsa = "0.7"
-
 # 序列化
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 
 # 日志
 log = "0.4"
-flexi_logger = "0.27"
 anyhow = "1.0"
 
 # 实用工具
@@ -30,9 +24,9 @@ shared_structures = { workspace = true }
 # shared_structures = { path = "../shared_structures", features = ["use-eventfd"] }
 # shared_structures = { path = "../shared_structures", features = ["use-semaphore"] }
 # shared_structures = { path = "../shared_structures", features = ["use-futex"] }
+xbar_core = { workspace = true }
 thiserror = "2.0.12"
 tempfile = "3.20.0"
-battery = "0.7.8"
 image = "0.25.6"
 once = "0.3.4"
 tokio = { version = "1.47.1", features = ["full"] }

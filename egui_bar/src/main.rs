@@ -1,11 +1,10 @@
 //! egui_bar - A modern system status bar application
 
-use chrono::Local;
-use egui_bar::{AppError, EguiBarApp};
-use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
+mod egui_bar_app;
+use egui_bar_app::EguiBarApp;
 use log::{error, info};
 use std::env;
-use std::path::Path;
+use xbar_core::initialize_logging;
 
 /// Application entry point
 #[tokio::main]
@@ -15,7 +14,7 @@ async fn main() -> eframe::Result<()> {
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
     // Initialize logging
-    if let Err(e) = initialize_logging(&shared_path) {
+    if let Err(e) = initialize_logging("egui_bar", &shared_path) {
         eprintln!("Failed to initialize logging: {}", e);
         std::process::exit(1);
     }
@@ -49,42 +48,4 @@ async fn main() -> eframe::Result<()> {
             }
         }),
     )
-}
-
-/// Initialize logging system
-fn initialize_logging(shared_path: &str) -> Result<(), AppError> {
-    let now = Local::now();
-    let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
-
-    let file_name = if shared_path.is_empty() {
-        "egui_bar".to_string()
-    } else {
-        Path::new(shared_path)
-            .file_name()
-            .and_then(|name| name.to_str())
-            .map(|name| format!("egui_bar_{}", name))
-            .unwrap_or_else(|| "egui_bar".to_string())
-    };
-
-    let log_filename = format!("{}_{}", file_name, timestamp);
-
-    Logger::try_with_str("info")
-        .map_err(|e| AppError::config(format!("Failed to create logger: {}", e)))?
-        .format(flexi_logger::colored_opt_format)
-        .log_to_file(
-            FileSpec::default()
-                .directory("/var/tmp/jwm")
-                .basename(log_filename)
-                .suffix("log"),
-        )
-        .duplicate_to_stdout(Duplicate::Debug)
-        .rotate(
-            Criterion::Size(10_000_000), // 10MB
-            Naming::Numbers,
-            Cleanup::KeepLogFiles(5),
-        )
-        .start()
-        .map_err(|e| AppError::config(format!("Failed to start logger: {}", e)))?;
-
-    Ok(())
 }

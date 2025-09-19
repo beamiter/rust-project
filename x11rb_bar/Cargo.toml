@@ -9,7 +9,7 @@ chrono = "0.4.42"
 sysinfo = { version = "0.37.0", features = ["multithread"] }
 x11rb = { version = "0.13.2", features = ["all-extensions", "allow-unsafe-code", "dl-libxcb", "extra-traits"] }
 
-xbar_core = { path = "../xbar_core" }
+xbar_core = { workspace = true }
 shared_structures = { workspace = true }
 log = "0.4.28"
 thiserror = "2.0.16"

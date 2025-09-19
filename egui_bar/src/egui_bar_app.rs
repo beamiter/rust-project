@@ -13,9 +13,9 @@ use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 // Re-exports for convenience
-use crate::audio_manager::{AudioDevice, AudioManager};
-use crate::metrics::PerformanceMetrics;
-use crate::system_monitor::SystemMonitor;
+use anyhow::Result;
+use xbar_core::audio_manager::{AudioDevice, AudioManager};
+use xbar_core::system_monitor::SystemMonitor;
 
 // ================================
 // Constants Section
@@ -28,6 +28,7 @@ pub mod ui {
 }
 
 /// Color scheme
+#[allow(dead_code)]
 pub mod colors {
     use super::Color32;
 
@@ -86,6 +87,7 @@ pub mod colors {
 }
 
 /// Icons and symbols
+#[allow(dead_code)]
 pub mod icons {
     // Workspace tag icons
     pub const TAG_ICONS: [&str; 9] = ["🏠", "💻", "🌐", "🎵", "📁", "🎮", "📧", "🔧", "📊"];
@@ -112,14 +114,6 @@ pub const FONT_FAMILIES: &[&str] = &[
     "Noto Sans CJK TC",
     "SauceCodeProNerdFont",
 ];
-
-/// Application metadata
-pub mod app {
-    pub const DEFAULT_LOG_LEVEL: &str = "info";
-    pub const LOG_FILE_MAX_SIZE: u64 = 10_000_000; // 10MB
-    pub const LOG_FILE_MAX_COUNT: usize = 5;
-    pub const HEARTBEAT_TIMEOUT_SECS: u64 = 5;
-}
 
 // Helps control CPU plot per-core point drawing on many-core systems
 const PER_CORE_POINTS_THRESHOLD: usize = 32;
@@ -187,8 +181,6 @@ pub struct UiState {
     pub show_seconds: bool,
     /// Debug window visibility
     pub show_debug_window: bool,
-    /// Settings window visibility
-    pub show_settings_window: bool,
     /// Last UI update time
     pub last_ui_update: Instant,
     /// Button height for calculations
@@ -203,7 +195,6 @@ impl UiState {
             need_resize: false,
             show_seconds: false,
             show_debug_window: false,
-            show_settings_window: false,
             last_ui_update: Instant::now(),
             button_height: 0.0,
         }
@@ -234,14 +225,10 @@ pub struct AppState {
     pub audio_manager: AudioManager,
     /// System monitoring
     pub system_monitor: SystemMonitor,
-    /// Performance metrics
-    pub performance_metrics: PerformanceMetrics,
     /// UI state
     pub ui_state: UiState,
     /// Current message from shared memory
     pub current_message: Option<SharedMessage>,
-    /// Application start time
-    pub start_time: Instant,
     /// Layout selector state
     pub layout_selector_open: bool,
     /// Available layouts
@@ -272,10 +259,8 @@ impl AppState {
         Self {
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(10),
-            performance_metrics: PerformanceMetrics::new(),
             ui_state: UiState::new(),
             current_message: None,
-            start_time: Instant::now(),
             layout_selector_open: false,
             available_layouts,
         }
@@ -284,9 +269,6 @@ impl AppState {
     /// Update all subsystems
     pub fn update(&mut self) {
         let now = Instant::now();
-
-        // Update performance metrics
-        self.performance_metrics.start_frame();
 
         // Update system monitor
         self.system_monitor.update_if_needed();
@@ -301,28 +283,6 @@ impl AppState {
     /// Get master audio device
     pub fn get_master_audio_device(&self) -> Option<&AudioDevice> {
         self.audio_manager.get_master_device()
-    }
-
-    /// Set master volume
-    pub fn set_master_volume(&mut self, volume: i32) -> crate::Result<()> {
-        if let Some(device) = self.audio_manager.get_master_device() {
-            let device_name = device.name.clone();
-            let is_muted = device.is_muted;
-            self.audio_manager
-                .set_volume(&device_name, volume, is_muted)
-        } else {
-            Err(crate::AppError::audio("No master device available"))
-        }
-    }
-
-    /// Toggle master mute
-    pub fn toggle_master_mute(&mut self) -> crate::Result<bool> {
-        if let Some(device) = self.audio_manager.get_master_device() {
-            let device_name = device.name.clone();
-            self.audio_manager.toggle_mute(&device_name)
-        } else {
-            Err(crate::AppError::audio("No master device available"))
-        }
     }
 
     /// Get CPU data for chart
@@ -340,16 +300,6 @@ impl AppState {
         } else {
             (0.0, 0.0)
         }
-    }
-
-    /// Check if system resources are under stress
-    pub fn is_system_stressed(&self) -> bool {
-        self.system_monitor.is_cpu_usage_high(0.8) || self.system_monitor.is_memory_usage_high(0.8)
-    }
-
-    /// Get application uptime
-    pub fn get_uptime(&self) -> std::time::Duration {
-        Instant::now().duration_since(self.start_time)
     }
 }
 
@@ -391,7 +341,7 @@ pub struct EguiBarApp {
 
 impl EguiBarApp {
     /// Create new application instance
-    pub fn new(cc: &eframe::CreationContext<'_>, shared_path: String) -> crate::Result<Self> {
+    pub fn new(cc: &eframe::CreationContext<'_>, shared_path: String) -> Result<Self> {
         cc.egui_ctx.set_theme(egui::Theme::Light);
         let state = AppState::new();
         let shared_state = Arc::new(Mutex::new(SharedAppState::new()));
@@ -409,11 +359,7 @@ impl EguiBarApp {
             SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(Arc::new);
 
         // Start background tasks (std::thread, no tokio)
-        Self::start_background_tasks(
-            &shared_state,
-            &cc.egui_ctx,
-            shared_buffer_rc.clone(),
-        );
+        Self::start_background_tasks(&shared_state, &cc.egui_ctx, shared_buffer_rc.clone());
 
         Ok(Self {
             state,
@@ -513,7 +459,7 @@ impl EguiBarApp {
     }
 
     /// Setup custom fonts
-    fn setup_custom_fonts(ctx: &egui::Context) -> crate::Result<()> {
+    fn setup_custom_fonts(ctx: &egui::Context) -> Result<()> {
         use font_kit::family_name::FamilyName;
         use font_kit::properties::Properties;
         use font_kit::source::SystemSource;
@@ -1271,15 +1217,14 @@ impl EguiBarApp {
 
     /// Draw volume control content
     fn draw_volume_content(&mut self, ui: &mut egui::Ui) {
-        let devices: Vec<crate::audio_manager::AudioDevice> =
-            self.state.audio_manager.get_devices().to_vec();
+        let devices: Vec<AudioDevice> = self.state.audio_manager.get_devices().to_vec();
 
         if devices.is_empty() {
             ui.add(Label::new("❌ No controllable audio device found"));
             return;
         }
 
-        let controllable_devices: Vec<(usize, crate::audio_manager::AudioDevice)> = devices
+        let controllable_devices: Vec<(usize, AudioDevice)> = devices
             .into_iter()
             .enumerate()
             .filter(|(_, d)| d.has_volume_control || d.has_switch_control)
@@ -1304,7 +1249,7 @@ impl EguiBarApp {
     fn draw_device_selector(
         &mut self,
         ui: &mut egui::Ui,
-        controllable_devices: &[(usize, crate::audio_manager::AudioDevice)],
+        controllable_devices: &[(usize, AudioDevice)],
     ) {
         ui.horizontal(|ui| {
             ui.add(Label::new("🎵 Device:"));
@@ -1336,11 +1281,7 @@ impl EguiBarApp {
     }
 
     /// Draw device controls
-    fn draw_device_controls(
-        &mut self,
-        ui: &mut egui::Ui,
-        device: &crate::audio_manager::AudioDevice,
-    ) {
+    fn draw_device_controls(&mut self, ui: &mut egui::Ui, device: &AudioDevice) {
         let device_name = device.name.clone();
         let mut current_volume = device.volume;
         let is_muted = device.is_muted;
@@ -1449,34 +1390,6 @@ impl EguiBarApp {
             .default_height(300.0)
             .open(&mut window_open)
             .show(ctx, |ui| {
-                ui.label("📊 Performance Metrics");
-                ui.horizontal(|ui| {
-                    ui.label("FPS:");
-                    ui.label(
-                        egui::RichText::new(format!(
-                            "{:.1}",
-                            self.state.performance_metrics.average_fps()
-                        ))
-                        .color(colors::GREEN),
-                    );
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Frame Time:");
-                    ui.label(format!(
-                        "{:.2} ms",
-                        self.state.performance_metrics.average_frame_time_ms()
-                    ));
-                });
-                ui.horizontal(|ui| {
-                    ui.label("Render Time:");
-                    ui.label(format!(
-                        "{:.2} ms",
-                        self.state.performance_metrics.average_render_time_ms()
-                    ));
-                });
-
-                ui.separator();
-
                 ui.label("💻 System");
                 if let Some(snapshot) = self.state.system_monitor.get_snapshot() {
                     ui.horizontal(|ui| {

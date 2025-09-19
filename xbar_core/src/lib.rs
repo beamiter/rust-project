@@ -15,8 +15,8 @@ use std::time::Instant;
 
 use std::f64::consts::{FRAC_PI_2, PI};
 
-mod audio_manager;
-mod system_monitor;
+pub mod audio_manager;
+pub mod system_monitor;
 pub use audio_manager::AudioManager;
 pub use system_monitor::SystemMonitor;
 
