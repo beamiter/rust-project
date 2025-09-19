@@ -12,7 +12,7 @@ members = [
     "jwm",
     "shared_structures",
     "x11rb_bar",
-    "xcb_bar",
+    "xcb_bar", "xbar_core",
 ]
 resolver = "2" # 推荐使用最新的依赖解析器
 
@@ -21,6 +21,8 @@ resolver = "2" # 推荐使用最新的依赖解析器
 shared_structures = { path = "shared_structures", features = ["use-futex"] }
 # shared_structures = { path = "shared_structures", features = ["use-eventfd"] }
 # shared_structures = { path = "shared_structures", features = ["use-semaphore"] }
+xbar_core = { path = "xbar_core" }
+
 anyhow = "1.0.99"
 chrono = "0.4.42"
 sysinfo = { version = "0.37.0", features = ["multithread"] }
@@ -32,11 +34,11 @@ thiserror = "2.0.16"
 toml = "0.9.6"
 
 [profile.release]
-opt-level = 3       # 优化级别 (0-3, s, z)
-lto = "fat"         # 链接时优化
-codegen-units = 1   # 减少并行编译单元以获得更好的优化
-strip = true        # 剥离二进制文件中的调试符号
-panic = "abort"     # 发布模式下遇到panic直接中止
+opt-level = 0       # 优化级别 (0-3, s, z)
+# lto = "fat"         # 链接时优化
+# codegen-units = 1   # 减少并行编译单元以获得更好的优化
+# strip = true        # 剥离二进制文件中的调试符号
+# panic = "abort"     # 发布模式下遇到panic直接中止
 
 [profile.dev]
 opt-level = 0       # 开发模式不优化，加快编译速度

@@ -1,10 +1,9 @@
 // use bar::StatusBar;
-use chrono::prelude::*;
 use coredump::register_panic_handler;
-use flexi_logger::{Cleanup, Criterion, Duplicate, FileSpec, Logger, Naming};
-use jwm::Jwm;
+use jwm::{jwm::SHARED_PATH, Jwm};
 use log::{error, info, warn};
 use std::{env, process::Command, sync::atomic::Ordering};
+use xbar_core::initialize_logging;
 
 pub fn setup_locale() {
     // 获取当前locale
@@ -37,29 +36,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     jwm::miscellaneous::init_auto_command();
     jwm::miscellaneous::init_auto_start();
 
-    let now = Local::now();
-    let timestamp = now.format("%Y-%m-%d_%H_%M_%S").to_string();
-    let log_filename = format!("jwm_{}", timestamp);
-    Logger::try_with_str("info")
-        .unwrap()
-        .format(flexi_logger::colored_opt_format)
-        .log_to_file(
-            FileSpec::default()
-                .directory("/var/tmp/jwm")
-                .basename(format!("{log_filename}"))
-                .suffix("log"),
-        )
-        .duplicate_to_stdout(Duplicate::Info)
-        // .log_to_stdout()
-        // .buffer_capacity(1024)
-        // .use_background_worker(true)
-        .rotate(
-            Criterion::Size(10_000_000),
-            Naming::Numbers,
-            Cleanup::KeepLogFiles(5),
-        )
-        .start()
-        .unwrap();
+    initialize_logging("jwm", SHARED_PATH)?;
 
     info!("[main] main begin");
 
