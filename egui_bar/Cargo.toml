@@ -8,7 +8,6 @@ description = "A modern system status bar built with egui"
 [dependencies]
 # 序列化
 serde = { workspace = true }
-toml = { workspace = true }
 
 # 日志
 log = { workspace = true }

@@ -3,6 +3,8 @@ name = "jterm"
 version = "0.1.0"
 edition = "2021"
 
+[workspace]
+
 [dependencies]
 libc = "0.2.153"
 nix = {version = "0.28.0", features = ["term", "ioctl", "fs"]}

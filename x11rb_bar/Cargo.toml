@@ -13,7 +13,6 @@ xbar_core = { workspace = true }
 shared_structures = { workspace = true }
 libc = { workspace = true }
 log = { workspace = true }
-toml = { workspace = true }
 
 cairo-rs = { version = "0.21.2", features = ["xcb"] }
 pango = "0.21.2"
