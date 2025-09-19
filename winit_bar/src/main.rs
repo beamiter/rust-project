@@ -174,11 +174,17 @@ fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>
                         if code == libc::EINTR {
                             continue;
                         }
+                        if code == libc::EAGAIN {
+                            // 非阻塞且当前无事件：正常，避免 warn 刷屏
+                            thread::sleep(Duration::from_millis(5));
+                            continue;
+                        }
                     }
                     warn!("[shared-thread] eventfd read error: {}", err);
                     thread::sleep(Duration::from_millis(50));
                 } else {
-                    break;
+                    // 未读满 8 字节，罕见，稍作等待
+                    thread::sleep(Duration::from_millis(5));
                 }
             }
         });
@@ -248,7 +254,7 @@ impl App {
 
     fn redraw(&mut self) -> Result<()> {
         let window = match &self.window {
-            Some(w) => w,
+            Some(w) => w, // &Window
             None => return Ok(()),
         };
 
@@ -274,7 +280,7 @@ impl App {
         back.cr.paint()?;
         back.cr.restore()?;
 
-        // 调用你已有的绘制逻辑
+        // 绘制 bar
         let w_u16 = width_px.min(u16::MAX as u32) as u16;
         let h_u16 = height_px.min(u16::MAX as u32) as u16;
         draw_bar(
@@ -288,8 +294,10 @@ impl App {
         )?;
 
         back.image.flush();
+        let stride = back.image.stride() as usize;
+        let data = back.image.data()?; // &[u8]（小端 BGRA，预乘 alpha）
 
-        // 每次重绘时临时创建 softbuffer 上下文与表面，避免泛型/生命周期问题
+        // 每次重绘时临时创建 softbuffer 上下文与表面（按引用，不移动 window）
         let context = softbuffer::Context::new(window)
             .map_err(|e| anyhow::anyhow!("softbuffer::Context::new: {}", e))?;
         let mut surface = softbuffer::Surface::new(&context, window)
@@ -306,25 +314,29 @@ impl App {
             .resize(w_nz, h_nz)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        // 拷贝像素并呈现
+        // 拷贝像素并呈现：按小端原样拷贝（避免通道错位）
         {
-            let stride = back.image.stride() as usize;
-            let data = back.image.data()?;
+            let mut buf = surface.buffer_mut().map_err(|e| anyhow::anyhow!("{}", e))?;
             let w = width_px as usize;
             let h = height_px as usize;
-
-            let mut sbuf = surface.buffer_mut().map_err(|e| anyhow::anyhow!("{}", e))?;
             for y in 0..h {
-                let src_row_bytes = &data[y * stride..y * stride + w * 4];
-                let src_row_u32: &[u32] = bytemuck::cast_slice(src_row_bytes); // 小端下将 BGRA bytes 视为 u32
-                let dst_row = &mut sbuf[y * w..(y + 1) * w];
-                dst_row.copy_from_slice(src_row_u32);
+                let src_row = &data[y * stride..y * stride + w * 4];
+                let dst_row = &mut buf[y * w..(y + 1) * w];
+
+                for x in 0..w {
+                    let i = x * 4;
+                    dst_row[x] = u32::from_le_bytes([
+                        src_row[i + 0], // B
+                        src_row[i + 1], // G
+                        src_row[i + 2], // R
+                        src_row[i + 3], // A
+                    ]);
+                }
             }
-            sbuf.present().map_err(|e| anyhow::anyhow!("{}", e))?;
+            buf.present().map_err(|e| anyhow::anyhow!("{}", e))?;
         }
 
-        // 请求系统（有的后端需要 RedrawRequested，但这里已经 present 了）
-        window.request_redraw();
+        // 不再主动 request_redraw；由 Tick/SharedUpdated 驱动
         Ok(())
     }
 
@@ -376,7 +388,7 @@ impl ApplicationHandler<UserEvent> for App {
                 .with_decorations(false)
                 .with_resizable(false)
                 .with_visible(true)
-                .with_transparent(true);
+                .with_transparent(true); // 关键：启用透明视觉
 
             let window = event_loop
                 .create_window(attrs)
@@ -530,8 +542,7 @@ impl ApplicationHandler<UserEvent> for App {
     }
 
     fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // 类似旧 API 的 MainEventsCleared；通常若需要周期性刷新可在此 request_redraw
-        // 我们的逻辑在收到 Tick/SharedUpdated 时主动重绘，这里无需操作
+        // 周期性刷新由 Tick/SharedUpdated 驱动，这里无需操作
     }
 }
 
