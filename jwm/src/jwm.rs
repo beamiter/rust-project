@@ -40,6 +40,9 @@ use shared_structures::CommandType;
 use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 
+use bincode::config::standard;
+use bincode::{Decode, Encode};
+
 // 新增导入
 use std::os::unix::io::AsRawFd;
 use tokio::io::unix::AsyncFd;
@@ -64,7 +67,7 @@ lazy_static::lazy_static! {
     pub static ref MOUSEMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Decode, Encode)]
 pub struct RestartSnapshot {
     pub version: u32,
     pub timestamp: u64,
@@ -80,7 +83,7 @@ pub struct RestartSnapshot {
     pub clients: HashMap<Window, WMClient>,
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Decode, Encode)]
 pub struct MonitorSnapshot {
     pub num: i32,
 
@@ -96,7 +99,7 @@ pub struct MonitorSnapshot {
     pub monitor_stack_order: Vec<Window>,   // 建议定义为“底->顶”（与 restack 对应）
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize, Decode, Encode)]
 pub struct PertagSnapshot {
     pub cur_tag: usize,
     pub prev_tag: usize,
@@ -124,7 +127,7 @@ struct DragContext {
     initial_mouse_y: u16,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Decode, Encode)]
 pub struct WMClient {
     // === 基本信息 ===
     pub name: String,
@@ -140,13 +143,14 @@ pub struct WMClient {
     pub state: ClientState,
 
     // === 链表和关联 ===
+    #[bincode(with_serde)]
     pub mon: Option<MonitorKey>,
 
     // === 重启时记录，方便映射到对应monitor ===
     pub monitor_num: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Decode, Encode)]
 pub struct ClientGeometry {
     // 当前位置和大小
     pub x: i32,
@@ -165,7 +169,7 @@ pub struct ClientGeometry {
     pub old_border_w: i32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Decode, Encode)]
 pub struct SizeHints {
     pub base_w: i32,
     pub base_h: i32,
@@ -180,7 +184,7 @@ pub struct SizeHints {
     pub hints_valid: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Decode, Encode)]
 pub struct ClientState {
     pub tags: u32,
     pub client_fact: f32,
@@ -1001,7 +1005,7 @@ impl Jwm {
         }
 
         // 写盘（原子）
-        let data = bincode::serialize(&snapshot)?;
+        let data = bincode::encode_to_vec(&snapshot, standard())?;
         Self::atomic_write(RESTART_SNAPSHOT_PATH, &data)?;
         Ok(())
     }
@@ -1012,7 +1016,9 @@ impl Jwm {
             return None;
         }
         let data = std::fs::read(path).ok()?;
-        bincode::deserialize(&data).ok()
+        bincode::decode_from_slice(&data, standard())
+            .ok()
+            .map(|(snapshot, _bytes_read)| snapshot)
     }
 
     pub fn apply_snapshot(&mut self, snap: &RestartSnapshot) {
@@ -3280,7 +3286,7 @@ impl Jwm {
                 self.update_bar_message_for_monitor(Some(mon_key));
 
                 // 2) 序列化用于差异比较
-                let payload = match bincode::serialize(&self.message) {
+                let payload = match bincode::encode_to_vec(&self.message, standard()) {
                     Ok(v) => v,
                     Err(_) => {
                         self.pending_bar_updates.clear();
