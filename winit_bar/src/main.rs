@@ -151,7 +151,7 @@ fn set_x11_dock_properties(
 fn spawn_tick_thread(proxy: EventLoopProxy<UserEvent>) {
     thread::spawn(move || {
         loop {
-            thread::sleep(Duration::from_millis(250));
+            thread::sleep(Duration::from_millis(1000));
             let _ = proxy.send_event(UserEvent::Tick);
         }
     });
