@@ -13,7 +13,7 @@ use x11rb::wrapper::ConnectionExt as _;
 
 use winit::{
     application::ApplicationHandler,
-    dpi::{LogicalPosition, LogicalSize, PhysicalSize},
+    dpi::{LogicalSize, PhysicalSize},
     event::WindowEvent,
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
     window::{Window, WindowAttributes, WindowId},
@@ -341,7 +341,6 @@ impl App {
         Ok(())
     }
 
-
     fn update_hover_and_redraw(&mut self, px: i32, py: i32) {
         let hovered = self.state.ss_rect.contains(px as i16, py as i16);
         if hovered != self.state.is_ss_hover {
@@ -395,7 +394,6 @@ impl ApplicationHandler<UserEvent> for App {
             let window = event_loop
                 .create_window(attrs)
                 .expect("create_window failed");
-            window.set_outer_position(LogicalPosition::new(0.0, 0.0));
 
             // X11: 设置 dock/strut（Wayland 下无效）
             #[cfg(target_os = "linux")]
