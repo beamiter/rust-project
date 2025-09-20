@@ -37,29 +37,28 @@ struct CairoBackBuffer {
     width: u32,
     height: u32,
     image: ImageSurface,
-    cr: Context,
 }
+
 impl CairoBackBuffer {
     fn new(width: u32, height: u32) -> Result<Self> {
         let image = ImageSurface::create(Format::ARgb32, width as i32, height as i32)?;
-        let cr = Context::new(&image)?;
         Ok(Self {
             width,
             height,
             image,
-            cr,
         })
     }
+
     fn ensure_size(&mut self, width: u32, height: u32) -> Result<()> {
         if self.width == width && self.height == height {
             return Ok(());
         }
         self.image = ImageSurface::create(Format::ARgb32, width as i32, height as i32)?;
-        self.cr = Context::new(&self.image)?;
         self.width = width;
         self.height = height;
         Ok(())
     }
+
     #[allow(dead_code)]
     fn size(&self) -> (u32, u32) {
         (self.width, self.height)
@@ -254,15 +253,13 @@ impl App {
 
     fn redraw(&mut self) -> Result<()> {
         let window = match &self.window {
-            Some(w) => w, // &Window
+            Some(w) => w,
             None => return Ok(()),
         };
 
-        // 计算物理尺寸
         let width_px = (self.logical_size.width * self.scale_factor).round() as u32;
         let height_px = (self.logical_size.height * self.scale_factor).round() as u32;
 
-        // back buffer
         if self.back.is_none() {
             self.back = Some(CairoBackBuffer::new(width_px, height_px)?);
         } else {
@@ -273,37 +270,43 @@ impl App {
         }
         let back = self.back.as_mut().unwrap();
 
-        // 清透明背景
-        back.cr.save()?;
-        back.cr.set_source_rgba(0.0, 0.0, 0.0, 0.0);
-        back.cr.set_operator(cairo::Operator::Source);
-        back.cr.paint()?;
-        back.cr.restore()?;
+        // 1) 临时创建 Context
+        {
+            let cr = Context::new(&back.image)?;
 
-        // 绘制 bar
-        let w_u16 = width_px.min(u16::MAX as u32) as u16;
-        let h_u16 = height_px.min(u16::MAX as u32) as u16;
-        draw_bar(
-            &back.cr,
-            w_u16,
-            h_u16,
-            &self.colors,
-            &mut self.state,
-            &self.font,
-            &self.cfg,
-        )?;
+            // 清屏（注意这里用了 Source + 不透明黑）
+            cr.save()?;
+            cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+            cr.set_operator(cairo::Operator::Source);
+            cr.paint()?;
+            cr.restore()?;
 
+            // 绘制 bar
+            let w_u16 = width_px.min(u16::MAX as u32) as u16;
+            let h_u16 = height_px.min(u16::MAX as u32) as u16;
+            draw_bar(
+                &cr,
+                w_u16,
+                h_u16,
+                &self.colors,
+                &mut self.state,
+                &self.font,
+                &self.cfg,
+            )?;
+            // 离开作用域，cr 被 drop，引用计数回到 1
+        }
+
+        // 2) 现在可以安全读取像素数据
         back.image.flush();
         let stride = back.image.stride() as usize;
-        let data = back.image.data()?; // &[u8]（小端 BGRA，预乘 alpha）
+        let data = back.image.data()?; // 不再 NonExclusive
 
-        // 每次重绘时临时创建 softbuffer 上下文与表面（按引用，不移动 window）
+        // 3) softbuffer 显示
         let context = softbuffer::Context::new(window)
             .map_err(|e| anyhow::anyhow!("softbuffer::Context::new: {}", e))?;
         let mut surface = softbuffer::Surface::new(&context, window)
             .map_err(|e| anyhow::anyhow!("softbuffer::Surface::new: {}", e))?;
 
-        // 调整大小（避免 0 尺寸）
         let (Some(w_nz), Some(h_nz)) = (
             std::num::NonZeroU32::new(width_px),
             std::num::NonZeroU32::new(height_px),
@@ -314,7 +317,6 @@ impl App {
             .resize(w_nz, h_nz)
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        // 拷贝像素并呈现：按小端原样拷贝（避免通道错位）
         {
             let mut buf = surface.buffer_mut().map_err(|e| anyhow::anyhow!("{}", e))?;
             let w = width_px as usize;
@@ -336,9 +338,9 @@ impl App {
             buf.present().map_err(|e| anyhow::anyhow!("{}", e))?;
         }
 
-        // 不再主动 request_redraw；由 Tick/SharedUpdated 驱动
         Ok(())
     }
+
 
     fn update_hover_and_redraw(&mut self, px: i32, py: i32) {
         let hovered = self.state.ss_rect.contains(px as i16, py as i16);
@@ -386,9 +388,9 @@ impl ApplicationHandler<UserEvent> for App {
                 .with_title("winit_bar")
                 .with_inner_size(self.logical_size)
                 .with_decorations(false)
-                .with_resizable(false)
+                .with_resizable(true)
                 .with_visible(true)
-                .with_transparent(true); // 关键：启用透明视觉
+                .with_transparent(false);
 
             let window = event_loop
                 .create_window(attrs)
@@ -400,7 +402,6 @@ impl ApplicationHandler<UserEvent> for App {
             {
                 #[allow(unused_imports)]
                 use winit::platform::x11::WindowExtX11;
-
                 let x11_win_id = u64::from(window.id());
                 if let Ok((conn, _screen)) = x11rb::connect(None) {
                     let _ = set_x11_dock_properties(&conn, x11_win_id as u32, width_px, height_px);
@@ -427,12 +428,14 @@ impl ApplicationHandler<UserEvent> for App {
                 let mut need_redraw = false;
                 if self.last_clock_update.elapsed() >= Duration::from_secs(1) {
                     self.last_clock_update = Instant::now();
+                    log::info!("redraw by clock update: {:?}", self.last_clock_update);
                     need_redraw = true;
                 }
                 if self.last_monitor_update.elapsed() >= Duration::from_secs(2) {
                     self.state.system_monitor.update_if_needed();
                     self.state.audio_manager.update_if_needed();
                     self.last_monitor_update = Instant::now();
+                    log::info!("redraw by system update: {:?}", self.last_monitor_update);
                     need_redraw = true;
                 }
                 if need_redraw {
@@ -459,6 +462,7 @@ impl ApplicationHandler<UserEvent> for App {
                         }
                     }
                     if let Some(msg) = last_msg {
+                        log::info!("redraw by msg: {:?}", msg);
                         self.state.update_from_shared(msg);
                         need_redraw = true;
                     }
