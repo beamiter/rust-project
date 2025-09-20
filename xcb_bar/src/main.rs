@@ -441,7 +441,7 @@ fn main() -> Result<()> {
 
     // 共享内存
     let shared_buffer = SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(Arc::new);
-    let shared_efd = spawn_shared_eventfd_notifier(shared_buffer.clone());
+    let shared_efd = spawn_shared_eventfd_notifier(shared_buffer.clone(), true);
 
     // X 连接
     let (conn, screen_num) = xcb::Connection::connect(None)?;

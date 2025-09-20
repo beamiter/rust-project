@@ -7,9 +7,7 @@ use std::env;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-
-use x11rb::protocol::xproto::ConnectionExt as _;
-use x11rb::wrapper::ConnectionExt as _;
+use winit::event_loop::OwnedDisplayHandle;
 
 use winit::{
     application::ApplicationHandler,
@@ -19,12 +17,17 @@ use winit::{
     window::{Window, WindowAttributes, WindowId},
 };
 
-use x11rb::{connection::Connection, protocol::xproto::PropMode, rust_connection::RustConnection};
-
 use xbar_core::{
     AppState, BarConfig, ShapeStyle, default_colors, draw_bar, initialize_logging,
     spawn_shared_eventfd_notifier,
 };
+
+use std::num::NonZeroU32;
+use std::rc::Rc;
+
+// 简化泛型类型书写
+type SbContext = softbuffer::Context<OwnedDisplayHandle>;
+type SbSurface = softbuffer::Surface<OwnedDisplayHandle, Rc<Window>>;
 
 #[derive(Debug, Clone, Copy)]
 enum UserEvent {
@@ -65,89 +68,6 @@ impl CairoBackBuffer {
     }
 }
 
-// X11: 设置 dock/strut（EWMH），仅在 X11 下有效
-fn set_x11_dock_properties(
-    conn: &RustConnection,
-    window_id: u32,
-    width_px: u32,
-    height_px: u32,
-) -> Result<()> {
-    let intern = |name: &str| -> Result<u32> {
-        let reply = conn.intern_atom(false, name.as_bytes())?.reply()?;
-        Ok(reply.atom)
-    };
-
-    let net_wm_window_type = intern("_NET_WM_WINDOW_TYPE")?;
-    let net_wm_window_type_dock = intern("_NET_WM_WINDOW_TYPE_DOCK")?;
-    let net_wm_state = intern("_NET_WM_STATE")?;
-    let net_wm_state_above = intern("_NET_WM_STATE_ABOVE")?;
-    let net_wm_desktop = intern("_NET_WM_DESKTOP")?;
-    let net_wm_strut_partial = intern("_NET_WM_STRUT_PARTIAL")?;
-    let net_wm_strut = intern("_NET_WM_STRUT")?;
-    let net_wm_name = intern("_NET_WM_NAME")?;
-    let utf8_string = intern("UTF8_STRING")?;
-    let atom = intern("ATOM")?;
-    let cardinal = intern("CARDINAL")?;
-
-    conn.change_property32(
-        PropMode::REPLACE,
-        window_id,
-        net_wm_window_type,
-        atom,
-        &[net_wm_window_type_dock],
-    )?;
-    conn.change_property32(
-        PropMode::REPLACE,
-        window_id,
-        net_wm_state,
-        atom,
-        &[net_wm_state_above],
-    )?;
-    conn.change_property32(
-        PropMode::REPLACE,
-        window_id,
-        net_wm_desktop,
-        cardinal,
-        &[0xFFFFFFFF],
-    )?;
-
-    let top = height_px;
-    let top_start_x = 0u32;
-    let top_end_x = width_px.saturating_sub(1);
-    let strut_partial = [
-        0,
-        0,
-        top,
-        0, // left, right, top, bottom
-        0,
-        0,
-        0,
-        0, // left_start_y, left_end_y, right_start_y, right_end_y
-        top_start_x,
-        top_end_x, // top_start_x, top_end_x
-        0,
-        0, // bottom_start_x, bottom_end_x
-    ];
-    conn.change_property32(
-        PropMode::REPLACE,
-        window_id,
-        net_wm_strut_partial,
-        cardinal,
-        &strut_partial,
-    )?;
-    let strut = [0u32, 0, top, 0];
-    conn.change_property32(PropMode::REPLACE, window_id, net_wm_strut, cardinal, &strut)?;
-    conn.change_property8(
-        PropMode::REPLACE,
-        window_id,
-        net_wm_name,
-        utf8_string,
-        b"winit_bar",
-    )?;
-    conn.flush()?;
-    Ok(())
-}
-
 fn spawn_tick_thread(proxy: EventLoopProxy<UserEvent>) {
     thread::spawn(move || {
         loop {
@@ -161,29 +81,39 @@ fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>
     if let Some(efd) = shared_efd {
         thread::spawn(move || {
             let mut buf8 = [0u8; 8];
+            let mut pfd = libc::pollfd {
+                fd: efd,
+                events: libc::POLLIN,
+                revents: 0,
+            };
             loop {
-                let r =
-                    unsafe { libc::read(efd, buf8.as_mut_ptr() as *mut libc::c_void, buf8.len()) };
-                if r == 8 {
-                    let _ = proxy.send_event(UserEvent::SharedUpdated);
-                    continue;
-                } else if r < 0 {
+                // 阻塞等待 eventfd 可读，-1 表示无限等待
+                let pr = unsafe { libc::poll(&mut pfd as *mut libc::pollfd, 1, -1) };
+                if pr < 0 {
                     let err = std::io::Error::last_os_error();
                     if let Some(code) = err.raw_os_error() {
                         if code == libc::EINTR {
                             continue;
                         }
-                        if code == libc::EAGAIN {
-                            // 非阻塞且当前无事件：正常，避免 warn 刷屏
-                            thread::sleep(Duration::from_millis(5));
-                            continue;
-                        }
                     }
-                    warn!("[shared-thread] eventfd read error: {}", err);
+                    warn!("[shared-thread] poll error: {}", err);
                     thread::sleep(Duration::from_millis(50));
-                } else {
-                    // 未读满 8 字节，罕见，稍作等待
-                    thread::sleep(Duration::from_millis(5));
+                    continue;
+                }
+                if (pfd.revents & libc::POLLIN) != 0 {
+                    let r = unsafe { libc::read(efd, buf8.as_mut_ptr() as *mut _, buf8.len()) };
+                    if r == 8 {
+                        let _ = proxy.send_event(UserEvent::SharedUpdated);
+                    } else if r < 0 {
+                        let err = std::io::Error::last_os_error();
+                        if let Some(code) = err.raw_os_error() {
+                            if code == libc::EINTR {
+                                continue;
+                            }
+                        }
+                        warn!("[shared-thread] eventfd read error: {}", err);
+                        thread::sleep(Duration::from_millis(50));
+                    }
                 }
             }
         });
@@ -192,7 +122,7 @@ fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>
 
 struct App {
     // 运行期资源
-    window: Option<Window>,
+    window: Option<Rc<Window>>,
     window_id: Option<WindowId>,
     back: Option<CairoBackBuffer>,
 
@@ -212,6 +142,9 @@ struct App {
 
     // 记录最近一次鼠标物理坐标（像素）
     last_cursor_pos_px: Option<(i32, i32)>,
+
+    soft_ctx: Option<SbContext>,
+    soft_surface: Option<SbSurface>,
 }
 
 impl App {
@@ -248,18 +181,20 @@ impl App {
             last_clock_update: Instant::now(),
             last_monitor_update: Instant::now(),
             last_cursor_pos_px: None,
+            soft_ctx: None,
+            soft_surface: None,
         }
     }
 
     fn redraw(&mut self) -> Result<()> {
-        let window = match &self.window {
-            Some(w) => w,
-            None => return Ok(()),
-        };
+        if self.window.is_none() {
+            return Ok(());
+        }
 
         let width_px = (self.logical_size.width * self.scale_factor).round() as u32;
         let height_px = (self.logical_size.height * self.scale_factor).round() as u32;
 
+        // back buffer 尺寸保证
         if self.back.is_none() {
             self.back = Some(CairoBackBuffer::new(width_px, height_px)?);
         } else {
@@ -270,18 +205,15 @@ impl App {
         }
         let back = self.back.as_mut().unwrap();
 
-        // 1) 临时创建 Context
+        // Cairo 绘制
         {
             let cr = Context::new(&back.image)?;
-
-            // 清屏（注意这里用了 Source + 不透明黑）
             cr.save()?;
             cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
             cr.set_operator(cairo::Operator::Source);
             cr.paint()?;
             cr.restore()?;
 
-            // 绘制 bar
             let w_u16 = width_px.min(u16::MAX as u32) as u16;
             let h_u16 = height_px.min(u16::MAX as u32) as u16;
             draw_bar(
@@ -293,50 +225,38 @@ impl App {
                 &self.font,
                 &self.cfg,
             )?;
-            // 离开作用域，cr 被 drop，引用计数回到 1
         }
 
-        // 2) 现在可以安全读取像素数据
+        // 像素提交
         back.image.flush();
         let stride = back.image.stride() as usize;
-        let data = back.image.data()?; // 不再 NonExclusive
+        let data = back.image.data()?; // &[u8]
+        let w = width_px as usize;
+        let h = height_px as usize;
 
-        // 3) softbuffer 显示
-        let context = softbuffer::Context::new(window)
-            .map_err(|e| anyhow::anyhow!("softbuffer::Context::new: {}", e))?;
-        let mut surface = softbuffer::Surface::new(&context, window)
-            .map_err(|e| anyhow::anyhow!("softbuffer::Surface::new: {}", e))?;
-
-        let (Some(w_nz), Some(h_nz)) = (
-            std::num::NonZeroU32::new(width_px),
-            std::num::NonZeroU32::new(height_px),
-        ) else {
-            return Ok(());
+        let surface = match self.soft_surface.as_mut() {
+            Some(s) => s,
+            None => return Ok(()),
         };
-        surface
-            .resize(w_nz, h_nz)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        {
-            let mut buf = surface.buffer_mut().map_err(|e| anyhow::anyhow!("{}", e))?;
-            let w = width_px as usize;
-            let h = height_px as usize;
-            for y in 0..h {
-                let src_row = &data[y * stride..y * stride + w * 4];
-                let dst_row = &mut buf[y * w..(y + 1) * w];
-
-                for x in 0..w {
-                    let i = x * 4;
-                    dst_row[x] = u32::from_le_bytes([
-                        src_row[i + 0], // B
-                        src_row[i + 1], // G
-                        src_row[i + 2], // R
-                        src_row[i + 3], // A
-                    ]);
-                }
-            }
-            buf.present().map_err(|e| anyhow::anyhow!("{}", e))?;
+        if let (Some(wnz), Some(hnz)) = (NonZeroU32::new(width_px), NonZeroU32::new(height_px)) {
+            let _ = surface.resize(wnz, hnz); // 再保险一次
         }
+
+        use bytemuck::cast_slice;
+        let mut buf = surface.buffer_mut().map_err(|e| anyhow::anyhow!("{}", e))?;
+        if stride == w * 4 {
+            let src_u32: &[u32] = cast_slice(&data[..h * stride]); // BGRA字节序小端与 u32 兼容
+            buf[..w * h].copy_from_slice(src_u32);
+        } else {
+            for y in 0..h {
+                let row = &data[y * stride..y * stride + w * 4];
+                let src_u32: &[u32] = cast_slice(row);
+                let dst_row = &mut buf[y * w..(y + 1) * w];
+                dst_row.copy_from_slice(src_u32);
+            }
+        }
+        buf.present().map_err(|e| anyhow::anyhow!("{}", e))?;
 
         Ok(())
     }
@@ -393,17 +313,22 @@ impl ApplicationHandler<UserEvent> for App {
 
             let window = event_loop
                 .create_window(attrs)
+                .map(Rc::new)
                 .expect("create_window failed");
 
-            // X11: 设置 dock/strut（Wayland 下无效）
-            #[cfg(target_os = "linux")]
-            {
-                #[allow(unused_imports)]
-                use winit::platform::x11::WindowExtX11;
-                let x11_win_id = u64::from(window.id());
-                if let Ok((conn, _screen)) = x11rb::connect(None) {
-                    let _ = set_x11_dock_properties(&conn, x11_win_id as u32, width_px, height_px);
-                }
+            // softbuffer Context 与 Surface（只创建一次）
+            let soft_ctx = SbContext::new(event_loop.owned_display_handle())
+                .map_err(|e| anyhow::anyhow!("softbuffer::Context::new: {}", e))
+                .expect("softbuffer context");
+
+            let mut soft_surface = SbSurface::new(&soft_ctx, window.clone())
+                .map_err(|e| anyhow::anyhow!("softbuffer::Surface::new: {}", e))
+                .expect("softbuffer surface");
+
+            let width_px = (self.logical_size.width * self.scale_factor).round() as u32;
+            let height_px = (self.logical_size.height * self.scale_factor).round() as u32;
+            if let (Some(w), Some(h)) = (NonZeroU32::new(width_px), NonZeroU32::new(height_px)) {
+                let _ = soft_surface.resize(w, h);
             }
 
             // Cairo back buffer
@@ -412,6 +337,8 @@ impl ApplicationHandler<UserEvent> for App {
             self.window_id = Some(window.id());
             self.window = Some(window);
             self.back = Some(back);
+            self.soft_ctx = Some(soft_ctx);
+            self.soft_surface = Some(soft_surface);
 
             // 首次绘制
             if let Err(e) = self.redraw() {
@@ -493,18 +420,32 @@ impl ApplicationHandler<UserEvent> for App {
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
-                // 物理尺寸 -> 逻辑尺寸
-                let scale = window.scale_factor();
-                self.scale_factor = scale;
-                self.logical_size = new_size.to_logical::<f64>(scale);
+                let window = self.window.as_ref().unwrap();
+                self.scale_factor = window.scale_factor();
+                self.logical_size = new_size.to_logical::<f64>(self.scale_factor);
+                if let Some(surface) = self.soft_surface.as_mut() {
+                    let w = (self.logical_size.width * self.scale_factor).round() as u32;
+                    let h = (self.logical_size.height * self.scale_factor).round() as u32;
+                    if let (Some(wnz), Some(hnz)) = (NonZeroU32::new(w), NonZeroU32::new(h)) {
+                        let _ = surface.resize(wnz, hnz);
+                    }
+                }
                 if let Err(e) = self.redraw() {
                     warn!("redraw error (Resized): {}", e);
                 }
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.scale_factor = scale_factor;
-                let logical = window.inner_size().to_logical::<f64>(self.scale_factor);
-                self.logical_size = logical;
+                let window = self.window.as_ref().unwrap();
+                self.logical_size = window.inner_size().to_logical::<f64>(self.scale_factor);
+
+                if let Some(surface) = self.soft_surface.as_mut() {
+                    let w = (self.logical_size.width * self.scale_factor).round() as u32;
+                    let h = (self.logical_size.height * self.scale_factor).round() as u32;
+                    if let (Some(wnz), Some(hnz)) = (NonZeroU32::new(w), NonZeroU32::new(h)) {
+                        let _ = surface.resize(wnz, hnz);
+                    }
+                }
                 if let Err(e) = self.redraw() {
                     warn!("redraw error (ScaleFactorChanged): {}", e);
                 }
@@ -561,7 +502,7 @@ fn main() -> Result<()> {
 
     // 共享内存与通知
     let shared_buffer = SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(Arc::new);
-    let shared_efd = spawn_shared_eventfd_notifier(shared_buffer.clone());
+    let shared_efd = spawn_shared_eventfd_notifier(shared_buffer.clone(), false);
 
     // 事件循环与代理（winit 0.30.12）
     let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event().build()?;

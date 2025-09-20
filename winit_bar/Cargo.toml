@@ -7,7 +7,6 @@ edition = "2024"
 libc.workspace = true
 xbar_core = { workspace = true }
 shared_structures = { workspace = true }
-x11rb = "0.13.2"
 softbuffer = "0.4.6"
 pango = "0.21.2"
 cairo-rs = "0.21.2"

@@ -137,7 +137,6 @@ impl Default for BarConfig {
 
 // ================= AppState 与业务逻辑 =================
 
-
 pub struct AppState {
     pub shared_buffer: Option<Arc<SharedRingBuffer>>,
     pub monitor_info: Option<MonitorInfo>,
@@ -834,13 +833,20 @@ pub const SHARED_TOKEN: u64 = 3;
 
 pub fn spawn_shared_eventfd_notifier(
     shared_buffer: Option<Arc<SharedRingBuffer>>,
+    non_block: bool,
 ) -> Option<libc::c_int> {
     let Some(buf) = shared_buffer.clone() else {
         return None;
     };
 
     // 创建 eventfd：非阻塞 + CLOEXEC
-    let efd = unsafe { libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC) };
+    let efd = unsafe {
+        if non_block {
+            libc::eventfd(0, libc::EFD_NONBLOCK | libc::EFD_CLOEXEC)
+        } else {
+            libc::eventfd(0, libc::EFD_CLOEXEC)
+        }
+    };
     if efd < 0 {
         error!("eventfd create failed: {}", std::io::Error::last_os_error());
         return None;
