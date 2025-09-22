@@ -665,14 +665,14 @@ impl eframe::App for SSHCommander {
                         ui.label("bag:");
                         let remaining_width =
                             ui.available_width() - ui.spacing().interact_size.x * 1.5; // Approx button width
-                        ui.add(
-                            egui::TextEdit::singleline(&mut self.bag)
-                                .desired_width(remaining_width.max(120.0)),
-                        );
                         if ui.button("Browse...").clicked() {
                             self.show_file_dialog = true;
                             self.trigger_load_directory_contents();
                         }
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.bag)
+                                .desired_width(remaining_width.max(120.0)),
+                        );
                     });
 
                     if self.show_file_dialog {

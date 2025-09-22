@@ -307,6 +307,11 @@ impl ApplicationHandler<UserEvent> for App {
             let surface_texture = SurfaceTexture::new(width_px, height_px, window);
             let pixels: Pixels<'static> = PixelsBuilder::new(width_px, height_px, surface_texture)
                 .texture_format(TextureFormat::Bgra8UnormSrgb)
+                .enable_vsync(true)
+                .request_adapter_options(pixels::wgpu::RequestAdapterOptions {
+                    power_preference: pixels::wgpu::PowerPreference::LowPower,
+                    ..Default::default()
+                })
                 .build()
                 .map_err(|e| anyhow::anyhow!("pixels::new: {}", e))
                 .expect("pixels create failed");

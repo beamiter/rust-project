@@ -4,6 +4,8 @@ version = "0.1.0"
 authors = ["beamiter <beamiter@163.com>"]
 edition = "2021"
 
+[workspace]
+
 [dependencies]
 
 log = "0.4"
