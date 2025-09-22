@@ -21,45 +21,13 @@ use xbar_core::{
 };
 
 // pixels 0.15 + winit 0.30
-use pixels::{Pixels, SurfaceTexture};
+use pixels::wgpu::TextureFormat;
+use pixels::{Pixels, PixelsBuilder, SurfaceTexture};
 
 #[derive(Debug, Clone, Copy)]
 enum UserEvent {
     Tick,
     SharedUpdated,
-}
-
-// Cairo 后备缓冲：ImageSurface + Context
-struct CairoBackBuffer {
-    width: u32,
-    height: u32,
-    image: ImageSurface,
-}
-
-impl CairoBackBuffer {
-    fn new(width: u32, height: u32) -> Result<Self> {
-        let image = ImageSurface::create(Format::ARgb32, width as i32, height as i32)?;
-        Ok(Self {
-            width,
-            height,
-            image,
-        })
-    }
-
-    fn ensure_size(&mut self, width: u32, height: u32) -> Result<()> {
-        if self.width == width && self.height == height {
-            return Ok(());
-        }
-        self.image = ImageSurface::create(Format::ARgb32, width as i32, height as i32)?;
-        self.width = width;
-        self.height = height;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn size(&self) -> (u32, u32) {
-        (self.width, self.height)
-    }
 }
 
 // Tick 线程：始终按秒对齐唤醒（低开销），用 state.show_seconds 决定是否重绘
@@ -123,9 +91,6 @@ struct App {
     // 仅保存窗口 ID
     window_id: Option<WindowId>,
 
-    // Cairo 回缓冲
-    back: Option<CairoBackBuffer>,
-
     // 配置与状态
     colors: xbar_core::Colors,
     cfg: BarConfig,
@@ -151,9 +116,6 @@ struct App {
 
     // 时间刷新：根据 state.show_seconds 决定 bucket（秒或分钟）
     last_time_bucket: u64,
-
-    // 临时 RGBA 缓冲，避免重复分配和借用冲突
-    scratch_rgba: Vec<u8>,
 }
 
 impl App {
@@ -179,7 +141,6 @@ impl App {
 
         Self {
             window_id: None,
-            back: None,
             colors,
             cfg,
             font,
@@ -196,114 +157,66 @@ impl App {
             pixels_w: 0,
             pixels_h: 0,
             last_time_bucket: 0,
-            scratch_rgba: Vec::new(),
         }
     }
 
-    // 将 Cairo(BGRA 预乘) 拷贝/转换到 out(RGBA 非预乘)
-    fn cairo_to_rgba(
-        image: &mut ImageSurface,
-        width_px: u32,
-        height_px: u32,
-        out: &mut [u8],
-    ) -> Result<()> {
-        image.flush();
-        let stride = image.stride() as usize;
-        let mapped = image.data()?; // MappedImageSurface<'_>
-        let data: &[u8] = mapped.as_ref();
-
-        let w = width_px as usize;
-        let h = height_px as usize;
-
-        if stride == w * 4 {
-            for (src_px, dst_px) in data.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
-                let b = src_px[0];
-                let g = src_px[1];
-                let r = src_px[2];
-                let a = src_px[3];
-                dst_px[0] = r;
-                dst_px[1] = g;
-                dst_px[2] = b;
-                dst_px[3] = a;
-            }
-        } else {
-            for y in 0..h {
-                let src_row = &data[y * stride..y * stride + w * 4];
-                let dst_row = &mut out[y * w * 4..(y + 1) * w * 4];
-                for (src_px, dst_px) in src_row.chunks_exact(4).zip(dst_row.chunks_exact_mut(4)) {
-                    let b = src_px[0];
-                    let g = src_px[1];
-                    let r = src_px[2];
-                    let a = src_px[3];
-                    dst_px[0] = r;
-                    dst_px[1] = g;
-                    dst_px[2] = b;
-                    dst_px[3] = a;
-                }
-            }
-        }
-        Ok(())
-    }
-
-    fn redraw(&mut self) -> Result<()> {
+    fn redraw(&mut self) -> anyhow::Result<()> {
         if self.window_id.is_none() {
             return Ok(());
         }
 
-        let width_px = (self.logical_size.width * self.scale_factor).round() as u32;
-        let height_px = (self.logical_size.height * self.scale_factor).round() as u32;
+        let width_px = (self.logical_size.width * self.scale_factor).round() as i32;
+        let height_px = (self.logical_size.height * self.scale_factor).round() as i32;
+        let stride = width_px
+            .checked_mul(4)
+            .ok_or_else(|| anyhow::anyhow!("stride overflow"))?;
 
-        // back buffer 尺寸保证
-        if self.back.is_none() {
-            self.back = Some(CairoBackBuffer::new(width_px, height_px)?);
-        } else {
-            self.back
-                .as_mut()
-                .unwrap()
-                .ensure_size(width_px, height_px)?;
-        }
-        let back = self.back.as_mut().unwrap();
-
-        // Cairo 绘制
-        {
-            let cr = Context::new(&back.image)?;
-            cr.save()?;
-            cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
-            cr.set_operator(cairo::Operator::Source);
-            cr.paint()?;
-            cr.restore()?;
-
-            let w_u16 = width_px.min(u16::MAX as u32) as u16;
-            let h_u16 = height_px.min(u16::MAX as u32) as u16;
-            draw_bar(
-                &cr,
-                w_u16,
-                h_u16,
-                &self.colors,
-                &mut self.state,
-                &self.font,
-                &self.cfg,
-            )?;
-        }
-
-        // 拷贝到 pixels 帧并呈现（不要在这里 resize）
         if let Some(pixels) = self.pixels.as_mut() {
-            // 预备临时 RGBA 缓冲
-            let need_len = (width_px as usize) * (height_px as usize) * 4;
-            if self.scratch_rgba.len() != need_len {
-                self.scratch_rgba.resize(need_len, 0);
-            }
-
-            // 先转到 scratch
-            App::cairo_to_rgba(&mut back.image, width_px, height_px, &mut self.scratch_rgba)?;
-
-            // 写入 pixels 帧
+            // 把对 frame 的借用限制在这个小作用域内，避免和后续 pixels.render() 冲突
             {
-                let frame = pixels.frame_mut();
-                frame.copy_from_slice(&self.scratch_rgba);
+                let frame: &mut [u8] = pixels.frame_mut();
+
+                // 用 frame 的裸指针创建临时 Cairo ImageSurface
+                // 安全性说明：
+                // - 数据指针在这段作用域内始终有效（源自 frame 的借用）
+                // - 我们不会跨线程访问 frame，也不会在 surface 存在时 resize pixels
+                // - surface 在该作用域结束时被 Drop，早于 pixels.render()
+                let surface = unsafe {
+                    ImageSurface::create_for_data_unsafe(
+                        frame.as_mut_ptr(),
+                        Format::ARgb32, // BGRA pre-multiplied on little-endian
+                        width_px,
+                        height_px,
+                        stride,
+                    )?
+                };
+
+                // Cairo 绘制
+                let cr = Context::new(&surface)?;
+                cr.save()?;
+                cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
+                cr.set_operator(cairo::Operator::Source);
+                cr.paint()?;
+                cr.restore()?;
+
+                let w_u16 = (width_px as u32).min(u16::MAX as u32) as u16;
+                let h_u16 = (height_px as u32).min(u16::MAX as u32) as u16;
+                draw_bar(
+                    &cr,
+                    w_u16,
+                    h_u16,
+                    &self.colors,
+                    &mut self.state,
+                    &self.font,
+                    &self.cfg,
+                )?;
+
+                // 确保 Cairo 的写入刷新回像素缓冲
+                surface.flush();
+                // surface、cr、frame 在此作用域末尾全部 drop
             }
 
-            // 提交到 GPU
+            // 现在不再持有 frame 的借用，可以安全调用 render
             pixels
                 .render()
                 .map_err(|e| anyhow::anyhow!("pixels render: {}", e))?;
@@ -392,15 +305,13 @@ impl ApplicationHandler<UserEvent> for App {
             let width_px = (self.logical_size.width * self.scale_factor).round() as u32;
             let height_px = (self.logical_size.height * self.scale_factor).round() as u32;
             let surface_texture = SurfaceTexture::new(width_px, height_px, window);
-            let pixels: Pixels<'static> = Pixels::new(width_px, height_px, surface_texture)
+            let pixels: Pixels<'static> = PixelsBuilder::new(width_px, height_px, surface_texture)
+                .texture_format(TextureFormat::Bgra8UnormSrgb)
+                .build()
                 .map_err(|e| anyhow::anyhow!("pixels::new: {}", e))
                 .expect("pixels create failed");
 
-            // Cairo back buffer
-            let back = CairoBackBuffer::new(width_px, height_px).expect("cairo back buffer failed");
-
             self.window_id = Some(win_id);
-            self.back = Some(back);
             self.pixels_w = width_px;
             self.pixels_h = height_px;
             self.pixels = Some(pixels);

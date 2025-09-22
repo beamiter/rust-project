@@ -366,6 +366,6 @@ impl SystemMonitor {
 
 impl Default for SystemMonitor {
     fn default() -> Self {
-        Self::new(60) // Default to 60 samples
+        Self::new(6) // Default to 6 samples
     }
 }
