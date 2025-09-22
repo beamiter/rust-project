@@ -36,6 +36,24 @@ impl Color {
             b: b as f64 / 255.0,
         }
     }
+
+    // 轻量化 hover 需要的辅助方法：提亮 / 变暗
+    pub fn lighten(&self, amount: f64) -> Self {
+        let a = amount.clamp(0.0, 1.0);
+        Self {
+            r: (self.r + (1.0 - self.r) * a).clamp(0.0, 1.0),
+            g: (self.g + (1.0 - self.g) * a).clamp(0.0, 1.0),
+            b: (self.b + (1.0 - self.b) * a).clamp(0.0, 1.0),
+        }
+    }
+    pub fn darken(&self, amount: f64) -> Self {
+        let a = amount.clamp(0.0, 1.0);
+        Self {
+            r: (self.r * (1.0 - a)).clamp(0.0, 1.0),
+            g: (self.g * (1.0 - a)).clamp(0.0, 1.0),
+            b: (self.b * (1.0 - a)).clamp(0.0, 1.0),
+        }
+    }
 }
 
 #[derive(Clone)]
@@ -155,6 +173,20 @@ pub struct AppState {
     pub is_ss_hover: bool,
     pub show_seconds: bool,
 
+    // Hover 状态
+    pub hovered_tag: Option<usize>,
+    pub is_layout_hover: bool,
+    pub hovered_layout_option: Option<usize>,
+    pub is_time_hover: bool,
+    pub is_mem_hover: bool,
+    pub is_cpu_hover: bool,
+    pub is_mon_hover: bool,
+
+    // hover 判定区域
+    pub mem_rect: Rect,
+    pub cpu_rect: Rect,
+    pub mon_rect: Rect,
+
     pub audio_manager: AudioManager,
     pub system_monitor: SystemMonitor,
 
@@ -181,6 +213,18 @@ impl AppState {
             time_rect: Rect::default(),
             is_ss_hover: false,
             show_seconds: false,
+
+            hovered_tag: None,
+            is_layout_hover: false,
+            hovered_layout_option: None,
+            is_time_hover: false,
+            is_mem_hover: false,
+            is_cpu_hover: false,
+            is_mon_hover: false,
+
+            mem_rect: Rect::default(),
+            cpu_rect: Rect::default(),
+            mon_rect: Rect::default(),
 
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(5),
@@ -281,6 +325,77 @@ impl AppState {
             need_redraw = true;
         }
         need_redraw
+    }
+
+    // 鼠标移动：更新 hover 状态。返回是否需要重绘
+    pub fn update_hover(&mut self, px: i16, py: i16) -> bool {
+        let mut changed = false;
+
+        let old_tag = self.hovered_tag;
+        let old_layout_hover = self.is_layout_hover;
+        let old_layout_idx = self.hovered_layout_option;
+        let old_ss = self.is_ss_hover;
+        let old_time = self.is_time_hover;
+        let old_mem = self.is_mem_hover;
+        let old_cpu = self.is_cpu_hover;
+        let old_mon = self.is_mon_hover;
+
+        self.hovered_tag = None;
+        for (i, rect) in self.tag_rects.iter().enumerate() {
+            if rect.contains(px, py) {
+                self.hovered_tag = Some(i);
+                break;
+            }
+        }
+        self.is_layout_hover = self.layout_button_rect.contains(px, py);
+
+        self.hovered_layout_option = None;
+        for (i, r) in self.layout_option_rects.iter().enumerate() {
+            if r.w > 0 && r.contains(px, py) {
+                self.hovered_layout_option = Some(i);
+                break;
+            }
+        }
+
+        self.is_ss_hover = self.ss_rect.contains(px, py);
+        self.is_time_hover = self.time_rect.contains(px, py);
+        self.is_mem_hover = self.mem_rect.contains(px, py);
+        self.is_cpu_hover = self.cpu_rect.contains(px, py);
+        self.is_mon_hover = self.mon_rect.contains(px, py);
+
+        changed |= old_tag != self.hovered_tag;
+        changed |= old_layout_hover != self.is_layout_hover;
+        changed |= old_layout_idx != self.hovered_layout_option;
+        changed |= old_ss != self.is_ss_hover;
+        changed |= old_time != self.is_time_hover;
+        changed |= old_mem != self.is_mem_hover;
+        changed |= old_cpu != self.is_cpu_hover;
+        changed |= old_mon != self.is_mon_hover;
+
+        changed
+    }
+
+    // 鼠标离开：清空 hover 状态。返回是否需要重绘
+    pub fn clear_hover(&mut self) -> bool {
+        let changed = self.hovered_tag.is_some()
+            || self.is_layout_hover
+            || self.hovered_layout_option.is_some()
+            || self.is_ss_hover
+            || self.is_time_hover
+            || self.is_mem_hover
+            || self.is_cpu_hover
+            || self.is_mon_hover;
+
+        self.hovered_tag = None;
+        self.is_layout_hover = false;
+        self.hovered_layout_option = None;
+        self.is_ss_hover = false;
+        self.is_time_hover = false;
+        self.is_mem_hover = false;
+        self.is_cpu_hover = false;
+        self.is_mon_hover = false;
+
+        changed
     }
 }
 
@@ -524,7 +639,16 @@ pub fn draw_bar(
         let (tw, _th) = pango_text_size(cr, font, label);
         let w = ((tw as f64) + 2.0 * cfg.pill_hpadding).max(40.0);
 
-        let (bg, bw, bc, txt_color, draw_bg) = tag_visuals(colors, state.monitor_info.as_ref(), i);
+        let (mut bg, mut bw, mut bc, txt_color, draw_bg) =
+            tag_visuals(colors, state.monitor_info.as_ref(), i);
+
+        // Hover 样式：提亮 + 边框加粗
+        if state.hovered_tag == Some(i) {
+            bg = bg.lighten(0.10);
+            bc = bc.lighten(0.12);
+            bw = (bw + 1.0).min(3.0);
+        }
+
         if draw_bg {
             stroke_shape_with_fill(
                 cr,
@@ -553,6 +677,15 @@ pub fn draw_bar(
     let layout_label = state.layout_symbol.as_str();
     let (lw, lh) = pango_text_size(cr, font, layout_label);
     let lw_total = lw as f64 + 2.0 * cfg.pill_hpadding;
+
+    let mut layout_fill = colors.green;
+    let mut layout_border = colors.green;
+    let mut layout_bw = 1.0;
+    if state.is_layout_hover {
+        layout_fill = layout_fill.lighten(0.08);
+        layout_border = layout_border.lighten(0.12);
+        layout_bw = 2.0;
+    }
     stroke_shape_with_fill(
         cr,
         state.shape_style,
@@ -561,9 +694,9 @@ pub fn draw_bar(
         lw_total,
         pill_h,
         cfg.pill_radius,
-        1.0,
-        colors.green,
-        Some(colors.green),
+        layout_bw,
+        layout_border,
+        Some(layout_fill),
     )?;
     let ty = cfg.padding_y + (pill_h - lh as f64) / 2.0 - 1.0;
     pango_draw_text_left(
@@ -593,6 +726,16 @@ pub fn draw_bar(
         for (i, (sym, _idx, base_color)) in layouts.iter().enumerate() {
             let (tw, _th) = pango_text_size(cr, font, sym);
             let w = ((tw as f64) + 2.0 * (cfg.pill_hpadding - 2.0)).max(32.0);
+
+            let is_hover = state.hovered_layout_option == Some(i);
+            let mut fill = *base_color;
+            let mut border = *base_color;
+            let mut bw = 1.0;
+            if is_hover {
+                fill = fill.lighten(0.08);
+                border = border.lighten(0.12);
+                bw = 2.0;
+            }
             stroke_shape_with_fill(
                 cr,
                 state.shape_style,
@@ -601,9 +744,9 @@ pub fn draw_bar(
                 w,
                 pill_h,
                 cfg.pill_radius,
-                1.0,
-                *base_color,
-                Some(*base_color),
+                bw,
+                border,
+                Some(fill),
             )?;
             pango_draw_text_centered(cr, font, colors.white, opt_x, cfg.padding_y, w, pill_h, sym);
             state.layout_option_rects[i] = Rect {
@@ -626,6 +769,14 @@ pub fn draw_bar(
     let (mon_w, mon_h) = pango_text_size(cr, font, &mon_label);
     let mon_total = mon_w as f64 + 2.0 * cfg.pill_hpadding;
     right_x -= mon_total + cfg.tag_spacing;
+    let mut mon_fill = colors.purple;
+    let mut mon_border = colors.purple;
+    let mut mon_bw = 1.0;
+    if state.is_mon_hover {
+        mon_fill = mon_fill.lighten(0.08);
+        mon_border = mon_border.lighten(0.12);
+        mon_bw = 2.0;
+    }
     stroke_shape_with_fill(
         cr,
         state.shape_style,
@@ -634,9 +785,9 @@ pub fn draw_bar(
         mon_total,
         pill_h,
         cfg.pill_radius,
-        1.0,
-        colors.purple,
-        Some(colors.purple),
+        mon_bw,
+        mon_border,
+        Some(mon_fill),
     )?;
     let ty_mon = cfg.padding_y + (pill_h - mon_h as f64) / 2.0 - 1.0;
     pango_draw_text_left(
@@ -647,6 +798,12 @@ pub fn draw_bar(
         ty_mon,
         &mon_label,
     );
+    state.mon_rect = Rect {
+        x: right_x as i16,
+        y: cfg.padding_y as i16,
+        w: mon_total as u16,
+        h: pill_h as u16,
+    };
 
     // 时间 pill
     let time_str = state.format_time();
@@ -654,6 +811,14 @@ pub fn draw_bar(
     let (time_w, time_h) = pango_text_size(cr, font, &time_label);
     let time_total = time_w as f64 + 2.0 * cfg.pill_hpadding;
     right_x -= time_total + cfg.tag_spacing;
+    let mut time_fill = colors.time;
+    let mut time_border = colors.time;
+    let mut time_bw = 1.0;
+    if state.is_time_hover {
+        time_fill = time_fill.lighten(0.08);
+        time_border = time_border.lighten(0.12);
+        time_bw = 2.0;
+    }
     stroke_shape_with_fill(
         cr,
         state.shape_style,
@@ -662,9 +827,9 @@ pub fn draw_bar(
         time_total,
         pill_h,
         cfg.pill_radius,
-        1.0,
-        colors.time,
-        Some(colors.time),
+        time_bw,
+        time_border,
+        Some(time_fill),
     )?;
     let ty_time = cfg.padding_y + (pill_h - time_h as f64) / 2.0 - 1.0;
     pango_draw_text_left(
@@ -682,16 +847,19 @@ pub fn draw_bar(
         h: pill_h as u16,
     };
 
-    // 截图 pill
+    // 截图 pill（hover：提亮 + 边框加粗）
     let ss_label = cfg.screenshot_label;
     let (ss_w, ss_h) = pango_text_size(cr, font, ss_label);
     let ss_total = ss_w as f64 + 2.0 * cfg.pill_hpadding;
     right_x -= ss_total + cfg.tag_spacing;
-    let ss_color = if state.is_ss_hover {
-        colors.orange
-    } else {
-        colors.teal
-    };
+    let mut ss_fill = colors.teal;
+    let mut ss_border = colors.teal;
+    let mut ss_bw = 1.0;
+    if state.is_ss_hover {
+        ss_fill = ss_fill.lighten(0.08);
+        ss_border = ss_border.lighten(0.12);
+        ss_bw = 2.0;
+    }
     stroke_shape_with_fill(
         cr,
         state.shape_style,
@@ -700,9 +868,9 @@ pub fn draw_bar(
         ss_total,
         pill_h,
         cfg.pill_radius,
-        1.0,
-        ss_color,
-        Some(ss_color),
+        ss_bw,
+        ss_border,
+        Some(ss_fill),
     )?;
     let ty_ss = cfg.padding_y + (pill_h - ss_h as f64) / 2.0 - 1.0;
     pango_draw_text_left(
@@ -740,8 +908,16 @@ pub fn draw_bar(
     let (mem_w, mem_h) = pango_text_size(cr, font, &mem_label);
     let mem_total = mem_w as f64 + 2.0 * cfg.pill_hpadding;
     right_x -= mem_total + cfg.tag_spacing;
-    let mem_bg = usage_bg_color(colors, mem_usage);
-    let mem_fg = usage_text_color(colors, mem_usage);
+    let base_mem_bg = usage_bg_color(colors, mem_usage);
+    let base_mem_fg = usage_text_color(colors, mem_usage);
+    let mut mem_bg = base_mem_bg;
+    let mut mem_border = base_mem_bg;
+    let mut mem_bw = 1.0;
+    if state.is_mem_hover {
+        mem_bg = mem_bg.lighten(0.08);
+        mem_border = mem_border.lighten(0.12);
+        mem_bw = 2.0;
+    }
     stroke_shape_with_fill(
         cr,
         state.shape_style,
@@ -750,26 +926,40 @@ pub fn draw_bar(
         mem_total,
         pill_h,
         cfg.pill_radius,
-        1.0,
-        mem_bg,
+        mem_bw,
+        mem_border,
         Some(mem_bg),
     )?;
     let ty_mem = cfg.padding_y + (pill_h - mem_h as f64) / 2.0 - 1.0;
     pango_draw_text_left(
         cr,
         font,
-        mem_fg,
+        base_mem_fg,
         right_x + cfg.pill_hpadding,
         ty_mem,
         &mem_label,
     );
+    state.mem_rect = Rect {
+        x: right_x as i16,
+        y: cfg.padding_y as i16,
+        w: mem_total as u16,
+        h: pill_h as u16,
+    };
 
     let cpu_label = format!("CPU {:.0}%", cpu_avg.clamp(0.0, 100.0));
     let (cpu_w, cpu_h) = pango_text_size(cr, font, &cpu_label);
     let cpu_total = cpu_w as f64 + 2.0 * cfg.pill_hpadding;
     right_x -= cpu_total + cfg.tag_spacing;
-    let cpu_bg = usage_bg_color(colors, cpu_avg);
-    let cpu_fg = usage_text_color(colors, cpu_avg);
+    let base_cpu_bg = usage_bg_color(colors, cpu_avg);
+    let base_cpu_fg = usage_text_color(colors, cpu_avg);
+    let mut cpu_bg = base_cpu_bg;
+    let mut cpu_border = base_cpu_bg;
+    let mut cpu_bw = 1.0;
+    if state.is_cpu_hover {
+        cpu_bg = cpu_bg.lighten(0.08);
+        cpu_border = cpu_border.lighten(0.12);
+        cpu_bw = 2.0;
+    }
     stroke_shape_with_fill(
         cr,
         state.shape_style,
@@ -778,19 +968,25 @@ pub fn draw_bar(
         cpu_total,
         pill_h,
         cfg.pill_radius,
-        1.0,
-        cpu_bg,
+        cpu_bw,
+        cpu_border,
         Some(cpu_bg),
     )?;
     let ty_cpu = cfg.padding_y + (pill_h - cpu_h as f64) / 2.0 - 1.0;
     pango_draw_text_left(
         cr,
         font,
-        cpu_fg,
+        base_cpu_fg,
         right_x + cfg.pill_hpadding,
         ty_cpu,
         &cpu_label,
     );
+    state.cpu_rect = Rect {
+        x: right_x as i16,
+        y: cfg.padding_y as i16,
+        w: cpu_total as u16,
+        h: pill_h as u16,
+    };
 
     Ok(())
 }

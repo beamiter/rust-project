@@ -41,6 +41,7 @@ status_bar_config!(
     "x11rb_bar" => "x11rb_bar",
     "xcb_bar" => "xcb_bar",
     "winit_softbuffer_bar" => "winit_softbuffer_bar",
+    "tao_softbuffer_bar" => "tao_softbuffer_bar",
     "winit_pixels_bar" => "winit_pixels_bar",
 );
 
