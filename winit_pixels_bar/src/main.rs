@@ -7,14 +7,12 @@ use std::env;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
-use winit::event_loop::OwnedDisplayHandle;
-
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalSize},
     event::WindowEvent,
     event_loop::{ActiveEventLoop, EventLoop, EventLoopProxy},
-    window::{Window, WindowAttributes, WindowId},
+    window::{WindowAttributes, WindowId},
 };
 
 use xbar_core::{
@@ -22,12 +20,8 @@ use xbar_core::{
     spawn_shared_eventfd_notifier,
 };
 
-use std::num::NonZeroU32;
-use std::rc::Rc;
-
-// 简化泛型类型书写
-type SbContext = softbuffer::Context<OwnedDisplayHandle>;
-type SbSurface = softbuffer::Surface<OwnedDisplayHandle, Rc<Window>>;
+// pixels 0.15 + winit 0.30
+use pixels::{Pixels, SurfaceTexture};
 
 #[derive(Debug, Clone, Copy)]
 enum UserEvent {
@@ -87,7 +81,6 @@ fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>
                 revents: 0,
             };
             loop {
-                // 阻塞等待 eventfd 可读，-1 表示无限等待
                 let pr = unsafe { libc::poll(&mut pfd as *mut libc::pollfd, 1, -1) };
                 if pr < 0 {
                     let err = std::io::Error::last_os_error();
@@ -121,9 +114,10 @@ fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>
 }
 
 struct App {
-    // 运行期资源
-    window: Option<Rc<Window>>,
+    // 仅保存窗口 ID
     window_id: Option<WindowId>,
+
+    // Cairo 回缓冲
     back: Option<CairoBackBuffer>,
 
     // 配置与状态
@@ -135,16 +129,20 @@ struct App {
     // DPI/尺寸
     scale_factor: f64,
     logical_size: LogicalSize<f64>,
+    last_physical_size: PhysicalSize<u32>,
 
     // 更新计时
     last_clock_update: Instant,
     last_monitor_update: Instant,
 
-    // 记录最近一次鼠标物理坐标（像素）
+    // 最近一次鼠标物理坐标（像素）
     last_cursor_pos_px: Option<(i32, i32)>,
 
-    soft_ctx: Option<SbContext>,
-    soft_surface: Option<SbSurface>,
+    // pixels（持有 Window 的所有权）
+    pixels: Option<Pixels<'static>>,
+
+    // 临时 RGBA 缓冲，避免重复分配和借用冲突
+    scratch_rgba: Vec<u8>,
 }
 
 impl App {
@@ -169,7 +167,6 @@ impl App {
         let state = AppState::new(shared_buffer);
 
         Self {
-            window: None,
             window_id: None,
             back: None,
             colors,
@@ -178,16 +175,65 @@ impl App {
             state,
             scale_factor: scale,
             logical_size,
+            last_physical_size: PhysicalSize::new(
+                logical_size.width.round() as u32,
+                logical_size.height.round() as u32,
+            ),
             last_clock_update: Instant::now(),
             last_monitor_update: Instant::now(),
             last_cursor_pos_px: None,
-            soft_ctx: None,
-            soft_surface: None,
+            pixels: None,
+            scratch_rgba: Vec::new(),
         }
     }
 
+    // 将 Cairo(BGRA 预乘) 拷贝/转换到 out(RGBA 非预乘)
+    fn cairo_to_rgba(
+        image: &mut ImageSurface,
+        width_px: u32,
+        height_px: u32,
+        out: &mut [u8],
+    ) -> Result<()> {
+        image.flush();
+        let stride = image.stride() as usize;
+        let mapped = image.data()?; // MappedImageSurface<'_>
+        let data: &[u8] = mapped.as_ref();
+
+        let w = width_px as usize;
+        let h = height_px as usize;
+
+        if stride == w * 4 {
+            for (src_px, dst_px) in data.chunks_exact(4).zip(out.chunks_exact_mut(4)) {
+                let b = src_px[0];
+                let g = src_px[1];
+                let r = src_px[2];
+                let a = src_px[3];
+                dst_px[0] = r;
+                dst_px[1] = g;
+                dst_px[2] = b;
+                dst_px[3] = a;
+            }
+        } else {
+            for y in 0..h {
+                let src_row = &data[y * stride..y * stride + w * 4];
+                let dst_row = &mut out[y * w * 4..(y + 1) * w * 4];
+                for (src_px, dst_px) in src_row.chunks_exact(4).zip(dst_row.chunks_exact_mut(4)) {
+                    let b = src_px[0];
+                    let g = src_px[1];
+                    let r = src_px[2];
+                    let a = src_px[3];
+                    dst_px[0] = r;
+                    dst_px[1] = g;
+                    dst_px[2] = b;
+                    dst_px[3] = a;
+                }
+            }
+        }
+        Ok(())
+    }
+
     fn redraw(&mut self) -> Result<()> {
-        if self.window.is_none() {
+        if self.window_id.is_none() {
             return Ok(());
         }
 
@@ -227,36 +273,36 @@ impl App {
             )?;
         }
 
-        // 像素提交
-        back.image.flush();
-        let stride = back.image.stride() as usize;
-        let data = back.image.data()?; // &[u8]
-        let w = width_px as usize;
-        let h = height_px as usize;
-
-        let surface = match self.soft_surface.as_mut() {
-            Some(s) => s,
-            None => return Ok(()),
-        };
-
-        if let (Some(wnz), Some(hnz)) = (NonZeroU32::new(width_px), NonZeroU32::new(height_px)) {
-            let _ = surface.resize(wnz, hnz); // 再保险一次
-        }
-
-        use bytemuck::cast_slice;
-        let mut buf = surface.buffer_mut().map_err(|e| anyhow::anyhow!("{}", e))?;
-        if stride == w * 4 {
-            let src_u32: &[u32] = cast_slice(&data[..h * stride]); // BGRA字节序小端与 u32 兼容
-            buf[..w * h].copy_from_slice(src_u32);
-        } else {
-            for y in 0..h {
-                let row = &data[y * stride..y * stride + w * 4];
-                let src_u32: &[u32] = cast_slice(row);
-                let dst_row = &mut buf[y * w..(y + 1) * w];
-                dst_row.copy_from_slice(src_u32);
+        // 拷贝到 pixels 帧并呈现
+        if let Some(pixels) = self.pixels.as_mut() {
+            // 确保 surface/buffer 尺寸
+            if let Err(e) = pixels.resize_surface(width_px, height_px) {
+                warn!("pixels.resize_surface error: {}", e);
             }
+            if let Err(e) = pixels.resize_buffer(width_px, height_px) {
+                warn!("pixels.resize_buffer error: {}", e);
+            }
+
+            // 预备临时 RGBA 缓冲
+            let need_len = (width_px as usize) * (height_px as usize) * 4;
+            if self.scratch_rgba.len() != need_len {
+                self.scratch_rgba.resize(need_len, 0);
+            }
+
+            // 先转到 scratch，避免同时可变借用 self
+            App::cairo_to_rgba(&mut back.image, width_px, height_px, &mut self.scratch_rgba)?;
+
+            // 再写入 pixels 帧
+            {
+                let frame = pixels.frame_mut();
+                frame.copy_from_slice(&self.scratch_rgba);
+            }
+
+            // 提交到 GPU
+            pixels
+                .render()
+                .map_err(|e| anyhow::anyhow!("pixels render: {}", e))?;
         }
-        buf.present().map_err(|e| anyhow::anyhow!("{}", e))?;
 
         Ok(())
     }
@@ -283,7 +329,7 @@ impl App {
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         // 若尚未创建窗口，创建并初始化
-        if self.window.is_none() {
+        if self.window_id.is_none() {
             // 初始尺寸：主显示器宽度，bar 高度
             let primary = event_loop
                 .primary_monitor()
@@ -299,46 +345,39 @@ impl ApplicationHandler<UserEvent> for App {
             let height_px = self.cfg.bar_height as u32;
 
             self.logical_size = LogicalSize::new(
-                width_px as f64 / self.scale_factor,
-                height_px as f64 / self.scale_factor,
+                (width_px as f64) / self.scale_factor,
+                (height_px as f64) / self.scale_factor,
             );
+            self.last_physical_size = PhysicalSize::new(width_px, height_px);
 
             let attrs = WindowAttributes::default()
-                .with_title("winit_bar")
+                .with_title("winit_pixels_bar")
                 .with_inner_size(self.logical_size)
                 .with_decorations(false)
                 .with_resizable(true)
                 .with_visible(true)
                 .with_transparent(false);
 
+            // 创建 Window（owned）
             let window = event_loop
                 .create_window(attrs)
-                .map(Rc::new)
                 .expect("create_window failed");
+            let win_id = window.id();
 
-            // softbuffer Context 与 Surface（只创建一次）
-            let soft_ctx = SbContext::new(event_loop.owned_display_handle())
-                .map_err(|e| anyhow::anyhow!("softbuffer::Context::new: {}", e))
-                .expect("softbuffer context");
-
-            let mut soft_surface = SbSurface::new(&soft_ctx, window.clone())
-                .map_err(|e| anyhow::anyhow!("softbuffer::Surface::new: {}", e))
-                .expect("softbuffer surface");
-
+            // 创建 pixels（将 Window 所有权移动给 SurfaceTexture/Pixels）
             let width_px = (self.logical_size.width * self.scale_factor).round() as u32;
             let height_px = (self.logical_size.height * self.scale_factor).round() as u32;
-            if let (Some(w), Some(h)) = (NonZeroU32::new(width_px), NonZeroU32::new(height_px)) {
-                let _ = soft_surface.resize(w, h);
-            }
+            let surface_texture = SurfaceTexture::new(width_px, height_px, window);
+            let pixels: Pixels<'static> = Pixels::new(width_px, height_px, surface_texture)
+                .map_err(|e| anyhow::anyhow!("pixels::new: {}", e))
+                .expect("pixels create failed");
 
             // Cairo back buffer
             let back = CairoBackBuffer::new(width_px, height_px).expect("cairo back buffer failed");
 
-            self.window_id = Some(window.id());
-            self.window = Some(window);
+            self.window_id = Some(win_id);
             self.back = Some(back);
-            self.soft_ctx = Some(soft_ctx);
-            self.soft_surface = Some(soft_surface);
+            self.pixels = Some(pixels);
 
             // 首次绘制
             if let Err(e) = self.redraw() {
@@ -410,46 +449,58 @@ impl ApplicationHandler<UserEvent> for App {
         if Some(window_id) != self.window_id {
             return;
         }
-        let window = match &self.window {
-            Some(w) => w,
-            None => return,
-        };
 
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
-                self.scale_factor = window.scale_factor();
+                // new_size 是物理像素尺寸；更新记录
+                self.last_physical_size = new_size;
+
+                // 基于当前 scale_factor 更新逻辑尺寸
                 self.logical_size = new_size.to_logical::<f64>(self.scale_factor);
-                if let Some(surface) = self.soft_surface.as_mut() {
+
+                // 调整 pixels surface/buffer
+                if let Some(pixels) = self.pixels.as_mut() {
                     let w = (self.logical_size.width * self.scale_factor).round() as u32;
                     let h = (self.logical_size.height * self.scale_factor).round() as u32;
-                    if let (Some(wnz), Some(hnz)) = (NonZeroU32::new(w), NonZeroU32::new(h)) {
-                        let _ = surface.resize(wnz, hnz);
+                    if let Err(e) = pixels.resize_surface(w, h) {
+                        warn!("pixels.resize_surface error: {}", e);
+                    }
+                    if let Err(e) = pixels.resize_buffer(w, h) {
+                        warn!("pixels.resize_buffer error: {}", e);
                     }
                 }
+
                 if let Err(e) = self.redraw() {
                     warn!("redraw error (Resized): {}", e);
                 }
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
+                // 更新缩放因子
                 self.scale_factor = scale_factor;
-                self.logical_size = window.inner_size().to_logical::<f64>(self.scale_factor);
 
-                if let Some(surface) = self.soft_surface.as_mut() {
+                // 没有直接调用 window.inner_size()，使用记录的 last_physical_size 计算逻辑尺寸
+                self.logical_size = self.last_physical_size.to_logical::<f64>(self.scale_factor);
+
+                if let Some(pixels) = self.pixels.as_mut() {
                     let w = (self.logical_size.width * self.scale_factor).round() as u32;
                     let h = (self.logical_size.height * self.scale_factor).round() as u32;
-                    if let (Some(wnz), Some(hnz)) = (NonZeroU32::new(w), NonZeroU32::new(h)) {
-                        let _ = surface.resize(wnz, hnz);
+                    if let Err(e) = pixels.resize_surface(w, h) {
+                        warn!("pixels.resize_surface error: {}", e);
+                    }
+                    if let Err(e) = pixels.resize_buffer(w, h) {
+                        warn!("pixels.resize_buffer error: {}", e);
                     }
                 }
+
                 if let Err(e) = self.redraw() {
                     warn!("redraw error (ScaleFactorChanged): {}", e);
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                // position 已是 PhysicalPosition<f64>，无需再乘以 scale_factor
+                // position 是 PhysicalPosition<f64>
                 let px = position.x.round() as i32;
                 let py = position.y.round() as i32;
                 self.last_cursor_pos_px = Some((px, py));
@@ -479,7 +530,6 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                // 某些平台会发该事件；我们已在需要时 redraw，这里可忽略或补绘
                 if let Err(e) = self.redraw() {
                     warn!("redraw error (RedrawRequested): {}", e);
                 }
@@ -499,7 +549,7 @@ fn main() -> Result<()> {
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
     // 日志
-    if let Err(e) = initialize_logging("winit_bar", &shared_path) {
+    if let Err(e) = initialize_logging("winit_pixels_bar", &shared_path) {
         eprintln!("Failed to initialize logging: {}", e);
         std::process::exit(1);
     }
@@ -516,7 +566,7 @@ fn main() -> Result<()> {
     spawn_tick_thread(proxy.clone());
     spawn_shared_thread(proxy.clone(), shared_efd);
 
-    // 初始逻辑尺寸，先用一个占位，实际在 resumed 中根据显示器设置
+    // 初始逻辑尺寸，实际在 resumed 中根据显示器设置
     let logical_size = LogicalSize::new(800.0, 40.0);
     let mut app = App::new(shared_buffer, logical_size, 1.0);
 

@@ -12,7 +12,10 @@ members = [
     "jwm",
     "shared_structures",
     "x11rb_bar",
-    "xcb_bar", "xbar_core", "winit_bar",
+    "xcb_bar",
+    "xbar_core",
+    "winit_softbuffer_bar",
+    "winit_pixels_bar",
 ]
 resolver = "2" # 推荐使用最新的依赖解析器
 
