@@ -6,7 +6,7 @@ use shared_structures::{SharedMessage, SharedRingBuffer};
 use std::env;
 use std::sync::Arc;
 use std::thread;
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalSize},
@@ -62,10 +62,16 @@ impl CairoBackBuffer {
     }
 }
 
+// Tick 线程：始终按秒对齐唤醒（低开销），用 state.show_seconds 决定是否重绘
 fn spawn_tick_thread(proxy: EventLoopProxy<UserEvent>) {
     thread::spawn(move || {
         loop {
-            thread::sleep(Duration::from_millis(1000));
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_else(|_| Duration::from_secs(0));
+            let subns = now.subsec_nanos() as u64;
+            let sleep_dur = Duration::from_nanos(1_000_000_000u64.saturating_sub(subns));
+            thread::sleep(sleep_dur);
             let _ = proxy.send_event(UserEvent::Tick);
         }
     });
@@ -131,8 +137,7 @@ struct App {
     logical_size: LogicalSize<f64>,
     last_physical_size: PhysicalSize<u32>,
 
-    // 更新计时
-    last_clock_update: Instant,
+    // 系统监控更新计时
     last_monitor_update: Instant,
 
     // 最近一次鼠标物理坐标（像素）
@@ -140,6 +145,12 @@ struct App {
 
     // pixels（持有 Window 的所有权）
     pixels: Option<Pixels<'static>>,
+    // 当前 pixels buffer 尺寸（只在 Resized/ScaleFactorChanged 时更新）
+    pixels_w: u32,
+    pixels_h: u32,
+
+    // 时间刷新：根据 state.show_seconds 决定 bucket（秒或分钟）
+    last_time_bucket: u64,
 
     // 临时 RGBA 缓冲，避免重复分配和借用冲突
     scratch_rgba: Vec<u8>,
@@ -179,10 +190,12 @@ impl App {
                 logical_size.width.round() as u32,
                 logical_size.height.round() as u32,
             ),
-            last_clock_update: Instant::now(),
             last_monitor_update: Instant::now(),
             last_cursor_pos_px: None,
             pixels: None,
+            pixels_w: 0,
+            pixels_h: 0,
+            last_time_bucket: 0,
             scratch_rgba: Vec::new(),
         }
     }
@@ -273,26 +286,18 @@ impl App {
             )?;
         }
 
-        // 拷贝到 pixels 帧并呈现
+        // 拷贝到 pixels 帧并呈现（不要在这里 resize）
         if let Some(pixels) = self.pixels.as_mut() {
-            // 确保 surface/buffer 尺寸
-            if let Err(e) = pixels.resize_surface(width_px, height_px) {
-                warn!("pixels.resize_surface error: {}", e);
-            }
-            if let Err(e) = pixels.resize_buffer(width_px, height_px) {
-                warn!("pixels.resize_buffer error: {}", e);
-            }
-
             // 预备临时 RGBA 缓冲
             let need_len = (width_px as usize) * (height_px as usize) * 4;
             if self.scratch_rgba.len() != need_len {
                 self.scratch_rgba.resize(need_len, 0);
             }
 
-            // 先转到 scratch，避免同时可变借用 self
+            // 先转到 scratch
             App::cairo_to_rgba(&mut back.image, width_px, height_px, &mut self.scratch_rgba)?;
 
-            // 再写入 pixels 帧
+            // 写入 pixels 帧
             {
                 let frame = pixels.frame_mut();
                 frame.copy_from_slice(&self.scratch_rgba);
@@ -318,10 +323,29 @@ impl App {
     }
 
     fn handle_button(&mut self, px: i32, py: i32, button_id: u8) {
+        // 记录 show_seconds 切换前的值
+        let prev_show_seconds = self.state.show_seconds;
+
         if self.state.handle_buttons(px as i16, py as i16, button_id) {
+            // 如果 show_seconds 在点击后发生变化，则把时间桶对齐，避免下一个 Tick 再多重绘一次
+            if self.state.show_seconds != prev_show_seconds {
+                self.last_time_bucket = self.current_time_bucket();
+            }
             if let Err(e) = self.redraw() {
                 warn!("redraw error (button): {}", e);
             }
+        }
+    }
+
+    // 按 state.show_seconds 决定当前时间 bucket（单位秒或分钟）
+    fn current_time_bucket(&self) -> u64 {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_else(|_| Duration::from_secs(0));
+        if self.state.show_seconds {
+            now.as_secs()
+        } else {
+            now.as_secs() / 60
         }
     }
 }
@@ -377,7 +401,12 @@ impl ApplicationHandler<UserEvent> for App {
 
             self.window_id = Some(win_id);
             self.back = Some(back);
+            self.pixels_w = width_px;
+            self.pixels_h = height_px;
             self.pixels = Some(pixels);
+
+            // 初始化时间 bucket
+            self.last_time_bucket = self.current_time_bucket();
 
             // 首次绘制
             if let Err(e) = self.redraw() {
@@ -390,18 +419,24 @@ impl ApplicationHandler<UserEvent> for App {
         match event {
             UserEvent::Tick => {
                 let mut need_redraw = false;
-                if self.last_clock_update.elapsed() >= Duration::from_secs(1) {
-                    self.last_clock_update = Instant::now();
-                    log::info!("redraw by clock update: {:?}", self.last_clock_update);
+
+                // 时间 bucket 变化才重绘（秒或分钟由 state.show_seconds 决定）
+                let bucket = self.current_time_bucket();
+                if bucket != self.last_time_bucket {
+                    self.last_time_bucket = bucket;
+                    log::trace!("redraw by time bucket update: {}", bucket);
                     need_redraw = true;
                 }
+
+                // 系统监控更新（保持 2s），降低日志等级
                 if self.last_monitor_update.elapsed() >= Duration::from_secs(2) {
                     self.state.system_monitor.update_if_needed();
                     self.state.audio_manager.update_if_needed();
                     self.last_monitor_update = Instant::now();
-                    log::info!("redraw by system update: {:?}", self.last_monitor_update);
+                    log::trace!("maybe redraw by system update");
                     need_redraw = true;
                 }
+
                 if need_redraw {
                     if let Err(e) = self.redraw() {
                         warn!("redraw error (Tick): {}", e);
@@ -426,7 +461,7 @@ impl ApplicationHandler<UserEvent> for App {
                         }
                     }
                     if let Some(msg) = last_msg {
-                        log::info!("redraw by msg: {:?}", msg);
+                        log::trace!("redraw by msg: {:?}", msg);
                         self.state.update_from_shared(msg);
                         need_redraw = true;
                     }
@@ -461,15 +496,19 @@ impl ApplicationHandler<UserEvent> for App {
                 // 基于当前 scale_factor 更新逻辑尺寸
                 self.logical_size = new_size.to_logical::<f64>(self.scale_factor);
 
-                // 调整 pixels surface/buffer
+                // 调整 pixels surface/buffer（仅在此处）
                 if let Some(pixels) = self.pixels.as_mut() {
                     let w = (self.logical_size.width * self.scale_factor).round() as u32;
                     let h = (self.logical_size.height * self.scale_factor).round() as u32;
-                    if let Err(e) = pixels.resize_surface(w, h) {
-                        warn!("pixels.resize_surface error: {}", e);
-                    }
-                    if let Err(e) = pixels.resize_buffer(w, h) {
-                        warn!("pixels.resize_buffer error: {}", e);
+                    if self.pixels_w != w || self.pixels_h != h {
+                        if let Err(e) = pixels.resize_surface(w, h) {
+                            warn!("pixels.resize_surface error: {}", e);
+                        }
+                        if let Err(e) = pixels.resize_buffer(w, h) {
+                            warn!("pixels.resize_buffer error: {}", e);
+                        }
+                        self.pixels_w = w;
+                        self.pixels_h = h;
                     }
                 }
 
@@ -481,17 +520,22 @@ impl ApplicationHandler<UserEvent> for App {
                 // 更新缩放因子
                 self.scale_factor = scale_factor;
 
-                // 没有直接调用 window.inner_size()，使用记录的 last_physical_size 计算逻辑尺寸
+                // 计算逻辑尺寸
                 self.logical_size = self.last_physical_size.to_logical::<f64>(self.scale_factor);
 
+                // 调整 pixels surface/buffer（仅在此处）
                 if let Some(pixels) = self.pixels.as_mut() {
                     let w = (self.logical_size.width * self.scale_factor).round() as u32;
                     let h = (self.logical_size.height * self.scale_factor).round() as u32;
-                    if let Err(e) = pixels.resize_surface(w, h) {
-                        warn!("pixels.resize_surface error: {}", e);
-                    }
-                    if let Err(e) = pixels.resize_buffer(w, h) {
-                        warn!("pixels.resize_buffer error: {}", e);
+                    if self.pixels_w != w || self.pixels_h != h {
+                        if let Err(e) = pixels.resize_surface(w, h) {
+                            warn!("pixels.resize_surface error: {}", e);
+                        }
+                        if let Err(e) = pixels.resize_buffer(w, h) {
+                            warn!("pixels.resize_buffer error: {}", e);
+                        }
+                        self.pixels_w = w;
+                        self.pixels_h = h;
                     }
                 }
 
