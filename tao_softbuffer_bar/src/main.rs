@@ -23,8 +23,6 @@ use xbar_core::{
     spawn_shared_eventfd_notifier,
 };
 
-// softbuffer 上下文与表面：在启用 "tao" 特性后，直接使用 Window 作为显示句柄
-type SbContext = softbuffer::Context<Rc<Window>>;
 type SbSurface = softbuffer::Surface<Rc<Window>, Rc<Window>>;
 
 #[derive(Debug, Clone, Copy)]
@@ -137,7 +135,6 @@ struct App {
     // 记录最近一次鼠标物理坐标（像素）
     last_cursor_pos_px: Option<(i32, i32)>,
 
-    soft_ctx: Option<SbContext>,
     soft_surface: Option<SbSurface>,
 }
 
@@ -174,7 +171,6 @@ impl App {
             last_clock_update: Instant::now(),
             last_monitor_update: Instant::now(),
             last_cursor_pos_px: None,
-            soft_ctx: None,
             soft_surface: None,
         }
     }
@@ -234,7 +230,6 @@ impl App {
         self.window_id = Some(window.id());
         self.window = Some(window);
         self.back = Some(back);
-        self.soft_ctx = Some(soft_ctx);
         self.soft_surface = Some(soft_surface);
 
         // 首次绘制

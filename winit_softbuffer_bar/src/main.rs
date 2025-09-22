@@ -26,7 +26,6 @@ use std::num::NonZeroU32;
 use std::rc::Rc;
 
 // 简化泛型类型书写
-type SbContext = softbuffer::Context<OwnedDisplayHandle>;
 type SbSurface = softbuffer::Surface<OwnedDisplayHandle, Rc<Window>>;
 
 #[derive(Debug, Clone, Copy)]
@@ -143,7 +142,6 @@ struct App {
     // 记录最近一次鼠标物理坐标（像素）
     last_cursor_pos_px: Option<(i32, i32)>,
 
-    soft_ctx: Option<SbContext>,
     soft_surface: Option<SbSurface>,
 }
 
@@ -181,7 +179,6 @@ impl App {
             last_clock_update: Instant::now(),
             last_monitor_update: Instant::now(),
             last_cursor_pos_px: None,
-            soft_ctx: None,
             soft_surface: None,
         }
     }
@@ -315,7 +312,7 @@ impl ApplicationHandler<UserEvent> for App {
                 .expect("create_window failed");
 
             // softbuffer Context 与 Surface（只创建一次）
-            let soft_ctx = SbContext::new(event_loop.owned_display_handle())
+            let soft_ctx = softbuffer::Context::new(event_loop.owned_display_handle())
                 .map_err(|e| anyhow::anyhow!("softbuffer::Context::new: {}", e))
                 .expect("softbuffer context");
 
@@ -335,7 +332,6 @@ impl ApplicationHandler<UserEvent> for App {
             self.window_id = Some(window.id());
             self.window = Some(window);
             self.back = Some(back);
-            self.soft_ctx = Some(soft_ctx);
             self.soft_surface = Some(soft_surface);
 
             // 首次绘制

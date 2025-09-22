@@ -20,7 +20,6 @@ use xbar_core::{
     spawn_shared_eventfd_notifier,
 };
 
-// pixels 0.15 + winit 0.30
 use pixels::wgpu::TextureFormat;
 use pixels::{Pixels, PixelsBuilder, SurfaceTexture};
 
