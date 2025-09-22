@@ -226,9 +226,7 @@ impl App {
     }
 
     fn update_hover_and_redraw(&mut self, px: i32, py: i32) {
-        let hovered = self.state.ss_rect.contains(px as i16, py as i16);
-        if hovered != self.state.is_ss_hover {
-            self.state.is_ss_hover = hovered;
+        if self.state.update_hover(px as i16, py as i16) {
             if let Err(e) = self.redraw() {
                 warn!("redraw error (hover): {}", e);
             }

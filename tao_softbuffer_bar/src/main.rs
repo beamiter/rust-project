@@ -473,7 +473,6 @@ fn main() -> Result<()> {
                         }
                     }
                     WindowEvent::CursorMoved { position, .. } => {
-                        // tao position 已是 PhysicalPosition<f64>
                         let px = position.x.round() as i32;
                         let py = position.y.round() as i32;
                         app.last_cursor_pos_px = Some((px, py));

@@ -262,9 +262,7 @@ impl App {
     }
 
     fn update_hover_and_redraw(&mut self, px: i32, py: i32) {
-        let hovered = self.state.ss_rect.contains(px as i16, py as i16);
-        if hovered != self.state.is_ss_hover {
-            self.state.is_ss_hover = hovered;
+        if self.state.update_hover(px as i16, py as i16) {
             if let Err(e) = self.redraw() {
                 warn!("redraw error (hover): {}", e);
             }
@@ -449,7 +447,6 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                // position 已是 PhysicalPosition<f64>，无需再乘以 scale_factor
                 let px = position.x.round() as i32;
                 let py = position.y.round() as i32;
                 self.last_cursor_pos_px = Some((px, py));
@@ -479,7 +476,6 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::RedrawRequested => {
-                // 某些平台会发该事件；我们已在需要时 redraw，这里可忽略或补绘
                 if let Err(e) = self.redraw() {
                     warn!("redraw error (RedrawRequested): {}", e);
                 }
