@@ -420,7 +420,6 @@ impl ApplicationHandler<UserEvent> for App {
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
-                let window = self.window.as_ref().unwrap();
                 self.scale_factor = window.scale_factor();
                 self.logical_size = new_size.to_logical::<f64>(self.scale_factor);
                 if let Some(surface) = self.soft_surface.as_mut() {
@@ -436,7 +435,6 @@ impl ApplicationHandler<UserEvent> for App {
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 self.scale_factor = scale_factor;
-                let window = self.window.as_ref().unwrap();
                 self.logical_size = window.inner_size().to_logical::<f64>(self.scale_factor);
 
                 if let Some(surface) = self.soft_surface.as_mut() {
@@ -451,12 +449,18 @@ impl ApplicationHandler<UserEvent> for App {
                 }
             }
             WindowEvent::CursorMoved { position, .. } => {
-                let scale = window.scale_factor();
-                let px = (position.x * scale) as i32;
-                let py = (position.y * scale) as i32;
-                // 记录位置供 MouseInput 使用
+                // position 已是 PhysicalPosition<f64>，无需再乘以 scale_factor
+                let px = position.x.round() as i32;
+                let py = position.y.round() as i32;
                 self.last_cursor_pos_px = Some((px, py));
                 self.update_hover_and_redraw(px, py);
+                log::trace!(
+                    "cursor px={}, py={}, time_rect={:?}, ss_rect={:?}",
+                    px,
+                    py,
+                    self.state.time_rect,
+                    self.state.ss_rect
+                );
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 use winit::event::{ElementState, MouseButton};
