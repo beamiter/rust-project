@@ -7,6 +7,7 @@ use std::env;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use winit::window::Window;
 use winit::{
     application::ApplicationHandler,
     dpi::{LogicalSize, PhysicalSize},
@@ -89,6 +90,7 @@ fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>
 struct App {
     // 仅保存窗口 ID
     window_id: Option<WindowId>,
+    window: Option<Arc<Window>>,
 
     // 配置与状态
     colors: xbar_core::Colors,
@@ -140,6 +142,7 @@ impl App {
 
         Self {
             window_id: None,
+            window: None,
             colors,
             cfg,
             font,
@@ -169,17 +172,9 @@ impl App {
         let stride = width_px
             .checked_mul(4)
             .ok_or_else(|| anyhow::anyhow!("stride overflow"))?;
-
         if let Some(pixels) = self.pixels.as_mut() {
-            // 把对 frame 的借用限制在这个小作用域内，避免和后续 pixels.render() 冲突
             {
                 let frame: &mut [u8] = pixels.frame_mut();
-
-                // 用 frame 的裸指针创建临时 Cairo ImageSurface
-                // 安全性说明：
-                // - 数据指针在这段作用域内始终有效（源自 frame 的借用）
-                // - 我们不会跨线程访问 frame，也不会在 surface 存在时 resize pixels
-                // - surface 在该作用域结束时被 Drop，早于 pixels.render()
                 let surface = unsafe {
                     ImageSurface::create_for_data_unsafe(
                         frame.as_mut_ptr(),
@@ -189,7 +184,6 @@ impl App {
                         stride,
                     )?
                 };
-
                 // Cairo 绘制
                 let cr = Context::new(&surface)?;
                 cr.save()?;
@@ -197,7 +191,6 @@ impl App {
                 cr.set_operator(cairo::Operator::Source);
                 cr.paint()?;
                 cr.restore()?;
-
                 let w_u16 = (width_px as u32).min(u16::MAX as u32) as u16;
                 let h_u16 = (height_px as u32).min(u16::MAX as u32) as u16;
                 draw_bar(
@@ -209,26 +202,26 @@ impl App {
                     &self.font,
                     &self.cfg,
                 )?;
-
-                // 确保 Cairo 的写入刷新回像素缓冲
                 surface.flush();
-                // surface、cr、frame 在此作用域末尾全部 drop
             }
-
-            // 现在不再持有 frame 的借用，可以安全调用 render
             pixels
                 .render()
                 .map_err(|e| anyhow::anyhow!("pixels render: {}", e))?;
         }
-
         Ok(())
+    }
+
+    #[inline]
+    fn request_redraw(&self) {
+        if let Some(win) = self.window.as_ref() {
+            win.request_redraw();
+        }
     }
 
     fn update_hover_and_redraw(&mut self, px: i32, py: i32) {
         if self.state.update_hover(px as i16, py as i16) {
-            if let Err(e) = self.redraw() {
-                warn!("redraw error (hover): {}", e);
-            }
+            // 改为仅请求重绘
+            self.request_redraw();
         }
     }
 
@@ -241,9 +234,8 @@ impl App {
             if self.state.show_seconds != prev_show_seconds {
                 self.last_time_bucket = self.current_time_bucket();
             }
-            if let Err(e) = self.redraw() {
-                warn!("redraw error (button): {}", e);
-            }
+            // 改为仅请求重绘
+            self.request_redraw();
         }
     }
 
@@ -297,11 +289,14 @@ impl ApplicationHandler<UserEvent> for App {
                 .create_window(attrs)
                 .expect("create_window failed");
             let win_id = window.id();
+            let arc = Arc::new(window);
 
             // 创建 pixels（将 Window 所有权移动给 SurfaceTexture/Pixels）
             let width_px = (self.logical_size.width * self.scale_factor).round() as u32;
             let height_px = (self.logical_size.height * self.scale_factor).round() as u32;
-            let surface_texture = SurfaceTexture::new(width_px, height_px, window);
+
+            let surface_texture = SurfaceTexture::new(width_px, height_px, arc.clone());
+            self.window = Some(arc);
             let pixels: Pixels<'static> = PixelsBuilder::new(width_px, height_px, surface_texture)
                 .texture_format(TextureFormat::Bgra8UnormSrgb)
                 .enable_vsync(true)
@@ -321,10 +316,8 @@ impl ApplicationHandler<UserEvent> for App {
             // 初始化时间 bucket
             self.last_time_bucket = self.current_time_bucket();
 
-            // 首次绘制
-            if let Err(e) = self.redraw() {
-                warn!("redraw error (initial): {}", e);
-            }
+            // 首次绘制：仅请求重绘
+            self.request_redraw();
         }
     }
 
@@ -351,9 +344,8 @@ impl ApplicationHandler<UserEvent> for App {
                 }
 
                 if need_redraw {
-                    if let Err(e) = self.redraw() {
-                        warn!("redraw error (Tick): {}", e);
-                    }
+                    // 改为仅请求重绘
+                    self.request_redraw();
                 }
             }
             UserEvent::SharedUpdated => {
@@ -380,9 +372,8 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
                 if need_redraw {
-                    if let Err(e) = self.redraw() {
-                        warn!("redraw error (SharedUpdated): {}", e);
-                    }
+                    // 改为仅请求重绘
+                    self.request_redraw();
                 }
             }
         }
@@ -425,9 +416,8 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
 
-                if let Err(e) = self.redraw() {
-                    warn!("redraw error (Resized): {}", e);
-                }
+                // 改为仅请求重绘
+                self.request_redraw();
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
                 // 更新缩放因子
@@ -452,9 +442,8 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
 
-                if let Err(e) = self.redraw() {
-                    warn!("redraw error (ScaleFactorChanged): {}", e);
-                }
+                // 改为仅请求重绘
+                self.request_redraw();
             }
             WindowEvent::CursorMoved { position, .. } => {
                 // position 是 PhysicalPosition<f64>

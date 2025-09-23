@@ -1017,7 +1017,6 @@ pub fn spawn_shared_eventfd_notifier(
     let Some(buf) = shared_buffer.clone() else {
         return None;
     };
-
     // 创建 eventfd：非阻塞 + CLOEXEC
     let efd = unsafe {
         if non_block {
@@ -1030,7 +1029,6 @@ pub fn spawn_shared_eventfd_notifier(
         error!("eventfd create failed: {}", std::io::Error::last_os_error());
         return None;
     }
-
     std::thread::spawn(move || {
         loop {
             match buf.wait_for_message(None) {
@@ -1061,7 +1059,6 @@ pub fn spawn_shared_eventfd_notifier(
             }
         }
     });
-
     Some(efd)
 }
 
