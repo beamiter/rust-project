@@ -16,6 +16,7 @@ xcb_bar = []
 winit_softbuffer_bar = []
 tao_softbuffer_bar = []
 winit_pixels_bar = []
+tao_pixels_bar = []
 nixgl = []
 cairo = []
 
