@@ -22,23 +22,7 @@ use xbar_core::{
 
 #[derive(Debug, Clone, Copy)]
 enum UserEvent {
-    Tick,
     SharedUpdated,
-}
-
-// Tick 线程：始终按秒对齐唤醒（低开销），用时间 bucket 控制是否重绘
-fn spawn_tick_thread(proxy: EventLoopProxy<UserEvent>) {
-    thread::spawn(move || {
-        loop {
-            let now = SystemTime::now()
-                .duration_since(UNIX_EPOCH)
-                .unwrap_or_else(|_| Duration::from_secs(0));
-            let subns = now.subsec_nanos() as u64;
-            let sleep_dur = Duration::from_nanos(1_000_000_000u64.saturating_sub(subns));
-            thread::sleep(sleep_dur);
-            let _ = proxy.send_event(UserEvent::Tick);
-        }
-    });
 }
 
 // 共享 eventfd 线程：读取 eventfd 通知并发出 UserEvent::SharedUpdated
@@ -298,7 +282,7 @@ impl App {
         let prev_show_seconds = self.state.show_seconds;
 
         if self.state.handle_buttons(px as i16, py as i16, button_id) {
-            // 若 show_seconds 改变，立即更新时间 bucket，避免下次 Tick 再二次重绘
+            // 若 show_seconds 改变，立即更新时间 bucket，避免下次唤醒再二次重绘
             if self.state.show_seconds != prev_show_seconds {
                 self.last_time_bucket = self.current_time_bucket();
             }
@@ -321,6 +305,39 @@ impl App {
     }
 }
 
+// 计算下一次时间 bucket 的边界 Instant（对齐秒或分钟）
+fn next_time_bucket_instant(show_seconds: bool) -> Instant {
+    let now_inst = Instant::now();
+    let now_sys = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_else(|_| Duration::from_secs(0));
+    let subns = now_sys.subsec_nanos() as u64;
+
+    if show_seconds {
+        // 到下一秒边界
+        let remain_ns = 1_000_000_000u64.saturating_sub(subns).max(1);
+        now_inst + Duration::from_nanos(remain_ns)
+    } else {
+        // 到下一分钟边界
+        let sec_in_min = (now_sys.as_secs() % 60) as u64;
+        let nanos_into_min = sec_in_min * 1_000_000_000u64 + subns;
+        let remain_ns = 60_000_000_000u64.saturating_sub(nanos_into_min).max(1);
+        now_inst + Duration::from_nanos(remain_ns)
+    }
+}
+
+// 取“时间 bucket 边界”和“监控更新 2s”中的较早者作为唤醒时间
+fn next_deadline(app: &App) -> Instant {
+    let bucket_due = next_time_bucket_instant(app.state.show_seconds);
+    let monitor_due = app.last_monitor_update + Duration::from_secs(2);
+    std::cmp::min(bucket_due, monitor_due)
+}
+
+// 设置下一次等待截止时间
+fn schedule_next_wake(app: &App, control_flow: &mut ControlFlow) {
+    *control_flow = ControlFlow::WaitUntil(next_deadline(app));
+}
+
 fn main() -> Result<()> {
     // 参数
     let args: Vec<String> = env::args().collect();
@@ -340,8 +357,7 @@ fn main() -> Result<()> {
     let event_loop: EventLoop<UserEvent> = EventLoopBuilder::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
-    // 后台线程：Tick 与 SharedUpdated
-    spawn_tick_thread(proxy.clone());
+    // 后台线程：仅 SharedUpdated
     spawn_shared_thread(proxy.clone(), shared_efd);
 
     // 初始逻辑尺寸（实际在 Init/Resumed 中按主显示器设置）
@@ -349,45 +365,52 @@ fn main() -> Result<()> {
     let mut app = App::new(shared_buffer, logical_size, 1.0);
 
     event_loop.run(move |event, target, control_flow| {
+        // 默认等待（后续各分支会通过 schedule_next_wake 设置 WaitUntil）
         *control_flow = ControlFlow::Wait;
 
         match event {
             Event::NewEvents(StartCause::Init) => {
                 // 首次进入事件循环时创建窗口与渲染资源
                 app.ensure_init_window(target);
+                schedule_next_wake(&app, control_flow);
             }
             Event::Resumed => {
                 // 某些平台用 Resumed 作为初始化契机
                 app.ensure_init_window(target);
+                schedule_next_wake(&app, control_flow);
+            }
+
+            // 定时唤醒：取代原先的 Tick 线程
+            Event::NewEvents(StartCause::ResumeTimeReached { .. }) => {
+                let mut need_redraw = false;
+
+                // 时间 bucket 变化才重绘（秒或分钟由 state.show_seconds 决定）
+                let bucket = app.current_time_bucket();
+                if bucket != app.last_time_bucket {
+                    app.last_time_bucket = bucket;
+                    log::trace!("redraw by time bucket update: {}", bucket);
+                    need_redraw = true;
+                }
+
+                // 系统监控定期更新（2s）
+                if app.last_monitor_update.elapsed() >= Duration::from_secs(2) {
+                    app.state.system_monitor.update_if_needed();
+                    app.state.audio_manager.update_if_needed();
+                    app.last_monitor_update = Instant::now();
+                    log::trace!("maybe redraw by system update");
+                    need_redraw = true;
+                }
+
+                if need_redraw {
+                    if let Err(e) = app.redraw() {
+                        warn!("redraw error (ResumeTimeReached): {}", e);
+                    }
+                }
+
+                schedule_next_wake(&app, control_flow);
             }
 
             Event::UserEvent(ue) => match ue {
-                UserEvent::Tick => {
-                    let mut need_redraw = false;
-
-                    // 时间 bucket 变化才重绘（秒或分钟由 state.show_seconds 决定）
-                    let bucket = app.current_time_bucket();
-                    if bucket != app.last_time_bucket {
-                        app.last_time_bucket = bucket;
-                        log::trace!("redraw by time bucket update: {}", bucket);
-                        need_redraw = true;
-                    }
-
-                    // 系统监控定期更新（2s）
-                    if app.last_monitor_update.elapsed() >= Duration::from_secs(2) {
-                        app.state.system_monitor.update_if_needed();
-                        app.state.audio_manager.update_if_needed();
-                        app.last_monitor_update = Instant::now();
-                        log::trace!("maybe redraw by system update");
-                        need_redraw = true;
-                    }
-
-                    if need_redraw {
-                        if let Err(e) = app.redraw() {
-                            warn!("redraw error (Tick): {}", e);
-                        }
-                    }
-                }
                 UserEvent::SharedUpdated => {
                     let mut need_redraw = false;
                     if let Some(buf_arc) = app.state.shared_buffer.as_ref().cloned() {
@@ -416,6 +439,7 @@ fn main() -> Result<()> {
                             warn!("redraw error (SharedUpdated): {}", e);
                         }
                     }
+                    schedule_next_wake(&app, control_flow);
                 }
             },
 
@@ -453,6 +477,7 @@ fn main() -> Result<()> {
                         if let Err(e) = app.redraw() {
                             warn!("redraw error (Resized): {}", e);
                         }
+                        schedule_next_wake(&app, control_flow);
                     }
                     WindowEvent::ScaleFactorChanged {
                         scale_factor,
@@ -482,6 +507,7 @@ fn main() -> Result<()> {
                         if let Err(e) = app.redraw() {
                             warn!("redraw error (ScaleFactorChanged): {}", e);
                         }
+                        schedule_next_wake(&app, control_flow);
                     }
                     WindowEvent::CursorMoved { position, .. } => {
                         // tao 的 position 是 PhysicalPosition<f64>
@@ -490,9 +516,11 @@ fn main() -> Result<()> {
                         app.last_cursor_pos_px = Some((px, py));
                         app.update_hover_and_redraw(px, py);
                         log::trace!("cursor px={}, py={}", px, py);
+                        schedule_next_wake(&app, control_flow);
                     }
                     WindowEvent::CursorLeft { .. } => {
                         app.state.clear_hover();
+                        schedule_next_wake(&app, control_flow);
                     }
                     WindowEvent::MouseInput { state, button, .. } => {
                         use tao::event::{ElementState, MouseButton};
@@ -505,17 +533,26 @@ fn main() -> Result<()> {
                                     MouseButton::Other(n) => n as u8,
                                     _ => todo!(),
                                 };
+                                let prev_show_seconds = app.state.show_seconds;
                                 app.handle_button(px, py, button_id);
+                                if app.state.show_seconds != prev_show_seconds {
+                                    // 立即按新的粒度计算下一次 WaitUntil
+                                    schedule_next_wake(&app, control_flow);
+                                }
                             }
                         }
+                        schedule_next_wake(&app, control_flow);
                     }
-                    _ => {}
+                    _ => {
+                        schedule_next_wake(&app, control_flow);
+                    }
                 }
             }
             Event::RedrawRequested(_) => {
                 if let Err(e) = app.redraw() {
                     warn!("redraw error (RedrawRequested): {}", e);
                 }
+                schedule_next_wake(&app, control_flow);
             }
 
             Event::LoopDestroyed => {
