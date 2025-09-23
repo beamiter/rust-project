@@ -233,8 +233,8 @@ impl App {
         self.soft_surface = Some(soft_surface);
 
         // 首次绘制
-        if let Err(e) = self.redraw() {
-            warn!("redraw error (initial): {}", e);
+        if let Some(w) = &self.window {
+            w.request_redraw();
         }
     }
 
@@ -290,10 +290,6 @@ impl App {
             None => return Ok(()),
         };
 
-        if let (Some(wnz), Some(hnz)) = (NonZeroU32::new(width_px), NonZeroU32::new(height_px)) {
-            let _ = surface.resize(wnz, hnz); // 再保险一次
-        }
-
         use bytemuck::cast_slice;
         let mut buf = surface.buffer_mut().map_err(|e| anyhow::anyhow!("{}", e))?;
         if stride == w * 4 {
@@ -313,16 +309,16 @@ impl App {
 
     fn update_hover_and_redraw(&mut self, px: i32, py: i32) {
         if self.state.update_hover(px as i16, py as i16) {
-            if let Err(e) = self.redraw() {
-                warn!("redraw error (hover): {}", e);
+            if let Some(w) = &self.window {
+                w.request_redraw();
             }
         }
     }
 
     fn handle_button(&mut self, px: i32, py: i32, button_id: u8) {
         if self.state.handle_buttons(px as i16, py as i16, button_id) {
-            if let Err(e) = self.redraw() {
-                warn!("redraw error (button): {}", e);
+            if let Some(w) = &self.window {
+                w.request_redraw();
             }
         }
     }
@@ -375,19 +371,19 @@ fn main() -> Result<()> {
                     let mut need_redraw = false;
                     if app.last_clock_update.elapsed() >= Duration::from_secs(1) {
                         app.last_clock_update = Instant::now();
-                        log::info!("redraw by clock update: {:?}", app.last_clock_update);
+                        log::trace!("redraw by clock update: {:?}", app.last_clock_update);
                         need_redraw = true;
                     }
                     if app.last_monitor_update.elapsed() >= Duration::from_secs(2) {
                         app.state.system_monitor.update_if_needed();
                         app.state.audio_manager.update_if_needed();
                         app.last_monitor_update = Instant::now();
-                        log::info!("redraw by system update: {:?}", app.last_monitor_update);
+                        log::trace!("redraw by system update: {:?}", app.last_monitor_update);
                         need_redraw = true;
                     }
                     if need_redraw {
-                        if let Err(e) = app.redraw() {
-                            warn!("redraw error (Tick): {}", e);
+                        if let Some(w) = &app.window {
+                            w.request_redraw();
                         }
                     }
                 }
@@ -415,8 +411,8 @@ fn main() -> Result<()> {
                         }
                     }
                     if need_redraw {
-                        if let Err(e) = app.redraw() {
-                            warn!("redraw error (SharedUpdated): {}", e);
+                        if let Some(w) = &app.window {
+                            w.request_redraw();
                         }
                     }
                 }
@@ -472,13 +468,10 @@ fn main() -> Result<()> {
                         let py = position.y.round() as i32;
                         app.last_cursor_pos_px = Some((px, py));
                         app.update_hover_and_redraw(px, py);
-                        log::trace!(
-                            "cursor px={}, py={}, time_rect={:?}, ss_rect={:?}",
-                            px,
-                            py,
-                            app.state.time_rect,
-                            app.state.ss_rect
-                        );
+                        log::trace!("cursor px={}, py={}", px, py,);
+                    }
+                    WindowEvent::CursorLeft { .. } => {
+                        app.state.clear_hover();
                     }
                     WindowEvent::MouseInput { state, button, .. } => {
                         use tao::event::{ElementState, MouseButton};
@@ -499,6 +492,7 @@ fn main() -> Result<()> {
                 }
             }
             Event::RedrawRequested(_) => {
+                log::trace!("[RedrawRequested]");
                 if let Err(e) = app.redraw() {
                     warn!("redraw error (RedrawRequested): {}", e);
                 }

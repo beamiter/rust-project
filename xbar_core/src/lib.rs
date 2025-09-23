@@ -174,13 +174,7 @@ pub struct AppState {
     pub show_seconds: bool,
 
     // Hover 状态
-    pub hovered_tag: Option<usize>,
-    pub is_layout_hover: bool,
-    pub hovered_layout_option: Option<usize>,
-    pub is_time_hover: bool,
-    pub is_mem_hover: bool,
-    pub is_cpu_hover: bool,
-    pub is_mon_hover: bool,
+    pub hover_target: HoverTarget,
 
     // hover 判定区域
     pub mem_rect: Rect,
@@ -195,6 +189,21 @@ pub struct AppState {
 
     pub shape_style: ShapeStyle,
 }
+
+// 排他式 hover 的命中目标
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HoverTarget {
+    None,
+    Tag(usize),
+    LayoutOption(usize),
+    LayoutButton,
+    Screenshot,
+    Time,
+    Mem,
+    Cpu,
+    Monitor,
+}
+
 impl AppState {
     pub fn new(shared_buffer: Option<Arc<SharedRingBuffer>>) -> Self {
         Self {
@@ -214,13 +223,7 @@ impl AppState {
             is_ss_hover: false,
             show_seconds: false,
 
-            hovered_tag: None,
-            is_layout_hover: false,
-            hovered_layout_option: None,
-            is_time_hover: false,
-            is_mem_hover: false,
-            is_cpu_hover: false,
-            is_mon_hover: false,
+            hover_target: HoverTarget::None,
 
             mem_rect: Rect::default(),
             cpu_rect: Rect::default(),
@@ -327,74 +330,55 @@ impl AppState {
         need_redraw
     }
 
-    // 鼠标移动：更新 hover 状态。返回是否需要重绘
-    pub fn update_hover(&mut self, px: i16, py: i16) -> bool {
-        let mut changed = false;
-
-        let old_tag = self.hovered_tag;
-        let old_layout_hover = self.is_layout_hover;
-        let old_layout_idx = self.hovered_layout_option;
-        let old_ss = self.is_ss_hover;
-        let old_time = self.is_time_hover;
-        let old_mem = self.is_mem_hover;
-        let old_cpu = self.is_cpu_hover;
-        let old_mon = self.is_mon_hover;
-
-        self.hovered_tag = None;
+    // 命中测试：排他式，按优先级选1个
+    fn hit_test(&self, px: i16, py: i16) -> HoverTarget {
+        // 1) 布局选项（仅在打开时）
+        if self.layout_selector_open {
+            for (i, r) in self.layout_option_rects.iter().enumerate() {
+                if r.w > 0 && r.contains(px, py) {
+                    return HoverTarget::LayoutOption(i);
+                }
+            }
+        }
+        // 2) 布局按钮
+        if self.layout_button_rect.contains(px, py) {
+            return HoverTarget::LayoutButton;
+        }
+        // 3) 右侧 pills（按你喜欢的优先级；这里时间优先）
+        if self.time_rect.contains(px, py) {
+            return HoverTarget::Time;
+        }
+        if self.ss_rect.contains(px, py) {
+            return HoverTarget::Screenshot;
+        }
+        if self.mem_rect.contains(px, py) {
+            return HoverTarget::Mem;
+        }
+        if self.cpu_rect.contains(px, py) {
+            return HoverTarget::Cpu;
+        }
+        if self.mon_rect.contains(px, py) {
+            return HoverTarget::Monitor;
+        }
+        // 4) 左侧 tags（只取第一个命中的）
         for (i, rect) in self.tag_rects.iter().enumerate() {
             if rect.contains(px, py) {
-                self.hovered_tag = Some(i);
-                break;
+                return HoverTarget::Tag(i);
             }
         }
-        self.is_layout_hover = self.layout_button_rect.contains(px, py);
+        HoverTarget::None
+    }
 
-        self.hovered_layout_option = None;
-        for (i, r) in self.layout_option_rects.iter().enumerate() {
-            if r.w > 0 && r.contains(px, py) {
-                self.hovered_layout_option = Some(i);
-                break;
-            }
-        }
-
-        self.is_ss_hover = self.ss_rect.contains(px, py);
-        self.is_time_hover = self.time_rect.contains(px, py);
-        self.is_mem_hover = self.mem_rect.contains(px, py);
-        self.is_cpu_hover = self.cpu_rect.contains(px, py);
-        self.is_mon_hover = self.mon_rect.contains(px, py);
-
-        changed |= old_tag != self.hovered_tag;
-        changed |= old_layout_hover != self.is_layout_hover;
-        changed |= old_layout_idx != self.hovered_layout_option;
-        changed |= old_ss != self.is_ss_hover;
-        changed |= old_time != self.is_time_hover;
-        changed |= old_mem != self.is_mem_hover;
-        changed |= old_cpu != self.is_cpu_hover;
-        changed |= old_mon != self.is_mon_hover;
-
-        changed
+    // 鼠标移动：更新 hover 状态。返回是否需要重绘（排他式）
+    pub fn update_hover(&mut self, px: i16, py: i16) -> bool {
+        self.hover_target = self.hit_test(px, py);
+        return self.hover_target != HoverTarget::None;
     }
 
     // 鼠标离开：清空 hover 状态。返回是否需要重绘
     pub fn clear_hover(&mut self) -> bool {
-        let changed = self.hovered_tag.is_some()
-            || self.is_layout_hover
-            || self.hovered_layout_option.is_some()
-            || self.is_ss_hover
-            || self.is_time_hover
-            || self.is_mem_hover
-            || self.is_cpu_hover
-            || self.is_mon_hover;
-
-        self.hovered_tag = None;
-        self.is_layout_hover = false;
-        self.hovered_layout_option = None;
-        self.is_ss_hover = false;
-        self.is_time_hover = false;
-        self.is_mem_hover = false;
-        self.is_cpu_hover = false;
-        self.is_mon_hover = false;
-
+        let changed = self.hover_target != HoverTarget::None;
+        self.hover_target = HoverTarget::None;
         changed
     }
 }
@@ -643,7 +627,7 @@ pub fn draw_bar(
             tag_visuals(colors, state.monitor_info.as_ref(), i);
 
         // Hover 样式：提亮 + 边框加粗
-        if state.hovered_tag == Some(i) {
+        if HoverTarget::Tag(i) == state.hover_target {
             bg = bg.lighten(0.10);
             bc = bc.lighten(0.12);
             bw = (bw + 1.0).min(3.0);
@@ -681,7 +665,7 @@ pub fn draw_bar(
     let mut layout_fill = colors.green;
     let mut layout_border = colors.green;
     let mut layout_bw = 1.0;
-    if state.is_layout_hover {
+    if state.hover_target == HoverTarget::LayoutButton {
         layout_fill = layout_fill.lighten(0.08);
         layout_border = layout_border.lighten(0.12);
         layout_bw = 2.0;
@@ -727,11 +711,10 @@ pub fn draw_bar(
             let (tw, _th) = pango_text_size(cr, font, sym);
             let w = ((tw as f64) + 2.0 * (cfg.pill_hpadding - 2.0)).max(32.0);
 
-            let is_hover = state.hovered_layout_option == Some(i);
             let mut fill = *base_color;
             let mut border = *base_color;
             let mut bw = 1.0;
-            if is_hover {
+            if HoverTarget::LayoutOption(i) == state.hover_target {
                 fill = fill.lighten(0.08);
                 border = border.lighten(0.12);
                 bw = 2.0;
@@ -772,7 +755,7 @@ pub fn draw_bar(
     let mut mon_fill = colors.purple;
     let mut mon_border = colors.purple;
     let mut mon_bw = 1.0;
-    if state.is_mon_hover {
+    if HoverTarget::Monitor == state.hover_target {
         mon_fill = mon_fill.lighten(0.08);
         mon_border = mon_border.lighten(0.12);
         mon_bw = 2.0;
@@ -814,7 +797,7 @@ pub fn draw_bar(
     let mut time_fill = colors.time;
     let mut time_border = colors.time;
     let mut time_bw = 1.0;
-    if state.is_time_hover {
+    if HoverTarget::Time == state.hover_target {
         time_fill = time_fill.lighten(0.08);
         time_border = time_border.lighten(0.12);
         time_bw = 2.0;
@@ -913,7 +896,7 @@ pub fn draw_bar(
     let mut mem_bg = base_mem_bg;
     let mut mem_border = base_mem_bg;
     let mut mem_bw = 1.0;
-    if state.is_mem_hover {
+    if HoverTarget::Mem == state.hover_target {
         mem_bg = mem_bg.lighten(0.08);
         mem_border = mem_border.lighten(0.12);
         mem_bw = 2.0;
@@ -955,7 +938,7 @@ pub fn draw_bar(
     let mut cpu_bg = base_cpu_bg;
     let mut cpu_border = base_cpu_bg;
     let mut cpu_bw = 1.0;
-    if state.is_cpu_hover {
+    if HoverTarget::Cpu == state.hover_target {
         cpu_bg = cpu_bg.lighten(0.08);
         cpu_border = cpu_border.lighten(0.12);
         cpu_bw = 2.0;

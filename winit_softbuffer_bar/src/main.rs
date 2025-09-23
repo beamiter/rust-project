@@ -236,10 +236,6 @@ impl App {
             None => return Ok(()),
         };
 
-        if let (Some(wnz), Some(hnz)) = (NonZeroU32::new(width_px), NonZeroU32::new(height_px)) {
-            let _ = surface.resize(wnz, hnz); // 再保险一次
-        }
-
         use bytemuck::cast_slice;
         let mut buf = surface.buffer_mut().map_err(|e| anyhow::anyhow!("{}", e))?;
         if stride == w * 4 {
