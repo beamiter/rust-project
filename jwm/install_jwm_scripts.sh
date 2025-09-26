@@ -5,6 +5,8 @@ sudo cp target/release/jwm /usr/local/bin/
 sudo cp target/release/jwm-tool /usr/local/bin/
 sudo cp jwm.desktop /usr/local/share/xsessions/
 sudo cp jwm.desktop /usr/share/xsessions/
+mkdir -p ~/.config/picom/
+cp picom.conf ~/.config/picom/picom.conf
 
 echo "jwm-tool"
 echo "JWM 管理工具（单二进制多子命令）"

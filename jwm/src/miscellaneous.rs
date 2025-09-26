@@ -39,16 +39,15 @@ pub fn init_auto_start() {
             info!("fehbg: {:?}", start_fehbg);
             if let Err(_) = Command::new(start_fehbg).spawn() {
                 error!("[spawn] Start fehbg failed");
+            } else {
+                info!("[spawn] Start fehbg succed");
             }
         }
         None => error!("Could not find the home directory."),
     }
-    let start_picom = "picom";
-    if let Err(_) = Command::new(start_picom)
-        .arg("--backend")
-        .arg("xrender")
-        .spawn()
-    {
+    if let Err(_) = Command::new("picom").spawn() {
         error!("[spawn] Start picom failed");
+    } else {
+        info!("[spawn] Start picom succed");
     }
 }
