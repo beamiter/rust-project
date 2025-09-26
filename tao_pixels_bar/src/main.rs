@@ -72,14 +72,20 @@ fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>
 // 每秒对齐 tick 线程：按秒对齐，发送 UserEvent::Tick
 fn spawn_tick_thread(proxy: EventLoopProxy<UserEvent>) {
     thread::spawn(move || {
+        let mut last_bucket: u64 = 0;
         loop {
-            let now_sys = SystemTime::now()
+            let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_else(|_| Duration::from_secs(0));
-            let subns = now_sys.subsec_nanos() as u64;
+            let bucket = now.as_secs(); // 或按分钟
+            if bucket != last_bucket {
+                last_bucket = bucket;
+                let _ = proxy.send_event(UserEvent::Tick);
+            }
+            // sleep 到下一秒边界
+            let subns = now.subsec_nanos() as u64;
             let remain_ns = 1_000_000_000u64.saturating_sub(subns).max(1);
             thread::sleep(Duration::from_nanos(remain_ns));
-            let _ = proxy.send_event(UserEvent::Tick);
         }
     });
 }
@@ -360,24 +366,16 @@ fn main() -> Result<()> {
                 UserEvent::SharedUpdated => {
                     let mut need_redraw = false;
                     if let Some(buf_arc) = app.state.shared_buffer.as_ref().cloned() {
-                        let mut last_msg: Option<SharedMessage> = None;
-                        loop {
-                            match buf_arc.try_read_latest_message() {
-                                Ok(Some(msg)) => {
-                                    last_msg = Some(msg);
-                                    continue;
-                                }
-                                Ok(None) => break,
-                                Err(e) => {
-                                    warn!("Shared try_read_latest_message failed: {}", e);
-                                    break;
-                                }
+                        match buf_arc.try_read_latest_message() {
+                            Ok(Some(msg)) => {
+                                log::trace!("redraw by msg: {:?}", msg);
+                                app.state.update_from_shared(msg);
+                                need_redraw = true;
                             }
-                        }
-                        if let Some(msg) = last_msg {
-                            log::trace!("redraw by msg: {:?}", msg);
-                            app.state.update_from_shared(msg);
-                            need_redraw = true;
+                            Ok(None) => { /* 没有消息 */ }
+                            Err(e) => {
+                                warn!("Shared try_read_latest_message failed: {}", e);
+                            }
                         }
                     }
                     if need_redraw {
