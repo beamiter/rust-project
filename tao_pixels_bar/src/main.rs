@@ -4,7 +4,7 @@ use log::warn;
 use pango::FontDescription;
 use pixels::wgpu::TextureFormat;
 use pixels::{Pixels, PixelsBuilder, SurfaceTexture};
-use shared_structures::{SharedMessage, SharedRingBuffer};
+use shared_structures::SharedRingBuffer;
 use std::env;
 use std::sync::Arc;
 use std::thread;
