@@ -2,7 +2,7 @@ use anyhow::Result;
 use cairo::{Context, Format, ImageSurface};
 use log::warn;
 use pango::FontDescription;
-use shared_structures::{SharedMessage, SharedRingBuffer};
+use shared_structures::SharedRingBuffer;
 use std::env;
 use std::sync::Arc;
 use std::thread;
@@ -351,24 +351,16 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::SharedUpdated => {
                 let mut need_redraw = false;
                 if let Some(buf_arc) = self.state.shared_buffer.as_ref().cloned() {
-                    let mut last_msg: Option<SharedMessage> = None;
-                    loop {
-                        match buf_arc.try_read_latest_message() {
-                            Ok(Some(msg)) => {
-                                last_msg = Some(msg);
-                                continue;
-                            }
-                            Ok(None) => break,
-                            Err(e) => {
-                                warn!("Shared try_read_latest_message failed: {}", e);
-                                break;
-                            }
+                    match buf_arc.try_read_latest_message() {
+                        Ok(Some(msg)) => {
+                            log::trace!("redraw by msg: {:?}", msg);
+                            self.state.update_from_shared(msg);
+                            need_redraw = true;
                         }
-                    }
-                    if let Some(msg) = last_msg {
-                        log::trace!("redraw by msg: {:?}", msg);
-                        self.state.update_from_shared(msg);
-                        need_redraw = true;
+                        Ok(None) => { /* 没有消息 */ }
+                        Err(e) => {
+                            warn!("Shared try_read_latest_message failed: {}", e);
+                        }
                     }
                 }
                 if need_redraw {

@@ -3,7 +3,7 @@ use cairo::ffi::{xcb_connection_t, xcb_visualtype_t};
 use cairo::{Context, XCBConnection as CairoXCBConnection, XCBDrawable, XCBSurface, XCBVisualType};
 use log::{debug, warn};
 use pango::FontDescription;
-use shared_structures::{SharedMessage, SharedRingBuffer};
+use shared_structures::SharedRingBuffer;
 use std::env;
 use std::mem::MaybeUninit;
 use std::os::fd::AsRawFd as _;
@@ -729,23 +729,16 @@ fn main() -> Result<()> {
 
                         let mut need_redraw = false;
                         if let Some(buf_arc) = state.shared_buffer.as_ref().cloned() {
-                            let mut last_msg: Option<SharedMessage> = None;
-                            loop {
-                                match buf_arc.try_read_latest_message() {
-                                    Ok(Some(msg)) => {
-                                        last_msg = Some(msg);
-                                        continue;
-                                    }
-                                    Ok(None) => break,
-                                    Err(e) => {
-                                        warn!("Shared try_read_latest_message failed: {}", e);
-                                        break;
-                                    }
+                            match buf_arc.try_read_latest_message() {
+                                Ok(Some(msg)) => {
+                                    log::trace!("redraw by msg: {:?}", msg);
+                                    state.update_from_shared(msg);
+                                    need_redraw = true;
                                 }
-                            }
-                            if let Some(msg) = last_msg {
-                                state.update_from_shared(msg);
-                                need_redraw = true;
+                                Ok(None) => { /* 没有消息 */ }
+                                Err(e) => {
+                                    warn!("Shared try_read_latest_message failed: {}", e);
+                                }
                             }
                         }
                         if need_redraw {
