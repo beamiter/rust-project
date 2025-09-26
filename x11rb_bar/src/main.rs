@@ -3,7 +3,7 @@ use cairo::ffi::{xcb_connection_t, xcb_visualtype_t};
 use cairo::{Context, XCBConnection as CairoXCBConnection, XCBDrawable, XCBSurface, XCBVisualType};
 use log::{debug, warn};
 use pango::FontDescription;
-use shared_structures::{SharedMessage, SharedRingBuffer};
+use shared_structures::SharedRingBuffer;
 use std::env;
 use std::mem::MaybeUninit;
 use std::os::fd::{AsFd, AsRawFd};
