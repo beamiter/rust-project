@@ -9,7 +9,7 @@ use log::{error, info, warn};
 use std::cell::{Cell, RefCell};
 use std::env;
 use std::rc::Rc;
-use std::sync::mpsc::{self, Receiver, Sender as StdSender};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -23,11 +23,6 @@ use gtk4::glib::ControlFlow;
 // ========= 事件与命令 =========
 enum AppEvent {
     SharedMessage(SharedMessage),
-}
-
-enum AppCommand {
-    SendCommand(SharedCommand),
-    Stop,
 }
 
 // ========= 常量 =========
@@ -117,37 +112,6 @@ fn set_metric_capsule(label: &Label, title: &str, ratio: f64) {
     label.add_css_class(usage_to_level_class(ratio));
 }
 
-// ========= 背景线程句柄 =========
-struct WorkerHandle {
-    thread: Option<thread::JoinHandle<()>>,
-    cmd_tx: StdSender<AppCommand>,
-}
-impl WorkerHandle {
-    fn new(shared_path: String, ui_sender: async_channel::Sender<AppEvent>) -> Self {
-        let (cmd_tx, cmd_rx) = mpsc::channel::<AppCommand>();
-        let handle = thread::spawn(move || {
-            worker_thread(shared_path, ui_sender, cmd_rx);
-        });
-        Self {
-            thread: Some(handle),
-            cmd_tx,
-        }
-    }
-    fn send_command(&self, cmd: AppCommand) {
-        if let Err(e) = self.cmd_tx.send(cmd) {
-            warn!("Failed to send command to worker: {}", e);
-        }
-    }
-}
-impl Drop for WorkerHandle {
-    fn drop(&mut self) {
-        let _ = self.cmd_tx.send(AppCommand::Stop);
-        if let Some(handle) = self.thread.take() {
-            let _ = handle.join();
-        }
-    }
-}
-
 // ========= 主体应用 =========
 struct TabBarApp {
     // GTK widgets
@@ -169,8 +133,7 @@ struct TabBarApp {
     // Shared state
     state: SharedAppState,
 
-    // Worker
-    worker: WorkerHandle,
+    shared_buffer_rc: Option<Arc<SharedRingBuffer>>,
 
     // Cached UI-applied values for diff
     ui_last_monitor_num: Cell<u8>,
@@ -236,9 +199,12 @@ impl TabBarApp {
 
         // 异步事件通道（worker -> 主线程）
         let (ui_sender, ui_receiver) = async_channel::unbounded::<AppEvent>();
-
-        // Worker
-        let worker = WorkerHandle::new(shared_path.clone(), ui_sender);
+        let shared_buffer_rc =
+            SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(Arc::new);
+        let shared_buffer_rc_clone = shared_buffer_rc.clone();
+        thread::spawn(move || {
+            worker_thread(shared_buffer_rc_clone, ui_sender);
+        });
 
         let app_instance = Rc::new(Self {
             builder,
@@ -254,7 +220,7 @@ impl TabBarApp {
             layout_btn_floating,
             layout_btn_monocle,
             state,
-            worker,
+            shared_buffer_rc,
             ui_last_monitor_num: Cell::new(255),
         });
 
@@ -445,8 +411,10 @@ impl TabBarApp {
         info!("Tab selected: {}", index);
         if let Ok(mut st) = app.state.try_borrow_mut() {
             st.active_tab = index;
-            if let Some(cmd) = Self::build_tag_command(&st, true) {
-                app.worker.send_command(AppCommand::SendCommand(cmd));
+            if let Some(command) = Self::build_tag_command(&st, true) {
+                if let Some(shared_buffer) = app.shared_buffer_rc.as_ref() {
+                    let _ = shared_buffer.send_command(command);
+                }
             }
         }
         app.update_tab_styles();
@@ -456,7 +424,9 @@ impl TabBarApp {
         if let Ok(st) = app.state.try_borrow() {
             let monitor_id = st.monitor_num as i32;
             let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
-            app.worker.send_command(AppCommand::SendCommand(command));
+            if let Some(shared_buffer) = app.shared_buffer_rc.as_ref() {
+                let _ = shared_buffer.send_command(command);
+            }
             info!("Sent SetLayout command: layout_index={}", layout_index);
         }
         if let Ok(mut st) = app.state.try_borrow_mut() {
@@ -680,61 +650,36 @@ impl TabBarApp {
 
 // ========= Worker 线程：独占 SharedRingBuffer =========
 fn worker_thread(
-    shared_path: String,
+    shared_buffer_rc: Option<Arc<SharedRingBuffer>>,
     ui_sender: async_channel::Sender<AppEvent>,
-    cmd_rx: Receiver<AppCommand>,
 ) {
-    info!("Worker thread starting with shared_path={}", shared_path);
-    let shared_buffer_opt = SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path);
-
-    if shared_buffer_opt.is_none() {
-        error!("Failed to create/open SharedRingBuffer at {}", shared_path);
-        return;
-    }
-    let shared_buffer = shared_buffer_opt.unwrap();
-    let mut prev_timestamp: u128 = 0;
-
-    'outer: loop {
-        // 处理全部待发送命令（非阻塞）
-        while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                AppCommand::SendCommand(command) => match shared_buffer.send_command(command) {
-                    Ok(true) => info!("Command sent via shared_buffer"),
-                    Ok(false) => warn!("Command buffer full, command dropped"),
-                    Err(e) => error!("Failed to send command: {}", e),
-                },
-                AppCommand::Stop => {
-                    info!("Worker received Stop, exiting");
-                    break 'outer;
-                }
-            }
-        }
-
-        // 等待共享内存消息，带超时以便循环处理命令
-        match shared_buffer.wait_for_message(Some(Duration::from_millis(500))) {
-            Ok(true) => {
-                if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
-                    let ts: u128 = message.timestamp.into();
-                    if ts != prev_timestamp {
-                        prev_timestamp = ts;
-                        if let Err(e) = ui_sender.try_send(AppEvent::SharedMessage(message)) {
-                            if !e.is_full() {
-                                warn!("Failed to send SharedMessage to UI: {}", e);
+    if let Some(shared_buffer) = shared_buffer_rc {
+        let mut prev_timestamp: u128 = 0;
+        loop {
+            match shared_buffer.wait_for_message(Some(Duration::from_millis(2000))) {
+                Ok(true) => {
+                    if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
+                        let ts: u128 = message.timestamp.into();
+                        if ts != prev_timestamp {
+                            prev_timestamp = ts;
+                            if let Err(e) = ui_sender.try_send(AppEvent::SharedMessage(message)) {
+                                if !e.is_full() {
+                                    warn!("Failed to send SharedMessage to UI: {}", e);
+                                }
                             }
                         }
                     }
                 }
-            }
-            Ok(false) => {
-                // timeout
-            }
-            Err(e) => {
-                error!("[worker] wait_for_message failed: {}", e);
-                thread::sleep(Duration::from_millis(200));
+                Ok(false) => {
+                    // timeout
+                }
+                Err(e) => {
+                    error!("[worker] wait_for_message failed: {}", e);
+                    thread::sleep(Duration::from_millis(200));
+                }
             }
         }
     }
-
     info!("Worker thread exited");
 }
 
