@@ -121,7 +121,6 @@ body, html {
 .emoji-button:hover { filter: brightness(1.05); border-width: 2px; }
 .emoji-button.pressed { transform: translateY(1px) scale(0.98); filter: brightness(0.95); }
 
-/* 布局开关 & 选项（与 tauri_bar 优化版一致） */
 .layout-controls {
   display: inline-flex;
   align-items: center;

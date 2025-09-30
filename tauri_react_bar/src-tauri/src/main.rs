@@ -244,7 +244,7 @@ async fn main() {
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
-    if let Err(e) = initialize_logging("tauri_bar", &shared_path) {
+    if let Err(e) = initialize_logging("tauri_react_bar", &shared_path) {
         eprintln!("Failed to initialize logging: {}", e);
     }
 
