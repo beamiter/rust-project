@@ -15,7 +15,7 @@ libc = { workspace = true }
 log = { workspace = true }
 
 cairo-rs = { version = "0.21.2", features = ["xcb"] }
-pango = "0.21.2"
+pango = "0.21.3"
 pangocairo = "0.21.2"
 xcb = "1.6.0"
 

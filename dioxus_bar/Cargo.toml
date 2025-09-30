@@ -6,8 +6,8 @@ edition = "2024"
 [dependencies]
 dioxus = { version = "0.6.3", features = ["desktop"] }
 
-wasm-bindgen = "0.2.103"
-web-sys = "0.3.80"
+wasm-bindgen = "0.2.104"
+web-sys = "0.3.81"
 
 tokio = { workspace = true }
 chrono = { workspace = true }

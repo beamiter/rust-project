@@ -8,7 +8,7 @@ libc.workspace = true
 xbar_core = { workspace = true }
 shared_structures = { workspace = true }
 softbuffer = "0.4.6"
-pango = "0.21.2"
+pango = "0.21.3"
 cairo-rs = "0.21.2"
 log.workspace = true
 anyhow.workspace = true
