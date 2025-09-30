@@ -37,7 +37,7 @@ status_bar_config!(
     "iced_bar" => "iced_bar",
     "gtk_bar" => "gtk_bar",
     "relm_bar" => "relm_bar",
-    "tauri_bar" => "tauri_bar",
+    "tauri_react_bar" => "tauri_react_bar",
     "x11rb_bar" => "x11rb_bar",
     "xcb_bar" => "xcb_bar",
     "winit_softbuffer_bar" => "winit_softbuffer_bar",
