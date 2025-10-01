@@ -3,6 +3,8 @@ name = "clash_client"
 version = "0.1.0"
 edition = "2024"
 
+[workspace]
+
 [dependencies]
 anyhow = "1.0.98"
 chrono = "0.4.41"
