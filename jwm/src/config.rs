@@ -45,6 +45,7 @@ status_bar_config!(
     "tao_softbuffer_bar" => "tao_softbuffer_bar",
     "winit_pixels_bar" => "winit_pixels_bar",
     "tao_pixels_bar" => "tao_pixels_bar",
+    "winit_wgpu_bar" => "winit_wgpu_bar",
 );
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

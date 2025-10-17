@@ -1,0 +1,17 @@
+[package]
+name = "winit_wgpu_bar"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+pollster = "0.4.0"
+wgpu = "27.0.1"
+anyhow.workspace = true
+cairo-rs = "0.21.2"
+libc.workspace = true
+log.workspace = true
+xbar_core = { workspace = true }
+shared_structures = { workspace = true }
+pango = "0.21.3"
+winit = "0.30.12"
+raw-window-handle = "0.6.2"
