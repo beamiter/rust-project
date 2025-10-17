@@ -9,6 +9,7 @@ use std::env;
 use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::sync::atomic::{AtomicBool, Ordering};
 use tao::{
     dpi::{LogicalSize, PhysicalSize},
     event::{Event, StartCause, WindowEvent},
@@ -26,8 +27,27 @@ enum UserEvent {
     Tick,
 }
 
-// 共享 eventfd 线程：读取 eventfd 通知并发出 UserEvent::SharedUpdated
-fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>) {
+// 事件合并/背压信号：防止后台线程在主线程处理慢时无限堆积事件
+#[derive(Clone)]
+struct EventCoalescer {
+    shared_dirty: Arc<AtomicBool>, // 是否有未处理的共享更新
+    tick_pending: Arc<AtomicBool>, // 是否有未处理的 tick
+}
+impl EventCoalescer {
+    fn new() -> Self {
+        Self {
+            shared_dirty: Arc::new(AtomicBool::new(false)),
+            tick_pending: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+// 共享 eventfd 线程：读取 eventfd 通知并发出 UserEvent::SharedUpdated（带背压）
+fn spawn_shared_thread(
+    proxy: EventLoopProxy<UserEvent>,
+    shared_efd: Option<i32>,
+    signals: EventCoalescer,
+) {
     if let Some(efd) = shared_efd {
         thread::spawn(move || {
             let mut buf8 = [0u8; 8];
@@ -52,7 +72,14 @@ fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>
                 if (pfd.revents & libc::POLLIN) != 0 {
                     let r = unsafe { libc::read(efd, buf8.as_mut_ptr() as *mut _, buf8.len()) };
                     if r == 8 {
-                        let _ = proxy.send_event(UserEvent::SharedUpdated);
+                        // 合并：只有在之前没有待处理事件时才发送一次
+                        if signals
+                            .shared_dirty
+                            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                            .is_ok()
+                        {
+                            let _ = proxy.send_event(UserEvent::SharedUpdated);
+                        }
                     } else if r < 0 {
                         let err = std::io::Error::last_os_error();
                         if let Some(code) = err.raw_os_error() {
@@ -69,18 +96,25 @@ fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>
     }
 }
 
-// 每秒对齐 tick 线程：按秒对齐，发送 UserEvent::Tick
-fn spawn_tick_thread(proxy: EventLoopProxy<UserEvent>) {
+// 每秒对齐 tick 线程：按秒对齐，发送 UserEvent::Tick（带背压）
+fn spawn_tick_thread(proxy: EventLoopProxy<UserEvent>, signals: EventCoalescer) {
     thread::spawn(move || {
         let mut last_bucket: u64 = 0;
         loop {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_else(|_| Duration::from_secs(0));
-            let bucket = now.as_secs(); // 或按分钟
+            let bucket = now.as_secs(); // 每秒对齐
             if bucket != last_bucket {
                 last_bucket = bucket;
-                let _ = proxy.send_event(UserEvent::Tick);
+                // 合并：只有在之前没有待处理 tick 时才发送一次
+                if signals
+                    .tick_pending
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    let _ = proxy.send_event(UserEvent::Tick);
+                }
             }
             // sleep 到下一秒边界
             let subns = now.subsec_nanos() as u64;
@@ -118,6 +152,9 @@ struct App {
 
     // 时间刷新 bucket（按秒或分钟），减少无谓重绘
     last_time_bucket: u64,
+
+    // 事件合并信号
+    signals: EventCoalescer,
 }
 
 impl App {
@@ -125,6 +162,7 @@ impl App {
         shared_buffer: Option<Arc<SharedRingBuffer>>,
         logical_size: LogicalSize<f64>,
         scale: f64,
+        signals: EventCoalescer,
     ) -> Self {
         let colors = default_colors();
         let cfg = BarConfig {
@@ -159,6 +197,7 @@ impl App {
             pixels_w: 0,
             pixels_h: 0,
             last_time_bucket: 0,
+            signals,
         }
     }
 
@@ -199,11 +238,15 @@ impl App {
             .expect("create window failed");
         let win_id = window.id();
 
-        // 构建 pixels（移动 Window 所有权）
         let width_px = (self.logical_size.width * self.scale_factor).round() as u32;
         let height_px = (self.logical_size.height * self.scale_factor).round() as u32;
-        let surface_texture = SurfaceTexture::new(width_px, height_px, window);
-        let pixels: Pixels<'static> = PixelsBuilder::new(width_px, height_px, surface_texture)
+
+        // 零尺寸保护
+        let safe_w = width_px.max(1);
+        let safe_h = height_px.max(1);
+
+        let surface_texture = SurfaceTexture::new(safe_w, safe_h, window);
+        let pixels: Pixels<'static> = PixelsBuilder::new(safe_w, safe_h, surface_texture)
             .texture_format(TextureFormat::Bgra8UnormSrgb)
             .enable_vsync(true)
             .request_adapter_options(pixels::wgpu::RequestAdapterOptions {
@@ -215,8 +258,8 @@ impl App {
             .expect("pixels create failed");
 
         self.window_id = Some(win_id);
-        self.pixels_w = width_px;
-        self.pixels_h = height_px;
+        self.pixels_w = safe_w;
+        self.pixels_h = safe_h;
         self.pixels = Some(pixels);
 
         // 初始化时间 bucket 并首次绘制
@@ -234,6 +277,12 @@ impl App {
 
         let width_px = (self.logical_size.width * self.scale_factor).round() as i32;
         let height_px = (self.logical_size.height * self.scale_factor).round() as i32;
+
+        // 零尺寸保护：避免无效渲染/驱动问题
+        if width_px <= 0 || height_px <= 0 {
+            return Ok(());
+        }
+
         let stride = width_px
             .checked_mul(4)
             .ok_or_else(|| anyhow::anyhow!("stride overflow"))?;
@@ -342,13 +391,16 @@ fn main() -> Result<()> {
     let event_loop: EventLoop<UserEvent> = EventLoopBuilder::with_user_event().build();
     let proxy = event_loop.create_proxy();
 
-    // 后台线程：SharedUpdated + Tick
-    spawn_shared_thread(proxy.clone(), shared_efd);
-    spawn_tick_thread(proxy.clone());
+    // 初始化事件合并信号
+    let signals = EventCoalescer::new();
+
+    // 后台线程：SharedUpdated + Tick（带背压/事件合并）
+    spawn_shared_thread(proxy.clone(), shared_efd, signals.clone());
+    spawn_tick_thread(proxy.clone(), signals.clone());
 
     // 初始逻辑尺寸（实际在 Init/Resumed 中按主显示器设置）
     let logical_size = LogicalSize::new(800.0, 40.0);
-    let mut app = App::new(shared_buffer, logical_size, 1.0);
+    let mut app = App::new(shared_buffer, logical_size, 1.0, signals.clone());
 
     event_loop.run(move |event, target, control_flow| {
         // 始终等待事件（共享通知 + Tick + 窗口事件）
@@ -364,6 +416,9 @@ fn main() -> Result<()> {
 
             Event::UserEvent(ue) => match ue {
                 UserEvent::SharedUpdated => {
+                    // 清理待处理标记，允许下次发送
+                    app.signals.shared_dirty.store(false, Ordering::Release);
+
                     let mut need_redraw = false;
                     if let Some(buf_arc) = app.state.shared_buffer.as_ref().cloned() {
                         match buf_arc.try_read_latest_message() {
@@ -385,6 +440,9 @@ fn main() -> Result<()> {
                     }
                 }
                 UserEvent::Tick => {
+                    // 清理待处理标记，允许下次发送
+                    app.signals.tick_pending.store(false, Ordering::Release);
+
                     let mut need_redraw = false;
 
                     // 时间 bucket 变化才重绘（秒或分钟由 state.show_seconds 决定）
@@ -425,12 +483,19 @@ fn main() -> Result<()> {
                     }
                     WindowEvent::Resized(new_size) => {
                         app.last_physical_size = new_size;
+
+                        // 零尺寸保护：窗口可能被最小化
+                        if new_size.width == 0 || new_size.height == 0 {
+                            // 跳过 resize 与 redraw，等待恢复
+                            return;
+                        }
+
                         app.logical_size = new_size.to_logical::<f64>(app.scale_factor);
 
                         if let Some(pixels) = app.pixels.as_mut() {
                             let w = (app.logical_size.width * app.scale_factor).round() as u32;
                             let h = (app.logical_size.height * app.scale_factor).round() as u32;
-                            if app.pixels_w != w || app.pixels_h != h {
+                            if w > 0 && h > 0 && (app.pixels_w != w || app.pixels_h != h) {
                                 if let Err(e) = pixels.resize_surface(w, h) {
                                     warn!("pixels.resize_surface error: {}", e);
                                 }
@@ -453,12 +518,18 @@ fn main() -> Result<()> {
                         let new_physical = *new_inner_size;
                         app.scale_factor = scale_factor;
                         app.last_physical_size = new_physical;
+
+                        // 零尺寸保护
+                        if new_physical.width == 0 || new_physical.height == 0 {
+                            return;
+                        }
+
                         app.logical_size = new_physical.to_logical::<f64>(app.scale_factor);
 
                         if let Some(pixels) = app.pixels.as_mut() {
                             let w = (app.logical_size.width * app.scale_factor).round() as u32;
                             let h = (app.logical_size.height * app.scale_factor).round() as u32;
-                            if app.pixels_w != w || app.pixels_h != h {
+                            if w > 0 && h > 0 && (app.pixels_w != w || app.pixels_h != h) {
                                 if let Err(e) = pixels.resize_surface(w, h) {
                                     warn!("pixels.resize_surface error: {}", e);
                                 }
