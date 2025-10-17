@@ -60,7 +60,12 @@ fn vs(@builtin(vertex_index) vid: u32) -> VSOut {
 
   var out: VSOut;
   out.pos = vec4(pos, 0.0, 1.0);
-  out.uv = 0.5 * pos + vec2(0.5, 0.5);
+
+  // 先做标准 NDC->UV 映射
+  let uv = 0.5 * pos + vec2(0.5, 0.5);
+  // 修正 Y 翻转：把屏幕的底部映射到纹理的底部（v=1）
+  out.uv = vec2(uv.x, 1.0 - uv.y);
+
   return out;
 }
 
