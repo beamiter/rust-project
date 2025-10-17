@@ -4,6 +4,8 @@ use std::process::Command;
 
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
+const USE_PICOM: bool = false;
+
 pub fn init_auto_command() {
     let prober = &*ADVANCED_TERMINAL_PROBER;
     if let Some(terminal) = prober.get_available_terminal() {
@@ -45,9 +47,11 @@ pub fn init_auto_start() {
         }
         None => error!("Could not find the home directory."),
     }
-    if let Err(_) = Command::new("picom").spawn() {
-        error!("[spawn] Start picom failed");
-    } else {
-        info!("[spawn] Start picom succed");
+    if USE_PICOM {
+        if let Err(_) = Command::new("picom").spawn() {
+            error!("[spawn] Start picom failed");
+        } else {
+            info!("[spawn] Start picom succed");
+        }
     }
 }
