@@ -4,7 +4,6 @@ version = "0.1.0"
 edition = "2021"
 
 [features]
-default = []
 egui_bar = []
 iced_bar = []
 dioxus_bar = []
@@ -21,6 +20,9 @@ tao_pixels_bar = []
 winit_wgpu_bar = []
 nixgl = []
 cairo = []
+backend-x11 = []
+backend-wayland = []
+default = ["backend-x11"]
 
 [[bin]]
 name = "jwm-tool"
@@ -56,6 +58,8 @@ cfg-if.workspace = true
 lazy_static.workspace = true
 once_cell.workspace = true
 rand.workspace = true
+xkbcommon = "0.9.0"
+bitflags = "2.9.4"
 
 
 [build-dependencies]

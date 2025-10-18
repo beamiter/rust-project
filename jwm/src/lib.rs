@@ -3,6 +3,7 @@ pub mod jwm;
 pub mod miscellaneous;
 pub mod terminal_prober;
 pub mod xcb_util;
+pub mod backend;
 
 pub use jwm::Jwm;
 

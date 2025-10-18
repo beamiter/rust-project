@@ -24,6 +24,11 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::{Duration, Instant};
 use std::usize;
 
+use crate::backend::common_input::{KeySym, Mods, MouseButton};
+use crate::backend::x11::adapter::{button_from_x11, button_to_x11, mods_from_x11, mods_to_x11};
+use crate::backend::x11::ewmh::X11Ewmh;
+use crate::backend::Ewmh;
+
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyError;
 use x11rb::properties::WmSizeHints;
@@ -511,16 +516,16 @@ pub enum WMArgEnum {
 #[derive(Debug, Clone)]
 pub struct WMButton {
     pub click_type: WMClickType,
-    pub mask: KeyButMask,
-    pub button: ButtonIndex,
+    pub mask: Mods,
+    pub button: MouseButton,
     pub func: Option<WMFuncType>,
     pub arg: WMArgEnum,
 }
 impl WMButton {
     pub fn new(
         click_type: WMClickType,
-        mask: KeyButMask,
-        button: ButtonIndex,
+        mask: Mods,
+        button: MouseButton,
         func: Option<WMFuncType>,
         arg_enum: WMArgEnum,
     ) -> Self {
@@ -537,13 +542,13 @@ impl WMButton {
 pub type WMFuncType = fn(&mut Jwm, &WMArgEnum) -> Result<(), Box<dyn std::error::Error>>;
 #[derive(Debug, Clone)]
 pub struct WMKey {
-    pub mask: KeyButMask,
-    pub key_sym: Keysym,
+    pub mask: Mods,
+    pub key_sym: KeySym,
     pub func_opt: Option<WMFuncType>,
     pub arg: WMArgEnum,
 }
 impl WMKey {
-    pub fn new(mod0: KeyButMask, keysym: Keysym, func: Option<WMFuncType>, arg: WMArgEnum) -> Self {
+    pub fn new(mod0: Mods, keysym: KeySym, func: Option<WMFuncType>, arg: WMArgEnum) -> Self {
         Self {
             mask: mod0,
             key_sym: keysym,
@@ -665,7 +670,9 @@ pub struct Jwm {
     pub stext_max_len: usize,
     pub s_w: i32,
     pub s_h: i32,
-    pub numlock_mask: KeyButMask,
+    pub numlock_mask: Mods,
+    pub x11_numlock_mask: x11rb::protocol::xproto::KeyButMask,
+    pub ewmh: X11Ewmh,
     pub running: AtomicBool,
     pub is_restarting: AtomicBool,
     pub cursor_manager: CursorManager,
@@ -828,7 +835,9 @@ impl Jwm {
             stext_max_len: 512,
             s_w,
             s_h,
-            numlock_mask: KeyButMask::default(),
+            numlock_mask: Mods::empty(),
+            x11_numlock_mask: x11rb::protocol::xproto::KeyButMask::default(),
+            ewmh: X11Ewmh,
             running: AtomicBool::new(true),
             is_restarting: AtomicBool::new(false),
             theme_manager,
@@ -1474,18 +1483,18 @@ impl Jwm {
         }
     }
 
-    fn clean_mask(&self, mask: u16) -> KeyButMask {
-        // 第一步：移除NumLock和CapsLock
-        let mask_without_locks = mask & !(self.numlock_mask.bits() | KeyButMask::LOCK.bits());
-        // 第二步：只保留真正的修饰键
-        let modifier_mask = KeyButMask::SHIFT
-            | KeyButMask::CONTROL
-            | KeyButMask::MOD1
-            | KeyButMask::MOD2
-            | KeyButMask::MOD3
-            | KeyButMask::MOD4
-            | KeyButMask::MOD5;
-        KeyButMask::from(mask_without_locks) & modifier_mask
+    fn clean_mask(&self, raw: u16) -> Mods {
+        let raw_x11 = x11rb::protocol::xproto::KeyButMask::from(raw);
+        let mods_all = mods_from_x11(raw_x11, self.x11_numlock_mask);
+        // 只保留真正的修饰（去掉 CAPS/NUMLOCK）
+        mods_all
+            & (Mods::SHIFT
+                | Mods::CONTROL
+                | Mods::ALT
+                | Mods::SUPER
+                | Mods::MOD2
+                | Mods::MOD3
+                | Mods::MOD5)
     }
 
     /// 获取窗口的 WM_CLASS（即类名和实例名）
@@ -2277,22 +2286,16 @@ impl Jwm {
         Ok(())
     }
 
+    // (TODO)
     pub fn grabkeys(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[grabkeys]");
-        self.setup_modifier_masks()?;
+        self.setup_modifier_masks()?; // 仍然调用
 
-        let modifiers_to_try = [
-            KeyButMask::default(),
-            KeyButMask::LOCK,
-            self.numlock_mask,
-            self.numlock_mask | KeyButMask::LOCK,
-        ];
+        self.x11rb_conn.ungrab_key(
+            Grab::ANY,
+            self.x11rb_root,
+            x11rb::protocol::xproto::ModMask::ANY.into(),
+        )?;
 
-        // 取消之前的按键抓取
-        self.x11rb_conn
-            .ungrab_key(Grab::ANY, self.x11rb_root, ModMask::ANY.into())?;
-
-        // 获取键盘映射
         let setup = self.x11rb_conn.setup();
         let mapping = self
             .x11rb_conn
@@ -2302,23 +2305,29 @@ impl Jwm {
             )?
             .reply()?;
 
-        // 遍历所有键码
         for (keycode_offset, keysyms_for_keycode) in mapping
             .keysyms
             .chunks(mapping.keysyms_per_keycode as usize)
             .enumerate()
         {
             let keycode = setup.min_keycode + keycode_offset as u8;
-
             if let Some(&keysym) = keysyms_for_keycode.first() {
-                // 检查是否匹配配置中的按键
                 for key_config in CONFIG.get_keys().iter() {
                     if key_config.key_sym == u32::from(keysym) {
-                        for &modifier_combo in modifiers_to_try.iter() {
+                        // 组合 None / LOCK / NUMLOCK / LOCK|NUMLOCK
+                        use x11rb::protocol::xproto::{KeyButMask as KBM, ModMask};
+                        let base = mods_to_x11(key_config.mask, self.x11_numlock_mask);
+                        let combos = [
+                            base,
+                            base | KBM::LOCK,
+                            base | self.x11_numlock_mask,
+                            base | KBM::LOCK | self.x11_numlock_mask,
+                        ];
+                        for mm in combos {
                             self.x11rb_conn.grab_key(
-                                false, // owner_events
+                                false,
                                 self.x11rb_root,
-                                ModMask::from(key_config.mask.bits() | modifier_combo.bits()),
+                                ModMask::from(mm.bits()),
                                 keycode,
                                 GrabMode::ASYNC,
                                 GrabMode::ASYNC,
@@ -3818,11 +3827,9 @@ impl Jwm {
         let mut click_type = WMClickType::ClickRootWin;
         let window = e.event as u32;
 
-        // 处理监视器切换（保持你原有逻辑）
         if let Some(target_mon_key) = self.wintomon(window) {
             if Some(target_mon_key) != self.sel_mon {
                 let current_sel = self.get_selected_client_key();
-                // 原代码这里 unwrap() 有 panic 风险，保守点可防御
                 if let Some(cur) = current_sel {
                     self.unfocus(cur, true)?;
                 }
@@ -3831,7 +3838,6 @@ impl Jwm {
             }
         }
 
-        // 是否点击在已管理客户端上
         let mut is_client_click = false;
         if let Some(client_key) = self.wintoclient(window) {
             is_client_click = true;
@@ -3840,34 +3846,36 @@ impl Jwm {
             click_type = WMClickType::ClickClientWin;
         }
 
-        // 先判断是否有匹配绑定（而不是先 ReplayPointer）
         let event_mask = self.clean_mask(e.state.bits());
-        let mut handled_by_wm = false;
+        let mouse_button = button_from_x11(e.detail);
 
+        let mut handled_by_wm = false;
         for config in CONFIG.get_buttons().iter() {
+            let kc_mask = config.mask
+                & (Mods::SHIFT
+                    | Mods::CONTROL
+                    | Mods::ALT
+                    | Mods::SUPER
+                    | Mods::MOD2
+                    | Mods::MOD3
+                    | Mods::MOD5);
             if config.click_type == click_type
                 && config.func.is_some()
-                && config.button == ButtonIndex::from(e.detail)
-                && self.clean_mask(config.mask.bits()) == event_mask
+                && config.button == mouse_button
+                && kc_mask == event_mask
             {
                 handled_by_wm = true;
                 if let Some(ref func) = config.func {
-                    info!("[buttonpress] Executing button action");
                     let _ = func(self, &config.arg);
                 }
                 break;
             }
         }
 
-        // 决定是否 Replay/AsyncPointer
-        // - 被 WM 处理的事件，不 Replay 给客户端，最多做 ASYNC_POINTER 解冻
-        // - 未被 WM 处理的事件，才 Replay 给客户端
         if is_client_click {
             if handled_by_wm {
-                // 解冻但不重放
                 let _ = self.x11rb_conn.allow_events(Allow::ASYNC_POINTER, e.time);
             } else {
-                // 我们不处理，回放给客户端
                 let _ = self.x11rb_conn.allow_events(Allow::REPLAY_POINTER, e.time);
             }
         }
@@ -4478,20 +4486,15 @@ impl Jwm {
             let never_focus = client.state.never_focus;
 
             if !never_focus {
-                self.x11rb_conn.set_input_focus(
-                    InputFocus::POINTER_ROOT,
-                    win,
-                    0u32, // time
-                )?;
-
-                use x11rb::wrapper::ConnectionExt;
-                self.x11rb_conn.change_property32(
-                    PropMode::REPLACE,
+                self.x11rb_conn
+                    .set_input_focus(InputFocus::POINTER_ROOT, win, 0u32)?;
+                // EWMH: active window
+                let _ = self.ewmh.set_active_window(
+                    &self.x11rb_conn,
                     self.x11rb_root,
-                    self.atoms._NET_ACTIVE_WINDOW,
-                    AtomEnum::WINDOW,
-                    &[win],
-                )?;
+                    &self.atoms,
+                    win,
+                );
             }
 
             self.sendevent_by_window(win, self.atoms.WM_TAKE_FOCUS);
@@ -6915,19 +6918,21 @@ impl Jwm {
         let numlock_keycode = self.find_numlock_keycode()?;
         if numlock_keycode == 0 {
             warn!("NumLock key not found, using default mask");
-            self.numlock_mask = KeyButMask::MOD2; // 默认Mod2
+            self.numlock_mask = Mods::MOD2; // 默认Mod2
+            self.x11_numlock_mask = x11rb::protocol::xproto::KeyButMask::MOD2;
             return Ok(());
         }
-        // 2. 获取修饰键映射
         let modifier_mapping = self.x11rb_conn.get_modifier_mapping()?.reply()?;
-        // 3. 查找NumLock对应的修饰键位
-        let numlock_mask = self.find_modifier_mask(numlock_keycode, &modifier_mapping);
-        self.numlock_mask = KeyButMask::from(numlock_mask);
-        info!(
-            "NumLock detection: keycode={}, {:?}",
-            numlock_keycode, self.numlock_mask,
-        );
-        // 4. 验证结果
+        let mask_u8 = self.find_modifier_mask(numlock_keycode, &modifier_mapping);
+        if mask_u8 != 0 {
+            // 保存 X11 的真实 mask 位
+            self.x11_numlock_mask = x11rb::protocol::xproto::KeyButMask::from(mask_u8);
+            // 标记通用 Mods 的 NUMLOCK
+            self.numlock_mask |= Mods::NUMLOCK;
+        } else {
+            self.x11_numlock_mask = x11rb::protocol::xproto::KeyButMask::default();
+            self.numlock_mask.remove(Mods::NUMLOCK);
+        }
         self.verify_modifier_setup()?;
         Ok(())
     }
@@ -7007,15 +7012,24 @@ impl Jwm {
     }
 
     fn verify_modifier_setup(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // 获取当前修饰键状态来验证设置
+        // 获取当前修饰键状态
         let pointer_query = self.x11rb_conn.query_pointer(self.x11rb_root)?.reply()?;
 
         info!("Current modifier state: {:?}", pointer_query.mask);
-        if self.numlock_mask != KeyButMask::default() {
-            let numlock_active = pointer_query.mask & self.numlock_mask != 0u16.into();
+
+        // 如果我们有有效的 X11 层 numlock 探测位，就用它判断当前是否开启
+        if self.x11_numlock_mask != x11rb::protocol::xproto::KeyButMask::default() {
+            let numlock_active = (pointer_query.mask & self.x11_numlock_mask)
+                != x11rb::protocol::xproto::KeyButMask::default();
             info!(
                 "NumLock currently {}",
                 if numlock_active { "ON" } else { "OFF" }
+            );
+        } else if !self.numlock_mask.is_empty() {
+            // 否则如果通用层设置了某种回退（例如 MOD2 回退），这里只能提示无法直接判断当前状态
+            info!(
+                "NumLock detection fallback (Mods={:?}), state unknown at X11 level",
+                self.numlock_mask
             );
         }
 
@@ -7335,35 +7349,38 @@ impl Jwm {
             return Err("Client not found".into());
         };
 
-        let modifiers_to_try = [
-            KeyButMask::default(),
-            KeyButMask::LOCK,
-            self.numlock_mask,
-            self.numlock_mask | KeyButMask::LOCK,
-        ];
-
-        // 取消之前的按钮抓取
-        self.x11rb_conn
-            .ungrab_button(ButtonIndex::ANY, client_win_id, ModMask::ANY.into())?;
+        self.x11rb_conn.ungrab_button(
+            ButtonIndex::ANY,
+            client_win_id,
+            x11rb::protocol::xproto::ModMask::ANY.into(),
+        )?;
 
         if !focused {
-            // 兜底抓取改为 ASYNC，避免冻结
             self.x11rb_conn.grab_button(
-                false, // owner_events
+                false,
                 client_win_id,
                 *BUTTONMASK,
                 GrabMode::ASYNC,
                 GrabMode::ASYNC,
-                0u32, // confine_to
-                0u32, // cursor
+                0u32,
+                0u32,
                 ButtonIndex::ANY,
-                ModMask::ANY.into(),
+                x11rb::protocol::xproto::ModMask::ANY.into(),
             )?;
         }
 
         for button_config in CONFIG.get_buttons().iter() {
             if button_config.click_type == WMClickType::ClickClientWin {
-                for &modifier_combo in modifiers_to_try.iter() {
+                use x11rb::protocol::xproto::{KeyButMask as KBM, ModMask};
+                let base = mods_to_x11(button_config.mask, self.x11_numlock_mask);
+                let combos = [
+                    base,
+                    base | KBM::LOCK,
+                    base | self.x11_numlock_mask,
+                    base | KBM::LOCK | self.x11_numlock_mask,
+                ];
+                let x11_btn = button_to_x11(button_config.button);
+                for mm in combos {
                     self.x11rb_conn.grab_button(
                         false,
                         client_win_id,
@@ -7372,8 +7389,8 @@ impl Jwm {
                         GrabMode::ASYNC,
                         0u32,
                         0u32,
-                        button_config.button,
-                        ModMask::from(button_config.mask.bits() | modifier_combo.bits()),
+                        x11_btn,
+                        ModMask::from(mm.bits()),
                     )?;
                 }
             }
@@ -7533,8 +7550,9 @@ impl Jwm {
                 self.x11rb_conn
                     .set_input_focus(InputFocus::POINTER_ROOT, self.x11rb_root, 0u32)?;
 
-                self.x11rb_conn
-                    .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW)?;
+                let _ =
+                    self.ewmh
+                        .clear_active_window(&self.x11rb_conn, self.x11rb_root, &self.atoms);
             }
 
             self.x11rb_conn.flush()?;
@@ -7551,17 +7569,15 @@ impl Jwm {
             0u32, // CurrentTime equivalent
         )?;
 
-        // 清除 _NET_ACTIVE_WINDOW 属性
-        self.x11rb_conn
-            .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW)?;
+        let _ = self
+            .ewmh
+            .clear_active_window(&self.x11rb_conn, self.x11rb_root, &self.atoms);
 
         self.x11rb_conn.flush()?;
         Ok(())
     }
 
     pub fn update_net_client_list(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        use x11rb::wrapper::ConnectionExt;
-
         // 1) _NET_CLIENT_LIST：按“初次管理顺序”（client_order）
         let mut ordered: Vec<Window> = Vec::with_capacity(self.client_order.len());
         for &key in &self.client_order {
@@ -7570,13 +7586,8 @@ impl Jwm {
             }
         }
 
-        self.x11rb_conn.change_property32(
-            PropMode::REPLACE,
-            self.x11rb_root,
-            self.atoms._NET_CLIENT_LIST,
-            AtomEnum::WINDOW,
-            &ordered,
-        )?;
+        self.ewmh
+            .set_client_list(&self.x11rb_conn, self.x11rb_root, &self.atoms, &ordered)?;
 
         // 2) _NET_CLIENT_LIST_STACKING：按“从底到顶”堆叠顺序
         //    monitor_stack 的 0 通常是“顶部”（你 attachstack 是 insert(0,...)）
@@ -7595,11 +7606,10 @@ impl Jwm {
             }
         }
 
-        self.x11rb_conn.change_property32(
-            PropMode::REPLACE,
+        self.ewmh.set_client_list_stacking(
+            &self.x11rb_conn,
             self.x11rb_root,
-            self.atoms._NET_CLIENT_LIST_STACKING,
-            AtomEnum::WINDOW,
+            &self.atoms,
             &stacking,
         )?;
 
@@ -7631,21 +7641,28 @@ impl Jwm {
     }
 
     pub fn keypress(&mut self, e: &KeyPressEvent) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[keypress]");
-        // 使用缓存的键盘映射转换keycode到keysym
         let keysym = self.get_keysym_from_keycode(e.detail)?;
-        debug!(
-            "[keypress] keycode: {}, keysym: 0x{:x}, raw_state: {:?}, clean_state: {:?}",
-            e.detail,
-            keysym,
-            e.state,
-            self.clean_mask(e.state.bits())
-        );
-        // 处理按键绑定
-        if self.execute_key_binding(keysym, e.state)? {
-            debug!("Key binding executed successfully");
-        } else {
-            debug!("No matching key binding found for keysym 0x{:x}", keysym);
+        let clean_state = self.clean_mask(e.state.bits());
+        let keys = CONFIG.get_keys();
+
+        for (_i, key_config) in keys.iter().enumerate() {
+            let kc_mask = key_config.mask
+                & (Mods::SHIFT
+                    | Mods::CONTROL
+                    | Mods::ALT
+                    | Mods::SUPER
+                    | Mods::MOD2
+                    | Mods::MOD3
+                    | Mods::MOD5);
+            if keysym == key_config.key_sym
+                && kc_mask == clean_state
+                && key_config.func_opt.is_some()
+            {
+                if let Some(func) = key_config.func_opt {
+                    let _ = func(self, &key_config.arg);
+                    return Ok(());
+                }
+            }
         }
         Ok(())
     }
@@ -7689,10 +7706,17 @@ impl Jwm {
         Ok(false)
     }
 
-    fn is_key_match(&self, key_config: &WMKey, keysym: u32, clean_state: KeyButMask) -> bool {
-        keysym == key_config.key_sym as u32
-            && self.clean_mask(key_config.mask.bits()) == clean_state
-            && key_config.func_opt.is_some()
+    fn is_key_match(&self, key_config: &WMKey, keysym: u32, clean_state: Mods) -> bool {
+        // 只保留真正的修饰键进行比较
+        let mask_only = key_config.mask
+            & (Mods::SHIFT
+                | Mods::CONTROL
+                | Mods::ALT
+                | Mods::SUPER
+                | Mods::MOD2
+                | Mods::MOD3
+                | Mods::MOD5);
+        keysym == key_config.key_sym && mask_only == clean_state && key_config.func_opt.is_some()
     }
 
     /// 清除键盘映射缓存（在键盘映射变更时调用）

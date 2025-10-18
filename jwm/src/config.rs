@@ -1,12 +1,9 @@
-// config.rs
+// 替换 import 片段
 use cfg_if::cfg_if;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use x11::keysym::*;
-use x11rb::protocol::xproto::ButtonIndex;
-use x11rb::protocol::xproto::KeyButMask;
 
 use std::fmt;
 use std::rc::Rc;
@@ -14,6 +11,10 @@ use std::rc::Rc;
 use crate::jwm::WMFuncType;
 use crate::jwm::{self, Jwm, LayoutEnum, WMButton, WMClickType, WMKey, WMRule};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
+
+// 新增：后端无关输入
+use crate::backend::common_input::keys as k;
+use crate::backend::common_input::{KeySym, Mods, MouseButton};
 
 pub const LOAD_LOCAL_CONFIG: bool = false;
 
@@ -136,7 +137,7 @@ pub struct MouseBindingsConfig {
 pub struct ButtonConfig {
     pub click_type: String, //
     pub modifier: Vec<String>,
-    pub button: u32, // 1, 2, 3
+    pub button: u8, // 1, 2, 3
     pub function: String,
     pub argument: ArgumentConfig,
 }
@@ -479,21 +480,21 @@ impl Config {
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec!["Mod1".to_string()],
-                button: ButtonIndex::M1.into(),
+                button: 1, // 左键
                 function: "movemouse".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec!["Mod1".to_string()],
-                button: ButtonIndex::M2.into(),
+                button: 2, // 中键
                 function: "togglefloating".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec!["Mod1".to_string()],
-                button: ButtonIndex::M3.into(),
+                button: 3, // 右键
                 function: "resizemouse".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
@@ -502,16 +503,7 @@ impl Config {
 
     // 获取默认规则
     fn get_default_rules() -> Vec<RuleConfig> {
-        vec![
-            // RuleConfig {
-            //     class: "meeting".to_string(),
-            //     instance: "".to_string(),
-            //     name: "飞书会议".to_string(),
-            //     tags_mask: 0,
-            //     is_floating: true,
-            //     monitor: -1,
-            // },
-        ]
+        vec![]
     }
 
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
@@ -650,7 +642,7 @@ impl Config {
     fn convert_button_config(&self, btn_config: &ButtonConfig) -> Option<WMButton> {
         let click_type = self.parse_click_type(&btn_config.click_type)?;
         let modifiers = self.parse_modifiers(&btn_config.modifier);
-        let button = ButtonIndex::from(btn_config.button as u8);
+        let button = MouseButton::from_u8(btn_config.button as u8);
         let function = self.parse_function(&btn_config.function)?;
         let arg = self.convert_argument(&btn_config.argument);
 
@@ -716,108 +708,105 @@ impl Config {
         }
     }
 
-    // 扩展 parse_keysym 以支持更多按键
-    fn parse_keysym(&self, key: &str) -> Option<u64> {
-        match key {
+    fn parse_keysym(&self, key: &str) -> Option<KeySym> {
+        let ks: KeySym = match key {
             // 特殊键
-            "Return" => Some(XK_Return.into()),
-            "Tab" => Some(XK_Tab.into()),
-            "space" => Some(XK_space.into()),
-            "Page_Up" => Some(XK_Page_Up.into()),
-            "Page_Down" => Some(XK_Page_Down.into()),
-            "comma" => Some(XK_comma.into()),
-            "period" => Some(XK_period.into()),
+            "Return" => k::KEY_Return,
+            "Tab" => k::KEY_Tab,
+            "space" => k::KEY_space,
+            "Page_Up" => k::KEY_Page_Up,
+            "Page_Down" => k::KEY_Page_Down,
+            "comma" => k::KEY_comma,
+            "period" => k::KEY_period,
 
             // 字母键
-            "a" => Some(XK_a.into()),
-            "b" => Some(XK_b.into()),
-            "c" => Some(XK_c.into()),
-            "d" => Some(XK_d.into()),
-            "e" => Some(XK_e.into()),
-            "f" => Some(XK_f.into()),
-            "g" => Some(XK_g.into()),
-            "h" => Some(XK_h.into()),
-            "i" => Some(XK_i.into()),
-            "j" => Some(XK_j.into()),
-            "k" => Some(XK_k.into()),
-            "l" => Some(XK_l.into()),
-            "m" => Some(XK_m.into()),
-            "n" => Some(XK_n.into()),
-            "o" => Some(XK_o.into()),
-            "p" => Some(XK_p.into()),
-            "q" => Some(XK_q.into()),
-            "r" => Some(XK_r.into()),
-            "s" => Some(XK_s.into()),
-            "t" => Some(XK_t.into()),
-            "u" => Some(XK_u.into()),
-            "v" => Some(XK_v.into()),
-            "w" => Some(XK_w.into()),
-            "x" => Some(XK_x.into()),
-            "y" => Some(XK_y.into()),
-            "z" => Some(XK_z.into()),
+            "a" => k::KEY_a,
+            "b" => k::KEY_b,
+            "c" => k::KEY_c,
+            "d" => k::KEY_d,
+            "e" => k::KEY_e,
+            "f" => k::KEY_f,
+            "g" => k::KEY_g,
+            "h" => k::KEY_h,
+            "i" => k::KEY_i,
+            "j" => k::KEY_j,
+            "k" => k::KEY_k,
+            "l" => k::KEY_l,
+            "m" => k::KEY_m,
+            "n" => k::KEY_n,
+            "o" => k::KEY_o,
+            "p" => k::KEY_p,
+            "q" => k::KEY_q,
+            "r" => k::KEY_r,
+            "s" => k::KEY_s,
+            "t" => k::KEY_t,
+            "u" => k::KEY_u,
+            "v" => k::KEY_v,
+            "w" => k::KEY_w,
+            "x" => k::KEY_x,
+            "y" => k::KEY_y,
+            "z" => k::KEY_z,
 
             // 数字键
-            "0" => Some(XK_0.into()),
-            "1" => Some(XK_1.into()),
-            "2" => Some(XK_2.into()),
-            "3" => Some(XK_3.into()),
-            "4" => Some(XK_4.into()),
-            "5" => Some(XK_5.into()),
-            "6" => Some(XK_6.into()),
-            "7" => Some(XK_7.into()),
-            "8" => Some(XK_8.into()),
-            "9" => Some(XK_9.into()),
+            "0" => k::KEY_0,
+            "1" => k::KEY_1,
+            "2" => k::KEY_2,
+            "3" => k::KEY_3,
+            "4" => k::KEY_4,
+            "5" => k::KEY_5,
+            "6" => k::KEY_6,
+            "7" => k::KEY_7,
+            "8" => k::KEY_8,
+            "9" => k::KEY_9,
 
             // 功能键
-            "F1" => Some(XK_F1.into()),
-            "F2" => Some(XK_F2.into()),
-            "F3" => Some(XK_F3.into()),
-            "F4" => Some(XK_F4.into()),
-            "F5" => Some(XK_F5.into()),
-            "F6" => Some(XK_F6.into()),
-            "F7" => Some(XK_F7.into()),
-            "F8" => Some(XK_F8.into()),
-            "F9" => Some(XK_F9.into()),
-            "F10" => Some(XK_F10.into()),
-            "F11" => Some(XK_F11.into()),
-            "F12" => Some(XK_F12.into()),
+            "F1" => k::KEY_F1,
+            "F2" => k::KEY_F2,
+            "F3" => k::KEY_F3,
+            "F4" => k::KEY_F4,
+            "F5" => k::KEY_F5,
+            "F6" => k::KEY_F6,
+            "F7" => k::KEY_F7,
+            "F8" => k::KEY_F8,
+            "F9" => k::KEY_F9,
+            "F10" => k::KEY_F10,
+            "F11" => k::KEY_F11,
+            "F12" => k::KEY_F12,
 
             // 方向键
-            "Left" => Some(XK_Left.into()),
-            "Right" => Some(XK_Right.into()),
-            "Up" => Some(XK_Up.into()),
-            "Down" => Some(XK_Down.into()),
+            "Left" => k::KEY_Left,
+            "Right" => k::KEY_Right,
+            "Up" => k::KEY_Up,
+            "Down" => k::KEY_Down,
 
             // 其他常用键
-            "Escape" => Some(XK_Escape.into()),
-            "BackSpace" => Some(XK_BackSpace.into()),
-            "Delete" => Some(XK_Delete.into()),
-            "Home" => Some(XK_Home.into()),
-            "End" => Some(XK_End.into()),
-
+            "Escape" => k::KEY_Escape,
+            "BackSpace" => k::KEY_BackSpace,
+            "Delete" => k::KEY_Delete,
+            "Home" => k::KEY_Home,
+            "End" => k::KEY_End,
             _ => {
                 eprintln!("Unknown key: {}", key);
-                None
+                return None;
             }
-        }
+        };
+        Some(ks)
     }
 
-    // 扩展 parse_modifiers 以支持更多修饰键
-    fn parse_modifiers(&self, modifiers: &[String]) -> KeyButMask {
-        let mut mask = KeyButMask::default();
+    fn parse_modifiers(&self, modifiers: &[String]) -> Mods {
+        let mut mask = Mods::empty();
         for modifier in modifiers {
-            mask |= match modifier.as_str() {
-                "Mod1" | "Alt" => KeyButMask::MOD1,
-                "Mod2" => KeyButMask::MOD2,
-                "Mod3" => KeyButMask::MOD3,
-                "Mod4" | "Super" | "Win" => KeyButMask::MOD4,
-                "Mod5" => KeyButMask::MOD5,
-                "Control" | "Ctrl" => KeyButMask::CONTROL,
-                "Shift" => KeyButMask::SHIFT,
-                "Lock" | "CapsLock" => KeyButMask::LOCK,
+            match modifier.as_str() {
+                "Mod1" | "Alt" => mask |= Mods::ALT,
+                "Mod2" => mask |= Mods::MOD2,
+                "Mod3" => mask |= Mods::MOD3,
+                "Mod4" | "Super" | "Win" => mask |= Mods::SUPER,
+                "Mod5" => mask |= Mods::MOD5,
+                "Control" | "Ctrl" => mask |= Mods::CONTROL,
+                "Shift" => mask |= Mods::SHIFT,
+                "Lock" | "CapsLock" => mask |= Mods::CAPS,
                 _ => {
                     eprintln!("Unknown modifier: {}", modifier);
-                    KeyButMask::default()
                 }
             };
         }
@@ -849,21 +838,21 @@ impl Config {
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: ButtonIndex::M1.into(),
+                button: 1,
                 function: "movemouse".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: ButtonIndex::M2.into(),
+                button: 2,
                 function: "togglefloating".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
             ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: ButtonIndex::M3.into(),
+                button: 3,
                 function: "resizemouse".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
@@ -883,54 +872,47 @@ impl Config {
             .collect()
     }
 
-    // 私有辅助方法
     fn convert_key_config(&self, key_config: &KeyConfig) -> Option<WMKey> {
         let modifiers = self.parse_modifiers(&key_config.modifier);
         let keysym = self.parse_keysym(&key_config.key)?;
         let function = self.parse_function(&key_config.function)?;
         let arg = self.convert_argument(&key_config.argument);
 
-        Some(WMKey::new(modifiers, keysym as u32, Some(function), arg))
+        Some(WMKey::new(modifiers, keysym, Some(function), arg))
     }
 
     fn generate_tag_keys(&self, tag: usize) -> Vec<WMKey> {
         let key = match tag {
-            0 => XK_1,
-            1 => XK_2,
-            2 => XK_3,
-            3 => XK_4,
-            4 => XK_5,
-            5 => XK_6,
-            6 => XK_7,
-            7 => XK_8,
-            8 => XK_9,
+            0 => k::KEY_1,
+            1 => k::KEY_2,
+            2 => k::KEY_3,
+            3 => k::KEY_4,
+            4 => k::KEY_5,
+            5 => k::KEY_6,
+            6 => k::KEY_7,
+            7 => k::KEY_8,
+            8 => k::KEY_9,
             _ => return vec![],
         };
 
         let modkey = self.parse_modifiers(&[self.inner.keybindings.modkey.clone()]);
-
         vec![
+            WMKey::new(modkey, key, Some(Jwm::view), jwm::WMArgEnum::UInt(1 << tag)),
             WMKey::new(
-                modkey,
-                key.into(),
-                Some(Jwm::view),
-                jwm::WMArgEnum::UInt(1 << tag),
-            ),
-            WMKey::new(
-                modkey | KeyButMask::CONTROL,
-                key.into(),
+                modkey | Mods::CONTROL,
+                key,
                 Some(Jwm::toggleview),
                 jwm::WMArgEnum::UInt(1 << tag),
             ),
             WMKey::new(
-                modkey | KeyButMask::SHIFT,
-                key.into(),
+                modkey | Mods::SHIFT,
+                key,
                 Some(Jwm::tag),
                 jwm::WMArgEnum::UInt(1 << tag),
             ),
             WMKey::new(
-                modkey | KeyButMask::CONTROL | KeyButMask::SHIFT,
-                key.into(),
+                modkey | Mods::CONTROL | Mods::SHIFT,
+                key,
                 Some(Jwm::toggletag),
                 jwm::WMArgEnum::UInt(1 << tag),
             ),
