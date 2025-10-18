@@ -7684,41 +7684,6 @@ impl Jwm {
         Ok(keysym)
     }
 
-    fn execute_key_binding(
-        &mut self,
-        keysym: u32,
-        state: KeyButMask,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        let keys = CONFIG.get_keys();
-        let clean_state = self.clean_mask(state.bits().into());
-        for (i, key_config) in keys.iter().enumerate() {
-            if self.is_key_match(key_config, keysym, clean_state) {
-                info!(
-                    "[keypress] executing binding {}: keysym=0x{:x}, mod={:?}, arg={:?}",
-                    i, key_config.key_sym, key_config.mask, key_config.arg,
-                );
-                if let Some(func) = key_config.func_opt {
-                    let _ = func(self, &key_config.arg);
-                    return Ok(true);
-                }
-            }
-        }
-        Ok(false)
-    }
-
-    fn is_key_match(&self, key_config: &WMKey, keysym: u32, clean_state: Mods) -> bool {
-        // 只保留真正的修饰键进行比较
-        let mask_only = key_config.mask
-            & (Mods::SHIFT
-                | Mods::CONTROL
-                | Mods::ALT
-                | Mods::SUPER
-                | Mods::MOD2
-                | Mods::MOD3
-                | Mods::MOD5);
-        keysym == key_config.key_sym && mask_only == clean_state && key_config.func_opt.is_some()
-    }
-
     /// 清除键盘映射缓存（在键盘映射变更时调用）
     pub fn clear_keycode_cache(&mut self) {
         self.keycode_cache.clear();

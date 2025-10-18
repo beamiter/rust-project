@@ -1,6 +1,6 @@
 // src/backend/x11/ewmh.rs
-use x11rb::connection::Connection;
 use x11rb::protocol::xproto::{AtomEnum, PropMode, Window};
+use x11rb::rust_connection::RustConnection;
 use x11rb::wrapper::ConnectionExt;
 
 use crate::backend::Ewmh;
@@ -12,17 +12,15 @@ pub struct X11Ewmh;
 impl Ewmh for X11Ewmh {
     type Window = Window;
     type AtomSet = Atoms;
+    type Conn = RustConnection;
 
-    fn set_active_window<C>(
+    fn set_active_window(
         &self,
-        conn: &C,
-        root: Window,
-        atoms: &Atoms,
-        win: Window,
-    ) -> Result<(), Box<dyn std::error::Error>>
-    where
-        C: Connection,
-    {
+        conn: &Self::Conn,
+        root: Self::Window,
+        atoms: &Self::AtomSet,
+        win: Self::Window,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         conn.change_property32(
             PropMode::REPLACE,
             root,
@@ -33,30 +31,24 @@ impl Ewmh for X11Ewmh {
         Ok(())
     }
 
-    fn clear_active_window<C>(
+    fn clear_active_window(
         &self,
-        conn: &C,
-        root: Window,
-        atoms: &Atoms,
-    ) -> Result<(), Box<dyn std::error::Error>>
-    where
-        C: Connection,
-    {
+        conn: &Self::Conn,
+        root: Self::Window,
+        atoms: &Self::AtomSet,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         use x11rb::protocol::xproto::ConnectionExt;
         conn.delete_property(root, atoms._NET_ACTIVE_WINDOW)?;
         Ok(())
     }
 
-    fn set_client_list<C>(
+    fn set_client_list(
         &self,
-        conn: &C,
-        root: Window,
-        atoms: &Atoms,
-        list: &[Window],
-    ) -> Result<(), Box<dyn std::error::Error>>
-    where
-        C: Connection,
-    {
+        conn: &Self::Conn,
+        root: Self::Window,
+        atoms: &Self::AtomSet,
+        list: &[Self::Window],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         conn.change_property32(
             PropMode::REPLACE,
             root,
@@ -67,16 +59,13 @@ impl Ewmh for X11Ewmh {
         Ok(())
     }
 
-    fn set_client_list_stacking<C>(
+    fn set_client_list_stacking(
         &self,
-        conn: &C,
-        root: Window,
-        atoms: &Atoms,
-        list: &[Window],
-    ) -> Result<(), Box<dyn std::error::Error>>
-    where
-        C: Connection,
-    {
+        conn: &Self::Conn,
+        root: Self::Window,
+        atoms: &Self::AtomSet,
+        list: &[Self::Window],
+    ) -> Result<(), Box<dyn std::error::Error>> {
         conn.change_property32(
             PropMode::REPLACE,
             root,
