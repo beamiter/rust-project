@@ -4,7 +4,6 @@ pub mod common_input;
 #[cfg(feature = "backend-x11")]
 pub mod x11;
 
-/// 仅抽象 EWMH 常用接口（PR6）
 pub trait Ewmh {
     type Window;
     type AtomSet;

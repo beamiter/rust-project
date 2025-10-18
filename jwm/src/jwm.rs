@@ -48,7 +48,6 @@ use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus}
 use bincode::config::standard;
 use bincode::{Decode, Encode};
 
-// 新增导入
 use std::os::unix::io::AsRawFd;
 use tokio::io::unix::AsyncFd;
 
@@ -725,7 +724,7 @@ pub struct Jwm {
 
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
 
-    pub restoring_from_snapshot: bool, // 新增：是否处于重启恢复模式
+    pub restoring_from_snapshot: bool,
 
     pub last_stacking: SecondaryMap<MonitorKey, Vec<Window>>,
 }
@@ -3610,7 +3609,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 新增处理命令的方法
     fn process_commands_from_status_bar(&mut self) {
         // 创建一个临时向量来收集所有命令
         let mut commands_to_process: Vec<SharedCommand> = Vec::new();
@@ -8691,7 +8689,6 @@ impl Jwm {
         if e.event != self.x11rb_root {
             return Ok(());
         }
-        // 新增：短路屏蔽
         if self.mouse_focus_blocked() {
             return Ok(());
         }

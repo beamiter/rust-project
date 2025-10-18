@@ -1,4 +1,3 @@
-// 替换 import 片段
 use cfg_if::cfg_if;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
@@ -12,7 +11,6 @@ use crate::jwm::WMFuncType;
 use crate::jwm::{self, Jwm, LayoutEnum, WMButton, WMClickType, WMKey, WMRule};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
-// 新增：后端无关输入
 use crate::backend::common_input::keys as k;
 use crate::backend::common_input::{KeySym, Mods, MouseButton};
 
