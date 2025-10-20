@@ -2,7 +2,6 @@
 
 use crate::backend::traits::{ColorAllocator, CursorProvider, Pixel, StdCursorKind};
 use std::collections::HashMap;
-use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 
@@ -362,71 +361,6 @@ impl StandardCursor {
     }
 }
 
-// 基本使用
-#[allow(dead_code)]
-fn create_standard_cursors(conn: &impl Connection) -> Result<(), Box<dyn std::error::Error>> {
-    // 打开光标字体
-    let cursor_font = conn.generate_id()?;
-    conn.open_font(cursor_font, b"cursor")?;
-
-    // 创建各种光标
-    let arrow_cursor = StandardCursor::LeftPtr.create(conn, cursor_font)?;
-    let hand_cursor = StandardCursor::Hand1.create(conn, cursor_font)?;
-    let text_cursor = StandardCursor::Xterm.create(conn, cursor_font)?;
-    let wait_cursor = StandardCursor::Watch.create(conn, cursor_font)?;
-    let crosshair_cursor = StandardCursor::Crosshair.create(conn, cursor_font)?;
-
-    println!("Created cursors successfully!");
-
-    // 清理资源
-    conn.free_cursor(arrow_cursor)?;
-    conn.free_cursor(hand_cursor)?;
-    conn.free_cursor(text_cursor)?;
-    conn.free_cursor(wait_cursor)?;
-    conn.free_cursor(crosshair_cursor)?;
-    conn.close_font(cursor_font)?;
-
-    Ok(())
-}
-
-// 创建彩色光标
-#[allow(dead_code)]
-fn create_colored_cursors(conn: &impl Connection) -> Result<(), Box<dyn std::error::Error>> {
-    let cursor_font = conn.generate_id()?;
-    conn.open_font(cursor_font, b"cursor")?;
-
-    // 红色箭头光标
-    let red_arrow = StandardCursor::LeftPtr.create_colored(
-        conn,
-        cursor_font,
-        65535,
-        0,
-        0, // 红色前景
-        65535,
-        65535,
-        65535, // 白色背景
-    )?;
-
-    // 蓝色手型光标
-    let blue_hand = StandardCursor::Hand1.create_colored(
-        conn,
-        cursor_font,
-        0,
-        0,
-        65535, // 蓝色前景
-        65535,
-        65535,
-        65535, // 白色背景
-    )?;
-
-    // 清理
-    conn.free_cursor(red_arrow)?;
-    conn.free_cursor(blue_hand)?;
-    conn.close_font(cursor_font)?;
-
-    Ok(())
-}
-
 // 新的主题管理器（非泛型结构）
 #[derive(Debug, Clone)]
 pub struct GenericThemeManager {
@@ -524,13 +458,16 @@ impl GenericThemeManager {
     }
 }
 
-// 原 CursorManager 抽象为：
-pub struct GenericCursorManager<P: CursorProvider> {
-    provider: P,
+// type alias 保留
+#[cfg(feature = "backend-x11")]
+pub type ThemeManager = GenericThemeManager;
+
+pub struct CursorManager {
+    provider: Box<dyn CursorProvider>,
 }
 
-impl<P: CursorProvider> GenericCursorManager<P> {
-    pub fn new(mut provider: P) -> Result<Self, Box<dyn std::error::Error>> {
+impl CursorManager {
+    pub fn new(mut provider: Box<dyn CursorProvider>) -> Result<Self, Box<dyn std::error::Error>> {
         provider.preload_common()?;
         Ok(Self { provider })
     }
@@ -551,59 +488,6 @@ impl<P: CursorProvider> GenericCursorManager<P> {
     pub fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.provider.cleanup()
     }
-}
-
-// type alias 保留
-#[cfg(feature = "backend-x11")]
-pub type ThemeManager = GenericThemeManager;
-
-#[cfg(feature = "backend-x11")]
-pub type CursorManager = GenericCursorManager<
-    crate::backend::x11::cursor::X11CursorProvider<x11rb::rust_connection::RustConnection>,
->;
-
-// 使用示例（修正）
-#[allow(dead_code)]
-fn example_usage() -> Result<(), Box<dyn std::error::Error>> {
-    let (conn, _screen_num) = x11rb::connect(None)?;
-    let conn = Arc::new(conn);
-    let provider = crate::backend::x11::cursor::X11CursorProvider::new(conn.clone())?;
-    let mut cursor_manager = CursorManager::new(provider)?;
-
-    let main_window = conn.generate_id()?;
-    let button_window = conn.generate_id()?;
-    let text_window = conn.generate_id()?;
-
-    cursor_manager.apply_cursor(main_window as u64, StdCursorKind::LeftPtr)?;
-    cursor_manager.apply_cursor(button_window as u64, StdCursorKind::Hand)?;
-    cursor_manager.apply_cursor(text_window as u64, StdCursorKind::XTerm)?;
-    cursor_manager.cleanup()?;
-
-    Ok(())
-}
-
-// 测试所有光标（保持不变或用 as_ref()）
-#[allow(dead_code)]
-pub fn test_all_cursors(conn: &impl Connection) -> Result<(), Box<dyn std::error::Error>> {
-    let cursor_font = conn.generate_id()?;
-    conn.open_font(cursor_font, b"cursor")?;
-
-    println!("Testing all standard cursors:");
-
-    for &cursor_type in StandardCursor::all_cursors() {
-        match cursor_type.create(conn, cursor_font) {
-            Ok(cursor) => {
-                println!("✓ {:?}: {}", cursor_type, cursor_type.description());
-                conn.free_cursor(cursor)?;
-            }
-            Err(e) => {
-                println!("✗ {:?}: Failed - {}", cursor_type, e);
-            }
-        }
-    }
-
-    conn.close_font(cursor_font)?;
-    Ok(())
 }
 
 /// ARGB颜色结构，支持Alpha通道

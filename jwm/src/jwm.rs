@@ -35,7 +35,7 @@ use crate::backend::x11::window_ops::X11WindowOps;
 use crate::backend::Ewmh;
 use crate::config::CONFIG;
 use crate::xcb_util::SchemeType;
-use crate::xcb_util::{test_all_cursors, Atoms, CursorManager, ThemeManager};
+use crate::xcb_util::{Atoms, CursorManager, ThemeManager};
 
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyError;
@@ -801,9 +801,6 @@ impl Jwm {
             }
         };
 
-        info!("[new] Testing cursors");
-        let _ = test_all_cursors(x11rb_conn.as_ref());
-
         let x11rb_screen = x11rb_conn.setup().roots[x11rb_screen_num].clone();
         let s_w = x11rb_screen.width_in_pixels.into();
         let s_h = x11rb_screen.height_in_pixels.into();
@@ -825,7 +822,7 @@ impl Jwm {
         // CursorManager
         let cursor_provider =
             crate::backend::x11::cursor::X11CursorProvider::new(x11rb_conn.clone())?;
-        let cursor_manager = crate::xcb_util::GenericCursorManager::new(cursor_provider)?;
+        let cursor_manager = crate::xcb_util::CursorManager::new(Box::new(cursor_provider))?;
 
         let window_ops = X11WindowOps::new(x11rb_conn.clone());
         let input_ops =
