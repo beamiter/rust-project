@@ -5962,20 +5962,6 @@ impl Jwm {
         }
     }
 
-    // 回退文本解析
-    fn parse_fallback_text(&self, value: &[u8]) -> Option<String> {
-        debug!("[gettextprop] Using fallback text parsing");
-
-        // 首先尝试 UTF-8
-        match String::from_utf8(value.to_vec()) {
-            Ok(utf8_string) => Some(utf8_string),
-            Err(_) => {
-                debug!("[gettextprop] Fallback UTF-8 failed, using Latin-1");
-                Some(self.parse_latin1_string(value))
-            }
-        }
-    }
-
     pub fn propertynotify(
         &mut self,
         e: &PropertyNotifyEvent,
