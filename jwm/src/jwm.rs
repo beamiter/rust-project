@@ -21,18 +21,15 @@ use std::os::fd::OwnedFd;
 use std::process::{Child, Command};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::usize;
 
 use crate::backend::common_input::{KeySym, Mods, MouseButton};
+use crate::backend::traits::StdCursorKind;
 use crate::backend::x11::adapter::{button_from_x11, button_to_x11, mods_from_x11, mods_to_x11};
-use crate::backend::x11::color::X11ColorAllocator;
-use crate::backend::x11::cursor::X11CursorProvider;
 use crate::backend::x11::ewmh::X11Ewmh;
 use crate::backend::Ewmh;
-use crate::xcb_util::GenericCursorManager;
-use crate::xcb_util::GenericThemeManager;
-use crate::backend::traits::StdCursorKind;
 
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyError;
@@ -719,7 +716,7 @@ pub struct Jwm {
     pub pending_bar_updates: HashSet<MonitorIndex>,
 
     // X11rb 连接/根窗口/屏幕/Atoms
-    pub x11rb_conn: RustConnection,
+    pub x11rb_conn: Arc<RustConnection>,
     pub x11rb_root: Window,
     pub x11rb_screen: Screen,
     pub atoms: Atoms,
@@ -766,7 +763,7 @@ impl Jwm {
 
         // 尝试连接到 X11 服务器，添加错误处理
         info!("[new] Connecting to X11 server");
-        let (x11rb_conn, x11rb_screen_num) =
+        let (raw_conn, x11rb_screen_num) =
             match x11rb::rust_connection::RustConnection::connect(None) {
                 Ok(conn) => {
                     info!("[new] X11 connection established");
@@ -777,9 +774,10 @@ impl Jwm {
                     return Err(format!("X11 connection failed: {}", e).into());
                 }
             };
+        let x11rb_conn = Arc::new(raw_conn);
 
         info!("[new] Getting atoms");
-        let atoms = match Atoms::new(&x11rb_conn) {
+        let atoms = match Atoms::new(x11rb_conn.as_ref()) {
             Ok(cookie) => match cookie.reply() {
                 Ok(atoms) => {
                     info!("[new] Atoms retrieved successfully");
@@ -797,7 +795,7 @@ impl Jwm {
         };
 
         info!("[new] Testing cursors");
-        let _ = test_all_cursors(&x11rb_conn);
+        let _ = test_all_cursors(x11rb_conn.as_ref());
 
         let x11rb_screen = x11rb_conn.setup().roots[x11rb_screen_num].clone();
         let s_w = x11rb_screen.width_in_pixels.into();
@@ -810,12 +808,17 @@ impl Jwm {
         );
 
         // ThemeManager
-        let x11_alloc = X11ColorAllocator::new(x11rb_conn.clone(), x11rb_screen.default_colormap);
-        let (theme_manager, _alloc_back) = GenericThemeManager::create_from_config(x11_alloc)?;
+        let x11_alloc = crate::backend::x11::color::X11ColorAllocator::new(
+            x11rb_conn.clone(),
+            x11rb_screen.default_colormap,
+        );
+        let (theme_manager, _alloc_back) =
+            crate::xcb_util::GenericThemeManager::create_from_config(x11_alloc)?;
 
         // CursorManager
-        let cursor_provider = X11CursorProvider::new(x11rb_conn.clone())?;
-        let cursor_manager = GenericCursorManager::new(cursor_provider)?;
+        let cursor_provider =
+            crate::backend::x11::cursor::X11CursorProvider::new(x11rb_conn.clone())?;
+        let cursor_manager = crate::xcb_util::GenericCursorManager::new(cursor_provider)?;
 
         info!("[new] JWM initialization completed successfully");
 
@@ -6472,9 +6475,7 @@ impl Jwm {
             (query_reply.root_x as u16, query_reply.root_y as u16);
 
         // 5. 获取拖拽时的光标
-        let cursor = self
-            .cursor_manager
-            .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Hand1)?;
+        let cursor = self.cursor_manager.get_cursor(StdCursorKind::Hand)?;
 
         // 6. 组装上下文并进入通用循环
         let ctx = DragContext {
@@ -6733,9 +6734,7 @@ impl Jwm {
         let q = self.x11rb_conn.query_pointer(self.x11rb_root)?.reply()?;
         let (initial_mouse_x, initial_mouse_y) = (q.root_x as u16, q.root_y as u16);
 
-        let cursor = self
-            .cursor_manager
-            .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::Fleur)?;
+        let cursor = self.cursor_manager.get_cursor(StdCursorKind::Fleur)?;
 
         let ctx = DragContext {
             client_key,

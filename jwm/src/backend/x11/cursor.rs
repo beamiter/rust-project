@@ -1,21 +1,27 @@
 // src/backend/x11/cursor.rs
+use crate::backend::traits::{CursorHandle, CursorProvider, StdCursorKind};
+use crate::xcb_util::StandardCursor as X11StdCursor;
 use std::collections::HashMap;
+use std::sync::Arc;
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::*;
-use crate::backend::traits::{CursorProvider, CursorHandle, StdCursorKind};
-use crate::xcb_util::StandardCursor as X11StdCursor; // 复用现有的枚举和 create()
+use x11rb::protocol::xproto::*; // 复用现有的枚举和 create()
 
 pub struct X11CursorProvider<C: Connection> {
-    conn: C,
+    conn: Arc<C>,
     cursor_font: Font,
     cache: HashMap<StdCursorKind, Cursor>,
 }
 
-impl<C: Connection + Clone> X11CursorProvider<C> {
-    pub fn new(conn: C) -> Result<Self, Box<dyn std::error::Error>> {
+impl<C: Connection> X11CursorProvider<C> {
+    pub fn new(conn: Arc<C>) -> Result<Self, Box<dyn std::error::Error>> {
+        use x11rb::protocol::xproto::ConnectionExt;
         let font = conn.generate_id()?;
-        conn.open_font(font, b"cursor")?;
-        Ok(Self { conn, cursor_font: font, cache: HashMap::new() })
+        conn.open_font(font, b"cursor")?.check()?;
+        Ok(Self {
+            conn,
+            cursor_font: font,
+            cache: HashMap::new(),
+        })
     }
 
     fn map_kind(kind: StdCursorKind) -> X11StdCursor {
@@ -37,9 +43,8 @@ impl<C: Connection + Clone> X11CursorProvider<C> {
     }
 }
 
-impl<C: Connection + Clone + Send + 'static> CursorProvider for X11CursorProvider<C> {
+impl<C: Connection + Send + Sync + 'static> CursorProvider for X11CursorProvider<C> {
     fn preload_common(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 预创建常用光标
         for kind in [
             StdCursorKind::LeftPtr,
             StdCursorKind::Hand,
@@ -65,25 +70,34 @@ impl<C: Connection + Clone + Send + 'static> CursorProvider for X11CursorProvide
             return Ok(CursorHandle(c as u64));
         }
         let x11_cursor = Self::map_kind(kind);
-        let cursor = x11_cursor.create(&self.conn, self.cursor_font)?;
+        let cursor = x11_cursor.create(&*self.conn, self.cursor_font)?;
         self.cache.insert(kind, cursor);
         Ok(CursorHandle(cursor as u64))
     }
 
-    fn apply(&mut self, window_id: u64, kind: StdCursorKind) -> Result<(), Box<dyn std::error::Error>> {
+    fn apply(
+        &mut self,
+        window_id: u64,
+        kind: StdCursorKind,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use x11rb::protocol::xproto::ConnectionExt;
         let c = match self.get(kind) {
             Ok(h) => h.0 as u32,
             Err(e) => return Err(e),
         };
-        self.conn.change_window_attributes(window_id as u32, &ChangeWindowAttributesAux::new().cursor(c))?;
+        (*self.conn).change_window_attributes(
+            window_id as u32,
+            &ChangeWindowAttributesAux::new().cursor(c),
+        )?;
         Ok(())
     }
 
     fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        use x11rb::protocol::xproto::ConnectionExt;
         for &cursor in self.cache.values() {
-            let _ = self.conn.free_cursor(cursor);
+            let _ = (*self.conn).free_cursor(cursor);
         }
-        let _ = self.conn.close_font(self.cursor_font);
+        let _ = (*self.conn).close_font(self.cursor_font);
         Ok(())
     }
 }

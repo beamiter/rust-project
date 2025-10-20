@@ -1,6 +1,8 @@
 // src/xcb_util.rs
 
 use crate::backend::traits::{ColorAllocator, CursorProvider, Pixel, StdCursorKind};
+use std::collections::HashMap;
+use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 
@@ -425,18 +427,14 @@ fn create_colored_cursors(conn: &impl Connection) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-// 新的主题管理器（泛型）
+// 新的主题管理器（非泛型结构）
 #[derive(Debug, Clone)]
-pub struct GenericThemeManager<A: ColorAllocator> {
+pub struct GenericThemeManager {
     schemes: HashMap<SchemeType, ColorScheme>,
-    // 通用像素缓存：ARGB -> Pixel
     pixel_cache: HashMap<u32, Pixel>,
-    // 持有一个分配器（可选引用或 Rc<RefCell<..>>，根据你的生命周期设计）
-    // 这里为了简化，采用 runtime 注入 allocate/free
-    // 你也可以不持有，而是在 allocate/free 时传参
 }
 
-impl<A: ColorAllocator> GenericThemeManager<A> {
+impl GenericThemeManager {
     pub fn new() -> Self {
         Self {
             schemes: HashMap::new(),
@@ -464,7 +462,10 @@ impl<A: ColorAllocator> GenericThemeManager<A> {
         self.pixel_cache.get(&color.value).copied()
     }
 
-    pub fn allocate_pixels(&mut self, allocator: &mut A) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn allocate_pixels<A: ColorAllocator>(
+        &mut self,
+        allocator: &mut A,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let mut colors = Vec::new();
         for s in self.schemes.values() {
             colors.push(s.fg);
@@ -474,7 +475,6 @@ impl<A: ColorAllocator> GenericThemeManager<A> {
         colors.sort_by_key(|c| c.value);
         colors.dedup();
         for c in colors {
-            // 如果已分配过则跳过
             if self.pixel_cache.contains_key(&c.value) {
                 continue;
             }
@@ -485,7 +485,10 @@ impl<A: ColorAllocator> GenericThemeManager<A> {
         Ok(())
     }
 
-    pub fn free_pixels(&mut self, allocator: &mut A) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn free_pixels<A: ColorAllocator>(
+        &mut self,
+        allocator: &mut A,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let pixels: Vec<Pixel> = self.pixel_cache.values().copied().collect();
         if !pixels.is_empty() {
             allocator.free_pixels(&pixels)?;
@@ -496,8 +499,10 @@ impl<A: ColorAllocator> GenericThemeManager<A> {
 }
 
 // 从配置创建
-impl<A: ColorAllocator> GenericThemeManager<A> {
-    pub fn create_from_config(mut allocator: A) -> Result<(Self, A), Box<dyn std::error::Error>> {
+impl GenericThemeManager {
+    pub fn create_from_config<A: ColorAllocator>(
+        mut allocator: A,
+    ) -> Result<(Self, A), Box<dyn std::error::Error>> {
         let mut theme = Self::new();
         let colors = crate::config::CONFIG.colors();
 
@@ -538,45 +543,46 @@ impl<P: CursorProvider> GenericCursorManager<P> {
         self.provider.apply(window, kind)
     }
 
+    pub fn get_cursor(&mut self, kind: StdCursorKind) -> Result<u32, Box<dyn std::error::Error>> {
+        let h = self.provider.get(kind)?;
+        Ok(h.0 as u32)
+    }
+
     pub fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.provider.cleanup()
     }
 }
 
-// type alias，保留旧名 ThemeManager/CursorManager
+// type alias 保留
 #[cfg(feature = "backend-x11")]
-pub type ThemeManager = GenericThemeManager<
-    crate::backend::x11::color::X11ColorAllocator<x11rb::rust_connection::RustConnection>,
->;
+pub type ThemeManager = GenericThemeManager;
 
 #[cfg(feature = "backend-x11")]
 pub type CursorManager = GenericCursorManager<
     crate::backend::x11::cursor::X11CursorProvider<x11rb::rust_connection::RustConnection>,
 >;
 
-// 使用示例
+// 使用示例（修正）
 #[allow(dead_code)]
 fn example_usage() -> Result<(), Box<dyn std::error::Error>> {
     let (conn, _screen_num) = x11rb::connect(None)?;
-    let mut cursor_manager = CursorManager::new(&conn)?;
+    let conn = Arc::new(conn);
+    let provider = crate::backend::x11::cursor::X11CursorProvider::new(conn.clone())?;
+    let mut cursor_manager = CursorManager::new(provider)?;
 
-    // 假设有一些窗口
     let main_window = conn.generate_id()?;
     let button_window = conn.generate_id()?;
     let text_window = conn.generate_id()?;
 
-    // 应用不同的光标
-    cursor_manager.apply_cursor(&conn, main_window, StandardCursor::LeftPtr)?;
-    cursor_manager.apply_cursor(&conn, button_window, StandardCursor::Hand1)?;
-    cursor_manager.apply_cursor(&conn, text_window, StandardCursor::Xterm)?;
-
-    // 程序结束时清理
-    cursor_manager.cleanup(&conn)?;
+    cursor_manager.apply_cursor(main_window as u64, StdCursorKind::LeftPtr)?;
+    cursor_manager.apply_cursor(button_window as u64, StdCursorKind::Hand)?;
+    cursor_manager.apply_cursor(text_window as u64, StdCursorKind::XTerm)?;
+    cursor_manager.cleanup()?;
 
     Ok(())
 }
 
-// 测试所有光标
+// 测试所有光标（保持不变或用 as_ref()）
 #[allow(dead_code)]
 pub fn test_all_cursors(conn: &impl Connection) -> Result<(), Box<dyn std::error::Error>> {
     let cursor_font = conn.generate_id()?;
@@ -599,8 +605,6 @@ pub fn test_all_cursors(conn: &impl Connection) -> Result<(), Box<dyn std::error
     conn.close_font(cursor_font)?;
     Ok(())
 }
-
-use std::collections::HashMap;
 
 /// ARGB颜色结构，支持Alpha通道
 #[derive(Debug, Clone, Copy, PartialEq)]
