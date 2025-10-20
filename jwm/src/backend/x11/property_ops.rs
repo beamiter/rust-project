@@ -1,8 +1,8 @@
 // src/backend/x11/property_ops.rs
+use crate::xcb_util::Atoms;
 use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
-use crate::xcb_util::Atoms;
 
 pub struct X11PropertyOps<C: Connection> {
     conn: Arc<C>,
@@ -30,11 +30,9 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
     }
 
     // 解析 WM_CLASS -> (instance, class)
-    pub fn get_wm_class(
-        &self,
-        window: Window,
-    ) -> Option<(String, String)> {
-        let reply = self.conn
+    pub fn get_wm_class(&self, window: Window) -> Option<(String, String)> {
+        let reply = self
+            .conn
             .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)
             .ok()?
             .reply()
@@ -48,20 +46,21 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
             return None;
         }
         let mut parts = value.split(|&b| b == 0u8).filter(|s| !s.is_empty());
-        let instance = parts.next().and_then(|s| String::from_utf8(s.to_vec()).ok())?;
-        let class = parts.next().and_then(|s| String::from_utf8(s.to_vec()).ok())?;
+        let instance = parts
+            .next()
+            .and_then(|s| String::from_utf8(s.to_vec()).ok())?;
+        let class = parts
+            .next()
+            .and_then(|s| String::from_utf8(s.to_vec()).ok())?;
         Some((instance.to_lowercase(), class.to_lowercase()))
     }
 
     // 获取单个Atom属性（value32第一个值）
-    pub fn get_atom_property_first(
-        &self,
-        window: Window,
-        property: Atom,
-    ) -> Atom {
-        let cookie = match self.conn.get_property(
-            false, window, property, AtomEnum::ATOM, 0, 1,
-        ) {
+    pub fn get_atom_property_first(&self, window: Window, property: Atom) -> Atom {
+        let cookie = match self
+            .conn
+            .get_property(false, window, property, AtomEnum::ATOM, 0, 1)
+        {
             Ok(c) => c,
             Err(_) => return 0,
         };
@@ -84,7 +83,14 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
     ) -> Result<Vec<Atom>, Box<dyn std::error::Error>> {
         let reply = self
             .conn
-            .get_property(false, window, atoms._NET_WM_STATE, AtomEnum::ATOM, 0, u32::MAX)?
+            .get_property(
+                false,
+                window,
+                atoms._NET_WM_STATE,
+                AtomEnum::ATOM,
+                0,
+                u32::MAX,
+            )?
             .reply()?;
         if reply.format != 32 {
             return Ok(Vec::new());
@@ -103,11 +109,7 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
     }
 
     // 获取 _NET_WM_WINDOW_TYPE 列表
-    pub fn get_window_types(
-        &self,
-        window: Window,
-        atoms: &Atoms,
-    ) -> Vec<Atom> {
+    pub fn get_window_types(&self, window: Window, atoms: &Atoms) -> Vec<Atom> {
         if let Ok(reply) = self.conn.get_property(
             false,
             window,
@@ -126,15 +128,13 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
     }
 
     // 尝试获取文本属性并解析为 String
-    pub fn get_text_property(
-        &self,
-        window: Window,
-        atom: Atom,
-        atoms: &Atoms,
-    ) -> Option<String> {
-        let reply = self.conn.get_property(
-            false, window, atom, AtomEnum::ANY, 0, u32::MAX
-        ).ok()?.reply().ok()?;
+    pub fn get_text_property(&self, window: Window, atom: Atom, atoms: &Atoms) -> Option<String> {
+        let reply = self
+            .conn
+            .get_property(false, window, atom, AtomEnum::ANY, 0, u32::MAX)
+            .ok()?
+            .reply()
+            .ok()?;
 
         if reply.value.is_empty() || reply.format != 8 {
             return None;
@@ -144,7 +144,7 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
 
         // 根据类型解析
         let parsed = if reply.type_ == atoms.UTF8_STRING {
-            Self::parse_utf8(&value)?
+            Self::parse_utf8(&value)
         } else if reply.type_ == u32::from(AtomEnum::STRING) {
             Some(Self::parse_latin1(&value))
         } else if reply.type_ == atoms.COMPOUND_TEXT {
@@ -153,17 +153,12 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
         } else {
             // 回退：尝试UTF-8，再Latin-1
             Self::parse_utf8(&value).or_else(|| Some(Self::parse_latin1(&value)))
-        }?;
-
-        Some(parsed)
+        };
+        parsed
     }
 
     // 获取最佳窗口标题（优先 _NET_WM_NAME，然后 WM_NAME）
-    pub fn get_best_window_title(
-        &self,
-        window: Window,
-        atoms: &Atoms,
-    ) -> String {
+    pub fn get_best_window_title(&self, window: Window, atoms: &Atoms) -> String {
         if let Some(title) = self.get_text_property(window, atoms._NET_WM_NAME, atoms) {
             return title;
         }

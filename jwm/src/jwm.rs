@@ -1200,14 +1200,6 @@ impl Jwm {
             .unwrap_or(false)
     }
 
-    /// 获取当前选中的客户端键
-    #[allow(dead_code)]
-    fn get_selected_client(&self) -> Option<ClientKey> {
-        self.sel_mon
-            .and_then(|sel_mon_key| self.monitors.get(sel_mon_key))
-            .and_then(|monitor| monitor.sel)
-    }
-
     // 获取监视器的所有客户端
     pub fn get_monitor_clients(&self, mon_key: MonitorKey) -> &[ClientKey] {
         self.monitor_clients
@@ -1504,8 +1496,7 @@ impl Jwm {
     }
 
     /// 获取窗口的 WM_CLASS（即类名和实例名）
-    pub fn get_wm_class<C: Connection>(_conn: &C, window: Window) -> Option<(String, String)> {
-        // 改用封装
+    pub fn get_wm_class(&self, window: Window) -> Option<(String, String)> {
         self.prop_ops.get_wm_class(window)
     }
 
@@ -2498,24 +2489,6 @@ impl Jwm {
             .and_then(|_| self.window_ops.flush());
     }
 
-    #[allow(dead_code)]
-    fn send_wm_hints_with_flags_vec(&self, window: u32, flags: u32, rest: Vec<u32>) {
-        let mut data = Vec::with_capacity(rest.len() + 1);
-        data.push(flags);
-        data.extend(rest);
-        use x11rb::wrapper::ConnectionExt;
-        let _ = self
-            .x11rb_conn
-            .change_property32(
-                PropMode::REPLACE,
-                window,
-                AtomEnum::WM_HINTS,
-                AtomEnum::WM_HINTS,
-                &data,
-            )
-            .and_then(|_| self.x11rb_conn.flush());
-    }
-
     /// 显示/隐藏指定监视器上的窗口
     fn showhide_monitor(&mut self, mon_key: MonitorKey) {
         // 获取该监视器的堆栈顺序客户端列表
@@ -2586,7 +2559,6 @@ impl Jwm {
     }
 
     /// 递归显示/隐藏监视器上的所有客户端（保持原有逻辑）
-    #[allow(dead_code)]
     fn showhide_monitor_recursive(&mut self, mon_key: MonitorKey) {
         // 获取堆栈中的第一个客户端
         let first_client = self
@@ -3193,7 +3165,6 @@ impl Jwm {
     }
 
     /// 将鼠标指针移动到客户端窗口的中心
-    #[allow(dead_code)]
     fn move_cursor_to_client_center(
         &mut self,
         client_key: ClientKey,
@@ -4335,7 +4306,6 @@ impl Jwm {
         )
     }
 
-    #[allow(dead_code)]
     fn get_client_y_offset_regard_to_monitor(&self, monitor: &WMMonitor) -> i32 {
         let monitor_id = monitor.num;
         // 必须是 bar 当前所在的显示器
@@ -6006,23 +5976,6 @@ impl Jwm {
         }
     }
 
-    fn truncate_text(&self, input: String) -> String {
-        let mut char_count = 0;
-        let mut byte_truncate_at = input.len();
-
-        for (idx, _) in input.char_indices() {
-            if char_count >= self.stext_max_len {
-                byte_truncate_at = idx;
-                break;
-            }
-            char_count += 1;
-        }
-
-        let mut result = input;
-        result.truncate(byte_truncate_at);
-        result
-    }
-
     pub fn propertynotify(
         &mut self,
         e: &PropertyNotifyEvent,
@@ -6167,26 +6120,6 @@ impl Jwm {
         X11PropertyOps::<RustConnection>::truncate_chars(title, self.stext_max_len)
     }
 
-    fn get_text_property(&mut self, window: Window, atom: Atom) -> Option<String> {
-        let property = self.get_window_property(window, atom).ok()?;
-
-        if property.value.is_empty() || property.format != 8 {
-            return None;
-        }
-
-        // 根据属性类型解析文本
-        let parsed_text = match property.type_ {
-            type_ if type_ == self.atoms.UTF8_STRING => self.parse_utf8_string(&property.value),
-            type_ if type_ == u32::from(AtomEnum::STRING) => {
-                Some(self.parse_latin1_string(&property.value))
-            }
-            type_ if type_ == self.atoms.COMPOUND_TEXT => self.parse_compound_text(&property.value),
-            _ => self.parse_fallback_text(&property.value),
-        }?;
-
-        Some(self.truncate_text(parsed_text))
-    }
-
     fn handle_title_change(
         &mut self,
         client_key: ClientKey,
@@ -6232,126 +6165,6 @@ impl Jwm {
         Ok(())
     }
 
-    /// 通用的指针拖拽循环
-    ///
-    /// - grab_cursor: 拖拽时显示的鼠标光标
-    /// - warp_to: 可选，若为 Some(x, y) 则在开始前 warp 到窗口内该位置（相对窗口坐标）
-    /// - on_motion: 每次 MotionNotify 调用的回调，内部应用具体的移动/缩放逻辑
-    fn pointer_drag_loop<F>(
-        &mut self,
-        ctx: &DragContext,
-        grab_cursor: u32,
-        warp_to: Option<(i16, i16)>,
-        mut on_motion: F,
-    ) -> Result<(), Box<dyn std::error::Error>>
-    where
-        F: FnMut(
-            &mut Jwm,
-            &MotionNotifyEvent,
-            &DragContext,
-        ) -> Result<(), Box<dyn std::error::Error>>,
-    {
-        // 抓取指针
-        let grab_reply = self
-            .x11rb_conn
-            .grab_pointer(
-                false,
-                self.x11rb_root,
-                *MOUSEMASK,
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-                0u32,
-                grab_cursor,
-                0u32,
-            )?
-            .reply()?;
-        if grab_reply.status != GrabStatus::SUCCESS {
-            let status_str = match grab_reply.status {
-                GrabStatus::ALREADY_GRABBED => "AlreadyGrabbed",
-                GrabStatus::FROZEN => "Frozen",
-                GrabStatus::INVALID_TIME => "InvalidTime",
-                GrabStatus::NOT_VIEWABLE => "NotViewable",
-                _ => "Unknown",
-            };
-            return Err(format!("Failed to grab pointer: {}", status_str).into());
-        }
-
-        // 可选 warp（用于 resize 把鼠标移到窗口右下角）
-        if let Some((wx, wy)) = warp_to {
-            self.x11rb_conn.warp_pointer(
-                0u32,       // src_window
-                ctx.window, // dst_window
-                0, 0, 0, 0, // src_* ignored
-                wx, wy, // 目标位置（相对窗口）
-            )?;
-        }
-        self.x11rb_conn.flush()?;
-
-        let mut last_motion_time = 0u32;
-        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
-
-        loop {
-            match self.x11rb_conn.poll_for_event()? {
-                Some(event) => match event {
-                    Event::ConfigureRequest(e) => {
-                        self.configurerequest(&e)?;
-                    }
-                    Event::Expose(e) => {
-                        self.expose(&e)?;
-                    }
-                    Event::MapRequest(e) => {
-                        self.maprequest(&e)?;
-                    }
-                    Event::DestroyNotify(e) => {
-                        if e.window == ctx.window {
-                            debug!("Window destroyed during drag, aborting");
-                            break;
-                        }
-                    }
-                    Event::UnmapNotify(e) => {
-                        if e.window == ctx.window {
-                            debug!("Window unmapped during drag, aborting");
-                            break;
-                        }
-                    }
-                    Event::KeyPress(e) => {
-                        // ESC 取消
-                        if self.get_keysym_from_keycode(e.detail).unwrap_or(0)
-                            == x11::keysym::XK_Escape
-                        {
-                            debug!("Drag canceled by ESC");
-                            break;
-                        }
-                    }
-                    Event::MotionNotify(e) => {
-                        // 节流（~16ms）
-                        if e.time.wrapping_sub(last_motion_time) <= 16 {
-                            continue;
-                        }
-                        last_motion_time = e.time;
-                        on_motion(self, &e, ctx)?;
-                    }
-                    Event::ButtonRelease(_) => {
-                        debug!("Button released, ending drag");
-                        break;
-                    }
-                    _ => {
-                        // 忽略其他事件
-                    }
-                },
-                None => {
-                    if std::time::Instant::now() > deadline {
-                        warn!("pointer_drag_loop timeout, aborting");
-                        break;
-                    }
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     pub fn movemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[movemouse]");
 
@@ -6374,7 +6187,7 @@ impl Jwm {
         self.restack(self.sel_mon)?;
 
         // 保存窗口开始移动时的信息
-        let (start_x, start_y, start_w, start_h, border_w, window_id) = {
+        let (start_x, start_y, _start_w, _start_h, _border_w, window_id) = {
             let c = self.clients.get(client_key).unwrap();
             (
                 c.geometry.x,
@@ -6391,29 +6204,16 @@ impl Jwm {
         let (initial_mouse_x, initial_mouse_y) =
             (query_reply.root_x as u16, query_reply.root_y as u16);
 
-        // 5. 获取拖拽时的光标
         let cursor = self.cursor_manager.get_cursor(StdCursorKind::Hand)?;
+        let local_input_ops = X11InputOps::new(self.x11rb_conn.clone(), self.x11rb_root);
 
-        // 6. 组装上下文并进入通用循环
-        let ctx = DragContext {
-            client_key,
-            window: window_id,
-            start_x,
-            start_y,
-            start_w,
-            start_h,
-            border_w,
-            initial_mouse_x,
-            initial_mouse_y,
-        };
-
-        let cursor = self.cursor_manager.get_cursor(StdCursorKind::Hand)?;
-        self.input_ops.drag_loop(
+        local_input_ops.drag_loop(
             *MOUSEMASK,
             Some(cursor),
             None, // move 无需 warp
             window_id,
             |e| {
+                // 闭包里可以安全地使用 &mut self
                 self.handle_move_motion(
                     client_key,
                     e,
@@ -6644,26 +6444,16 @@ impl Jwm {
                 c.geometry.h,
             )
         };
-
-        // 准备 warp 到窗口右下角
         let warp_pos = (
             (start_w + border_w - 1) as i16,
             (start_h + border_w - 1) as i16,
         );
-
-        // 读取初始鼠标位置（并不强依赖）
-        let q = self.x11rb_conn.query_pointer(self.x11rb_root)?.reply()?;
-        let (initial_mouse_x, initial_mouse_y) = (q.root_x as u16, q.root_y as u16);
 
         let cursor = self.cursor_manager.get_cursor(StdCursorKind::Fleur)?;
-        let warp_pos = (
-            (start_w + border_w - 1) as i16,
-            (start_h + border_w - 1) as i16,
-        );
-        self.input_ops
-            .drag_loop(*MOUSEMASK, Some(cursor), Some(warp_pos), window_id, |e| {
-                self.handle_resize_motion(client_key, e, start_x, start_y, border_w)
-            })?;
+        let local_input_ops = X11InputOps::new(self.x11rb_conn.clone(), self.x11rb_root);
+        local_input_ops.drag_loop(*MOUSEMASK, Some(cursor), Some(warp_pos), window_id, |e| {
+            self.handle_resize_motion(client_key, e, start_x, start_y, border_w)
+        })?;
         self.cleanup_resize(window_id, border_w)?;
         Ok(())
     }
@@ -7917,7 +7707,7 @@ impl Jwm {
     }
 
     fn update_class_info(&mut self, client: &mut WMClient) {
-        if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, client.win) {
+        if let Some((inst, cls)) = self.get_wm_class(client.win) {
             client.instance = inst;
             client.class = cls;
         }
@@ -8025,7 +7815,7 @@ impl Jwm {
 
         // 如果类信息为空，尝试从 X11 获取
         if class.is_empty() && instance.is_empty() {
-            if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, win) {
+            if let Some((inst, cls)) = self.get_wm_class(win) {
                 instance = inst;
                 class = cls;
 
@@ -8363,74 +8153,6 @@ impl Jwm {
             .map(|(key, _)| key)
     }
 
-    #[allow(dead_code)]
-    fn set_class_info(
-        &mut self,
-        client_mut: &mut WMClient,
-        res_class: &str,
-        res_name: &str,
-    ) -> Result<(), String> {
-        if res_class.is_empty() && res_name.is_empty() {
-            return Err("Both class and name cannot be empty".to_string());
-        }
-        // 检查窗口是否存在
-        if self
-            .x11rb_conn
-            .get_geometry(client_mut.win)
-            .and_then(|c| Ok(c.reply()))
-            .is_err()
-        {
-            return Err(format!("Invalid window: 0x{:x}", client_mut.win));
-        }
-        let mut data = Vec::with_capacity(res_name.len() + res_class.len() + 2);
-        data.extend_from_slice(res_name.as_bytes());
-        data.push(0);
-        data.extend_from_slice(res_class.as_bytes());
-        data.push(0);
-        use x11rb::wrapper::ConnectionExt;
-        self.x11rb_conn
-            .change_property8(
-                PropMode::REPLACE,
-                client_mut.win,
-                AtomEnum::WM_CLASS,
-                AtomEnum::STRING,
-                &data,
-            )
-            .map_err(|e| format!("X11 error: {}", e))?;
-        self.x11rb_conn
-            .flush()
-            .map_err(|e| format!("Flush error: {}", e))?;
-        client_mut.class = res_class.to_string();
-        client_mut.instance = res_name.to_string();
-        info!(
-            "[set_class_info] Set class='{}', instance='{}' for window 0x{:x}",
-            res_class, res_name, client_mut.win
-        );
-        self.verify_class_info_set(client_mut, res_class, res_name);
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    fn verify_class_info_set(
-        &mut self,
-        client: &WMClient,
-        expected_class: &str,
-        expected_instance: &str,
-    ) {
-        if let Some((inst, cls)) = Self::get_wm_class(&self.x11rb_conn, client.win as u32) {
-            if cls == expected_class && inst == expected_instance {
-                info!("[verify_class_info_set] Verification successful");
-            } else {
-                warn!(
-                    "[verify_class_info_set] Verification failed. Expected: class='{}', instance='{}'. Actual: class='{}', instance='{}'",
-                    expected_class, expected_instance, cls, inst
-                );
-            }
-        } else {
-            warn!("[verify_class_info_set] Failed to get class hint for verification");
-        }
-    }
-
     pub fn mappingnotify(
         &mut self,
         e: &MappingNotifyEvent,
@@ -8712,24 +8434,6 @@ impl Jwm {
         }
     }
 
-    fn get_window_types(&self, window: Window) -> Vec<Atom> {
-        if let Ok(reply) = self.x11rb_conn.get_property(
-            false,
-            window,
-            self.atoms._NET_WM_WINDOW_TYPE,
-            AtomEnum::ATOM,
-            0,
-            u32::MAX,
-        ) {
-            if let Ok(rep) = reply.reply() {
-                if rep.format == 32 {
-                    return rep.value32().into_iter().flatten().collect::<Vec<_>>();
-                }
-            }
-        }
-        Vec::new()
-    }
-
     fn is_popup_like(&self, client_key: ClientKey) -> bool {
         let c = if let Some(c) = self.clients.get(client_key) {
             c
@@ -8881,65 +8585,6 @@ impl Jwm {
                 "[adjust_client_position] Final position: ({}, {}) {}x{}",
                 client.geometry.x, client.geometry.y, client.geometry.w, client.geometry.h
             );
-        }
-    }
-
-    // 如果需要批量调整客户端位置的优化版本
-    #[allow(dead_code)]
-    fn adjust_multiple_clients_positions(&mut self, client_keys: &[ClientKey]) {
-        for &client_key in client_keys {
-            self.adjust_client_position(client_key);
-        }
-    }
-
-    // 针对特定监视器调整所有客户端位置
-    #[allow(dead_code)]
-    fn adjust_all_clients_on_monitor(&mut self, mon_key: MonitorKey) {
-        let client_keys: Vec<ClientKey> =
-            if let Some(client_list) = self.monitor_clients.get(mon_key) {
-                client_list.clone()
-            } else {
-                return;
-            };
-
-        for client_key in client_keys {
-            self.adjust_client_position(client_key);
-        }
-    }
-
-    // 智能调整：只调整超出边界的客户端
-    #[allow(dead_code)]
-    fn adjust_client_position_smart(&mut self, client_key: ClientKey) {
-        let needs_adjustment = if let Some(client) = self.clients.get(client_key) {
-            if let Some(mon_key) = client.mon {
-                if let Some(monitor) = self.monitors.get(mon_key) {
-                    let (mon_wx, mon_wy, mon_ww, mon_wh) = (
-                        monitor.geometry.w_x,
-                        monitor.geometry.w_y,
-                        monitor.geometry.w_w,
-                        monitor.geometry.w_h,
-                    );
-
-                    let client_total_width = client.total_width();
-                    let client_total_height = client.total_height();
-
-                    // 检查是否需要调整
-                    client.geometry.x < mon_wx
-                        || client.geometry.y < mon_wy
-                        || client.geometry.x + client_total_width > mon_wx + mon_ww
-                        || client.geometry.y + client_total_height > mon_wy + mon_wh
-                } else {
-                    false
-                }
-            } else {
-                false
-            }
-        } else {
-            false
-        };
-
-        if needs_adjustment {
-            self.adjust_client_position(client_key);
         }
     }
 
@@ -9331,16 +8976,6 @@ impl Jwm {
         Ok(atoms)
     }
 
-    // 判定 window 是否包含指定的 _NET_WM_STATE 原子（如 _NET_WM_STATE_FULLSCREEN）
-    fn has_net_wm_state(
-        &self,
-        window: Window,
-        state_atom: Atom,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        let states = self.get_net_wm_state(window)?;
-        Ok(states.iter().any(|&a| a == state_atom))
-    }
-
     fn set_x11_wm_state_fullscreen(
         &mut self,
         win: Window,
@@ -9354,8 +8989,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 将某个 _NET_WM_STATE 原子加入（若已存在则不重复写入）
-    #[allow(dead_code)]
     fn add_net_wm_state(
         &mut self,
         window: Window,
@@ -9377,8 +9010,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 从 _NET_WM_STATE 列表移除某个原子（若不存在则不操作）
-    #[allow(dead_code)]
     fn remove_net_wm_state(
         &mut self,
         window: Window,
@@ -9425,11 +9056,6 @@ impl Jwm {
                 client.state.is_floating = true;
             }
         }
-        // 你也可以扩展更多类型判断，如 STICKY/ABOVE/MAXIMIZED 等：
-        // if let Ok(true) = self.has_net_wm_state(win, self.atoms._NET_WM_STATE_ABOVE) { ... }
-        // if let Ok(true) = self.has_net_wm_state(win, self.atoms._NET_WM_STATE_STICKY) { ... }
-        // if let Ok(true) = self.has_net_wm_state(win, self.atoms._NET_WM_STATE_MAXIMIZED_VERT) { ... }
-        // if let Ok(true) = self.has_net_wm_state(win, self.atoms._NET_WM_STATE_MAXIMIZED_HORZ) { ... }
     }
 
     /// 根据窗口ID获取原子属性
