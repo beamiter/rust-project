@@ -2558,74 +2558,6 @@ impl Jwm {
         }
     }
 
-    /// 递归显示/隐藏监视器上的所有客户端（保持原有逻辑）
-    fn showhide_monitor_recursive(&mut self, mon_key: MonitorKey) {
-        // 获取堆栈中的第一个客户端
-        let first_client = self
-            .monitor_stack
-            .get(mon_key)
-            .and_then(|stack| stack.first().copied());
-
-        if let Some(client_key) = first_client {
-            self.showhide_client_recursive(client_key, mon_key);
-        }
-    }
-
-    /// 递归显示/隐藏客户端（保持原有的递归逻辑）
-    fn showhide_client_recursive(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
-        let is_visible = self.is_client_visible_on_monitor(client_key, mon_key);
-
-        if is_visible {
-            // 显示客户端 - 从上到下
-            self.show_client_recursive_top_down(client_key, mon_key);
-        } else {
-            // 隐藏客户端 - 从下到上
-            self.hide_client_recursive_bottom_up(client_key, mon_key);
-        }
-    }
-
-    /// 从上到下递归显示客户端
-    fn show_client_recursive_top_down(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
-        // 先显示当前客户端
-        self.show_client(client_key);
-
-        // 然后递归处理下一个客户端
-        let next_client = self.find_next_client_in_stack(client_key, mon_key);
-        if let Some(next_key) = next_client {
-            self.showhide_client_recursive(next_key, mon_key);
-        }
-    }
-
-    /// 从下到上递归隐藏客户端
-    fn hide_client_recursive_bottom_up(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
-        // 先递归处理下一个客户端（底部优先）
-        let next_client = self.find_next_client_in_stack(client_key, mon_key);
-        if let Some(next_key) = next_client {
-            self.showhide_client_recursive(next_key, mon_key);
-        }
-
-        // 然后隐藏当前客户端
-        self.hide_client(client_key);
-    }
-
-    /// 在堆栈中查找下一个客户端
-    fn find_next_client_in_stack(
-        &self,
-        current_key: ClientKey,
-        mon_key: MonitorKey,
-    ) -> Option<ClientKey> {
-        if let Some(stack) = self.monitor_stack.get(mon_key) {
-            if let Some(pos) = stack.iter().position(|&key| key == current_key) {
-                // 返回下一个客户端（如果存在）
-                stack.get(pos + 1).copied()
-            } else {
-                None
-            }
-        } else {
-            None
-        }
-    }
-
     fn resize_client(
         &mut self,
         client_key: ClientKey,
@@ -3161,51 +3093,6 @@ impl Jwm {
         self.mark_bar_update_needed_if_visible(Some(monitor_num));
 
         info!("[restack] finish");
-        Ok(())
-    }
-
-    /// 将鼠标指针移动到客户端窗口的中心
-    fn move_cursor_to_client_center(
-        &mut self,
-        client_key: ClientKey,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // 获取当前鼠标位置
-        let query_cookie = self.x11rb_conn.query_pointer(self.x11rb_root)?;
-        let query_reply = query_cookie.reply()?;
-        let (initial_mouse_x, initial_mouse_y) = (query_reply.root_x, query_reply.root_y);
-
-        // 检查鼠标是否已经在客户端内
-        if let Some(client) = self.clients.get(client_key) {
-            if client.contains_point(initial_mouse_x.into(), initial_mouse_y.into()) {
-                return Ok(());
-            }
-
-            let (win, center_x, center_y) = {
-                let center_x = client.geometry.w / 2;
-                let center_y = client.geometry.h / 2;
-                (client.win, center_x, center_y)
-            };
-
-            // 使用 warp_pointer 将鼠标移动到窗口中心
-            self.x11rb_conn.warp_pointer(
-                0u32,            // src_window (0 = None)
-                win,             // dst_window (目标窗口)
-                0,               // src_x
-                0,               // src_y
-                0,               // src_width
-                0,               // src_height
-                center_x as i16, // dst_x (相对于目标窗口的X坐标)
-                center_y as i16, // dst_y (相对于目标窗口的Y坐标)
-            )?;
-
-            // 刷新连接确保请求被发送
-            self.x11rb_conn.flush()?;
-            debug!(
-                "[move_cursor_to_client_center] Moved cursor to center of window {}: ({}, {})",
-                win, center_x, center_y
-            );
-        }
-
         Ok(())
     }
 
@@ -4304,23 +4191,6 @@ impl Jwm {
             ww - mw - 2 * border_w,
             height - 2 * border_w,
         )
-    }
-
-    fn get_client_y_offset_regard_to_monitor(&self, monitor: &WMMonitor) -> i32 {
-        let monitor_id = monitor.num;
-        // 必须是 bar 当前所在的显示器
-        if self.current_bar_monitor_id == Some(monitor_id) {
-            let show_bar = monitor
-                .pertag
-                .as_ref()
-                .and_then(|p| p.show_bars.get(p.cur_tag))
-                .copied()
-                .unwrap_or(true);
-            if show_bar {
-                return CONFIG.status_bar_height() + CONFIG.status_bar_padding() * 2;
-            }
-        }
-        0
     }
 
     fn get_client_y_offset(&self, monitor: &WMMonitor) -> i32 {
@@ -5906,59 +5776,6 @@ impl Jwm {
             true
         } else {
             false
-        }
-    }
-
-    // 获取窗口属性
-    fn get_window_property(
-        &mut self,
-        w: Window,
-        atom: Atom,
-    ) -> Result<GetPropertyReply, Box<dyn std::error::Error>> {
-        let cookie = self.x11rb_conn.get_property(
-            false,         // delete: 不删除属性
-            w,             // window
-            atom,          // property
-            AtomEnum::ANY, // type: 接受任何类型
-            0,             // long_offset
-            u32::MAX,      // long_length: 读取全部内容
-        )?;
-
-        let property = cookie.reply()?;
-        Ok(property)
-    }
-
-    // 解析 UTF-8 字符串
-    fn parse_utf8_string(&self, value: &[u8]) -> Option<String> {
-        match String::from_utf8(value.to_vec()) {
-            Ok(utf8_string) => {
-                debug!("[gettextprop] Successfully parsed UTF8_STRING");
-                Some(utf8_string)
-            }
-            Err(e) => {
-                debug!("[gettextprop] Invalid UTF-8 in UTF8_STRING: {:?}", e);
-                None
-            }
-        }
-    }
-
-    // 解析 Latin-1 字符串
-    fn parse_latin1_string(&self, value: &[u8]) -> String {
-        debug!("[gettextprop] Parsing as STRING (Latin-1)");
-        value.iter().map(|&b| b as char).collect()
-    }
-
-    // 解析 COMPOUND_TEXT
-    fn parse_compound_text(&self, value: &[u8]) -> Option<String> {
-        debug!("[gettextprop] Parsing as COMPOUND_TEXT");
-
-        // 首先尝试 UTF-8 解析
-        match String::from_utf8(value.to_vec()) {
-            Ok(utf8_string) => Some(utf8_string),
-            Err(_) => {
-                debug!("[gettextprop] COMPOUND_TEXT UTF-8 failed, falling back to Latin-1");
-                Some(self.parse_latin1_string(value))
-            }
         }
     }
 
