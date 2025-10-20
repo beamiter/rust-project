@@ -29,6 +29,8 @@ use crate::backend::common_input::{KeySym, Mods, MouseButton};
 use crate::backend::traits::StdCursorKind;
 use crate::backend::x11::adapter::{button_from_x11, button_to_x11, mods_from_x11, mods_to_x11};
 use crate::backend::x11::ewmh::X11Ewmh;
+use crate::backend::x11::input_ops::X11InputOps;
+use crate::backend::x11::property_ops::X11PropertyOps;
 use crate::backend::x11::window_ops::X11WindowOps;
 use crate::backend::Ewmh;
 use crate::config::CONFIG;
@@ -684,6 +686,8 @@ pub struct Jwm {
     pub color_map: Colormap,
 
     pub window_ops: X11WindowOps<RustConnection>,
+    pub input_ops: X11InputOps<RustConnection>, // 新增
+    pub prop_ops: X11PropertyOps<RustConnection>,
 
     // 与状态栏进程通信的消息缓存（写到 ring buffer）
     pub message: SharedMessage,
@@ -824,6 +828,9 @@ impl Jwm {
         let cursor_manager = crate::xcb_util::GenericCursorManager::new(cursor_provider)?;
 
         let window_ops = X11WindowOps::new(x11rb_conn.clone());
+        let input_ops =
+            crate::backend::x11::input_ops::X11InputOps::new(x11rb_conn.clone(), x11rb_root);
+        let prop_ops = crate::backend::x11::property_ops::X11PropertyOps::new(x11rb_conn.clone());
 
         info!("[new] JWM initialization completed successfully");
 
@@ -865,6 +872,8 @@ impl Jwm {
             pending_bar_updates: HashSet::new(),
             x11rb_conn,
             window_ops,
+            input_ops,
+            prop_ops,
             x11rb_root,
             x11rb_screen,
             atoms,
@@ -1495,31 +1504,9 @@ impl Jwm {
     }
 
     /// 获取窗口的 WM_CLASS（即类名和实例名）
-    pub fn get_wm_class<C: Connection>(conn: &C, window: Window) -> Option<(String, String)> {
-        // Get the WM_NAME property of the window
-        let cookie = conn
-            .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)
-            .unwrap();
-        if let Ok(prop) = cookie.reply() {
-            // 2. 检查属性是否存在且格式正确
-            if prop.type_ != u32::from(AtomEnum::STRING) || prop.format != 8 {
-                return None;
-            }
-            let value = prop.value; // 字节流
-            if value.is_empty() {
-                return None;
-            }
-            // 3. WM_CLASS 包含两个以 '\0' 结尾的字符串：instance\0class\0
-            let mut parts = value.split(|&b| b == 0u8).filter(|s| !s.is_empty());
-            let instance = parts
-                .next()
-                .and_then(|s| String::from_utf8(s.to_vec()).ok())?;
-            let class = parts
-                .next()
-                .and_then(|s| String::from_utf8(s.to_vec()).ok())?;
-            return Some((instance.to_lowercase(), class.to_lowercase()));
-        }
-        None
+    pub fn get_wm_class<C: Connection>(_conn: &C, window: Window) -> Option<(String, String)> {
+        // 改用封装
+        self.prop_ops.get_wm_class(window)
     }
 
     pub fn applysizehints(
@@ -5943,43 +5930,12 @@ impl Jwm {
     }
 
     pub fn gettextprop(&mut self, w: Window, atom: Atom, text: &mut String) -> bool {
-        text.clear();
-
-        let property = match self.get_window_property(w, atom) {
-            Ok(prop) => prop,
-            Err(_) => return false,
-        };
-
-        if property.value.is_empty() {
-            debug!("[gettextprop] Property value is empty");
-            return false;
-        }
-
-        // 只处理 8 位格式的属性
-        if property.format != 8 {
-            debug!(
-                "[gettextprop] Unsupported property format: {}",
-                property.format
-            );
-            return false;
-        }
-
-        // 根据属性类型解析文本
-        let parsed_text = match property.type_ {
-            type_ if type_ == self.atoms.UTF8_STRING => self.parse_utf8_string(&property.value),
-            type_ if type_ == u32::from(AtomEnum::STRING) => {
-                Some(self.parse_latin1_string(&property.value))
-            }
-            type_ if type_ == self.atoms.COMPOUND_TEXT => self.parse_compound_text(&property.value),
-            _ => self.parse_fallback_text(&property.value),
-        };
-
-        match parsed_text {
-            Some(parsed) => {
-                *text = self.truncate_text(parsed);
-                true
-            }
-            None => false,
+        if let Some(s) = self.prop_ops.get_text_property(w, atom, &self.atoms) {
+            // 截断到 stext_max_len 字符数
+            *text = X11PropertyOps::<RustConnection>::truncate_chars(s, self.stext_max_len);
+            true
+        } else {
+            false
         }
     }
 
@@ -6207,18 +6163,8 @@ impl Jwm {
     }
 
     fn fetch_window_title(&mut self, window: Window) -> String {
-        // 尝试获取 _NET_WM_NAME (UTF-8)
-        if let Some(title) = self.get_text_property(window, self.atoms._NET_WM_NAME) {
-            return title;
-        }
-
-        // 如果失败，尝试 WM_NAME (Latin-1)
-        if let Some(title) = self.get_text_property(window, AtomEnum::WM_NAME.into()) {
-            return title;
-        }
-
-        // 如果都失败，返回默认值
-        format!("Window 0x{:x}", window)
+        let title = self.prop_ops.get_best_window_title(window, &self.atoms);
+        X11PropertyOps::<RustConnection>::truncate_chars(title, self.stext_max_len)
     }
 
     fn get_text_property(&mut self, window: Window, atom: Atom) -> Option<String> {
@@ -6461,19 +6407,23 @@ impl Jwm {
             initial_mouse_y,
         };
 
-        // 注意：move 不需要 warp_pointer
-        self.pointer_drag_loop(&ctx, cursor, None, |this, e, c| {
-            this.handle_move_motion(
-                c.client_key,
-                e,
-                c.start_x,
-                c.start_y,
-                c.initial_mouse_x,
-                c.initial_mouse_y,
-            )
-        })?;
-
-        // 7. 清理与跨屏检查
+        let cursor = self.cursor_manager.get_cursor(StdCursorKind::Hand)?;
+        self.input_ops.drag_loop(
+            *MOUSEMASK,
+            Some(cursor),
+            None, // move 无需 warp
+            window_id,
+            |e| {
+                self.handle_move_motion(
+                    client_key,
+                    e,
+                    start_x,
+                    start_y,
+                    initial_mouse_x,
+                    initial_mouse_y,
+                )
+            },
+        )?;
         self.cleanup_move(window_id, client_key)?;
 
         info!("[movemouse] completed");
@@ -6706,23 +6656,14 @@ impl Jwm {
         let (initial_mouse_x, initial_mouse_y) = (q.root_x as u16, q.root_y as u16);
 
         let cursor = self.cursor_manager.get_cursor(StdCursorKind::Fleur)?;
-
-        let ctx = DragContext {
-            client_key,
-            window: window_id,
-            start_x,
-            start_y,
-            start_w,
-            start_h,
-            border_w,
-            initial_mouse_x,
-            initial_mouse_y,
-        };
-
-        self.pointer_drag_loop(&ctx, cursor, Some(warp_pos), |this, e, c| {
-            this.handle_resize_motion(c.client_key, e, c.start_x, c.start_y, c.border_w)
-        })?;
-
+        let warp_pos = (
+            (start_w + border_w - 1) as i16,
+            (start_h + border_w - 1) as i16,
+        );
+        self.input_ops
+            .drag_loop(*MOUSEMASK, Some(cursor), Some(warp_pos), window_id, |e| {
+                self.handle_resize_motion(client_key, e, start_x, start_y, border_w)
+            })?;
         self.cleanup_resize(window_id, border_w)?;
         Ok(())
     }
@@ -8795,7 +8736,7 @@ impl Jwm {
         } else {
             return false;
         };
-        let types = self.get_window_types(c.win);
+        let types = self.prop_ops.get_window_types(c.win, &self.atoms);
         let is_type_popup = types.iter().any(|&a| {
             a == self.atoms._NET_WM_WINDOW_TYPE_POPUP_MENU
                 || a == self.atoms._NET_WM_WINDOW_TYPE_DROPDOWN_MENU
@@ -9470,7 +9411,10 @@ impl Jwm {
         };
 
         // 1) 判定 FULLSCREEN 是否在 _NET_WM_STATE 列表中
-        if let Ok(true) = self.has_net_wm_state(win, self.atoms._NET_WM_STATE_FULLSCREEN) {
+        if let Ok(true) =
+            self.prop_ops
+                .has_net_wm_state(win, &self.atoms, self.atoms._NET_WM_STATE_FULLSCREEN)
+        {
             let _ = self.setfullscreen(client_key, true);
         }
 
