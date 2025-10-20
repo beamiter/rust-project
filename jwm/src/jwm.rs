@@ -26,8 +26,13 @@ use std::usize;
 
 use crate::backend::common_input::{KeySym, Mods, MouseButton};
 use crate::backend::x11::adapter::{button_from_x11, button_to_x11, mods_from_x11, mods_to_x11};
+use crate::backend::x11::color::X11ColorAllocator;
+use crate::backend::x11::cursor::X11CursorProvider;
 use crate::backend::x11::ewmh::X11Ewmh;
 use crate::backend::Ewmh;
+use crate::xcb_util::GenericCursorManager;
+use crate::xcb_util::GenericThemeManager;
+use crate::backend::traits::StdCursorKind;
 
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyError;
@@ -804,29 +809,13 @@ impl Jwm {
             x11rb_screen_num, s_w, s_h, x11rb_root
         );
 
-        info!("[new] Creating cursor manager");
-        let cursor_manager = match CursorManager::new(&x11rb_conn) {
-            Ok(cm) => {
-                info!("[new] Cursor manager created");
-                cm
-            }
-            Err(e) => {
-                error!("[new] Failed to create cursor manager: {}", e);
-                return Err(format!("Cursor manager creation failed: {}", e).into());
-            }
-        };
+        // ThemeManager
+        let x11_alloc = X11ColorAllocator::new(x11rb_conn.clone(), x11rb_screen.default_colormap);
+        let (theme_manager, _alloc_back) = GenericThemeManager::create_from_config(x11_alloc)?;
 
-        info!("[new] Creating theme manager");
-        let theme_manager = match ThemeManager::create_default(&x11rb_conn, &x11rb_screen.clone()) {
-            Ok(tm) => {
-                info!("[new] Theme manager created");
-                tm
-            }
-            Err(e) => {
-                error!("[new] Failed to create theme manager: {}", e);
-                return Err(format!("Theme manager creation failed: {}", e).into());
-            }
-        };
+        // CursorManager
+        let cursor_provider = X11CursorProvider::new(x11rb_conn.clone())?;
+        let cursor_manager = GenericCursorManager::new(cursor_provider)?;
 
         info!("[new] JWM initialization completed successfully");
 
@@ -2274,11 +2263,12 @@ impl Jwm {
         } else {
             SchemeType::Norm
         };
-        if let Some(border_color) = self.theme_manager.get_border(scheme_type) {
-            if let Some(pixel) = self.theme_manager.get_x11_pixel(border_color) {
+        if let Some(color) = self.theme_manager.get_border(scheme_type) {
+            if let Some(pixel) = self.theme_manager.get_pixel(color) {
+                // 保持 X11 行为不变：直接使用 pixel.0
                 self.x11rb_conn.change_window_attributes(
                     window,
-                    &ChangeWindowAttributesAux::new().border_pixel(pixel),
+                    &ChangeWindowAttributesAux::new().border_pixel(pixel.0),
                 )?;
             }
         }
@@ -5780,20 +5770,18 @@ impl Jwm {
         self.updategeom();
         self.setup_ewmh()?;
 
-        let aux = ChangeWindowAttributesAux::new()
-            .event_mask(
-                EventMask::SUBSTRUCTURE_REDIRECT
-                    | EventMask::STRUCTURE_NOTIFY
-                    | EventMask::BUTTON_PRESS
-                    | EventMask::POINTER_MOTION
-                    | EventMask::ENTER_WINDOW
-                    | EventMask::LEAVE_WINDOW
-                    | EventMask::PROPERTY_CHANGE,
-            )
-            .cursor(
-                self.cursor_manager
-                    .get_cursor(&self.x11rb_conn, crate::xcb_util::StandardCursor::LeftPtr)?,
-            );
+        let aux = ChangeWindowAttributesAux::new().event_mask(
+            EventMask::SUBSTRUCTURE_REDIRECT
+                | EventMask::STRUCTURE_NOTIFY
+                | EventMask::BUTTON_PRESS
+                | EventMask::POINTER_MOTION
+                | EventMask::ENTER_WINDOW
+                | EventMask::LEAVE_WINDOW
+                | EventMask::PROPERTY_CHANGE,
+        );
+        let _ = self
+            .cursor_manager
+            .apply_cursor(self.x11rb_root as u64, StdCursorKind::LeftPtr);
         self.x11rb_conn
             .change_window_attributes(self.x11rb_root, &aux)?;
         self.grabkeys()?;

@@ -1,5 +1,6 @@
 // src/xcb_util.rs
 
+use crate::backend::traits::{ColorAllocator, CursorProvider, Pixel, StdCursorKind};
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 
@@ -424,61 +425,134 @@ fn create_colored_cursors(conn: &impl Connection) -> Result<(), Box<dyn std::err
     Ok(())
 }
 
-// 光标管理器
-pub struct CursorManager {
-    font: Font,
-    cursors: std::collections::HashMap<StandardCursor, Cursor>,
+// 新的主题管理器（泛型）
+#[derive(Debug, Clone)]
+pub struct GenericThemeManager<A: ColorAllocator> {
+    schemes: HashMap<SchemeType, ColorScheme>,
+    // 通用像素缓存：ARGB -> Pixel
+    pixel_cache: HashMap<u32, Pixel>,
+    // 持有一个分配器（可选引用或 Rc<RefCell<..>>，根据你的生命周期设计）
+    // 这里为了简化，采用 runtime 注入 allocate/free
+    // 你也可以不持有，而是在 allocate/free 时传参
 }
 
-impl CursorManager {
-    pub fn new(conn: &impl Connection) -> Result<Self, Box<dyn std::error::Error>> {
-        let font = conn.generate_id()?;
-        conn.open_font(font, b"cursor")?;
-
-        let mut cursors = std::collections::HashMap::new();
-
-        // 预创建常用光标
-        for &cursor_type in StandardCursor::common_cursors() {
-            let cursor = cursor_type.create(conn, font)?;
-            cursors.insert(cursor_type, cursor);
+impl<A: ColorAllocator> GenericThemeManager<A> {
+    pub fn new() -> Self {
+        Self {
+            schemes: HashMap::new(),
+            pixel_cache: HashMap::new(),
         }
-
-        Ok(CursorManager { font, cursors })
     }
 
-    pub fn get_cursor(
-        &mut self,
-        conn: &impl Connection,
-        cursor_type: StandardCursor,
-    ) -> Result<Cursor, Box<dyn std::error::Error>> {
-        if let Some(&cursor) = self.cursors.get(&cursor_type) {
-            Ok(cursor)
-        } else {
-            let cursor = cursor_type.create(conn, self.font)?;
-            self.cursors.insert(cursor_type, cursor);
-            Ok(cursor)
+    pub fn set_scheme(&mut self, t: SchemeType, s: ColorScheme) {
+        self.schemes.insert(t, s);
+    }
+    pub fn get_scheme(&self, t: SchemeType) -> Option<&ColorScheme> {
+        self.schemes.get(&t)
+    }
+    pub fn get_fg(&self, t: SchemeType) -> Option<ArgbColor> {
+        self.get_scheme(t).map(|s| s.fg)
+    }
+    pub fn get_bg(&self, t: SchemeType) -> Option<ArgbColor> {
+        self.get_scheme(t).map(|s| s.bg)
+    }
+    pub fn get_border(&self, t: SchemeType) -> Option<ArgbColor> {
+        self.get_scheme(t).map(|s| s.border)
+    }
+
+    pub fn get_pixel(&self, color: ArgbColor) -> Option<Pixel> {
+        self.pixel_cache.get(&color.value).copied()
+    }
+
+    pub fn allocate_pixels(&mut self, allocator: &mut A) -> Result<(), Box<dyn std::error::Error>> {
+        let mut colors = Vec::new();
+        for s in self.schemes.values() {
+            colors.push(s.fg);
+            colors.push(s.bg);
+            colors.push(s.border);
         }
+        colors.sort_by_key(|c| c.value);
+        colors.dedup();
+        for c in colors {
+            // 如果已分配过则跳过
+            if self.pixel_cache.contains_key(&c.value) {
+                continue;
+            }
+            let (_, r, g, b) = c.components();
+            let pix = allocator.alloc_rgb(r, g, b)?;
+            self.pixel_cache.insert(c.value, pix);
+        }
+        Ok(())
+    }
+
+    pub fn free_pixels(&mut self, allocator: &mut A) -> Result<(), Box<dyn std::error::Error>> {
+        let pixels: Vec<Pixel> = self.pixel_cache.values().copied().collect();
+        if !pixels.is_empty() {
+            allocator.free_pixels(&pixels)?;
+            self.pixel_cache.clear();
+        }
+        Ok(())
+    }
+}
+
+// 从配置创建
+impl<A: ColorAllocator> GenericThemeManager<A> {
+    pub fn create_from_config(mut allocator: A) -> Result<(Self, A), Box<dyn std::error::Error>> {
+        let mut theme = Self::new();
+        let colors = crate::config::CONFIG.colors();
+
+        let normal = ColorScheme::new(
+            ArgbColor::from_hex(&colors.dark_sea_green1, colors.opaque)?,
+            ArgbColor::from_hex(&colors.light_sky_blue1, colors.opaque)?,
+            ArgbColor::from_hex(&colors.light_sky_blue1, colors.opaque)?,
+        );
+        let selected = ColorScheme::new(
+            ArgbColor::from_hex(&colors.dark_sea_green2, colors.opaque)?,
+            ArgbColor::from_hex(&colors.pale_turquoise1, colors.opaque)?,
+            ArgbColor::from_hex(&colors.cyan, colors.opaque)?,
+        );
+        theme.set_scheme(SchemeType::Norm, normal);
+        theme.set_scheme(SchemeType::Sel, selected);
+
+        theme.allocate_pixels(&mut allocator)?;
+        Ok((theme, allocator))
+    }
+}
+
+// 原 CursorManager 抽象为：
+pub struct GenericCursorManager<P: CursorProvider> {
+    provider: P,
+}
+
+impl<P: CursorProvider> GenericCursorManager<P> {
+    pub fn new(mut provider: P) -> Result<Self, Box<dyn std::error::Error>> {
+        provider.preload_common()?;
+        Ok(Self { provider })
     }
 
     pub fn apply_cursor(
         &mut self,
-        conn: &impl Connection,
-        window: Window,
-        cursor_type: StandardCursor,
+        window: u64,
+        kind: StdCursorKind,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let cursor = self.get_cursor(conn, cursor_type)?;
-        conn.change_window_attributes(window, &ChangeWindowAttributesAux::new().cursor(cursor))?;
-        Ok(())
+        self.provider.apply(window, kind)
     }
 
-    pub fn cleanup(&self, conn: &impl Connection) -> Result<(), Box<dyn std::error::Error>> {
-        for &cursor in self.cursors.values() {
-            conn.free_cursor(cursor)?;
-        }
-        conn.close_font(self.font)?;
-        Ok(())
+    pub fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        self.provider.cleanup()
     }
 }
+
+// type alias，保留旧名 ThemeManager/CursorManager
+#[cfg(feature = "backend-x11")]
+pub type ThemeManager = GenericThemeManager<
+    crate::backend::x11::color::X11ColorAllocator<x11rb::rust_connection::RustConnection>,
+>;
+
+#[cfg(feature = "backend-x11")]
+pub type CursorManager = GenericCursorManager<
+    crate::backend::x11::cursor::X11CursorProvider<x11rb::rust_connection::RustConnection>,
+>;
 
 // 使用示例
 #[allow(dead_code)]
@@ -526,7 +600,6 @@ pub fn test_all_cursors(conn: &impl Connection) -> Result<(), Box<dyn std::error
     Ok(())
 }
 
-use crate::config::CONFIG;
 use std::collections::HashMap;
 
 /// ARGB颜色结构，支持Alpha通道
@@ -649,253 +722,6 @@ pub enum SchemeType {
     Urgent = 2,  // 紧急状态
     Warning = 3, // 警告状态
     Error = 4,   // 错误状态
-}
-
-/// 主题管理器
-#[derive(Debug, Clone)]
-pub struct ThemeManager {
-    schemes: HashMap<SchemeType, ColorScheme>,
-    x11_color_cache: HashMap<u32, u32>, // ARGB -> X11 pixel映射缓存
-}
-
-impl ThemeManager {
-    /// 创建新的主题管理器
-    pub fn new() -> Self {
-        Self {
-            schemes: HashMap::new(),
-            x11_color_cache: HashMap::new(),
-        }
-    }
-
-    /// 创建默认主题
-    pub fn create_default<C: Connection>(
-        conn: &C,
-        screen: &Screen,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut theme = Self::new();
-
-        // 普通状态 - 深色主题
-        let normal = ColorScheme::from_hex(
-            "#E0E0E0", // 浅灰前景
-            "#2E2E2E", // 深灰背景
-            "#404040", // 中灰边框
-            255,       // 不透明
-        )?;
-
-        // 选中状态 - 蓝色主题
-        let selected = ColorScheme::from_hex(
-            "#FFFFFF", // 白色前景
-            "#007ACC", // 蓝色背景
-            "#005A9E", // 深蓝边框
-            255,       // 不透明
-        )?;
-
-        // 紧急状态 - 红色主题
-        let urgent = ColorScheme::from_hex(
-            "#FFFFFF", // 白色前景
-            "#DC3545", // 红色背景
-            "#C82333", // 深红边框
-            255,       // 不透明
-        )?;
-
-        // 警告状态 - 黄色主题
-        let warning = ColorScheme::from_hex(
-            "#000000", // 黑色前景
-            "#FFC107", // 黄色背景
-            "#E0A800", // 深黄边框
-            255,       // 不透明
-        )?;
-
-        // 错误状态 - 深红主题
-        let error = ColorScheme::from_hex(
-            "#FFFFFF", // 白色前景
-            "#8B0000", // 深红背景
-            "#660000", // 更深红边框
-            255,       // 不透明
-        )?;
-
-        theme.set_scheme(SchemeType::Norm, normal);
-        theme.set_scheme(SchemeType::Sel, selected);
-        theme.set_scheme(SchemeType::Urgent, urgent);
-        theme.set_scheme(SchemeType::Warning, warning);
-        theme.set_scheme(SchemeType::Error, error);
-
-        // 预分配X11颜色
-        theme.allocate_x11_colors(conn, screen.default_colormap)?;
-
-        Ok(theme)
-    }
-
-    /// 从配置创建主题
-    pub fn create_from_config<C: Connection>(
-        conn: &C,
-        screen: &Screen,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        let mut theme = Self::new();
-        let colors = CONFIG.colors();
-
-        // 从配置创建各种状态的颜色方案
-        let normal = ColorScheme::new(
-            ArgbColor::from_hex(&colors.dark_sea_green1, colors.opaque)?,
-            ArgbColor::from_hex(&colors.light_sky_blue1, colors.opaque)?,
-            ArgbColor::from_hex(&colors.light_sky_blue1, colors.opaque)?,
-        );
-
-        let selected = ColorScheme::new(
-            ArgbColor::from_hex(&colors.dark_sea_green2, colors.opaque)?,
-            ArgbColor::from_hex(&colors.pale_turquoise1, colors.opaque)?,
-            ArgbColor::from_hex(&colors.cyan, colors.opaque)?,
-        );
-
-        theme.set_scheme(SchemeType::Norm, normal);
-        theme.set_scheme(SchemeType::Sel, selected);
-
-        // 分配X11颜色
-        theme.allocate_x11_colors(conn, screen.default_colormap)?;
-
-        Ok(theme)
-    }
-
-    /// 设置颜色方案
-    pub fn set_scheme(&mut self, scheme_type: SchemeType, scheme: ColorScheme) {
-        self.schemes.insert(scheme_type, scheme);
-    }
-
-    /// 获取颜色方案
-    pub fn get_scheme(&self, scheme_type: SchemeType) -> Option<&ColorScheme> {
-        self.schemes.get(&scheme_type)
-    }
-
-    /// 获取可变颜色方案
-    pub fn get_scheme_mut(&mut self, scheme_type: SchemeType) -> Option<&mut ColorScheme> {
-        self.schemes.get_mut(&scheme_type)
-    }
-
-    /// 获取前景色
-    pub fn get_fg(&self, scheme_type: SchemeType) -> Option<ArgbColor> {
-        self.get_scheme(scheme_type).map(|s| s.foreground())
-    }
-
-    /// 获取背景色
-    pub fn get_bg(&self, scheme_type: SchemeType) -> Option<ArgbColor> {
-        self.get_scheme(scheme_type).map(|s| s.background())
-    }
-
-    /// 获取边框色
-    pub fn get_border(&self, scheme_type: SchemeType) -> Option<ArgbColor> {
-        self.get_scheme(scheme_type).map(|s| s.border_color())
-    }
-
-    /// 获取X11像素值
-    pub fn get_x11_pixel(&self, color: ArgbColor) -> Option<u32> {
-        self.x11_color_cache.get(&color.value).copied()
-    }
-
-    /// 分配X11颜色
-    pub fn allocate_x11_colors<C: Connection>(
-        &mut self,
-        conn: &C,
-        colormap: Colormap,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut colors_to_allocate = Vec::new();
-
-        // 收集所有需要分配的颜色
-        for scheme in self.schemes.values() {
-            colors_to_allocate.push(scheme.fg);
-            colors_to_allocate.push(scheme.bg);
-            colors_to_allocate.push(scheme.border);
-        }
-
-        // 去重
-        colors_to_allocate.sort_by_key(|c| c.value);
-        colors_to_allocate.dedup();
-
-        // 分配颜色
-        for color in colors_to_allocate {
-            let pixel = self.allocate_single_color(conn, colormap, color)?;
-            self.x11_color_cache.insert(color.value, pixel);
-        }
-
-        Ok(())
-    }
-
-    /// 分配单个颜色
-    fn allocate_single_color<C: Connection>(
-        &self,
-        conn: &C,
-        colormap: Colormap,
-        color: ArgbColor,
-    ) -> Result<u32, Box<dyn std::error::Error>> {
-        let (_, r, g, b) = color.components();
-
-        let reply = conn
-            .alloc_color(colormap, (r as u16) << 8, (g as u16) << 8, (b as u16) << 8)?
-            .reply()?;
-
-        Ok(reply.pixel)
-    }
-
-    /// 释放X11颜色
-    pub fn free_x11_colors<C: Connection>(
-        &mut self,
-        conn: &C,
-        colormap: Colormap,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let pixels: Vec<u32> = self.x11_color_cache.values().copied().collect();
-
-        if !pixels.is_empty() {
-            conn.free_colors(colormap, 0, &pixels)?;
-            self.x11_color_cache.clear();
-        }
-
-        Ok(())
-    }
-}
-
-/// 绘图辅助功能
-impl ThemeManager {
-    /// 为Cairo设置颜色
-    #[cfg(feature = "cairo")]
-    pub fn set_cairo_source(&self, ctx: &cairo::Context, color: ArgbColor) {
-        let (r, g, b, a) = color.to_rgba_f64();
-        ctx.set_source_rgba(r, g, b, a);
-    }
-
-    /// 绘制背景（Cairo）
-    #[cfg(feature = "cairo")]
-    pub fn draw_cairo_background(
-        &self,
-        ctx: &cairo::Context,
-        scheme_type: SchemeType,
-        width: f64,
-        height: f64,
-    ) {
-        if let Some(bg_color) = self.get_bg(scheme_type) {
-            self.set_cairo_source(ctx, bg_color);
-            ctx.rectangle(0.0, 0.0, width, height);
-            let _ = ctx.fill();
-        }
-    }
-
-    /// 绘制边框（Cairo）
-    #[cfg(feature = "cairo")]
-    pub fn draw_cairo_border(
-        &self,
-        ctx: &cairo::Context,
-        scheme_type: SchemeType,
-        x: f64,
-        y: f64,
-        width: f64,
-        height: f64,
-        border_width: f64,
-    ) {
-        if let Some(border_color) = self.get_border(scheme_type) {
-            self.set_cairo_source(ctx, border_color);
-            ctx.set_line_width(border_width);
-            ctx.rectangle(x, y, width, height);
-            let _ = ctx.stroke();
-        }
-    }
 }
 
 /// 辅助函数
