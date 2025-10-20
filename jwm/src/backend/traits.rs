@@ -42,7 +42,48 @@ pub trait CursorProvider {
     fn get(&mut self, kind: StdCursorKind) -> Result<CursorHandle, Box<dyn std::error::Error>>;
     // 应用光标到窗口
     // 这里用通用 WindowId: u64 表示，X11=Window，Wayland=surface 或 seat/cursor surface 逻辑自行映射
-    fn apply(&mut self, window_id: u64, kind: StdCursorKind) -> Result<(), Box<dyn std::error::Error>>;
+    fn apply(
+        &mut self,
+        window_id: u64,
+        kind: StdCursorKind,
+    ) -> Result<(), Box<dyn std::error::Error>>;
     // 清理资源
     fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+}
+
+pub trait Ewmh {
+    type Window;
+    type AtomSet;
+    type Conn;
+
+    fn set_active_window(
+        &self,
+        conn: &Self::Conn,
+        root: Self::Window,
+        atoms: &Self::AtomSet,
+        win: Self::Window,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn clear_active_window(
+        &self,
+        conn: &Self::Conn,
+        root: Self::Window,
+        atoms: &Self::AtomSet,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn set_client_list(
+        &self,
+        conn: &Self::Conn,
+        root: Self::Window,
+        atoms: &Self::AtomSet,
+        list: &[Self::Window],
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn set_client_list_stacking(
+        &self,
+        conn: &Self::Conn,
+        root: Self::Window,
+        atoms: &Self::AtomSet,
+        list: &[Self::Window],
+    ) -> Result<(), Box<dyn std::error::Error>>;
 }
