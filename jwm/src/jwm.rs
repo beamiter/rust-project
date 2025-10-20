@@ -25,9 +25,11 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::usize;
 
+use crate::backend::api::{BackendEvent, EventSource};
 use crate::backend::common_input::{KeySym, Mods, MouseButton};
 use crate::backend::traits::StdCursorKind;
 use crate::backend::x11::adapter::{button_from_x11, button_to_x11, mods_from_x11, mods_to_x11};
+use crate::backend::x11::event_source::X11EventSource;
 use crate::backend::x11::ewmh::X11Ewmh;
 use crate::backend::x11::input_ops::X11InputOps;
 use crate::backend::x11::property_ops::X11PropertyOps;
@@ -75,6 +77,8 @@ lazy_static::lazy_static! {
     pub static ref BUTTONMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE;
     pub static ref MOUSEMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
 }
+
+// 将 buttonpress/motionnotify/configurerequest 等核心处理函数改成后端无关参数，去掉 x11rb 事件构造，并将 Jwm 的 window/input/property 调用逐步替换为统一 Backend 接口
 
 #[derive(Debug, Serialize, Deserialize, Decode, Encode)]
 pub struct RestartSnapshot {
@@ -688,6 +692,7 @@ pub struct Jwm {
     pub window_ops: X11WindowOps<RustConnection>,
     pub input_ops: X11InputOps<RustConnection>, // 新增
     pub prop_ops: X11PropertyOps<RustConnection>,
+    pub event_source: Box<dyn EventSource>,
 
     // 与状态栏进程通信的消息缓存（写到 ring buffer）
     pub message: SharedMessage,
@@ -739,29 +744,6 @@ pub struct Jwm {
 }
 
 impl Jwm {
-    fn handler(&mut self, event: Event) -> Result<(), Box<dyn std::error::Error>> {
-        match event {
-            Event::ButtonPress(e) => self.buttonpress(&e)?,
-            Event::ClientMessage(e) => self.clientmessage(&e)?,
-            Event::ConfigureRequest(e) => self.configurerequest(&e)?,
-            Event::ConfigureNotify(e) => self.configurenotify(&e)?,
-            Event::DestroyNotify(e) => self.destroynotify(&e)?,
-            Event::EnterNotify(e) => self.enternotify(&e)?,
-            Event::Expose(e) => self.expose(&e)?,
-            Event::FocusIn(e) => self.focusin(&e)?,
-            Event::KeyPress(e) => self.keypress(&e)?,
-            Event::MappingNotify(e) => self.mappingnotify(&e)?,
-            Event::MapRequest(e) => self.maprequest(&e)?,
-            Event::MotionNotify(e) => self.motionnotify(&e)?,
-            Event::PropertyNotify(e) => self.propertynotify(&e)?,
-            Event::UnmapNotify(e) => self.unmapnotify(&e)?,
-            _ => {
-                debug!("Unsupported event type: {:?}", event);
-            }
-        }
-        Ok(())
-    }
-
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         info!("[new] Starting JWM initialization");
 
@@ -828,6 +810,7 @@ impl Jwm {
         let input_ops =
             crate::backend::x11::input_ops::X11InputOps::new(x11rb_conn.clone(), x11rb_root);
         let prop_ops = crate::backend::x11::property_ops::X11PropertyOps::new(x11rb_conn.clone());
+        let event_source: Box<dyn EventSource> = Box::new(X11EventSource::new(x11rb_conn.clone()));
 
         info!("[new] JWM initialization completed successfully");
 
@@ -842,6 +825,7 @@ impl Jwm {
             is_restarting: AtomicBool::new(false),
             theme_manager,
             cursor_manager,
+            event_source,
 
             clients: SlotMap::new(),
             monitors: SlotMap::new(),
@@ -880,6 +864,212 @@ impl Jwm {
             restoring_from_snapshot: false,
             last_stacking: SecondaryMap::new(),
         })
+    }
+
+    pub fn handle_backend_event(
+        &mut self,
+        ev: BackendEvent,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use x11rb::protocol::xproto::*;
+
+        match ev {
+            BackendEvent::ButtonPress { window, state, detail, time } => {
+                let e = ButtonPressEvent {
+                    response_type: BUTTON_PRESS_EVENT,
+                    sequence: 0,
+                    detail,
+                    time,
+                    root: self.x11rb_root,
+                    event: window.0 as u32,
+                    child: 0,
+                    root_x: 0,
+                    root_y: 0,
+                    event_x: 0,
+                    event_y: 0,
+                    state: KeyButMask::from(state),
+                    same_screen: true,
+                };
+                self.buttonpress(&e)
+            }
+            BackendEvent::ButtonRelease { /*window,*/ .. } => {
+                // 当前不需要专门处理 ButtonRelease（drag_loop 内部处理）
+                Ok(())
+            }
+            BackendEvent::MotionNotify { window, root_x, root_y, time } => {
+                let e = MotionNotifyEvent {
+                    response_type: MOTION_NOTIFY_EVENT,
+                    sequence: 0,
+                    detail: 0.into(),
+                    time,
+                    root: self.x11rb_root,
+                    event: window.0 as u32,
+                    child: 0,
+                    root_x,
+                    root_y,
+                    event_x: 0,
+                    event_y: 0,
+                    state: KeyButMask::default(),
+                    same_screen: true,
+                };
+                self.motionnotify(&e)
+            }
+            BackendEvent::KeyPress { keycode, state } => {
+                let e = KeyPressEvent {
+                    response_type: KEY_PRESS_EVENT,
+                    sequence: 0,
+                    detail: keycode,
+                    time: 0,
+                    root: self.x11rb_root,
+                    event: self.x11rb_root,
+                    child: 0,
+                    root_x: 0,
+                    root_y: 0,
+                    event_x: 0,
+                    event_y: 0,
+                    state: KeyButMask::from(state),
+                    same_screen: true,
+                };
+                self.keypress(&e)
+            }
+            BackendEvent::MappingNotify { request } => {
+                let e = MappingNotifyEvent {
+                    response_type: MAPPING_NOTIFY_EVENT,
+                    sequence: 0,
+                    request: Mapping::from(request),
+                    first_keycode: 0,
+                    count: 0,
+                };
+                self.mappingnotify(&e)
+            }
+            BackendEvent::ClientMessage { window, type_, data, format } => {
+                // 使用构造器以免 data 布局繁琐
+                let e = ClientMessageEvent::new(
+                    format,
+                    window.0 as u32,
+                    type_,
+                    data,
+                );
+                self.clientmessage(&e)
+            }
+            BackendEvent::ConfigureRequest {
+                window, mask, x, y, w, h, border, sibling, stack_mode
+            } => {
+                let e = ConfigureRequestEvent {
+                    response_type: CONFIGURE_REQUEST_EVENT,
+                    sequence: 0,
+                    parent: self.x11rb_root,
+                    window: window.0 as u32,
+                    sibling: sibling.map(|s| s.0 as u32).unwrap_or(0),
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                    border_width: border,
+                    value_mask: ConfigWindow::from(mask),
+                    stack_mode: StackMode::from(stack_mode),
+                };
+                self.configurerequest(&e)
+            }
+            BackendEvent::ConfigureNotify { window, x, y, w, h } => {
+                let e = ConfigureNotifyEvent {
+                    response_type: CONFIGURE_NOTIFY_EVENT,
+                    sequence: 0,
+                    event: window.0 as u32,
+                    window: window.0 as u32,
+                    x,
+                    y,
+                    width: w,
+                    height: h,
+                    border_width: 0,
+                    above_sibling: 0,
+                    override_redirect: false,
+                };
+                self.configurenotify(&e)
+            }
+            BackendEvent::DestroyNotify { window } => {
+                let e = DestroyNotifyEvent {
+                    response_type: DESTROY_NOTIFY_EVENT,
+                    sequence: 0,
+                    event: window.0 as u32,
+                    window: window.0 as u32,
+                };
+                self.destroynotify(&e)
+            }
+            BackendEvent::EnterNotify { window, event, mode, detail } => {
+                let e = EnterNotifyEvent {
+                    response_type: ENTER_NOTIFY_EVENT,
+                    sequence: 0,
+                    time: 0,
+                    root: self.x11rb_root,
+                    event: event.0 as u32,
+                    child: 0,
+                    root_x: 0,
+                    root_y: 0,
+                    event_x: 0,
+                    event_y: 0,
+                    state: KeyButMask::default(),
+                    mode: NotifyMode::from(mode),
+                    detail: NotifyDetail::from(detail),
+                    same_screen_focus: 1,
+                };
+                // 按现有代码，使用 event 字段表示触发窗口
+                let _ = window; // 未用
+                self.enternotify(&e)
+            }
+            BackendEvent::Expose { window, count } => {
+                let e = ExposeEvent {
+                    response_type: EXPOSE_EVENT,
+                    sequence: 0,
+                    window: window.0 as u32,
+                    x: 0,
+                    y: 0,
+                    width: 0,
+                    height: 0,
+                    count,
+                };
+                self.expose(&e)
+            }
+            BackendEvent::FocusIn { event } => {
+                let e = FocusInEvent {
+                    response_type: FOCUS_IN_EVENT,
+                    sequence: 0,
+                    event: event.0 as u32,
+                    mode: NotifyMode::NORMAL,
+                    detail: NotifyDetail::NONE,
+                };
+                self.focusin(&e)
+            }
+            BackendEvent::MapRequest { window } => {
+                let e = MapRequestEvent {
+                    response_type: MAP_REQUEST_EVENT,
+                    sequence: 0,
+                    parent: self.x11rb_root,
+                    window: window.0 as u32,
+                };
+                self.maprequest(&e)
+            }
+            BackendEvent::PropertyNotify { window, atom, state } => {
+                let e = PropertyNotifyEvent {
+                    response_type: PROPERTY_NOTIFY_EVENT,
+                    sequence: 0,
+                    window: window.0 as u32,
+                    atom,
+                    time: 0,
+                    state: Property::from(state),
+                };
+                self.propertynotify(&e)
+            }
+            BackendEvent::UnmapNotify { window, from_configure } => {
+                let e = UnmapNotifyEvent {
+                    response_type: UNMAP_NOTIFY_EVENT,
+                    sequence: 0,
+                    event: window.0 as u32,
+                    window: window.0 as u32,
+                    from_configure,
+                };
+                self.unmapnotify(&e)
+            }
+        }
     }
 
     fn layout_to_id(l: &LayoutEnum) -> u32 {
@@ -3181,38 +3371,35 @@ impl Jwm {
         self.x11rb_conn.flush()?;
         let mut event_count: u64 = 0;
         let mut update_timer = tokio::time::interval(std::time::Duration::from_millis(10));
-        // 1) 拿到底层原始 fd（只是借用）
+
+        // 与原逻辑一致：基于 X11 fd 的 AsyncFd，用于 readiness
         let raw_fd = self.x11rb_conn.stream().as_raw_fd();
-        // 2) 用 BorrowedFd 包装，再 F_DUPFD_CLOEXEC 复制一份真正的 X11 fd
         let dup_owned: OwnedFd = {
             let borrowed = unsafe { BorrowedFd::borrow_raw(raw_fd) };
             let new_fd = nix::fcntl::fcntl(borrowed, FcntlArg::F_DUPFD_CLOEXEC(3))?;
-            // 把新 fd 变成 OwnedFd（Drop 时会自动 close）
             unsafe { OwnedFd::from_raw_fd(new_fd) }
         };
-        // 3) 把 dup 出来的 fd 设为非阻塞（只影响这份 dup，不影响原 fd）
         {
             let flags_bits = nix::fcntl::fcntl(&dup_owned, FcntlArg::F_GETFL)?;
             let flags = OFlag::from_bits_truncate(flags_bits);
             let _ = nix::fcntl::fcntl(&dup_owned, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK))?;
         }
-        // 4) 用 OwnedFd 包装成 AsyncFd
         let async_fd = AsyncFd::new(dup_owned)?;
+
         while self.running.load(std::sync::atomic::Ordering::SeqCst) {
-            // 抽干所有可用事件（非阻塞）
-            while let Some(event) = self.x11rb_conn.poll_for_event()? {
+            // 抽干所有可用事件（改为从 event_source 拉）
+            while let Some(ev) = self.event_source.poll_event()? {
                 event_count = event_count.wrapping_add(1);
-                debug!(
-                    "[run_async] event_count: {}, event: {:?}",
-                    event_count, event
-                );
-                let _ = self.handler(event);
+                debug!("[run_async] event_count: {}, event: {:?}", event_count, ev);
+                let _ = self.handle_backend_event(ev);
             }
-            // 处理 bar 命令与刷新
+
+            // bar 处理逻辑保持不变
             self.process_commands_from_status_bar();
             if !self.pending_bar_updates.is_empty() {
                 self.flush_pending_bar_updates();
             }
+
             tokio::select! {
                 _ = update_timer.tick() => {
                     self.process_commands_from_status_bar();
@@ -3225,9 +3412,10 @@ impl Jwm {
                         Ok(mut guard) => {
                             loop {
                                 let mut progressed = false;
-                                while let Some(event) = self.x11rb_conn.poll_for_event()? {
+                                // 抽干事件（改为 event_source）
+                                while let Some(ev) = self.event_source.poll_event()? {
                                     event_count = event_count.wrapping_add(1);
-                                    let _ = self.handler(event);
+                                    let _ = self.handle_backend_event(ev);
                                     progressed = true;
                                 }
                                 if progressed {
@@ -3330,14 +3518,11 @@ impl Jwm {
             unsafe { MaybeUninit::zeroed().assume_init() };
 
         while self.running.load(std::sync::atomic::Ordering::SeqCst) {
-            // 5.1 抽干所有已到达的 X 事件（非阻塞）
-            while let Some(event) = self.x11rb_conn.poll_for_event()? {
+            // 5.1 抽干所有已到达事件（改为 event_source）
+            while let Some(ev) = self.event_source.poll_event()? {
                 event_count = event_count.wrapping_add(1);
-                debug!(
-                    "[run_sync] event_count: {}, event: {:?}",
-                    event_count, event
-                );
-                let _ = self.handler(event);
+                debug!("[run_sync] event_count: {}, event: {:?}", event_count, ev);
+                let _ = self.handle_backend_event(ev);
             }
 
             // 5.2 处理状态栏命令/刷新
@@ -3377,12 +3562,12 @@ impl Jwm {
                 let ev = events[i];
                 match ev.u64 {
                     X_TOKEN => {
-                        // 抽干所有可用的 X 事件
+                        // 抽干 event_source 事件
                         loop {
-                            match self.x11rb_conn.poll_for_event()? {
-                                Some(event) => {
+                            match self.event_source.poll_event()? {
+                                Some(ev) => {
                                     event_count = event_count.wrapping_add(1);
-                                    let _ = self.handler(event);
+                                    let _ = self.handle_backend_event(ev);
                                 }
                                 None => break,
                             }
