@@ -29,7 +29,11 @@ use crate::backend::common_input::{KeySym, Mods, MouseButton};
 use crate::backend::traits::StdCursorKind;
 use crate::backend::x11::adapter::{button_from_x11, button_to_x11, mods_from_x11, mods_to_x11};
 use crate::backend::x11::ewmh::X11Ewmh;
+use crate::backend::x11::window_ops::X11WindowOps;
 use crate::backend::Ewmh;
+use crate::config::CONFIG;
+use crate::xcb_util::SchemeType;
+use crate::xcb_util::{test_all_cursors, Atoms, CursorManager, ThemeManager};
 
 use x11rb::connection::Connection;
 use x11rb::errors::ReplyError;
@@ -40,9 +44,6 @@ use x11rb::protocol::Event;
 use x11rb::rust_connection::RustConnection;
 use x11rb::COPY_DEPTH_FROM_PARENT;
 
-use crate::config::CONFIG;
-use crate::xcb_util::SchemeType;
-use crate::xcb_util::{test_all_cursors, Atoms, CursorManager, ThemeManager};
 use shared_structures::CommandType;
 use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
@@ -682,6 +683,8 @@ pub struct Jwm {
     pub depth: u8,
     pub color_map: Colormap,
 
+    pub window_ops: X11WindowOps<RustConnection>,
+
     // 与状态栏进程通信的消息缓存（写到 ring buffer）
     pub message: SharedMessage,
 
@@ -820,6 +823,8 @@ impl Jwm {
             crate::backend::x11::cursor::X11CursorProvider::new(x11rb_conn.clone())?;
         let cursor_manager = crate::xcb_util::GenericCursorManager::new(cursor_provider)?;
 
+        let window_ops = X11WindowOps::new(x11rb_conn.clone());
+
         info!("[new] JWM initialization completed successfully");
 
         Ok(Jwm {
@@ -859,6 +864,7 @@ impl Jwm {
             status_bar_pid: None,
             pending_bar_updates: HashSet::new(),
             x11rb_conn,
+            window_ops,
             x11rb_root,
             x11rb_screen,
             atoms,
@@ -1888,29 +1894,24 @@ impl Jwm {
         Ok(())
     }
 
-    /// 恢复客户端的 X11 状态
     fn restore_client_x11_state(
         &mut self,
         win: Window,
         old_border_w: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 取消事件选择
-        let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT);
-        if let Err(e) = self.x11rb_conn.change_window_attributes(win, &aux) {
+        // 清空事件掩码
+        if let Err(e) = self.window_ops.change_event_mask(win, EventMask::NO_EVENT) {
             warn!("Failed to clear events for {}: {:?}", win, e);
         }
-        // 恢复原始边框宽度
-        if let Err(e) = self.set_window_border_width(win, old_border_w as u32) {
+        // 恢复边框宽度
+        if let Err(e) = self.window_ops.set_border_width(win, old_border_w as u32) {
             warn!("Failed to restore border for {}: {:?}", win, e);
         }
         // 取消按钮抓取
-        if let Err(e) = self
-            .x11rb_conn
-            .ungrab_button(ButtonIndex::ANY, win, ModMask::ANY.into())
-        {
+        if let Err(e) = self.window_ops.ungrab_all_buttons(win) {
             warn!("Failed to ungrab buttons for {}: {:?}", win, e);
         }
-        // 设置客户端状态为 WithdrawnState
+        // 设置 Withdrawn 状态（保留原封装）
         if let Err(e) = self.setclientstate(win, WITHDRAWN_STATE as i64) {
             warn!("Failed to set withdrawn state for {}: {:?}", win, e);
         }
@@ -2251,8 +2252,7 @@ impl Jwm {
         window: u32,
         border_width: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let aux = ConfigureWindowAux::new().border_width(border_width);
-        self.x11rb_conn.configure_window(window, &aux)?;
+        self.window_ops.set_border_width(window, border_width)?;
         Ok(())
     }
 
@@ -2268,11 +2268,7 @@ impl Jwm {
         };
         if let Some(color) = self.theme_manager.get_border(scheme_type) {
             if let Some(pixel) = self.theme_manager.get_pixel(color) {
-                // 保持 X11 行为不变：直接使用 pixel.0
-                self.x11rb_conn.change_window_attributes(
-                    window,
-                    &ChangeWindowAttributesAux::new().border_pixel(pixel.0),
-                )?;
+                self.window_ops.set_border_pixel(window, pixel.0)?;
             }
         }
         Ok(())
@@ -2502,23 +2498,17 @@ impl Jwm {
         Ok(())
     }
 
-    /// 辅助函数：通过 `_NET_WM_STATE` 或直接设置 `WM_HINTS`
-    /// 这里我们选择直接使用 `change_property` 设置 `WM_HINTS`
     fn send_wm_hints_with_flags(&self, window: u32, flags: u32) {
-        // 构造属性值：flags + 其余字段保持原样（这里我们只设置 flags）
-        // 如果你需要保留其他字段（如 input, initial_state 等），需从原 reply 中复制
-        let data: [u32; 1] = [flags]; // 至少写入 flags
-        use x11rb::wrapper::ConnectionExt;
+        let data: [u32; 1] = [flags];
         let _ = self
-            .x11rb_conn
+            .window_ops
             .change_property32(
-                PropMode::REPLACE,
                 window,
-                AtomEnum::WM_HINTS,
-                AtomEnum::WM_HINTS,
+                AtomEnum::WM_HINTS.into(),
+                AtomEnum::WM_HINTS.into(),
                 &data,
             )
-            .and_then(|_| self.x11rb_conn.flush());
+            .and_then(|_| self.window_ops.flush());
     }
 
     #[allow(dead_code)]
@@ -5889,39 +5879,20 @@ impl Jwm {
             return false;
         }
 
-        // 3. 构造 ClientMessageEvent
-        let event = ClientMessageEvent::new(
-            32,                      // format: 32 位
-            window,                  // window
-            self.atoms.WM_PROTOCOLS, // message_type
-            [proto, 0, 0, 0, 0],     // data.l[0] = protocol atom
-        );
-
-        // 4. 发送事件
-        use x11rb::x11_utils::Serialize;
-        let buffer = event.serialize();
-        let result = self.x11rb_conn.send_event(
-            false,
+        let r = self.window_ops.send_client_message(
             window,
-            EventMask::NO_EVENT, // 不需要事件掩码（由接收方决定）
-            buffer,
+            self.atoms.WM_PROTOCOLS,
+            [proto, 0, 0, 0, 0],
+            EventMask::NO_EVENT,
         );
-
-        if let Err(e) = result {
+        if let Err(e) = r {
             warn!("[sendevent_by_window] Failed to send event: {}", e);
             return false;
         }
-
-        // 5. flush
-        if let Err(e) = self.x11rb_conn.flush() {
+        if let Err(e) = self.window_ops.flush() {
             warn!("[sendevent_by_window] Failed to flush connection: {}", e);
             return false;
         }
-
-        info!(
-            "[sendevent_by_window] Successfully sent protocol {:?} to window 0x{:x}",
-            proto, window
-        );
         true
     }
 
@@ -7308,9 +7279,7 @@ impl Jwm {
             self.set_window_border_color(win, false)?;
 
             if setfocus {
-                // 将焦点设置到根窗口
-                self.x11rb_conn
-                    .set_input_focus(InputFocus::POINTER_ROOT, self.x11rb_root, 0u32)?;
+                self.window_ops.set_input_focus_root(self.x11rb_root)?;
 
                 // 清除 _NET_ACTIVE_WINDOW 属性
                 self.x11rb_conn
@@ -7532,8 +7501,7 @@ impl Jwm {
             self.set_window_border_color(win, false)?;
 
             if setfocus {
-                self.x11rb_conn
-                    .set_input_focus(InputFocus::POINTER_ROOT, self.x11rb_root, 0u32)?;
+                self.window_ops.set_input_focus_root(self.x11rb_root)?;
 
                 let _ =
                     self.ewmh
@@ -9091,31 +9059,27 @@ impl Jwm {
         &self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // 获取客户端与必要信息
         let client = if let Some(client) = self.clients.get(client_key) {
             client
         } else {
             return Err("Client not found".into());
         };
-        let (win, old_border_w) = (client.win, client.geometry.old_border_w);
+        let win = client.win;
+        let old_border_w = client.geometry.old_border_w;
 
-        // 抓取服务器
+        // 抓取服务器，保证接下来的更改原子性
         self.x11rb_conn.grab_server()?.check()?;
 
-        // 执行清理操作（将借用范围限制在这个块内）
-        let cleanup_result = {
-            // 取消事件选择
-            let clear_events_result = {
-                let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT);
-                self.x11rb_conn
-                    .change_window_attributes(win, &aux)
-                    .and_then(|cookie| Ok(cookie.check()))
-            };
-            if let Err(e) = clear_events_result {
+        // 执行清理操作（单独捕获错误并记录日志，不中断整个流程）
+        {
+            // 取消事件监听
+            if let Err(e) = self.window_ops.change_event_mask(win, EventMask::NO_EVENT) {
                 warn!("[cleanup_window_state] Failed to clear event mask: {:?}", e);
             }
 
             // 恢复原始边框宽度
-            if let Err(e) = self.set_window_border_width(win, old_border_w as u32) {
+            if let Err(e) = self.window_ops.set_border_width(win, old_border_w as u32) {
                 warn!(
                     "[cleanup_window_state] Failed to restore border width: {:?}",
                     e
@@ -9123,35 +9087,31 @@ impl Jwm {
             }
 
             // 取消所有按钮抓取
-            let ungrab_result = self
-                .x11rb_conn
-                .ungrab_button(ButtonIndex::ANY, win, ModMask::ANY.into())
-                .and_then(|cookie| Ok(cookie.check()));
-            if let Err(e) = ungrab_result {
+            if let Err(e) = self.window_ops.ungrab_all_buttons(win) {
                 warn!("[cleanup_window_state] Failed to ungrab buttons: {:?}", e);
             }
 
             // 设置客户端状态为 WithdrawnState
-            if let Err(e) = self.setclientstate(client.win, WITHDRAWN_STATE as i64) {
+            if let Err(e) = self.setclientstate(win, WITHDRAWN_STATE as i64) {
                 warn!("[cleanup_window_state] Failed to set client state: {:?}", e);
             }
 
-            // 同步所有操作
-            self.x11rb_conn.flush()
-        };
+            // 同步所有 X11 操作
+            if let Err(e) = self.window_ops.flush() {
+                warn!("[cleanup_window_state] Flush failed: {:?}", e);
+            }
+        }
 
         // 释放服务器（无论前面的操作是否成功）
-        let ungrab_result = self
-            .x11rb_conn
-            .ungrab_server()
-            .and_then(|_| self.x11rb_conn.flush());
-
-        // 处理结果
-        cleanup_result?;
-        ungrab_result?;
+        if let Err(e) = self.x11rb_conn.ungrab_server() {
+            warn!("[cleanup_window_state] Ungrab server failed: {:?}", e);
+        }
+        if let Err(e) = self.x11rb_conn.flush() {
+            warn!("[cleanup_window_state] Final flush failed: {:?}", e);
+        }
 
         info!(
-            "[cleanup_window_state] Window cleanup completed for 0x{}",
+            "[cleanup_window_state] Window cleanup completed for 0x{:x}",
             win
         );
         Ok(())
