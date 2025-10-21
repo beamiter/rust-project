@@ -5,7 +5,7 @@ use x11rb::protocol::xproto::{AtomEnum, PropMode};
 use x11rb::wrapper::ConnectionExt;
 
 use crate::backend::api::{EwmhFacade, WindowId};
-use crate::xcb_util::Atoms;
+use crate::backend::x11::Atoms;
 
 pub struct X11EwmhFacade<C: Connection> {
     conn: Arc<C>,

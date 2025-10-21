@@ -2,7 +2,7 @@ pub mod config;
 pub mod jwm;
 pub mod miscellaneous;
 pub mod terminal_prober;
-pub mod xcb_util;
+pub mod theme_manager;
 pub mod backend;
 
 pub use jwm::Jwm;

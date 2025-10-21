@@ -1,6 +1,6 @@
 // src/backend/x11/property_ops.rs
 use crate::backend::api::{PropertyOps as PropertyOpsTrait, WindowId};
-use crate::xcb_util::Atoms;
+use crate::backend::x11::Atoms;
 use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;

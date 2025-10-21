@@ -30,14 +30,16 @@ use crate::backend::api::KeyOps;
 use crate::backend::api::WindowId;
 use crate::backend::api::{BackendEvent, EventSource};
 use crate::backend::common_input::{KeySym, Mods, MouseButton};
+use crate::backend::cursor_manager::CursorManager;
 use crate::backend::traits::StdCursorKind;
 use crate::backend::x11::adapter::{button_to_x11, mods_from_x11, mods_to_x11};
 use crate::backend::x11::input_ops::X11InputOps;
 use crate::backend::x11::key_ops::X11KeyOps;
 use crate::backend::x11::property_ops::X11PropertyOps;
+use crate::backend::x11::Atoms;
 use crate::config::CONFIG;
-use crate::xcb_util::SchemeType;
-use crate::xcb_util::{Atoms, CursorManager, ThemeManager};
+use crate::theme_manager::SchemeType;
+use crate::theme_manager::ThemeManager;
 
 use x11rb::connection::Connection;
 use x11rb::properties::WmSizeHints;
@@ -793,13 +795,12 @@ impl Jwm {
             x11rb_conn.clone(),
             x11rb_screen.default_colormap,
         );
-        let (theme_manager, _alloc_back) =
-            crate::xcb_util::GenericThemeManager::create_from_config(x11_alloc)?;
+        let (theme_manager, _alloc_back) = ThemeManager::create_from_config(x11_alloc)?;
 
         // CursorManager
         let cursor_provider =
             crate::backend::x11::cursor::X11CursorProvider::new(x11rb_conn.clone())?;
-        let cursor_manager = crate::xcb_util::CursorManager::new(Box::new(cursor_provider))?;
+        let cursor_manager = CursorManager::new(Box::new(cursor_provider))?;
 
         let window_ops = Box::new(crate::backend::x11::window_ops::X11WindowOps::new(
             x11rb_conn.clone(),
