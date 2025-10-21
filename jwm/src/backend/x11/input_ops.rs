@@ -39,23 +39,6 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
         Ok(reply.status)
     }
 
-    pub fn ungrab_pointer(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn.ungrab_pointer(0u32)?.check()?;
-        Ok(())
-    }
-
-    pub fn warp_pointer_to_window(
-        &self,
-        window: Window,
-        x: i16,
-        y: i16,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn
-            .warp_pointer(0u32, window, 0, 0, 0, 0, x, y)?
-            .check()?;
-        Ok(())
-    }
-
     pub fn allow_events(&self, mode: Allow, time: u32) -> Result<(), Box<dyn std::error::Error>> {
         self.conn.allow_events(mode, time)?.check()?;
         Ok(())
@@ -110,7 +93,7 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
 
         // 可选 warp
         if let Some((wx, wy)) = warp_to {
-            self.warp_pointer_to_window(target_window, wx, wy)?;
+            self.warp_pointer_to_window(WindowId(target_window.into()), wx, wy)?;
         }
         self.flush()?;
 
@@ -178,7 +161,8 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
     }
 
     fn ungrab_pointer(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.ungrab_pointer()
+        self.conn.ungrab_pointer(0u32)?.check()?;
+        Ok(())
     }
 
     fn allow_events(&self, mode: u8, time: u32) -> Result<(), Box<dyn std::error::Error>> {
@@ -224,7 +208,10 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
         x: i16,
         y: i16,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.warp_pointer_to_window(win.0 as u32, x, y)
+        self.conn
+            .warp_pointer(0u32, win.0 as u32, 0, 0, 0, 0, x, y)?
+            .check()?;
+        Ok(())
     }
 
     fn drag_loop(
