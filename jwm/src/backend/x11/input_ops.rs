@@ -52,7 +52,11 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
         Ok(reply.status)
     }
 
-    pub fn allow_events(&self, mode: Allow, time: u32) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn allow_events_raw(
+        &self,
+        mode: Allow,
+        time: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         self.conn.allow_events(mode, time)?.check()?;
         Ok(())
     }
@@ -180,7 +184,7 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
 
     fn allow_events(&self, mode: AllowMode, time: u32) -> Result<(), Box<dyn std::error::Error>> {
         let allow = Self::map_allow_mode(mode);
-        self.allow_events(allow, time)
+        self.allow_events_raw(allow, time)
     }
 
     fn query_pointer_root(&self) -> Result<(i32, i32, u16, u16), Box<dyn std::error::Error>> {
