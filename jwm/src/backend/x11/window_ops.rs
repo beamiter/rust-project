@@ -30,7 +30,6 @@ impl<C: Connection> X11WindowOps<C> {
     }
 
     pub fn change_event_mask(&self, win: u32, mask: u32) -> Result<(), Box<dyn std::error::Error>> {
-        // mask 为 x11rb::protocol::xproto::EventMask 的 bits()
         let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::from(mask));
         self.conn.change_window_attributes(win, &aux)?.check()?;
         Ok(())
@@ -96,9 +95,7 @@ impl<C: Connection> X11WindowOps<C> {
         type_atom: u32,
         data: [u32; 5],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 统一使用 format=32
         let event = ClientMessageEvent::new(32, win, type_atom, data);
-        // 发送为 “NO_EVENT” 掩码（符合原 jwm 路径）
         use x11rb::x11_utils::Serialize;
         let buf = event.serialize();
         self.conn
@@ -149,16 +146,13 @@ impl<C: Connection> X11WindowOps<C> {
         self.conn.get_window_attributes(win)?.reply()
     }
 
-    pub fn get_geometry_translated(
-        &self,
-        win: u32,
-        parent: u32,
-    ) -> Result<GetGeometryReply, ReplyError> {
+    // 简化：内部自行获取 parent（query_tree）
+    pub fn get_geometry_translated(&self, win: u32) -> Result<GetGeometryReply, ReplyError> {
         let geom = self.conn.get_geometry(win)?.reply()?;
-        let _tree = self.conn.query_tree(win)?.reply()?;
+        let tree = self.conn.query_tree(win)?.reply()?;
         let trans = self
             .conn
-            .translate_coordinates(win, parent, geom.x, geom.y)?
+            .translate_coordinates(win, tree.parent, geom.x, geom.y)?
             .reply()?;
         let mut g = geom.clone();
         g.x = trans.dst_x;
@@ -166,10 +160,60 @@ impl<C: Connection> X11WindowOps<C> {
         Ok(g)
     }
 
-    // 便捷：取消所有按钮抓取（cleanup 时会用到）
     pub fn ungrab_all_buttons(&self, win: u32) -> Result<(), Box<dyn std::error::Error>> {
         self.conn
             .ungrab_button(ButtonIndex::ANY, win, ModMask::ANY.into())?
+            .check()?;
+        Ok(())
+    }
+
+    // 额外：抓取 ButtonIndex::ANY + ModMask::ANY（JWM 在未聚焦时启用）
+    pub fn grab_button_any_anymod(
+        &self,
+        win: u32,
+        event_mask: EventMask,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.conn
+            .grab_button(
+                false,
+                win,
+                event_mask,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+                0u32,
+                0u32,
+                ButtonIndex::ANY,
+                ModMask::ANY.into(),
+            )?
+            .check()?;
+        Ok(())
+    }
+
+    // 常规抓取某个按钮与修饰
+    pub fn grab_button(
+        &self,
+        win: u32,
+        button: ButtonIndex,
+        event_mask: EventMask,
+        mods_bits: u16,
+        pointer_mode: GrabMode,
+        keyboard_mode: GrabMode,
+        confine_to: u32,
+        cursor: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mods = ModMask::from(mods_bits);
+        self.conn
+            .grab_button(
+                false,
+                win,
+                event_mask,
+                pointer_mode,
+                keyboard_mode,
+                confine_to,
+                cursor,
+                button,
+                mods,
+            )?
             .check()?;
         Ok(())
     }

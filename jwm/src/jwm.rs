@@ -2485,7 +2485,10 @@ impl Jwm {
         old_border_w: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 清空事件掩码
-        if let Err(e) = self.window_ops.change_event_mask(win, EventMask::NO_EVENT.into()) {
+        if let Err(e) = self
+            .window_ops
+            .change_event_mask(win, EventMask::NO_EVENT.into())
+        {
             warn!("Failed to clear events for {}: {:?}", win, e);
         }
         // 恢复边框宽度
@@ -4076,12 +4079,11 @@ impl Jwm {
     }
 
     pub fn scan(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[scan]");
         let tree_reply = self.x11rb_conn.query_tree(self.x11rb_root)?.reply()?;
         let mut cookies = Vec::with_capacity(tree_reply.children.len());
         for win in tree_reply.children {
-            let attr = self.get_window_attributes(win)?;
-            let geom = Self::get_and_query_window_geom(&self.x11rb_conn, win)?;
+            let attr = self.window_ops.get_window_attributes(win)?;
+            let geom = self.window_ops.get_geometry_translated(win)?;
             let trans = self.get_transient_for(win);
             cookies.push((win, attr, geom, trans));
         }
@@ -4096,13 +4098,11 @@ impl Jwm {
             }
         }
         for (win, attr, geom, trans) in &cookies {
-            {
-                if trans.is_some() {
-                    if attr.map_state == MapState::VIEWABLE
-                        || self.get_wm_state(*win) == ICONIC_STATE as i64
-                    {
-                        self.manage(*win, geom)?;
-                    }
+            if trans.is_some() {
+                if attr.map_state == MapState::VIEWABLE
+                    || self.get_wm_state(*win) == ICONIC_STATE as i64
+                {
+                    self.manage(*win, geom)?;
                 }
             }
         }
@@ -4130,9 +4130,8 @@ impl Jwm {
         }
     }
 
-    pub fn getrootptr(&mut self) -> Result<(i32, i32), ReplyError> {
-        let cookie = self.x11rb_conn.query_pointer(self.x11rb_root)?;
-        let reply = cookie.reply()?;
+    pub fn getrootptr(&mut self) -> Result<(i32, i32), Box<dyn std::error::Error>> {
+        let reply = self.input_ops.query_pointer()?;
         Ok((reply.root_x as i32, reply.root_y as i32))
     }
 
@@ -6298,8 +6297,7 @@ impl Jwm {
         true
     }
 
-    /// 通过ClientKey强制终止客户端
-    fn force_kill_client(
+    pub fn force_kill_client(
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -6314,34 +6312,19 @@ impl Jwm {
             client_name, win
         );
 
-        // 抓取服务器以确保操作的原子性
-        self.x11rb_conn.grab_server()?;
+        self.window_ops.grab_server()?;
+        let res = self.window_ops.kill_client(win);
+        // 无论成功失败，释放 server
+        let _ = self.window_ops.ungrab_server();
+        self.window_ops.flush()?;
 
-        // 强制终止客户端
-        match self.x11rb_conn.kill_client(win) {
-            Ok(cookie) => {
-                // 同步并检查结果
-                self.x11rb_conn.flush()?;
-                match cookie.check() {
-                    Ok(_) => return Ok(()),
-                    Err(e) => {
-                        warn!("[force_kill_client_by_key] Kill client failed: {:?}", e);
-                    }
-                }
-            }
+        match res {
+            Ok(()) => Ok(()),
             Err(e) => {
-                warn!(
-                    "[force_kill_client_by_key] Failed to send kill_client request: {:?}",
-                    e
-                );
+                warn!("[force_kill_client_by_key] Kill client failed: {:?}", e);
+                Ok(()) // 容错：不让整个流程失败
             }
-        };
-
-        // 释放服务器（无论成功失败）
-        self.x11rb_conn.ungrab_server()?;
-        self.x11rb_conn.flush()?;
-
-        Ok(())
+        }
     }
 
     pub fn gettextprop(&mut self, w: Window, atom: Atom, text: &mut String) -> bool {
@@ -6763,11 +6746,8 @@ impl Jwm {
         _window_id: Window,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 释放鼠标抓取
-        self.x11rb_conn.ungrab_pointer(0u32)?;
-        self.x11rb_conn.flush()?;
+        self.input_ops.ungrab_pointer()?;
 
-        // 检查窗口移动后是否跨越了显示器边界
         let (final_x, final_y, final_w, final_h) =
             if let Some(client) = self.clients.get(client_key) {
                 (
@@ -6927,22 +6907,16 @@ impl Jwm {
         window_id: Window,
         border_width: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 将鼠标定位到最终位置（若无选中客户端则跳过）
         if let Some(key) = self.get_selected_client_key() {
             if let Some(client) = self.clients.get(key) {
-                self.x11rb_conn.warp_pointer(
-                    0u32,
+                self.input_ops.warp_pointer_to_window(
                     window_id,
-                    0,
-                    0,
-                    0,
-                    0,
                     (client.geometry.w + border_width - 1) as i16,
                     (client.geometry.h + border_width - 1) as i16,
                 )?;
             }
         }
-        self.x11rb_conn.ungrab_pointer(0u32)?;
+        self.input_ops.ungrab_pointer()?;
         self.check_monitor_change_after_resize()?;
         Ok(())
     }
@@ -7117,15 +7091,13 @@ impl Jwm {
             };
 
             let data: [u32; 2] = [client.state.tags, monitor_num];
-
-            use x11rb::wrapper::ConnectionExt;
-            self.x11rb_conn.change_property32(
-                PropMode::REPLACE,
+            self.window_ops.change_property32(
                 client.win,
                 self.atoms._NET_CLIENT_INFO,
-                AtomEnum::CARDINAL,
+                AtomEnum::CARDINAL.into(),
                 &data,
             )?;
+            self.window_ops.flush()?;
         }
         Ok(())
     }
@@ -7412,29 +7384,16 @@ impl Jwm {
             return Err("Client not found".into());
         };
 
-        self.x11rb_conn.ungrab_button(
-            ButtonIndex::ANY,
-            client_win_id,
-            x11rb::protocol::xproto::ModMask::ANY.into(),
-        )?;
+        self.window_ops.ungrab_all_buttons(client_win_id)?;
 
         if !focused {
-            self.x11rb_conn.grab_button(
-                false,
-                client_win_id,
-                *BUTTONMASK,
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-                0u32,
-                0u32,
-                ButtonIndex::ANY,
-                x11rb::protocol::xproto::ModMask::ANY.into(),
-            )?;
+            self.window_ops
+                .grab_button_any_anymod(client_win_id, *BUTTONMASK)?;
         }
 
         for button_config in CONFIG.get_buttons().iter() {
             if button_config.click_type == WMClickType::ClickClientWin {
-                use x11rb::protocol::xproto::{KeyButMask as KBM, ModMask};
+                use x11rb::protocol::xproto::KeyButMask as KBM;
                 let base = mods_to_x11(button_config.mask, self.x11_numlock_mask);
                 let combos = [
                     base,
@@ -7444,22 +7403,21 @@ impl Jwm {
                 ];
                 let x11_btn = button_to_x11(button_config.button);
                 for mm in combos {
-                    self.x11rb_conn.grab_button(
-                        false,
+                    self.window_ops.grab_button(
                         client_win_id,
-                        *BUTTONMASK,
-                        GrabMode::ASYNC,
-                        GrabMode::ASYNC,
-                        0u32,
-                        0u32,
                         x11_btn,
-                        ModMask::from(mm.bits()),
+                        *BUTTONMASK,
+                        mm.bits(), // u16
+                        GrabMode::ASYNC,
+                        GrabMode::ASYNC,
+                        0,
+                        0,
                     )?;
                 }
             }
         }
 
-        self.x11rb_conn.flush()?;
+        self.window_ops.flush()?;
         Ok(())
     }
 
@@ -8521,39 +8479,16 @@ impl Jwm {
         Ok(())
     }
 
-    fn get_and_query_window_geom<C: Connection>(
-        conn: &C,
-        win: Window,
-    ) -> Result<GetGeometryReply, ReplyError> {
-        let geom = conn.get_geometry(win)?;
-        let tree = conn.query_tree(win)?;
-
-        let mut geom = geom.reply()?;
-        let tree = tree.reply()?;
-
-        let trans = conn
-            .translate_coordinates(win, tree.parent, geom.x, geom.y)?
-            .reply()?;
-
-        // the translated coordinates are in trans.dst_x and trans.dst_y
-        geom.x = trans.dst_x;
-        geom.y = trans.dst_y;
-        Ok(geom)
-    }
-
     pub fn get_window_attributes(
         &self,
         window: Window,
-    ) -> Result<GetWindowAttributesReply, ReplyError> {
+    ) -> Result<GetWindowAttributesReply, Box<dyn std::error::Error>> {
         let geom = self.x11rb_conn.get_window_attributes(window)?.reply()?;
         return Ok(geom);
     }
 
     pub fn maprequest(&mut self, e: &MapRequestEvent) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[maprequest]");
-        // 获取窗口属性
-        let window_attr = self.x11rb_conn.get_window_attributes(e.window)?.reply()?;
-        // 忽略设置了override_redirect的窗口
+        let window_attr = self.window_ops.get_window_attributes(e.window)?;
         if window_attr.override_redirect {
             debug!(
                 "Ignoring map request for override_redirect window: {}",
@@ -8561,10 +8496,8 @@ impl Jwm {
             );
             return Ok(());
         }
-        // 检查窗口是否已经被管理
         if self.wintoclient(e.window).is_none() {
-            // 获取窗口几何信息并开始管理
-            let geom = Self::get_and_query_window_geom(&self.x11rb_conn, e.window)?;
+            let geom = self.window_ops.get_geometry_translated(e.window)?;
             self.manage(e.window, &geom)?;
         } else {
             debug!(
@@ -9012,7 +8945,10 @@ impl Jwm {
         // 执行清理操作（单独捕获错误并记录日志，不中断整个流程）
         {
             // 取消事件监听
-            if let Err(e) = self.window_ops.change_event_mask(win, EventMask::NO_EVENT.into()) {
+            if let Err(e) = self
+                .window_ops
+                .change_event_mask(win, EventMask::NO_EVENT.into())
+            {
                 warn!("[cleanup_window_state] Failed to clear event mask: {:?}", e);
             }
 
