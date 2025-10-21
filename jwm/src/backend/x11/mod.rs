@@ -6,3 +6,4 @@ pub mod input_ops;
 pub mod property_ops;
 pub mod event_source;
 pub mod ewmh_facade;
+pub mod key_ops;

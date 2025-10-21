@@ -3,18 +3,21 @@
 [workspace]
 # 列出所有属于该工作区的成员 crate
 members = [
-    "egui_bar",
-    "iced_bar",
-    "gtk_bar",
-    "relm_bar",
-    "dioxus_bar",
+    # "egui_bar",
+    # "iced_bar",
+    # "gtk_bar",
+    # "relm_bar",
+    # "dioxus_bar",
     "jwm",
     "shared_structures",
     "x11rb_bar",
     "xcb_bar",
     "xbar_core",
     "winit_softbuffer_bar",
-    "winit_pixels_bar", "tao_softbuffer_bar", "tao_pixels_bar", "winit_wgpu_bar",
+    "winit_pixels_bar",
+    "tao_softbuffer_bar",
+    "tao_pixels_bar",
+    "winit_wgpu_bar",
 ]
 resolver = "2" # 推荐使用最新的依赖解析器
 

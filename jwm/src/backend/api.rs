@@ -124,6 +124,26 @@ pub struct Geometry {
     pub border: u16,
 }
 
+// src/backend/api.rs
+
+use crate::backend::common_input::{KeySym, Mods};
+
+pub trait KeyOps: Send {
+    // 探测 NumLock 掩码，返回 (通用 Mods 标记, X11/后端的掩码位 bits)
+    fn detect_numlock_mask(&mut self) -> Result<(Mods, u16), Box<dyn std::error::Error>>;
+
+    // 清理所有键抓取（针对 root）
+    fn clear_key_grabs(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 抓取键绑定（通用形式：mods + keysym），numlock_mask_bits 为后端的掩码位
+    fn grab_keys(
+        &self,
+        root: WindowId,
+        bindings: &[(Mods, KeySym)],
+        numlock_mask_bits: u16,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+}
+
 // 输入接口
 pub trait InputOps: Send {
     fn grab_pointer(

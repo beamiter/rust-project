@@ -26,12 +26,14 @@ use std::time::{Duration, Instant};
 use std::usize;
 
 use crate::backend::api::Geometry;
+use crate::backend::api::KeyOps;
 use crate::backend::api::WindowId;
 use crate::backend::api::{BackendEvent, EventSource};
 use crate::backend::common_input::{KeySym, Mods, MouseButton};
 use crate::backend::traits::StdCursorKind;
 use crate::backend::x11::adapter::{button_to_x11, mods_from_x11, mods_to_x11};
 use crate::backend::x11::input_ops::X11InputOps;
+use crate::backend::x11::key_ops::X11KeyOps;
 use crate::backend::x11::property_ops::X11PropertyOps;
 use crate::config::CONFIG;
 use crate::xcb_util::SchemeType;
@@ -688,6 +690,7 @@ pub struct Jwm {
     pub prop_ops: Box<dyn crate::backend::api::PropertyOps>,
     pub event_source: Box<dyn EventSource>,
     pub ewmh_facade: Option<Box<dyn crate::backend::api::EwmhFacade>>,
+    pub key_ops: Box<dyn KeyOps>,
 
     // 与状态栏进程通信的消息缓存（写到 ring buffer）
     pub message: SharedMessage,
@@ -815,6 +818,7 @@ impl Jwm {
         let event_source: Box<dyn EventSource> = Box::new(
             crate::backend::x11::event_source::X11EventSource::new(x11rb_conn.clone()),
         );
+        let key_ops: Box<dyn KeyOps> = Box::new(X11KeyOps::new(x11rb_conn.clone()));
 
         // EWMH facade（基于 trait）
         let ewmh_facade: Option<Box<dyn crate::backend::api::EwmhFacade>> = Some(Box::new(
@@ -843,6 +847,7 @@ impl Jwm {
             prop_ops,
             event_source,
             ewmh_facade,
+            key_ops,
 
             clients: SlotMap::new(),
             monitors: SlotMap::new(),
@@ -2590,18 +2595,11 @@ impl Jwm {
     }
 
     fn cleanup_key_grabs(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        match self
-            .x11rb_conn
-            .ungrab_key(Grab::ANY, self.x11rb_root, ModMask::ANY.into())
+        if let Err(e) = self
+            .key_ops
+            .clear_key_grabs(WindowId(self.x11rb_root as u64))
         {
-            Ok(cookie) => {
-                if let Err(e) = cookie.check() {
-                    warn!("[cleanup_key_grabs] Failed to ungrab keys: {:?}", e);
-                }
-            }
-            Err(e) => {
-                warn!("[cleanup_key_grabs] Failed to send ungrab request: {:?}", e);
-            }
+            warn!("[cleanup_key_grabs] Failed to ungrab keys: {:?}", e);
         }
         Ok(())
     }
@@ -2862,59 +2860,28 @@ impl Jwm {
         Ok(())
     }
 
-    // (TODO)
     pub fn grabkeys(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.setup_modifier_masks()?; // 仍然调用
+        // 探测 NumLock（KeyOps）
+        self.setup_modifier_masks()?;
 
-        self.x11rb_conn.ungrab_key(
-            Grab::ANY,
-            self.x11rb_root,
-            x11rb::protocol::xproto::ModMask::ANY.into(),
+        // 清除旧的抓取
+        self.key_ops
+            .clear_key_grabs(WindowId(self.x11rb_root as u64))?;
+
+        // 构造绑定列表（通用 Mods + KeySym）
+        let bindings: Vec<(Mods, KeySym)> = CONFIG
+            .get_keys()
+            .iter()
+            .map(|k| (k.mask, k.key_sym))
+            .collect();
+
+        // 抓取
+        self.key_ops.grab_keys(
+            WindowId(self.x11rb_root as u64),
+            &bindings,
+            self.x11_numlock_mask.bits() as u16,
         )?;
 
-        let setup = self.x11rb_conn.setup();
-        let mapping = self
-            .x11rb_conn
-            .get_keyboard_mapping(
-                setup.min_keycode,
-                (setup.max_keycode - setup.min_keycode) + 1,
-            )?
-            .reply()?;
-
-        for (keycode_offset, keysyms_for_keycode) in mapping
-            .keysyms
-            .chunks(mapping.keysyms_per_keycode as usize)
-            .enumerate()
-        {
-            let keycode = setup.min_keycode + keycode_offset as u8;
-            if let Some(&keysym) = keysyms_for_keycode.first() {
-                for key_config in CONFIG.get_keys().iter() {
-                    if key_config.key_sym == u32::from(keysym) {
-                        // 组合 None / LOCK / NUMLOCK / LOCK|NUMLOCK
-                        use x11rb::protocol::xproto::{KeyButMask as KBM, ModMask};
-                        let base = mods_to_x11(key_config.mask, self.x11_numlock_mask);
-                        let combos = [
-                            base,
-                            base | KBM::LOCK,
-                            base | self.x11_numlock_mask,
-                            base | KBM::LOCK | self.x11_numlock_mask,
-                        ];
-                        for mm in combos {
-                            self.x11rb_conn.grab_key(
-                                false,
-                                self.x11rb_root,
-                                ModMask::from(mm.bits()),
-                                keycode,
-                                GrabMode::ASYNC,
-                                GrabMode::ASYNC,
-                            )?;
-                        }
-                    }
-                }
-            }
-        }
-
-        self.x11rb_conn.flush()?;
         Ok(())
     }
 
@@ -6878,102 +6845,21 @@ impl Jwm {
     }
 
     pub fn setup_modifier_masks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("Setting up modifier masks...");
-        // 1. 获取NumLock的keycode
-        let numlock_keycode = self.find_numlock_keycode()?;
-        if numlock_keycode == 0 {
-            warn!("NumLock key not found, using default mask");
-            self.numlock_mask = Mods::MOD2; // 默认Mod2
-            self.x11_numlock_mask = x11rb::protocol::xproto::KeyButMask::MOD2;
-            return Ok(());
-        }
-        let modifier_mapping = self.x11rb_conn.get_modifier_mapping()?.reply()?;
-        let mask_u8 = self.find_modifier_mask(numlock_keycode, &modifier_mapping);
-        if mask_u8 != 0 {
-            // 保存 X11 的真实 mask 位
-            self.x11_numlock_mask = x11rb::protocol::xproto::KeyButMask::from(mask_u8);
-            // 标记通用 Mods 的 NUMLOCK
+        info!("Setting up modifier masks (KeyOps)...");
+        let (mods_flag, x11_bits) = self.key_ops.detect_numlock_mask()?;
+        // 更新通用层
+        self.numlock_mask = Mods::empty();
+        if mods_flag.contains(Mods::NUMLOCK) {
             self.numlock_mask |= Mods::NUMLOCK;
-        } else {
-            self.x11_numlock_mask = x11rb::protocol::xproto::KeyButMask::default();
-            self.numlock_mask.remove(Mods::NUMLOCK);
+        } else if mods_flag.contains(Mods::MOD2) {
+            // 回退信息（表示无法探测到具体位，采用 MOD2 语义）
+            self.numlock_mask |= Mods::MOD2;
         }
+        // 更新 X11 掩码位
+        self.x11_numlock_mask = x11rb::protocol::xproto::KeyButMask::from(x11_bits);
+        // 记录当前状态（通过 InputOps 查询）
         self.verify_modifier_setup()?;
         Ok(())
-    }
-
-    fn find_numlock_keycode(&self) -> Result<u8, Box<dyn std::error::Error>> {
-        // NumLock的keysym值
-        const XK_NUM_LOCK: u32 = 0xFF7F;
-        // 获取键盘映射
-        let setup = self.x11rb_conn.setup();
-        let min_keycode = setup.min_keycode;
-        let max_keycode = setup.max_keycode;
-        let keyboard_mapping = self
-            .x11rb_conn
-            .get_keyboard_mapping(min_keycode, max_keycode - min_keycode + 1)?
-            .reply()?;
-        let keysyms_per_keycode = keyboard_mapping.keysyms_per_keycode as usize;
-        // 遍历所有keycode，查找NumLock
-        for keycode in min_keycode..=max_keycode {
-            let keycode_index = (keycode - min_keycode) as usize;
-            let base_index = keycode_index * keysyms_per_keycode;
-            // 检查这个keycode的所有keysym
-            for i in 0..keysyms_per_keycode {
-                let keysym_index = base_index + i;
-                if keysym_index < keyboard_mapping.keysyms.len() {
-                    if keyboard_mapping.keysyms[keysym_index] == XK_NUM_LOCK {
-                        info!("Found NumLock at keycode {}", keycode);
-                        return Ok(keycode);
-                    }
-                }
-            }
-        }
-        warn!("NumLock keycode not found in keyboard mapping");
-        Ok(0)
-    }
-
-    fn find_modifier_mask(&self, target_keycode: u8, modifier_map: &GetModifierMappingReply) -> u8 {
-        let keycodes_per_modifier = modifier_map.keycodes_per_modifier() as usize;
-        // 遍历8个修饰键位 (Shift, Lock, Control, Mod1-Mod5)
-        for mod_index in 0..8 {
-            let start_index = mod_index * keycodes_per_modifier;
-            let end_index = start_index + keycodes_per_modifier;
-            // 检查这个修饰键位的所有keycode
-            if end_index <= modifier_map.keycodes.len() {
-                for &keycode in &modifier_map.keycodes[start_index..end_index] {
-                    if keycode == target_keycode && keycode != 0 {
-                        let mask = 1 << mod_index;
-                        info!(
-                            "NumLock found at modifier index {} ({}), mask=0x{:02x}",
-                            mod_index,
-                            self.modifier_index_to_name(mod_index),
-                            mask
-                        );
-                        return mask;
-                    }
-                }
-            }
-        }
-        warn!(
-            "NumLock keycode {} not found in modifier mapping",
-            target_keycode
-        );
-        0
-    }
-
-    fn modifier_index_to_name(&self, index: usize) -> &'static str {
-        match index {
-            0 => "Shift",
-            1 => "Lock",
-            2 => "Control",
-            3 => "Mod1",
-            4 => "Mod2",
-            5 => "Mod3",
-            6 => "Mod4",
-            7 => "Mod5",
-            _ => "Unknown",
-        }
     }
 
     fn verify_modifier_setup(&self) -> Result<(), Box<dyn std::error::Error>> {
