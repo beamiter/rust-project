@@ -2485,7 +2485,7 @@ impl Jwm {
         old_border_w: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 清空事件掩码
-        if let Err(e) = self.window_ops.change_event_mask(win, EventMask::NO_EVENT) {
+        if let Err(e) = self.window_ops.change_event_mask(win, EventMask::NO_EVENT.into()) {
             warn!("Failed to clear events for {}: {:?}", win, e);
         }
         // 恢复边框宽度
@@ -3182,7 +3182,6 @@ impl Jwm {
         }
     }
 
-    /// 更新 resizeclient 方法签名
     pub fn resizeclient(
         &mut self,
         client_key: ClientKey,
@@ -3192,36 +3191,27 @@ impl Jwm {
         h: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.clients.get_mut(client_key) {
-            // 保存旧的位置和大小
             client.geometry.old_x = client.geometry.x;
             client.geometry.old_y = client.geometry.y;
             client.geometry.old_w = client.geometry.w;
             client.geometry.old_h = client.geometry.h;
 
-            // 更新新的位置和大小
             client.geometry.x = x;
             client.geometry.y = y;
             client.geometry.w = w;
             client.geometry.h = h;
 
-            // 构建配置值
-            let values = ConfigureWindowAux::new()
-                .x(x)
-                .y(y)
-                .width(w as u32)
-                .height(h as u32)
-                .border_width(client.geometry.border_w as u32);
-
-            // 发送配置窗口请求
-            self.x11rb_conn.configure_window(client.win, &values)?;
-
-            // 调用configure方法
+            self.window_ops.configure_xywh_border(
+                client.win,
+                Some(x),
+                Some(y),
+                Some(w as u32),
+                Some(h as u32),
+                Some(client.geometry.border_w as u32),
+            )?;
             self.configure_client(client_key)?;
-
-            // 同步连接
-            self.x11rb_conn.flush()?;
+            self.window_ops.flush()?;
         }
-
         Ok(())
     }
 
@@ -3259,9 +3249,9 @@ impl Jwm {
         x: i32,
         y: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let aux = ConfigureWindowAux::new().x(x).y(y);
-        self.x11rb_conn.configure_window(win, &aux)?;
-        self.x11rb_conn.flush()?;
+        self.window_ops
+            .configure_xywh_border(win, Some(x), Some(y), None, None, None)?;
+        self.window_ops.flush()?;
         Ok(())
     }
 
@@ -3615,10 +3605,10 @@ impl Jwm {
         let monitor = self.monitors.get(mon_key).ok_or("Monitor not found")?;
         let monitor_num = monitor.num;
 
-        // 1) 取出该 monitor 的堆栈（顶部优先）
+        // 1) 从顶部到下的栈
         let stack = self.monitor_stack.get(mon_key).cloned().unwrap_or_default();
 
-        // 2) 收集“从底到顶”的 tiled 与 floating（只收集可见的）
+        // 2) 分离 tiled 与 floating（仅可见）
         let mut tiled_bottom_to_top: Vec<Window> = Vec::new();
         let mut floating_bottom_to_top: Vec<Window> = Vec::new();
 
@@ -3635,7 +3625,7 @@ impl Jwm {
             }
         }
 
-        // 3) 选中的浮动窗口（若存在）置于浮动层最顶端
+        // 3) 选中的浮动窗口置顶
         if let Some(sel_ck) = monitor.sel {
             if let Some(sel_c) = self.clients.get(sel_ck) {
                 if sel_c.state.is_floating {
@@ -3647,34 +3637,33 @@ impl Jwm {
             }
         }
 
-        // 4) 合并最终叠放序列：tiled 在下，floating 在上（从底到顶）
+        // 4) 最终顺序（底->顶）
         let mut final_bottom_to_top: Vec<Window> =
             Vec::with_capacity(tiled_bottom_to_top.len() + floating_bottom_to_top.len());
         final_bottom_to_top.extend(tiled_bottom_to_top.into_iter());
         final_bottom_to_top.extend(floating_bottom_to_top.into_iter());
 
-        // 5) 如果堆叠序列与上次相同，跳过窗口重排
+        // 5) 如果顺序未变化，跳过
         let need_restack_windows = match self.last_stacking.get(mon_key) {
             Some(prev) => prev.as_slice() != final_bottom_to_top.as_slice(),
             None => true,
         };
 
         if need_restack_windows {
-            // 第一个（最底部）不指定 sibling；之后的都 ABOVE 前一个
             for i in 0..final_bottom_to_top.len() {
                 let win = final_bottom_to_top[i];
-                let mut cfg = ConfigureWindowAux::new().stack_mode(StackMode::ABOVE);
-                if i > 0 {
-                    cfg = cfg.sibling(final_bottom_to_top[i - 1]);
-                }
-                self.x11rb_conn.configure_window(win, &cfg)?;
+                let sibling = if i > 0 {
+                    Some(final_bottom_to_top[i - 1])
+                } else {
+                    None
+                };
+                self.window_ops.configure_stack_above(win, sibling)?;
             }
-            // 更新缓存
             self.last_stacking
                 .insert(mon_key, final_bottom_to_top.clone());
         }
 
-        // 6) 如果 bar 在当前显示器且当前 tag 显示 bar：把 bar 置顶
+        // 6) bar 置顶（若显示）
         if self.current_bar_monitor_id == Some(monitor_num) {
             if let Some(bar_key) = self.status_bar_client {
                 if let Some(bar_client) = self.clients.get(bar_key) {
@@ -3685,18 +3674,14 @@ impl Jwm {
                         .copied()
                         .unwrap_or(true);
                     if show_bar {
-                        // 即便窗口序列没变，也补一次把 bar 置顶（更稳妥）
-                        let cfg = ConfigureWindowAux::new().stack_mode(StackMode::ABOVE);
-                        self.x11rb_conn.configure_window(bar_client.win, &cfg)?;
+                        self.window_ops
+                            .configure_stack_above(bar_client.win, None)?;
                     }
                 }
             }
         }
 
-        // 7) 单次 flush
-        self.x11rb_conn.flush()?;
-
-        // 标记需要刷新 bar（必要时）
+        self.window_ops.flush()?;
         self.mark_bar_update_needed_if_visible(Some(monitor_num));
 
         info!("[restack] finish");
@@ -6263,21 +6248,19 @@ impl Jwm {
         Ok(())
     }
 
-    /// 通过窗口ID发送事件（从原来的sendevent方法改造）
     fn sendevent_by_window(&mut self, window: Window, proto: Atom) -> bool {
         info!(
             "[sendevent_by_window] Sending protocol {:?} to window 0x{:x}",
             proto, window
         );
 
-        // 1. 获取 WM_PROTOCOLS 属性
         let cookie = match self.x11rb_conn.get_property(
-            false,                   // delete: 不删除
-            window,                  // window
-            self.atoms.WM_PROTOCOLS, // Atom for WM_PROTOCOLS
+            false,
+            window,
+            self.atoms.WM_PROTOCOLS,
             AtomEnum::ATOM,
-            0,    // long_offset
-            1024, // 足够大的长度
+            0,
+            1024,
         ) {
             Ok(cookie) => cookie,
             Err(_) => {
@@ -6285,7 +6268,6 @@ impl Jwm {
                 return false;
             }
         };
-
         let reply = match cookie.reply() {
             Ok(reply) => reply,
             Err(_) => {
@@ -6296,10 +6278,7 @@ impl Jwm {
                 return false;
             }
         };
-
-        // 2. 检查属性值中是否包含目标 proto
         let protocols: Vec<Atom> = reply.value32().into_iter().flatten().collect();
-
         if !protocols.contains(&proto) {
             info!(
                 "[sendevent_by_window] Protocol {:?} not supported by window 0x{:x}",
@@ -6308,18 +6287,12 @@ impl Jwm {
             return false;
         }
 
-        let r = self.window_ops.send_client_message(
-            window,
-            self.atoms.WM_PROTOCOLS,
-            [proto, 0, 0, 0, 0],
-            EventMask::NO_EVENT,
-        );
-        if let Err(e) = r {
+        let res = self
+            .window_ops
+            .send_client_message(window, self.atoms.WM_PROTOCOLS, [proto, 0, 0, 0, 0])
+            .and_then(|_| self.window_ops.flush());
+        if let Err(e) = res {
             warn!("[sendevent_by_window] Failed to send event: {}", e);
-            return false;
-        }
-        if let Err(e) = self.window_ops.flush() {
-            warn!("[sendevent_by_window] Failed to flush connection: {}", e);
             return false;
         }
         true
@@ -7651,18 +7624,12 @@ impl Jwm {
     }
 
     fn set_root_focus(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 将焦点设置到根窗口
-        self.x11rb_conn.set_input_focus(
-            InputFocus::POINTER_ROOT,
-            self.x11rb_root,
-            0u32, // CurrentTime equivalent
-        )?;
-
+        // 统一抽象：设置焦点到根窗口
+        self.window_ops.set_input_focus_root(self.x11rb_root)?;
         let _ = self
             .ewmh
             .clear_active_window(&self.x11rb_conn, self.x11rb_root, &self.atoms);
-
-        self.x11rb_conn.flush()?;
+        self.window_ops.flush()?;
         Ok(())
     }
 
@@ -8285,18 +8252,13 @@ impl Jwm {
             return Err("Client not found".into());
         };
 
-        // 选择窗口事件
-        let aux = ChangeWindowAttributesAux::new().event_mask(
-            EventMask::ENTER_WINDOW
-                | EventMask::FOCUS_CHANGE
-                | EventMask::PROPERTY_CHANGE
-                | EventMask::STRUCTURE_NOTIFY,
-        );
-        self.x11rb_conn.change_window_attributes(win, &aux)?;
-
-        // 抓取按钮
+        let mask = (EventMask::ENTER_WINDOW
+            | EventMask::FOCUS_CHANGE
+            | EventMask::PROPERTY_CHANGE
+            | EventMask::STRUCTURE_NOTIFY)
+            .bits();
+        self.window_ops.change_event_mask(win, mask)?;
         self.grabbuttons(client_key, false)?;
-
         info!(
             "[register_client_events] Events registered for window 0x{:x}",
             win
@@ -8314,26 +8276,8 @@ impl Jwm {
             return Err("Client not found".into());
         };
 
-        match self.x11rb_conn.map_window(win) {
-            Ok(cookie) => {
-                if let Err(e) = cookie.check() {
-                    error!(
-                        "[map_client_window] Failed to map window 0x{:x}: {:?}",
-                        win, e
-                    );
-                    return Err(e.into());
-                }
-            }
-            Err(e) => {
-                error!(
-                    "[map_client_window] Failed to send map_window request for 0x{:x}: {:?}",
-                    win, e
-                );
-                return Err(e.into());
-            }
-        }
-
-        self.x11rb_conn.flush()?;
+        self.window_ops.map_window(win)?;
+        self.window_ops.flush()?;
         info!("[map_client_window] Successfully mapped window 0x{:x}", win);
         Ok(())
     }
@@ -8470,13 +8414,14 @@ impl Jwm {
             None => return Ok(()),
         };
         let monitor = self.monitors.get(mon_key).unwrap();
-        // 当前 tag 是否显示 bar
+
         let show_bar = monitor
             .pertag
             .as_ref()
             .and_then(|p| p.show_bars.get(p.cur_tag))
             .copied()
             .unwrap_or(true);
+
         let (client_win, client_height) = if let Some(client) = self.clients.get_mut(client_key) {
             if show_bar {
                 let pad = CONFIG.status_bar_padding();
@@ -8484,34 +8429,38 @@ impl Jwm {
                 client.geometry.y = monitor.geometry.m_y + pad;
                 client.geometry.w = monitor.geometry.m_w - 2 * pad;
                 client.geometry.h = CONFIG.status_bar_height();
-                let aux = ConfigureWindowAux::new()
-                    .x(client.geometry.x)
-                    .y(client.geometry.y)
-                    .width(client.geometry.w as u32)
-                    .height(client.geometry.h as u32);
-                self.x11rb_conn.configure_window(client.win, &aux)?;
-                // 返回窗口句柄和高度，用于后续的 strut 设置
+
+                self.window_ops.configure_xywh_border(
+                    client.win,
+                    Some(client.geometry.x),
+                    Some(client.geometry.y),
+                    Some(client.geometry.w as u32),
+                    Some(client.geometry.h as u32),
+                    None,
+                )?;
                 (client.win, Some(client.geometry.h))
             } else {
-                // 隐藏
-                let aux = ConfigureWindowAux::new().x(-1000).y(-1000);
-                self.x11rb_conn.configure_window(client.win, &aux)?;
-                // 返回窗口句柄，高度设为 None 表示需要移除 strut
+                self.window_ops.configure_xywh_border(
+                    client.win,
+                    Some(-1000),
+                    Some(-1000),
+                    None,
+                    None,
+                    None,
+                )?;
                 (client.win, None)
             }
         } else {
-            // 如果客户端不存在，直接返回
-            self.x11rb_conn.flush()?;
+            self.window_ops.flush()?;
             return Ok(());
         };
+
         if let Some(height) = client_height {
-            // 设置 strut 占位
             self.set_bar_strut(client_win, monitor, height)?;
         } else {
-            // 移除 strut
             self.remove_bar_strut(client_win)?;
         }
-        self.x11rb_conn.flush()?;
+        self.window_ops.flush()?;
         Ok(())
     }
 
@@ -8800,10 +8749,9 @@ impl Jwm {
     }
 
     fn cleanup_statusbar_window(&mut self, win: Window) -> Result<(), Box<dyn std::error::Error>> {
-        // 清除事件监听
-        let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT);
-        self.x11rb_conn.change_window_attributes(win, &aux)?;
-        self.x11rb_conn.flush()?;
+        self.window_ops
+            .change_event_mask(win, EventMask::NO_EVENT.bits())?;
+        self.window_ops.flush()?;
         debug!(
             "[cleanup_statusbar_window] Cleared events for statusbar window {}",
             win
@@ -9064,7 +9012,7 @@ impl Jwm {
         // 执行清理操作（单独捕获错误并记录日志，不中断整个流程）
         {
             // 取消事件监听
-            if let Err(e) = self.window_ops.change_event_mask(win, EventMask::NO_EVENT) {
+            if let Err(e) = self.window_ops.change_event_mask(win, EventMask::NO_EVENT.into()) {
                 warn!("[cleanup_window_state] Failed to clear event mask: {:?}", e);
             }
 
