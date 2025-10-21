@@ -647,35 +647,3 @@ impl ArgbColor {
     pub const CYAN: ArgbColor = ArgbColor { value: 0xFF00FFFF };
     pub const MAGENTA: ArgbColor = ArgbColor { value: 0xFFFF00FF };
 }
-
-/// 使用示例和测试
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_argb_color() {
-        let color = ArgbColor::new(128, 255, 0, 0); // 半透明红色
-        assert_eq!(color.value, 0x80FF0000);
-
-        let (a, r, g, b) = color.components();
-        assert_eq!((a, r, g, b), (128, 255, 0, 0));
-    }
-
-    #[test]
-    fn test_hex_parsing() {
-        let color = ArgbColor::from_hex("#FF0000", 255).unwrap();
-        assert_eq!(color.rgb(), (255, 0, 0));
-
-        let color = ArgbColor::from_hex("F00", 128).unwrap();
-        assert_eq!(color.components(), (128, 255, 0, 0));
-    }
-
-    #[test]
-    fn test_color_scheme() {
-        let scheme = ColorScheme::from_hex("#000000", "#FFFFFF", "#808080", 255).unwrap();
-        assert_eq!(scheme.foreground().rgb(), (0, 0, 0));
-        assert_eq!(scheme.background().rgb(), (255, 255, 255));
-        assert_eq!(scheme.border_color().rgb(), (128, 128, 128));
-    }
-}

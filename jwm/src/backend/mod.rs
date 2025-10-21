@@ -4,7 +4,5 @@ pub mod api;
 pub mod common_input;
 pub mod traits;
 
-pub use traits::Ewmh;
-
 #[cfg(feature = "backend-x11")]
 pub mod x11;
