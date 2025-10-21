@@ -30,11 +30,9 @@ use crate::backend::api::WindowId;
 use crate::backend::api::{BackendEvent, EventSource};
 use crate::backend::common_input::{KeySym, Mods, MouseButton};
 use crate::backend::traits::StdCursorKind;
-use crate::backend::x11::adapter::{button_from_x11, button_to_x11, mods_from_x11, mods_to_x11};
-use crate::backend::x11::ewmh::X11Ewmh;
+use crate::backend::x11::adapter::{button_to_x11, mods_from_x11, mods_to_x11};
 use crate::backend::x11::input_ops::X11InputOps;
 use crate::backend::x11::property_ops::X11PropertyOps;
-use crate::backend::Ewmh;
 use crate::config::CONFIG;
 use crate::xcb_util::SchemeType;
 use crate::xcb_util::{Atoms, CursorManager, ThemeManager};
@@ -677,7 +675,6 @@ pub struct Jwm {
     pub s_h: i32,
     pub numlock_mask: Mods,
     pub x11_numlock_mask: x11rb::protocol::xproto::KeyButMask,
-    pub ewmh: X11Ewmh,
     pub running: AtomicBool,
     pub is_restarting: AtomicBool,
     pub cursor_manager: CursorManager,
@@ -836,7 +833,6 @@ impl Jwm {
             s_h,
             numlock_mask: Mods::empty(),
             x11_numlock_mask: x11rb::protocol::xproto::KeyButMask::default(),
-            ewmh: X11Ewmh,
             running: AtomicBool::new(true),
             is_restarting: AtomicBool::new(false),
             theme_manager,
@@ -916,7 +912,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 后端无关：ClientMessage 处理（EWMH）
     pub fn on_client_message(
         &mut self,
         window: u32,
@@ -2612,37 +2607,24 @@ impl Jwm {
     }
 
     fn reset_input_focus(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        match self
-            .x11rb_conn
-            .set_input_focus(InputFocus::POINTER_ROOT, self.x11rb_root, 0u32)
-        {
-            Ok(cookie) => {
-                if let Err(e) = cookie.check() {
-                    warn!("[reset_input_focus] Failed to reset focus: {:?}", e);
-                }
-            }
-            Err(e) => {
-                warn!("[reset_input_focus] Failed to send focus request: {:?}", e);
-            }
-        }
+        self.window_ops
+            .set_input_focus_root(WindowId(self.x11rb_root as u64))?;
+        self.window_ops.flush()?;
         Ok(())
     }
 
     fn cleanup_ewmh_properties(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let properties_to_clean = [
+        let root_id = WindowId(self.x11rb_root as u64);
+        for &property in [
             self.atoms._NET_ACTIVE_WINDOW,
             self.atoms._NET_CLIENT_LIST,
             self.atoms._NET_SUPPORTED,
-        ];
-
-        for &property in &properties_to_clean {
-            if let Err(e) = self.x11rb_conn.delete_property(self.x11rb_root, property) {
-                warn!(
-                    "[cleanup_ewmh_properties] Failed to delete property {:?}: {:?}",
-                    property, e
-                );
-            }
+        ]
+        .iter()
+        {
+            let _ = self.window_ops.delete_property(root_id, property);
         }
+        self.window_ops.flush()?;
         Ok(())
     }
 
@@ -3339,15 +3321,22 @@ impl Jwm {
             }
 
             // 应用配置
-            let values = ConfigureWindowAux::new()
-                .x(statusbar_mut.geometry.x)
-                .y(statusbar_mut.geometry.y)
-                .width(statusbar_mut.geometry.w as u32)
-                .height(statusbar_mut.geometry.h as u32);
-
-            self.x11rb_conn.configure_window(e.window, &values)?;
-            self.x11rb_conn.flush()?;
-        } // 确保 statusbar_mut 在这里被释放
+            let (x, y, w, h) = (
+                statusbar_mut.geometry.x,
+                statusbar_mut.geometry.y,
+                statusbar_mut.geometry.w as u32,
+                statusbar_mut.geometry.h as u32,
+            );
+            self.window_ops.configure_xywh_border(
+                WindowId(e.window.into()),
+                Some(x),
+                Some(y),
+                Some(w),
+                Some(h),
+                None,
+            )?;
+            self.window_ops.flush()?;
+        }
 
         // 现在可以安全地进行其他操作
         let client_key_opt = self.wintoclient(e.window);
@@ -4266,66 +4255,6 @@ impl Jwm {
                 self.sel_mon
             }
         }
-    }
-
-    pub fn buttonpress(&mut self, e: &ButtonPressEvent) -> Result<(), Box<dyn std::error::Error>> {
-        let mut click_type = WMClickType::ClickRootWin;
-        let window = e.event as u32;
-
-        if let Some(target_mon_key) = self.wintomon(window) {
-            if Some(target_mon_key) != self.sel_mon {
-                let current_sel = self.get_selected_client_key();
-                if let Some(cur) = current_sel {
-                    self.unfocus(cur, true)?;
-                }
-                self.sel_mon = Some(target_mon_key);
-                self.focus(None)?;
-            }
-        }
-
-        let mut is_client_click = false;
-        if let Some(client_key) = self.wintoclient(window) {
-            is_client_click = true;
-            self.focus(Some(client_key))?;
-            let _ = self.restack(self.sel_mon);
-            click_type = WMClickType::ClickClientWin;
-        }
-
-        let event_mask = self.clean_mask(e.state.bits());
-        let mouse_button = button_from_x11(e.detail);
-
-        let mut handled_by_wm = false;
-        for config in CONFIG.get_buttons().iter() {
-            let kc_mask = config.mask
-                & (Mods::SHIFT
-                    | Mods::CONTROL
-                    | Mods::ALT
-                    | Mods::SUPER
-                    | Mods::MOD2
-                    | Mods::MOD3
-                    | Mods::MOD5);
-            if config.click_type == click_type
-                && config.func.is_some()
-                && config.button == mouse_button
-                && kc_mask == event_mask
-            {
-                handled_by_wm = true;
-                if let Some(ref func) = config.func {
-                    let _ = func(self, &config.arg);
-                }
-                break;
-            }
-        }
-
-        if is_client_click {
-            if handled_by_wm {
-                let _ = self.x11rb_conn.allow_events(Allow::ASYNC_POINTER, e.time);
-            } else {
-                let _ = self.x11rb_conn.allow_events(Allow::REPLAY_POINTER, e.time);
-            }
-        }
-
-        Ok(())
     }
 
     pub fn checkotherwm(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -7570,25 +7499,19 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.clients.get(client_key) {
             let win = client.win;
-
             // 抓取按钮（设为非焦点状态）
             self.grabbuttons(client_key, false)?;
-
             // 设置边框颜色为非选中状态
             self.set_window_border_color(win, false)?;
-
             if setfocus {
                 self.window_ops
                     .set_input_focus_root(WindowId(self.x11rb_root.into()))?;
-
-                let _ =
-                    self.ewmh
-                        .clear_active_window(&self.x11rb_conn, self.x11rb_root, &self.atoms);
+                if let Some(facade) = self.ewmh_facade.as_ref() {
+                    let _ = facade.clear_active_window();
+                }
             }
-
-            self.x11rb_conn.flush()?;
+            self.window_ops.flush()?;
         }
-
         Ok(())
     }
 
@@ -7958,8 +7881,9 @@ impl Jwm {
         // 已映射窗口避免再次 map
         let already_mapped = {
             let win = self.clients.get(client_key).unwrap().win;
-            self.get_window_attributes(win)
-                .map(|a| a.map_state == MapState::VIEWABLE)
+            self.window_ops
+                .get_window_attributes(WindowId(win.into()))
+                .map(|a| a.map_state_viewable)
                 .unwrap_or(false)
         };
         if !already_mapped {
@@ -8298,8 +8222,8 @@ impl Jwm {
         self.setup_statusbar_window_by_key(client_key)?;
 
         // 映射状态栏窗口
-        self.x11rb_conn.map_window(win)?;
-        self.x11rb_conn.flush()?;
+        self.window_ops.map_window(WindowId(win.into()))?;
+        self.window_ops.flush()?;
         Ok(())
     }
 
@@ -8484,14 +8408,6 @@ impl Jwm {
             _ => {}
         }
         Ok(())
-    }
-
-    pub fn get_window_attributes(
-        &self,
-        window: Window,
-    ) -> Result<GetWindowAttributesReply, Box<dyn std::error::Error>> {
-        let geom = self.x11rb_conn.get_window_attributes(window)?.reply()?;
-        return Ok(geom);
     }
 
     pub fn maprequest(&mut self, e: &MapRequestEvent) -> Result<(), Box<dyn std::error::Error>> {
