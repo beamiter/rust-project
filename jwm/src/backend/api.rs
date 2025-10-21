@@ -124,75 +124,6 @@ pub struct Geometry {
     pub border: u16,
 }
 
-// 窗口接口
-pub trait WindowOps: Send {
-    fn set_border_width(
-        &self,
-        win: WindowId,
-        border: u32,
-    ) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn set_border_pixel(&self, win: WindowId, pixel: u32)
-        -> Result<(), Box<dyn std::error::Error>>;
-
-    fn change_event_mask(&self, win: WindowId, mask: u32)
-        -> Result<(), Box<dyn std::error::Error>>;
-
-    fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn configure_xywh_border(
-        &self,
-        win: WindowId,
-        x: Option<i32>,
-        y: Option<i32>,
-        w: Option<u32>,
-        h: Option<u32>,
-        border: Option<u32>,
-    ) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn configure_stack_above(
-        &self,
-        win: WindowId,
-        sibling: Option<WindowId>,
-    ) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn set_input_focus_root(&self) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn send_client_message(
-        &self,
-        win: WindowId,
-        type_atom: u32,
-        data: [u32; 5],
-    ) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn delete_property(&self, win: WindowId, atom: u32) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn change_property32(
-        &self,
-        win: WindowId,
-        property: u32,
-        ty: u32,
-        data: &[u32],
-    ) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn flush(&self) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn kill_client(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>>;
-    fn ungrab_server(&self) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn get_window_attributes(
-        &self,
-        win: WindowId,
-    ) -> Result<WindowAttributes, Box<dyn std::error::Error>>;
-
-    fn get_geometry_translated(
-        &self,
-        win: WindowId,
-    ) -> Result<Geometry, Box<dyn std::error::Error>>;
-}
-
 // 输入接口
 pub trait InputOps: Send {
     fn grab_pointer(
@@ -224,6 +155,116 @@ pub trait InputOps: Send {
     ) -> Result<(), Box<dyn std::error::Error>>;
 }
 
+// 输出（屏幕/显示器）接口
+pub trait OutputOps: Send {
+    fn screen_info(&self) -> ScreenInfo;
+    fn enumerate_outputs(&self) -> Vec<OutputInfo>;
+}
+
+// 事件源（供 JWM 主循环消费）
+pub trait EventSource: Send {
+    fn poll_event(&mut self) -> Result<Option<BackendEvent>, Box<dyn std::error::Error>>;
+    fn flush(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+}
+
+// 窗口接口
+pub trait WindowOps: Send {
+    fn set_border_width(
+        &self,
+        win: WindowId,
+        border: u32,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+    fn set_border_pixel(&self, win: WindowId, pixel: u32)
+        -> Result<(), Box<dyn std::error::Error>>;
+
+    fn change_event_mask(&self, win: WindowId, mask: u32)
+        -> Result<(), Box<dyn std::error::Error>>;
+
+    fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn configure_xywh_border(
+        &self,
+        win: WindowId,
+        x: Option<i32>,
+        y: Option<i32>,
+        w: Option<u32>,
+        h: Option<u32>,
+        border: Option<u32>,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn configure_stack_above(
+        &self,
+        win: WindowId,
+        sibling: Option<WindowId>,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn set_input_focus_root(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn send_client_message(
+        &self,
+        win: WindowId,
+        type_atom: u32,
+        data: [u32; 5],
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn delete_property(&self, win: WindowId, atom: u32) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn change_property32(
+        &self,
+        win: WindowId,
+        property: u32,
+        ty: u32,
+        data: &[u32],
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 新增：设置 8-bit STRING 属性
+    fn change_property8(
+        &self,
+        win: WindowId,
+        property: u32,
+        ty: u32,
+        data: &[u8],
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn flush(&self) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn kill_client(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn ungrab_server(&self) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn get_window_attributes(
+        &self,
+        win: WindowId,
+    ) -> Result<WindowAttributes, Box<dyn std::error::Error>>;
+
+    fn get_geometry_translated(
+        &self,
+        win: WindowId,
+    ) -> Result<Geometry, Box<dyn std::error::Error>>;
+
+    // 便捷：取消所有按钮抓取（X11 需要）
+    fn ungrab_all_buttons(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 便捷：抓取任何按钮 + 任意修饰（未聚焦时启用）
+    fn grab_button_any_anymod(
+        &self,
+        win: WindowId,
+        event_mask_bits: u32,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 便捷：抓取具体按钮与修饰
+    fn grab_button(
+        &self,
+        win: WindowId,
+        button: u8, // MouseButton::to_u8() 映射
+        event_mask_bits: u32,
+        mods_bits: u16,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+}
+
 // 属性接口
 pub trait PropertyOps: Send {
     fn get_text_property_best_title(&self, win: WindowId) -> String;
@@ -236,12 +277,25 @@ pub trait PropertyOps: Send {
         state_atom: u32,
     ) -> Result<bool, Box<dyn std::error::Error>>;
     fn get_window_types(&self, win: WindowId) -> Vec<u32>;
-}
 
-// 输出（屏幕/显示器）接口
-pub trait OutputOps: Send {
-    fn screen_info(&self) -> ScreenInfo;
-    fn enumerate_outputs(&self) -> Vec<OutputInfo>;
+    // 新增：设置、添加、删除 _NET_WM_STATE
+    fn set_net_wm_state_atoms(
+        &self,
+        win: WindowId,
+        atoms: &[u32],
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn add_net_wm_state_atom(
+        &self,
+        win: WindowId,
+        atom: u32,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn remove_net_wm_state_atom(
+        &self,
+        win: WindowId,
+        atom: u32,
+    ) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 // EWMH 门面（Wayland 可 no-op）
@@ -253,14 +307,6 @@ pub trait EwmhFacade: Send {
         -> Result<(), Box<dyn std::error::Error>>;
 }
 
-// 事件源（供 JWM 主循环消费）
-pub trait EventSource: Send {
-    fn poll_event(&mut self) -> Result<Option<BackendEvent>, Box<dyn std::error::Error>>;
-    fn flush(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-}
-
 // 后端总接口（聚合各子服务）
 pub trait Backend: Send {
     fn capabilities(&self) -> Capabilities;
@@ -270,8 +316,8 @@ pub trait Backend: Send {
     fn output_ops(&self) -> &dyn OutputOps;
     fn ewmh(&self) -> Option<&dyn EwmhFacade>;
 
-    fn cursor_provider(&mut self) -> &mut dyn crate::backend::traits::CursorProvider; // 复用已有 CursorProvider
-    fn color_allocator(&mut self) -> &mut dyn crate::backend::traits::ColorAllocator; // 复用已有 ColorAllocator
+    fn cursor_provider(&mut self) -> &mut dyn crate::backend::traits::CursorProvider;
+    fn color_allocator(&mut self) -> &mut dyn crate::backend::traits::ColorAllocator;
 
     fn event_source(&mut self) -> &mut dyn EventSource;
     fn root_window(&self) -> WindowId;

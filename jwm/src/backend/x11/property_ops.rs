@@ -1,4 +1,5 @@
 // src/backend/x11/property_ops.rs
+use crate::backend::api::WindowId;
 use crate::xcb_util::Atoms;
 use std::sync::Arc;
 use x11rb::connection::Connection;
@@ -6,11 +7,12 @@ use x11rb::protocol::xproto::*;
 
 pub struct X11PropertyOps<C: Connection> {
     conn: Arc<C>,
+    atoms: Atoms, // 便于直接访问 _NET_WM_STATE 等
 }
 
 impl<C: Connection> X11PropertyOps<C> {
-    pub fn new(conn: Arc<C>) -> Self {
-        Self { conn }
+    pub fn new(conn: Arc<C>, atoms: Atoms) -> Self {
+        Self { conn, atoms }
     }
 }
 
@@ -27,32 +29,6 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
             .conn
             .get_property(false, window, property, req_type, long_offset, long_length)?
             .reply()?)
-    }
-
-    // 解析 WM_CLASS -> (instance, class)
-    pub fn get_wm_class(&self, window: Window) -> Option<(String, String)> {
-        let reply = self
-            .conn
-            .get_property(false, window, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)
-            .ok()?
-            .reply()
-            .ok()?;
-
-        if reply.type_ != u32::from(AtomEnum::STRING) || reply.format != 8 {
-            return None;
-        }
-        let value = reply.value;
-        if value.is_empty() {
-            return None;
-        }
-        let mut parts = value.split(|&b| b == 0u8).filter(|s| !s.is_empty());
-        let instance = parts
-            .next()
-            .and_then(|s| String::from_utf8(s.to_vec()).ok())?;
-        let class = parts
-            .next()
-            .and_then(|s| String::from_utf8(s.to_vec()).ok())?;
-        Some((instance.to_lowercase(), class.to_lowercase()))
     }
 
     // 获取单个Atom属性（value32第一个值）
@@ -98,37 +74,8 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
         Ok(reply.value32().into_iter().flatten().collect())
     }
 
-    pub fn has_net_wm_state(
-        &self,
-        window: Window,
-        atoms: &Atoms,
-        state_atom: Atom,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        let states = self.get_net_wm_state(window, atoms)?;
-        Ok(states.iter().any(|&a| a == state_atom))
-    }
-
-    // 获取 _NET_WM_WINDOW_TYPE 列表
-    pub fn get_window_types(&self, window: Window, atoms: &Atoms) -> Vec<Atom> {
-        if let Ok(reply) = self.conn.get_property(
-            false,
-            window,
-            atoms._NET_WM_WINDOW_TYPE,
-            AtomEnum::ATOM,
-            0,
-            u32::MAX,
-        ) {
-            if let Ok(rep) = reply.reply() {
-                if rep.format == 32 {
-                    return rep.value32().into_iter().flatten().collect::<Vec<_>>();
-                }
-            }
-        }
-        Vec::new()
-    }
-
     // 尝试获取文本属性并解析为 String
-    pub fn get_text_property(&self, window: Window, atom: Atom, atoms: &Atoms) -> Option<String> {
+    fn get_text_property(&self, window: Window, atom: Atom, atoms: &Atoms) -> Option<String> {
         let reply = self
             .conn
             .get_property(false, window, atom, AtomEnum::ANY, 0, u32::MAX)
@@ -157,17 +104,6 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
         parsed
     }
 
-    // 获取最佳窗口标题（优先 _NET_WM_NAME，然后 WM_NAME）
-    pub fn get_best_window_title(&self, window: Window, atoms: &Atoms) -> String {
-        if let Some(title) = self.get_text_property(window, atoms._NET_WM_NAME, atoms) {
-            return title;
-        }
-        if let Some(title) = self.get_text_property(window, AtomEnum::WM_NAME.into(), atoms) {
-            return title;
-        }
-        format!("Window 0x{:x}", window)
-    }
-
     // 文本解析工具
     fn parse_utf8(value: &[u8]) -> Option<String> {
         String::from_utf8(value.to_vec()).ok()
@@ -193,5 +129,141 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
         let mut s = input;
         s.truncate(truncate_at);
         s
+    }
+
+    // 获取最佳窗口标题（优先 _NET_WM_NAME，然后 WM_NAME）
+    fn get_best_window_title(&self, win: Window, atoms: &Atoms) -> String {
+        if let Some(title) = self.get_text_property(win, atoms._NET_WM_NAME, atoms) {
+            return title;
+        }
+        if let Some(title) = self.get_text_property(win, AtomEnum::WM_NAME.into(), atoms) {
+            return title;
+        }
+        format!("Window 0x{:x}", win)
+    }
+    fn get_text_property_best_title(&self, win: WindowId) -> String {
+        self.get_best_window_title(win.0 as u32, &self.atoms)
+    }
+
+    fn get_wm_class(&self, win: WindowId) -> Option<(String, String)> {
+        let reply = self
+            .conn
+            .get_property(
+                false,
+                win.0 as u32,
+                AtomEnum::WM_CLASS,
+                AtomEnum::STRING,
+                0,
+                256,
+            )
+            .ok()?
+            .reply()
+            .ok()?;
+        if reply.type_ != u32::from(AtomEnum::STRING) || reply.format != 8 {
+            return None;
+        }
+        let value = reply.value;
+        if value.is_empty() {
+            return None;
+        }
+        let mut parts = value.split(|&b| b == 0u8).filter(|s| !s.is_empty());
+        let instance = parts
+            .next()
+            .and_then(|s| String::from_utf8(s.to_vec()).ok())?;
+        let class = parts
+            .next()
+            .and_then(|s| String::from_utf8(s.to_vec()).ok())?;
+        Some((instance.to_lowercase(), class.to_lowercase()))
+    }
+
+    fn get_net_wm_state_atoms(
+        &self,
+        win: WindowId,
+    ) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+        let reply = self
+            .conn
+            .get_property(
+                false,
+                win.0 as u32,
+                self.atoms._NET_WM_STATE,
+                AtomEnum::ATOM,
+                0,
+                u32::MAX,
+            )?
+            .reply()?;
+        if reply.format != 32 {
+            return Ok(Vec::new());
+        }
+        Ok(reply.value32().into_iter().flatten().collect())
+    }
+
+    fn has_net_wm_state(
+        &self,
+        win: WindowId,
+        state_atom: u32,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        let states = self.get_net_wm_state_atoms(win)?;
+        Ok(states.iter().any(|&a| a == state_atom))
+    }
+
+    fn get_window_types(&self, win: WindowId) -> Vec<u32> {
+        if let Ok(reply) = self.conn.get_property(
+            false,
+            win.0 as u32,
+            self.atoms._NET_WM_WINDOW_TYPE,
+            AtomEnum::ATOM,
+            0,
+            u32::MAX,
+        ) {
+            if let Ok(rep) = reply.reply() {
+                if rep.format == 32 {
+                    return rep.value32().into_iter().flatten().collect::<Vec<_>>();
+                }
+            }
+        }
+        Vec::new()
+    }
+
+    fn set_net_wm_state_atoms(
+        &self,
+        win: WindowId,
+        atoms: &[u32],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use x11rb::wrapper::ConnectionExt;
+        self.conn.change_property32(
+            PropMode::REPLACE,
+            win.0 as u32,
+            self.atoms._NET_WM_STATE,
+            AtomEnum::ATOM,
+            atoms,
+        )?;
+        Ok(())
+    }
+
+    fn add_net_wm_state_atom(
+        &self,
+        win: WindowId,
+        atom: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut states = self.get_net_wm_state_atoms(win)?;
+        if !states.iter().any(|&a| a == atom) {
+            states.push(atom);
+            self.set_net_wm_state_atoms(win, &states)?;
+        }
+        Ok(())
+    }
+
+    fn remove_net_wm_state_atom(
+        &self,
+        win: WindowId,
+        atom: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut states = self.get_net_wm_state_atoms(win)?;
+        let len_before = states.len();
+        states.retain(|&a| a != atom);
+        if states.len() != len_before {
+            self.set_net_wm_state_atoms(win, &states)?;
+        }
+        Ok(())
     }
 }
