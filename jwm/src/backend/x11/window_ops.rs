@@ -15,6 +15,42 @@ impl<C: Connection> X11WindowOps<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
+    fn send_configure_notify(
+        &self,
+        win: WindowId,
+        x: i16,
+        y: i16,
+        w: u16,
+        h: u16,
+        border: u16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 构造并发送 ConfigureNotify
+        let event = ConfigureNotifyEvent {
+            response_type: CONFIGURE_NOTIFY_EVENT,
+            sequence: 0,
+            event: win.0 as u32,
+            window: win.0 as u32,
+            x,
+            y,
+            width: w,
+            height: h,
+            border_width: border,
+            above_sibling: 0,
+            override_redirect: false,
+        };
+        self.conn
+            .send_event(false, win.0 as u32, EventMask::STRUCTURE_NOTIFY, event)?;
+        self.conn.flush()?;
+        Ok(())
+    }
+
+    fn set_input_focus_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        self.conn
+            .set_input_focus(InputFocus::POINTER_ROOT, win.0 as u32, 0u32)?
+            .check()?;
+        Ok(())
+    }
+
     fn set_border_width(
         &self,
         win: WindowId,

@@ -263,6 +263,19 @@ pub trait WindowOps: Send {
         event_mask_bits: u32,
         mods_bits: u16,
     ) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn send_configure_notify(
+        &self,
+        win: WindowId,
+        x: i16,
+        y: i16,
+        w: u16,
+        h: u16,
+        border: u16,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 设置焦点到具体窗口（revert_to=POINTER_ROOT）
+    fn set_input_focus_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 // 属性接口

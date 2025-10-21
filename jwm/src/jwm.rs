@@ -73,7 +73,7 @@ lazy_static::lazy_static! {
     pub static ref MOUSEMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
 }
 
-// 继续提交第四个 PR，把 keypress 和 clientmessage 也改成后端无关参数版本，并把更多 x11rb_conn 调用替换掉。
+// 继续把 grabkeys/cleanup_key_grabs 等键盘接口抽象为通用 KeyOpsg
 
 #[derive(Debug, Serialize, Deserialize, Decode, Encode)]
 pub struct RestartSnapshot {
@@ -2816,28 +2816,20 @@ impl Jwm {
     }
 
     pub fn configure(&mut self, client_key: ClientKey) -> Result<(), Box<dyn std::error::Error>> {
-        let client = if let Some(client) = self.clients.get_mut(client_key) {
-            client
+        let client = if let Some(c) = self.clients.get(client_key) {
+            c
         } else {
             return Err("Client not found".into());
         };
         info!("[configure] {}", client);
-        let event = ConfigureNotifyEvent {
-            event: client.win,
-            window: client.win,
-            x: client.geometry.x as i16,
-            y: client.geometry.y as i16,
-            width: client.geometry.w as u16,
-            height: client.geometry.h as u16,
-            border_width: client.geometry.border_w as u16,
-            above_sibling: 0,
-            override_redirect: false,
-            response_type: CONFIGURE_NOTIFY_EVENT,
-            sequence: 0,
-        };
-        self.x11rb_conn
-            .send_event(false, client.win, EventMask::STRUCTURE_NOTIFY, event)?;
-        self.x11rb_conn.flush()?;
+        self.window_ops.send_configure_notify(
+            WindowId(client.win.into()),
+            client.geometry.x as i16,
+            client.geometry.y as i16,
+            client.geometry.w as u16,
+            client.geometry.h as u16,
+            client.geometry.border_w as u16,
+        )?;
         Ok(())
     }
 
@@ -3226,31 +3218,20 @@ impl Jwm {
         Ok(())
     }
 
-    /// 更新 configure 方法签名
     pub fn configure_client(
         &self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.clients.get(client_key) {
-            let event = ConfigureNotifyEvent {
-                event: client.win,
-                window: client.win,
-                x: client.geometry.x as i16,
-                y: client.geometry.y as i16,
-                width: client.geometry.w as u16,
-                height: client.geometry.h as u16,
-                border_width: client.geometry.border_w as u16,
-                above_sibling: 0,
-                override_redirect: false,
-                response_type: CONFIGURE_NOTIFY_EVENT,
-                sequence: 0,
-            };
-
-            self.x11rb_conn
-                .send_event(false, client.win, EventMask::STRUCTURE_NOTIFY, event)?;
-            self.x11rb_conn.flush()?;
+            self.window_ops.send_configure_notify(
+                WindowId(client.win.into()),
+                client.geometry.x as i16,
+                client.geometry.y as i16,
+                client.geometry.w as u16,
+                client.geometry.h as u16,
+                client.geometry.border_w as u16,
+            )?;
         }
-
         Ok(())
     }
 
@@ -6501,21 +6482,22 @@ impl Jwm {
             )
         };
 
-        // 4. 获取鼠标初始位置
-        let query_reply = self.x11rb_conn.query_pointer(self.x11rb_root)?.reply()?;
-        let (initial_mouse_x, initial_mouse_y) =
-            (query_reply.root_x as u16, query_reply.root_y as u16);
+        // 4. 获取鼠标初始位置（仍可用 InputOps trait）
+        let (initial_x, initial_y, _mask, _unused) = self.input_ops.query_pointer_root()?;
+        let (initial_mouse_x, initial_mouse_y) = (initial_x as u16, initial_y as u16);
 
+        // 5. 光标
         let cursor = self.cursor_manager.get_cursor(StdCursorKind::Hand)?;
-        let local_input_ops = X11InputOps::new(self.x11rb_conn.clone(), self.x11rb_root);
 
+        // 6. 使用“本地 X11InputOps 实例”执行拖拽循环，避免借用 self.input_ops
+        let local_input_ops = X11InputOps::new(self.x11rb_conn.clone(), self.x11rb_root);
         local_input_ops.drag_loop(
             *MOUSEMASK,
             Some(cursor),
             None, // move 无需 warp
             window_id,
             |e| {
-                // 闭包里可以安全地使用 &mut self
+                // 闭包里安全地使用 &mut self
                 self.handle_move_motion(
                     client_key,
                     e,
@@ -6526,8 +6508,8 @@ impl Jwm {
                 )
             },
         )?;
-        self.cleanup_move(window_id, client_key)?;
 
+        self.cleanup_move(window_id, client_key)?;
         info!("[movemouse] completed");
         Ok(())
     }
@@ -6749,10 +6731,13 @@ impl Jwm {
         );
 
         let cursor = self.cursor_manager.get_cursor(StdCursorKind::Fleur)?;
+
+        // 使用“本地 X11InputOps 实例”执行拖拽循环，避免借用 self.input_ops
         let local_input_ops = X11InputOps::new(self.x11rb_conn.clone(), self.x11rb_root);
         local_input_ops.drag_loop(*MOUSEMASK, Some(cursor), Some(warp_pos), window_id, |e| {
             self.handle_resize_motion(client_key, e, start_x, start_y, border_w)
         })?;
+
         self.cleanup_resize(window_id, border_w)?;
         Ok(())
     }
@@ -6992,27 +6977,20 @@ impl Jwm {
     }
 
     fn verify_modifier_setup(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // 获取当前修饰键状态
-        let pointer_query = self.x11rb_conn.query_pointer(self.x11rb_root)?.reply()?;
-
-        info!("Current modifier state: {:?}", pointer_query.mask);
-
-        // 如果我们有有效的 X11 层 numlock 探测位，就用它判断当前是否开启
+        let (_x, _y, mask, _unused) = self.input_ops.query_pointer_root()?;
+        info!("Current modifier state: 0x{:04x}", mask);
         if self.x11_numlock_mask != x11rb::protocol::xproto::KeyButMask::default() {
-            let numlock_active = (pointer_query.mask & self.x11_numlock_mask)
-                != x11rb::protocol::xproto::KeyButMask::default();
+            let numlock_active = (mask & self.x11_numlock_mask.bits() as u16) != 0;
             info!(
                 "NumLock currently {}",
                 if numlock_active { "ON" } else { "OFF" }
             );
         } else if !self.numlock_mask.is_empty() {
-            // 否则如果通用层设置了某种回退（例如 MOD2 回退），这里只能提示无法直接判断当前状态
             info!(
                 "NumLock detection fallback (Mods={:?}), state unknown at X11 level",
                 self.numlock_mask
             );
         }
-
         Ok(())
     }
 
@@ -7517,16 +7495,12 @@ impl Jwm {
 
     pub fn setfocus(&mut self, client_key: ClientKey) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.clients.get(client_key) {
-            let win = WindowId(client.win as u64);
-            self.x11rb_conn.set_input_focus(
-                x11rb::protocol::xproto::InputFocus::POINTER_ROOT,
-                client.win,
-                0u32,
-            )?;
+            let wid = WindowId(client.win as u64);
+            self.window_ops.set_input_focus_window(wid)?;
             if let Some(facade) = self.ewmh_facade.as_ref() {
-                let _ = facade.set_active_window(win);
+                let _ = facade.set_active_window(wid);
             }
-            self.x11rb_conn.flush()?;
+            self.window_ops.flush()?;
         }
         Ok(())
     }
@@ -8233,28 +8207,18 @@ impl Jwm {
         mon: &WMMonitor,
         bar_height: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use x11rb::wrapper::ConnectionExt;
-
-        // 全屏幕坐标
-        let _top = (mon.geometry.m_y + bar_height).max(0) as u32;
         let top_amount = bar_height.max(0) as u32;
         let top_start_x = mon.geometry.m_x.max(0) as u32;
         let top_end_x = (mon.geometry.m_x + mon.geometry.m_w - 1).max(0) as u32;
 
-        // _NET_WM_STRUT: [left, right, top, bottom]
         let strut = [0u32, 0u32, top_amount, 0u32];
-        self.x11rb_conn.change_property32(
-            PropMode::REPLACE,
-            bar_win,
+        self.window_ops.change_property32(
+            WindowId(bar_win.into()),
             self.atoms._NET_WM_STRUT,
-            AtomEnum::CARDINAL,
+            AtomEnum::CARDINAL.into(),
             &strut,
         )?;
 
-        // _NET_WM_STRUT_PARTIAL:
-        // [left, right, top, bottom, left_start_y, left_end_y,
-        //  right_start_y, right_end_y, top_start_x, top_end_x,
-        //  bottom_start_x, bottom_end_x]
         let strut_partial = [
             0,
             0,
@@ -8269,24 +8233,22 @@ impl Jwm {
             0,
             0,
         ];
-        self.x11rb_conn.change_property32(
-            PropMode::REPLACE,
-            bar_win,
+        self.window_ops.change_property32(
+            WindowId(bar_win.into()),
             self.atoms._NET_WM_STRUT_PARTIAL,
-            AtomEnum::CARDINAL,
+            AtomEnum::CARDINAL.into(),
             &strut_partial,
         )?;
-
         Ok(())
     }
 
     fn remove_bar_strut(&self, bar_win: Window) -> Result<(), Box<dyn std::error::Error>> {
         let _ = self
-            .x11rb_conn
-            .delete_property(bar_win, self.atoms._NET_WM_STRUT);
+            .window_ops
+            .delete_property(WindowId(bar_win.into()), self.atoms._NET_WM_STRUT);
         let _ = self
-            .x11rb_conn
-            .delete_property(bar_win, self.atoms._NET_WM_STRUT_PARTIAL);
+            .window_ops
+            .delete_property(WindowId(bar_win.into()), self.atoms._NET_WM_STRUT_PARTIAL);
         Ok(())
     }
 
@@ -8353,7 +8315,6 @@ impl Jwm {
         Ok(())
     }
 
-    /// 设置状态栏窗口属性（SlotMap版本）
     fn setup_statusbar_window_by_key(
         &mut self,
         client_key: ClientKey,
@@ -8363,23 +8324,18 @@ impl Jwm {
         } else {
             return Err("Client not found".into());
         };
-
         info!(
             "[setup_statusbar_window_by_key] Setting up statusbar window 0x{:x}",
             win
         );
 
-        // 设置状态栏窗口的事件监听
-        let aux = ChangeWindowAttributesAux::new().event_mask(
-            EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE | EventMask::ENTER_WINDOW,
-        );
-        self.x11rb_conn.change_window_attributes(win, &aux)?;
-
-        // 发送配置通知
+        let mask_bits =
+            (EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE | EventMask::ENTER_WINDOW)
+                .bits();
+        self.window_ops
+            .change_event_mask(WindowId(win.into()), mask_bits)?;
         self.configure_client(client_key)?;
-
-        // 同步操作
-        self.x11rb_conn.flush()?;
+        self.window_ops.flush()?;
         info!(
             "[setup_statusbar_window_by_key] Statusbar window setup completed for 0x{:x}",
             win
