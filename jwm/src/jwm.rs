@@ -28,7 +28,7 @@ use std::usize;
 use crate::backend::api::AllowMode;
 use crate::backend::api::Geometry;
 use crate::backend::api::KeyOps;
-use crate::backend::api::WindowId;
+use crate::backend::api::{Backend, WindowId};
 use crate::backend::api::{BackendEvent, EventSource};
 use crate::backend::common_input::{KeySym, Mods, MouseButton};
 use crate::backend::cursor_manager::CursorManager;
@@ -696,6 +696,8 @@ pub struct Jwm {
     pub key_ops: Box<dyn KeyOps>,
     pub output_ops: Box<dyn crate::backend::api::OutputOps>,
 
+    backend: Box<dyn Backend>,
+
     // 与状态栏进程通信的消息缓存（写到 ring buffer）
     pub message: SharedMessage,
 
@@ -743,11 +745,15 @@ pub struct Jwm {
 }
 
 impl Jwm {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(mut backend: Box<dyn Backend>) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[new] Starting JWM initialization");
-
         // 显示当前的 X11 环境信息
         Self::log_x11_environment();
+
+        backend.cursor_provider().preload_common()?;
+
+        // 屏幕尺寸来自 OutputOps
+        let si = backend.output_ops().screen_info();
 
         // 尝试连接到 X11 服务器，添加错误处理
         info!("[new] Connecting to X11 server");
@@ -891,6 +897,10 @@ impl Jwm {
             restoring_from_snapshot: false,
             last_stacking: SecondaryMap::new(),
         })
+    }
+
+    pub fn root_window(&self) -> WindowId {
+        self.backend.root_window()
     }
 
     // 后端无关：按键处理
@@ -2986,68 +2996,15 @@ impl Jwm {
             .map(|client| client.win)
             .ok_or("Client not found after update")?;
 
-        // 设置X11 urgent hint
-        self.set_x11_urgent_hint(win, urgent)?;
+        self.set_urgent_flag(win, urgent)?;
 
         Ok(())
     }
 
-    /// 辅助方法：设置X11 urgent hint
-    fn set_x11_urgent_hint(
-        &self,
-        win: Window,
-        urgent: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // 1. 先读取现有的 WM_HINTS 属性
-        let cookie = match self.x11rb_conn.get_property(
-            false, // delete: 不删除
-            win,   // window
-            AtomEnum::WM_HINTS,
-            AtomEnum::CARDINAL, // type: 期望 CARDINAL（实际是位图）
-            0,                  // long_offset
-            20,                 // 足够读取所有字段（flags + 数据）
-        ) {
-            Ok(cookie) => cookie,
-            Err(_) => {
-                error!("seturgent: failed to send get_property request for WM_HINTS");
-                return Ok(());
-            }
-        };
-        let reply = match cookie.reply() {
-            Ok(reply) => reply,
-            Err(_) => {
-                // 属性不存在，我们视为 flags = 0
-                debug!("WM_HINTS not set, treating as zero");
-                self.send_wm_hints_with_flags(win, if urgent { 256 } else { 0 });
-                // 256 = XUrgencyHint
-                return Ok(());
-            }
-        };
-        // 2. 解析 flags（第一个 u32）
-        let mut values = if let Some(values) = reply.value32() {
-            values
-        } else {
-            return Ok(());
-        };
-        let mut flags = match values.next() {
-            Some(f) => f,
-            None => {
-                debug!("WM_HINTS has no data");
-                self.send_wm_hints_with_flags(win, if urgent { 256 } else { 0 });
-                return Ok(());
-            }
-        };
-
-        // 3. 修改 XUrgencyHint 位（第 9 位，值为 256）
-        const X_URGENCY_HINT: u32 = 1 << 8; // 256
-        if urgent {
-            flags |= X_URGENCY_HINT;
-        } else {
-            flags &= !X_URGENCY_HINT;
-        }
-        // 4. 重新设置 WM_HINTS 属性
-        self.send_wm_hints_with_flags(win, flags);
-        Ok(())
+    fn set_urgent_flag(&self, win: u32, urgent: bool) -> Result<(), Box<dyn std::error::Error>> {
+        self.backend
+            .property_ops()
+            .set_urgent_hint(WindowId(win as u64), urgent)
     }
 
     fn send_wm_hints_with_flags(&self, window: u32, flags: u32) {
@@ -4102,52 +4059,11 @@ impl Jwm {
         Ok((x, y))
     }
 
-    /// 获取窗口的 WM_STATE 状态
-    /// 返回值：1 = NormalState, 3 = IconicState, -1 = 失败
     pub fn get_wm_state(&self, window: u32) -> i64 {
-        // 发送 GetProperty 请求
-        let cookie = match self.x11rb_conn.get_property(
-            false,               // delete: 不删除属性
-            window,              // window
-            self.atoms.WM_STATE, // property: _NET_WM_STATE
-            self.atoms.WM_STATE, // type: 期望类型也是 WM_STATE
-            0,                   // long_offset
-            2,                   // long_length: 最多读取 2 个 32-bit 值
-        ) {
-            Ok(cookie) => cookie,
-            Err(_) => {
-                error!("get_wm_state: failed to send get_property request");
-                return -1;
-            }
-        };
-
-        // 等待回复
-        let reply = match cookie.reply() {
-            Ok(reply) => reply,
-            Err(_) => {
-                // 属性不存在或类型不匹配
-                return -1;
-            }
-        };
-
-        // 检查格式是否为 32 位
-        if reply.format != 32 {
-            return -1;
-        }
-        let mut values = if let Some(values) = reply.value32() {
-            values
-        } else {
-            return -1;
-        };
-
-        // 提取第一个值（state）
-        let state = match values.next() {
-            Some(s) => s as i64,
-            None => return -1, // 空数据
-        };
-        // 可选：第二个值是 icon_window，我们不使用
-        // let _icon_window = iter.next();
-        state
+        self.backend
+            .property_ops()
+            .get_wm_state(WindowId(window as u64))
+            .unwrap_or(-1)
     }
 
     pub fn recttomon(&mut self, x: i32, y: i32, w: i32, h: i32) -> Option<MonitorKey> {
@@ -6008,9 +5924,10 @@ impl Jwm {
                 | EventMask::LEAVE_WINDOW
                 | EventMask::PROPERTY_CHANGE,
         );
-        let _ = self
-            .cursor_manager
-            .apply_cursor(self.x11rb_root as u64, StdCursorKind::LeftPtr);
+        let root = self.backend.root_window();
+        self.backend
+            .cursor_provider()
+            .apply(root.0, StdCursorKind::LeftPtr)?;
         self.x11rb_conn
             .change_window_attributes(self.x11rb_root, &aux)?;
         self.grabkeys()?;
@@ -6392,13 +6309,13 @@ impl Jwm {
         let (initial_mouse_x, initial_mouse_y) = (initial_x as u16, initial_y as u16);
 
         // 5. 光标
-        let cursor = self.cursor_manager.get_cursor(StdCursorKind::Hand)?;
+        let cursor = self.backend.cursor_provider().get(StdCursorKind::Hand)?.0;
 
         // 6. 使用“本地 X11InputOps 实例”执行拖拽循环，避免借用 self.input_ops
         let local_input_ops = X11InputOps::new(self.x11rb_conn.clone(), self.x11rb_root);
         local_input_ops.drag_loop(
             *MOUSEMASK,
-            Some(cursor),
+            Some(cursor.into()),
             None, // move 无需 warp
             window_id,
             |e| {
@@ -6635,11 +6552,11 @@ impl Jwm {
             (start_h + border_w - 1) as i16,
         );
 
-        let cursor = self.cursor_manager.get_cursor(StdCursorKind::Fleur)?;
+        let cursor = self.backend.cursor_provider().get(StdCursorKind::Fleur)?.0;
 
         // 使用“本地 X11InputOps 实例”执行拖拽循环，避免借用 self.input_ops
         let local_input_ops = X11InputOps::new(self.x11rb_conn.clone(), self.x11rb_root);
-        local_input_ops.drag_loop(*MOUSEMASK, Some(cursor), Some(warp_pos), window_id, |e| {
+        local_input_ops.drag_loop(*MOUSEMASK, Some(cursor.into()), Some(warp_pos), window_id, |e| {
             self.handle_resize_motion(client_key, e, start_x, start_y, border_w)
         })?;
 
@@ -7365,21 +7282,10 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn setclientstate(
-        &self,
-        win: Window,
-        state: i64,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // data: [state, icon_window(None=0)]
-        let data_to_set: [u32; 2] = [state as u32, 0];
-        self.window_ops.change_property32(
-            WindowId(win.into()),
-            self.atoms.WM_STATE,
-            self.atoms.WM_STATE,
-            &data_to_set,
-        )?;
-        self.window_ops.flush()?;
-        Ok(())
+    pub fn setclientstate(&self, win: u32, state: i64) -> Result<(), Box<dyn std::error::Error>> {
+        self.backend
+            .property_ops()
+            .set_wm_state(WindowId(win as u64), state)
     }
 
     pub fn keypress(&mut self, e: &KeyPressEvent) -> Result<(), Box<dyn std::error::Error>> {

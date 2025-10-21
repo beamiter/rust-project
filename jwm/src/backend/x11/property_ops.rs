@@ -90,6 +90,98 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<C> {
+    fn get_wm_state(&self, win: WindowId) -> Result<i64, Box<dyn std::error::Error>> {
+        // 等价于原 jwm.get_wm_state
+        let reply = self
+            .conn
+            .get_property(
+                false,
+                win.0 as u32,
+                self.atoms.WM_STATE,
+                self.atoms.WM_STATE,
+                0,
+                2,
+            )?
+            .reply()?;
+        if reply.format != 32 {
+            return Ok(-1);
+        }
+        let mut it = reply.value32();
+        Ok(it
+            .into_iter()
+            .flatten()
+            .next()
+            .map(|v| v as i64)
+            .unwrap_or(-1))
+    }
+
+    fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), Box<dyn std::error::Error>> {
+        use x11rb::wrapper::ConnectionExt;
+        let data: [u32; 2] = [state as u32, 0];
+        self.conn.change_property32(
+            x11rb::protocol::xproto::PropMode::REPLACE,
+            win.0 as u32,
+            self.atoms.WM_STATE,
+            self.atoms.WM_STATE,
+            &data,
+        )?;
+        Ok(())
+    }
+
+    fn set_urgent_hint(
+        &self,
+        win: WindowId,
+        urgent: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        use x11rb::protocol::xproto::{AtomEnum, PropMode};
+        // 读取 WM_HINTS，修改 XUrgencyHint 位（1<<8）
+        const X_URGENCY_HINT: u32 = 1 << 8;
+
+        let cookie = self.conn.get_property(
+            false,
+            win.0 as u32,
+            AtomEnum::WM_HINTS,
+            AtomEnum::CARDINAL,
+            0,
+            20,
+        )?;
+        let reply = match cookie.reply() {
+            Ok(r) => r,
+            Err(_) => {
+                // 不存在时，直接写 flags
+                let flags = if urgent { X_URGENCY_HINT } else { 0 };
+                self.conn.change_property32(
+                    PropMode::REPLACE,
+                    win.0 as u32,
+                    AtomEnum::WM_HINTS,
+                    AtomEnum::WM_HINTS,
+                    &[flags],
+                )?;
+                return Ok(());
+            }
+        };
+        let mut v = reply.value32();
+        let mut data: Vec<u32> = v.into_iter().flatten().collect();
+        // 至少要有 flags 字段
+        if data.is_empty() {
+            data.push(0);
+        }
+        if urgent {
+            data[0] |= X_URGENCY_HINT;
+        } else {
+            data[0] &= !X_URGENCY_HINT;
+        }
+        use x11rb::wrapper::ConnectionExt;
+        self.conn.change_property32(
+            PropMode::REPLACE,
+            win.0 as u32,
+            AtomEnum::WM_HINTS,
+            AtomEnum::WM_HINTS,
+            &data,
+        )?;
+        Ok(())
+    }
+
     fn is_popup_type(&self, win: WindowId) -> bool {
         let types = self.get_window_types(win);
         // X11: 看 EWMH 类型

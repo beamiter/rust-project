@@ -345,6 +345,17 @@ pub trait PropertyOps: Send {
     fn transient_for(&self, _win: WindowId) -> Option<WindowId> {
         None
     }
+
+    // ICCCM WM_STATE 读写
+    fn get_wm_state(&self, win: WindowId) -> Result<i64, Box<dyn std::error::Error>>;
+    fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 设置/清除 WM_HINTS 的 XUrgencyHint
+    fn set_urgent_hint(
+        &self,
+        win: WindowId,
+        urgent: bool,
+    ) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 // EWMH 门面（Wayland 可 no-op）

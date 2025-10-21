@@ -46,7 +46,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
     info!("[main] Starting JWM instance");
-    let mut jwm = Jwm::new()?;
+    let backend = Box::new(X11Backend::new()?);
+
+    let mut jwm = Jwm::new(backend)?;
     jwm.checkotherwm()?;
 
     jwm.setup()?;
