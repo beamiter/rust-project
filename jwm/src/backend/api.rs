@@ -1,4 +1,5 @@
 // src/backend/api.rs
+use crate::backend::common_input::{KeySym, Mods};
 use std::fmt::Debug;
 
 // 通用后端窗口ID（X11: Window; Wayland: 自定义句柄）
@@ -124,12 +125,8 @@ pub struct Geometry {
     pub border: u16,
 }
 
-// src/backend/api.rs
-
-use crate::backend::common_input::{KeySym, Mods};
-
 pub trait KeyOps: Send {
-    // 探测 NumLock 掩码，返回 (通用 Mods 标记, X11/后端的掩码位 bits)
+    // 探测 NumLock 掩码，返回 (通用 Mods 标记, 后端掩码位 bits)
     fn detect_numlock_mask(&mut self) -> Result<(Mods, u16), Box<dyn std::error::Error>>;
 
     // 清理所有键抓取（针对 root）
@@ -142,6 +139,12 @@ pub trait KeyOps: Send {
         bindings: &[(Mods, KeySym)],
         numlock_mask_bits: u16,
     ) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 依据 keycode 获取 keysym（用于处理 KeyPress）
+    fn keysym_from_keycode(&mut self, keycode: u8) -> Result<KeySym, Box<dyn std::error::Error>>;
+
+    // 清空内部键盘映射缓存（在 MappingNotify 时）
+    fn clear_cache(&mut self);
 }
 
 // 输入接口

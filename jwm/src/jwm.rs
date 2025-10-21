@@ -731,9 +731,6 @@ pub struct Jwm {
     pub x11rb_screen: Screen,
     pub atoms: Atoms,
 
-    // 其他运行时
-    pub keycode_cache: HashMap<u8, u32>,
-
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
 
     pub restoring_from_snapshot: bool,
@@ -879,7 +876,6 @@ impl Jwm {
             x11rb_screen,
             atoms,
 
-            keycode_cache: HashMap::new(),
             suppress_mouse_focus_until: None,
 
             restoring_from_snapshot: false,
@@ -893,8 +889,7 @@ impl Jwm {
         keycode: u8,
         state_bits: u16,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 复用已有工具：从 keycode 获取 keysym，清洗修饰键
-        let keysym = self.get_keysym_from_keycode(keycode)?;
+        let keysym = self.key_ops.keysym_from_keycode(keycode)?;
         let clean_state = self.clean_mask(state_bits);
 
         // 匹配配置的键绑定
@@ -7445,7 +7440,7 @@ impl Jwm {
     }
 
     pub fn keypress(&mut self, e: &KeyPressEvent) -> Result<(), Box<dyn std::error::Error>> {
-        let keysym = self.get_keysym_from_keycode(e.detail)?;
+        let keysym = self.key_ops.keysym_from_keycode(e.detail)?;
         let clean_state = self.clean_mask(e.state.bits());
         let keys = CONFIG.get_keys();
 
@@ -7469,29 +7464,6 @@ impl Jwm {
             }
         }
         Ok(())
-    }
-
-    fn get_keysym_from_keycode(&mut self, keycode: u8) -> Result<u32, Box<dyn std::error::Error>> {
-        // 检查缓存
-        if let Some(&keysym) = self.keycode_cache.get(&keycode) {
-            return Ok(keysym);
-        }
-        // 查询键盘映射
-        let keyboard_mapping = self.x11rb_conn.get_keyboard_mapping(keycode, 1)?.reply()?;
-        let keysym = if !keyboard_mapping.keysyms.is_empty() {
-            keyboard_mapping.keysyms[0]
-        } else {
-            0
-        };
-        // 缓存结果
-        self.keycode_cache.insert(keycode, keysym);
-        Ok(keysym)
-    }
-
-    /// 清除键盘映射缓存（在键盘映射变更时调用）
-    pub fn clear_keycode_cache(&mut self) {
-        self.keycode_cache.clear();
-        info!("Keycode cache cleared");
     }
 
     pub fn manage(
@@ -8243,7 +8215,8 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         match e.request {
             Mapping::KEYBOARD | Mapping::MODIFIER => {
-                self.clear_keycode_cache();
+                // 清除 KeyOps 内部缓存并重新抓取
+                self.key_ops.clear_cache();
                 self.grabkeys()?;
             }
             Mapping::POINTER => { /* 忽略或按需处理 */ }

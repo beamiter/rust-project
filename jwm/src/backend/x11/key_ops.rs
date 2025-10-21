@@ -1,17 +1,26 @@
 // src/backend/x11/key_ops.rs
+use std::collections::HashMap;
 use std::sync::Arc;
+
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
+
 use crate::backend::api::{KeyOps, WindowId};
 use crate::backend::common_input::{KeySym, Mods};
+use crate::backend::x11::adapter::mods_to_x11;
 
 pub struct X11KeyOps<C: Connection> {
     conn: Arc<C>,
+    // 简单缓存：keycode -> keysym
+    cache: HashMap<u8, u32>,
 }
 
 impl<C: Connection> X11KeyOps<C> {
     pub fn new(conn: Arc<C>) -> Self {
-        Self { conn }
+        Self {
+            conn,
+            cache: HashMap::new(),
+        }
     }
 
     fn find_numlock_keycode(&self) -> Result<u8, Box<dyn std::error::Error>> {
@@ -95,9 +104,7 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
             .reply()?;
         let per = mapping.keysyms_per_keycode as usize;
 
-        use crate::backend::x11::adapter::mods_to_x11;
         use x11rb::protocol::xproto::{KeyButMask as KBM, ModMask};
-
         let numlock_mask = KBM::from(numlock_mask_bits);
 
         for (mods, keysym) in bindings {
@@ -135,5 +142,19 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
 
         self.conn.flush()?;
         Ok(())
+    }
+
+    fn keysym_from_keycode(&mut self, keycode: u8) -> Result<KeySym, Box<dyn std::error::Error>> {
+        if let Some(&ks) = self.cache.get(&keycode) {
+            return Ok(ks);
+        }
+        let mapping = self.conn.get_keyboard_mapping(keycode, 1)?.reply()?;
+        let ks = mapping.keysyms.get(0).copied().unwrap_or(0);
+        self.cache.insert(keycode, ks);
+        Ok(ks)
+    }
+
+    fn clear_cache(&mut self) {
+        self.cache.clear();
     }
 }
