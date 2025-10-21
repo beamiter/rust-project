@@ -865,6 +865,92 @@ impl Jwm {
         })
     }
 
+    // 后端无关：按键处理
+    pub fn on_key_press(
+        &mut self,
+        keycode: u8,
+        state_bits: u16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 复用已有工具：从 keycode 获取 keysym，清洗修饰键
+        let keysym = self.get_keysym_from_keycode(keycode)?;
+        let clean_state = self.clean_mask(state_bits);
+
+        // 匹配配置的键绑定
+        for key_config in CONFIG.get_keys().iter() {
+            let kc_mask = key_config.mask
+                & (Mods::SHIFT
+                    | Mods::CONTROL
+                    | Mods::ALT
+                    | Mods::SUPER
+                    | Mods::MOD2
+                    | Mods::MOD3
+                    | Mods::MOD5);
+            if keysym == key_config.key_sym && kc_mask == clean_state {
+                if let Some(func) = key_config.func_opt {
+                    let _ = func(self, &key_config.arg);
+                }
+                break;
+            }
+        }
+        Ok(())
+    }
+
+    // 后端无关：ClientMessage 处理（EWMH）
+    pub fn on_client_message(
+        &mut self,
+        window: u32,
+        type_atom: u32,
+        data: [u32; 5],
+        format: u8,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 找到对应客户端
+        let client_key = match self.wintoclient(window) {
+            Some(k) => k,
+            None => return Ok(()),
+        };
+
+        // 处理 _NET_WM_STATE（全屏）
+        if type_atom == self.atoms._NET_WM_STATE {
+            // 我们的 EventSource 已经传递 data32，且 EWMH ClientMessage 规范为 format=32
+            if format == 32 {
+                let state1 = data[1];
+                let state2 = data[2];
+                // 两个候选位中任意一个是 FULLSCREEN
+                if state1 == self.atoms._NET_WM_STATE_FULLSCREEN
+                    || state2 == self.atoms._NET_WM_STATE_FULLSCREEN
+                {
+                    // data[0] 是 action: 1=ADD, 0=REMOVE, 2=TOGGLE
+                    let is_fullscreen = self
+                        .clients
+                        .get(client_key)
+                        .map(|c| c.state.is_fullscreen)
+                        .unwrap_or(false);
+                    let fullscreen = match data[0] {
+                        1 => true,
+                        0 => false,
+                        2 => !is_fullscreen,
+                        _ => is_fullscreen, // 未知操作：保持现状
+                    };
+                    self.setfullscreen(client_key, fullscreen)?;
+                }
+            }
+        }
+        // 处理 _NET_ACTIVE_WINDOW（置 urgent）
+        else if type_atom == self.atoms._NET_ACTIVE_WINDOW {
+            let is_urgent = self
+                .clients
+                .get(client_key)
+                .map(|client| client.state.is_urgent)
+                .unwrap_or(false);
+
+            if !self.is_client_selected(client_key) && !is_urgent {
+                self.seturgent(client_key, true)?;
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn on_button_press(
         &mut self,
         window: u32,
@@ -1279,41 +1365,20 @@ impl Jwm {
                 sibling.map(|s| s.0 as u32),
                 stack_mode,
             ),
-            // 其他分支维持原样或稍后逐步迁移
-            BackendEvent::KeyPress { keycode, state } => {
-                // 这里暂时保持构造 x11rb 事件并调用原有函数（后续 PR 再改）
-                let e = x11rb::protocol::xproto::KeyPressEvent {
-                    response_type: x11rb::protocol::xproto::KEY_PRESS_EVENT,
-                    sequence: 0,
-                    detail: keycode,
-                    time: 0,
-                    root: self.x11rb_root,
-                    event: self.x11rb_root,
-                    child: 0,
-                    root_x: 0,
-                    root_y: 0,
-                    event_x: 0,
-                    event_y: 0,
-                    state: x11rb::protocol::xproto::KeyButMask::from(state),
-                    same_screen: true,
-                };
-                self.keypress(&e)
-            }
+
+            // 新的按键分支（无关参数）
+            BackendEvent::KeyPress { keycode, state } => self.on_key_press(keycode, state),
+
+            // 新的 ClientMessage 分支（无关参数）
             BackendEvent::ClientMessage {
                 window,
                 type_,
                 data,
                 format,
-            } => {
-                let e = x11rb::protocol::xproto::ClientMessageEvent::new(
-                    format,
-                    window.0 as u32,
-                    type_,
-                    data,
-                );
-                self.clientmessage(&e)
-            }
+            } => self.on_client_message(window.0 as u32, type_, data, format),
+
             BackendEvent::ConfigureNotify { window, x, y, w, h } => {
+                // 此处仍保留旧路径，后续按需迁移
                 let e = x11rb::protocol::xproto::ConfigureNotifyEvent {
                     response_type: x11rb::protocol::xproto::CONFIGURE_NOTIFY_EVENT,
                     sequence: 0,
@@ -1421,8 +1486,9 @@ impl Jwm {
                     from_configure,
                 };
                 self.unmapnotify(&e)
-            },
-            BackendEvent::ButtonRelease { .. } | BackendEvent::MappingNotify { .. } => Ok(())
+            }
+
+            BackendEvent::ButtonRelease { .. } | BackendEvent::MappingNotify { .. } => Ok(()),
         }
     }
 
@@ -7650,16 +7716,15 @@ impl Jwm {
         win: Window,
         state: i64,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[setclientstate]");
-        let data_to_set: [u32; 2] = [state as u32, 0]; // 0 代表 None (无图标窗口)
-        use x11rb::wrapper::ConnectionExt;
-        self.x11rb_conn.change_property32(
-            PropMode::REPLACE,
+        // data: [state, icon_window(None=0)]
+        let data_to_set: [u32; 2] = [state as u32, 0];
+        self.window_ops.change_property32(
             win,
             self.atoms.WM_STATE,
             self.atoms.WM_STATE,
             &data_to_set,
         )?;
+        self.window_ops.flush()?;
         Ok(())
     }
 
