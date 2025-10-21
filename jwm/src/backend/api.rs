@@ -125,6 +125,18 @@ pub struct Geometry {
     pub border: u16,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AllowMode {
+    AsyncPointer,
+    ReplayPointer,
+    SyncPointer,
+    AsyncKeyboard,
+    SyncKeyboard,
+    ReplayKeyboard,
+    AsyncBoth,
+    SyncBoth,
+}
+
 pub trait KeyOps: Send {
     // 探测 NumLock 掩码，返回 (通用 Mods 标记, 后端掩码位 bits)
     fn detect_numlock_mask(&mut self) -> Result<(Mods, u16), Box<dyn std::error::Error>>;
@@ -147,20 +159,17 @@ pub trait KeyOps: Send {
     fn clear_cache(&mut self);
 }
 
-// 输入接口
 pub trait InputOps: Send {
     fn grab_pointer(
         &self,
         mask: u32,
         cursor: Option<u64>,
     ) -> Result<bool, Box<dyn std::error::Error>>;
-
     fn ungrab_pointer(&self) -> Result<(), Box<dyn std::error::Error>>;
 
-    fn allow_events(&self, mode: u8, time: u32) -> Result<(), Box<dyn std::error::Error>>;
+    fn allow_events(&self, mode: AllowMode, time: u32) -> Result<(), Box<dyn std::error::Error>>;
 
     fn query_pointer_root(&self) -> Result<(i32, i32, u16, u16), Box<dyn std::error::Error>>;
-
     fn warp_pointer_to_window(
         &self,
         win: WindowId,
@@ -168,7 +177,6 @@ pub trait InputOps: Send {
         y: i16,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
-    // 重要：使用 trait object 作为回调，保证对象安全
     fn drag_loop(
         &self,
         cursor: Option<u64>,
@@ -332,6 +340,11 @@ pub trait PropertyOps: Send {
         win: WindowId,
         atom: u32,
     ) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn is_popup_type(&self, win: WindowId) -> bool;
+    fn transient_for(&self, _win: WindowId) -> Option<WindowId> {
+        None
+    }
 }
 
 // EWMH 门面（Wayland 可 no-op）
@@ -341,6 +354,13 @@ pub trait EwmhFacade: Send {
     fn set_client_list(&self, list: &[WindowId]) -> Result<(), Box<dyn std::error::Error>>;
     fn set_client_list_stacking(&self, list: &[WindowId])
         -> Result<(), Box<dyn std::error::Error>>;
+
+    fn setup_supporting_wm_check(
+        &self,
+        wm_name: &str,
+    ) -> Result<WindowId, Box<dyn std::error::Error>>;
+
+    fn set_supported_atoms(&self, supported: &[u32]) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 // 后端总接口（聚合各子服务）

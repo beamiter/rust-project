@@ -4,18 +4,31 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 
+use crate::backend::api::AllowMode;
+
 pub struct X11InputOps<C: Connection> {
     conn: Arc<C>,
     root: Window,
 }
 
-impl<C: Connection> X11InputOps<C> {
+impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
     pub fn new(conn: Arc<C>, root: Window) -> Self {
         Self { conn, root }
     }
-}
 
-impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
+    fn map_allow_mode(mode: AllowMode) -> Allow {
+        match mode {
+            AllowMode::AsyncPointer => Allow::ASYNC_POINTER,
+            AllowMode::ReplayPointer => Allow::REPLAY_POINTER,
+            AllowMode::SyncPointer => Allow::SYNC_POINTER,
+            AllowMode::AsyncKeyboard => Allow::ASYNC_KEYBOARD,
+            AllowMode::SyncKeyboard => Allow::SYNC_KEYBOARD,
+            AllowMode::ReplayKeyboard => Allow::REPLAY_KEYBOARD,
+            AllowMode::AsyncBoth => Allow::ASYNC_BOTH,
+            AllowMode::SyncBoth => Allow::SYNC_BOTH,
+        }
+    }
+
     // 抓取指针，返回 GrabStatus
     pub fn grab_pointer(
         &self,
@@ -165,29 +178,8 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
         Ok(())
     }
 
-    fn allow_events(&self, mode: u8, time: u32) -> Result<(), Box<dyn std::error::Error>> {
-        use x11rb::protocol::xproto::Allow;
-        // 将通用 u8 的模式映射为 X11 Allow 枚举
-        let allow = if mode == Allow::ASYNC_POINTER.into() {
-            Allow::ASYNC_POINTER
-        } else if mode == Allow::REPLAY_POINTER.into() {
-            Allow::REPLAY_POINTER
-        } else if mode == Allow::SYNC_POINTER.into() {
-            Allow::SYNC_POINTER
-        } else if mode == Allow::ASYNC_KEYBOARD.into() {
-            Allow::ASYNC_KEYBOARD
-        } else if mode == Allow::SYNC_KEYBOARD.into() {
-            Allow::SYNC_KEYBOARD
-        } else if mode == Allow::REPLAY_KEYBOARD.into() {
-            Allow::REPLAY_KEYBOARD
-        } else if mode == Allow::ASYNC_BOTH.into() {
-            Allow::ASYNC_BOTH
-        } else if mode == Allow::SYNC_BOTH.into() {
-            Allow::SYNC_BOTH
-        } else {
-            // 默认兜底
-            Allow::ASYNC_POINTER
-        };
+    fn allow_events(&self, mode: AllowMode, time: u32) -> Result<(), Box<dyn std::error::Error>> {
+        let allow = Self::map_allow_mode(mode);
         self.allow_events(allow, time)
     }
 

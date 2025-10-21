@@ -25,6 +25,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::usize;
 
+use crate::backend::api::AllowMode;
 use crate::backend::api::Geometry;
 use crate::backend::api::KeyOps;
 use crate::backend::api::WindowId;
@@ -693,6 +694,7 @@ pub struct Jwm {
     pub event_source: Box<dyn EventSource>,
     pub ewmh_facade: Option<Box<dyn crate::backend::api::EwmhFacade>>,
     pub key_ops: Box<dyn KeyOps>,
+    pub output_ops: Box<dyn crate::backend::api::OutputOps>,
 
     // 与状态栏进程通信的消息缓存（写到 ring buffer）
     pub message: SharedMessage,
@@ -817,6 +819,12 @@ impl Jwm {
             crate::backend::x11::event_source::X11EventSource::new(x11rb_conn.clone()),
         );
         let key_ops: Box<dyn KeyOps> = Box::new(X11KeyOps::new(x11rb_conn.clone()));
+        let output_ops = Box::new(crate::backend::x11::output_ops::X11OutputOps::new(
+            x11rb_conn.clone(),
+            x11rb_root,
+            s_w,
+            s_h,
+        ));
 
         // EWMH facade（基于 trait）
         let ewmh_facade: Option<Box<dyn crate::backend::api::EwmhFacade>> = Some(Box::new(
@@ -846,6 +854,7 @@ impl Jwm {
             event_source,
             ewmh_facade,
             key_ops,
+            output_ops,
 
             clients: SlotMap::new(),
             monitors: SlotMap::new(),
@@ -976,7 +985,6 @@ impl Jwm {
         time: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         use crate::backend::x11::adapter::button_from_x11;
-        use x11rb::protocol::xproto::Allow;
 
         let mut click_type = WMClickType::ClickRootWin;
 
@@ -1024,20 +1032,13 @@ impl Jwm {
                 break;
             }
         }
-
         if is_client_click {
-            // 逐步用 input_ops 替代直接 x11rb 允许事件
-            if handled_by_wm {
-                let _ = self
-                    .input_ops
-                    .allow_events(Allow::ASYNC_POINTER.into(), time);
+            let _ = if handled_by_wm {
+                self.input_ops.allow_events(AllowMode::AsyncPointer, time)
             } else {
-                let _ = self
-                    .input_ops
-                    .allow_events(Allow::REPLAY_POINTER.into(), time);
-            }
+                self.input_ops.allow_events(AllowMode::ReplayPointer, time)
+            };
         }
-
         Ok(())
     }
 
@@ -5969,82 +5970,23 @@ impl Jwm {
     }
 
     pub fn setup_ewmh(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 创建一个 1x1 supporting WM check 窗口（仍用底层 X11；也可封到 WindowOps 扩展）
-        let frame_win = self.x11rb_conn.generate_id()?;
-        let win_aux = x11rb::protocol::xproto::CreateWindowAux::new()
-            .event_mask(
-                x11rb::protocol::xproto::EventMask::EXPOSURE
-                    | x11rb::protocol::xproto::EventMask::KEY_PRESS,
-            )
-            .background_pixel(self.x11rb_screen.white_pixel);
-        self.x11rb_conn
-            .create_window(
-                x11rb::COPY_DEPTH_FROM_PARENT,
-                frame_win,
-                self.x11rb_screen.root,
-                0,
-                0,
-                1,
-                1,
-                0,
-                x11rb::protocol::xproto::WindowClass::INPUT_OUTPUT,
-                0,
-                &win_aux,
-            )?
-            .check()?;
-
-        // 设置 _NET_SUPPORTING_WM_CHECK 到 frame_win 与 root
-        self.window_ops.change_property32(
-            WindowId(self.x11rb_screen.root as u64),
-            self.atoms._NET_SUPPORTING_WM_CHECK,
-            x11rb::protocol::xproto::AtomEnum::WINDOW.into(),
-            &[frame_win],
-        )?;
-        self.window_ops.change_property32(
-            WindowId(frame_win as u64),
-            self.atoms._NET_SUPPORTING_WM_CHECK,
-            x11rb::protocol::xproto::AtomEnum::WINDOW.into(),
-            &[frame_win],
-        )?;
-
-        // WM_NAME = "jwm"
-        self.window_ops.change_property8(
-            WindowId(frame_win as u64),
-            x11rb::protocol::xproto::AtomEnum::WM_NAME.into(),
-            x11rb::protocol::xproto::AtomEnum::STRING.into(),
-            b"jwm",
-        )?;
-
-        // _NET_SUPPORTED
-        let supported_atoms = [
-            self.atoms._NET_ACTIVE_WINDOW,
-            self.atoms._NET_SUPPORTED,
-            self.atoms._NET_WM_NAME,
-            self.atoms._NET_WM_STATE,
-            self.atoms._NET_SUPPORTING_WM_CHECK,
-            self.atoms._NET_WM_STATE_FULLSCREEN,
-            self.atoms._NET_WM_WINDOW_TYPE,
-            self.atoms._NET_WM_WINDOW_TYPE_DIALOG,
-            self.atoms._NET_CLIENT_LIST,
-            self.atoms._NET_CLIENT_INFO,
-        ];
-        self.window_ops.change_property32(
-            WindowId(self.x11rb_screen.root as u64),
-            self.atoms._NET_SUPPORTED,
-            x11rb::protocol::xproto::AtomEnum::ATOM.into(),
-            &supported_atoms,
-        )?;
-
-        // 清除 _NET_CLIENT_LIST / _NET_CLIENT_INFO
-        let _ = self.window_ops.delete_property(
-            WindowId(self.x11rb_screen.root as u64),
-            self.atoms._NET_CLIENT_LIST,
-        );
-        let _ = self.window_ops.delete_property(
-            WindowId(self.x11rb_screen.root as u64),
-            self.atoms._NET_CLIENT_INFO,
-        );
-
+        if let Some(facade) = self.ewmh_facade.as_ref() {
+            let _support_win = facade.setup_supporting_wm_check("jwm")?;
+            // 声明支持的 atoms（保留 X11 atoms，但 Jwm 不直接操作 property）
+            let supported = [
+                self.atoms._NET_ACTIVE_WINDOW,
+                self.atoms._NET_SUPPORTED,
+                self.atoms._NET_WM_NAME,
+                self.atoms._NET_WM_STATE,
+                self.atoms._NET_SUPPORTING_WM_CHECK,
+                self.atoms._NET_WM_STATE_FULLSCREEN,
+                self.atoms._NET_WM_WINDOW_TYPE,
+                self.atoms._NET_WM_WINDOW_TYPE_DIALOG,
+                self.atoms._NET_CLIENT_LIST,
+                self.atoms._NET_CLIENT_INFO,
+            ];
+            facade.set_supported_atoms(&supported)?;
+        }
         self.window_ops.flush()?;
         Ok(())
     }
@@ -8468,20 +8410,18 @@ impl Jwm {
         } else {
             return false;
         };
-        let types = self.prop_ops.get_window_types(WindowId(c.win.into()));
-        let is_type_popup = types.iter().any(|&a| {
-            a == self.atoms._NET_WM_WINDOW_TYPE_POPUP_MENU
-                || a == self.atoms._NET_WM_WINDOW_TYPE_DROPDOWN_MENU
-                || a == self.atoms._NET_WM_WINDOW_TYPE_MENU
-                || a == self.atoms._NET_WM_WINDOW_TYPE_TOOLTIP
-                || a == self.atoms._NET_WM_WINDOW_TYPE_COMBO
-                || a == self.atoms._NET_WM_WINDOW_TYPE_NOTIFICATION
-        });
-        // 容错：有些应用只设置了 transient_for，不设置 window_type
-        let is_small_transient =
-            self.get_transient_for(c.win).is_some() && (c.geometry.w <= 700 && c.geometry.h <= 700);
-
-        is_type_popup || is_small_transient
+        if self.prop_ops.is_popup_type(WindowId(c.win.into())) {
+            return true;
+        }
+        if self
+            .prop_ops
+            .transient_for(WindowId(c.win.into()))
+            .is_some()
+            && (c.geometry.w <= 700 && c.geometry.h <= 700)
+        {
+            return true;
+        }
+        false
     }
 
     fn adjust_client_position(&mut self, client_key: ClientKey) {
@@ -8762,30 +8702,26 @@ impl Jwm {
 
     pub fn updategeom(&mut self) -> bool {
         info!("[updategeom]");
+        // 读取输出信息（由后端实现 RandR/Wayland 输出）
+        let outputs = self.output_ops.enumerate_outputs();
 
-        let dirty = match self.get_monitors_randr() {
-            Ok(monitors) => {
-                info!("[updategeom] monitors: {:?}", monitors);
-                if monitors.is_empty() {
-                    self.setup_single_monitor()
-                } else {
-                    self.setup_multiple_monitors(monitors)
-                }
-            }
-            Err(_) => {
-                // RandR 不可用，使用单显示器模式
-                self.setup_single_monitor()
-            }
+        let dirty = if outputs.len() <= 1 {
+            self.setup_single_monitor()
+        } else {
+            // 把 outputs 转换为 (x,y,w,h)
+            let mons: Vec<(i32, i32, i32, i32)> = outputs
+                .iter()
+                .map(|o| (o.x, o.y, o.width, o.height))
+                .collect();
+            self.setup_multiple_monitors(mons)
         };
 
         if dirty {
-            // 更新选中的监视器
             self.sel_mon = self.wintomon(self.x11rb_root);
             if self.sel_mon.is_none() && !self.monitor_order.is_empty() {
                 self.sel_mon = self.monitor_order.first().copied();
             }
         }
-
         dirty
     }
 
@@ -8937,48 +8873,6 @@ impl Jwm {
                 client_key, from_monitor_key, target_monitor_key
             );
         }
-    }
-
-    fn get_monitors_randr(&self) -> Result<Vec<(i32, i32, i32, i32)>, Box<dyn std::error::Error>> {
-        use x11rb::protocol::randr::ConnectionExt as RandrExt;
-
-        // 先探测 randr 版本
-        let v = self.x11rb_conn.randr_query_version(1, 5)?.reply()?;
-        if (v.major_version > 1) || (v.major_version == 1 && v.minor_version >= 5) {
-            // RandR 1.5: 使用 GetMonitors
-            if let Ok(reply) = self
-                .x11rb_conn
-                .randr_get_monitors(self.x11rb_root, true)?
-                .reply()
-            {
-                let mut mons = Vec::new();
-                for m in reply.monitors {
-                    // 注意 m.x/y/width/height 即为 root 下的几何
-                    if m.width > 0 && m.height > 0 {
-                        mons.push((m.x as i32, m.y as i32, m.width as i32, m.height as i32));
-                    }
-                }
-                mons.dedup();
-                if !mons.is_empty() {
-                    return Ok(mons);
-                }
-            }
-        }
-
-        // 回退 RandR 1.2：get_screen_resources + get_crtc_info
-        let resources = self
-            .x11rb_conn
-            .randr_get_screen_resources(self.x11rb_root)?
-            .reply()?;
-        let mut mons = Vec::new();
-        for crtc in resources.crtcs {
-            let ci = self.x11rb_conn.randr_get_crtc_info(crtc, 0)?.reply()?;
-            if ci.width > 0 && ci.height > 0 {
-                mons.push((ci.x as i32, ci.y as i32, ci.width as i32, ci.height as i32));
-            }
-        }
-        mons.dedup();
-        Ok(mons)
     }
 
     fn set_x11_wm_state_fullscreen(

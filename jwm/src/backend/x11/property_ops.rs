@@ -90,6 +90,49 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<C> {
+    fn is_popup_type(&self, win: WindowId) -> bool {
+        let types = self.get_window_types(win);
+        // X11: 看 EWMH 类型
+        if types.iter().any(|&a| {
+            a == self.atoms._NET_WM_WINDOW_TYPE_POPUP_MENU
+                || a == self.atoms._NET_WM_WINDOW_TYPE_DROPDOWN_MENU
+                || a == self.atoms._NET_WM_WINDOW_TYPE_MENU
+                || a == self.atoms._NET_WM_WINDOW_TYPE_TOOLTIP
+                || a == self.atoms._NET_WM_WINDOW_TYPE_COMBO
+                || a == self.atoms._NET_WM_WINDOW_TYPE_NOTIFICATION
+        }) {
+            return true;
+        }
+        // fallback: transient_for 存在也可能是 popup-like
+        self.transient_for(win).is_some()
+    }
+
+    fn transient_for(&self, win: WindowId) -> Option<WindowId> {
+        // 读取 WM_TRANSIENT_FOR
+        let r = self
+            .conn
+            .get_property(
+                false,
+                win.0 as u32,
+                self.atoms.WM_TRANSIENT_FOR,
+                AtomEnum::WINDOW,
+                0,
+                1,
+            )
+            .ok()?
+            .reply()
+            .ok()?;
+        if r.format == 32 {
+            let it = r.value32();
+            if let Some(t) = it?.next() {
+                if t != 0 && t != win.0 as u32 {
+                    return Some(WindowId(t as u64));
+                }
+            }
+        }
+        None
+    }
+
     fn get_text_property_best_title(&self, win: WindowId) -> String {
         // 复用现有逻辑
         if let Some(title) = self.get_text_property(win, self.atoms._NET_WM_NAME) {
