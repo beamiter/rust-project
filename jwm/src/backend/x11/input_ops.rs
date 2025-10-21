@@ -161,3 +161,86 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
         Ok(())
     }
 }
+
+use crate::backend::api::{InputOps as InputOpsTrait, WindowId};
+impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
+    fn grab_pointer(
+        &self,
+        mask_bits: u32,
+        cursor: Option<u64>,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        // 将通用 mask 转为 X11 EventMask
+        let event_mask = x11rb::protocol::xproto::EventMask::from(mask_bits);
+        // 将通用 cursor 句柄转为 X11 Cursor id（无则 0）
+        let cursor_id = cursor.map(|c| c as u32);
+        let status = self.grab_pointer(event_mask, cursor_id)?;
+        Ok(status == GrabStatus::SUCCESS)
+    }
+
+    fn ungrab_pointer(&self) -> Result<(), Box<dyn std::error::Error>> {
+        self.ungrab_pointer()
+    }
+
+    fn allow_events(&self, mode: u8, time: u32) -> Result<(), Box<dyn std::error::Error>> {
+        use x11rb::protocol::xproto::Allow;
+        // 将通用 u8 的模式映射为 X11 Allow 枚举
+        let allow = if mode == Allow::ASYNC_POINTER.into() {
+            Allow::ASYNC_POINTER
+        } else if mode == Allow::REPLAY_POINTER.into() {
+            Allow::REPLAY_POINTER
+        } else if mode == Allow::SYNC_POINTER.into() {
+            Allow::SYNC_POINTER
+        } else if mode == Allow::ASYNC_KEYBOARD.into() {
+            Allow::ASYNC_KEYBOARD
+        } else if mode == Allow::SYNC_KEYBOARD.into() {
+            Allow::SYNC_KEYBOARD
+        } else if mode == Allow::REPLAY_KEYBOARD.into() {
+            Allow::REPLAY_KEYBOARD
+        } else if mode == Allow::ASYNC_BOTH.into() {
+            Allow::ASYNC_BOTH
+        } else if mode == Allow::SYNC_BOTH.into() {
+            Allow::SYNC_BOTH
+        } else {
+            // 默认兜底
+            Allow::ASYNC_POINTER
+        };
+        self.allow_events(allow, time)
+    }
+
+    fn query_pointer_root(&self) -> Result<(i32, i32, u16, u16), Box<dyn std::error::Error>> {
+        let reply = self.query_pointer()?;
+        // 返回 (root_x, root_y, 修饰键mask, 预留值 0)
+        Ok((
+            reply.root_x as i32,
+            reply.root_y as i32,
+            reply.mask.bits() as u16,
+            0,
+        ))
+    }
+
+    fn warp_pointer_to_window(
+        &self,
+        win: WindowId,
+        x: i16,
+        y: i16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.warp_pointer_to_window(win.0 as u32, x, y)
+    }
+
+    fn drag_loop(
+        &self,
+        cursor: Option<u64>,
+        warp_to: Option<(i16, i16)>,
+        target: WindowId,
+        on_motion: &mut dyn FnMut(i16, i16, u32) -> Result<(), Box<dyn std::error::Error>>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 通用实现：抓取 BUTTON_PRESS|BUTTON_RELEASE|POINTER_MOTION
+        use x11rb::protocol::xproto::EventMask;
+        let grab_mask =
+            EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
+        let cursor_id = cursor.map(|c| c as u32);
+        self.drag_loop(grab_mask, cursor_id, warp_to, target.0 as u32, |e| {
+            on_motion(e.root_x, e.root_y, e.time)
+        })
+    }
+}

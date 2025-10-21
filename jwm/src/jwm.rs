@@ -40,7 +40,6 @@ use crate::xcb_util::SchemeType;
 use crate::xcb_util::{Atoms, CursorManager, ThemeManager};
 
 use x11rb::connection::Connection;
-use x11rb::errors::ReplyError;
 use x11rb::properties::WmSizeHints;
 use x11rb::protocol::render::{self, ConnectionExt as RenderExt};
 use x11rb::protocol::xproto::*;
@@ -4165,8 +4164,8 @@ impl Jwm {
     }
 
     pub fn getrootptr(&mut self) -> Result<(i32, i32), Box<dyn std::error::Error>> {
-        let reply = self.input_ops.query_pointer()?;
-        Ok((reply.root_x as i32, reply.root_y as i32))
+        let (x, y, _mask, _unused) = self.input_ops.query_pointer_root()?;
+        Ok((x, y))
     }
 
     /// 获取窗口的 WM_STATE 状态
@@ -9250,35 +9249,6 @@ impl Jwm {
         Ok(mons)
     }
 
-    // 读取 window 的全部 _NET_WM_STATE（如果没有则返回空 vec）
-    fn get_net_wm_state(&self, window: Window) -> Result<Vec<Atom>, Box<dyn std::error::Error>> {
-        let cookie = self.x11rb_conn.get_property(
-            false,                    // delete: 不删除
-            window,                   // window
-            self.atoms._NET_WM_STATE, // property
-            AtomEnum::ATOM,           // type: ATOM
-            0,                        // long_offset
-            u32::MAX,                 // long_length: 读全量
-        )?;
-
-        let reply = match cookie.reply() {
-            Ok(r) => r,
-            Err(ReplyError::X11Error(_)) => {
-                // 属性不存在或类型不匹配，按空处理
-                return Ok(Vec::new());
-            }
-            Err(e) => return Err(e.into()),
-        };
-
-        // 只有 format=32 时才有有效的 Atom 列表
-        if reply.format != 32 {
-            return Ok(Vec::new());
-        }
-
-        let atoms: Vec<Atom> = reply.value32().into_iter().flatten().collect();
-        Ok(atoms)
-    }
-
     fn set_x11_wm_state_fullscreen(
         &mut self,
         win: u32,
@@ -9291,49 +9261,6 @@ impl Jwm {
         } else {
             self.prop_ops
                 .remove_net_wm_state_atom(wid, self.atoms._NET_WM_STATE_FULLSCREEN)?;
-        }
-        Ok(())
-    }
-
-    fn add_net_wm_state(
-        &mut self,
-        window: Window,
-        state_atom: Atom,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut states = self.get_net_wm_state(window)?;
-        if !states.iter().any(|&a| a == state_atom) {
-            states.push(state_atom);
-            use x11rb::wrapper::ConnectionExt;
-            self.x11rb_conn.change_property32(
-                PropMode::REPLACE,
-                window,
-                self.atoms._NET_WM_STATE,
-                AtomEnum::ATOM,
-                &states,
-            )?;
-            self.x11rb_conn.flush()?;
-        }
-        Ok(())
-    }
-
-    fn remove_net_wm_state(
-        &mut self,
-        window: Window,
-        state_atom: Atom,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut states = self.get_net_wm_state(window)?;
-        let len_before = states.len();
-        states.retain(|&a| a != state_atom);
-        if states.len() != len_before {
-            use x11rb::wrapper::ConnectionExt;
-            self.x11rb_conn.change_property32(
-                PropMode::REPLACE,
-                window,
-                self.atoms._NET_WM_STATE,
-                AtomEnum::ATOM,
-                &states,
-            )?;
-            self.x11rb_conn.flush()?;
         }
         Ok(())
     }
