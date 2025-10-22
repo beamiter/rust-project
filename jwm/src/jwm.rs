@@ -36,7 +36,6 @@ use crate::config::CONFIG;
 
 use x11rb::connection::Connection;
 use x11rb::properties::WmSizeHints;
-use x11rb::protocol::render::{self, ConnectionExt as RenderExt};
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 
@@ -706,7 +705,6 @@ pub struct Jwm {
 
     // X11rb 连接/根窗口/屏幕/Atoms
     pub x11rb_conn: Arc<RustConnection>,
-    pub x11rb_screen: Screen,
     pub atoms: Atoms,
 
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
@@ -760,7 +758,6 @@ impl Jwm {
             }
         };
 
-        let x11rb_screen = x11rb_conn.setup().roots[x11rb_screen_num].clone();
         let s_w = si.width;
         let s_h = si.height;
 
@@ -827,7 +824,6 @@ impl Jwm {
             pending_bar_updates: HashSet::new(),
 
             x11rb_conn,
-            x11rb_screen,
             atoms,
 
             suppress_mouse_focus_until: None,
@@ -3961,71 +3957,6 @@ impl Jwm {
         Ok(())
     }
 
-    /// 在 render_query_pict_formats 的结果中，查找给定 Visualid 对应的 Pictforminfo
-    fn find_visual_format_local<'a>(
-        &self,
-        formats: &'a render::QueryPictFormatsReply,
-        visual: Visualid,
-    ) -> Option<&'a render::Pictforminfo> {
-        // 步骤：在 screens[..].depths[..].visuals[..] 里找到与 visual 匹配的 Pictvisual，
-        // 再用它的 format 字段去 formats.formats 里找 Pictforminfo
-        for screen in &formats.screens {
-            for depth in &screen.depths {
-                for v in &depth.visuals {
-                    if v.visual == visual {
-                        let fmt = v.format;
-                        return formats.formats.iter().find(|f| f.id == fmt);
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn xinit_visual(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 查询 render pict formats
-        let formats = self.x11rb_conn.render_query_pict_formats()?.reply()?;
-
-        // 优先寻找 32-bit TRUE_COLOR + 有 alpha 的 visual
-        for depth in self.x11rb_screen.allowed_depths.iter().cloned() {
-            if depth.depth != 32 {
-                continue;
-            }
-            for visualtype in &depth.visuals {
-                if visualtype.class != VisualClass::TRUE_COLOR {
-                    continue;
-                }
-                if let Some(info) = self.find_visual_format_local(&formats, visualtype.visual_id) {
-                    if info.direct.alpha_mask != 0 {
-                        return self.setup_argb_visual(visualtype);
-                    }
-                }
-            }
-        }
-
-        // 没找到 32-bit ARGB，回退默认
-        info!("[xinit_visual] No 32-bit ARGB visual found. Falling back to default.");
-
-        Ok(())
-    }
-
-    fn setup_argb_visual(
-        &mut self,
-        visualtype: &Visualtype,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let colormap_id = self.x11rb_conn.generate_id()?;
-        self.x11rb_conn
-            .create_colormap(
-                ColormapAlloc::NONE,
-                colormap_id,
-                self.backend.root_window().0 as u32,
-                visualtype.visual_id,
-            )?
-            .check()?;
-
-        Ok(())
-    }
-
     pub fn tile(&mut self, mon_key: MonitorKey) {
         info!("[tile]");
 
@@ -5585,7 +5516,7 @@ impl Jwm {
         info!("[setup]");
 
         // 初始化视觉/几何/EWMH/根窗口事件/keys
-        self.xinit_visual()?;
+        self.backend.init_visual()?;
         self.updategeom();
         self.setup_ewmh()?;
 
