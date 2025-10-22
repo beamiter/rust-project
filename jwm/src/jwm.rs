@@ -53,6 +53,7 @@ use nix::unistd::close;
 
 // definitions for initial window state.
 pub const WITHDRAWN_STATE: u8 = 0;
+pub const STEXT_MAX_LEN: usize =  512;
 pub const NORMAL_STATE: u8 = 1;
 pub const ICONIC_STATE: u8 = 2;
 pub const RESTART_SNAPSHOT_PATH: &str = "/var/tmp/jwm/restart_snapshot.bin";
@@ -663,10 +664,8 @@ pub type MonitorIndex = i32;
 
 pub struct Jwm {
     // 基础/环境
-    pub stext_max_len: usize,
     pub s_w: i32,
     pub s_h: i32,
-    pub numlock_mask: Mods,
     pub x11_numlock_mask: x11rb::protocol::xproto::KeyButMask,
     pub running: AtomicBool,
     pub is_restarting: AtomicBool,
@@ -791,10 +790,8 @@ impl Jwm {
         info!("[new] JWM initialization completed successfully");
 
         Ok(Jwm {
-            stext_max_len: 512,
             s_w,
             s_h,
-            numlock_mask: Mods::empty(),
             x11_numlock_mask: x11rb::protocol::xproto::KeyButMask::default(),
             running: AtomicBool::new(true),
             is_restarting: AtomicBool::new(false),
@@ -5748,7 +5745,7 @@ impl Jwm {
             .backend
             .property_ops()
             .get_text_property_best_title(WindowId(w.into()));
-        *text = X11PropertyOps::<RustConnection>::truncate_chars(s, self.stext_max_len);
+        *text = X11PropertyOps::<RustConnection>::truncate_chars(s, STEXT_MAX_LEN);
         true
     }
 
@@ -5897,7 +5894,7 @@ impl Jwm {
             .backend
             .property_ops()
             .get_text_property_best_title(WindowId(window.into()));
-        X11PropertyOps::<RustConnection>::truncate_chars(title, self.stext_max_len)
+        X11PropertyOps::<RustConnection>::truncate_chars(title, STEXT_MAX_LEN)
     }
 
     fn handle_title_change(
@@ -6311,18 +6308,8 @@ impl Jwm {
 
     pub fn setup_modifier_masks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("Setting up modifier masks (KeyOps)...");
-        let (mods_flag, x11_bits) = self.backend.key_ops_mut().detect_numlock_mask()?;
-        // 更新通用层
-        self.numlock_mask = Mods::empty();
-        if mods_flag.contains(Mods::NUMLOCK) {
-            self.numlock_mask |= Mods::NUMLOCK;
-        } else if mods_flag.contains(Mods::MOD2) {
-            // 回退信息（表示无法探测到具体位，采用 MOD2 语义）
-            self.numlock_mask |= Mods::MOD2;
-        }
-        // 更新 X11 掩码位
+        let (_mods_flag, x11_bits) = self.backend.key_ops_mut().detect_numlock_mask()?;
         self.x11_numlock_mask = x11rb::protocol::xproto::KeyButMask::from(x11_bits);
-        // 记录当前状态（通过 InputOps 查询）
         self.verify_modifier_setup()?;
         Ok(())
     }
@@ -6335,11 +6322,6 @@ impl Jwm {
             info!(
                 "NumLock currently {}",
                 if numlock_active { "ON" } else { "OFF" }
-            );
-        } else if !self.numlock_mask.is_empty() {
-            info!(
-                "NumLock detection fallback (Mods={:?}), state unknown at X11 level",
-                self.numlock_mask
             );
         }
         Ok(())
