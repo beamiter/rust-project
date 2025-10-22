@@ -772,12 +772,7 @@ impl Jwm {
             backend.root_window().0
         );
 
-        // ThemeManager
-        let x11_alloc = crate::backend::x11::color::X11ColorAllocator::new(
-            x11rb_conn.clone(),
-            x11rb_screen.default_colormap,
-        );
-        let (theme_manager, _alloc_back) = ThemeManager::create_from_config(x11_alloc)?;
+        let theme_manager = ThemeManager::create_from_config(backend.color_allocator())?;
 
         info!("[new] JWM initialization completed successfully");
 

@@ -1,7 +1,7 @@
 // src/xcb_util.rs
 
-use crate::backend::common_define::Pixel;
 use crate::backend::api::ColorAllocator;
+use crate::backend::common_define::Pixel;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]
@@ -38,9 +38,9 @@ impl ThemeManager {
         self.pixel_cache.get(&color.value).copied()
     }
 
-    pub fn allocate_pixels<A: ColorAllocator>(
+    pub fn allocate_pixels(
         &mut self,
-        allocator: &mut A,
+        allocator: &mut Box<dyn ColorAllocator>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut colors = Vec::new();
         for s in self.schemes.values() {
@@ -61,9 +61,9 @@ impl ThemeManager {
         Ok(())
     }
 
-    pub fn free_pixels<A: ColorAllocator>(
+    pub fn free_pixels(
         &mut self,
-        allocator: &mut A,
+        allocator: &mut Box<dyn ColorAllocator>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let pixels: Vec<Pixel> = self.pixel_cache.values().copied().collect();
         if !pixels.is_empty() {
@@ -76,9 +76,9 @@ impl ThemeManager {
 
 // 从配置创建
 impl ThemeManager {
-    pub fn create_from_config<A: ColorAllocator>(
-        mut allocator: A,
-    ) -> Result<(Self, A), Box<dyn std::error::Error>> {
+    pub fn create_from_config(
+        allocator: &mut Box<dyn ColorAllocator>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut theme = Self::new();
         let colors = crate::config::CONFIG.colors();
 
@@ -96,7 +96,7 @@ impl ThemeManager {
         theme.set_scheme(SchemeType::Sel, selected);
 
         theme.allocate_pixels(&mut allocator)?;
-        Ok((theme, allocator))
+        Ok(theme)
     }
 }
 
