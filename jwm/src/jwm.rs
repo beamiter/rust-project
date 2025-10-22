@@ -672,9 +672,6 @@ pub struct Jwm {
     pub is_restarting: AtomicBool,
     pub cursor_manager: CursorManager,
     pub theme_manager: ThemeManager,
-    pub visual_id: Visualid,
-    pub depth: u8,
-    pub color_map: Colormap,
 
     backend: Box<dyn Backend>,
 
@@ -816,9 +813,6 @@ impl Jwm {
             monitor_clients: SecondaryMap::new(),
             monitor_stack: SecondaryMap::new(),
 
-            visual_id: 0,
-            depth: 0,
-            color_map: 0,
             status_bar_shmem: None,
             status_bar_child: None,
             message: SharedMessage::default(),
@@ -4008,16 +4002,14 @@ impl Jwm {
 
         // 没找到 32-bit ARGB，回退默认
         info!("[xinit_visual] No 32-bit ARGB visual found. Falling back to default.");
-        self.setup_default_visual()
+
+        Ok(())
     }
 
     fn setup_argb_visual(
         &mut self,
         visualtype: &Visualtype,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.visual_id = visualtype.visual_id;
-        self.depth = 32;
-
         let colormap_id = self.x11rb_conn.generate_id()?;
         self.x11rb_conn
             .create_colormap(
@@ -4027,57 +4019,6 @@ impl Jwm {
                 visualtype.visual_id,
             )?
             .check()?;
-
-        self.color_map = colormap_id.into();
-
-        match self.test_color_allocation(colormap_id) {
-            Ok(_) => {
-                info!(
-                "[xinit_visual] Successfully set up 32-bit ARGB visual. VisualID: 0x{:x}, ColormapID: 0x{:x}",
-                self.visual_id, self.color_map
-            );
-                Ok(())
-            }
-            Err(e) => {
-                warn!("[xinit_visual] Color allocation test failed: {:?}", e);
-                let _ = self.x11rb_conn.free_colormap(colormap_id);
-                self.setup_default_visual()
-            }
-        }
-    }
-
-    fn setup_default_visual(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.visual_id = self.x11rb_screen.root_visual;
-        self.depth = self.x11rb_screen.root_depth;
-        self.color_map = self.x11rb_screen.default_colormap.into();
-
-        info!(
-            "[xinit_visual] Using default visual. VisualID: 0x{:x}, Depth: {}, ColormapID: 0x{:x}",
-            self.visual_id, self.depth, self.color_map
-        );
-
-        Ok(())
-    }
-
-    fn test_color_allocation(
-        &self,
-        colormap_id: Colormap,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // 测试分配一个简单的颜色（红色）
-        let color_reply = self
-            .x11rb_conn
-            .alloc_color(colormap_id, 65535, 0, 0)?
-            .reply()?;
-
-        debug!(
-            "[test_color_allocation] Successfully allocated test color, pixel: {}",
-            color_reply.pixel
-        );
-
-        // 可选：释放测试颜色
-        let _ = self
-            .x11rb_conn
-            .free_colors(colormap_id, 0, &[color_reply.pixel]);
 
         Ok(())
     }
