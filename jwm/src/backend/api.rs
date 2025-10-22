@@ -379,6 +379,7 @@ pub trait Backend: Send {
     fn capabilities(&self) -> Capabilities;
     fn window_ops(&self) -> &dyn WindowOps;
     fn input_ops(&self) -> &dyn InputOps;
+    fn input_ops_handle(&self) -> std::sync::Arc<std::sync::Mutex<dyn InputOps + Send>>;
     fn property_ops(&self) -> &dyn PropertyOps;
     fn output_ops(&self) -> &dyn OutputOps;
     fn key_ops(&self) -> &dyn KeyOps;

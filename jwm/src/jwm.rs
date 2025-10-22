@@ -14,10 +14,6 @@ use std::collections::{HashMap, HashSet};
 use std::env;
 use std::fmt;
 use std::io::Write;
-use std::mem::MaybeUninit;
-use std::os::fd::BorrowedFd;
-use std::os::fd::FromRawFd;
-use std::os::fd::OwnedFd;
 use std::process::{Child, Command};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -33,7 +29,6 @@ use crate::backend::common_input::{KeySym, Mods, MouseButton};
 use crate::backend::cursor_manager::CursorManager;
 use crate::backend::traits::StdCursorKind;
 use crate::backend::x11::adapter::{button_to_x11, mods_from_x11, mods_to_x11};
-use crate::backend::x11::input_ops::X11InputOps;
 use crate::backend::x11::property_ops::X11PropertyOps;
 use crate::backend::x11::Atoms;
 use crate::config::CONFIG;
@@ -53,11 +48,6 @@ use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus}
 use bincode::config::standard;
 use bincode::{Decode, Encode};
 
-use std::os::unix::io::AsRawFd;
-use tokio::io::unix::AsyncFd;
-
-#[cfg(unix)]
-use nix::fcntl::{FcntlArg, OFlag};
 #[cfg(unix)]
 use nix::unistd::close;
 
@@ -6010,61 +6000,6 @@ impl Jwm {
         Ok(())
     }
 
-    fn handle_move_motion(
-        &mut self,
-        client_key: ClientKey,
-        e: &MotionNotifyEvent,
-        original_x: i32,
-        original_y: i32,
-        initial_mouse_x: u16,
-        initial_mouse_y: u16,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // 计算新的位置
-        let current_mouse_x = e.root_x;
-        let current_mouse_y = e.root_y;
-        let mut new_x = original_x + (current_mouse_x as i32 - initial_mouse_x as i32);
-        let mut new_y = original_y + (current_mouse_y as i32 - initial_mouse_y as i32);
-
-        // 获取显示器工作区边界
-        let (mon_wx, mon_wy, mon_ww, mon_wh) = if let Some(sel_mon_key) = self.sel_mon {
-            if let Some(monitor) = self.monitors.get(sel_mon_key) {
-                (
-                    monitor.geometry.w_x,
-                    monitor.geometry.w_y,
-                    monitor.geometry.w_w,
-                    monitor.geometry.w_h,
-                )
-            } else {
-                return Ok(());
-            }
-        } else {
-            return Ok(());
-        };
-
-        // 应用边缘吸附
-        self.apply_edge_snapping(
-            client_key, &mut new_x, &mut new_y, mon_wx, mon_wy, mon_ww, mon_wh,
-        )?;
-
-        // 检查是否需要切换到浮动模式
-        self.check_and_toggle_floating_for_move(client_key, new_x, new_y)?;
-
-        // 如果是浮动窗口或浮动布局，执行移动
-        let should_move = self.should_move_client(client_key);
-
-        if should_move {
-            let (window_w, window_h) = if let Some(client) = self.clients.get(client_key) {
-                (client.geometry.w, client.geometry.h)
-            } else {
-                return Ok(());
-            };
-
-            self.resize_client(client_key, new_x, new_y, window_w, window_h, true);
-        }
-
-        Ok(())
-    }
-
     fn should_move_client(&self, client_key: ClientKey) -> bool {
         if let Some(client) = self.clients.get(client_key) {
             if client.state.is_floating {
@@ -6192,78 +6127,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 在 impl Jwm 里新增
-    fn pointer_drag_loop<F>(
-        &mut self,
-        grab_mask_bits: u32,
-        cursor: Option<u64>,
-        warp_to: Option<(i16, i16)>,
-        target: WindowId,
-        mut on_motion: F,
-    ) -> Result<(), Box<dyn std::error::Error>>
-    where
-        F: FnMut(&mut Jwm, i16, i16, u32) -> Result<(), Box<dyn std::error::Error>>,
-    {
-        // 抓指针
-        let grabbed = self
-            .backend
-            .input_ops()
-            .grab_pointer(grab_mask_bits, cursor)?;
-        if !grabbed {
-            return Err("Failed to grab pointer".into());
-        }
-
-        // 可选 warp
-        if let Some((wx, wy)) = warp_to {
-            self.backend
-                .input_ops()
-                .warp_pointer_to_window(target, wx, wy)?;
-        }
-        self.backend.event_source().flush()?;
-
-        let mut last_motion_time: u32 = 0;
-
-        loop {
-            match self.backend.event_source().poll_event()? {
-                Some(crate::backend::api::BackendEvent::MotionNotify {
-                    root_x,
-                    root_y,
-                    time,
-                    ..
-                }) => {
-                    // ~16ms 节流
-                    if time.wrapping_sub(last_motion_time) <= 16 {
-                        continue;
-                    }
-                    last_motion_time = time;
-                    on_motion(self, root_x, root_y, time)?;
-                }
-                Some(crate::backend::api::BackendEvent::ButtonRelease { .. }) => break,
-                Some(crate::backend::api::BackendEvent::KeyPress { keycode, .. }) => {
-                    let ks = self.backend.key_ops_mut().keysym_from_keycode(keycode)?;
-                    if ks == crate::backend::common_input::keys::KEY_Escape {
-                        break;
-                    }
-                }
-                Some(crate::backend::api::BackendEvent::DestroyNotify { window }) => {
-                    if window == target {
-                        break;
-                    }
-                }
-                Some(crate::backend::api::BackendEvent::UnmapNotify { window, .. }) => {
-                    if window == target {
-                        break;
-                    }
-                }
-                Some(_other) => {}
-                None => std::thread::sleep(std::time::Duration::from_millis(10)),
-            }
-        }
-
-        self.backend.input_ops().ungrab_pointer()?;
-        Ok(())
-    }
-
     pub fn movemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         let client_key = match self.get_selected_client_key() {
             Some(k) => k,
@@ -6286,50 +6149,54 @@ impl Jwm {
         let (initial_x, initial_y, _mask, _unused) =
             self.backend.input_ops().query_pointer_root()?;
         let (initial_mouse_x, initial_mouse_y) = (initial_x as u16, initial_y as u16);
+
         let cursor_handle = self.backend.cursor_provider().get(StdCursorKind::Hand)?.0;
 
-        self.pointer_drag_loop(
-            (*MOUSEMASK).bits(),
-            Some(cursor_handle),
-            None, // move 无需 warp
-            WindowId(window_id.into()),
-            move |wm: &mut Jwm, root_x, root_y, _time| {
-                let mut new_x = start_x + (root_x as i32 - initial_mouse_x as i32);
-                let mut new_y = start_y + (root_y as i32 - initial_mouse_y as i32);
+        // 关键：先取后端输入句柄（Arc<Mutex<...>>），避免借用 self.backend
+        let io = self.backend.input_ops_handle();
+        {
+            let ops = io.lock().unwrap();
+            ops.drag_loop(
+                Some(cursor_handle),
+                None,
+                WindowId(window_id.into()),
+                &mut |root_x, root_y, _time| {
+                    let mut new_x = start_x + (root_x as i32 - initial_mouse_x as i32);
+                    let mut new_y = start_y + (root_y as i32 - initial_mouse_y as i32);
 
-                let (mon_wx, mon_wy, mon_ww, mon_wh) = {
-                    let sel_mon_key = match wm.sel_mon {
-                        Some(k) => k,
-                        None => return Ok(()),
+                    let (mon_wx, mon_wy, mon_ww, mon_wh) = {
+                        let sel_mon_key = match self.sel_mon {
+                            Some(k) => k,
+                            None => return Ok(()),
+                        };
+                        let m = self.monitors.get(sel_mon_key).unwrap();
+                        (
+                            m.geometry.w_x,
+                            m.geometry.w_y,
+                            m.geometry.w_w,
+                            m.geometry.w_h,
+                        )
                     };
-                    let m = wm.monitors.get(sel_mon_key).unwrap();
-                    (
-                        m.geometry.w_x,
-                        m.geometry.w_y,
-                        m.geometry.w_w,
-                        m.geometry.w_h,
-                    )
-                };
 
-                wm.apply_edge_snapping(
-                    client_key, &mut new_x, &mut new_y, mon_wx, mon_wy, mon_ww, mon_wh,
-                )?;
-                wm.check_and_toggle_floating_for_move(client_key, new_x, new_y)?;
-                if wm.should_move_client(client_key) {
-                    let (w, h) = {
-                        let c = wm.clients.get(client_key).unwrap();
-                        (c.geometry.w, c.geometry.h)
-                    };
-                    wm.resize_client(client_key, new_x, new_y, w, h, true);
-                }
-                Ok(())
-            },
-        )?;
+                    self.apply_edge_snapping(
+                        client_key, &mut new_x, &mut new_y, mon_wx, mon_wy, mon_ww, mon_wh,
+                    )?;
+                    self.check_and_toggle_floating_for_move(client_key, new_x, new_y)?;
+                    if self.should_move_client(client_key) {
+                        let (w, h) = {
+                            let c = self.clients.get(client_key).unwrap();
+                            (c.geometry.w, c.geometry.h)
+                        };
+                        self.resize_client(client_key, new_x, new_y, w, h, true);
+                    }
+                    Ok(())
+                },
+            )?;
+        }
 
         self.cleanup_move(window_id, client_key)?;
         Ok(())
     }
-
     pub fn resizemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         let client_key = match self.get_selected_client_key() {
             Some(k) => k,
@@ -6360,57 +6227,34 @@ impl Jwm {
             (start_w + border_w - 1) as i16,
             (start_h + border_w - 1) as i16,
         );
+
         let cursor_handle = self.backend.cursor_provider().get(StdCursorKind::Fleur)?.0;
 
-        self.pointer_drag_loop(
-            (*MOUSEMASK).bits(),
-            Some(cursor_handle),
-            Some(warp_pos),
-            WindowId(window_id.into()),
-            move |wm: &mut Jwm, root_x, root_y, _time| {
-                let new_width =
-                    ((root_x as i32 - start_x).max(1 + 2 * border_w) - 2 * border_w).max(1);
-                let new_height =
-                    ((root_y as i32 - start_y).max(1 + 2 * border_w) - 2 * border_w).max(1);
+        let io = self.backend.input_ops_handle();
+        {
+            let ops = io.lock().unwrap();
+            ops.drag_loop(
+                Some(cursor_handle),
+                Some(warp_pos),
+                WindowId(window_id.into()),
+                &mut |root_x, root_y, _time| {
+                    let new_width =
+                        ((root_x as i32 - start_x).max(1 + 2 * border_w) - 2 * border_w).max(1);
+                    let new_height =
+                        ((root_y as i32 - start_y).max(1 + 2 * border_w) - 2 * border_w).max(1);
 
-                wm.check_and_toggle_floating_for_resize(client_key, new_width, new_height)?;
-                if wm.should_resize_client(client_key) {
-                    wm.resize_client(client_key, start_x, start_y, new_width, new_height, true);
-                }
-                Ok(())
-            },
-        )?;
-
-        self.cleanup_resize(window_id, border_w)?;
-        Ok(())
-    }
-
-    fn handle_resize_motion(
-        &mut self,
-        client_key: ClientKey,
-        e: &MotionNotifyEvent,
-        original_x: i32,
-        original_y: i32,
-        border_width: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // 计算新的尺寸
-        let new_width =
-            ((e.root_x as i32 - original_x).max(1 + 2 * border_width) - 2 * border_width).max(1);
-        let new_height =
-            ((e.root_y as i32 - original_y).max(1 + 2 * border_width) - 2 * border_width).max(1);
-
-        // 检查是否需要切换到浮动模式
-        self.check_and_toggle_floating_for_resize(client_key, new_width, new_height)?;
-
-        // 如果是浮动窗口或浮动布局，执行调整大小
-        let should_resize = self.should_resize_client(client_key);
-
-        if should_resize {
-            self.resize_client(
-                client_key, original_x, original_y, new_width, new_height, true,
-            );
+                    self.check_and_toggle_floating_for_resize(client_key, new_width, new_height)?;
+                    if self.should_resize_client(client_key) {
+                        self.resize_client(
+                            client_key, start_x, start_y, new_width, new_height, true,
+                        );
+                    }
+                    Ok(())
+                },
+            )?;
         }
 
+        self.cleanup_resize(window_id, border_w)?;
         Ok(())
     }
 

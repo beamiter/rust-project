@@ -1,5 +1,5 @@
 // src/backend/x11/backend.rs
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use x11rb::protocol::xproto::Screen;
 use x11rb::rust_connection::RustConnection;
 
@@ -118,6 +118,12 @@ impl Backend for X11Backend {
     }
     fn input_ops(&self) -> &dyn InputOps {
         &*self.input_ops
+    }
+    fn input_ops_handle(&self) -> std::sync::Arc<std::sync::Mutex<dyn InputOps + Send>> {
+        Arc::new(Mutex::new(super::input_ops::X11InputOps::new(
+            self.conn.clone(),
+            self.screen.root,
+        )))
     }
     fn property_ops(&self) -> &dyn PropertyOps {
         &*self.property_ops
