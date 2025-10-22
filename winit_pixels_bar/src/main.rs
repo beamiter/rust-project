@@ -2,9 +2,12 @@ use anyhow::Result;
 use cairo::{Context, Format, ImageSurface};
 use log::warn;
 use pango::FontDescription;
+use pixels::wgpu::TextureFormat;
+use pixels::{Pixels, PixelsBuilder, SurfaceTexture};
 use shared_structures::SharedRingBuffer;
 use std::env;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use winit::window::Window;
@@ -21,31 +24,64 @@ use xbar_core::{
     spawn_shared_eventfd_notifier,
 };
 
-use pixels::wgpu::TextureFormat;
-use pixels::{Pixels, PixelsBuilder, SurfaceTexture};
-
 #[derive(Debug, Clone, Copy)]
 enum UserEvent {
     Tick,
     SharedUpdated,
 }
 
-// Tick 线程：始终按秒对齐唤醒（低开销），用 state.show_seconds 决定是否重绘
-fn spawn_tick_thread(proxy: EventLoopProxy<UserEvent>) {
+// ============ 事件合并机制（防止内存泄漏的关键） ============
+#[derive(Clone)]
+struct EventCoalescer {
+    shared_dirty: Arc<AtomicBool>,
+    tick_pending: Arc<AtomicBool>,
+}
+
+impl EventCoalescer {
+    fn new() -> Self {
+        Self {
+            shared_dirty: Arc::new(AtomicBool::new(false)),
+            tick_pending: Arc::new(AtomicBool::new(false)),
+        }
+    }
+}
+
+// ============ Tick 线程（带事件合并） ============
+fn spawn_tick_thread(proxy: EventLoopProxy<UserEvent>, signals: EventCoalescer) {
     thread::spawn(move || {
+        let mut last_bucket: u64 = 0;
         loop {
             let now = SystemTime::now()
                 .duration_since(UNIX_EPOCH)
                 .unwrap_or_else(|_| Duration::from_secs(0));
+            let bucket = now.as_secs();
+
+            if bucket != last_bucket {
+                last_bucket = bucket;
+                // 只有在之前没有待处理的 tick 时才发送
+                if signals
+                    .tick_pending
+                    .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                    .is_ok()
+                {
+                    let _ = proxy.send_event(UserEvent::Tick);
+                }
+            }
+
+            // 精确 sleep 到下一秒边界
             let subns = now.subsec_nanos() as u64;
-            let sleep_dur = Duration::from_nanos(1_000_000_000u64.saturating_sub(subns));
-            thread::sleep(sleep_dur);
-            let _ = proxy.send_event(UserEvent::Tick);
+            let remain_ns = 1_000_000_000u64.saturating_sub(subns).max(1);
+            thread::sleep(Duration::from_nanos(remain_ns));
         }
     });
 }
 
-fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>) {
+// ============ 共享内存线程（带事件合并） ============
+fn spawn_shared_thread(
+    proxy: EventLoopProxy<UserEvent>,
+    shared_efd: Option<i32>,
+    signals: EventCoalescer,
+) {
     if let Some(efd) = shared_efd {
         thread::spawn(move || {
             let mut buf8 = [0u8; 8];
@@ -70,7 +106,14 @@ fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>
                 if (pfd.revents & libc::POLLIN) != 0 {
                     let r = unsafe { libc::read(efd, buf8.as_mut_ptr() as *mut _, buf8.len()) };
                     if r == 8 {
-                        let _ = proxy.send_event(UserEvent::SharedUpdated);
+                        // 只有在之前没有待处理的共享更新时才发送
+                        if signals
+                            .shared_dirty
+                            .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+                            .is_ok()
+                        {
+                            let _ = proxy.send_event(UserEvent::SharedUpdated);
+                        }
                     } else if r < 0 {
                         let err = std::io::Error::last_os_error();
                         if let Some(code) = err.raw_os_error() {
@@ -88,35 +131,29 @@ fn spawn_shared_thread(proxy: EventLoopProxy<UserEvent>, shared_efd: Option<i32>
 }
 
 struct App {
-    // 仅保存窗口 ID
     window_id: Option<WindowId>,
     window: Option<Arc<Window>>,
 
-    // 配置与状态
     colors: xbar_core::Colors,
     cfg: BarConfig,
     font: FontDescription,
     state: AppState,
 
-    // DPI/尺寸
     scale_factor: f64,
     logical_size: LogicalSize<f64>,
     last_physical_size: PhysicalSize<u32>,
 
-    // 系统监控更新计时
     last_monitor_update: Instant,
-
-    // 最近一次鼠标物理坐标（像素）
     last_cursor_pos_px: Option<(i32, i32)>,
 
-    // pixels（持有 Window 的所有权）
     pixels: Option<Pixels<'static>>,
-    // 当前 pixels buffer 尺寸（只在 Resized/ScaleFactorChanged 时更新）
     pixels_w: u32,
     pixels_h: u32,
 
-    // 时间刷新：根据 state.show_seconds 决定 bucket（秒或分钟）
     last_time_bucket: u64,
+
+    // 事件合并信号
+    signals: EventCoalescer,
 }
 
 impl App {
@@ -124,6 +161,7 @@ impl App {
         shared_buffer: Option<Arc<SharedRingBuffer>>,
         logical_size: LogicalSize<f64>,
         scale: f64,
+        signals: EventCoalescer,
     ) -> Self {
         let colors = default_colors();
         let cfg = BarConfig {
@@ -134,8 +172,8 @@ impl App {
             pill_hpadding: 10.0,
             pill_radius: 8.0,
             shape_style: ShapeStyle::Pill,
-            time_icon: "",
-            screenshot_label: " Screenshot",
+            time_icon: "",
+            screenshot_label: " Screenshot",
         };
         let font = FontDescription::from_string("JetBrainsMono Nerd Font 11");
         let state = AppState::new(shared_buffer);
@@ -159,6 +197,7 @@ impl App {
             pixels_w: 0,
             pixels_h: 0,
             last_time_bucket: 0,
+            signals,
         }
     }
 
@@ -169,28 +208,36 @@ impl App {
 
         let width_px = (self.logical_size.width * self.scale_factor).round() as i32;
         let height_px = (self.logical_size.height * self.scale_factor).round() as i32;
+
+        // 零尺寸保护
+        if width_px <= 0 || height_px <= 0 {
+            return Ok(());
+        }
+
         let stride = width_px
             .checked_mul(4)
             .ok_or_else(|| anyhow::anyhow!("stride overflow"))?;
+
         if let Some(pixels) = self.pixels.as_mut() {
             {
                 let frame: &mut [u8] = pixels.frame_mut();
                 let surface = unsafe {
                     ImageSurface::create_for_data_unsafe(
                         frame.as_mut_ptr(),
-                        Format::ARgb32, // BGRA pre-multiplied on little-endian
+                        Format::ARgb32,
                         width_px,
                         height_px,
                         stride,
                     )?
                 };
-                // Cairo 绘制
+
                 let cr = Context::new(&surface)?;
                 cr.save()?;
                 cr.set_source_rgba(0.0, 0.0, 0.0, 1.0);
                 cr.set_operator(cairo::Operator::Source);
                 cr.paint()?;
                 cr.restore()?;
+
                 let w_u16 = (width_px as u32).min(u16::MAX as u32) as u16;
                 let h_u16 = (height_px as u32).min(u16::MAX as u32) as u16;
                 draw_bar(
@@ -202,8 +249,10 @@ impl App {
                     &self.font,
                     &self.cfg,
                 )?;
+
                 surface.flush();
             }
+
             pixels
                 .render()
                 .map_err(|e| anyhow::anyhow!("pixels render: {}", e))?;
@@ -220,26 +269,21 @@ impl App {
 
     fn update_hover_and_redraw(&mut self, px: i32, py: i32) {
         if self.state.update_hover(px as i16, py as i16) {
-            // 改为仅请求重绘
             self.request_redraw();
         }
     }
 
     fn handle_button(&mut self, px: i32, py: i32, button_id: u8) {
-        // 记录 show_seconds 切换前的值
         let prev_show_seconds = self.state.show_seconds;
 
         if self.state.handle_buttons(px as i16, py as i16, button_id) {
-            // 如果 show_seconds 在点击后发生变化，则把时间桶对齐，避免下一个 Tick 再多重绘一次
             if self.state.show_seconds != prev_show_seconds {
                 self.last_time_bucket = self.current_time_bucket();
             }
-            // 改为仅请求重绘
             self.request_redraw();
         }
     }
 
-    // 按 state.show_seconds 决定当前时间 bucket（单位秒或分钟）
     fn current_time_bucket(&self) -> u64 {
         let now = SystemTime::now()
             .duration_since(UNIX_EPOCH)
@@ -254,9 +298,7 @@ impl App {
 
 impl ApplicationHandler<UserEvent> for App {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        // 若尚未创建窗口，创建并初始化
         if self.window_id.is_none() {
-            // 初始尺寸：主显示器宽度，bar 高度
             let primary = event_loop
                 .primary_monitor()
                 .or_else(|| event_loop.available_monitors().next());
@@ -284,20 +326,23 @@ impl ApplicationHandler<UserEvent> for App {
                 .with_visible(true)
                 .with_transparent(false);
 
-            // 创建 Window（owned）
             let window = event_loop
                 .create_window(attrs)
                 .expect("create_window failed");
             let win_id = window.id();
             let arc = Arc::new(window);
 
-            // 创建 pixels（将 Window 所有权移动给 SurfaceTexture/Pixels）
             let width_px = (self.logical_size.width * self.scale_factor).round() as u32;
             let height_px = (self.logical_size.height * self.scale_factor).round() as u32;
 
-            let surface_texture = SurfaceTexture::new(width_px, height_px, arc.clone());
+            // 零尺寸保护
+            let safe_w = width_px.max(1);
+            let safe_h = height_px.max(1);
+
+            let surface_texture = SurfaceTexture::new(safe_w, safe_h, arc.clone());
             self.window = Some(arc);
-            let pixels: Pixels<'static> = PixelsBuilder::new(width_px, height_px, surface_texture)
+
+            let pixels: Pixels<'static> = PixelsBuilder::new(safe_w, safe_h, surface_texture)
                 .texture_format(TextureFormat::Bgra8UnormSrgb)
                 .enable_vsync(true)
                 .request_adapter_options(pixels::wgpu::RequestAdapterOptions {
@@ -309,14 +354,11 @@ impl ApplicationHandler<UserEvent> for App {
                 .expect("pixels create failed");
 
             self.window_id = Some(win_id);
-            self.pixels_w = width_px;
-            self.pixels_h = height_px;
+            self.pixels_w = safe_w;
+            self.pixels_h = safe_h;
             self.pixels = Some(pixels);
 
-            // 初始化时间 bucket
             self.last_time_bucket = self.current_time_bucket();
-
-            // 首次绘制：仅请求重绘
             self.request_redraw();
         }
     }
@@ -324,9 +366,11 @@ impl ApplicationHandler<UserEvent> for App {
     fn user_event(&mut self, _event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
             UserEvent::Tick => {
+                // 清理待处理标记
+                self.signals.tick_pending.store(false, Ordering::Release);
+
                 let mut need_redraw = false;
 
-                // 时间 bucket 变化才重绘（秒或分钟由 state.show_seconds 决定）
                 let bucket = self.current_time_bucket();
                 if bucket != self.last_time_bucket {
                     self.last_time_bucket = bucket;
@@ -334,7 +378,6 @@ impl ApplicationHandler<UserEvent> for App {
                     need_redraw = true;
                 }
 
-                // 系统监控更新（保持 2s），降低日志等级
                 if self.last_monitor_update.elapsed() >= Duration::from_secs(2) {
                     self.state.system_monitor.update_if_needed();
                     self.state.audio_manager.update_if_needed();
@@ -344,11 +387,13 @@ impl ApplicationHandler<UserEvent> for App {
                 }
 
                 if need_redraw {
-                    // 改为仅请求重绘
                     self.request_redraw();
                 }
             }
             UserEvent::SharedUpdated => {
+                // 清理待处理标记
+                self.signals.shared_dirty.store(false, Ordering::Release);
+
                 let mut need_redraw = false;
                 if let Some(buf_arc) = self.state.shared_buffer.as_ref().cloned() {
                     match buf_arc.try_read_latest_message() {
@@ -357,14 +402,13 @@ impl ApplicationHandler<UserEvent> for App {
                             self.state.update_from_shared(msg);
                             need_redraw = true;
                         }
-                        Ok(None) => { /* 没有消息 */ }
+                        Ok(None) => {}
                         Err(e) => {
                             warn!("Shared try_read_latest_message failed: {}", e);
                         }
                     }
                 }
                 if need_redraw {
-                    // 改为仅请求重绘
                     self.request_redraw();
                 }
             }
@@ -386,17 +430,19 @@ impl ApplicationHandler<UserEvent> for App {
                 event_loop.exit();
             }
             WindowEvent::Resized(new_size) => {
-                // new_size 是物理像素尺寸；更新记录
                 self.last_physical_size = new_size;
 
-                // 基于当前 scale_factor 更新逻辑尺寸
+                // 零尺寸保护
+                if new_size.width == 0 || new_size.height == 0 {
+                    return;
+                }
+
                 self.logical_size = new_size.to_logical::<f64>(self.scale_factor);
 
-                // 调整 pixels surface/buffer（仅在此处）
                 if let Some(pixels) = self.pixels.as_mut() {
                     let w = (self.logical_size.width * self.scale_factor).round() as u32;
                     let h = (self.logical_size.height * self.scale_factor).round() as u32;
-                    if self.pixels_w != w || self.pixels_h != h {
+                    if w > 0 && h > 0 && (self.pixels_w != w || self.pixels_h != h) {
                         if let Err(e) = pixels.resize_surface(w, h) {
                             warn!("pixels.resize_surface error: {}", e);
                         }
@@ -408,21 +454,16 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
 
-                // 改为仅请求重绘
                 self.request_redraw();
             }
             WindowEvent::ScaleFactorChanged { scale_factor, .. } => {
-                // 更新缩放因子
                 self.scale_factor = scale_factor;
-
-                // 计算逻辑尺寸
                 self.logical_size = self.last_physical_size.to_logical::<f64>(self.scale_factor);
 
-                // 调整 pixels surface/buffer（仅在此处）
                 if let Some(pixels) = self.pixels.as_mut() {
                     let w = (self.logical_size.width * self.scale_factor).round() as u32;
                     let h = (self.logical_size.height * self.scale_factor).round() as u32;
-                    if self.pixels_w != w || self.pixels_h != h {
+                    if w > 0 && h > 0 && (self.pixels_w != w || self.pixels_h != h) {
                         if let Err(e) = pixels.resize_surface(w, h) {
                             warn!("pixels.resize_surface error: {}", e);
                         }
@@ -434,22 +475,18 @@ impl ApplicationHandler<UserEvent> for App {
                     }
                 }
 
-                // 改为仅请求重绘
                 self.request_redraw();
             }
             WindowEvent::CursorMoved { position, .. } => {
-                // position 是 PhysicalPosition<f64>
                 let px = position.x.round() as i32;
                 let py = position.y.round() as i32;
                 self.last_cursor_pos_px = Some((px, py));
                 self.update_hover_and_redraw(px, py);
-                log::trace!(
-                    "cursor px={}, py={}, time_rect={:?}, ss_rect={:?}",
-                    px,
-                    py,
-                    self.state.time_rect,
-                    self.state.ss_rect
-                );
+                log::trace!("cursor px={}, py={}", px, py);
+            }
+            WindowEvent::CursorLeft { .. } => {
+                self.state.clear_hover();
+                self.request_redraw();
             }
             WindowEvent::MouseInput { state, button, .. } => {
                 use winit::event::{ElementState, MouseButton};
@@ -476,39 +513,33 @@ impl ApplicationHandler<UserEvent> for App {
         }
     }
 
-    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {
-        // 周期性刷新由 Tick/SharedUpdated 驱动，这里无需操作
-    }
+    fn about_to_wait(&mut self, _event_loop: &ActiveEventLoop) {}
 }
 
 fn main() -> Result<()> {
-    // 参数
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
-    // 日志
     if let Err(e) = initialize_logging("winit_pixels_bar", &shared_path) {
         eprintln!("Failed to initialize logging: {}", e);
         std::process::exit(1);
     }
 
-    // 共享内存与通知
     let shared_buffer = SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(Arc::new);
     let shared_efd = spawn_shared_eventfd_notifier(shared_buffer.clone(), false);
 
-    // 事件循环与代理（winit 0.30.12）
     let event_loop: EventLoop<UserEvent> = EventLoop::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
 
-    // 后台线程：Tick 与 SharedUpdated
-    spawn_tick_thread(proxy.clone());
-    spawn_shared_thread(proxy.clone(), shared_efd);
+    // 创建事件合并信号
+    let signals = EventCoalescer::new();
 
-    // 初始逻辑尺寸，实际在 resumed 中根据显示器设置
+    spawn_tick_thread(proxy.clone(), signals.clone());
+    spawn_shared_thread(proxy.clone(), shared_efd, signals.clone());
+
     let logical_size = LogicalSize::new(800.0, 40.0);
-    let mut app = App::new(shared_buffer, logical_size, 1.0);
+    let mut app = App::new(shared_buffer, logical_size, 1.0, signals);
 
-    // 运行
     event_loop.run_app(&mut app)?;
     Ok(())
 }
