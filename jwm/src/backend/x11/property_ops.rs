@@ -106,13 +106,14 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         if reply.format != 32 {
             return Ok(-1);
         }
-        let mut it = reply.value32();
-        Ok(it
+        let it = reply.value32();
+        let x = Ok(it
             .into_iter()
             .flatten()
             .next()
             .map(|v| v as i64)
-            .unwrap_or(-1))
+            .unwrap_or(-1));
+        x
     }
 
     fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), Box<dyn std::error::Error>> {
@@ -160,7 +161,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
                 return Ok(());
             }
         };
-        let mut v = reply.value32();
+        let v = reply.value32();
         let mut data: Vec<u32> = v.into_iter().flatten().collect();
         // 至少要有 flags 字段
         if data.is_empty() {

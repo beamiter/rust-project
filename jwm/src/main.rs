@@ -1,4 +1,5 @@
 // use bar::StatusBar;
+use jwm::backend::x11::backend::X11Backend;
 use jwm::{jwm::SHARED_PATH, Jwm};
 use log::{error, info, warn};
 use std::{env, process::Command, sync::atomic::Ordering};

@@ -381,7 +381,9 @@ pub trait Backend: Send {
     fn input_ops(&self) -> &dyn InputOps;
     fn property_ops(&self) -> &dyn PropertyOps;
     fn output_ops(&self) -> &dyn OutputOps;
-    fn ewmh(&self) -> Option<&dyn EwmhFacade>;
+    fn key_ops(&self) -> &dyn KeyOps;
+    fn key_ops_mut(&mut self) -> &mut dyn KeyOps;
+    fn ewmh_facade(&self) -> Option<&dyn EwmhFacade>;
 
     fn cursor_provider(&mut self) -> &mut dyn crate::backend::traits::CursorProvider;
     fn color_allocator(&mut self) -> &mut dyn crate::backend::traits::ColorAllocator;

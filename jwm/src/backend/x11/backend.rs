@@ -4,10 +4,11 @@ use x11rb::protocol::xproto::Screen;
 use x11rb::rust_connection::RustConnection;
 
 use crate::backend::api::{
-    Backend, Capabilities, EventSource, EwmhFacade, InputOps, OutputOps, PropertyOps, WindowId,
-    WindowOps,
+    Backend, Capabilities, EventSource, EwmhFacade, InputOps, KeyOps, OutputOps, PropertyOps,
+    WindowId, WindowOps,
 };
 use crate::backend::traits::{ColorAllocator, CursorProvider};
+use crate::backend::x11::key_ops::X11KeyOps;
 
 use super::{
     color::X11ColorAllocator, cursor::X11CursorProvider, event_source::X11EventSource,
@@ -15,6 +16,7 @@ use super::{
     property_ops::X11PropertyOps, window_ops::X11WindowOps, Atoms,
 };
 
+#[allow(dead_code)]
 pub struct X11Backend {
     conn: Arc<RustConnection>,
     screen: Screen,
@@ -27,6 +29,7 @@ pub struct X11Backend {
     input_ops: Box<dyn InputOps>,
     property_ops: Box<dyn PropertyOps>,
     output_ops: Box<dyn OutputOps>,
+    key_ops: Box<dyn KeyOps>,
     ewmh_facade: Option<Box<dyn EwmhFacade>>,
 
     cursor_provider: Box<dyn CursorProvider>,
@@ -37,8 +40,9 @@ pub struct X11Backend {
 impl X11Backend {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         // 连接 X11
-        let (raw, screen_num) = x11rb::rust_connection::RustConnection::connect(None)?;
-        let conn = Arc::new(raw);
+        let (raw_conn, screen_num) = x11rb::rust_connection::RustConnection::connect(None)?;
+        let conn = Arc::new(raw_conn);
+        use x11rb::connection::Connection;
         let screen = conn.setup().roots[screen_num].clone();
         let root = WindowId(screen.root as u64);
 
@@ -56,6 +60,7 @@ impl X11Backend {
             screen.width_in_pixels as i32,
             screen.height_in_pixels as i32,
         ));
+        let key_ops: Box<dyn KeyOps> = Box::new(X11KeyOps::new(conn.clone()));
         let ewmh_facade: Option<Box<dyn EwmhFacade>> = Some(Box::new(X11EwmhFacade::new(
             conn.clone(),
             root,
@@ -86,6 +91,7 @@ impl X11Backend {
             input_ops,
             property_ops,
             output_ops,
+            key_ops,
             ewmh_facade,
             cursor_provider,
             color_allocator,
@@ -119,7 +125,13 @@ impl Backend for X11Backend {
     fn output_ops(&self) -> &dyn OutputOps {
         &*self.output_ops
     }
-    fn ewmh(&self) -> Option<&dyn EwmhFacade> {
+    fn key_ops(&self) -> &dyn KeyOps {
+        &*self.key_ops
+    }
+    fn key_ops_mut(&mut self) -> &mut dyn KeyOps {
+        &mut *self.key_ops
+    }
+    fn ewmh_facade(&self) -> Option<&dyn EwmhFacade> {
         self.ewmh_facade.as_deref()
     }
 

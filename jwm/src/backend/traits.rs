@@ -35,7 +35,7 @@ pub enum StdCursorKind {
     // 可继续扩展...
 }
 
-pub trait CursorProvider {
+pub trait CursorProvider: Send {
     // 预创建常用光标
     fn preload_common(&mut self) -> Result<(), Box<dyn std::error::Error>>;
     // 获取（或创建）某种标准光标
