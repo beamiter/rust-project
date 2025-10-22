@@ -2889,7 +2889,7 @@ impl Jwm {
             // 提升窗口到顶层
             let config = ConfigureWindowAux::new().stack_mode(StackMode::ABOVE);
             self.x11rb_conn.configure_window(win, &config)?;
-            self.x11rb_conn.flush()?;
+            self.backend.window_ops().flush()?;
         } else if !fullscreen && is_fullscreen {
             // 取消全屏逻辑
             self.set_x11_wm_state_fullscreen(win, false)?;
@@ -3261,7 +3261,7 @@ impl Jwm {
                                 .width(client.geometry.w as u32)
                                 .height(client.geometry.h as u32),
                         )?;
-                        self.x11rb_conn.flush()?;
+                        self.backend.window_ops().flush()?;
                     }
                     return Ok(());
                 }
@@ -3296,7 +3296,7 @@ impl Jwm {
                             .width(client.geometry.w as u32)
                             .height(client.geometry.h as u32),
                     )?;
-                    self.x11rb_conn.flush()?;
+                    self.backend.window_ops().flush()?;
                 }
             }
         } else {
@@ -3336,7 +3336,7 @@ impl Jwm {
             values = values.stack_mode(e.stack_mode);
         }
         self.x11rb_conn.configure_window(e.window, &values)?;
-        self.x11rb_conn.flush()?;
+        self.backend.window_ops().flush()?;
         Ok(())
     }
 
@@ -5537,7 +5537,7 @@ impl Jwm {
             .change_window_attributes(self.backend.root_window().0 as u32, &aux)?;
         self.grabkeys()?;
         self.focus(None)?;
-        self.x11rb_conn.flush()?;
+        self.backend.window_ops().flush()?;
 
         // 读取快照（如果存在）
         let snapshot_opt = Self::load_restart_snapshot();
@@ -6560,7 +6560,7 @@ impl Jwm {
                 )?;
             }
 
-            self.x11rb_conn.flush()?;
+            self.backend.window_ops().flush()?;
         }
 
         Ok(())
@@ -6915,7 +6915,7 @@ impl Jwm {
             // 不设置选中边框色
             self.configure_client(client_key)?;
             self.setclientstate(win, NORMAL_STATE as i64)?;
-            self.x11rb_conn.flush()?;
+            self.backend.window_ops().flush()?;
             return Ok(());
         }
 
@@ -6960,7 +6960,7 @@ impl Jwm {
                 .width(w as u32)
                 .height(h as u32);
             self.x11rb_conn.configure_window(win, &aux)?;
-            self.x11rb_conn.flush()?;
+            self.backend.window_ops().flush()?;
         }
 
         // 5) 设置 NormalState
@@ -6968,7 +6968,7 @@ impl Jwm {
             self.setclientstate(client.win, NORMAL_STATE as i64)?;
         }
 
-        self.x11rb_conn.flush()?;
+        self.backend.window_ops().flush()?;
         Ok(())
     }
 
@@ -6985,7 +6985,7 @@ impl Jwm {
                     c.win,
                     &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
                 )?;
-                self.x11rb_conn.flush()?;
+                self.backend.window_ops().flush()?;
             }
             // 维持父窗口焦点
             self.focus(None)?;
