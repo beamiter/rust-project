@@ -40,7 +40,7 @@ impl ThemeManager {
 
     pub fn allocate_pixels(
         &mut self,
-        allocator: &mut Box<dyn ColorAllocator>,
+        allocator: &mut dyn ColorAllocator,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut colors = Vec::new();
         for s in self.schemes.values() {
@@ -63,7 +63,7 @@ impl ThemeManager {
 
     pub fn free_pixels(
         &mut self,
-        allocator: &mut Box<dyn ColorAllocator>,
+        allocator: &mut dyn ColorAllocator,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let pixels: Vec<Pixel> = self.pixel_cache.values().copied().collect();
         if !pixels.is_empty() {
@@ -77,7 +77,7 @@ impl ThemeManager {
 // 从配置创建
 impl ThemeManager {
     pub fn create_from_config(
-        allocator: &mut Box<dyn ColorAllocator>,
+        allocator: &mut dyn ColorAllocator,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let mut theme = Self::new();
         let colors = crate::config::CONFIG.colors();
