@@ -713,7 +713,6 @@ pub struct Jwm {
 
     // X11rb 连接/根窗口/屏幕/Atoms
     pub x11rb_conn: Arc<RustConnection>,
-    pub x11rb_root: Window,
     pub x11rb_screen: Screen,
     pub atoms: Atoms,
 
@@ -733,7 +732,7 @@ impl Jwm {
         backend.cursor_provider().preload_common()?;
 
         // 屏幕尺寸来自 OutputOps
-        let _si = backend.output_ops().screen_info();
+        let si = backend.output_ops().screen_info();
 
         // 尝试连接到 X11 服务器，添加错误处理
         info!("[new] Connecting to X11 server");
@@ -769,13 +768,15 @@ impl Jwm {
         };
 
         let x11rb_screen = x11rb_conn.setup().roots[x11rb_screen_num].clone();
-        let s_w = x11rb_screen.width_in_pixels.into();
-        let s_h = x11rb_screen.height_in_pixels.into();
-        let x11rb_root = x11rb_screen.root;
+        let s_w = si.width;
+        let s_h = si.height;
 
         info!(
             "[new] Screen info - screen_num: {}, resolution: {}x{}, root: 0x{:x}",
-            x11rb_screen_num, s_w, s_h, x11rb_root
+            x11rb_screen_num,
+            s_w,
+            s_h,
+            backend.root_window().0
         );
 
         // ThemeManager
@@ -831,7 +832,6 @@ impl Jwm {
             pending_bar_updates: HashSet::new(),
 
             x11rb_conn,
-            x11rb_root,
             x11rb_screen,
             atoms,
 
@@ -932,7 +932,7 @@ impl Jwm {
 
     pub fn on_button_press(
         &mut self,
-        window: u32,
+        window: Window,
         state_bits: u16,
         detail_btn: u8,
         time: u32,
@@ -1002,12 +1002,12 @@ impl Jwm {
     // 后端无关：鼠标移动（根窗口）
     pub fn on_motion_notify(
         &mut self,
-        window: u32,
+        window: Window,
         root_x: i16,
         root_y: i16,
         _time: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if window != self.x11rb_root {
+        if window != self.backend.root_window().0 as u32 {
             return Ok(());
         }
         if self.mouse_focus_blocked() {
@@ -1385,7 +1385,7 @@ impl Jwm {
                     response_type: x11rb::protocol::xproto::ENTER_NOTIFY_EVENT,
                     sequence: 0,
                     time: 0,
-                    root: self.x11rb_root,
+                    root: self.backend.root_window().0 as u32,
                     event: event.0 as u32,
                     child: 0,
                     root_x: 0,
@@ -1426,7 +1426,7 @@ impl Jwm {
                 let e = x11rb::protocol::xproto::MapRequestEvent {
                     response_type: x11rb::protocol::xproto::MAP_REQUEST_EVENT,
                     sequence: 0,
-                    parent: self.x11rb_root,
+                    parent: self.backend.root_window().0 as u32,
                     window: window.0 as u32,
                 };
                 self.maprequest(&e)
@@ -2557,7 +2557,7 @@ impl Jwm {
         if let Err(e) = self
             .backend
             .key_ops()
-            .clear_key_grabs(WindowId(self.x11rb_root as u64))
+            .clear_key_grabs(self.backend.root_window())
         {
             warn!("[cleanup_key_grabs] Failed to ungrab keys: {:?}", e);
         }
@@ -2567,13 +2567,13 @@ impl Jwm {
     fn reset_input_focus(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.backend
             .window_ops()
-            .set_input_focus_root(WindowId(self.x11rb_root as u64))?;
+            .set_input_focus_root(self.backend.root_window())?;
         self.backend.window_ops().flush()?;
         Ok(())
     }
 
     fn cleanup_ewmh_properties(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let root_id = WindowId(self.x11rb_root as u64);
+        let root_id = self.backend.root_window();
         for &property in [
             self.atoms._NET_ACTIVE_WINDOW,
             self.atoms._NET_CLIENT_LIST,
@@ -2698,7 +2698,7 @@ impl Jwm {
         e: &ConfigureNotifyEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 检查是否是根窗口的配置变更
-        if e.window == self.x11rb_root {
+        if e.window == self.backend.root_window().0 as u32 {
             info!("[configurenotify] e: {:?}", e);
             let dirty = self.s_w != e.width as i32 || self.s_h != e.height as i32;
             self.s_w = e.width as i32;
@@ -2829,7 +2829,7 @@ impl Jwm {
         // 清除旧的抓取
         self.backend
             .key_ops()
-            .clear_key_grabs(WindowId(self.x11rb_root as u64))?;
+            .clear_key_grabs(self.backend.root_window())?;
 
         // 构造绑定列表（通用 Mods + KeySym）
         let bindings: Vec<(Mods, KeySym)> = CONFIG
@@ -2840,7 +2840,7 @@ impl Jwm {
 
         // 抓取
         self.backend.key_ops().grab_keys(
-            WindowId(self.x11rb_root as u64),
+            self.backend.root_window(),
             &bindings,
             self.x11_numlock_mask.bits() as u16,
         )?;
@@ -3756,7 +3756,10 @@ impl Jwm {
     }
 
     pub fn scan(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let tree_reply = self.x11rb_conn.query_tree(self.x11rb_root)?.reply()?;
+        let tree_reply = self
+            .x11rb_conn
+            .query_tree(self.backend.root_window().0 as u32)?
+            .reply()?;
         let mut cookies = Vec::with_capacity(tree_reply.children.len());
         for win in tree_reply.children {
             let attr = self
@@ -3841,7 +3844,7 @@ impl Jwm {
 
     pub fn wintomon(&mut self, w: Window) -> Option<MonitorKey> {
         // 处理根窗口
-        if w == self.x11rb_root {
+        if w == self.backend.root_window().0 as u32 {
             match self.getrootptr() {
                 Ok((x, y)) => return self.recttomon(x, y, 1, 1),
                 Err(e) => {
@@ -4020,7 +4023,7 @@ impl Jwm {
             .create_colormap(
                 ColormapAlloc::NONE,
                 colormap_id,
-                self.x11rb_root,
+                self.backend.root_window().0 as u32,
                 visualtype.visual_id,
             )?
             .check()?;
@@ -5656,7 +5659,7 @@ impl Jwm {
             .cursor_provider()
             .apply(root.0, StdCursorKind::LeftPtr)?;
         self.x11rb_conn
-            .change_window_attributes(self.x11rb_root, &aux)?;
+            .change_window_attributes(self.backend.root_window().0 as u32, &aux)?;
         self.grabkeys()?;
         self.focus(None)?;
         self.x11rb_conn.flush()?;
@@ -5815,7 +5818,8 @@ impl Jwm {
         // info!("[propertynotify]");
 
         // 处理根窗口属性变更
-        if e.window == self.x11rb_root && e.atom == u32::from(AtomEnum::WM_NAME) {
+        if e.window == self.backend.root_window().0 as u32 && e.atom == u32::from(AtomEnum::WM_NAME)
+        {
             debug!("Root window name property changed");
             return Ok(());
         }
@@ -6514,7 +6518,7 @@ impl Jwm {
         }
         // 过滤不需要处理的事件
         if (e.mode != NotifyMode::NORMAL || e.detail == NotifyDetail::INFERIOR)
-            && e.event != self.x11rb_root
+            && e.event != self.backend.root_window().0 as u32
         {
             return Ok(());
         }
@@ -6687,11 +6691,13 @@ impl Jwm {
             if setfocus {
                 self.backend
                     .window_ops()
-                    .set_input_focus_root(WindowId(self.x11rb_root.into()))?;
+                    .set_input_focus_root(self.backend.root_window())?;
 
                 // 清除 _NET_ACTIVE_WINDOW 属性
-                self.x11rb_conn
-                    .delete_property(self.x11rb_root, self.atoms._NET_ACTIVE_WINDOW)?;
+                self.x11rb_conn.delete_property(
+                    self.backend.root_window().0 as u32,
+                    self.atoms._NET_ACTIVE_WINDOW,
+                )?;
             }
 
             self.x11rb_conn.flush()?;
@@ -6893,7 +6899,7 @@ impl Jwm {
             if setfocus {
                 self.backend
                     .window_ops()
-                    .set_input_focus_root(WindowId(self.x11rb_root.into()))?;
+                    .set_input_focus_root(self.backend.root_window())?;
                 if let Some(facade) = self.backend.ewmh_facade().as_ref() {
                     let _ = facade.clear_active_window();
                 }
@@ -6918,7 +6924,7 @@ impl Jwm {
     fn set_root_focus(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.backend
             .window_ops()
-            .set_input_focus_root(WindowId(self.x11rb_root as u64))?;
+            .set_input_focus_root(self.backend.root_window())?;
         if let Some(facade) = self.backend.ewmh_facade().as_ref() {
             let _ = facade.clear_active_window();
         }
@@ -7858,7 +7864,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[motionnotify]");
         // 只处理根窗口上的鼠标移动事件
-        if e.event != self.x11rb_root {
+        if e.event != self.backend.root_window().0 as u32 {
             return Ok(());
         }
         if self.mouse_focus_blocked() {
@@ -8311,7 +8317,7 @@ impl Jwm {
         };
 
         if dirty {
-            self.sel_mon = self.wintomon(self.x11rb_root);
+            self.sel_mon = self.wintomon(self.backend.root_window().0 as u32);
             if self.sel_mon.is_none() && !self.monitor_order.is_empty() {
                 self.sel_mon = self.monitor_order.first().copied();
             }
