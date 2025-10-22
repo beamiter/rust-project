@@ -111,22 +111,6 @@ pub struct PertagSnapshot {
     pub sel_by_tag: Vec<Option<Window>>, // 每个 tag 的选中窗口（Window）
 }
 
-#[derive(Debug, Clone)]
-#[allow(dead_code)]
-struct DragContext {
-    client_key: ClientKey,
-    window: Window,
-    // 窗口开始拖拽时的几何
-    start_x: i32,
-    start_y: i32,
-    start_w: i32,
-    start_h: i32,
-    border_w: i32,
-    // 鼠标起始位置（root 坐标）
-    initial_mouse_x: u16,
-    initial_mouse_y: u16,
-}
-
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Decode, Encode)]
 pub struct WMClient {
     // === 基本信息 ===
@@ -6274,75 +6258,6 @@ impl Jwm {
             self.backend.window_ops().flush()?;
         }
         Ok(())
-    }
-
-    pub fn sendevent(&mut self, client_mut: &mut WMClient, proto: Atom) -> bool {
-        info!(
-            "[sendevent] Sending protocol {:?} to window 0x{:x}",
-            proto, client_mut.win
-        );
-        // 1. 获取 WM_PROTOCOLS 属性
-        let cookie = self
-            .x11rb_conn
-            .get_property(
-                false,
-                client_mut.win,
-                self.atoms.WM_PROTOCOLS, // Atom for WM_PROTOCOLS
-                AtomEnum::ATOM,
-                0,
-                1024, // 足够大的长度
-            )
-            .unwrap();
-        let reply = match cookie.reply() {
-            Ok(reply) => reply,
-            Err(_) => {
-                warn!(
-                    "[sendevent] Failed to get WM_PROTOCOLS for window 0x{:x}",
-                    client_mut.win
-                );
-                return false;
-            }
-        };
-        // 2. 检查属性值中是否包含目标 proto
-        let protocols: Vec<Atom> = reply.value.as_slice().iter().map(|v| (*v).into()).collect();
-        let exists = protocols.contains(&proto);
-        if !exists {
-            info!(
-                "[sendevent] Protocol {:?} not supported by window 0x{:x}",
-                proto, client_mut.win
-            );
-            return false;
-        }
-        // 3. 构造 ClientMessageEvent
-        let event = ClientMessageEvent::new(
-            32,                      // format: 32 位
-            client_mut.win,          // window
-            self.atoms.WM_PROTOCOLS, // message_type
-            [proto, 0, 0, 0, 0],     // data.l[0] = protocol atom
-        );
-        // 4. 发送事件
-        use x11rb::x11_utils::Serialize;
-        let buffer = event.serialize();
-        let result = self.x11rb_conn.send_event(
-            false,
-            client_mut.win,
-            EventMask::NO_EVENT, // 不需要事件掩码（由接收方决定）
-            buffer,
-        );
-        if let Err(e) = result {
-            warn!("[sendevent] Failed to send event: {}", e);
-            return false;
-        }
-        // 5. flush（可选）
-        if let Err(e) = self.x11rb_conn.flush() {
-            warn!("[sendevent] Failed to flush connection: {}", e);
-            return false;
-        }
-        info!(
-            "[sendevent] Successfully sent protocol {:?} to window 0x{:x}",
-            proto, client_mut.win
-        );
-        true
     }
 
     fn mouse_focus_blocked(&mut self) -> bool {
