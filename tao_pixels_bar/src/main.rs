@@ -7,9 +7,9 @@ use pixels::{Pixels, PixelsBuilder, SurfaceTexture};
 use shared_structures::SharedRingBuffer;
 use std::env;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-use std::sync::atomic::{AtomicBool, Ordering};
 use tao::{
     dpi::{LogicalSize, PhysicalSize},
     event::{Event, StartCause, WindowEvent},
@@ -370,6 +370,161 @@ impl App {
             now.as_secs() / 60
         }
     }
+
+    fn on_user_event(&mut self, event: UserEvent) {
+        match event {
+            UserEvent::SharedUpdated => {
+                // 清理待处理标记，允许下次发送
+                self.signals.shared_dirty.store(false, Ordering::Release);
+
+                let mut need_redraw = false;
+                if let Some(buf_arc) = self.state.shared_buffer.as_ref().cloned() {
+                    match buf_arc.try_read_latest_message() {
+                        Ok(Some(msg)) => {
+                            log::trace!("redraw by msg: {:?}", msg);
+                            self.state.update_from_shared(msg);
+                            need_redraw = true;
+                        }
+                        Ok(None) => { /* 没有消息 */ }
+                        Err(e) => {
+                            warn!("Shared try_read_latest_message failed: {}", e);
+                        }
+                    }
+                }
+                if need_redraw {
+                    if let Err(e) = self.redraw() {
+                        warn!("redraw error (SharedUpdated): {}", e);
+                    }
+                }
+            }
+            UserEvent::Tick => {
+                // 清理待处理标记，允许下次发送
+                self.signals.tick_pending.store(false, Ordering::Release);
+
+                let mut need_redraw = false;
+
+                // 时间 bucket 变化才重绘（秒或分钟由 state.show_seconds 决定）
+                let bucket = self.current_time_bucket();
+                if bucket != self.last_time_bucket {
+                    self.last_time_bucket = bucket;
+                    log::trace!("redraw by time bucket update: {}", bucket);
+                    need_redraw = true;
+                }
+
+                // 系统监控定期更新（2s）
+                if self.last_monitor_update.elapsed() >= Duration::from_secs(2) {
+                    self.state.system_monitor.update_if_needed();
+                    self.state.audio_manager.update_if_needed();
+                    self.last_monitor_update = Instant::now();
+                    log::trace!("maybe redraw by system update");
+                    need_redraw = true;
+                }
+
+                if need_redraw {
+                    if let Err(e) = self.redraw() {
+                        warn!("redraw error (Tick): {}", e);
+                    }
+                }
+            }
+        }
+    }
+
+    fn on_window_event(&mut self, window_id: WindowId, event: WindowEvent) -> Option<ControlFlow> {
+        if Some(window_id) != self.window_id {
+            return None;
+        }
+        match event {
+            WindowEvent::CloseRequested => {
+                return Some(ControlFlow::Exit);
+            }
+            WindowEvent::Resized(new_size) => {
+                self.last_physical_size = new_size;
+                // 零尺寸保护：窗口可能被最小化
+                if new_size.width == 0 || new_size.height == 0 {
+                    // 跳过 resize 与 redraw，等待恢复
+                    return None;
+                }
+                self.logical_size = new_size.to_logical::<f64>(self.scale_factor);
+                if let Some(pixels) = self.pixels.as_mut() {
+                    let w = (self.logical_size.width * self.scale_factor).round() as u32;
+                    let h = (self.logical_size.height * self.scale_factor).round() as u32;
+                    if w > 0 && h > 0 && (self.pixels_w != w || self.pixels_h != h) {
+                        if let Err(e) = pixels.resize_surface(w, h) {
+                            warn!("pixels.resize_surface error: {}", e);
+                        }
+                        if let Err(e) = pixels.resize_buffer(w, h) {
+                            warn!("pixels.resize_buffer error: {}", e);
+                        }
+                        self.pixels_w = w;
+                        self.pixels_h = h;
+                    }
+                }
+                if let Err(e) = self.redraw() {
+                    warn!("redraw error (Resized): {}", e);
+                }
+            }
+            WindowEvent::ScaleFactorChanged {
+                scale_factor,
+                new_inner_size,
+            } => {
+                let new_physical = *new_inner_size;
+                self.scale_factor = scale_factor;
+                self.last_physical_size = new_physical;
+                // 零尺寸保护
+                if new_physical.width == 0 || new_physical.height == 0 {
+                    return None;
+                }
+                self.logical_size = new_physical.to_logical::<f64>(self.scale_factor);
+                if let Some(pixels) = self.pixels.as_mut() {
+                    let w = (self.logical_size.width * self.scale_factor).round() as u32;
+                    let h = (self.logical_size.height * self.scale_factor).round() as u32;
+                    if w > 0 && h > 0 && (self.pixels_w != w || self.pixels_h != h) {
+                        if let Err(e) = pixels.resize_surface(w, h) {
+                            warn!("pixels.resize_surface error: {}", e);
+                        }
+                        if let Err(e) = pixels.resize_buffer(w, h) {
+                            warn!("pixels.resize_buffer error: {}", e);
+                        }
+                        self.pixels_w = w;
+                        self.pixels_h = h;
+                    }
+                }
+                if let Err(e) = self.redraw() {
+                    warn!("redraw error (ScaleFactorChanged): {}", e);
+                }
+            }
+            WindowEvent::CursorMoved { position, .. } => {
+                let px = position.x.round() as i32;
+                let py = position.y.round() as i32;
+                self.last_cursor_pos_px = Some((px, py));
+                self.update_hover_and_redraw(px, py);
+                log::trace!("cursor px={}, py={}", px, py);
+            }
+            WindowEvent::CursorLeft { .. } => {
+                self.state.clear_hover();
+                if let Err(e) = self.redraw() {
+                    warn!("redraw error (CursorLeft): {}", e);
+                }
+            }
+            WindowEvent::MouseInput { state, button, .. } => {
+                use tao::event::{ElementState, MouseButton};
+                if state == ElementState::Pressed {
+                    if let Some((px, py)) = self.last_cursor_pos_px {
+                        let button_id = match button {
+                            MouseButton::Left => 1,
+                            MouseButton::Middle => 2,
+                            MouseButton::Right => 3,
+                            MouseButton::Other(n) => n as u8,
+                            _ => todo!(),
+                        };
+                        self.handle_button(px, py, button_id);
+                    }
+                }
+            }
+            _ => {}
+        }
+        None
+    }
 }
 
 fn main() -> Result<()> {
@@ -413,180 +568,24 @@ fn main() -> Result<()> {
             Event::Resumed => {
                 app.ensure_init_window(target);
             }
-
-            Event::UserEvent(ue) => match ue {
-                UserEvent::SharedUpdated => {
-                    // 清理待处理标记，允许下次发送
-                    app.signals.shared_dirty.store(false, Ordering::Release);
-
-                    let mut need_redraw = false;
-                    if let Some(buf_arc) = app.state.shared_buffer.as_ref().cloned() {
-                        match buf_arc.try_read_latest_message() {
-                            Ok(Some(msg)) => {
-                                log::trace!("redraw by msg: {:?}", msg);
-                                app.state.update_from_shared(msg);
-                                need_redraw = true;
-                            }
-                            Ok(None) => { /* 没有消息 */ }
-                            Err(e) => {
-                                warn!("Shared try_read_latest_message failed: {}", e);
-                            }
-                        }
-                    }
-                    if need_redraw {
-                        if let Err(e) = app.redraw() {
-                            warn!("redraw error (SharedUpdated): {}", e);
-                        }
-                    }
-                }
-                UserEvent::Tick => {
-                    // 清理待处理标记，允许下次发送
-                    app.signals.tick_pending.store(false, Ordering::Release);
-
-                    let mut need_redraw = false;
-
-                    // 时间 bucket 变化才重绘（秒或分钟由 state.show_seconds 决定）
-                    let bucket = app.current_time_bucket();
-                    if bucket != app.last_time_bucket {
-                        app.last_time_bucket = bucket;
-                        log::trace!("redraw by time bucket update: {}", bucket);
-                        need_redraw = true;
-                    }
-
-                    // 系统监控定期更新（2s）
-                    if app.last_monitor_update.elapsed() >= Duration::from_secs(2) {
-                        app.state.system_monitor.update_if_needed();
-                        app.state.audio_manager.update_if_needed();
-                        app.last_monitor_update = Instant::now();
-                        log::trace!("maybe redraw by system update");
-                        need_redraw = true;
-                    }
-
-                    if need_redraw {
-                        if let Err(e) = app.redraw() {
-                            warn!("redraw error (Tick): {}", e);
-                        }
-                    }
-                }
-            },
-
+            Event::UserEvent(ue) => {
+                app.on_user_event(ue);
+            }
             Event::WindowEvent {
                 window_id, event, ..
             } => {
-                if Some(window_id) != app.window_id {
-                    return;
-                }
-
-                match event {
-                    WindowEvent::CloseRequested => {
-                        *control_flow = ControlFlow::Exit;
-                    }
-                    WindowEvent::Resized(new_size) => {
-                        app.last_physical_size = new_size;
-
-                        // 零尺寸保护：窗口可能被最小化
-                        if new_size.width == 0 || new_size.height == 0 {
-                            // 跳过 resize 与 redraw，等待恢复
-                            return;
-                        }
-
-                        app.logical_size = new_size.to_logical::<f64>(app.scale_factor);
-
-                        if let Some(pixels) = app.pixels.as_mut() {
-                            let w = (app.logical_size.width * app.scale_factor).round() as u32;
-                            let h = (app.logical_size.height * app.scale_factor).round() as u32;
-                            if w > 0 && h > 0 && (app.pixels_w != w || app.pixels_h != h) {
-                                if let Err(e) = pixels.resize_surface(w, h) {
-                                    warn!("pixels.resize_surface error: {}", e);
-                                }
-                                if let Err(e) = pixels.resize_buffer(w, h) {
-                                    warn!("pixels.resize_buffer error: {}", e);
-                                }
-                                app.pixels_w = w;
-                                app.pixels_h = h;
-                            }
-                        }
-
-                        if let Err(e) = app.redraw() {
-                            warn!("redraw error (Resized): {}", e);
-                        }
-                    }
-                    WindowEvent::ScaleFactorChanged {
-                        scale_factor,
-                        new_inner_size,
-                    } => {
-                        let new_physical = *new_inner_size;
-                        app.scale_factor = scale_factor;
-                        app.last_physical_size = new_physical;
-
-                        // 零尺寸保护
-                        if new_physical.width == 0 || new_physical.height == 0 {
-                            return;
-                        }
-
-                        app.logical_size = new_physical.to_logical::<f64>(app.scale_factor);
-
-                        if let Some(pixels) = app.pixels.as_mut() {
-                            let w = (app.logical_size.width * app.scale_factor).round() as u32;
-                            let h = (app.logical_size.height * app.scale_factor).round() as u32;
-                            if w > 0 && h > 0 && (app.pixels_w != w || app.pixels_h != h) {
-                                if let Err(e) = pixels.resize_surface(w, h) {
-                                    warn!("pixels.resize_surface error: {}", e);
-                                }
-                                if let Err(e) = pixels.resize_buffer(w, h) {
-                                    warn!("pixels.resize_buffer error: {}", e);
-                                }
-                                app.pixels_w = w;
-                                app.pixels_h = h;
-                            }
-                        }
-
-                        if let Err(e) = app.redraw() {
-                            warn!("redraw error (ScaleFactorChanged): {}", e);
-                        }
-                    }
-                    WindowEvent::CursorMoved { position, .. } => {
-                        let px = position.x.round() as i32;
-                        let py = position.y.round() as i32;
-                        app.last_cursor_pos_px = Some((px, py));
-                        app.update_hover_and_redraw(px, py);
-                        log::trace!("cursor px={}, py={}", px, py);
-                    }
-                    WindowEvent::CursorLeft { .. } => {
-                        app.state.clear_hover();
-                        if let Err(e) = app.redraw() {
-                            warn!("redraw error (CursorLeft): {}", e);
-                        }
-                    }
-                    WindowEvent::MouseInput { state, button, .. } => {
-                        use tao::event::{ElementState, MouseButton};
-                        if state == ElementState::Pressed {
-                            if let Some((px, py)) = app.last_cursor_pos_px {
-                                let button_id = match button {
-                                    MouseButton::Left => 1,
-                                    MouseButton::Middle => 2,
-                                    MouseButton::Right => 3,
-                                    MouseButton::Other(n) => n as u8,
-                                    _ => todo!(),
-                                };
-                                app.handle_button(px, py, button_id);
-                            }
-                        }
-                    }
-                    _ => {}
+                if let Some(cf) = app.on_window_event(window_id, event) {
+                    *control_flow = cf;
                 }
             }
-
             Event::RedrawRequested(_) => {
                 if let Err(e) = app.redraw() {
                     warn!("redraw error (RedrawRequested): {}", e);
                 }
             }
-
             Event::LoopDestroyed => {
                 // 资源在 Drop 时释放
             }
-
             _ => {}
         }
     });
