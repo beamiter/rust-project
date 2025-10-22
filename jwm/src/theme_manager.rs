@@ -1,6 +1,7 @@
 // src/xcb_util.rs
 
-use crate::backend::traits::{ColorAllocator, Pixel};
+use crate::backend::common_define::Pixel;
+use crate::backend::api::ColorAllocator;
 use std::collections::HashMap;
 
 #[derive(Debug, Clone)]

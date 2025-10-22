@@ -1,5 +1,6 @@
 // src/backend/x11/cursor.rs
-use crate::backend::traits::{CursorHandle, CursorProvider, StdCursorKind};
+use crate::backend::api::{CursorHandle, CursorProvider};
+use crate::backend::common_define::StdCursorKind;
 use std::collections::HashMap;
 use std::sync::Arc;
 use x11rb::connection::Connection;

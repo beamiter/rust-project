@@ -11,8 +11,8 @@ use crate::jwm::WMFuncType;
 use crate::jwm::{self, Jwm, LayoutEnum, WMButton, WMClickType, WMKey, WMRule};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
-use crate::backend::common_input::keys as k;
-use crate::backend::common_input::{KeySym, Mods, MouseButton};
+use crate::backend::common_define::keys as k;
+use crate::backend::common_define::{KeySym, Mods, MouseButton};
 
 pub const LOAD_LOCAL_CONFIG: bool = false;
 

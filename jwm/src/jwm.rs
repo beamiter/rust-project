@@ -25,9 +25,7 @@ use crate::backend::api::AllowMode;
 use crate::backend::api::BackendEvent;
 use crate::backend::api::Geometry;
 use crate::backend::api::{Backend, WindowId};
-use crate::backend::common_input::{KeySym, Mods, MouseButton};
-use crate::backend::cursor_manager::CursorManager;
-use crate::backend::traits::StdCursorKind;
+use crate::backend::common_define::{KeySym, Mods, MouseButton, StdCursorKind};
 use crate::backend::x11::adapter::{button_to_x11, mods_from_x11, mods_to_x11};
 use crate::backend::x11::property_ops::X11PropertyOps;
 use crate::backend::x11::Atoms;
@@ -53,7 +51,7 @@ use nix::unistd::close;
 
 // definitions for initial window state.
 pub const WITHDRAWN_STATE: u8 = 0;
-pub const STEXT_MAX_LEN: usize =  512;
+pub const STEXT_MAX_LEN: usize = 512;
 pub const NORMAL_STATE: u8 = 1;
 pub const ICONIC_STATE: u8 = 2;
 pub const RESTART_SNAPSHOT_PATH: &str = "/var/tmp/jwm/restart_snapshot.bin";
@@ -669,7 +667,6 @@ pub struct Jwm {
     pub x11_numlock_mask: x11rb::protocol::xproto::KeyButMask,
     pub running: AtomicBool,
     pub is_restarting: AtomicBool,
-    pub cursor_manager: CursorManager,
     pub theme_manager: ThemeManager,
 
     backend: Box<dyn Backend>,
@@ -782,11 +779,6 @@ impl Jwm {
         );
         let (theme_manager, _alloc_back) = ThemeManager::create_from_config(x11_alloc)?;
 
-        // CursorManager
-        let cursor_provider =
-            crate::backend::x11::cursor::X11CursorProvider::new(x11rb_conn.clone())?;
-        let cursor_manager = CursorManager::new(Box::new(cursor_provider))?;
-
         info!("[new] JWM initialization completed successfully");
 
         Ok(Jwm {
@@ -796,7 +788,6 @@ impl Jwm {
             running: AtomicBool::new(true),
             is_restarting: AtomicBool::new(false),
             theme_manager,
-            cursor_manager,
 
             backend,
 
@@ -3635,7 +3626,6 @@ impl Jwm {
         }
     }
 
-    // jwm.rs 中替换 run_async
     pub async fn run_async(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // 后端 flush，确保挂起请求发出
         self.backend.event_source().flush()?;
@@ -3670,7 +3660,6 @@ impl Jwm {
         Ok(())
     }
 
-    // jwm.rs 中替换 run_sync
     pub fn run_sync(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // 使用简化的阻塞循环 + 小睡眠，完全走 backend 事件源
         self.backend.event_source().flush()?;

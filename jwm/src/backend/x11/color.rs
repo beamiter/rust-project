@@ -1,5 +1,6 @@
 // src/backend/x11/color.rs
-use crate::backend::traits::{ColorAllocator, Pixel};
+use crate::backend::api::ColorAllocator;
+use crate::backend::common_define::Pixel;
 use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::Colormap;
@@ -19,7 +20,12 @@ impl<C: Connection + Send + Sync + 'static> ColorAllocator for X11ColorAllocator
     fn alloc_rgb(&mut self, r: u8, g: u8, b: u8) -> Result<Pixel, Box<dyn std::error::Error>> {
         use x11rb::protocol::xproto::ConnectionExt;
         let reply = (*self.conn)
-            .alloc_color(self.colormap, (r as u16) << 8, (g as u16) << 8, (b as u16) << 8)?
+            .alloc_color(
+                self.colormap,
+                (r as u16) << 8,
+                (g as u16) << 8,
+                (b as u16) << 8,
+            )?
             .reply()?;
         Ok(Pixel(reply.pixel))
     }

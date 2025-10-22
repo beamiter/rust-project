@@ -1,5 +1,34 @@
-// src/backend/common_input.rs
+// src/backend/common_define.rs
 use bitflags::bitflags;
+
+// 通用后端窗口ID（X11: Window; Wayland: 自定义句柄）
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct WindowId(pub u64);
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Pixel(pub u32); // 通用像素句柄（X11=像素ID，Wayland=ABGR/RGBA值或纹理句柄）
+
+// 通用光标类型与接口
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct CursorHandle(pub u64); // X11=Cursor id, Wayland=内部id
+
+// 标准光标的语义标识（与 xcb_util::StandardCursor 对齐）
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum StdCursorKind {
+    LeftPtr,
+    Hand,
+    XTerm,
+    Watch,
+    Crosshair,
+    Fleur,
+    HDoubleArrow,
+    VDoubleArrow,
+    TopLeftCorner,
+    TopRightCorner,
+    BottomLeftCorner,
+    BottomRightCorner,
+    Sizing,
+}
 
 /// 与后端无关的 KeySym（使用 xkbcommon 的 keysym 值，Wayland/X11 通用）
 pub type KeySym = u32;

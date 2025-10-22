@@ -1,10 +1,8 @@
 // src/backend/api.rs
-use crate::backend::common_input::{KeySym, Mods};
+pub use crate::backend::common_define::{
+    CursorHandle, KeySym, Mods, Pixel, StdCursorKind, WindowId,
+};
 use std::fmt::Debug;
-
-// 通用后端窗口ID（X11: Window; Wayland: 自定义句柄）
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
-pub struct WindowId(pub u64);
 
 #[derive(Clone, Copy, Debug)]
 pub struct ScreenInfo {
@@ -374,6 +372,30 @@ pub trait EwmhFacade: Send {
     fn set_supported_atoms(&self, supported: &[u32]) -> Result<(), Box<dyn std::error::Error>>;
 }
 
+// 通用颜色分配接口
+pub trait ColorAllocator: Send {
+    // 分配一个 RGB 颜色，返回通用 Pixel 句柄
+    fn alloc_rgb(&mut self, r: u8, g: u8, b: u8) -> Result<Pixel, Box<dyn std::error::Error>>;
+    // 释放多个像素（可选）
+    fn free_pixels(&mut self, pixels: &[Pixel]) -> Result<(), Box<dyn std::error::Error>>;
+}
+
+pub trait CursorProvider: Send {
+    // 预创建常用光标
+    fn preload_common(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+    // 获取（或创建）某种标准光标
+    fn get(&mut self, kind: StdCursorKind) -> Result<CursorHandle, Box<dyn std::error::Error>>;
+    // 应用光标到窗口
+    // 这里用通用 WindowId: u64 表示，X11=Window，Wayland=surface 或 seat/cursor surface 逻辑自行映射
+    fn apply(
+        &mut self,
+        window_id: u64,
+        kind: StdCursorKind,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+    // 清理资源
+    fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+}
+
 // 后端总接口（聚合各子服务）
 pub trait Backend: Send {
     fn capabilities(&self) -> Capabilities;
@@ -386,8 +408,8 @@ pub trait Backend: Send {
     fn key_ops_mut(&mut self) -> &mut dyn KeyOps;
     fn ewmh_facade(&self) -> Option<&dyn EwmhFacade>;
 
-    fn cursor_provider(&mut self) -> &mut dyn crate::backend::traits::CursorProvider;
-    fn color_allocator(&mut self) -> &mut dyn crate::backend::traits::ColorAllocator;
+    fn cursor_provider(&mut self) -> &mut dyn CursorProvider;
+    fn color_allocator(&mut self) -> &mut dyn ColorAllocator;
 
     fn event_source(&mut self) -> &mut dyn EventSource;
     fn root_window(&self) -> WindowId;

@@ -7,7 +7,7 @@ use crate::backend::api::{
     Backend, Capabilities, EventSource, EwmhFacade, InputOps, KeyOps, OutputOps, PropertyOps,
     WindowId, WindowOps,
 };
-use crate::backend::traits::{ColorAllocator, CursorProvider};
+use crate::backend::api::{ColorAllocator, CursorProvider};
 use crate::backend::x11::key_ops::X11KeyOps;
 
 use super::{

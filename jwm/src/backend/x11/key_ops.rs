@@ -6,7 +6,7 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 
 use crate::backend::api::{KeyOps, WindowId};
-use crate::backend::common_input::{KeySym, Mods};
+use crate::backend::common_define::{KeySym, Mods};
 use crate::backend::x11::adapter::mods_to_x11;
 
 pub struct X11KeyOps<C: Connection> {
