@@ -95,7 +95,7 @@ impl ThemeManager {
         theme.set_scheme(SchemeType::Norm, normal);
         theme.set_scheme(SchemeType::Sel, selected);
 
-        theme.allocate_pixels(&mut allocator)?;
+        theme.allocate_pixels(allocator)?;
         Ok(theme)
     }
 }
