@@ -23,7 +23,11 @@ use std::usize;
 
 use crate::backend::api::AllowMode;
 use crate::backend::api::BackendEvent;
+use crate::backend::api::EwmhFeature;
 use crate::backend::api::Geometry;
+use crate::backend::api::NetWmAction;
+use crate::backend::api::NetWmState;
+use crate::backend::api::PropertyKind;
 use crate::backend::api::{Backend, WindowId};
 use crate::backend::common_define::ArgbColor;
 use crate::backend::common_define::ColorScheme;
@@ -687,10 +691,6 @@ pub struct Jwm {
     // per-monitor 的待刷新集合（仍按显示器维度存）
     pub pending_bar_updates: HashSet<MonitorIndex>,
 
-    // X11rb 连接/根窗口/屏幕/Atoms
-    pub x11rb_conn: Arc<RustConnection>,
-    pub atoms: Atoms,
-
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
 
     pub restoring_from_snapshot: bool,
@@ -703,41 +703,17 @@ impl Jwm {
         info!("[new] Starting JWM initialization");
         // 显示当前的 X11 环境信息
         Self::log_x11_environment();
-
         backend.cursor_provider().preload_common()?;
-
         // 屏幕尺寸来自 OutputOps
         let si = backend.output_ops().screen_info();
-
-        // 尝试连接到 X11 服务器，添加错误处理
-        info!("[new] Connecting to X11 server");
-        let (raw_conn, x11rb_screen_num) =
-            match x11rb::rust_connection::RustConnection::connect(None) {
-                Ok(conn) => {
-                    info!("[new] X11 connection established");
-                    conn
-                }
-                Err(e) => {
-                    error!("[new] Failed to connect to X11 server: {}", e);
-                    return Err(format!("X11 connection failed: {}", e).into());
-                }
-            };
-        let x11rb_conn = Arc::new(raw_conn);
-
-        info!("[new] Getting atoms");
-        let atoms = Atoms::new(x11rb_conn.as_ref())?.reply()?;
-
         let s_w = si.width;
         let s_h = si.height;
-
         info!(
-            "[new] Screen info - screen_num: {}, resolution: {}x{}, root: 0x{:x}",
-            x11rb_screen_num,
+            "[new] Screen info - resolution: {}x{}, root: 0x{:x}",
             s_w,
             s_h,
             backend.root_window().0
         );
-
         let alloc = backend.color_allocator();
         let colors = crate::config::CONFIG.colors();
         alloc.set_scheme(
@@ -758,9 +734,7 @@ impl Jwm {
         );
         // 预分配
         backend.color_allocator().allocate_schemes_pixels()?;
-
         info!("[new] JWM initialization completed successfully");
-
         Ok(Jwm {
             s_w,
             s_h,
@@ -791,9 +765,6 @@ impl Jwm {
             bar_min_interval: std::time::Duration::from_millis(10),
             status_bar_pid: None,
             pending_bar_updates: HashSet::new(),
-
-            x11rb_conn,
-            atoms,
 
             suppress_mouse_focus_until: None,
 
@@ -832,61 +803,6 @@ impl Jwm {
                 break;
             }
         }
-        Ok(())
-    }
-
-    pub fn on_client_message(
-        &mut self,
-        window: u32,
-        type_atom: u32,
-        data: [u32; 5],
-        format: u8,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // 找到对应客户端
-        let client_key = match self.wintoclient(window) {
-            Some(k) => k,
-            None => return Ok(()),
-        };
-
-        // 处理 _NET_WM_STATE（全屏）
-        if type_atom == self.atoms._NET_WM_STATE {
-            // 我们的 EventSource 已经传递 data32，且 EWMH ClientMessage 规范为 format=32
-            if format == 32 {
-                let state1 = data[1];
-                let state2 = data[2];
-                // 两个候选位中任意一个是 FULLSCREEN
-                if state1 == self.atoms._NET_WM_STATE_FULLSCREEN
-                    || state2 == self.atoms._NET_WM_STATE_FULLSCREEN
-                {
-                    // data[0] 是 action: 1=ADD, 0=REMOVE, 2=TOGGLE
-                    let is_fullscreen = self
-                        .clients
-                        .get(client_key)
-                        .map(|c| c.state.is_fullscreen)
-                        .unwrap_or(false);
-                    let fullscreen = match data[0] {
-                        1 => true,
-                        0 => false,
-                        2 => !is_fullscreen,
-                        _ => is_fullscreen, // 未知操作：保持现状
-                    };
-                    self.setfullscreen(client_key, fullscreen)?;
-                }
-            }
-        }
-        // 处理 _NET_ACTIVE_WINDOW（置 urgent）
-        else if type_atom == self.atoms._NET_ACTIVE_WINDOW {
-            let is_urgent = self
-                .clients
-                .get(client_key)
-                .map(|client| client.state.is_urgent)
-                .unwrap_or(false);
-
-            if !self.is_client_selected(client_key) && !is_urgent {
-                self.seturgent(client_key, true)?;
-            }
-        }
-
         Ok(())
     }
 
@@ -1307,7 +1223,7 @@ impl Jwm {
                 type_,
                 data,
                 format,
-            } => self.on_client_message(window.0 as u32, type_, data, format),
+            } => Ok(()),
 
             BackendEvent::ConfigureNotify { window, x, y, w, h } => {
                 // 此处仍保留旧路径，后续按需迁移
@@ -1395,17 +1311,7 @@ impl Jwm {
                 window,
                 atom,
                 state,
-            } => {
-                let e = x11rb::protocol::xproto::PropertyNotifyEvent {
-                    response_type: x11rb::protocol::xproto::PROPERTY_NOTIFY_EVENT,
-                    sequence: 0,
-                    window: window.0 as u32,
-                    atom,
-                    time: 0,
-                    state: x11rb::protocol::xproto::Property::from(state),
-                };
-                self.propertynotify(&e)
-            }
+            } => Ok(()),
             BackendEvent::UnmapNotify {
                 window,
                 from_configure,
@@ -1421,6 +1327,74 @@ impl Jwm {
             }
 
             BackendEvent::ButtonRelease { .. } | BackendEvent::MappingNotify { .. } => Ok(()),
+            BackendEvent::EwmhState {
+                window,
+                action,
+                states,
+            } => {
+                // 只关注 FULLSCREEN
+                let fullscreen_requested = states
+                    .iter()
+                    .flatten()
+                    .any(|s| matches!(s, NetWmState::Fullscreen));
+                if fullscreen_requested {
+                    let is_fullscreen = self
+                        .clients
+                        .get(self.wintoclient(window.0 as u32).unwrap())
+                        .map(|c| c.state.is_fullscreen)
+                        .unwrap_or(false);
+                    let fullscreen = match action {
+                        NetWmAction::Add => true,
+                        NetWmAction::Remove => false,
+                        NetWmAction::Toggle => !is_fullscreen,
+                    };
+                    if let Some(ck) = self.wintoclient(window.0 as u32) {
+                        self.setfullscreen(ck, fullscreen)?;
+                    }
+                }
+                Ok(())
+            }
+            BackendEvent::ActiveWindowMessage { window } => {
+                if let Some(ck) = self.wintoclient(window.0 as u32) {
+                    let is_urgent = self
+                        .clients
+                        .get(ck)
+                        .map(|c| c.state.is_urgent)
+                        .unwrap_or(false);
+                    if !self.is_client_selected(ck) && !is_urgent {
+                        self.seturgent(ck, true)?;
+                    }
+                }
+                Ok(())
+            }
+            BackendEvent::PropertyChanged {
+                window,
+                kind,
+                deleted,
+            } => {
+                if deleted {
+                    return Ok(());
+                }
+                if let Some(client_key) = self.wintoclient(window.0 as u32) {
+                    match kind {
+                        PropertyKind::WmTransientFor => {
+                            self.handle_transient_for_change(client_key)?
+                        }
+                        PropertyKind::WmNormalHints => {
+                            self.handle_normal_hints_change(client_key)?
+                        }
+                        PropertyKind::WmHints => self.handle_wm_hints_change(client_key)?,
+                        PropertyKind::WmName | PropertyKind::NetWmName => {
+                            self.handle_title_change(client_key)?
+                        }
+                        PropertyKind::NetWmWindowType => {
+                            self.handle_window_type_change(client_key)?
+                        }
+                        PropertyKind::Other => { /* 忽略 */ }
+                    }
+                }
+                Ok(())
+            }
         }
     }
 
@@ -2258,62 +2232,42 @@ impl Jwm {
         (w, h)
     }
 
-    /// 更新 updatesizehints 方法签名
     pub fn updatesizehints(
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let win = if let Some(client) = self.clients.get(client_key) {
-            client.win
-        } else {
-            return Err("Client not found".into());
-        };
-
-        // 获取 WM_NORMAL_HINTS
-        let reply = match WmSizeHints::get_normal_hints(&self.x11rb_conn, win)?.reply()? {
-            Some(reply) => reply,
+        let win = self
+            .clients
+            .get(client_key)
+            .map(|c| c.win)
+            .ok_or("Client not found")?;
+        match self
+            .backend
+            .property_ops()
+            .fetch_normal_hints(WindowId(win.into()))?
+        {
+            Some(h) => {
+                let c = self.clients.get_mut(client_key).ok_or("Client not found")?;
+                c.size_hints.base_w = h.base_w;
+                c.size_hints.base_h = h.base_h;
+                c.size_hints.inc_w = h.inc_w;
+                c.size_hints.inc_h = h.inc_h;
+                c.size_hints.max_w = h.max_w;
+                c.size_hints.max_h = h.max_h;
+                c.size_hints.min_w = h.min_w;
+                c.size_hints.min_h = h.min_h;
+                c.size_hints.min_aspect = h.min_aspect;
+                c.size_hints.max_aspect = h.max_aspect;
+                c.state.is_fixed =
+                    (h.max_w > 0) && (h.max_h > 0) && (h.max_w == h.min_w) && (h.max_h == h.min_h);
+                c.size_hints.hints_valid = true;
+            }
             None => {
-                // 没有 WM_NORMAL_HINTS 属性，使用默认值
-                if let Some(client) = self.clients.get_mut(client_key) {
-                    client.size_hints.hints_valid = false;
+                if let Some(c) = self.clients.get_mut(client_key) {
+                    c.size_hints.hints_valid = false;
                 }
-                return Ok(());
             }
-        };
-
-        // 更新客户端的尺寸提示
-        if let Some(client) = self.clients.get_mut(client_key) {
-            if let Some((w, h)) = reply.base_size {
-                client.size_hints.base_w = w;
-                client.size_hints.base_h = h;
-            }
-            if let Some((w, h)) = reply.size_increment {
-                client.size_hints.inc_w = w;
-                client.size_hints.inc_h = h;
-            }
-            if let Some((w, h)) = reply.max_size {
-                client.size_hints.max_w = w;
-                client.size_hints.max_h = h;
-            }
-            if let Some((w, h)) = reply.min_size {
-                client.size_hints.min_w = w;
-                client.size_hints.min_h = h;
-            }
-            if let Some((min_aspect, max_aspect)) = reply.aspect {
-                client.size_hints.min_aspect =
-                    min_aspect.numerator as f32 / min_aspect.denominator as f32;
-                client.size_hints.max_aspect =
-                    max_aspect.numerator as f32 / max_aspect.denominator as f32;
-            }
-
-            client.state.is_fixed = (client.size_hints.max_w > 0)
-                && (client.size_hints.max_h > 0)
-                && (client.size_hints.max_w == client.size_hints.min_w)
-                && (client.size_hints.max_h == client.size_hints.min_h);
-
-            client.size_hints.hints_valid = true;
         }
-
         Ok(())
     }
 
@@ -2390,11 +2344,9 @@ impl Jwm {
         for (win, old_border_w, ck) in clients_to_process {
             if let Some(_) = self.clients.get(ck) {
                 if restarting {
-                    // 重启：尽量不改变窗口可见属性，避免闪烁
-                    // 仅取消抓取与事件监听，保留现状
-                    let _ =
-                        self.x11rb_conn
-                            .ungrab_button(ButtonIndex::ANY, win, ModMask::ANY.into());
+                    self.backend
+                        .window_ops()
+                        .ungrab_all_buttons(WindowId(win.into()))?;
                     let mask = EventMask::NO_EVENT.bits();
                     self.backend
                         .window_ops()
@@ -2535,81 +2487,10 @@ impl Jwm {
     }
 
     fn cleanup_ewmh_properties(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let root_id = self.backend.root_window();
-        for &property in [
-            self.atoms._NET_ACTIVE_WINDOW,
-            self.atoms._NET_CLIENT_LIST,
-            self.atoms._NET_SUPPORTED,
-        ]
-        .iter()
-        {
-            let _ = self.backend.window_ops().delete_property(root_id, property);
+        if let Some(facade) = self.backend.ewmh_facade().as_ref() {
+            let _ = facade.reset_root_properties(); // 后端内部清理 _NET_ACTIVE_WINDOW/_NET_CLIENT_LIST/_NET_SUPPORTED
         }
         Ok(())
-    }
-
-    pub fn clientmessage(
-        &mut self,
-        e: &ClientMessageEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[clientmessage]");
-        let client_key = if let Some(key) = self.wintoclient(e.window) {
-            key
-        } else {
-            return Ok(());
-        };
-
-        // 检查客户端是否存在
-        if !self.clients.contains_key(client_key) {
-            return Ok(());
-        }
-
-        // 检查是否是窗口状态消息
-        if e.type_ == self.atoms._NET_WM_STATE {
-            // 检查是否是全屏状态变更
-            if self.is_fullscreen_state_message(e) {
-                // 获取当前全屏状态（不持有借用）
-                let is_fullscreen = self
-                    .clients
-                    .get(client_key)
-                    .map(|client| client.state.is_fullscreen)
-                    .unwrap_or(false);
-
-                // 解析操作类型
-                let action = self.get_client_message_long(e, 0)?;
-                let fullscreen = match action {
-                    1 => true,           // NET_WM_STATE_ADD
-                    0 => false,          // NET_WM_STATE_REMOVE
-                    2 => !is_fullscreen, // NET_WM_STATE_TOGGLE
-                    _ => return Ok(()),  // 未知操作
-                };
-
-                self.setfullscreen(client_key, fullscreen)?;
-            }
-        }
-        // 检查是否是激活窗口消息
-        else if e.type_ == self.atoms._NET_ACTIVE_WINDOW {
-            // 获取紧急状态（不持有借用）
-            let is_urgent = self
-                .clients
-                .get(client_key)
-                .map(|client| client.state.is_urgent)
-                .unwrap_or(false);
-
-            if !self.is_client_selected(client_key) && !is_urgent {
-                self.seturgent(client_key, true)?;
-            }
-        }
-
-        Ok(())
-    }
-
-    /// 检查是否是全屏状态消息
-    fn is_fullscreen_state_message(&self, e: &ClientMessageEvent) -> bool {
-        let state1 = self.get_client_message_long(e, 1).unwrap_or(0);
-        let state2 = self.get_client_message_long(e, 2).unwrap_or(0);
-        state1 == self.atoms._NET_WM_STATE_FULLSCREEN
-            || state2 == self.atoms._NET_WM_STATE_FULLSCREEN
     }
 
     /// 从ClientMessage中获取long数据
@@ -2831,7 +2712,9 @@ impl Jwm {
 
         if fullscreen && !is_fullscreen {
             // 设置全屏逻辑
-            self.set_x11_wm_state_fullscreen(win, true)?;
+            self.backend
+                .property_ops()
+                .set_fullscreen_state(WindowId(win.into()), fullscreen)?;
 
             // 更新客户端状态
             if let Some(client) = self.clients.get_mut(client_key) {
@@ -2856,12 +2739,15 @@ impl Jwm {
             }
 
             // 提升窗口到顶层
-            let config = ConfigureWindowAux::new().stack_mode(StackMode::ABOVE);
-            self.x11rb_conn.configure_window(win, &config)?;
+            self.backend
+                .window_ops()
+                .configure_stack_above(WindowId(win.into()), None)?;
             self.backend.window_ops().flush()?;
         } else if !fullscreen && is_fullscreen {
             // 取消全屏逻辑
-            self.set_x11_wm_state_fullscreen(win, false)?;
+            self.backend
+                .property_ops()
+                .set_fullscreen_state(WindowId(win.into()), fullscreen)?;
 
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.state.is_fullscreen = false;
@@ -3222,13 +3108,13 @@ impl Jwm {
                 if is_popup {
                     // 最小干预：仅回 ACK/按应用请求配置
                     if let Some(client) = self.clients.get(client_key) {
-                        self.x11rb_conn.configure_window(
-                            client.win,
-                            &ConfigureWindowAux::new()
-                                .x(client.geometry.x)
-                                .y(client.geometry.y)
-                                .width(client.geometry.w as u32)
-                                .height(client.geometry.h as u32),
+                        self.backend.window_ops().configure_xywh_border(
+                            WindowId(client.win.into()),
+                            Some(client.geometry.x),
+                            Some(client.geometry.y),
+                            Some(client.geometry.w as u32),
+                            Some(client.geometry.h as u32),
+                            None,
                         )?;
                         self.backend.window_ops().flush()?;
                     }
@@ -3257,13 +3143,13 @@ impl Jwm {
             let is_visible = self.is_client_visible_by_key(client_key);
             if is_visible {
                 if let Some(client) = self.clients.get(client_key) {
-                    self.x11rb_conn.configure_window(
-                        client.win,
-                        &ConfigureWindowAux::new()
-                            .x(client.geometry.x)
-                            .y(client.geometry.y)
-                            .width(client.geometry.w as u32)
-                            .height(client.geometry.h as u32),
+                    self.backend.window_ops().configure_xywh_border(
+                        WindowId(client.win.into()),
+                        Some(client.geometry.x),
+                        Some(client.geometry.y),
+                        Some(client.geometry.w as u32),
+                        Some(client.geometry.h as u32),
+                        None,
                     )?;
                     self.backend.window_ops().flush()?;
                 }
@@ -3707,13 +3593,6 @@ impl Jwm {
                 }
                 CommandType::None => {}
             }
-        }
-    }
-
-    fn get_transient_for(&self, window: Window) -> Option<Window> {
-        match self.get_transient_for_hint(window) {
-            Ok(trans) => trans,
-            Err(_) => None,
         }
     }
 
@@ -5462,20 +5341,19 @@ impl Jwm {
     pub fn setup_ewmh(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(facade) = self.backend.ewmh_facade().as_ref() {
             let _support_win = facade.setup_supporting_wm_check("jwm")?;
-            // 声明支持的 atoms（保留 X11 atoms，但 Jwm 不直接操作 property）
             let supported = [
-                self.atoms._NET_ACTIVE_WINDOW,
-                self.atoms._NET_SUPPORTED,
-                self.atoms._NET_WM_NAME,
-                self.atoms._NET_WM_STATE,
-                self.atoms._NET_SUPPORTING_WM_CHECK,
-                self.atoms._NET_WM_STATE_FULLSCREEN,
-                self.atoms._NET_WM_WINDOW_TYPE,
-                self.atoms._NET_WM_WINDOW_TYPE_DIALOG,
-                self.atoms._NET_CLIENT_LIST,
-                self.atoms._NET_CLIENT_INFO,
+                EwmhFeature::ActiveWindow,
+                EwmhFeature::Supported,
+                EwmhFeature::WmName,
+                EwmhFeature::WmState,
+                EwmhFeature::SupportingWmCheck,
+                EwmhFeature::WmStateFullscreen,
+                EwmhFeature::ClientList,
+                EwmhFeature::ClientInfo,
+                EwmhFeature::WmWindowType,
+                EwmhFeature::WmWindowTypeDialog,
             ];
-            facade.set_supported_atoms(&supported)?;
+            facade.declare_supported(&supported)?;
         }
         self.backend.window_ops().flush()?;
         Ok(())
@@ -5549,7 +5427,7 @@ impl Jwm {
         );
 
         // 首先尝试发送 WM_DELETE_WINDOW 协议消息（优雅关闭）
-        if self.sendevent_by_window(client_win, self.atoms.WM_DELETE_WINDOW) {
+        if self.sendevent_by_window(client_win) {
             info!("[killclient] Sent WM_DELETE_WINDOW protocol message");
             return Ok(());
         }
@@ -5561,58 +5439,19 @@ impl Jwm {
         Ok(())
     }
 
-    fn sendevent_by_window(&mut self, window: Window, proto: Atom) -> bool {
-        info!(
-            "[sendevent_by_window] Sending protocol {:?} to window 0x{:x}",
-            proto, window
-        );
-
-        let cookie = match self.x11rb_conn.get_property(
-            false,
-            window,
-            self.atoms.WM_PROTOCOLS,
-            AtomEnum::ATOM,
-            0,
-            1024,
-        ) {
-            Ok(cookie) => cookie,
-            Err(_) => {
-                warn!("[sendevent_by_window] Failed to send get_property request");
-                return false;
-            }
-        };
-        let reply = match cookie.reply() {
-            Ok(reply) => reply,
-            Err(_) => {
-                warn!(
-                    "[sendevent_by_window] Failed to get WM_PROTOCOLS for window 0x{:x}",
-                    window
-                );
-                return false;
-            }
-        };
-        let protocols: Vec<Atom> = reply.value32().into_iter().flatten().collect();
-        if !protocols.contains(&proto) {
-            info!(
-                "[sendevent_by_window] Protocol {:?} not supported by window 0x{:x}",
-                proto, window
+    fn sendevent_by_window(&mut self, window: Window) -> bool {
+        let wid = WindowId(window.into());
+        if !self.backend.property_ops().supports_delete_window(wid) {
+            return false;
+        }
+        if let Err(e) = self.backend.property_ops().send_delete_window(wid) {
+            warn!(
+                "[sendevent_by_window] Failed to send WM_DELETE_WINDOW: {}",
+                e
             );
             return false;
         }
-
-        let res = self
-            .backend
-            .window_ops()
-            .send_client_message(
-                WindowId(window.into()),
-                self.atoms.WM_PROTOCOLS,
-                [proto, 0, 0, 0, 0],
-            )
-            .and_then(|_| self.backend.window_ops().flush());
-        if let Err(e) = res {
-            warn!("[sendevent_by_window] Failed to send event: {}", e);
-            return false;
-        }
+        let _ = self.backend.window_ops().flush();
         true
     }
 
@@ -5655,64 +5494,6 @@ impl Jwm {
         true
     }
 
-    pub fn propertynotify(
-        &mut self,
-        e: &PropertyNotifyEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[propertynotify]");
-
-        // 处理根窗口属性变更
-        if e.window == self.backend.root_window().0 as u32 && e.atom == u32::from(AtomEnum::WM_NAME)
-        {
-            debug!("Root window name property changed");
-            return Ok(());
-        }
-
-        // 忽略属性删除事件
-        if e.state == Property::DELETE {
-            debug!("Ignoring property delete event for window {}", e.window);
-            return Ok(());
-        }
-
-        // 处理客户端窗口属性变更
-        if let Some(client_key) = self.wintoclient(e.window) {
-            self.handle_client_property_change(client_key, e)?;
-        } else {
-            debug!("Property change for unmanaged window: {}", e.window);
-        }
-
-        Ok(())
-    }
-
-    fn handle_client_property_change(
-        &mut self,
-        client_key: ClientKey,
-        e: &PropertyNotifyEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        match e.atom {
-            atom if atom == self.atoms.WM_TRANSIENT_FOR => {
-                self.handle_transient_for_change(client_key)?;
-            }
-            atom if atom == u32::from(AtomEnum::WM_NORMAL_HINTS) => {
-                self.handle_normal_hints_change(client_key)?;
-            }
-            atom if atom == u32::from(AtomEnum::WM_HINTS) => {
-                self.handle_wm_hints_change(client_key)?;
-            }
-            atom if atom == u32::from(AtomEnum::WM_NAME) || atom == self.atoms._NET_WM_NAME => {
-                self.handle_title_change(client_key)?;
-            }
-            atom if atom == self.atoms._NET_WM_WINDOW_TYPE => {
-                self.handle_window_type_change(client_key)?;
-            }
-            _ => {
-                debug!("Unhandled property change: atom {}", e.atom);
-            }
-        }
-
-        Ok(())
-    }
-
     fn handle_transient_for_change(
         &mut self,
         client_key: ClientKey,
@@ -5726,7 +5507,7 @@ impl Jwm {
 
         if !is_floating {
             // 获取transient_for属性
-            let transient_for = self.get_transient_for_hint(win)?;
+            let transient_for = self.get_transient_for(win);
             if let Some(parent_window) = transient_for {
                 // 检查父窗口是否是我们管理的客户端
                 if self.wintoclient(parent_window).is_some() {
@@ -6238,22 +6019,15 @@ impl Jwm {
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.clients.get(client_key) {
-            let monitor_num = if let Some(mon_key) = client.mon {
-                if let Some(monitor) = self.monitors.get(mon_key) {
-                    monitor.num as u32
-                } else {
-                    0
-                }
-            } else {
-                0
-            };
-
-            let data: [u32; 2] = [client.state.tags, monitor_num];
-            self.backend.window_ops().change_property32(
+            let monitor_num = client
+                .mon
+                .and_then(|mk| self.monitors.get(mk))
+                .map(|m| m.num as u32)
+                .unwrap_or(0);
+            self.backend.property_ops().set_client_info(
                 WindowId(client.win.into()),
-                self.atoms._NET_CLIENT_INFO,
-                AtomEnum::CARDINAL.into(),
-                &data,
+                client.state.tags,
+                monitor_num,
             )?;
             self.backend.window_ops().flush()?;
         }
@@ -6452,12 +6226,9 @@ impl Jwm {
                 self.backend
                     .window_ops()
                     .set_input_focus_root(self.backend.root_window())?;
-
-                // 清除 _NET_ACTIVE_WINDOW 属性
-                self.x11rb_conn.delete_property(
-                    self.backend.root_window().0 as u32,
-                    self.atoms._NET_ACTIVE_WINDOW,
-                )?;
+                if let Some(facade) = self.backend.ewmh_facade().as_ref() {
+                    let _ = facade.clear_active_window();
+                }
             }
 
             self.backend.window_ops().flush()?;
@@ -6854,12 +6625,14 @@ impl Jwm {
             } else {
                 return Err("Client not found".into());
             };
-            let aux = ConfigureWindowAux::new()
-                .x(x)
-                .y(y)
-                .width(w as u32)
-                .height(h as u32);
-            self.x11rb_conn.configure_window(win, &aux)?;
+            self.backend.window_ops().configure_xywh_border(
+                WindowId(win.into()),
+                Some(x),
+                Some(y),
+                Some(w as u32),
+                Some(h as u32),
+                None,
+            )?;
             self.backend.window_ops().flush()?;
         }
 
@@ -6881,10 +6654,9 @@ impl Jwm {
             // 不更新 monitor.sel，不抢焦点
             // 需要的话，只做一次 restack 提到父窗口之上
             if let Some(c) = self.clients.get(client_key) {
-                self.x11rb_conn.configure_window(
-                    c.win,
-                    &ConfigureWindowAux::new().stack_mode(StackMode::ABOVE),
-                )?;
+                self.backend
+                    .window_ops()
+                    .configure_stack_above(WindowId(c.win.into()), None)?;
                 self.backend.window_ops().flush()?;
             }
             // 维持父窗口焦点
@@ -7028,8 +6800,8 @@ impl Jwm {
         };
 
         // 使用 x11rb 获取 WM_TRANSIENT_FOR 属性
-        match self.get_transient_for_hint(win) {
-            Ok(Some(transient_for_win)) => {
+        match self.get_transient_for(win) {
+            Some(transient_for_win) => {
                 // 找到 transient_for 窗口对应的客户端
                 if let Some(parent_client_key) = self.wintoclient(transient_for_win) {
                     let (parent_mon, parent_tags) =
@@ -7058,17 +6830,9 @@ impl Jwm {
                     self.applyrules_by_key(client_key);
                 }
             }
-            Ok(None) => {
+            None => {
                 info!("no WM_TRANSIENT_FOR property");
                 // 没有 WM_TRANSIENT_FOR 属性
-                if let Some(client) = self.clients.get_mut(client_key) {
-                    client.mon = self.sel_mon;
-                }
-                self.applyrules_by_key(client_key);
-            }
-            Err(e) => {
-                warn!("Failed to get transient_for hint: {:?}", e);
-                // 失败时使用默认行为
                 if let Some(client) = self.clients.get_mut(client_key) {
                     client.mon = self.sel_mon;
                 }
@@ -7291,32 +7055,11 @@ impl Jwm {
         Ok(())
     }
 
-    fn get_transient_for_hint(
-        &self,
-        window: Window,
-    ) -> Result<Option<Window>, Box<dyn std::error::Error>> {
-        let cookie = self.x11rb_conn.get_property(
-            false,                       // delete
-            window,                      // window
-            self.atoms.WM_TRANSIENT_FOR, // property
-            AtomEnum::WINDOW,            // type
-            0,                           // long_offset
-            1,                           // long_length
-        )?;
-
-        let reply = cookie.reply()?;
-
-        if reply.format == 32 && reply.value.len() >= 4 {
-            // 解析 32位的窗口ID
-            let mut values = reply.value32().unwrap();
-            if let Some(transient_for) = values.next() {
-                if transient_for != 0 && transient_for != window {
-                    return Ok(Some(transient_for));
-                }
-            }
-        }
-
-        Ok(None)
+    fn get_transient_for(&self, window: Window) -> Option<Window> {
+        self.backend
+            .property_ops()
+            .transient_for(WindowId(window.into()))
+            .map(|w| w.0 as u32)
     }
 
     fn manage_statusbar(
@@ -8236,175 +7979,51 @@ impl Jwm {
         }
     }
 
-    fn set_x11_wm_state_fullscreen(
-        &mut self,
-        win: u32,
-        on: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let wid = WindowId(win as u64);
-        if on {
-            self.backend
-                .property_ops()
-                .add_net_wm_state_atom(wid, self.atoms._NET_WM_STATE_FULLSCREEN)?;
-        } else {
-            self.backend
-                .property_ops()
-                .remove_net_wm_state_atom(wid, self.atoms._NET_WM_STATE_FULLSCREEN)?;
-        }
-        Ok(())
-    }
-
     pub fn updatewindowtype(&mut self, client_key: ClientKey) {
-        // 获取 window
-        let win = if let Some(client) = self.clients.get(client_key) {
-            client.win
-        } else {
-            warn!("[updatewindowtype] Client {:?} not found", client_key);
-            return;
-        };
-
-        // 1) 判定 FULLSCREEN 是否在 _NET_WM_STATE 列表中
-        if let Ok(true) = self
-            .backend
-            .property_ops()
-            .has_net_wm_state(WindowId(win.into()), self.atoms._NET_WM_STATE_FULLSCREEN)
-        {
-            let _ = self.setfullscreen(client_key, true);
-        }
-
-        // 2) 读取 _NET_WM_WINDOW_TYPE（仍可保留你原有的单值或多值读取逻辑）
-        let wtype = self.getatomprop_by_window(win, self.atoms._NET_WM_WINDOW_TYPE.into());
-        if wtype == self.atoms._NET_WM_WINDOW_TYPE_DIALOG {
-            if let Some(client) = self.clients.get_mut(client_key) {
-                client.state.is_floating = true;
+        if let Some(client) = self.clients.get(client_key) {
+            let win_id = WindowId(client.win.into());
+            if let Ok(true) = self.backend.property_ops().is_fullscreen(win_id) {
+                let _ = self.setfullscreen(client_key, true);
+            }
+            if self.backend.property_ops().is_popup_type(win_id) {
+                if let Some(c) = self.clients.get_mut(client_key) {
+                    c.state.is_floating = true;
+                }
             }
         }
-    }
-
-    /// 根据窗口ID获取原子属性
-    pub fn getatomprop_by_window(&self, window: Window, prop: Atom) -> Atom {
-        // 发送 GetProperty 请求
-        let cookie = match self.x11rb_conn.get_property(
-            false,          // delete: 是否删除属性（false）
-            window,         // window
-            prop,           // property
-            AtomEnum::ATOM, // req_type: 期望的类型（Atom）
-            0,              // long_offset
-            1,              // long_length (最多读取 1 个 Atom)
-        ) {
-            Ok(cookie) => cookie,
-            Err(_) => return 0, // 请求发送失败
-        };
-
-        // 等待回复
-        let reply = match cookie.reply() {
-            Ok(reply) => reply,
-            Err(_) => return 0, // 无回复或属性不存在
-        };
-
-        let mut values = if let Some(values) = reply.value32() {
-            values
-        } else {
-            return 0;
-        };
-
-        // 提取第一个 Atom 值（32 位）
-        values.next().unwrap_or(0)
     }
 
     pub fn updatewmhints(&mut self, client_key: ClientKey) {
-        // 获取窗口ID
-        let win = if let Some(client) = self.clients.get(client_key) {
-            client.win
-        } else {
-            warn!("[updatewmhints] Client {:?} not found", client_key);
-            return;
+        let win = match self.clients.get(client_key) {
+            Some(c) => c.win,
+            None => return,
         };
-
-        // 1. 读取 WM_HINTS 属性
-        use x11rb::wrapper::ConnectionExt;
-        let cookie = match self.x11rb_conn.get_property(
-            false, // delete: 不删除
-            win,   // window
-            AtomEnum::WM_HINTS,
-            AtomEnum::CARDINAL, // type: 期望 CARDINAL（实际是位图）
-            0,                  // long_offset
-            20,                 // length
-        ) {
-            Ok(cookie) => cookie,
-            Err(_) => {
-                debug!("updatewmhints: failed to send get_property request");
-                return;
-            }
-        };
-
-        let reply = match cookie.reply() {
-            Ok(reply) => reply,
-            Err(_) => {
-                // 属性不存在或无效
-                return;
-            }
-        };
-
-        // 2. 解析 flags（第一个 u32）
-        let mut values = reply.value32().into_iter().flatten();
-        let flags = match values.next() {
-            Some(f) => f,
-            None => return, // 无数据
-        };
-
-        // 3. 检查是否为当前选中窗口
-        let is_focused = self.is_client_selected(client_key);
-
-        const X_URGENCY_HINT: u32 = 1 << 8;
-        const INPUT_HINT: u32 = 1 << 0;
-
-        // 4. 处理 XUrgencyHint
-        if (flags & X_URGENCY_HINT) != 0 {
-            if is_focused {
-                // 如果是当前选中窗口，清除 urgency hint
-                let new_flags = flags & !X_URGENCY_HINT;
-                let mut data: Vec<u32> = vec![new_flags];
-                data.extend(&mut values); // 保留其余字段
-
-                let _ = self
-                    .x11rb_conn
-                    .change_property32(
-                        PropMode::REPLACE,
-                        win,
-                        AtomEnum::WM_HINTS,
-                        AtomEnum::WM_HINTS,
-                        &data,
-                    )
-                    .and_then(|_| self.x11rb_conn.flush());
+        let wid = WindowId(win.into());
+        if let Some(hints) = self.backend.property_ops().get_wm_hints(wid) {
+            // 处理紧急状态
+            if hints.urgent {
+                let is_focused = self.is_client_selected(client_key);
+                if is_focused {
+                    let _ = self.backend.property_ops().set_urgent_hint(wid, false);
+                } else {
+                    if let Some(c) = self.clients.get_mut(client_key) {
+                        c.state.is_urgent = true;
+                    }
+                }
             } else {
-                // 否则标记为 urgent
-                if let Some(client) = self.clients.get_mut(client_key) {
-                    client.state.is_urgent = true;
+                if let Some(c) = self.clients.get_mut(client_key) {
+                    c.state.is_urgent = false;
                 }
             }
-        } else {
-            // 没有 urgency hint
-            if let Some(client) = self.clients.get_mut(client_key) {
-                client.state.is_urgent = false;
-            }
-        }
-
-        // 5. 处理 InputHint
-        if (flags & INPUT_HINT) != 0 {
-            // InputHint 存在，检查 input 字段
-            let input = match values.next() {
-                Some(i) => i as i32,
-                None => return,
-            };
-
-            if let Some(client) = self.clients.get_mut(client_key) {
-                client.state.never_focus = input <= 0;
-            }
-        } else {
-            // InputHint 不存在，可聚焦
-            if let Some(client) = self.clients.get_mut(client_key) {
-                client.state.never_focus = false;
+            // 处理 InputHint
+            if let Some(input_ok) = hints.input {
+                if let Some(c) = self.clients.get_mut(client_key) {
+                    c.state.never_focus = !input_ok;
+                }
+            } else {
+                if let Some(c) = self.clients.get_mut(client_key) {
+                    c.state.never_focus = false;
+                }
             }
         }
     }

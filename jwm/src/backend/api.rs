@@ -27,9 +27,43 @@ pub struct Capabilities {
     pub supports_client_list: bool,
 }
 
-// 统一事件（只保留 JWM 需要的字段）
+#[derive(Debug, Clone, Copy)]
+pub enum NetWmState {
+    Fullscreen, /* 后续可扩充 */
+}
+#[derive(Debug, Clone, Copy)]
+pub enum NetWmAction {
+    Add,
+    Remove,
+    Toggle,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PropertyKind {
+    WmTransientFor,
+    WmNormalHints,
+    WmHints,
+    WmName,
+    NetWmName,
+    NetWmWindowType,
+    Other, // 后端无法识别
+}
+
 #[derive(Debug, Clone)]
 pub enum BackendEvent {
+    EwmhState {
+        window: WindowId,
+        action: NetWmAction,
+        states: [Option<NetWmState>; 2], // 最多两个
+    },
+    ActiveWindowMessage {
+        window: WindowId,
+    },
+    PropertyChanged {
+        window: WindowId,
+        kind: PropertyKind,
+        deleted: bool,
+    },
     ButtonPress {
         window: WindowId,
         state: u16,
@@ -308,10 +342,68 @@ pub trait WindowOps: Send {
     fn set_input_focus_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct NormalHints {
+    pub base_w: i32,
+    pub base_h: i32,
+    pub inc_w: i32,
+    pub inc_h: i32,
+    pub max_w: i32,
+    pub max_h: i32,
+    pub min_w: i32,
+    pub min_h: i32,
+    pub min_aspect: f32,
+    pub max_aspect: f32,
+}
+#[derive(Debug, Clone, Copy)]
+pub struct WmHints {
+    pub urgent: bool,
+    pub input: Option<bool>, // None 表示未提供 InputHint
+}
+
 // 属性接口
 pub trait PropertyOps: Send {
     fn get_text_property_best_title(&self, win: WindowId) -> String;
     fn get_wm_class(&self, win: WindowId) -> Option<(String, String)>;
+
+    // 语义化：窗口类型/状态，隐藏 Atom
+    fn is_popup_type(&self, win: WindowId) -> bool;
+    fn is_fullscreen(&self, win: WindowId) -> Result<bool, Box<dyn std::error::Error>>;
+    fn set_fullscreen_state(
+        &self,
+        win: WindowId,
+        on: bool,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 语义化：ICCCM WM_HINTS
+    fn get_wm_hints(&self, win: WindowId) -> Option<WmHints>;
+    fn set_urgent_hint(
+        &self,
+        win: WindowId,
+        urgent: bool,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 语义化：WM_TRANSIENT_FOR
+    fn transient_for(&self, win: WindowId) -> Option<WindowId>;
+
+    // 语义化：WM_NORMAL_HINTS（WmSizeHints）
+    fn fetch_normal_hints(
+        &self,
+        win: WindowId,
+    ) -> Result<Option<NormalHints>, Box<dyn std::error::Error>>;
+
+    // 语义化：WM_DELETE_WINDOW 协议
+    fn supports_delete_window(&self, win: WindowId) -> bool;
+    fn send_delete_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 语义化：_NET_CLIENT_INFO 设置
+    fn set_client_info(
+        &self,
+        win: WindowId,
+        tags: u32,
+        monitor_num: u32,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
     fn get_net_wm_state_atoms(&self, win: WindowId)
         -> Result<Vec<u32>, Box<dyn std::error::Error>>;
     fn has_net_wm_state(
@@ -340,21 +432,23 @@ pub trait PropertyOps: Send {
         atom: u32,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
-    fn is_popup_type(&self, win: WindowId) -> bool;
-    fn transient_for(&self, _win: WindowId) -> Option<WindowId> {
-        None
-    }
-
     // ICCCM WM_STATE 读写
     fn get_wm_state(&self, win: WindowId) -> Result<i64, Box<dyn std::error::Error>>;
     fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), Box<dyn std::error::Error>>;
+}
 
-    // 设置/清除 WM_HINTS 的 XUrgencyHint
-    fn set_urgent_hint(
-        &self,
-        win: WindowId,
-        urgent: bool,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum EwmhFeature {
+    ActiveWindow,
+    Supported,
+    WmName,
+    WmState,
+    SupportingWmCheck,
+    WmStateFullscreen,
+    ClientList,
+    ClientInfo,
+    WmWindowType,
+    WmWindowTypeDialog,
 }
 
 // EWMH 门面（Wayland 可 no-op）
@@ -371,6 +465,13 @@ pub trait EwmhFacade: Send {
     ) -> Result<WindowId, Box<dyn std::error::Error>>;
 
     fn set_supported_atoms(&self, supported: &[u32]) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn declare_supported(&self, features: &[EwmhFeature])
+        -> Result<(), Box<dyn std::error::Error>>;
+    // 可选：退出清理根属性
+    fn reset_root_properties(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
 }
 
 // 通用颜色分配接口
