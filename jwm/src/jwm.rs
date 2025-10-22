@@ -1250,9 +1250,9 @@ impl Jwm {
         h: u16,
         border: u16,
         sibling: Option<u32>,
-        stack_mode: u8,
+        _stack_mode: u8,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use x11rb::protocol::xproto::{ConfigWindow, StackMode};
+        use x11rb::protocol::xproto::ConfigWindow;
 
         info!(
             "[handle_unmanaged_configure_request] unmanaged window=0x{:x}",
@@ -1298,20 +1298,14 @@ impl Jwm {
             );
         }
 
-        // 若包含 sibling/stack_mode，当前 window_ops 仅提供 Above 简化版；
-        // 暂时保持直接调用 X11（逐步替换阶段）
         if mask.contains(ConfigWindow::SIBLING) || mask.contains(ConfigWindow::STACK_MODE) {
-            let mut aux = x11rb::protocol::xproto::ConfigureWindowAux::new();
-            if let Some(sib) = sibling {
-                aux = aux.sibling(sib);
-            }
-            if mask.contains(ConfigWindow::STACK_MODE) {
-                aux = aux.stack_mode(StackMode::from(stack_mode));
-            }
-            self.x11rb_conn.configure_window(window, &aux)?;
+            self.backend.window_ops().configure_stack_above(
+                WindowId(window.into()),
+                sibling.map(|s| WindowId(s.into())),
+            )?;
         }
+        self.backend.window_ops().flush()?;
 
-        self.x11rb_conn.flush()?;
         Ok(())
     }
 
@@ -3660,39 +3654,29 @@ impl Jwm {
         }
     }
 
+    // jwm.rs 中替换 run_async
     pub async fn run_async(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.x11rb_conn.flush()?;
+        // 后端 flush，确保挂起请求发出
+        self.backend.event_source().flush()?;
         let mut event_count: u64 = 0;
+
+        // 定时器用于节拍处理（状态栏等）
         let mut update_timer = tokio::time::interval(std::time::Duration::from_millis(10));
 
-        // 与原逻辑一致：基于 X11 fd 的 AsyncFd，用于 readiness
-        let raw_fd = self.x11rb_conn.stream().as_raw_fd();
-        let dup_owned: OwnedFd = {
-            let borrowed = unsafe { BorrowedFd::borrow_raw(raw_fd) };
-            let new_fd = nix::fcntl::fcntl(borrowed, FcntlArg::F_DUPFD_CLOEXEC(3))?;
-            unsafe { OwnedFd::from_raw_fd(new_fd) }
-        };
-        {
-            let flags_bits = nix::fcntl::fcntl(&dup_owned, FcntlArg::F_GETFL)?;
-            let flags = OFlag::from_bits_truncate(flags_bits);
-            let _ = nix::fcntl::fcntl(&dup_owned, FcntlArg::F_SETFL(flags | OFlag::O_NONBLOCK))?;
-        }
-        let async_fd = AsyncFd::new(dup_owned)?;
-
         while self.running.load(std::sync::atomic::Ordering::SeqCst) {
-            // 抽干所有可用事件（改为从 event_source 拉）
+            // 抽干所有可用事件
             while let Some(ev) = self.backend.event_source().poll_event()? {
                 event_count = event_count.wrapping_add(1);
-                debug!("[run_async] event_count: {}, event: {:?}", event_count, ev);
                 let _ = self.handle_backend_event(ev);
             }
 
-            // bar 处理逻辑保持不变
+            // 处理状态栏命令与待更新
             self.process_commands_from_status_bar();
             if !self.pending_bar_updates.is_empty() {
                 self.flush_pending_bar_updates();
             }
 
+            // 等待下一个 tick
             tokio::select! {
                 _ = update_timer.tick() => {
                     self.process_commands_from_status_bar();
@@ -3700,215 +3684,33 @@ impl Jwm {
                         self.flush_pending_bar_updates();
                     }
                 }
-                ready = async_fd.readable() => {
-                    match ready {
-                        Ok(mut guard) => {
-                            loop {
-                                let mut progressed = false;
-                                // 抽干事件（改为 event_source）
-                                while let Some(ev) = self.backend.event_source().poll_event()? {
-                                    event_count = event_count.wrapping_add(1);
-                                    let _ = self.handle_backend_event(ev);
-                                    progressed = true;
-                                }
-                                if progressed {
-                                    tokio::task::yield_now().await;
-                                } else {
-                                    guard.clear_ready();
-                                    break;
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            log::warn!("AsyncFd readable() error: {}", e);
-                            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
-                        }
-                    }
-                }
             }
         }
         Ok(())
     }
 
+    // jwm.rs 中替换 run_sync
     pub fn run_sync(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 确保连接上的挂起请求尽快发出
-        self.x11rb_conn.flush()?;
+        // 使用简化的阻塞循环 + 小睡眠，完全走 backend 事件源
+        self.backend.event_source().flush()?;
         let mut event_count: u64 = 0;
 
-        // 1) 取出 X11 连接底层 fd
-        let x_fd = self.x11rb_conn.stream().as_raw_fd();
-
-        // 2) 创建 epoll 实例
-        let epfd = unsafe { libc::epoll_create1(libc::EPOLL_CLOEXEC) };
-        if epfd < 0 {
-            return Err(std::io::Error::last_os_error().into());
-        }
-
-        // 3) 创建 timerfd：10ms 周期
-        let tfd = unsafe {
-            libc::timerfd_create(
-                libc::CLOCK_MONOTONIC,
-                libc::TFD_NONBLOCK | libc::TFD_CLOEXEC,
-            )
-        };
-        if tfd < 0 {
-            let e = std::io::Error::last_os_error();
-            let _ = close(epfd);
-            return Err(e.into());
-        }
-
-        // 设置初始启动时间与间隔（10ms）
-        let to_timespec = |ms: u64| -> libc::timespec {
-            libc::timespec {
-                tv_sec: (ms / 1000) as libc::time_t,
-                tv_nsec: ((ms % 1000) * 1_000_000) as libc::c_long,
-            }
-        };
-        let its = libc::itimerspec {
-            it_interval: to_timespec(10),
-            it_value: to_timespec(10),
-        };
-        let rc = unsafe { libc::timerfd_settime(tfd, 0, &its as *const _, std::ptr::null_mut()) };
-        if rc < 0 {
-            let e = std::io::Error::last_os_error();
-            let _ = close(tfd);
-            let _ = close(epfd);
-            return Err(e.into());
-        }
-
-        // 4) 注册 X fd 与 timerfd 到 epoll
-        const X_TOKEN: u64 = 1;
-        const TFD_TOKEN: u64 = 2;
-
-        let mut ev_x = libc::epoll_event {
-            events: (libc::EPOLLIN) as u32,
-            u64: X_TOKEN,
-        };
-        let rc = unsafe { libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, x_fd, &mut ev_x as *mut _) };
-        if rc < 0 {
-            let e = std::io::Error::last_os_error();
-            let _ = close(tfd);
-            let _ = close(epfd);
-            return Err(e.into());
-        }
-
-        let mut ev_t = libc::epoll_event {
-            events: (libc::EPOLLIN) as u32,
-            u64: TFD_TOKEN,
-        };
-        let rc = unsafe { libc::epoll_ctl(epfd, libc::EPOLL_CTL_ADD, tfd, &mut ev_t as *mut _) };
-        if rc < 0 {
-            let e = std::io::Error::last_os_error();
-            let _ = close(tfd);
-            let _ = close(epfd);
-            return Err(e.into());
-        }
-
-        // 5) 主循环
-        // 先准备一个固定容量的 events buffer
-        const EP_EVENTS_CAP: usize = 32;
-        let mut events: [libc::epoll_event; EP_EVENTS_CAP] =
-            unsafe { MaybeUninit::zeroed().assume_init() };
-
         while self.running.load(std::sync::atomic::Ordering::SeqCst) {
-            // 5.1 抽干所有已到达事件（改为 event_source）
+            // 抽干所有可用事件
             while let Some(ev) = self.backend.event_source().poll_event()? {
                 event_count = event_count.wrapping_add(1);
-                debug!("[run_sync] event_count: {}, event: {:?}", event_count, ev);
                 let _ = self.handle_backend_event(ev);
             }
 
-            // 5.2 处理状态栏命令/刷新
+            // 处理状态栏命令与待更新
             self.process_commands_from_status_bar();
             if !self.pending_bar_updates.is_empty() {
                 self.flush_pending_bar_updates();
             }
 
-            // 5.3 阻塞等待 epoll 事件（X 可读 或 定时器 tick）
-            let nfds = loop {
-                let n = unsafe {
-                    libc::epoll_wait(
-                        epfd,
-                        events.as_mut_ptr(),
-                        EP_EVENTS_CAP as i32,
-                        -1, // 永久阻塞，依赖 timerfd 唤醒
-                    )
-                };
-                if n >= 0 {
-                    break n;
-                }
-                // 出错，若被信号打断则继续
-                let err = std::io::Error::last_os_error();
-                if let Some(code) = err.raw_os_error() {
-                    if code == libc::EINTR {
-                        continue;
-                    }
-                }
-                // 其他错误：打印告警，稍退避，继续循环
-                warn!("[run_sync] epoll_wait failed: {}", err);
-                std::thread::sleep(std::time::Duration::from_millis(10));
-                break 0;
-            };
-
-            // 5.4 处理就绪事件
-            for i in 0..(nfds as usize) {
-                let ev = events[i];
-                match ev.u64 {
-                    X_TOKEN => {
-                        // 抽干 event_source 事件
-                        loop {
-                            match self.backend.event_source().poll_event()? {
-                                Some(ev) => {
-                                    event_count = event_count.wrapping_add(1);
-                                    let _ = self.handle_backend_event(ev);
-                                }
-                                None => break,
-                            }
-                        }
-                    }
-                    TFD_TOKEN => {
-                        // 读取 timerfd，清空到期计数
-                        let mut buf = [0u8; 8];
-                        loop {
-                            let r = unsafe {
-                                libc::read(tfd, buf.as_mut_ptr() as *mut libc::c_void, buf.len())
-                            };
-                            if r == 8 {
-                                // 正常读到一次到期计数；处理周期任务
-                                self.process_commands_from_status_bar();
-                                if !self.pending_bar_updates.is_empty() {
-                                    self.flush_pending_bar_updates();
-                                }
-                                // 继续读，防止丢积压 tick
-                                continue;
-                            } else if r < 0 {
-                                let err = std::io::Error::last_os_error();
-                                // 非阻塞下，EAGAIN/EWOULDBLOCK 表示已无数据
-                                if let Some(code) = err.raw_os_error() {
-                                    if code == libc::EAGAIN || code == libc::EWOULDBLOCK {
-                                        break;
-                                    }
-                                }
-                                // 其他错误：记录并跳出
-                                warn!("[run_sync] timerfd read error: {}", err);
-                                break;
-                            } else {
-                                // 短读（不应发生），跳出
-                                break;
-                            }
-                        }
-                    }
-                    other => {
-                        // 未知 token（一般不会发生）
-                        debug!("[run_sync] unexpected epoll token: {}", other);
-                    }
-                }
-            }
+            // 轻微退避，避免 busy loop
+            std::thread::sleep(std::time::Duration::from_millis(10));
         }
-
-        // 6) 清理
-        let _ = close(tfd);
-        let _ = close(epfd);
         Ok(())
     }
 
@@ -4082,50 +3884,22 @@ impl Jwm {
     }
 
     pub fn checkotherwm(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[checkotherwm]");
+        // 依赖 X11 的 SUBSTRUCTURE_REDIRECT 掩码位（沿用 x11rb 的常量）
+        let mask_bits = x11rb::protocol::xproto::EventMask::SUBSTRUCTURE_REDIRECT.bits();
+        let root = self.backend.root_window();
 
-        // 在 XCB 中，我们通过尝试选择 SubstructureRedirect 事件来检查
-        // 如果有其他窗口管理器运行，这个操作会失败
-        let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::SUBSTRUCTURE_REDIRECT);
-        match self
-            .x11rb_conn
-            .change_window_attributes(self.x11rb_root, &aux)
-        {
-            Ok(cookie) => {
-                // 等待请求完成，检查是否有错误
-                match cookie.check() {
-                    Ok(_) => {
-                        info!("[checkotherwm] Successfully acquired SubstructureRedirect, no other WM running");
-                        Ok(())
-                    }
-                    Err(e) => {
-                        error!(
-                            "[checkotherwm] Failed to acquire SubstructureRedirect: {:?}",
-                            e
-                        );
-                        // 检查错误类型
-                        match e {
-                            x11rb::errors::ReplyError::X11Error(ref x11_error) => {
-                                if x11_error.error_kind == x11rb::protocol::ErrorKind::Access {
-                                    error!("jwm: another window manager is already running");
-                                    std::process::exit(1);
-                                }
-                            }
-                            _ => {
-                                error!("jwm: X11 connection error during WM check");
-                                std::process::exit(1);
-                            }
-                        }
-                        Err(e.into())
-                    }
-                }
+        match self.backend.window_ops().change_event_mask(root, mask_bits) {
+            Ok(_) => {
+                log::info!("[checkotherwm] SubstructureRedirect acquired, no other WM running");
+                Ok(())
             }
             Err(e) => {
-                error!(
-                    "[checkotherwm] Failed to send change_window_attributes request: {:?}",
+                // 如果失败，认为有其他 WM 在运行
+                log::error!(
+                    "[checkotherwm] Failed to acquire SubstructureRedirect: {:?}",
                     e
                 );
-                error!("jwm: failed to communicate with X server");
+                eprintln!("jwm: another window manager may already be running");
                 std::process::exit(1);
             }
         }
@@ -6236,73 +6010,6 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn movemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[movemouse]");
-
-        // 1. 获取当前选中的客户端
-        let client_key = match self.get_selected_client_key() {
-            Some(key) => key,
-            None => return Ok(()),
-        };
-
-        // 2. 全屏检查
-        if let Some(client) = self.clients.get(client_key) {
-            if client.state.is_fullscreen {
-                return Ok(());
-            }
-        } else {
-            return Ok(());
-        }
-
-        // 3. 准备工作
-        self.restack(self.sel_mon)?;
-
-        // 保存窗口开始移动时的信息
-        let (start_x, start_y, _start_w, _start_h, _border_w, window_id) = {
-            let c = self.clients.get(client_key).unwrap();
-            (
-                c.geometry.x,
-                c.geometry.y,
-                c.geometry.w,
-                c.geometry.h,
-                c.geometry.border_w,
-                c.win,
-            )
-        };
-
-        // 4. 获取鼠标初始位置（仍可用 InputOps trait）
-        let (initial_x, initial_y, _mask, _unused) =
-            self.backend.input_ops().query_pointer_root()?;
-        let (initial_mouse_x, initial_mouse_y) = (initial_x as u16, initial_y as u16);
-
-        // 5. 光标
-        let cursor = self.backend.cursor_provider().get(StdCursorKind::Hand)?.0;
-
-        // 6. 使用“本地 X11InputOps 实例”执行拖拽循环，避免借用 self.backend.input_ops()
-        let local_input_ops = X11InputOps::new(self.x11rb_conn.clone(), self.x11rb_root);
-        local_input_ops.drag_loop(
-            *MOUSEMASK,
-            Some(cursor as u32),
-            None, // move 无需 warp
-            window_id,
-            |e| {
-                // 闭包里安全地使用 &mut self
-                self.handle_move_motion(
-                    client_key,
-                    e,
-                    start_x,
-                    start_y,
-                    initial_mouse_x,
-                    initial_mouse_y,
-                )
-            },
-        )?;
-
-        self.cleanup_move(window_id, client_key)?;
-        info!("[movemouse] completed");
-        Ok(())
-    }
-
     fn handle_move_motion(
         &mut self,
         client_key: ClientKey,
@@ -6485,14 +6192,149 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn resizemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[resizemouse]");
+    // 在 impl Jwm 里新增
+    fn pointer_drag_loop<F>(
+        &mut self,
+        grab_mask_bits: u32,
+        cursor: Option<u64>,
+        warp_to: Option<(i16, i16)>,
+        target: WindowId,
+        mut on_motion: F,
+    ) -> Result<(), Box<dyn std::error::Error>>
+    where
+        F: FnMut(&mut Jwm, i16, i16, u32) -> Result<(), Box<dyn std::error::Error>>,
+    {
+        // 抓指针
+        let grabbed = self
+            .backend
+            .input_ops()
+            .grab_pointer(grab_mask_bits, cursor)?;
+        if !grabbed {
+            return Err("Failed to grab pointer".into());
+        }
 
+        // 可选 warp
+        if let Some((wx, wy)) = warp_to {
+            self.backend
+                .input_ops()
+                .warp_pointer_to_window(target, wx, wy)?;
+        }
+        self.backend.event_source().flush()?;
+
+        let mut last_motion_time: u32 = 0;
+
+        loop {
+            match self.backend.event_source().poll_event()? {
+                Some(crate::backend::api::BackendEvent::MotionNotify {
+                    root_x,
+                    root_y,
+                    time,
+                    ..
+                }) => {
+                    // ~16ms 节流
+                    if time.wrapping_sub(last_motion_time) <= 16 {
+                        continue;
+                    }
+                    last_motion_time = time;
+                    on_motion(self, root_x, root_y, time)?;
+                }
+                Some(crate::backend::api::BackendEvent::ButtonRelease { .. }) => break,
+                Some(crate::backend::api::BackendEvent::KeyPress { keycode, .. }) => {
+                    let ks = self.backend.key_ops_mut().keysym_from_keycode(keycode)?;
+                    if ks == crate::backend::common_input::keys::KEY_Escape {
+                        break;
+                    }
+                }
+                Some(crate::backend::api::BackendEvent::DestroyNotify { window }) => {
+                    if window == target {
+                        break;
+                    }
+                }
+                Some(crate::backend::api::BackendEvent::UnmapNotify { window, .. }) => {
+                    if window == target {
+                        break;
+                    }
+                }
+                Some(_other) => {}
+                None => std::thread::sleep(std::time::Duration::from_millis(10)),
+            }
+        }
+
+        self.backend.input_ops().ungrab_pointer()?;
+        Ok(())
+    }
+
+    pub fn movemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         let client_key = match self.get_selected_client_key() {
-            Some(key) => key,
+            Some(k) => k,
             None => return Ok(()),
         };
+        if let Some(client) = self.clients.get(client_key) {
+            if client.state.is_fullscreen {
+                return Ok(());
+            }
+        } else {
+            return Ok(());
+        }
 
+        self.restack(self.sel_mon)?;
+
+        let (start_x, start_y, window_id) = {
+            let c = self.clients.get(client_key).unwrap();
+            (c.geometry.x, c.geometry.y, c.win)
+        };
+        let (initial_x, initial_y, _mask, _unused) =
+            self.backend.input_ops().query_pointer_root()?;
+        let (initial_mouse_x, initial_mouse_y) = (initial_x as u16, initial_y as u16);
+        let cursor_handle = self.backend.cursor_provider().get(StdCursorKind::Hand)?.0;
+
+        self.pointer_drag_loop(
+            (*MOUSEMASK).bits(),
+            Some(cursor_handle),
+            None, // move 无需 warp
+            WindowId(window_id.into()),
+            move |wm: &mut Jwm, root_x, root_y, _time| {
+                let mut new_x = start_x + (root_x as i32 - initial_mouse_x as i32);
+                let mut new_y = start_y + (root_y as i32 - initial_mouse_y as i32);
+
+                let (mon_wx, mon_wy, mon_ww, mon_wh) = {
+                    let sel_mon_key = match wm.sel_mon {
+                        Some(k) => k,
+                        None => return Ok(()),
+                    };
+                    let m = wm.monitors.get(sel_mon_key).unwrap();
+                    (
+                        m.geometry.w_x,
+                        m.geometry.w_y,
+                        m.geometry.w_w,
+                        m.geometry.w_h,
+                    )
+                };
+
+                wm.apply_edge_snapping(
+                    client_key, &mut new_x, &mut new_y, mon_wx, mon_wy, mon_ww, mon_wh,
+                )?;
+                wm.check_and_toggle_floating_for_move(client_key, new_x, new_y)?;
+                if wm.should_move_client(client_key) {
+                    let (w, h) = {
+                        let c = wm.clients.get(client_key).unwrap();
+                        (c.geometry.w, c.geometry.h)
+                    };
+                    wm.resize_client(client_key, new_x, new_y, w, h, true);
+                }
+                Ok(())
+            },
+        )?;
+
+        self.cleanup_move(window_id, client_key)?;
+        Ok(())
+    }
+
+    pub fn resizemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
+        let client_key = match self.get_selected_client_key() {
+            Some(k) => k,
+            None => return Ok(()),
+        };
         if let Some(client) = self.clients.get(client_key) {
             if client.state.is_fullscreen {
                 return Ok(());
@@ -6518,17 +6360,25 @@ impl Jwm {
             (start_w + border_w - 1) as i16,
             (start_h + border_w - 1) as i16,
         );
+        let cursor_handle = self.backend.cursor_provider().get(StdCursorKind::Fleur)?.0;
 
-        let cursor = self.backend.cursor_provider().get(StdCursorKind::Fleur)?.0;
-
-        // 使用“本地 X11InputOps 实例”执行拖拽循环，避免借用 self.backend.input_ops()
-        let local_input_ops = X11InputOps::new(self.x11rb_conn.clone(), self.x11rb_root);
-        local_input_ops.drag_loop(
-            *MOUSEMASK,
-            Some(cursor as u32),
+        self.pointer_drag_loop(
+            (*MOUSEMASK).bits(),
+            Some(cursor_handle),
             Some(warp_pos),
-            window_id,
-            |e| self.handle_resize_motion(client_key, e, start_x, start_y, border_w),
+            WindowId(window_id.into()),
+            move |wm: &mut Jwm, root_x, root_y, _time| {
+                let new_width =
+                    ((root_x as i32 - start_x).max(1 + 2 * border_w) - 2 * border_w).max(1);
+                let new_height =
+                    ((root_y as i32 - start_y).max(1 + 2 * border_w) - 2 * border_w).max(1);
+
+                wm.check_and_toggle_floating_for_resize(client_key, new_width, new_height)?;
+                if wm.should_resize_client(client_key) {
+                    wm.resize_client(client_key, start_x, start_y, new_width, new_height, true);
+                }
+                Ok(())
+            },
         )?;
 
         self.cleanup_resize(window_id, border_w)?;
