@@ -1,4 +1,5 @@
 // src/backend/api.rs
+use crate::backend::common_define::{ArgbColor, ColorScheme, SchemeType};
 pub use crate::backend::common_define::{
     CursorHandle, KeySym, Mods, Pixel, StdCursorKind, WindowId,
 };
@@ -378,6 +379,45 @@ pub trait ColorAllocator: Send {
     fn alloc_rgb(&mut self, r: u8, g: u8, b: u8) -> Result<Pixel, Box<dyn std::error::Error>>;
     // 释放多个像素（可选）
     fn free_pixels(&mut self, pixels: &[Pixel]) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 主题 API（新增）
+    fn set_scheme(&mut self, t: SchemeType, s: ColorScheme);
+    fn get_scheme(&self, t: SchemeType) -> Option<ColorScheme>;
+
+    // 获取像素：优先从缓存，不在缓存则分配/缓存后返回
+    fn ensure_pixel(&mut self, color: ArgbColor) -> Result<Pixel, Box<dyn std::error::Error>>;
+
+    // 只读查询缓存（不触发分配）
+    fn get_pixel_cached(&self, color: ArgbColor) -> Option<Pixel>;
+
+    // 为当前所有方案预分配像素（去重）
+    fn allocate_schemes_pixels(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 释放所有主题缓存像素（实现方可按自身缓存释放）
+    fn free_all_theme_pixels(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+
+    // 便捷方法（可有默认实现）
+    fn get_border_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, Box<dyn std::error::Error>> {
+        if let Some(s) = self.get_scheme(t) {
+            self.ensure_pixel(s.border)
+        } else {
+            Err("scheme not found".into())
+        }
+    }
+    fn get_fg_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, Box<dyn std::error::Error>> {
+        if let Some(s) = self.get_scheme(t) {
+            self.ensure_pixel(s.fg)
+        } else {
+            Err("scheme not found".into())
+        }
+    }
+    fn get_bg_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, Box<dyn std::error::Error>> {
+        if let Some(s) = self.get_scheme(t) {
+            self.ensure_pixel(s.bg)
+        } else {
+            Err("scheme not found".into())
+        }
+    }
 }
 
 pub trait CursorProvider: Send {

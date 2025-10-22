@@ -25,13 +25,14 @@ use crate::backend::api::AllowMode;
 use crate::backend::api::BackendEvent;
 use crate::backend::api::Geometry;
 use crate::backend::api::{Backend, WindowId};
+use crate::backend::common_define::ArgbColor;
+use crate::backend::common_define::ColorScheme;
+use crate::backend::common_define::SchemeType;
 use crate::backend::common_define::{KeySym, Mods, MouseButton, StdCursorKind};
 use crate::backend::x11::adapter::{button_to_x11, mods_from_x11, mods_to_x11};
 use crate::backend::x11::property_ops::X11PropertyOps;
 use crate::backend::x11::Atoms;
 use crate::config::CONFIG;
-use crate::theme_manager::SchemeType;
-use crate::theme_manager::ThemeManager;
 
 use x11rb::connection::Connection;
 use x11rb::properties::WmSizeHints;
@@ -667,7 +668,6 @@ pub struct Jwm {
     pub x11_numlock_mask: x11rb::protocol::xproto::KeyButMask,
     pub running: AtomicBool,
     pub is_restarting: AtomicBool,
-    pub theme_manager: ThemeManager,
 
     backend: Box<dyn Backend>,
 
@@ -772,7 +772,26 @@ impl Jwm {
             backend.root_window().0
         );
 
-        let theme_manager = ThemeManager::create_from_config(backend.color_allocator())?;
+        let alloc = backend.color_allocator();
+        let colors = crate::config::CONFIG.colors();
+        alloc.set_scheme(
+            SchemeType::Norm,
+            ColorScheme::new(
+                ArgbColor::from_hex(&colors.dark_sea_green1, colors.opaque)?,
+                ArgbColor::from_hex(&colors.light_sky_blue1, colors.opaque)?,
+                ArgbColor::from_hex(&colors.light_sky_blue1, colors.opaque)?,
+            ),
+        );
+        alloc.set_scheme(
+            SchemeType::Sel,
+            ColorScheme::new(
+                ArgbColor::from_hex(&colors.dark_sea_green2, colors.opaque)?,
+                ArgbColor::from_hex(&colors.pale_turquoise1, colors.opaque)?,
+                ArgbColor::from_hex(&colors.cyan, colors.opaque)?,
+            ),
+        );
+        // 预分配
+        backend.color_allocator().allocate_schemes_pixels()?;
 
         info!("[new] JWM initialization completed successfully");
 
@@ -782,7 +801,6 @@ impl Jwm {
             x11_numlock_mask: x11rb::protocol::xproto::KeyButMask::default(),
             running: AtomicBool::new(true),
             is_restarting: AtomicBool::new(false),
-            theme_manager,
 
             backend,
 
@@ -2344,8 +2362,10 @@ impl Jwm {
         // 3. 清理系统资源（必须手动处理）
         self.cleanup_system_resources()?;
 
+        self.backend.color_allocator().free_all_theme_pixels()?;
+
         // 4. 同步所有 X11 操作
-        self.x11rb_conn.flush()?;
+        self.backend.window_ops().flush()?;
 
         info!("[cleanup] Essential cleanup completed (Rust will handle the rest)");
         Ok(())
@@ -2780,7 +2800,7 @@ impl Jwm {
     }
 
     pub fn set_window_border_color(
-        &self,
+        &mut self,
         window: Window,
         selected: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -2789,12 +2809,14 @@ impl Jwm {
         } else {
             SchemeType::Norm
         };
-        if let Some(color) = self.theme_manager.get_border(scheme_type) {
-            if let Some(pixel) = self.theme_manager.get_pixel(color) {
-                self.backend
-                    .window_ops()
-                    .set_border_pixel(WindowId(window.into()), pixel.0)?;
-            }
+        if let Ok(pixel) = self
+            .backend
+            .color_allocator()
+            .get_border_pixel_of(scheme_type)
+        {
+            self.backend
+                .window_ops()
+                .set_border_pixel(WindowId(window.into()), pixel.0)?;
         }
         Ok(())
     }
