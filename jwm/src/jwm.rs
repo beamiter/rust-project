@@ -741,22 +741,7 @@ impl Jwm {
         let x11rb_conn = Arc::new(raw_conn);
 
         info!("[new] Getting atoms");
-        let atoms = match Atoms::new(x11rb_conn.as_ref()) {
-            Ok(cookie) => match cookie.reply() {
-                Ok(atoms) => {
-                    info!("[new] Atoms retrieved successfully");
-                    atoms
-                }
-                Err(e) => {
-                    error!("[new] Failed to get atoms reply: {}", e);
-                    return Err(format!("Atoms reply failed: {}", e).into());
-                }
-            },
-            Err(e) => {
-                error!("[new] Failed to request atoms: {}", e);
-                return Err(format!("Atoms request failed: {}", e).into());
-            }
-        };
+        let atoms = Atoms::new(x11rb_conn.as_ref())?.reply()?;
 
         let s_w = si.width;
         let s_h = si.height;
@@ -2426,19 +2411,19 @@ impl Jwm {
                     let _ =
                         self.x11rb_conn
                             .ungrab_button(ButtonIndex::ANY, win, ModMask::ANY.into());
-                    let _ = self.x11rb_conn.change_window_attributes(
-                        win,
-                        &ChangeWindowAttributesAux::new().event_mask(EventMask::NO_EVENT),
-                    );
+                    let mask = EventMask::NO_EVENT.bits();
+                    self.backend
+                        .window_ops()
+                        .change_event_mask(WindowId(win.into()), mask)?;
                 } else {
                     // 抓取服务器确保操作原子性
-                    self.x11rb_conn.grab_server()?;
+                    self.backend.window_ops().grab_server()?;
 
                     // 正常退出：执行完整恢复
                     let _ = self.restore_client_x11_state(win, old_border_w);
 
                     // 无论成功失败都要释放服务器
-                    let _ = self.x11rb_conn.ungrab_server();
+                    let _ = self.backend.window_ops().ungrab_server();
                 }
             }
         }
@@ -5520,21 +5505,21 @@ impl Jwm {
         self.updategeom();
         self.setup_ewmh()?;
 
-        let aux = ChangeWindowAttributesAux::new().event_mask(
-            EventMask::SUBSTRUCTURE_REDIRECT
-                | EventMask::STRUCTURE_NOTIFY
-                | EventMask::BUTTON_PRESS
-                | EventMask::POINTER_MOTION
-                | EventMask::ENTER_WINDOW
-                | EventMask::LEAVE_WINDOW
-                | EventMask::PROPERTY_CHANGE,
-        );
+        let mask = (EventMask::SUBSTRUCTURE_REDIRECT
+            | EventMask::STRUCTURE_NOTIFY
+            | EventMask::BUTTON_PRESS
+            | EventMask::POINTER_MOTION
+            | EventMask::ENTER_WINDOW
+            | EventMask::LEAVE_WINDOW
+            | EventMask::PROPERTY_CHANGE)
+            .bits();
         let root = self.backend.root_window();
         self.backend
             .cursor_provider()
             .apply(root.0, StdCursorKind::LeftPtr)?;
-        self.x11rb_conn
-            .change_window_attributes(self.backend.root_window().0 as u32, &aux)?;
+        self.backend
+            .window_ops()
+            .change_event_mask(self.backend.root_window(), mask)?;
         self.grabkeys()?;
         self.focus(None)?;
         self.backend.window_ops().flush()?;
@@ -7363,6 +7348,7 @@ impl Jwm {
             | EventMask::PROPERTY_CHANGE
             | EventMask::STRUCTURE_NOTIFY)
             .bits();
+        // haha
         self.backend
             .window_ops()
             .change_event_mask(WindowId(win.into()), mask)?;
@@ -8078,7 +8064,7 @@ impl Jwm {
         let old_border_w = client.geometry.old_border_w;
 
         // 抓取服务器，保证接下来的更改原子性
-        self.x11rb_conn.grab_server()?.check()?;
+        self.backend.window_ops().grab_server()?;
 
         // 执行清理操作（单独捕获错误并记录日志，不中断整个流程）
         {
@@ -8124,10 +8110,10 @@ impl Jwm {
         }
 
         // 释放服务器（无论前面的操作是否成功）
-        if let Err(e) = self.x11rb_conn.ungrab_server() {
+        if let Err(e) = self.backend.window_ops().ungrab_server() {
             warn!("[cleanup_window_state] Ungrab server failed: {:?}", e);
         }
-        if let Err(e) = self.x11rb_conn.flush() {
+        if let Err(e) = self.backend.window_ops().flush() {
             warn!("[cleanup_window_state] Final flush failed: {:?}", e);
         }
 

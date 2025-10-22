@@ -196,7 +196,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     }
 
     fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn.grab_server()?;
+        self.conn.grab_server()?.check()?;
         Ok(())
     }
 
