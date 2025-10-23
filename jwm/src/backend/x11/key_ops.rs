@@ -7,7 +7,7 @@ use x11rb::protocol::xproto::*;
 
 use crate::backend::api::{KeyOps, WindowId};
 use crate::backend::common_define::{KeySym, Mods};
-use crate::backend::x11::adapter::mods_to_x11;
+use crate::backend::x11::adapter::{mods_from_x11, mods_to_x11};
 
 pub struct X11KeyOps<C: Connection> {
     conn: Arc<C>,
@@ -67,6 +67,17 @@ impl<C: Connection> X11KeyOps<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
+    fn mods_from_raw_mask(&self, raw: u16, numlock_mask_bits: u16) -> Mods {
+        let raw_mask = KeyButMask::from(raw);
+        let numlock = KeyButMask::from(numlock_mask_bits);
+        mods_from_x11(raw_mask, numlock)
+    }
+
+    fn backend_mods_mask_for_grab(&self, mods: Mods, numlock_mask_bits: u16) -> u16 {
+        let numlock = KeyButMask::from(numlock_mask_bits);
+        mods_to_x11(mods, numlock).bits()
+    }
+
     fn detect_numlock_mask(&mut self) -> Result<(Mods, u16), Box<dyn std::error::Error>> {
         let numkc = self.find_numlock_keycode()?;
         if numkc == 0 {
@@ -109,11 +120,7 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
 
         for (mods, keysym) in bindings {
             // 遍历 keycodes 找到匹配的 keysym（first keysym）
-            for (offset, keysyms_for_keycode) in mapping
-                .keysyms
-                .chunks(per)
-                .enumerate()
-            {
+            for (offset, keysyms_for_keycode) in mapping.keysyms.chunks(per).enumerate() {
                 let keycode = min + offset as u8;
                 if let Some(&ks) = keysyms_for_keycode.first() {
                     if u32::from(ks) == *keysym {
@@ -126,14 +133,16 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
                             base | KBM::LOCK | numlock_mask,
                         ];
                         for mm in combos {
-                            self.conn.grab_key(
-                                false,
-                                root.0 as u32,
-                                ModMask::from(mm.bits()),
-                                keycode,
-                                GrabMode::ASYNC,
-                                GrabMode::ASYNC,
-                            )?.check()?;
+                            self.conn
+                                .grab_key(
+                                    false,
+                                    root.0 as u32,
+                                    ModMask::from(mm.bits()),
+                                    keycode,
+                                    GrabMode::ASYNC,
+                                    GrabMode::ASYNC,
+                                )?
+                                .check()?;
                         }
                     }
                 }

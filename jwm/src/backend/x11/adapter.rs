@@ -1,6 +1,7 @@
 // src/backend/x11/adapter.rs
-use crate::backend::common_define::{Mods, MouseButton};
-use x11rb::protocol::xproto::{ButtonIndex, KeyButMask};
+use crate::backend::common_define::MouseButton;
+use crate::backend::common_define::{EventMaskBits, Mods};
+use x11rb::protocol::xproto::{ButtonIndex, EventMask, KeyButMask};
 
 pub fn mods_from_x11(mask: KeyButMask, numlock_mask: KeyButMask) -> Mods {
     let mut m = Mods::empty();
@@ -73,4 +74,36 @@ pub fn button_from_x11(detail: u8) -> MouseButton {
 }
 pub fn button_to_x11(btn: MouseButton) -> ButtonIndex {
     ButtonIndex::from(btn.to_u8())
+}
+
+pub fn event_mask_from_generic(bits: u32) -> EventMask {
+    let mut m = EventMask::default();
+    if (bits & EventMaskBits::BUTTON_PRESS.bits()) != 0 {
+        m |= EventMask::BUTTON_PRESS;
+    }
+    if (bits & EventMaskBits::BUTTON_RELEASE.bits()) != 0 {
+        m |= EventMask::BUTTON_RELEASE;
+    }
+    if (bits & EventMaskBits::POINTER_MOTION.bits()) != 0 {
+        m |= EventMask::POINTER_MOTION;
+    }
+    if (bits & EventMaskBits::ENTER_WINDOW.bits()) != 0 {
+        m |= EventMask::ENTER_WINDOW;
+    }
+    if (bits & EventMaskBits::LEAVE_WINDOW.bits()) != 0 {
+        m |= EventMask::LEAVE_WINDOW;
+    }
+    if (bits & EventMaskBits::PROPERTY_CHANGE.bits()) != 0 {
+        m |= EventMask::PROPERTY_CHANGE;
+    }
+    if (bits & EventMaskBits::STRUCTURE_NOTIFY.bits()) != 0 {
+        m |= EventMask::STRUCTURE_NOTIFY;
+    }
+    if (bits & EventMaskBits::SUBSTRUCTURE_REDIRECT.bits()) != 0 {
+        m |= EventMask::SUBSTRUCTURE_REDIRECT;
+    }
+    if (bits & EventMaskBits::FOCUS_CHANGE.bits()) != 0 {
+        m |= EventMask::FOCUS_CHANGE;
+    }
+    m
 }

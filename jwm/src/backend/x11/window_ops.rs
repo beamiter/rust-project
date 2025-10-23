@@ -1,5 +1,6 @@
 // src/backend/x11/window_ops.rs
 use crate::backend::api::{Geometry, WindowAttributes, WindowId, WindowOps};
+use crate::backend::x11::adapter::event_mask_from_generic;
 use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
@@ -15,6 +16,68 @@ impl<C: Connection> X11WindowOps<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
+    fn change_event_mask(
+        &self,
+        win: WindowId,
+        mask: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 使用通用位映射为 X11 EventMask
+        let x_mask = event_mask_from_generic(mask);
+        let aux = ChangeWindowAttributesAux::new().event_mask(x_mask);
+        self.conn
+            .change_window_attributes(win.0 as u32, &aux)?
+            .check()?;
+        Ok(())
+    }
+
+    fn grab_button_any_anymod(
+        &self,
+        win: WindowId,
+        event_mask_bits: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let x_mask = event_mask_from_generic(event_mask_bits);
+        self.conn
+            .grab_button(
+                false,
+                win.0 as u32,
+                x_mask,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+                0u32,
+                0u32,
+                ButtonIndex::ANY,
+                ModMask::ANY.into(),
+            )?
+            .check()?;
+        Ok(())
+    }
+
+    fn grab_button(
+        &self,
+        win: WindowId,
+        button: u8,
+        event_mask_bits: u32,
+        mods_bits: u16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let x_mask = event_mask_from_generic(event_mask_bits);
+        let bi = ButtonIndex::from(button);
+        let mods = ModMask::from(mods_bits);
+        self.conn
+            .grab_button(
+                false,
+                win.0 as u32,
+                x_mask,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+                0u32,
+                0u32,
+                bi,
+                mods,
+            )?
+            .check()?;
+        Ok(())
+    }
+
     fn send_configure_notify(
         &self,
         win: WindowId,
@@ -67,18 +130,6 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         pixel: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let aux = ChangeWindowAttributesAux::new().border_pixel(pixel);
-        self.conn
-            .change_window_attributes(win.0 as u32, &aux)?
-            .check()?;
-        Ok(())
-    }
-
-    fn change_event_mask(
-        &self,
-        win: WindowId,
-        mask: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let aux = ChangeWindowAttributesAux::new().event_mask(EventMask::from(mask));
         self.conn
             .change_window_attributes(win.0 as u32, &aux)?
             .check()?;
@@ -247,52 +298,6 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     fn ungrab_all_buttons(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         self.conn
             .ungrab_button(ButtonIndex::ANY, win.0 as u32, ModMask::ANY.into())?
-            .check()?;
-        Ok(())
-    }
-
-    fn grab_button_any_anymod(
-        &self,
-        win: WindowId,
-        event_mask_bits: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn
-            .grab_button(
-                false,
-                win.0 as u32,
-                EventMask::from(event_mask_bits),
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-                0u32,
-                0u32,
-                ButtonIndex::ANY,
-                ModMask::ANY.into(),
-            )?
-            .check()?;
-        Ok(())
-    }
-
-    fn grab_button(
-        &self,
-        win: WindowId,
-        button: u8,
-        event_mask_bits: u32,
-        mods_bits: u16,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let bi = ButtonIndex::from(button);
-        let mods = ModMask::from(mods_bits);
-        self.conn
-            .grab_button(
-                false,
-                win.0 as u32,
-                EventMask::from(event_mask_bits),
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-                0u32,
-                0u32,
-                bi,
-                mods,
-            )?
             .check()?;
         Ok(())
     }

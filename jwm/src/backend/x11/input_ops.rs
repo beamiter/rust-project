@@ -5,6 +5,8 @@ use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
 
 use crate::backend::api::AllowMode;
+use crate::backend::api::{InputOps as InputOpsTrait, WindowId};
+use crate::backend::x11::adapter::event_mask_from_generic;
 
 pub struct X11InputOps<C: Connection> {
     conn: Arc<C>,
@@ -29,8 +31,7 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
         }
     }
 
-    // 抓取指针，返回 GrabStatus
-    pub fn grab_pointer(
+    fn grab_pointer_raw(
         &self,
         event_mask: EventMask,
         cursor: Option<Cursor>,
@@ -93,7 +94,7 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
         F: FnMut(&MotionNotifyEvent) -> Result<(), Box<dyn std::error::Error>>,
     {
         // 抓指针
-        match self.grab_pointer(grab_mask, cursor) {
+        match self.grab_pointer_raw(grab_mask, cursor) {
             Ok(GrabStatus::SUCCESS) => {}
             Ok(status) => {
                 let status_str = match status {
@@ -162,7 +163,6 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
     }
 }
 
-use crate::backend::api::{InputOps as InputOpsTrait, WindowId};
 impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
     fn grab_pointer(
         &self,
@@ -170,10 +170,9 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
         cursor: Option<u64>,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         // 将通用 mask 转为 X11 EventMask
-        let event_mask = x11rb::protocol::xproto::EventMask::from(mask_bits);
-        // 将通用 cursor 句柄转为 X11 Cursor id（无则 0）
+        let event_mask = event_mask_from_generic(mask_bits);
         let cursor_id = cursor.map(|c| c as u32);
-        let status = self.grab_pointer(event_mask, cursor_id)?;
+        let status = self.grab_pointer_raw(event_mask, cursor_id)?;
         Ok(status == GrabStatus::SUCCESS)
     }
 

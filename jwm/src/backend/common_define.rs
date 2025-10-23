@@ -241,3 +241,34 @@ impl ArgbColor {
     pub const CYAN: ArgbColor = ArgbColor { value: 0xFF00FFFF };
     pub const MAGENTA: ArgbColor = ArgbColor { value: 0xFFFF00FF };
 }
+
+bitflags! {
+    // 后端无关事件掩码（JWM只使用这些语义位）
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct EventMaskBits: u32 {
+        const NONE                 = 0;
+        const BUTTON_PRESS         = 1 << 0;
+        const BUTTON_RELEASE       = 1 << 1;
+        const POINTER_MOTION       = 1 << 2;
+        const ENTER_WINDOW         = 1 << 3;
+        const LEAVE_WINDOW         = 1 << 4;
+        const PROPERTY_CHANGE      = 1 << 5;
+        const STRUCTURE_NOTIFY     = 1 << 6;
+        const SUBSTRUCTURE_REDIRECT= 1 << 7;
+        const FOCUS_CHANGE         = 1 << 8;
+    }
+}
+
+bitflags! {
+    // 后端无关的 ConfigureRequest 掩码（与 X11 xproto::ConfigWindow 位布局一致）
+    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+    pub struct ConfigWindowBits: u16 {
+        const X             = 1 << 0;
+        const Y             = 1 << 1;
+        const WIDTH         = 1 << 2;
+        const HEIGHT        = 1 << 3;
+        const BORDER_WIDTH  = 1 << 4;
+        const SIBLING       = 1 << 5;
+        const STACK_MODE    = 1 << 6;
+    }
+}

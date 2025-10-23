@@ -30,21 +30,14 @@ use crate::backend::api::PropertyKind;
 use crate::backend::api::{Backend, WindowId};
 use crate::backend::common_define::ArgbColor;
 use crate::backend::common_define::ColorScheme;
+use crate::backend::common_define::ConfigWindowBits;
+use crate::backend::common_define::EventMaskBits;
 use crate::backend::common_define::SchemeType;
 use crate::backend::common_define::{KeySym, Mods, MouseButton, StdCursorKind};
-use crate::backend::x11::adapter::{button_to_x11, mods_from_x11, mods_to_x11};
 use crate::config::CONFIG;
 
 use x11rb::protocol::xproto::ConfigWindow;
-use x11rb::protocol::xproto::ConfigureRequestEvent;
-use x11rb::protocol::xproto::EnterNotifyEvent;
 use x11rb::protocol::xproto::EventMask;
-use x11rb::protocol::xproto::KeyPressEvent;
-use x11rb::protocol::xproto::Mapping;
-use x11rb::protocol::xproto::MappingNotifyEvent;
-use x11rb::protocol::xproto::MotionNotifyEvent;
-use x11rb::protocol::xproto::NotifyDetail;
-use x11rb::protocol::xproto::NotifyMode;
 
 use shared_structures::CommandType;
 use shared_structures::SharedCommand;
@@ -65,11 +58,9 @@ pub type ClientKey = DefaultKey;
 pub type MonitorKey = DefaultKey;
 
 lazy_static::lazy_static! {
-    pub static ref BUTTONMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE;
-    pub static ref MOUSEMASK: EventMask  = EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
+    pub static ref BUTTONMASK: EventMaskBits  = EventMaskBits::BUTTON_PRESS | EventMaskBits::BUTTON_RELEASE;
+    pub static ref MOUSEMASK: EventMaskBits   = EventMaskBits::BUTTON_PRESS | EventMaskBits::BUTTON_RELEASE | EventMaskBits::POINTER_MOTION;
 }
-
-// 继续把 grabkeys/cleanup_key_grabs 等键盘接口抽象为通用 KeyOpsg
 
 #[derive(Debug, Serialize, Deserialize, Decode, Encode)]
 pub struct RestartSnapshot {
@@ -652,7 +643,7 @@ pub struct Jwm {
     // 基础/环境
     pub s_w: i32,
     pub s_h: i32,
-    pub x11_numlock_mask: x11rb::protocol::xproto::KeyButMask,
+    pub numlock_mask_bits: u16,
     pub running: AtomicBool,
     pub is_restarting: AtomicBool,
 
@@ -738,7 +729,7 @@ impl Jwm {
         Ok(Jwm {
             s_w,
             s_h,
-            x11_numlock_mask: x11rb::protocol::xproto::KeyButMask::default(),
+            numlock_mask_bits: 0,
             running: AtomicBool::new(true),
             is_restarting: AtomicBool::new(false),
 
@@ -773,20 +764,29 @@ impl Jwm {
         })
     }
 
-    pub fn root_window(&self) -> WindowId {
-        self.backend.root_window()
+    fn clean_mask(&self, raw: u16) -> Mods {
+        // 使用 KeyOps 将后端原始修饰位转换为通用 Mods 并去掉 NUMLOCK/CAPS
+        let mods_all = self
+            .backend
+            .key_ops()
+            .mods_from_raw_mask(raw, self.numlock_mask_bits);
+        mods_all
+            & (Mods::SHIFT
+                | Mods::CONTROL
+                | Mods::ALT
+                | Mods::SUPER
+                | Mods::MOD2
+                | Mods::MOD3
+                | Mods::MOD5)
     }
 
-    // 后端无关：按键处理
-    pub fn on_key_press(
+    fn on_key_press(
         &mut self,
         keycode: u8,
         state_bits: u16,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let keysym = self.backend.key_ops_mut().keysym_from_keycode(keycode)?;
         let clean_state = self.clean_mask(state_bits);
-
-        // 匹配配置的键绑定
         for key_config in CONFIG.get_keys().iter() {
             let kc_mask = key_config.mask
                 & (Mods::SHIFT
@@ -806,21 +806,18 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn on_button_press(
+    fn on_button_press(
         &mut self,
         window: u32,
         state_bits: u16,
         detail_btn: u8,
         time: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use crate::backend::x11::adapter::button_from_x11;
-
         let mut click_type = WMClickType::ClickRootWin;
 
         if let Some(target_mon_key) = self.wintomon(window) {
             if Some(target_mon_key) != self.sel_mon {
-                let current_sel = self.get_selected_client_key();
-                if let Some(cur) = current_sel {
+                if let Some(cur) = self.get_selected_client_key() {
                     self.unfocus(cur, true)?;
                 }
                 self.sel_mon = Some(target_mon_key);
@@ -837,7 +834,7 @@ impl Jwm {
         }
 
         let event_mask = self.clean_mask(state_bits);
-        let mouse_button = button_from_x11(detail_btn);
+        let mouse_button = MouseButton::from_u8(detail_btn);
 
         let mut handled_by_wm = false;
         for config in CONFIG.get_buttons().iter() {
@@ -861,6 +858,7 @@ impl Jwm {
                 break;
             }
         }
+
         if is_client_click {
             let _ = if handled_by_wm {
                 self.backend
@@ -875,8 +873,7 @@ impl Jwm {
         Ok(())
     }
 
-    // 后端无关：鼠标移动（根窗口）
-    pub fn on_motion_notify(
+    fn on_motion_notify(
         &mut self,
         window: u32,
         root_x: i16,
@@ -898,7 +895,7 @@ impl Jwm {
     }
 
     // 后端无关：配置请求（包括 unmanaged 和 managed）
-    pub fn on_configure_request(
+    fn on_configure_request(
         &mut self,
         window: u32,
         mask_bits: u16,
@@ -931,7 +928,6 @@ impl Jwm {
         }
     }
 
-    // 后端无关：状态栏窗口的 configure 请求
     fn handle_statusbar_configure_request_params(
         &mut self,
         window: u32,
@@ -950,20 +946,18 @@ impl Jwm {
                 window, mask_bits, x, y, 0, h, 0, None, 0,
             );
         }
-
-        // 更新几何并下发配置
-        let mask = ConfigWindow::from(mask_bits);
+        let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
         {
             let bar_key = self.status_bar_client.unwrap();
             let statusbar_mut = self.clients.get_mut(bar_key).unwrap();
 
-            if mask.contains(ConfigWindow::X) {
+            if mask.contains(ConfigWindowBits::X) {
                 statusbar_mut.geometry.x = x as i32;
             }
-            if mask.contains(ConfigWindow::Y) {
+            if mask.contains(ConfigWindowBits::Y) {
                 statusbar_mut.geometry.y = y as i32;
             }
-            if mask.contains(ConfigWindow::HEIGHT) {
+            if mask.contains(ConfigWindowBits::HEIGHT) {
                 statusbar_mut.geometry.h = (h.max(CONFIG.status_bar_height() as u16)) as i32;
             }
 
@@ -976,8 +970,6 @@ impl Jwm {
                 None,
             )?;
         }
-
-        // 重新触发布局刷新
         let monitor_key = self.get_monitor_by_id(self.current_bar_monitor_id.unwrap());
         self.arrange(monitor_key);
         if let Some(client_key) = self.wintoclient(window) {
@@ -1169,10 +1161,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn handle_backend_event(
-        &mut self,
-        ev: BackendEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn handle_backend_event(&mut self, ev: BackendEvent) -> Result<(), Box<dyn std::error::Error>> {
         match ev {
             BackendEvent::ButtonPress {
                 window,
@@ -1207,37 +1196,17 @@ impl Jwm {
                 sibling.map(|s| s.0 as u32),
                 stack_mode,
             ),
-
             BackendEvent::KeyPress { keycode, state } => self.on_key_press(keycode, state),
-
             BackendEvent::ConfigureNotify { window, x, y, w, h } => {
                 self.configurenotify(window.0 as u32, x, y, w, h)
             }
             BackendEvent::DestroyNotify { window } => self.destroynotify(window.0 as u32),
             BackendEvent::EnterNotify {
-                window: _,
+                window,
                 event,
                 mode,
                 detail,
-            } => {
-                let e = x11rb::protocol::xproto::EnterNotifyEvent {
-                    response_type: x11rb::protocol::xproto::ENTER_NOTIFY_EVENT,
-                    sequence: 0,
-                    time: 0,
-                    root: self.backend.root_window().0 as u32,
-                    event: event.0 as u32,
-                    child: 0,
-                    root_x: 0,
-                    root_y: 0,
-                    event_x: 0,
-                    event_y: 0,
-                    state: x11rb::protocol::xproto::KeyButMask::default(),
-                    mode: x11rb::protocol::xproto::NotifyMode::from(mode),
-                    detail: x11rb::protocol::xproto::NotifyDetail::from(detail),
-                    same_screen_focus: 1,
-                };
-                self.enternotify(&e)
-            }
+            } => self.enter_notify(window.0 as u32, event.0 as u32, mode, detail),
             BackendEvent::Expose { window, count } => self.expose(window.0 as u32, count),
             BackendEvent::FocusIn { event } => self.focusin(event.0 as u32),
             BackendEvent::MapRequest { window } => self.maprequest(window.0 as u32),
@@ -1246,46 +1215,12 @@ impl Jwm {
                 from_configure,
             } => self.unmapnotify(window.0 as u32, from_configure),
 
-            BackendEvent::ButtonRelease { .. } | BackendEvent::MappingNotify { .. } => Ok(()),
-            BackendEvent::EwmhState {
-                window,
-                action,
-                states,
-            } => {
-                let fullscreen_requested = states
-                    .iter()
-                    .flatten()
-                    .any(|s| matches!(s, NetWmState::Fullscreen));
-                if fullscreen_requested {
-                    let is_fullscreen = self
-                        .clients
-                        .get(self.wintoclient(window.0 as u32).unwrap())
-                        .map(|c| c.state.is_fullscreen)
-                        .unwrap_or(false);
-                    let fullscreen = match action {
-                        NetWmAction::Add => true,
-                        NetWmAction::Remove => false,
-                        NetWmAction::Toggle => !is_fullscreen,
-                    };
-                    if let Some(ck) = self.wintoclient(window.0 as u32) {
-                        self.setfullscreen(ck, fullscreen)?;
-                    }
-                }
-                Ok(())
+            BackendEvent::MappingNotify { request: _ } => {
+                // 统一处理：键盘映射变化，清缓存+重新抓取
+                self.backend.key_ops_mut().clear_cache();
+                self.grabkeys()
             }
-            BackendEvent::ActiveWindowMessage { window } => {
-                if let Some(ck) = self.wintoclient(window.0 as u32) {
-                    let is_urgent = self
-                        .clients
-                        .get(ck)
-                        .map(|c| c.state.is_urgent)
-                        .unwrap_or(false);
-                    if !self.is_client_selected(ck) && !is_urgent {
-                        self.seturgent(ck, true)?;
-                    }
-                }
-                Ok(())
-            }
+
             BackendEvent::PropertyChanged {
                 window,
                 kind,
@@ -1309,13 +1244,52 @@ impl Jwm {
                         PropertyKind::NetWmWindowType => {
                             self.handle_window_type_change(client_key)?
                         }
-                        PropertyKind::Other => { /* 忽略 */ }
+                        PropertyKind::Other => {}
                     }
                 }
                 Ok(())
             }
-            BackendEvent::PropertyNotify { .. } => Ok(()),
-            BackendEvent::ClientMessage { .. } => Ok(()),
+            BackendEvent::EwmhState {
+                window,
+                action,
+                states,
+            } => {
+                let fullscreen_requested = states
+                    .iter()
+                    .flatten()
+                    .any(|s| matches!(s, NetWmState::Fullscreen));
+                if fullscreen_requested {
+                    if let Some(ck) = self.wintoclient(window.0 as u32) {
+                        let is_fullscreen = self
+                            .clients
+                            .get(ck)
+                            .map(|c| c.state.is_fullscreen)
+                            .unwrap_or(false);
+                        let fullscreen = match action {
+                            NetWmAction::Add => true,
+                            NetWmAction::Remove => false,
+                            NetWmAction::Toggle => !is_fullscreen,
+                        };
+                        self.setfullscreen(ck, fullscreen)?;
+                    }
+                }
+                Ok(())
+            }
+            BackendEvent::ActiveWindowMessage { window } => {
+                if let Some(ck) = self.wintoclient(window.0 as u32) {
+                    let is_urgent = self
+                        .clients
+                        .get(ck)
+                        .map(|c| c.state.is_urgent)
+                        .unwrap_or(false);
+                    if !self.is_client_selected(ck) && !is_urgent {
+                        self.seturgent(ck, true)?;
+                    }
+                }
+                Ok(())
+            }
+            BackendEvent::ClientMessage { .. } | BackendEvent::PropertyNotify { .. } => Ok(()),
+            BackendEvent::ButtonRelease { .. } => Ok(()),
         }
     }
 
@@ -1349,7 +1323,7 @@ impl Jwm {
             .as_secs()
     }
 
-    pub fn save_restart_snapshot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn save_restart_snapshot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut snapshot = RestartSnapshot {
             version: 1,
             timestamp: Self::unix_ts(),
@@ -1459,7 +1433,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn load_restart_snapshot() -> Option<RestartSnapshot> {
+    fn load_restart_snapshot() -> Option<RestartSnapshot> {
         let path = std::path::Path::new(RESTART_SNAPSHOT_PATH);
         if !path.exists() {
             return None;
@@ -1470,7 +1444,7 @@ impl Jwm {
             .map(|(snapshot, _bytes_read)| snapshot)
     }
 
-    pub fn apply_snapshot(&mut self, snap: &RestartSnapshot) {
+    fn apply_snapshot(&mut self, snap: &RestartSnapshot) {
         // 0) 先把 snapshot 中的 client 状态应用到已管理的 clients（tags、is_floating、client_fact、fullscreen、geometry 等）
         for (win, sc) in &snap.clients {
             if let Some(ck) = self.wintoclient(*win) {
@@ -1610,14 +1584,14 @@ impl Jwm {
     }
 
     // 创建新的客户端
-    pub fn insert_client(&mut self, client: WMClient) -> ClientKey {
+    fn insert_client(&mut self, client: WMClient) -> ClientKey {
         let key = self.clients.insert(client);
         self.client_order.push(key);
         key
     }
 
     // 创建新的监视器
-    pub fn insert_monitor(&mut self, monitor: WMMonitor) -> MonitorKey {
+    fn insert_monitor(&mut self, monitor: WMMonitor) -> MonitorKey {
         let key = self.monitors.insert(monitor);
         self.monitor_order.push(key);
         self.monitor_clients.insert(key, Vec::new());
@@ -1635,7 +1609,7 @@ impl Jwm {
     }
 
     // 获取监视器的所有客户端
-    pub fn get_monitor_clients(&self, mon_key: MonitorKey) -> &[ClientKey] {
+    fn get_monitor_clients(&self, mon_key: MonitorKey) -> &[ClientKey] {
         self.monitor_clients
             .get(mon_key)
             .map(|v| v.as_slice())
@@ -1643,14 +1617,14 @@ impl Jwm {
     }
 
     // 获取监视器的堆栈顺序
-    pub fn get_monitor_stack(&self, mon_key: MonitorKey) -> &[ClientKey] {
+    fn get_monitor_stack(&self, mon_key: MonitorKey) -> &[ClientKey] {
         self.monitor_stack
             .get(mon_key)
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
 
-    pub fn get_sel_mon(&self) -> Option<&WMMonitor> {
+    fn get_sel_mon(&self) -> Option<&WMMonitor> {
         self.sel_mon
             .and_then(|sel_mon_key| self.monitors.get(sel_mon_key))
             .and_then(|monitor| Some(monitor))
@@ -1662,7 +1636,7 @@ impl Jwm {
             .and_then(|monitor| monitor.sel)
     }
 
-    pub fn attach(&mut self, client_key: ClientKey) {
+    fn attach(&mut self, client_key: ClientKey) {
         if let Some(client) = self.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
                 if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
@@ -1673,7 +1647,7 @@ impl Jwm {
         }
     }
 
-    pub fn detach(&mut self, client_key: ClientKey) {
+    fn detach(&mut self, client_key: ClientKey) {
         if let Some(client) = self.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
                 if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
@@ -1685,7 +1659,7 @@ impl Jwm {
         }
     }
 
-    pub fn attachstack(&mut self, client_key: ClientKey) {
+    fn attachstack(&mut self, client_key: ClientKey) {
         if let Some(client) = self.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
                 if let Some(stack_list) = self.monitor_stack.get_mut(mon_key) {
@@ -1715,7 +1689,7 @@ impl Jwm {
         }
     }
 
-    pub fn detachstack(&mut self, client_key: ClientKey) {
+    fn detachstack(&mut self, client_key: ClientKey) {
         if let Some(client) = self.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
                 if let Some(stack_list) = self.monitor_stack.get_mut(mon_key) {
@@ -1772,11 +1746,7 @@ impl Jwm {
         false
     }
 
-    pub fn nexttiled(
-        &self,
-        mon_key: MonitorKey,
-        start_from: Option<ClientKey>,
-    ) -> Option<ClientKey> {
+    fn nexttiled(&self, mon_key: MonitorKey, start_from: Option<ClientKey>) -> Option<ClientKey> {
         let client_list = self.get_monitor_clients(mon_key);
         let start_index = if let Some(start_key) = start_from {
             client_list
@@ -1800,7 +1770,7 @@ impl Jwm {
         None
     }
 
-    pub fn pop(&mut self, client_key: ClientKey) {
+    fn pop(&mut self, client_key: ClientKey) {
         // info!("[pop]");
         let mon_key = if let Some(client) = self.clients.get(client_key) {
             client.mon
@@ -1817,11 +1787,7 @@ impl Jwm {
         }
     }
 
-    pub fn find_client_key(&self, target_client: &WMClient) -> Option<ClientKey> {
-        self.wintoclient(target_client.win)
-    }
-
-    pub fn wintoclient(&self, win: u32) -> Option<ClientKey> {
+    fn wintoclient(&self, win: u32) -> Option<ClientKey> {
         // 先检查是否为单实例状态栏窗口
         if let Some(bar_win) = self.status_bar_window {
             if bar_win == win {
@@ -1863,14 +1829,6 @@ impl Jwm {
             .map(|output| !output.stdout.is_empty())
             .unwrap_or(false);
         info!("X server running: {}", x_running);
-    }
-
-    /// 设置 X11 环境变量
-    pub fn set_x11_environment(env_vars: &HashMap<String, String>) {
-        for (key, value) in env_vars {
-            env::set_var(key, value);
-            info!("[set_x11_environment] Set {}: {}", key, value);
-        }
     }
 
     pub fn restart(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
@@ -1915,28 +1873,14 @@ impl Jwm {
         }
     }
 
-    fn clean_mask(&self, raw: u16) -> Mods {
-        let raw_x11 = x11rb::protocol::xproto::KeyButMask::from(raw);
-        let mods_all = mods_from_x11(raw_x11, self.x11_numlock_mask);
-        // 只保留真正的修饰（去掉 CAPS/NUMLOCK）
-        mods_all
-            & (Mods::SHIFT
-                | Mods::CONTROL
-                | Mods::ALT
-                | Mods::SUPER
-                | Mods::MOD2
-                | Mods::MOD3
-                | Mods::MOD5)
-    }
-
     /// 获取窗口的 WM_CLASS（即类名和实例名）
-    pub fn get_wm_class(&self, window: u32) -> Option<(String, String)> {
+    fn get_wm_class(&self, window: u32) -> Option<(String, String)> {
         self.backend
             .property_ops()
             .get_wm_class(WindowId(window.into()))
     }
 
-    pub fn applysizehints(
+    fn applysizehints(
         &mut self,
         client_key: ClientKey,
         x: &mut i32,
@@ -2153,10 +2097,7 @@ impl Jwm {
         (w, h)
     }
 
-    pub fn updatesizehints(
-        &mut self,
-        client_key: ClientKey,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn updatesizehints(&mut self, client_key: ClientKey) -> Result<(), Box<dyn std::error::Error>> {
         let win = self
             .clients
             .get(client_key)
@@ -2414,7 +2355,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn configurenotify(
+    fn configurenotify(
         &mut self,
         window: u32,
         _x: i16,
@@ -2497,25 +2438,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn configure(&mut self, client_key: ClientKey) -> Result<(), Box<dyn std::error::Error>> {
-        let client = if let Some(c) = self.clients.get(client_key) {
-            c
-        } else {
-            return Err("Client not found".into());
-        };
-        info!("[configure] {}", client);
-        self.backend.window_ops().send_configure_notify(
-            WindowId(client.win.into()),
-            client.geometry.x as i16,
-            client.geometry.y as i16,
-            client.geometry.w as u16,
-            client.geometry.h as u16,
-            client.geometry.border_w as u16,
-        )?;
-        Ok(())
-    }
-
-    pub fn set_window_border_width(
+    fn set_window_border_width(
         &self,
         window: u32,
         border_width: u32,
@@ -2526,7 +2449,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn set_window_border_color(
+    fn set_window_border_color(
         &mut self,
         window: u32,
         selected: bool,
@@ -2548,7 +2471,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn grabkeys(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn grabkeys(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // 探测 NumLock（KeyOps）
         self.setup_modifier_masks()?;
 
@@ -2568,13 +2491,13 @@ impl Jwm {
         self.backend.key_ops().grab_keys(
             self.backend.root_window(),
             &bindings,
-            self.x11_numlock_mask.bits() as u16,
+            self.numlock_mask_bits,
         )?;
 
         Ok(())
     }
 
-    pub fn setfullscreen(
+    fn setfullscreen(
         &mut self,
         client_key: ClientKey,
         fullscreen: bool,
@@ -2664,7 +2587,7 @@ impl Jwm {
     }
 
     /// 更新 seturgent 方法签名
-    pub fn seturgent(
+    fn seturgent(
         &mut self,
         client_key: ClientKey,
         urgent: bool,
@@ -2780,7 +2703,7 @@ impl Jwm {
         }
     }
 
-    pub fn resizeclient(
+    fn resizeclient(
         &mut self,
         client_key: ClientKey,
         x: i32,
@@ -2813,10 +2736,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn configure_client(
-        &self,
-        client_key: ClientKey,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn configure_client(&self, client_key: ClientKey) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.clients.get(client_key) {
             self.backend.window_ops().send_configure_notify(
                 WindowId(client.win.into()),
@@ -2843,252 +2763,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn configurerequest(
-        &mut self,
-        e: &ConfigureRequestEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let client_key = self.wintoclient(e.window);
-        if let Some(client_key) = client_key {
-            // 检查是否是状态栏
-            if Some(e.window) == self.status_bar_window {
-                info!("[configurerequest] statusbar ");
-                self.handle_statusbar_configure_request(e)?;
-            } else {
-                // 常规客户端的配置请求处理
-                self.handle_regular_configure_request(client_key, e)?;
-            }
-        } else {
-            // 未管理的窗口，直接应用配置请求
-            self.handle_unmanaged_configure_request(e)?;
-        }
-        Ok(())
-    }
-
-    fn handle_statusbar_configure_request(
-        &mut self,
-        e: &ConfigureRequestEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // 检查状态栏是否存在并获取基本信息
-        if self.status_bar_client.is_none() {
-            error!("[handle_statusbar_configure_request] StatusBar not found",);
-            return self.handle_unmanaged_configure_request(e);
-        }
-        // info!("[handle_statusbar_configure_request]");
-
-        // 更新状态栏几何信息（限制借用范围）
-        {
-            let bar_key = self.status_bar_client.unwrap();
-            let statusbar_mut = self.clients.get_mut(bar_key).unwrap();
-
-            // 更新几何信息
-            if e.value_mask.contains(ConfigWindow::X) {
-                statusbar_mut.geometry.x = e.x as i32;
-            }
-            if e.value_mask.contains(ConfigWindow::Y) {
-                statusbar_mut.geometry.y = e.y as i32;
-            }
-            if e.value_mask.contains(ConfigWindow::HEIGHT) {
-                statusbar_mut.geometry.h = e.height.max(CONFIG.status_bar_height() as u16) as i32;
-            }
-
-            // 应用配置
-            let (x, y, w, h) = (
-                statusbar_mut.geometry.x,
-                statusbar_mut.geometry.y,
-                statusbar_mut.geometry.w as u32,
-                statusbar_mut.geometry.h as u32,
-            );
-            self.backend.window_ops().configure_xywh_border(
-                WindowId(e.window.into()),
-                Some(x),
-                Some(y),
-                Some(w),
-                Some(h),
-                None,
-            )?;
-            self.backend.window_ops().flush()?;
-        }
-
-        // 现在可以安全地进行其他操作
-        let client_key_opt = self.wintoclient(e.window);
-
-        if let Some(client_key) = client_key_opt {
-            self.configure_client(client_key)?;
-        }
-
-        // 重新排列
-        let monitor_key = self.get_monitor_by_id(self.current_bar_monitor_id.unwrap());
-        self.arrange(monitor_key);
-
-        Ok(())
-    }
-
-    fn handle_regular_configure_request(
-        &mut self,
-        client_key: ClientKey,
-        e: &ConfigureRequestEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[handle_regular_configure_request]");
-        let is_popup = self.is_popup_like(client_key);
-
-        // 获取客户端基本信息
-        let (is_floating, mon_key, _win) = if let Some(client) = self.clients.get(client_key) {
-            (client.state.is_floating, client.mon, client.win)
-        } else {
-            return Err("Client not found".into());
-        };
-
-        // 更新边框宽度
-        if e.value_mask.contains(ConfigWindow::BORDER_WIDTH) {
-            if let Some(client) = self.clients.get_mut(client_key) {
-                client.geometry.border_w = e.border_width as i32;
-            }
-        }
-
-        if is_floating {
-            // 获取监视器几何信息
-            let (mx, my, mw, mh) = if let Some(mon_key) = mon_key {
-                if let Some(monitor) = self.monitors.get(mon_key) {
-                    (
-                        monitor.geometry.m_x,
-                        monitor.geometry.m_y,
-                        monitor.geometry.m_w,
-                        monitor.geometry.m_h,
-                    )
-                } else {
-                    return Err("Monitor not found".into());
-                }
-            } else {
-                return Err("Client has no monitor assigned".into());
-            };
-
-            // 更新客户端几何信息
-            if let Some(client) = self.clients.get_mut(client_key) {
-                if e.value_mask.contains(ConfigWindow::X) {
-                    client.geometry.old_x = client.geometry.x;
-                    client.geometry.x = mx + e.x as i32;
-                }
-                if e.value_mask.contains(ConfigWindow::Y) {
-                    client.geometry.old_y = client.geometry.y;
-                    client.geometry.y = my + e.y as i32;
-                }
-                if e.value_mask.contains(ConfigWindow::WIDTH) {
-                    client.geometry.old_w = client.geometry.w;
-                    client.geometry.w = e.width as i32;
-                }
-                if e.value_mask.contains(ConfigWindow::HEIGHT) {
-                    client.geometry.old_h = client.geometry.h;
-                    client.geometry.h = e.height as i32;
-                }
-
-                if is_popup {
-                    if let Some(client) = self.clients.get(client_key) {
-                        self.backend.window_ops().configure_xywh_border(
-                            WindowId(client.win.into()),
-                            Some(client.geometry.x),
-                            Some(client.geometry.y),
-                            Some(client.geometry.w as u32),
-                            Some(client.geometry.h as u32),
-                            None,
-                        )?;
-                        self.backend.window_ops().flush()?;
-                    }
-                    return Ok(());
-                }
-
-                // 确保窗口不超出显示器边界
-                if (client.geometry.x + client.geometry.w) > mx + mw && client.state.is_floating {
-                    client.geometry.x = mx + (mw / 2 - client.total_width() / 2);
-                }
-                if (client.geometry.y + client.geometry.h) > my + mh && client.state.is_floating {
-                    client.geometry.y = my + (mh / 2 - client.total_height() / 2);
-                }
-            }
-
-            // 如果只是位置变化，发送配置确认
-            if e.value_mask.contains(ConfigWindow::X | ConfigWindow::Y)
-                && !e
-                    .value_mask
-                    .contains(ConfigWindow::WIDTH | ConfigWindow::HEIGHT)
-            {
-                self.configure_client(client_key)?;
-            }
-
-            // 检查可见性并更新窗口
-            let is_visible = self.is_client_visible_by_key(client_key);
-            if is_visible {
-                if let Some(client) = self.clients.get(client_key) {
-                    self.backend.window_ops().configure_xywh_border(
-                        WindowId(client.win.into()),
-                        Some(client.geometry.x),
-                        Some(client.geometry.y),
-                        Some(client.geometry.w as u32),
-                        Some(client.geometry.h as u32),
-                        None,
-                    )?;
-                    self.backend.window_ops().flush()?;
-                }
-            }
-        } else {
-            // 平铺布局中的窗口，只允许有限的配置更改
-            self.configure_client(client_key)?;
-        }
-
-        Ok(())
-    }
-
-    fn handle_unmanaged_configure_request(
-        &mut self,
-        e: &ConfigureRequestEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut ox = None;
-        let mut oy = None;
-        let mut ow = None;
-        let mut oh = None;
-        let mut ob = None;
-        if e.value_mask.contains(ConfigWindow::X) {
-            ox = Some(e.x as i32);
-        }
-        if e.value_mask.contains(ConfigWindow::Y) {
-            oy = Some(e.y as i32);
-        }
-        if e.value_mask.contains(ConfigWindow::WIDTH) {
-            ow = Some(e.width as u32);
-        }
-        if e.value_mask.contains(ConfigWindow::HEIGHT) {
-            oh = Some(e.height as u32);
-        }
-        if e.value_mask.contains(ConfigWindow::BORDER_WIDTH) {
-            ob = Some(e.border_width as u32);
-        }
-
-        if ox.is_some() || oy.is_some() || ow.is_some() || oh.is_some() || ob.is_some() {
-            self.backend.window_ops().configure_xywh_border(
-                WindowId(e.window.into()),
-                ox,
-                oy,
-                ow,
-                oh,
-                ob,
-            )?;
-        }
-        if e.value_mask.contains(ConfigWindow::SIBLING)
-            || e.value_mask.contains(ConfigWindow::STACK_MODE)
-        {
-            self.backend.window_ops().configure_stack_above(
-                WindowId(e.window.into()),
-                if e.value_mask.contains(ConfigWindow::SIBLING) {
-                    Some(WindowId(e.sibling.into()))
-                } else {
-                    None
-                },
-            )?;
-        }
-        self.backend.window_ops().flush()?;
-        Ok(())
-    }
-
-    pub fn createmon(&mut self, show_bar: bool) -> WMMonitor {
+    fn createmon(&mut self, show_bar: bool) -> WMMonitor {
         // info!("[createmon]");
         let mut m: WMMonitor = WMMonitor::new();
         m.tag_set[0] = 1;
@@ -3116,7 +2791,70 @@ impl Jwm {
         return m;
     }
 
-    pub fn destroynotify(&mut self, window: u32) -> Result<(), Box<dyn std::error::Error>> {
+    fn enter_notify(
+        &mut self,
+        _root: u32,
+        event_window: u32,
+        mode: u8,
+        detail: u8,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // NOTE: X11 语义：mode=0(NORMAL), detail=2(INFERIOR)
+        if (mode != 0 || detail == 2) && event_window != self.backend.root_window().0 as u32 {
+            return Ok(());
+        }
+        // 检查是否进入状态栏
+        if self.handle_statusbar_enter_generic(event_window)? {
+            return Ok(());
+        }
+        self.handle_regular_enter_generic(event_window)?;
+        Ok(())
+    }
+
+    fn handle_statusbar_enter_generic(
+        &mut self,
+        event_window: u32,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        if Some(event_window) == self.status_bar_window {
+            if let Some(cur_bar_mon_id) = self.current_bar_monitor_id {
+                if let Some(target_monitor_key) = self.get_monitor_by_id(cur_bar_mon_id) {
+                    if Some(target_monitor_key) != self.sel_mon {
+                        let current_sel = self.get_selected_client_key();
+                        self.unfocus_client_opt(current_sel, true)?;
+                        self.sel_mon = Some(target_monitor_key);
+                        self.focus(None)?;
+                    }
+                }
+            }
+            return Ok(true);
+        }
+        Ok(false)
+    }
+
+    fn handle_regular_enter_generic(
+        &mut self,
+        event_window: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let client_key_opt = self.wintoclient(event_window);
+        let monitor_key_opt = if let Some(client_key) = client_key_opt {
+            self.clients.get(client_key).and_then(|client| client.mon)
+        } else {
+            self.wintomon(event_window)
+        };
+        let current_event_monitor_key = match monitor_key_opt {
+            Some(monitor_key) => monitor_key,
+            None => return Ok(()),
+        };
+        let is_on_selected_monitor = Some(current_event_monitor_key) == self.sel_mon;
+        if !is_on_selected_monitor {
+            self.switch_to_monitor(current_event_monitor_key)?;
+        }
+        if self.should_focus_client(client_key_opt, is_on_selected_monitor) {
+            self.focus(client_key_opt)?;
+        }
+        Ok(())
+    }
+
+    fn destroynotify(&mut self, window: u32) -> Result<(), Box<dyn std::error::Error>> {
         let c = self.wintoclient(window);
         if c.is_some() {
             self.unmanage(c, true)?;
@@ -3124,7 +2862,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn arrangemon(&mut self, mon_key: MonitorKey) {
+    fn arrangemon(&mut self, mon_key: MonitorKey) {
         info!("[arrangemon]");
 
         // 获取布局类型和更新符号
@@ -3154,7 +2892,7 @@ impl Jwm {
         }
     }
 
-    pub fn dirtomon(&mut self, dir: &i32) -> Option<MonitorKey> {
+    fn dirtomon(&mut self, dir: &i32) -> Option<MonitorKey> {
         let selected_monitor_key = self.sel_mon?; // Return None if sel_mon is None
         if self.monitor_order.is_empty() {
             return None;
@@ -3203,7 +2941,7 @@ impl Jwm {
         }
     }
 
-    pub fn restack(
+    fn restack(
         &mut self,
         mon_key_opt: Option<MonitorKey>,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -3214,7 +2952,7 @@ impl Jwm {
         let monitor_num = monitor.num;
 
         // 1) 从顶部到下的栈
-        let stack = self.monitor_stack.get(mon_key).cloned().unwrap_or_default();
+        let stack = self.get_monitor_stack(mon_key);
 
         // 2) 分离 tiled 与 floating（仅可见）
         let mut tiled_bottom_to_top: Vec<u32> = Vec::new();
@@ -3417,7 +3155,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn run_sync(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn run_sync(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // 使用简化的阻塞循环 + 小睡眠，完全走 backend 事件源
         self.backend.event_source().flush()?;
         let mut event_count: u64 = 0;
@@ -3527,7 +3265,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn arrange(&mut self, m_target: Option<MonitorKey>) {
+    fn arrange(&mut self, m_target: Option<MonitorKey>) {
         info!("[arrange]");
 
         // 确定要操作的监视器
@@ -3548,12 +3286,12 @@ impl Jwm {
         }
     }
 
-    pub fn getrootptr(&mut self) -> Result<(i32, i32), Box<dyn std::error::Error>> {
+    fn getrootptr(&mut self) -> Result<(i32, i32), Box<dyn std::error::Error>> {
         let (x, y, _mask, _unused) = self.backend.input_ops().query_pointer_root()?;
         Ok((x, y))
     }
 
-    pub fn recttomon(&mut self, x: i32, y: i32, w: i32, h: i32) -> Option<MonitorKey> {
+    fn recttomon(&mut self, x: i32, y: i32, w: i32, h: i32) -> Option<MonitorKey> {
         // info!("[recttomon]");
         let mut max_area = 0;
         let mut result_monitor = self.sel_mon;
@@ -3571,7 +3309,7 @@ impl Jwm {
         result_monitor
     }
 
-    pub fn wintomon(&mut self, w: u32) -> Option<MonitorKey> {
+    fn wintomon(&mut self, w: u32) -> Option<MonitorKey> {
         // 处理根窗口
         if w == self.backend.root_window().0 as u32 {
             match self.getrootptr() {
@@ -3606,17 +3344,15 @@ impl Jwm {
     }
 
     pub fn checkotherwm(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let mask_bits = x11rb::protocol::xproto::EventMask::SUBSTRUCTURE_REDIRECT.bits();
+        let mask_bits = EventMaskBits::SUBSTRUCTURE_REDIRECT.bits();
         let root = self.backend.root_window();
-
         match self.backend.window_ops().change_event_mask(root, mask_bits) {
             Ok(_) => {
-                log::info!("[checkotherwm] SubstructureRedirect acquired, no other WM running");
+                info!("[checkotherwm] SubstructureRedirect acquired, no other WM running");
                 Ok(())
             }
             Err(e) => {
-                // 如果失败，认为有其他 WM 在运行
-                log::error!(
+                error!(
                     "[checkotherwm] Failed to acquire SubstructureRedirect: {:?}",
                     e
                 );
@@ -3626,7 +3362,6 @@ impl Jwm {
         }
     }
 
-    // (todo) add prepare_child_command
     pub fn spawn(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[spawn]");
 
@@ -3687,7 +3422,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn tile(&mut self, mon_key: MonitorKey) {
+    fn tile(&mut self, mon_key: MonitorKey) {
         info!("[tile]");
 
         // 获取监视器基本信息
@@ -4018,7 +3753,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn focusin(&mut self, event: u32) -> Result<(), Box<dyn std::error::Error>> {
+    fn focusin(&mut self, event: u32) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[focusin]");
         let sel_client_key = self.get_selected_client_key();
 
@@ -4105,11 +3840,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn sendmon(
-        &mut self,
-        client_key_opt: Option<ClientKey>,
-        target_mon_opt: Option<MonitorKey>,
-    ) {
+    fn sendmon(&mut self, client_key_opt: Option<ClientKey>, target_mon_opt: Option<MonitorKey>) {
         // info!("[sendmon]");
 
         let client_key = match client_key_opt {
@@ -5220,7 +4951,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn setup_ewmh(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn setup_ewmh(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(facade) = self.backend.ewmh_facade().as_ref() {
             let _support_win = facade.setup_supporting_wm_check("jwm")?;
             let supported = [
@@ -5243,20 +4974,19 @@ impl Jwm {
 
     pub fn setup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[setup]");
-
-        // 初始化视觉/几何/EWMH/根窗口事件/keys
         self.backend.init_visual()?;
-        self.updategeom();
+        let _ = self.updategeom();
         self.setup_ewmh()?;
 
-        let mask = (EventMask::SUBSTRUCTURE_REDIRECT
-            | EventMask::STRUCTURE_NOTIFY
-            | EventMask::BUTTON_PRESS
-            | EventMask::POINTER_MOTION
-            | EventMask::ENTER_WINDOW
-            | EventMask::LEAVE_WINDOW
-            | EventMask::PROPERTY_CHANGE)
+        let mask = (EventMaskBits::SUBSTRUCTURE_REDIRECT
+            | EventMaskBits::STRUCTURE_NOTIFY
+            | EventMaskBits::BUTTON_PRESS
+            | EventMaskBits::POINTER_MOTION
+            | EventMaskBits::ENTER_WINDOW
+            | EventMaskBits::LEAVE_WINDOW
+            | EventMaskBits::PROPERTY_CHANGE)
             .bits();
+
         let root = self.backend.root_window();
         self.backend
             .cursor_provider()
@@ -5268,10 +4998,8 @@ impl Jwm {
         self.focus(None)?;
         self.backend.window_ops().flush()?;
 
-        // 读取快照（如果存在）
         let snapshot_opt = Self::load_restart_snapshot();
 
-        // 标记本次启动为“恢复模式”
         self.restoring_from_snapshot = snapshot_opt.is_some();
 
         self.scan()?;
@@ -5337,7 +5065,7 @@ impl Jwm {
         true
     }
 
-    pub fn force_kill_client(
+    fn force_kill_client(
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -5448,7 +5176,7 @@ impl Jwm {
     }
 
     // 截断到字符数（非字节数）上限
-    pub fn truncate_chars(input: String, max_chars: usize) -> String {
+    fn truncate_chars(input: String, max_chars: usize) -> String {
         if input.is_empty() {
             return input;
         }
@@ -5883,10 +5611,10 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn setup_modifier_masks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn setup_modifier_masks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("Setting up modifier masks (KeyOps)...");
-        let (_mods_flag, x11_bits) = self.backend.key_ops_mut().detect_numlock_mask()?;
-        self.x11_numlock_mask = x11rb::protocol::xproto::KeyButMask::from(x11_bits);
+        let (_mods_flag, backend_bits) = self.backend.key_ops_mut().detect_numlock_mask()?;
+        self.numlock_mask_bits = backend_bits;
         self.verify_modifier_setup()?;
         Ok(())
     }
@@ -5894,8 +5622,8 @@ impl Jwm {
     fn verify_modifier_setup(&self) -> Result<(), Box<dyn std::error::Error>> {
         let (_x, _y, mask, _unused) = self.backend.input_ops().query_pointer_root()?;
         info!("Current modifier state: 0x{:04x}", mask);
-        if self.x11_numlock_mask != x11rb::protocol::xproto::KeyButMask::default() {
-            let numlock_active = (mask & self.x11_numlock_mask.bits() as u16) != 0;
+        if self.numlock_mask_bits != 0 {
+            let numlock_active = (mask & self.numlock_mask_bits) != 0;
             info!(
                 "NumLock currently {}",
                 if numlock_active { "ON" } else { "OFF" }
@@ -5904,7 +5632,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn setclienttagprop(
+    fn setclienttagprop(
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -5933,83 +5661,6 @@ impl Jwm {
             self.suppress_mouse_focus_until = None;
         }
         false
-    }
-
-    pub fn enternotify(&mut self, e: &EnterNotifyEvent) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[enternotify]");
-        if self.mouse_focus_blocked() {
-            return Ok(());
-        }
-        // 过滤不需要处理的事件
-        if (e.mode != NotifyMode::NORMAL || e.detail == NotifyDetail::INFERIOR)
-            && e.event != self.backend.root_window().0 as u32
-        {
-            return Ok(());
-        }
-
-        // 检查是否进入状态栏
-        if self.handle_statusbar_enter(e)? {
-            return Ok(());
-        }
-
-        // 常规的 enternotify 处理
-        self.handle_regular_enter(e)?;
-        Ok(())
-    }
-
-    fn handle_statusbar_enter(
-        &mut self,
-        e: &EnterNotifyEvent,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
-        if Some(e.event) == self.status_bar_window {
-            if let Some(cur_bar_mon_id) = self.current_bar_monitor_id {
-                if let Some(target_monitor_key) = self.get_monitor_by_id(cur_bar_mon_id) {
-                    if Some(target_monitor_key) != self.sel_mon {
-                        let current_sel = self.get_selected_client_key();
-                        self.unfocus_client_opt(current_sel, true)?;
-                        self.sel_mon = Some(target_monitor_key);
-                        self.focus(None)?;
-                    }
-                }
-            }
-            return Ok(true);
-        }
-        Ok(false)
-    }
-
-    fn handle_regular_enter(
-        &mut self,
-        e: &EnterNotifyEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // 确定事件相关的客户端和显示器
-        let client_key_opt = self.wintoclient(e.event);
-        let monitor_key_opt = if let Some(client_key) = client_key_opt {
-            // 如果是已管理的客户端，获取其所在监视器
-            self.clients.get(client_key).and_then(|client| client.mon)
-        } else {
-            // 如果事件窗口不是已管理的客户端，尝试根据窗口ID确定显示器
-            self.wintomon(e.event)
-        };
-
-        // 如果无法确定显示器，则不处理
-        let current_event_monitor_key = match monitor_key_opt {
-            Some(monitor_key) => monitor_key,
-            None => return Ok(()),
-        };
-
-        // 处理显示器焦点切换
-        let is_on_selected_monitor = Some(current_event_monitor_key) == self.sel_mon;
-
-        if !is_on_selected_monitor {
-            self.switch_to_monitor(current_event_monitor_key)?;
-        }
-
-        // 处理客户端焦点切换
-        if self.should_focus_client(client_key_opt, is_on_selected_monitor) {
-            self.focus(client_key_opt)?;
-        }
-
-        Ok(())
     }
 
     fn switch_to_monitor(
@@ -6068,7 +5719,7 @@ impl Jwm {
         current_selected != client_key_opt
     }
 
-    pub fn expose(&mut self, window: u32, count: u16) -> Result<(), Box<dyn std::error::Error>> {
+    fn expose(&mut self, window: u32, count: u16) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[expose]");
         // 只处理最后一个expose事件（count为0时）
         if count != 0 {
@@ -6145,26 +5796,29 @@ impl Jwm {
         if !focused {
             self.backend
                 .window_ops()
-                .grab_button_any_anymod(WindowId(client_win_id.into()), (*BUTTONMASK).into())?;
+                .grab_button_any_anymod(WindowId(client_win_id.into()), BUTTONMASK.bits())?;
         }
 
         for button_config in CONFIG.get_buttons().iter() {
             if button_config.click_type == WMClickType::ClickClientWin {
-                use x11rb::protocol::xproto::KeyButMask as KBM;
-                let base = mods_to_x11(button_config.mask, self.x11_numlock_mask);
+                let base = button_config.mask;
                 let combos = [
                     base,
-                    base | KBM::LOCK,
-                    base | self.x11_numlock_mask,
-                    base | KBM::LOCK | self.x11_numlock_mask,
+                    base | Mods::CAPS,
+                    base | Mods::NUMLOCK,
+                    base | Mods::CAPS | Mods::NUMLOCK,
                 ];
-                let x11_btn = button_to_x11(button_config.button);
+                let btn_u8 = button_config.button.to_u8();
                 for mm in combos {
+                    let mods_bits = self
+                        .backend
+                        .key_ops()
+                        .backend_mods_mask_for_grab(mm, self.numlock_mask_bits);
                     self.backend.window_ops().grab_button(
                         WindowId(client_win_id.into()),
-                        x11_btn.into(),
-                        (*BUTTONMASK).into(),
-                        mm.bits(), // u16
+                        btn_u8,
+                        BUTTONMASK.bits(),
+                        mods_bits,
                     )?;
                 }
             }
@@ -6174,7 +5828,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn focus(
+    fn focus(
         &mut self,
         mut client_key_opt: Option<ClientKey>,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -6330,7 +5984,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn setfocus(&mut self, client_key: ClientKey) -> Result<(), Box<dyn std::error::Error>> {
+    fn setfocus(&mut self, client_key: ClientKey) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.clients.get(client_key) {
             let wid = WindowId(client.win as u64);
             self.backend.window_ops().set_input_focus_window(wid)?;
@@ -6353,7 +6007,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn update_net_client_list(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn update_net_client_list(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut ordered: Vec<WindowId> = Vec::with_capacity(self.client_order.len());
         for &key in &self.client_order {
             if let Some(client) = self.clients.get(key) {
@@ -6379,40 +6033,13 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn setclientstate(&self, win: u32, state: i64) -> Result<(), Box<dyn std::error::Error>> {
+    fn setclientstate(&self, win: u32, state: i64) -> Result<(), Box<dyn std::error::Error>> {
         self.backend
             .property_ops()
             .set_wm_state(WindowId(win as u64), state)
     }
 
-    pub fn keypress(&mut self, e: &KeyPressEvent) -> Result<(), Box<dyn std::error::Error>> {
-        let keysym = self.backend.key_ops_mut().keysym_from_keycode(e.detail)?;
-        let clean_state = self.clean_mask(e.state.bits());
-        let keys = CONFIG.get_keys();
-
-        for (_i, key_config) in keys.iter().enumerate() {
-            let kc_mask = key_config.mask
-                & (Mods::SHIFT
-                    | Mods::CONTROL
-                    | Mods::ALT
-                    | Mods::SUPER
-                    | Mods::MOD2
-                    | Mods::MOD3
-                    | Mods::MOD5);
-            if keysym == key_config.key_sym
-                && kc_mask == clean_state
-                && key_config.func_opt.is_some()
-            {
-                if let Some(func) = key_config.func_opt {
-                    let _ = func(self, &key_config.arg);
-                    return Ok(());
-                }
-            }
-        }
-        Ok(())
-    }
-
-    pub fn manage(&mut self, win: u32, geom: &Geometry) -> Result<(), Box<dyn std::error::Error>> {
+    fn manage(&mut self, win: u32, geom: &Geometry) -> Result<(), Box<dyn std::error::Error>> {
         info!("[manage] Managing window 0x{:x}", win);
         // 检查窗口是否已被管理
         if self.wintoclient(win).is_some() {
@@ -7087,23 +6714,7 @@ impl Jwm {
             .map(|(key, _)| key)
     }
 
-    pub fn mappingnotify(
-        &mut self,
-        e: &MappingNotifyEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        match e.request {
-            Mapping::KEYBOARD | Mapping::MODIFIER => {
-                // 清除 KeyOps 内部缓存并重新抓取
-                self.backend.key_ops_mut().clear_cache();
-                self.grabkeys()?;
-            }
-            Mapping::POINTER => { /* 忽略或按需处理 */ }
-            _ => {}
-        }
-        Ok(())
-    }
-
-    pub fn maprequest(&mut self, window: u32) -> Result<(), Box<dyn std::error::Error>> {
+    fn maprequest(&mut self, window: u32) -> Result<(), Box<dyn std::error::Error>> {
         let window_attr = self
             .backend
             .window_ops()
@@ -7127,7 +6738,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn monocle(&mut self, mon_key: MonitorKey) {
+    fn monocle(&mut self, mon_key: MonitorKey) {
         info!("[monocle]");
 
         // 获取监视器信息
@@ -7203,32 +6814,6 @@ impl Jwm {
         }
     }
 
-    pub fn motionnotify(
-        &mut self,
-        e: &MotionNotifyEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[motionnotify]");
-        // 只处理根窗口上的鼠标移动事件
-        if e.event != self.backend.root_window().0 as u32 {
-            return Ok(());
-        }
-        if self.mouse_focus_blocked() {
-            return Ok(());
-        }
-
-        // 根据鼠标位置确定当前显示器
-        let new_monitor_key = self.recttomon(e.root_x as i32, e.root_y as i32, 1, 1);
-
-        // 检查是否切换了显示器
-        if new_monitor_key != self.motion_mon {
-            self.handle_monitor_switch_by_key(new_monitor_key)?;
-        }
-
-        // 更新motion_mon
-        self.motion_mon = new_monitor_key;
-        Ok(())
-    }
-
     fn handle_monitor_switch_by_key(
         &mut self,
         new_monitor_key: Option<MonitorKey>,
@@ -7254,7 +6839,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn unmanage(
+    fn unmanage(
         &mut self,
         client_key: Option<ClientKey>,
         destroyed: bool,
@@ -7496,7 +7081,7 @@ impl Jwm {
         }
     }
 
-    pub fn unmanage_regular_client(
+    fn unmanage_regular_client(
         &mut self,
         client_key: ClientKey,
         destroyed: bool,
@@ -7623,7 +7208,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn unmapnotify(
+    fn unmapnotify(
         &mut self,
         window: u32,
         from_configure: bool,
@@ -7650,7 +7235,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn updategeom(&mut self) -> bool {
+    fn updategeom(&mut self) -> bool {
         info!("[updategeom]");
         let outputs = self.backend.output_ops().enumerate_outputs();
 
@@ -7824,7 +7409,7 @@ impl Jwm {
         }
     }
 
-    pub fn updatewindowtype(&mut self, client_key: ClientKey) {
+    fn updatewindowtype(&mut self, client_key: ClientKey) {
         if let Some(client) = self.clients.get(client_key) {
             let win_id = WindowId(client.win.into());
             if let Ok(true) = self.backend.property_ops().is_fullscreen(win_id) {
@@ -7838,7 +7423,7 @@ impl Jwm {
         }
     }
 
-    pub fn updatewmhints(&mut self, client_key: ClientKey) {
+    fn updatewmhints(&mut self, client_key: ClientKey) {
         let win = match self.clients.get(client_key) {
             Some(c) => c.win,
             None => return,
@@ -7873,7 +7458,7 @@ impl Jwm {
         }
     }
 
-    pub fn update_bar_message_for_monitor(&mut self, mon_key_opt: Option<MonitorKey>) {
+    fn update_bar_message_for_monitor(&mut self, mon_key_opt: Option<MonitorKey>) {
         // info!("[update_bar_message_for_monitor]");
 
         let mon_key = match mon_key_opt {

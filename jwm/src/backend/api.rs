@@ -190,6 +190,12 @@ pub trait KeyOps: Send {
 
     // 清空内部键盘映射缓存（在 MappingNotify 时）
     fn clear_cache(&mut self);
+
+    // 新增：将后端原始修饰位转换为通用 Mods（JWM 用于清理掩码）
+    fn mods_from_raw_mask(&self, raw: u16, numlock_mask_bits: u16) -> Mods;
+
+    // 新增：将通用 Mods 转为后端抓取时需要的掩码位（JWM 用于 grab_button）
+    fn backend_mods_mask_for_grab(&self, mods: Mods, numlock_mask_bits: u16) -> u16;
 }
 
 pub trait InputOps: Send {

@@ -1,8 +1,11 @@
+#![warn(dead_code, unused, unreachable_pub)]
+#![warn(clippy::all, clippy::pedantic)]
+
+pub mod backend;
 pub mod config;
 pub mod jwm;
 pub mod miscellaneous;
 pub mod terminal_prober;
-pub mod backend;
 
 pub use jwm::Jwm;
 
