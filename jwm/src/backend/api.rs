@@ -235,6 +235,8 @@ pub trait EventSource: Send {
 
 // 窗口接口
 pub trait WindowOps: Send {
+    fn get_tree_child(&self, win: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>>;
+
     fn set_border_width(
         &self,
         win: WindowId,

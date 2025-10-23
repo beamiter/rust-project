@@ -33,11 +33,9 @@ use crate::backend::common_define::ColorScheme;
 use crate::backend::common_define::SchemeType;
 use crate::backend::common_define::{KeySym, Mods, MouseButton, StdCursorKind};
 use crate::backend::x11::adapter::{button_to_x11, mods_from_x11, mods_to_x11};
-use crate::backend::x11::property_ops::X11PropertyOps;
 use crate::config::CONFIG;
 
 use x11rb::protocol::xproto::*;
-use x11rb::rust_connection::RustConnection;
 
 use shared_structures::CommandType;
 use shared_structures::SharedCommand;
@@ -45,9 +43,6 @@ use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus}
 
 use bincode::config::standard;
 use bincode::{Decode, Encode};
-
-#[cfg(unix)]
-use nix::unistd::close;
 
 // definitions for initial window state.
 pub const WITHDRAWN_STATE: u8 = 0;
@@ -2477,49 +2472,6 @@ impl Jwm {
         Ok(())
     }
 
-    /// 从ClientMessage中获取long数据
-    fn get_client_message_long(
-        &self,
-        e: &ClientMessageEvent,
-        index: usize,
-    ) -> Result<u32, Box<dyn std::error::Error>> {
-        if index >= 5 {
-            return Err("ClientMessage data index out of range".into());
-        }
-        match e.format {
-            32 => {
-                // 32位数据
-                let data = e.data.as_data32();
-                Ok(data[index])
-            }
-            16 => {
-                // 16位数据 - 需要组合两个16位值成一个32位值
-                let data = e.data.as_data16();
-                if index * 2 + 1 < data.len() {
-                    let low = data[index * 2] as u32;
-                    let high = data[index * 2 + 1] as u32;
-                    Ok(low | (high << 16))
-                } else {
-                    Err("16-bit data index out of range".into())
-                }
-            }
-            8 => {
-                // 8位数据 - 需要组合四个8位值成一个32位值
-                let data = e.data.as_data8();
-                if index * 4 + 3 < data.len() {
-                    let b0 = data[index * 4] as u32;
-                    let b1 = data[index * 4 + 1] as u32;
-                    let b2 = data[index * 4 + 2] as u32;
-                    let b3 = data[index * 4 + 3] as u32;
-                    Ok(b0 | (b1 << 8) | (b2 << 16) | (b3 << 24))
-                } else {
-                    Err("8-bit data index out of range".into())
-                }
-            }
-            _ => Err(format!("Unsupported data format: {}", e.format).into()),
-        }
-    }
-
     pub fn configurenotify(
         &mut self,
         e: &ConfigureNotifyEvent,
@@ -3599,35 +3551,41 @@ impl Jwm {
     }
 
     pub fn scan(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let tree_reply = self
-            .x11rb_conn
-            .query_tree(self.backend.root_window().0 as u32)?
-            .reply()?;
-        let mut cookies = Vec::with_capacity(tree_reply.children.len());
-        for win in tree_reply.children {
-            let attr = self
-                .backend
-                .window_ops()
-                .get_window_attributes(WindowId(win.into()))?;
-            let geom = self
-                .backend
-                .window_ops()
-                .get_geometry_translated(WindowId(win.into()))?;
-            let trans = self.get_transient_for(win);
+        let tree_child = self
+            .backend
+            .window_ops()
+            .get_tree_child(self.backend.root_window())?;
+        let mut cookies = Vec::with_capacity(tree_child.len());
+        for win in tree_child {
+            let attr = self.backend.window_ops().get_window_attributes(win)?;
+            let geom = self.backend.window_ops().get_geometry_translated(win)?;
+            let trans = self.get_transient_for(win.0 as u32);
             cookies.push((win, attr, geom, trans));
         }
         for (win, attr, geom, trans) in &cookies {
             if attr.override_redirect || trans.is_some() {
                 continue;
             }
-            if attr.map_state_viewable || self.get_wm_state(*win) == ICONIC_STATE as i64 {
-                self.manage(*win, geom)?;
+            if attr.map_state_viewable
+                || self
+                    .backend
+                    .property_ops()
+                    .get_wm_state(*win)
+                    .map_or(false, |s| s == ICONIC_STATE.into())
+            {
+                self.manage(win.0 as u32, geom)?;
             }
         }
         for (win, attr, geom, trans) in &cookies {
             if trans.is_some() {
-                if attr.map_state_viewable || self.get_wm_state(*win) == ICONIC_STATE as i64 {
-                    self.manage(*win, geom)?;
+                if attr.map_state_viewable
+                    || self
+                        .backend
+                        .property_ops()
+                        .get_wm_state(*win)
+                        .map_or(false, |s| s == ICONIC_STATE.into())
+                {
+                    self.manage(win.0 as u32, geom)?;
                 }
             }
         }
@@ -3658,13 +3616,6 @@ impl Jwm {
     pub fn getrootptr(&mut self) -> Result<(i32, i32), Box<dyn std::error::Error>> {
         let (x, y, _mask, _unused) = self.backend.input_ops().query_pointer_root()?;
         Ok((x, y))
-    }
-
-    pub fn get_wm_state(&self, window: u32) -> i64 {
-        self.backend
-            .property_ops()
-            .get_wm_state(WindowId(window as u64))
-            .unwrap_or(-1)
     }
 
     pub fn recttomon(&mut self, x: i32, y: i32, w: i32, h: i32) -> Option<MonitorKey> {
@@ -5389,7 +5340,7 @@ impl Jwm {
         // 标记本次启动为“恢复模式”
         self.restoring_from_snapshot = snapshot_opt.is_some();
 
-        self.scan()?; // 把当前所有窗口纳管
+        self.scan()?;
 
         if let Some(snap) = snapshot_opt {
             info!("[setup] applying snapshot...");
@@ -5482,15 +5433,6 @@ impl Jwm {
         }
     }
 
-    pub fn gettextprop(&mut self, w: Window, text: &mut String) -> bool {
-        let s = self
-            .backend
-            .property_ops()
-            .get_text_property_best_title(WindowId(w.into()));
-        *text = X11PropertyOps::<RustConnection>::truncate_chars(s, STEXT_MAX_LEN);
-        true
-    }
-
     fn handle_transient_for_change(
         &mut self,
         client_key: ClientKey,
@@ -5562,10 +5504,8 @@ impl Jwm {
         } else {
             return;
         };
-
         // 获取新标题
         let new_title = self.fetch_window_title(win);
-
         // 更新客户端标题
         if let Some(client) = self.clients.get_mut(client_key) {
             client.name = new_title;
@@ -5573,12 +5513,31 @@ impl Jwm {
         }
     }
 
+    // 截断到字符数（非字节数）上限
+    pub fn truncate_chars(input: String, max_chars: usize) -> String {
+        if input.is_empty() {
+            return input;
+        }
+        let mut count = 0usize;
+        let mut truncate_at = input.len();
+        for (idx, _) in input.char_indices() {
+            if count >= max_chars {
+                truncate_at = idx;
+                break;
+            }
+            count += 1;
+        }
+        let mut s = input;
+        s.truncate(truncate_at);
+        s
+    }
+
     fn fetch_window_title(&mut self, window: Window) -> String {
         let title = self
             .backend
             .property_ops()
             .get_text_property_best_title(WindowId(window.into()));
-        X11PropertyOps::<RustConnection>::truncate_chars(title, STEXT_MAX_LEN)
+        Self::truncate_chars(title, STEXT_MAX_LEN)
     }
 
     fn handle_title_change(
@@ -6545,8 +6504,7 @@ impl Jwm {
         client.geometry.old_h = geom.h as i32;
         client.geometry.old_border_w = geom.border as i32;
         client.state.client_fact = 1.0;
-        // 获取并设置窗口标题
-        self.updatetitle_by_window(&mut client);
+        client.name = self.fetch_window_title(client.win);
         self.update_class_info(&mut client);
 
         info!("[manage] {}", client);
@@ -6837,11 +6795,6 @@ impl Jwm {
             }
         }
         Ok(())
-    }
-
-    // 辅助方法
-    fn updatetitle_by_window(&mut self, client: &mut WMClient) {
-        self.gettextprop(client.win, &mut client.name);
     }
 
     fn update_class_info(&mut self, client: &mut WMClient) {

@@ -72,25 +72,6 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
     fn parse_latin1(value: &[u8]) -> String {
         value.iter().map(|&b| b as char).collect()
     }
-
-    // 截断到字符数（非字节数）上限
-    pub fn truncate_chars(input: String, max_chars: usize) -> String {
-        if input.is_empty() {
-            return input;
-        }
-        let mut count = 0usize;
-        let mut truncate_at = input.len();
-        for (idx, _) in input.char_indices() {
-            if count >= max_chars {
-                truncate_at = idx;
-                break;
-            }
-            count += 1;
-        }
-        let mut s = input;
-        s.truncate(truncate_at);
-        s
-    }
 }
 
 impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<C> {
@@ -107,7 +88,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
                 PropMode::REPLACE,
                 win.0 as u32,
                 self.atoms._NET_WM_STRUT,
-                AtomEnum::CARDINAL.into(),
+                AtomEnum::CARDINAL,
                 &strut,
             )?
             .check()?;
@@ -117,7 +98,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
                 PropMode::REPLACE,
                 win.0 as u32,
                 self.atoms._NET_WM_STRUT_PARTIAL,
-                AtomEnum::CARDINAL.into(),
+                AtomEnum::CARDINAL,
                 &partial,
             )?
             .check()?;
@@ -164,7 +145,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
                     PropMode::APPEND,
                     win.0 as u32,
                     self.atoms._NET_WM_STATE,
-                    AtomEnum::ATOM.into(),
+                    AtomEnum::ATOM,
                     &atoms,
                 )?
                 .check()?;
@@ -181,7 +162,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
                     u32::MAX,
                 )?
                 .reply()?;
-            let mut list: Vec<u32> = current
+            let list: Vec<u32> = current
                 .value32()
                 .into_iter()
                 .flatten()
@@ -192,7 +173,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
                     PropMode::REPLACE,
                     win.0 as u32,
                     self.atoms._NET_WM_STATE,
-                    AtomEnum::ATOM.into(),
+                    AtomEnum::ATOM,
                     &list,
                 )?
                 .check()?;
@@ -327,7 +308,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
                 PropMode::REPLACE,
                 win.0 as u32,
                 self.atoms._NET_CLIENT_INFO,
-                AtomEnum::CARDINAL.into(),
+                AtomEnum::CARDINAL,
                 &data,
             )?
             .check()?;

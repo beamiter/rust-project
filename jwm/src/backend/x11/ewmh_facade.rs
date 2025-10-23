@@ -47,7 +47,7 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
                 PropMode::REPLACE,
                 self.root.0 as u32,
                 self.atoms._NET_SUPPORTED,
-                AtomEnum::ATOM.into(),
+                AtomEnum::ATOM,
                 &atoms,
             )?
             .check()?;

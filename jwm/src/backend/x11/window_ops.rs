@@ -220,19 +220,28 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         &self,
         win: WindowId,
     ) -> Result<Geometry, Box<dyn std::error::Error>> {
-        let geom = self.conn.get_geometry(win.0 as u32)?.reply()?;
-        let tree = self.conn.query_tree(win.0 as u32)?.reply()?;
-        let trans = self
+        let geom_reply = self.conn.get_geometry(win.0 as u32)?.reply()?;
+        let tree_reply = self.conn.query_tree(win.0 as u32)?.reply()?;
+        let trans_coord = self
             .conn
-            .translate_coordinates(win.0 as u32, tree.parent, geom.x, geom.y)?
+            .translate_coordinates(win.0 as u32, tree_reply.parent, geom_reply.x, geom_reply.y)?
             .reply()?;
         Ok(Geometry {
-            x: trans.dst_x,
-            y: trans.dst_y,
-            w: geom.width,
-            h: geom.height,
-            border: geom.border_width,
+            x: trans_coord.dst_x,
+            y: trans_coord.dst_y,
+            w: geom_reply.width,
+            h: geom_reply.height,
+            border: geom_reply.border_width,
         })
+    }
+
+    fn get_tree_child(&self, win: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>> {
+        let tree_reply = self.conn.query_tree(win.0 as u32)?.reply()?;
+        Ok(tree_reply
+            .children
+            .iter()
+            .map(|c| WindowId(*c as u64))
+            .collect())
     }
 
     fn ungrab_all_buttons(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
