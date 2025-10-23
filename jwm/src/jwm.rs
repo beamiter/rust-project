@@ -1208,31 +1208,9 @@ impl Jwm {
             BackendEvent::KeyPress { keycode, state } => self.on_key_press(keycode, state),
 
             BackendEvent::ConfigureNotify { window, x, y, w, h } => {
-                // 此处仍保留旧路径，后续按需迁移
-                let e = x11rb::protocol::xproto::ConfigureNotifyEvent {
-                    response_type: x11rb::protocol::xproto::CONFIGURE_NOTIFY_EVENT,
-                    sequence: 0,
-                    event: window.0 as u32,
-                    window: window.0 as u32,
-                    x,
-                    y,
-                    width: w,
-                    height: h,
-                    border_width: 0,
-                    above_sibling: 0,
-                    override_redirect: false,
-                };
-                self.configurenotify(&e)
+                self.configurenotify(window.0 as u32, x, y, w, h)
             }
-            BackendEvent::DestroyNotify { window } => {
-                let e = x11rb::protocol::xproto::DestroyNotifyEvent {
-                    response_type: x11rb::protocol::xproto::DESTROY_NOTIFY_EVENT,
-                    sequence: 0,
-                    event: window.0 as u32,
-                    window: window.0 as u32,
-                };
-                self.destroynotify(&e)
-            }
+            BackendEvent::DestroyNotify { window } => self.destroynotify(window.0 as u32),
             BackendEvent::EnterNotify {
                 window: _,
                 event,
@@ -1257,51 +1235,13 @@ impl Jwm {
                 };
                 self.enternotify(&e)
             }
-            BackendEvent::Expose { window, count } => {
-                let e = x11rb::protocol::xproto::ExposeEvent {
-                    response_type: x11rb::protocol::xproto::EXPOSE_EVENT,
-                    sequence: 0,
-                    window: window.0 as u32,
-                    x: 0,
-                    y: 0,
-                    width: 0,
-                    height: 0,
-                    count,
-                };
-                self.expose(&e)
-            }
-            BackendEvent::FocusIn { event } => {
-                let e = x11rb::protocol::xproto::FocusInEvent {
-                    response_type: x11rb::protocol::xproto::FOCUS_IN_EVENT,
-                    sequence: 0,
-                    event: event.0 as u32,
-                    mode: x11rb::protocol::xproto::NotifyMode::NORMAL,
-                    detail: x11rb::protocol::xproto::NotifyDetail::NONE,
-                };
-                self.focusin(&e)
-            }
-            BackendEvent::MapRequest { window } => {
-                let e = x11rb::protocol::xproto::MapRequestEvent {
-                    response_type: x11rb::protocol::xproto::MAP_REQUEST_EVENT,
-                    sequence: 0,
-                    parent: self.backend.root_window().0 as u32,
-                    window: window.0 as u32,
-                };
-                self.maprequest(&e)
-            }
+            BackendEvent::Expose { window, count } => self.expose(window.0 as u32, count),
+            BackendEvent::FocusIn { event } => self.focusin(event.0 as u32),
+            BackendEvent::MapRequest { window } => self.maprequest(window.0 as u32),
             BackendEvent::UnmapNotify {
                 window,
                 from_configure,
-            } => {
-                let e = x11rb::protocol::xproto::UnmapNotifyEvent {
-                    response_type: x11rb::protocol::xproto::UNMAP_NOTIFY_EVENT,
-                    sequence: 0,
-                    event: window.0 as u32,
-                    window: window.0 as u32,
-                    from_configure,
-                };
-                self.unmapnotify(&e)
-            }
+            } => self.unmapnotify(window.0 as u32, from_configure),
 
             BackendEvent::ButtonRelease { .. } | BackendEvent::MappingNotify { .. } => Ok(()),
             BackendEvent::EwmhState {
@@ -1309,7 +1249,6 @@ impl Jwm {
                 action,
                 states,
             } => {
-                // 只关注 FULLSCREEN
                 let fullscreen_requested = states
                     .iter()
                     .flatten()
@@ -2474,14 +2413,17 @@ impl Jwm {
 
     pub fn configurenotify(
         &mut self,
-        e: &ConfigureNotifyEvent,
+        window: u32,
+        _x: i16,
+        _y: i16,
+        w: u16,
+        h: u16,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 检查是否是根窗口的配置变更
-        if e.window == self.backend.root_window().0 as u32 {
-            info!("[configurenotify] e: {:?}", e);
-            let dirty = self.s_w != e.width as i32 || self.s_h != e.height as i32;
-            self.s_w = e.width as i32;
-            self.s_h = e.height as i32;
+        if window == self.backend.root_window().0 as u32 {
+            let dirty = self.s_w != w as i32 || self.s_h != h as i32;
+            self.s_w = w as i32;
+            self.s_h = h as i32;
             if self.updategeom() || dirty {
                 self.handle_screen_geometry_change()?;
             }
@@ -3177,12 +3119,8 @@ impl Jwm {
         return m;
     }
 
-    pub fn destroynotify(
-        &mut self,
-        e: &DestroyNotifyEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[destroynotify]");
-        let c = self.wintoclient(e.window);
+    pub fn destroynotify(&mut self, window: u32) -> Result<(), Box<dyn std::error::Error>> {
+        let c = self.wintoclient(window);
         if c.is_some() {
             self.unmanage(c, true)?;
         }
@@ -4084,13 +4022,13 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn focusin(&mut self, e: &FocusInEvent) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn focusin(&mut self, event: Window) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[focusin]");
         let sel_client_key = self.get_selected_client_key();
 
         if let Some(client_key) = sel_client_key {
             if let Some(client) = self.clients.get(client_key) {
-                if e.event != client.win {
+                if event != client.win {
                     self.setfocus(client_key)?;
                 }
             }
@@ -6134,15 +6072,15 @@ impl Jwm {
         current_selected != client_key_opt
     }
 
-    pub fn expose(&mut self, e: &ExposeEvent) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn expose(&mut self, window: Window, count: u16) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[expose]");
         // 只处理最后一个expose事件（count为0时）
-        if e.count != 0 {
+        if count != 0 {
             return Ok(());
         }
 
         // 检查窗口所在的显示器并标记状态栏需要更新
-        if let Some(monitor_key) = self.wintomon(e.window) {
+        if let Some(monitor_key) = self.wintomon(window) {
             if let Some(monitor) = self.monitors.get(monitor_key) {
                 self.mark_bar_update_needed_if_visible(Some(monitor.num));
             }
@@ -6553,20 +6491,16 @@ impl Jwm {
 
         info!("[setup_client_window] Setting up window 0x{:x}", win);
 
-        // 1) 边框宽度
         if let Some(client) = self.clients.get_mut(client_key) {
             client.geometry.border_w = CONFIG.border_px() as i32;
         }
         let border_w = self.clients.get(client_key).unwrap().geometry.border_w;
         self.set_window_border_width(win, border_w as u32)?;
 
-        // 2) 边框颜色
         self.set_window_border_color(win, true)?;
 
-        // 3) 发送 ConfigureNotify（不改动几何）
         self.configure_client(client_key)?;
 
-        // 4) 恢复模式下：不要把窗口挪到屏幕外
         if !self.restoring_from_snapshot {
             // 原来的“屏幕外临时位置”逻辑，仅在非恢复模式执行
             let (x, y, w, h) = if let Some(client) = self.clients.get(client_key) {
@@ -6591,7 +6525,6 @@ impl Jwm {
             self.backend.window_ops().flush()?;
         }
 
-        // 5) 设置 NormalState
         if let Some(client) = self.clients.get(client_key) {
             self.setclientstate(client.win, NORMAL_STATE as i64)?;
         }
@@ -6754,7 +6687,6 @@ impl Jwm {
             return Err("Client not found".into());
         };
 
-        // 使用 x11rb 获取 WM_TRANSIENT_FOR 属性
         match self.get_transient_for(win) {
             Some(transient_for_win) => {
                 // 找到 transient_for 窗口对应的客户端
@@ -7179,29 +7111,26 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn maprequest(&mut self, e: &MapRequestEvent) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn maprequest(&mut self, window: Window) -> Result<(), Box<dyn std::error::Error>> {
         let window_attr = self
             .backend
             .window_ops()
-            .get_window_attributes(WindowId(e.window.into()))?;
+            .get_window_attributes(WindowId(window.into()))?;
         if window_attr.override_redirect {
             debug!(
                 "Ignoring map request for override_redirect window: {}",
-                e.window
+                window
             );
             return Ok(());
         }
-        if self.wintoclient(e.window).is_none() {
+        if self.wintoclient(window).is_none() {
             let geom = self
                 .backend
                 .window_ops()
-                .get_geometry_translated(WindowId(e.window.into()))?;
-            self.manage(e.window, &geom)?;
+                .get_geometry_translated(WindowId(window.into()))?;
+            self.manage(window, &geom)?;
         } else {
-            debug!(
-                "Window {} is already managed, ignoring map request",
-                e.window
-            );
+            debug!("Window {} is already managed, ignoring map request", window);
         }
         Ok(())
     }
@@ -7702,12 +7631,16 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn unmapnotify(&mut self, e: &UnmapNotifyEvent) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn unmapnotify(
+        &mut self,
+        window: Window,
+        from_configure: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[unmapnotify]");
-        if let Some(client_key) = self.wintoclient(e.window) {
-            if e.from_configure {
+        if let Some(client_key) = self.wintoclient(window) {
+            if from_configure {
                 // 这是由于配置请求导致的unmap（通常是合成窗口管理器）
-                debug!("Unmap from configure for window {}", e.window);
+                debug!("Unmap from configure for window {}", window);
                 let client = if let Some(client) = self.clients.get(client_key) {
                     client
                 } else {
@@ -7716,11 +7649,11 @@ impl Jwm {
                 self.setclientstate(client.win, WITHDRAWN_STATE as i64)?;
             } else {
                 // 这是真正的窗口销毁或隐藏
-                debug!("Real unmap for window {}, unmanaging", e.window);
+                debug!("Real unmap for window {}, unmanaging", window);
                 self.unmanage(Some(client_key), false)?;
             }
         } else {
-            debug!("Unmap event for unmanaged window: {}", e.window);
+            debug!("Unmap event for unmanaged window: {}", window);
         }
         Ok(())
     }
