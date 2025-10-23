@@ -36,7 +36,6 @@ use crate::backend::common_define::SchemeType;
 use crate::backend::common_define::{KeySym, Mods, MouseButton, StdCursorKind};
 use crate::config::CONFIG;
 
-use x11rb::protocol::xproto::ConfigWindow;
 use x11rb::protocol::xproto::EventMask;
 
 use shared_structures::CommandType;
@@ -995,8 +994,8 @@ impl Jwm {
         let is_popup = self.is_popup_like(client_key);
 
         // 边框更新
-        let mask = ConfigWindow::from(mask_bits);
-        if mask.contains(ConfigWindow::BORDER_WIDTH) {
+        let mask = ConfigWindowBits::from(mask_bits);
+        if mask.contains(ConfigWindowBits::BORDER_WIDTH) {
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.geometry.border_w = border as i32;
             }
@@ -1025,19 +1024,19 @@ impl Jwm {
             };
 
             if let Some(client) = self.clients.get_mut(client_key) {
-                if mask.contains(ConfigWindow::X) {
+                if mask.contains(ConfigWindowBits::X) {
                     client.geometry.old_x = client.geometry.x;
                     client.geometry.x = mx + x as i32;
                 }
-                if mask.contains(ConfigWindow::Y) {
+                if mask.contains(ConfigWindowBits::Y) {
                     client.geometry.old_y = client.geometry.y;
                     client.geometry.y = my + y as i32;
                 }
-                if mask.contains(ConfigWindow::WIDTH) {
+                if mask.contains(ConfigWindowBits::WIDTH) {
                     client.geometry.old_w = client.geometry.w;
                     client.geometry.w = w as i32;
                 }
-                if mask.contains(ConfigWindow::HEIGHT) {
+                if mask.contains(ConfigWindowBits::HEIGHT) {
                     client.geometry.old_h = client.geometry.h;
                     client.geometry.h = h as i32;
                 }
@@ -1065,8 +1064,8 @@ impl Jwm {
             }
 
             // 如果只是位置变化，发送配置确认
-            if mask.contains(ConfigWindow::X | ConfigWindow::Y)
-                && !mask.contains(ConfigWindow::WIDTH | ConfigWindow::HEIGHT)
+            if mask.contains(ConfigWindowBits::X | ConfigWindowBits::Y)
+                && !mask.contains(ConfigWindowBits::WIDTH | ConfigWindowBits::HEIGHT)
             {
                 self.configure_client(client_key)?;
             }
@@ -1110,30 +1109,30 @@ impl Jwm {
             "[handle_unmanaged_configure_request] unmanaged window=0x{:x}",
             window
         );
-        let mask = ConfigWindow::from(mask_bits);
+        let mask = ConfigWindowBits::from(mask_bits);
 
         // 先用 window_ops 配置 xywh/border（逐步替换）
-        let ox = if mask.contains(ConfigWindow::X) {
+        let ox = if mask.contains(ConfigWindowBits::X) {
             Some(x as i32)
         } else {
             None
         };
-        let oy = if mask.contains(ConfigWindow::Y) {
+        let oy = if mask.contains(ConfigWindowBits::Y) {
             Some(y as i32)
         } else {
             None
         };
-        let ow = if mask.contains(ConfigWindow::WIDTH) {
+        let ow = if mask.contains(ConfigWindowBits::WIDTH) {
             Some(w as u32)
         } else {
             None
         };
-        let oh = if mask.contains(ConfigWindow::HEIGHT) {
+        let oh = if mask.contains(ConfigWindowBits::HEIGHT) {
             Some(h as u32)
         } else {
             None
         };
-        let ob = if mask.contains(ConfigWindow::BORDER_WIDTH) {
+        let ob = if mask.contains(ConfigWindowBits::BORDER_WIDTH) {
             Some(border as u32)
         } else {
             None
@@ -1150,7 +1149,7 @@ impl Jwm {
             );
         }
 
-        if mask.contains(ConfigWindow::SIBLING) || mask.contains(ConfigWindow::STACK_MODE) {
+        if mask.contains(ConfigWindowBits::SIBLING) || mask.contains(ConfigWindowBits::STACK_MODE) {
             self.backend.window_ops().configure_stack_above(
                 WindowId(window.into()),
                 sibling.map(|s| WindowId(s.into())),
