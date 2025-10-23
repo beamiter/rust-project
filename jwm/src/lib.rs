@@ -1,5 +1,5 @@
-#![warn(dead_code, unused, unreachable_pub)]
-#![warn(clippy::all, clippy::pedantic)]
+// #![warn(dead_code, unused, unreachable_pub)]
+// #![warn(clippy::all, clippy::pedantic)]
 
 pub mod backend;
 pub mod config;

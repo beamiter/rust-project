@@ -3238,7 +3238,7 @@ impl Jwm {
                     .backend
                     .property_ops()
                     .get_wm_state(*win)
-                    .map_or(false, |s| s == ICONIC_STATE.into())
+                    .map_or(false, |s: i64| s == ICONIC_STATE as i64)
             {
                 self.manage(win.0 as u32, geom)?;
             }
@@ -3250,7 +3250,7 @@ impl Jwm {
                         .backend
                         .property_ops()
                         .get_wm_state(*win)
-                        .map_or(false, |s| s == ICONIC_STATE.into())
+                        .map_or(false, |s: i64| s == ICONIC_STATE as i64)
                 {
                     self.manage(win.0 as u32, geom)?;
                 }

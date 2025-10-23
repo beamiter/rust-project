@@ -1,68 +1,52 @@
-// use bar::StatusBar;
-use jwm::backend::x11::backend::X11Backend;
-use jwm::{jwm::SHARED_PATH, Jwm};
-use log::{error, info, warn};
-use std::{env, process::Command, sync::atomic::Ordering};
-use xbar_core::initialize_logging;
+// src/main.rs
+use log::{error, info};
+use std::sync::atomic::Ordering;
 
-pub fn setup_locale() {
-    // 获取当前locale
-    let locale = env::var("LANG")
-        .or_else(|_| env::var("LC_ALL"))
-        .or_else(|_| env::var("LC_CTYPE"))
-        .unwrap_or_else(|_| "C".to_string());
-    info!("Using locale: {}", locale);
-    // 检查UTF-8支持
-    if !locale.contains("UTF-8") && !locale.contains("utf8") {
-        warn!(
-            "Non-UTF-8 locale detected ({}). Text display may be affected.",
-            locale
-        );
-        warn!("Consider setting: export LANG=en_US.UTF-8");
-    }
-    // 确保关键的locale环境变量存在
-    if env::var("LC_CTYPE").is_err() {
-        if locale.contains("UTF-8") {
-            env::set_var("LC_CTYPE", &locale);
-        } else {
-            env::set_var("LC_CTYPE", "en_US.UTF-8");
-        }
-    }
-}
+use xbar_core::initialize_logging;
+use jwm::{jwm::SHARED_PATH, Jwm};
+
+#[cfg(feature = "backend-x11")]
+use jwm::backend::x11::backend::X11Backend;
+
+#[cfg(feature = "backend-wayland")]
+use jwm::backend::wayland::backend::WaylandBackend;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    setup_locale();
     jwm::miscellaneous::init_auto_command();
     jwm::miscellaneous::init_auto_start();
-
     initialize_logging("jwm", SHARED_PATH)?;
-
     info!("[main] main begin");
 
-    // 运行窗口管理器
     run_jwm()?;
-
     Ok(())
 }
 
 fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
     info!("[main] Starting JWM instance");
-    let backend = Box::new(X11Backend::new()?);
+
+    #[cfg(all(feature="backend-wayland", not(feature="backend-x11")))]
+    let backend: Box<dyn jwm::backend::api::Backend> = Box::new(WaylandBackend::new()?);
+
+    #[cfg(all(feature="backend-x11", not(feature="backend-wayland")))]
+    let backend: Box<dyn jwm::backend::api::Backend> = Box::new(X11Backend::new()?);
+
+    #[cfg(all(feature="backend-x11", feature="backend-wayland"))]
+    let backend: Box<dyn jwm::backend::api::Backend> = if env::var("WAYLAND_DISPLAY").is_ok() {
+        Box::new(WaylandBackend::new()?)
+    } else {
+        Box::new(X11Backend::new()?)
+    };
 
     let mut jwm = Jwm::new(backend)?;
-    jwm.checkotherwm()?;
-
+    jwm.checkotherwm()?;      // Wayland 下将 no-op 成功返回
     jwm.setup()?;
-
     jwm.scan()?;
-
     jwm.run()?;
-
     jwm.cleanup()?;
 
     if !jwm.is_restarting.load(Ordering::SeqCst) {
-        if let Err(_) = Command::new("jwm-tool").arg("quit").spawn() {
-            error!("[new] Failted to quit jwm daemon");
+        if let Err(_) = std::process::Command::new("jwm-tool").arg("quit").spawn() {
+            error!("[new] Failed to quit jwm daemon");
         }
     }
     Ok(())

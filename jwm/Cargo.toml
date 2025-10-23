@@ -23,7 +23,7 @@ nixgl = []
 cairo = []
 backend-x11 = []
 backend-wayland = []
-default = ["backend-x11"]
+default = ["backend-wayland"]
 
 [[bin]]
 name = "jwm-tool"
@@ -61,6 +61,12 @@ once_cell.workspace = true
 rand.workspace = true
 xkbcommon = "0.9.0"
 bitflags = "2.9.4"
+smithay = { version = "0.7.0", features = ["backend_winit", "renderer_gl", "wayland_frontend"] }
+calloop = "0.14.3"
+wayland-server = "0.31.10"
+wayland-protocols = { version = "0.32.9", features = ["staging", "unstable"] }
+winit = "0.30.12"
+crossbeam-channel = "0.5.15"
 
 
 [build-dependencies]
