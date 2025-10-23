@@ -75,7 +75,7 @@ pub struct RestartSnapshot {
     pub monitors: Vec<MonitorSnapshot>,
 
     // Window -> WMClient（保留状态、tags、is_floating、client_fact、is_fullscreen、geometry 等）
-    pub clients: HashMap<Window, WMClient>,
+    pub clients: HashMap<u32, WMClient>,
 }
 
 #[derive(Debug, Serialize, Deserialize, Decode, Encode)]
@@ -90,8 +90,8 @@ pub struct MonitorSnapshot {
     pub pertag: PertagSnapshot,
 
     // 顺序（使用 Window ID 表示）
-    pub monitor_clients_order: Vec<Window>, // 建议定义为“底->顶”（一致即可）
-    pub monitor_stack_order: Vec<Window>,   // 建议定义为“底->顶”（与 restack 对应）
+    pub monitor_clients_order: Vec<u32>, // 建议定义为“底->顶”（一致即可）
+    pub monitor_stack_order: Vec<u32>,   // 建议定义为“底->顶”（与 restack 对应）
 }
 
 #[derive(Debug, Serialize, Deserialize, Decode, Encode)]
@@ -103,7 +103,7 @@ pub struct PertagSnapshot {
     pub sel_lts: Vec<usize>,
     pub lt_pairs: Vec<[u32; 2]>, // 每 tag 两个 layout 的编号：0=TILE,1=FLOAT,2=MONOCLE
     pub show_bars: Vec<bool>,
-    pub sel_by_tag: Vec<Option<Window>>, // 每个 tag 的选中窗口（Window）
+    pub sel_by_tag: Vec<Option<u32>>, // 每个 tag 的选中窗口（Window）
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Decode, Encode)]
@@ -112,7 +112,7 @@ pub struct WMClient {
     pub name: String,
     pub class: String,
     pub instance: String,
-    pub win: Window,
+    pub win: u32,
 
     // === 几何信息 ===
     pub geometry: ClientGeometry,
@@ -671,7 +671,7 @@ pub struct Jwm {
 
     // 状态栏窗口（单实例）
     pub status_bar_client: Option<ClientKey>, // 唯一的 bar 客户端
-    pub status_bar_window: Option<Window>,    // 唯一的 bar 窗口
+    pub status_bar_window: Option<u32>,       // 唯一的 bar 窗口
     pub current_bar_monitor_id: Option<i32>,  // bar 当前所在显示器的编号（monitor.num）
 
     // 去抖/差异更新
@@ -686,7 +686,7 @@ pub struct Jwm {
 
     pub restoring_from_snapshot: bool,
 
-    pub last_stacking: SecondaryMap<MonitorKey, Vec<Window>>,
+    pub last_stacking: SecondaryMap<MonitorKey, Vec<u32>>,
 }
 
 impl Jwm {
@@ -799,7 +799,7 @@ impl Jwm {
 
     pub fn on_button_press(
         &mut self,
-        window: Window,
+        window: u32,
         state_bits: u16,
         detail_btn: u8,
         time: u32,
@@ -869,7 +869,7 @@ impl Jwm {
     // 后端无关：鼠标移动（根窗口）
     pub fn on_motion_notify(
         &mut self,
-        window: Window,
+        window: u32,
         root_x: i16,
         root_y: i16,
         _time: u32,
@@ -1818,7 +1818,7 @@ impl Jwm {
         self.wintoclient(target_client.win)
     }
 
-    pub fn wintoclient(&self, win: Window) -> Option<ClientKey> {
+    pub fn wintoclient(&self, win: u32) -> Option<ClientKey> {
         // 先检查是否为单实例状态栏窗口
         if let Some(bar_win) = self.status_bar_window {
             if bar_win == win {
@@ -1927,7 +1927,7 @@ impl Jwm {
     }
 
     /// 获取窗口的 WM_CLASS（即类名和实例名）
-    pub fn get_wm_class(&self, window: Window) -> Option<(String, String)> {
+    pub fn get_wm_class(&self, window: u32) -> Option<(String, String)> {
         self.backend
             .property_ops()
             .get_wm_class(WindowId(window.into()))
@@ -2287,7 +2287,7 @@ impl Jwm {
 
     fn restore_client_x11_state(
         &mut self,
-        win: Window,
+        win: u32,
         old_border_w: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 清空事件掩码
@@ -2525,7 +2525,7 @@ impl Jwm {
 
     pub fn set_window_border_color(
         &mut self,
-        window: Window,
+        window: u32,
         selected: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let scheme_type = if selected {
@@ -2827,12 +2827,7 @@ impl Jwm {
         Ok(())
     }
 
-    fn move_window(
-        &mut self,
-        win: Window,
-        x: i32,
-        y: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn move_window(&mut self, win: u32, x: i32, y: i32) -> Result<(), Box<dyn std::error::Error>> {
         self.backend.window_ops().configure_xywh_border(
             WindowId(win.into()),
             Some(x),
@@ -3220,8 +3215,8 @@ impl Jwm {
         let stack = self.monitor_stack.get(mon_key).cloned().unwrap_or_default();
 
         // 2) 分离 tiled 与 floating（仅可见）
-        let mut tiled_bottom_to_top: Vec<Window> = Vec::new();
-        let mut floating_bottom_to_top: Vec<Window> = Vec::new();
+        let mut tiled_bottom_to_top: Vec<u32> = Vec::new();
+        let mut floating_bottom_to_top: Vec<u32> = Vec::new();
 
         for &ck in stack.iter().rev() {
             if let Some(c) = self.clients.get(ck) {
@@ -3249,7 +3244,7 @@ impl Jwm {
         }
 
         // 4) 最终顺序（底->顶）
-        let mut final_bottom_to_top: Vec<Window> =
+        let mut final_bottom_to_top: Vec<u32> =
             Vec::with_capacity(tiled_bottom_to_top.len() + floating_bottom_to_top.len());
         final_bottom_to_top.extend(tiled_bottom_to_top.into_iter());
         final_bottom_to_top.extend(floating_bottom_to_top.into_iter());
@@ -3574,7 +3569,7 @@ impl Jwm {
         result_monitor
     }
 
-    pub fn wintomon(&mut self, w: Window) -> Option<MonitorKey> {
+    pub fn wintomon(&mut self, w: u32) -> Option<MonitorKey> {
         // 处理根窗口
         if w == self.backend.root_window().0 as u32 {
             match self.getrootptr() {
@@ -4022,7 +4017,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn focusin(&mut self, event: Window) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn focusin(&mut self, event: u32) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[focusin]");
         let sel_client_key = self.get_selected_client_key();
 
@@ -5325,7 +5320,7 @@ impl Jwm {
         Ok(())
     }
 
-    fn sendevent_by_window(&mut self, window: Window) -> bool {
+    fn sendevent_by_window(&mut self, window: u32) -> bool {
         let wid = WindowId(window.into());
         if !self.backend.property_ops().supports_delete_window(wid) {
             return false;
@@ -5470,7 +5465,7 @@ impl Jwm {
         s
     }
 
-    fn fetch_window_title(&mut self, window: Window) -> String {
+    fn fetch_window_title(&mut self, window: u32) -> String {
         let title = self
             .backend
             .property_ops()
@@ -5620,7 +5615,7 @@ impl Jwm {
 
     fn cleanup_move(
         &mut self,
-        _window_id: Window,
+        _window_id: u32,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.backend.input_ops().ungrab_pointer()?;
@@ -5840,7 +5835,7 @@ impl Jwm {
 
     fn cleanup_resize(
         &mut self,
-        window_id: Window,
+        window_id: u32,
         border_width: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(key) = self.get_selected_client_key() {
@@ -6072,7 +6067,7 @@ impl Jwm {
         current_selected != client_key_opt
     }
 
-    pub fn expose(&mut self, window: Window, count: u16) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn expose(&mut self, window: u32, count: u16) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[expose]");
         // 只处理最后一个expose事件（count为0时）
         if count != 0 {
@@ -6416,11 +6411,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn manage(
-        &mut self,
-        win: Window,
-        geom: &Geometry,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn manage(&mut self, win: u32, geom: &Geometry) -> Result<(), Box<dyn std::error::Error>> {
         info!("[manage] Managing window 0x{:x}", win);
         // 检查窗口是否已被管理
         if self.wintoclient(win).is_some() {
@@ -6937,7 +6928,7 @@ impl Jwm {
         Ok(())
     }
 
-    fn get_transient_for(&self, window: Window) -> Option<Window> {
+    fn get_transient_for(&self, window: u32) -> Option<u32> {
         self.backend
             .property_ops()
             .transient_for(WindowId(window.into()))
@@ -6947,7 +6938,7 @@ impl Jwm {
     fn manage_statusbar(
         &mut self,
         client_key: ClientKey,
-        win: Window,
+        win: u32,
         current_mon_id: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 配置状态栏客户端
@@ -6974,7 +6965,7 @@ impl Jwm {
 
     fn set_bar_strut(
         &self,
-        bar_win: Window,
+        bar_win: u32,
         mon: &WMMonitor,
         bar_height: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
@@ -6989,7 +6980,7 @@ impl Jwm {
         )
     }
 
-    fn remove_bar_strut(&self, bar_win: Window) -> Result<(), Box<dyn std::error::Error>> {
+    fn remove_bar_strut(&self, bar_win: u32) -> Result<(), Box<dyn std::error::Error>> {
         self.backend
             .property_ops()
             .clear_window_strut(WindowId(bar_win.into()))
@@ -7111,7 +7102,7 @@ impl Jwm {
         Ok(())
     }
 
-    pub fn maprequest(&mut self, window: Window) -> Result<(), Box<dyn std::error::Error>> {
+    pub fn maprequest(&mut self, window: u32) -> Result<(), Box<dyn std::error::Error>> {
         let window_attr = self
             .backend
             .window_ops()
@@ -7308,7 +7299,7 @@ impl Jwm {
         Ok(())
     }
 
-    fn cleanup_statusbar_window(&mut self, win: Window) -> Result<(), Box<dyn std::error::Error>> {
+    fn cleanup_statusbar_window(&mut self, win: u32) -> Result<(), Box<dyn std::error::Error>> {
         self.backend
             .window_ops()
             .change_event_mask(WindowId(win.into()), EventMask::NO_EVENT.bits())?;
@@ -7633,7 +7624,7 @@ impl Jwm {
 
     pub fn unmapnotify(
         &mut self,
-        window: Window,
+        window: u32,
         from_configure: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[unmapnotify]");
