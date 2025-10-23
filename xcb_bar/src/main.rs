@@ -351,10 +351,11 @@ fn handle_x_event(
                 )?;
             }
         }
-        xcb::Event::X(x::Event::MotionNotify(e)) => {
-            let hovered = state.ss_rect.contains(e.event_x(), e.event_y());
-            if hovered != state.is_ss_hover {
-                state.is_ss_hover = hovered;
+
+        // 进入窗口：更新 hover（使所有 pill 即时响应）
+        xcb::Event::X(x::Event::EnterNotify(e)) => {
+            // 注意：EnterNotify 事件通常也有 event_x/event_y
+            if state.update_hover(e.event_x(), e.event_y()) {
                 redraw(
                     cairo_xcb,
                     conn,
@@ -370,6 +371,45 @@ fn handle_x_event(
                 )?;
             }
         }
+
+        // 离开窗口：清空 hover（通过一个无效坐标）
+        xcb::Event::X(x::Event::LeaveNotify(_e)) => {
+            if state.update_hover(-1, -1) {
+                redraw(
+                    cairo_xcb,
+                    conn,
+                    back,
+                    win,
+                    gc,
+                    *current_width,
+                    *current_height,
+                    colors,
+                    state,
+                    font,
+                    cfg,
+                )?;
+            }
+        }
+
+        // 鼠标移动：统一走 AppState::update_hover，使所有 pill 都有 hover 反馈
+        xcb::Event::X(x::Event::MotionNotify(e)) => {
+            if state.update_hover(e.event_x(), e.event_y()) {
+                redraw(
+                    cairo_xcb,
+                    conn,
+                    back,
+                    win,
+                    gc,
+                    *current_width,
+                    *current_height,
+                    colors,
+                    state,
+                    font,
+                    cfg,
+                )?;
+            }
+        }
+
         xcb::Event::X(x::Event::ButtonPress(e)) => {
             let px = e.event_x();
             let py = e.event_y();

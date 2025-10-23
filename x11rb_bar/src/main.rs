@@ -300,10 +300,10 @@ fn handle_x_event(
                 )?;
             }
         }
-        x11rb::protocol::Event::MotionNotify(e) => {
-            let hovered = state.ss_rect.contains(e.event_x, e.event_y);
-            if hovered != state.is_ss_hover {
-                state.is_ss_hover = hovered;
+
+        // 进入窗口：更新 hover（使所有 pill 即时响应）
+        x11rb::protocol::Event::EnterNotify(e) => {
+            if state.update_hover(e.event_x, e.event_y) {
                 redraw(
                     cairo_xcb,
                     conn,
@@ -319,6 +319,45 @@ fn handle_x_event(
                 )?;
             }
         }
+
+        // 离开窗口：清空 hover（通过一个无效坐标）
+        x11rb::protocol::Event::LeaveNotify(_e) => {
+            if state.update_hover(-1, -1) {
+                redraw(
+                    cairo_xcb,
+                    conn,
+                    back,
+                    win,
+                    gc,
+                    *current_width,
+                    *current_height,
+                    colors,
+                    state,
+                    font,
+                    cfg,
+                )?;
+            }
+        }
+
+        // 鼠标移动：统一走 AppState::update_hover，使所有 pill 都有 hover 反馈
+        x11rb::protocol::Event::MotionNotify(e) => {
+            if state.update_hover(e.event_x, e.event_y) {
+                redraw(
+                    cairo_xcb,
+                    conn,
+                    back,
+                    win,
+                    gc,
+                    *current_width,
+                    *current_height,
+                    colors,
+                    state,
+                    font,
+                    cfg,
+                )?;
+            }
+        }
+
         x11rb::protocol::Event::ButtonPress(e) => {
             let px = e.event_x;
             let py = e.event_y;
