@@ -363,6 +363,14 @@ pub struct WmHints {
 
 // 属性接口
 pub trait PropertyOps: Send {
+    fn set_window_strut_top(
+        &self,
+        win: WindowId,
+        top: u32,
+        start_x: u32,
+        end_x: u32,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+    fn clear_window_strut(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
     fn get_text_property_best_title(&self, win: WindowId) -> String;
     fn get_wm_class(&self, win: WindowId) -> Option<(String, String)>;
 

@@ -1,9 +1,13 @@
 // src/backend/x11/property_ops.rs
+use crate::backend::api::NormalHints;
+use crate::backend::api::WmHints;
 use crate::backend::api::{PropertyOps as PropertyOpsTrait, WindowId};
 use crate::backend::x11::Atoms;
 use std::sync::Arc;
 use x11rb::connection::Connection;
+use x11rb::properties::WmSizeHints;
 use x11rb::protocol::xproto::*;
+use x11rb::wrapper::ConnectionExt as _;
 
 pub struct X11PropertyOps<C: Connection> {
     conn: Arc<C>,
@@ -90,6 +94,245 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<C> {
+    fn set_window_strut_top(
+        &self,
+        win: WindowId,
+        top: u32,
+        start_x: u32,
+        end_x: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let strut = [0, 0, top, 0];
+        self.conn
+            .change_property32(
+                PropMode::REPLACE,
+                win.0 as u32,
+                self.atoms._NET_WM_STRUT,
+                AtomEnum::CARDINAL.into(),
+                &strut,
+            )?
+            .check()?;
+        let partial = [0, 0, top, 0, 0, 0, 0, 0, start_x, end_x, 0, 0];
+        self.conn
+            .change_property32(
+                PropMode::REPLACE,
+                win.0 as u32,
+                self.atoms._NET_WM_STRUT_PARTIAL,
+                AtomEnum::CARDINAL.into(),
+                &partial,
+            )?
+            .check()?;
+        Ok(())
+    }
+
+    fn clear_window_strut(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        let _ = self
+            .conn
+            .delete_property(win.0 as u32, self.atoms._NET_WM_STRUT);
+        let _ = self
+            .conn
+            .delete_property(win.0 as u32, self.atoms._NET_WM_STRUT_PARTIAL);
+        Ok(())
+    }
+    fn is_fullscreen(&self, win: WindowId) -> Result<bool, Box<dyn std::error::Error>> {
+        let cookie = self.conn.get_property(
+            false,
+            win.0 as u32,
+            self.atoms._NET_WM_STATE,
+            AtomEnum::ATOM,
+            0,
+            u32::MAX,
+        )?;
+        let reply = cookie.reply()?;
+        let has = reply
+            .value32()
+            .map(|mut v| v.any(|a| a == self.atoms._NET_WM_STATE_FULLSCREEN))
+            .unwrap_or(false);
+        Ok(has)
+    }
+
+    fn set_fullscreen_state(
+        &self,
+        win: WindowId,
+        on: bool,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 直接 add/remove _NET_WM_STATE_FULLSCREEN
+        let mut atoms: Vec<u32> = Vec::new();
+        if on {
+            atoms.push(self.atoms._NET_WM_STATE_FULLSCREEN);
+            self.conn
+                .change_property32(
+                    PropMode::APPEND,
+                    win.0 as u32,
+                    self.atoms._NET_WM_STATE,
+                    AtomEnum::ATOM.into(),
+                    &atoms,
+                )?
+                .check()?;
+        } else {
+            // 读取现有状态，去掉 FULLSCREEN 后重写
+            let current = self
+                .conn
+                .get_property(
+                    false,
+                    win.0 as u32,
+                    self.atoms._NET_WM_STATE,
+                    AtomEnum::ATOM,
+                    0,
+                    u32::MAX,
+                )?
+                .reply()?;
+            let mut list: Vec<u32> = current
+                .value32()
+                .into_iter()
+                .flatten()
+                .filter(|&a| a != self.atoms._NET_WM_STATE_FULLSCREEN)
+                .collect();
+            self.conn
+                .change_property32(
+                    PropMode::REPLACE,
+                    win.0 as u32,
+                    self.atoms._NET_WM_STATE,
+                    AtomEnum::ATOM.into(),
+                    &list,
+                )?
+                .check()?;
+        }
+        Ok(())
+    }
+
+    fn get_wm_hints(&self, win: WindowId) -> Option<WmHints> {
+        let prop = self
+            .conn
+            .get_property(
+                false,
+                win.0 as u32,
+                AtomEnum::WM_HINTS,
+                AtomEnum::WM_HINTS,
+                0,
+                20,
+            )
+            .ok()?
+            .reply()
+            .ok()?;
+        let mut it = prop.value32()?.into_iter();
+        let flags = it.next()?;
+        const X_URGENCY_HINT: u32 = 1 << 8;
+        const INPUT_HINT: u32 = 1 << 0;
+        let urgent = (flags & X_URGENCY_HINT) != 0;
+        // 若 INPUT_HINT 位存在，则下一个字段是 input
+        let input = if (flags & INPUT_HINT) != 0 {
+            it.next().map(|v| v != 0)
+        } else {
+            None
+        };
+        Some(WmHints { urgent, input })
+    }
+
+    fn fetch_normal_hints(
+        &self,
+        win: WindowId,
+    ) -> Result<Option<NormalHints>, Box<dyn std::error::Error>> {
+        let reply_opt = WmSizeHints::get_normal_hints(&self.conn, win.0 as u32)?.reply()?;
+        if let Some(r) = reply_opt {
+            let (mut base_w, mut base_h) = (0, 0);
+            let (mut inc_w, mut inc_h) = (0, 0);
+            let (mut max_w, mut max_h) = (0, 0);
+            let (mut min_w, mut min_h) = (0, 0);
+            let (mut min_aspect, mut max_aspect) = (0.0, 0.0);
+            if let Some((w, h)) = r.base_size {
+                base_w = w;
+                base_h = h;
+            }
+            if let Some((w, h)) = r.size_increment {
+                inc_w = w;
+                inc_h = h;
+            }
+            if let Some((w, h)) = r.max_size {
+                max_w = w;
+                max_h = h;
+            }
+            if let Some((w, h)) = r.min_size {
+                min_w = w;
+                min_h = h;
+            }
+            if let Some((min, max)) = r.aspect {
+                min_aspect = min.numerator as f32 / min.denominator as f32;
+                max_aspect = max.numerator as f32 / max.denominator as f32;
+            }
+            Ok(Some(NormalHints {
+                base_w,
+                base_h,
+                inc_w,
+                inc_h,
+                max_w,
+                max_h,
+                min_w,
+                min_h,
+                min_aspect,
+                max_aspect,
+            }))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn supports_delete_window(&self, win: WindowId) -> bool {
+        let reply = match self.conn.get_property(
+            false,
+            win.0 as u32,
+            self.atoms.WM_PROTOCOLS,
+            AtomEnum::ATOM,
+            0,
+            1024,
+        ) {
+            Ok(c) => c.reply(),
+            Err(_) => return false,
+        };
+        let reply = match reply {
+            Ok(r) => r,
+            Err(_) => return false,
+        };
+        let found = reply
+            .value32()
+            .into_iter()
+            .flatten()
+            .any(|a| a == self.atoms.WM_DELETE_WINDOW);
+        found
+    }
+
+    fn send_delete_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        let event = ClientMessageEvent::new(
+            32,
+            win.0 as u32,
+            self.atoms.WM_PROTOCOLS,
+            [self.atoms.WM_DELETE_WINDOW, 0, 0, 0, 0],
+        );
+        use x11rb::x11_utils::Serialize;
+        let data = event.serialize();
+        self.conn
+            .send_event(false, win.0 as u32, EventMask::NO_EVENT, data)?
+            .check()?;
+        Ok(())
+    }
+
+    fn set_client_info(
+        &self,
+        win: WindowId,
+        tags: u32,
+        monitor_num: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let data = [tags, monitor_num];
+        self.conn
+            .change_property32(
+                PropMode::REPLACE,
+                win.0 as u32,
+                self.atoms._NET_CLIENT_INFO,
+                AtomEnum::CARDINAL.into(),
+                &data,
+            )?
+            .check()?;
+        Ok(())
+    }
     fn get_wm_state(&self, win: WindowId) -> Result<i64, Box<dyn std::error::Error>> {
         // 等价于原 jwm.get_wm_state
         let reply = self

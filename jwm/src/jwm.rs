@@ -3090,7 +3090,6 @@ impl Jwm {
                 }
 
                 if is_popup {
-                    // 最小干预：仅回 ACK/按应用请求配置
                     if let Some(client) = self.clients.get(client_key) {
                         self.backend.window_ops().configure_xywh_border(
                             WindowId(client.win.into()),
@@ -3150,31 +3149,50 @@ impl Jwm {
         &mut self,
         e: &ConfigureRequestEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[handle_unmanaged_configure_request] e: {:?}", e);
-        // 对于未管理的窗口，构建并应用配置请求
-        let mut values = ConfigureWindowAux::new();
+        use x11rb::protocol::xproto::ConfigWindow;
+        let mut ox = None;
+        let mut oy = None;
+        let mut ow = None;
+        let mut oh = None;
+        let mut ob = None;
         if e.value_mask.contains(ConfigWindow::X) {
-            values = values.x(e.x as i32);
+            ox = Some(e.x as i32);
         }
         if e.value_mask.contains(ConfigWindow::Y) {
-            values = values.y(e.y as i32);
+            oy = Some(e.y as i32);
         }
         if e.value_mask.contains(ConfigWindow::WIDTH) {
-            values = values.width(e.width as u32);
+            ow = Some(e.width as u32);
         }
         if e.value_mask.contains(ConfigWindow::HEIGHT) {
-            values = values.height(e.height as u32);
+            oh = Some(e.height as u32);
         }
         if e.value_mask.contains(ConfigWindow::BORDER_WIDTH) {
-            values = values.border_width(e.border_width as u32);
+            ob = Some(e.border_width as u32);
         }
-        if e.value_mask.contains(ConfigWindow::SIBLING) {
-            values = values.sibling(e.sibling);
+
+        if ox.is_some() || oy.is_some() || ow.is_some() || oh.is_some() || ob.is_some() {
+            self.backend.window_ops().configure_xywh_border(
+                WindowId(e.window.into()),
+                ox,
+                oy,
+                ow,
+                oh,
+                ob,
+            )?;
         }
-        if e.value_mask.contains(ConfigWindow::STACK_MODE) {
-            values = values.stack_mode(e.stack_mode);
+        if e.value_mask.contains(ConfigWindow::SIBLING)
+            || e.value_mask.contains(ConfigWindow::STACK_MODE)
+        {
+            self.backend.window_ops().configure_stack_above(
+                WindowId(e.window.into()),
+                if e.value_mask.contains(ConfigWindow::SIBLING) {
+                    Some(WindowId(e.sibling.into()))
+                } else {
+                    None
+                },
+            )?;
         }
-        self.x11rb_conn.configure_window(e.window, &values)?;
         self.backend.window_ops().flush()?;
         Ok(())
     }
@@ -3723,6 +3741,7 @@ impl Jwm {
         }
     }
 
+    // (todo) add prepare_child_command
     pub fn spawn(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[spawn]");
 
@@ -3750,18 +3769,11 @@ impl Jwm {
                 .stderr(std::process::Stdio::inherit());
 
             // 使用 pre_exec 来设置子进程环境
-            use std::os::unix::io::AsRawFd;
             use std::os::unix::process::CommandExt;
-
-            let x11_fd = self.x11rb_conn.stream().as_raw_fd();
 
             unsafe {
                 command.pre_exec(move || {
-                    // 关闭继承的 X11 连接
-                    close(x11_fd)?;
                     setsid();
-
-                    // 重置 SIGCHLD 信号处理
                     let mut sa: sigaction = std::mem::zeroed();
                     sigemptyset(&mut sa.sa_mask);
                     sa.sa_flags = 0;
@@ -3770,6 +3782,7 @@ impl Jwm {
                     Ok(())
                 });
             }
+
             // 启动子进程
             match command.spawn() {
                 Ok(child) => {
@@ -7083,48 +7096,18 @@ impl Jwm {
         let top_amount = bar_height.max(0) as u32;
         let top_start_x = mon.geometry.m_x.max(0) as u32;
         let top_end_x = (mon.geometry.m_x + mon.geometry.m_w - 1).max(0) as u32;
-
-        let strut = [0u32, 0u32, top_amount, 0u32];
-        self.backend.window_ops().change_property32(
+        self.backend.property_ops().set_window_strut_top(
             WindowId(bar_win.into()),
-            self.atoms._NET_WM_STRUT,
-            AtomEnum::CARDINAL.into(),
-            &strut,
-        )?;
-
-        let strut_partial = [
-            0,
-            0,
             top_amount,
-            0,
-            0,
-            0,
-            0,
-            0,
             top_start_x,
             top_end_x,
-            0,
-            0,
-        ];
-        self.backend.window_ops().change_property32(
-            WindowId(bar_win.into()),
-            self.atoms._NET_WM_STRUT_PARTIAL,
-            AtomEnum::CARDINAL.into(),
-            &strut_partial,
-        )?;
-        Ok(())
+        )
     }
 
     fn remove_bar_strut(&self, bar_win: Window) -> Result<(), Box<dyn std::error::Error>> {
-        let _ = self
-            .backend
-            .window_ops()
-            .delete_property(WindowId(bar_win.into()), self.atoms._NET_WM_STRUT);
-        let _ = self
-            .backend
-            .window_ops()
-            .delete_property(WindowId(bar_win.into()), self.atoms._NET_WM_STRUT_PARTIAL);
-        Ok(())
+        self.backend
+            .property_ops()
+            .clear_window_strut(WindowId(bar_win.into()))
     }
 
     fn position_statusbar_on_monitor(
