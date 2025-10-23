@@ -35,7 +35,16 @@ use crate::backend::common_define::{KeySym, Mods, MouseButton, StdCursorKind};
 use crate::backend::x11::adapter::{button_to_x11, mods_from_x11, mods_to_x11};
 use crate::config::CONFIG;
 
-use x11rb::protocol::xproto::*;
+use x11rb::protocol::xproto::ConfigWindow;
+use x11rb::protocol::xproto::ConfigureRequestEvent;
+use x11rb::protocol::xproto::EnterNotifyEvent;
+use x11rb::protocol::xproto::EventMask;
+use x11rb::protocol::xproto::KeyPressEvent;
+use x11rb::protocol::xproto::Mapping;
+use x11rb::protocol::xproto::MappingNotifyEvent;
+use x11rb::protocol::xproto::MotionNotifyEvent;
+use x11rb::protocol::xproto::NotifyDetail;
+use x11rb::protocol::xproto::NotifyMode;
 
 use shared_structures::CommandType;
 use shared_structures::SharedCommand;
@@ -935,8 +944,6 @@ impl Jwm {
         _sibling: Option<u32>,
         _stack_mode: u8,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use x11rb::protocol::xproto::ConfigWindow;
-
         if self.status_bar_client.is_none() {
             error!("[handle_statusbar_configure_request] StatusBar not found");
             return self.handle_unmanaged_configure_request_params(
@@ -992,8 +999,6 @@ impl Jwm {
         _sibling: Option<u32>,
         _stack_mode: u8,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use x11rb::protocol::xproto::ConfigWindow;
-
         info!("[handle_regular_configure_request]");
         let is_popup = self.is_popup_like(client_key);
 
@@ -1109,8 +1114,6 @@ impl Jwm {
         sibling: Option<u32>,
         _stack_mode: u8,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use x11rb::protocol::xproto::ConfigWindow;
-
         info!(
             "[handle_unmanaged_configure_request] unmanaged window=0x{:x}",
             window
@@ -3038,7 +3041,6 @@ impl Jwm {
         &mut self,
         e: &ConfigureRequestEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        use x11rb::protocol::xproto::ConfigWindow;
         let mut ox = None;
         let mut oy = None;
         let mut ow = None;
@@ -3604,7 +3606,6 @@ impl Jwm {
     }
 
     pub fn checkotherwm(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 依赖 X11 的 SUBSTRUCTURE_REDIRECT 掩码位（沿用 x11rb 的常量）
         let mask_bits = x11rb::protocol::xproto::EventMask::SUBSTRUCTURE_REDIRECT.bits();
         let root = self.backend.root_window();
 
