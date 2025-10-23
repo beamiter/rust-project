@@ -17,7 +17,6 @@ use std::io::Write;
 use std::process::{Child, Command};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 use std::usize;
 
@@ -35,11 +34,8 @@ use crate::backend::common_define::SchemeType;
 use crate::backend::common_define::{KeySym, Mods, MouseButton, StdCursorKind};
 use crate::backend::x11::adapter::{button_to_x11, mods_from_x11, mods_to_x11};
 use crate::backend::x11::property_ops::X11PropertyOps;
-use crate::backend::x11::Atoms;
 use crate::config::CONFIG;
 
-use x11rb::connection::Connection;
-use x11rb::properties::WmSizeHints;
 use x11rb::protocol::xproto::*;
 use x11rb::rust_connection::RustConnection;
 
@@ -1214,16 +1210,7 @@ impl Jwm {
                 stack_mode,
             ),
 
-            // 新的按键分支（无关参数）
             BackendEvent::KeyPress { keycode, state } => self.on_key_press(keycode, state),
-
-            // 新的 ClientMessage 分支（无关参数）
-            BackendEvent::ClientMessage {
-                window,
-                type_,
-                data,
-                format,
-            } => Ok(()),
 
             BackendEvent::ConfigureNotify { window, x, y, w, h } => {
                 // 此处仍保留旧路径，后续按需迁移
@@ -1307,11 +1294,6 @@ impl Jwm {
                 };
                 self.maprequest(&e)
             }
-            BackendEvent::PropertyNotify {
-                window,
-                atom,
-                state,
-            } => Ok(()),
             BackendEvent::UnmapNotify {
                 window,
                 from_configure,
@@ -1395,6 +1377,8 @@ impl Jwm {
                 }
                 Ok(())
             }
+            BackendEvent::PropertyNotify { .. } => Ok(()),
+            BackendEvent::ClientMessage { .. } => Ok(()),
         }
     }
 
