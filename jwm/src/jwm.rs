@@ -36,8 +36,6 @@ use crate::backend::common_define::SchemeType;
 use crate::backend::common_define::{KeySym, Mods, MouseButton, StdCursorKind};
 use crate::config::CONFIG;
 
-use x11rb::protocol::xproto::EventMask;
-
 use shared_structures::CommandType;
 use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
@@ -977,7 +975,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 后端无关：managed 窗口 configure 请求
     fn handle_regular_configure_request_params(
         &mut self,
         client_key: ClientKey,
@@ -994,7 +991,7 @@ impl Jwm {
         let is_popup = self.is_popup_like(client_key);
 
         // 边框更新
-        let mask = ConfigWindowBits::from(mask_bits);
+        let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
         if mask.contains(ConfigWindowBits::BORDER_WIDTH) {
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.geometry.border_w = border as i32;
@@ -1109,8 +1106,7 @@ impl Jwm {
             "[handle_unmanaged_configure_request] unmanaged window=0x{:x}",
             window
         );
-        let mask = ConfigWindowBits::from(mask_bits);
-
+        let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
         // 先用 window_ops 配置 xywh/border（逐步替换）
         let ox = if mask.contains(ConfigWindowBits::X) {
             Some(x as i32)
@@ -1137,7 +1133,6 @@ impl Jwm {
         } else {
             None
         };
-
         if ox.is_some() || oy.is_some() || ow.is_some() || oh.is_some() || ob.is_some() {
             let _ = self.backend.window_ops().configure_xywh_border(
                 WindowId(window.into()),
@@ -2208,7 +2203,7 @@ impl Jwm {
                     self.backend
                         .window_ops()
                         .ungrab_all_buttons(WindowId(win.into()))?;
-                    let mask = EventMask::NO_EVENT.bits();
+                    let mask = EventMaskBits::NONE.bits();
                     self.backend
                         .window_ops()
                         .change_event_mask(WindowId(win.into()), mask)?;
@@ -2237,7 +2232,7 @@ impl Jwm {
         if let Err(e) = self
             .backend
             .window_ops()
-            .change_event_mask(WindowId(win.into()), EventMask::NO_EVENT.into())
+            .change_event_mask(WindowId(win.into()), EventMaskBits::NONE.bits())
         {
             warn!("Failed to clear events for {}: {:?}", win, e);
         }
@@ -6522,10 +6517,10 @@ impl Jwm {
             return Err("Client not found".into());
         };
 
-        let mask = (EventMask::ENTER_WINDOW
-            | EventMask::FOCUS_CHANGE
-            | EventMask::PROPERTY_CHANGE
-            | EventMask::STRUCTURE_NOTIFY)
+        let mask = (EventMaskBits::ENTER_WINDOW
+            | EventMaskBits::FOCUS_CHANGE
+            | EventMaskBits::PROPERTY_CHANGE
+            | EventMaskBits::STRUCTURE_NOTIFY)
             .bits();
         // haha
         self.backend
@@ -6690,9 +6685,10 @@ impl Jwm {
             win
         );
 
-        let mask_bits =
-            (EventMask::STRUCTURE_NOTIFY | EventMask::PROPERTY_CHANGE | EventMask::ENTER_WINDOW)
-                .bits();
+        let mask_bits = (EventMaskBits::STRUCTURE_NOTIFY
+            | EventMaskBits::PROPERTY_CHANGE
+            | EventMaskBits::ENTER_WINDOW)
+            .bits();
         self.backend
             .window_ops()
             .change_event_mask(WindowId(win.into()), mask_bits)?;
@@ -6887,7 +6883,7 @@ impl Jwm {
     fn cleanup_statusbar_window(&mut self, win: u32) -> Result<(), Box<dyn std::error::Error>> {
         self.backend
             .window_ops()
-            .change_event_mask(WindowId(win.into()), EventMask::NO_EVENT.bits())?;
+            .change_event_mask(WindowId(win.into()), EventMaskBits::NONE.bits())?;
         self.backend.window_ops().flush()?;
         debug!(
             "[cleanup_statusbar_window] Cleared events for statusbar window {}",
@@ -7155,7 +7151,7 @@ impl Jwm {
             if let Err(e) = self
                 .backend
                 .window_ops()
-                .change_event_mask(WindowId(win.into()), EventMask::NO_EVENT.into())
+                .change_event_mask(WindowId(win.into()), EventMaskBits::NONE.bits())
             {
                 warn!("[cleanup_window_state] Failed to clear event mask: {:?}", e);
             }

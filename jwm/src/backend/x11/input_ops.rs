@@ -170,9 +170,9 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
         cursor: Option<u64>,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         // 将通用 mask 转为 X11 EventMask
-        let event_mask = event_mask_from_generic(mask_bits);
+        let x_mask = event_mask_from_generic(mask_bits);
         let cursor_id = cursor.map(|c| c as u32);
-        let status = self.grab_pointer_raw(event_mask, cursor_id)?;
+        let status = self.grab_pointer_raw(x_mask, cursor_id)?;
         Ok(status == GrabStatus::SUCCESS)
     }
 
