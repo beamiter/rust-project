@@ -146,7 +146,7 @@ pub struct RuleConfig {
     pub class: String,
     pub instance: String,
     pub name: String,
-    pub tags_mask: usize,
+    pub tags: usize,
     pub is_floating: bool,
     pub monitor: i32,
 }
@@ -605,7 +605,7 @@ impl Config {
                     rule.class.clone(),
                     rule.instance.clone(),
                     rule.name.clone(),
-                    rule.tags_mask,
+                    rule.tags,
                     rule.is_floating,
                     rule.monitor,
                 )

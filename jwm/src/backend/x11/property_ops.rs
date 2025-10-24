@@ -420,8 +420,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         }) {
             return true;
         }
-        // fallback: transient_for 存在也可能是 popup-like
-        self.transient_for(win).is_some()
+        false
     }
 
     fn transient_for(&self, win: WindowId) -> Option<WindowId> {

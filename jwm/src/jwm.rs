@@ -987,7 +987,6 @@ impl Jwm {
         _sibling: Option<u32>,
         _stack_mode: u8,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[handle_regular_configure_request]");
         let is_popup = self.is_popup_like(client_key);
 
         // 边框更新
@@ -4867,9 +4866,9 @@ impl Jwm {
         monitor.lt[sel_lt ^ 1] = layout_1;
 
         info!(
-        "[apply_pertag_settings_for_monitor] Applied settings for tag {}: n_master={}, m_fact={}, sel_lt={}",
-        cur_tag, n_master, m_fact, sel_lt
-    );
+            "[apply_pertag_settings_for_monitor] Applied settings for tag {}: n_master={}, m_fact={}, sel_lt={}",
+            cur_tag, n_master, m_fact, sel_lt
+        );
 
         Ok(())
     }
@@ -5831,6 +5830,7 @@ impl Jwm {
         // 如果传入的是状态栏客户端，忽略并寻找合适的替代
         if let Some(client_key) = client_key_opt {
             if let Some(client) = self.clients.get(client_key) {
+                info!("[focus] {}", client);
                 if Some(client.win) == self.status_bar_window {
                     client_key_opt = None; // 忽略状态栏
                 }
@@ -6146,95 +6146,106 @@ impl Jwm {
         Ok(())
     }
 
+    fn parent_client_of(&self, child_key: ClientKey) -> Option<ClientKey> {
+        let child_win = self.clients.get(child_key).map(|c| c.win)?;
+        let parent_win = self.get_transient_for(child_win)?;
+        self.wintoclient(parent_win)
+    }
+
     fn handle_new_client_focus(
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[handle_new_client_focus]");
-        if self.is_popup_like(client_key) {
-            // 不更新 monitor.sel，不抢焦点
-            // 需要的话，只做一次 restack 提到父窗口之上
+        // 预取必要信息，避免后续借用冲突
+        let (client_win, client_mon_key, is_never_focus) =
             if let Some(c) = self.clients.get(client_key) {
-                self.backend
-                    .window_ops()
-                    .configure_stack_above(WindowId(c.win.into()), None)?;
-                self.backend.window_ops().flush()?;
+                (c.win, c.mon, c.state.never_focus)
+            } else {
+                return Err("Client not found".into());
+            };
+        let current_sel = self.get_selected_client_key();
+        let current_sel_mon = self.sel_mon;
+
+        // 1) popup-like（菜单/提示/小尺寸 transient 等）
+        if self.is_popup_like(client_key) {
+            // 叠放到父窗口之上（如可用），否则顶层
+            let parent_key_opt = self.parent_client_of(client_key);
+            let sibling = parent_key_opt
+                .and_then(|pk| self.clients.get(pk))
+                .map(|pc| WindowId(pc.win.into()));
+            self.backend
+                .window_ops()
+                .configure_stack_above(WindowId(client_win.into()), sibling)?;
+            self.backend.window_ops().flush()?;
+
+            // 明确保持焦点：优先父窗口 -> 之前选中 -> 根焦点
+            if let Some(pk) = parent_key_opt {
+                // 若父窗口在不同屏，可选是否切屏，这里不切屏，仅保持父焦点
+                let _ = self.set_client_focus_by_key(pk);
+            } else if let Some(prev_sel) = current_sel {
+                let _ = self.set_client_focus_by_key(prev_sel);
+            } else {
+                let _ = self.set_root_focus();
             }
-            // 维持父窗口焦点
-            self.focus(None)?;
+            // 不修改 monitor.sel，不抢焦点
             return Ok(());
         }
 
-        // 检查新窗口所在的显示器是否是当前选中的显示器
-        let (client_mon_key, is_never_focus) = if let Some(client) = self.clients.get(client_key) {
-            (client.mon, client.state.never_focus)
-        } else {
-            return Err("Client not found".into());
-        };
-
-        let current_client_monitor_is_selected_monitor = client_mon_key == self.sel_mon;
-
-        if current_client_monitor_is_selected_monitor {
-            // 取消当前选中窗口的焦点
-            let prev_sel_opt = self.get_selected_client_key();
-            if let Some(prev_key) = prev_sel_opt {
-                self.unfocus(prev_key, false)?; // false: 不立即设置根窗口焦点
-                info!("[handle_new_client_focus] Unfocused previous client");
-            }
-
-            // 将新窗口设为其所在显示器的选中窗口
+        // 2) 非 popup-like，新窗口属于当前选中屏
+        let is_on_selected_monitor = client_mon_key.is_some() && client_mon_key == current_sel_mon;
+        if is_on_selected_monitor {
+            // 设置该屏选中为新窗口
             if let Some(mon_key) = client_mon_key {
                 if let Some(monitor) = self.monitors.get_mut(mon_key) {
                     monitor.sel = Some(client_key);
                 }
-            }
-
-            // 重新排列该显示器的窗口
-            if let Some(mon_key) = client_mon_key {
+                // 重排该屏
                 self.arrange(Some(mon_key));
             }
 
-            // 设置焦点到新窗口（如果它不是 never_focus）
+            // 焦点策略：只有在允许抢焦点时才抢（非 never_focus）
             if !is_never_focus {
+                // 先取消旧焦点（如果与新焦点不同），避免闪烁
+                if let Some(prev_sel) = current_sel {
+                    if prev_sel != client_key {
+                        self.unfocus(prev_sel, false)?;
+                    }
+                }
                 self.focus(Some(client_key))?;
-                if let Some(client) = self.clients.get(client_key) {
-                    info!(
-                        "[handle_new_client_focus] Focused new client: {}",
-                        client.name
-                    );
-                }
             } else {
-                // 如果新窗口是 never_focus，重新评估焦点
-                self.focus(None)?;
-                info!("[handle_new_client_focus] New client is never_focus, re-evaluated focus");
-            }
-        } else {
-            // 如果新窗口不在当前选中的显示器上
-            // 将新窗口设为其所在显示器的选中窗口
-            if let Some(mon_key) = client_mon_key {
-                if let Some(monitor) = self.monitors.get_mut(mon_key) {
-                    monitor.sel = Some(client_key);
+                // 不抢焦点：明确保持之前焦点（若不存在则设根焦点）
+                if let Some(prev_sel) = current_sel {
+                    let _ = self.set_client_focus_by_key(prev_sel);
+                } else {
+                    let _ = self.set_root_focus();
                 }
-
-                // 只重新排列该显示器，不改变全局焦点
-                self.arrange(Some(mon_key));
             }
-            info!("[handle_new_client_focus] New client on non-selected monitor, arranged only");
+            return Ok(());
         }
 
-        // 根据配置决定是否自动切换到新窗口的显示器
-        if CONFIG.behavior().focus_follows_new_window {
-            if let Some(new_mon_key) = client_mon_key {
-                if Some(new_mon_key) != self.sel_mon {
-                    // 切换到新窗口的显示器
-                    let old_sel = self.get_selected_client_key();
-                    if let Some(old_key) = old_sel {
-                        self.unfocus(old_key, true)?;
-                    }
-                    self.sel_mon = Some(new_mon_key);
-                    self.focus(Some(client_key))?;
-                    info!("[handle_new_client_focus] Switched to new window's monitor");
-                }
+        // 3) 非 popup-like，新窗口处于非选中屏
+        if let Some(target_mon_key) = client_mon_key {
+            // 该屏选中设为新窗口，并排列该屏
+            if let Some(monitor) = self.monitors.get_mut(target_mon_key) {
+                monitor.sel = Some(client_key);
+            }
+            self.arrange(Some(target_mon_key));
+        }
+
+        // 根据配置决定是否切屏并抢焦点
+        if CONFIG.behavior().focus_follows_new_window && !is_never_focus {
+            if let Some(target_mon_key) = client_mon_key {
+                // 使用统一的切屏逻辑（会处理状态栏与 restack）
+                self.switch_to_monitor(target_mon_key)?;
+                // 切屏后设置焦点到新窗口
+                self.focus(Some(client_key))?;
+            }
+        } else {
+            // 不切屏：保持当前屏焦点（优先之前选中，否则根焦点）
+            if let Some(prev_sel) = current_sel {
+                let _ = self.set_client_focus_by_key(prev_sel);
+            } else {
+                let _ = self.set_root_focus();
             }
         }
 
@@ -6355,12 +6366,10 @@ impl Jwm {
         if rule.name.is_empty() && rule.class.is_empty() && rule.instance.is_empty() {
             return false;
         }
-
         // 检查每个字段是否匹配（空字符串表示忽略该字段）
         let name_matches = rule.name.is_empty() || name.contains(&rule.name);
         let class_matches = rule.class.is_empty() || class.contains(&rule.class);
         let instance_matches = rule.instance.is_empty() || instance.contains(&rule.instance);
-
         name_matches && class_matches && instance_matches
     }
 
@@ -6368,15 +6377,12 @@ impl Jwm {
     fn apply_single_rule(&mut self, client_key: ClientKey, rule: &WMRule) {
         if let Some(client) = self.clients.get_mut(client_key) {
             info!("[apply_single_rule] Applying rule: {:?}", rule);
-
             // 设置浮动状态
             client.state.is_floating = rule.is_floating;
-
             // 设置标签
             if rule.tags > 0 {
                 client.state.tags |= rule.tags as u32;
             }
-
             // 设置监视器
             if rule.monitor >= 0 {
                 // 查找指定的监视器
@@ -6391,7 +6397,6 @@ impl Jwm {
                         }
                     })
                     .copied();
-
                 if let Some(mon_key) = target_monitor {
                     client.mon = Some(mon_key);
                     info!(
@@ -6400,7 +6405,6 @@ impl Jwm {
                     );
                 }
             }
-
             info!(
                 "[apply_single_rule] Applied - floating: {}, tags: {}, monitor: {}",
                 client.state.is_floating, client.state.tags, rule.monitor
@@ -6412,7 +6416,6 @@ impl Jwm {
     fn set_default_tags(&mut self, client_key: ClientKey) {
         if let Some(client) = self.clients.get_mut(client_key) {
             let condition = client.state.tags & CONFIG.tagmask();
-
             if condition > 0 {
                 // 如果客户端已有有效标签，保持现有标签
                 client.state.tags = condition;
@@ -6427,7 +6430,6 @@ impl Jwm {
                     client.state.tags = 1;
                 }
             }
-
             info!(
                 "[set_default_tags] Set tags to {} for client 0x{:x}",
                 client.state.tags, client.win
@@ -6435,7 +6437,6 @@ impl Jwm {
         }
     }
 
-    /// 应用所有规则到客户端（完整版本）
     fn applyrules_by_key(&mut self, client_key: ClientKey) {
         let (win, name, mut class, mut instance) =
             if let Some(client) = self.clients.get(client_key) {
@@ -6448,7 +6449,6 @@ impl Jwm {
             } else {
                 return;
             };
-
         // 如果类信息为空，尝试从 X11 获取
         if class.is_empty() && instance.is_empty() {
             if let Some((inst, cls)) = self.get_wm_class(win) {
@@ -6462,25 +6462,20 @@ impl Jwm {
                 }
             }
         }
-
         info!(
             "[applyrules_by_key] win: 0x{:x}, name: '{}', instance: '{}', class: '{}'",
             win, name, instance, class
         );
-
         // 重置浮动状态
         if let Some(client) = self.clients.get_mut(client_key) {
             client.state.is_floating = false;
         }
-
-        // 特殊处理：如果所有信息都为空，设置为浮动
         if name.is_empty() && class.is_empty() && instance.is_empty() {
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.state.is_floating = true;
             }
             info!("[applyrules_by_key] No window info available, setting as floating");
         }
-
         // 应用配置规则
         let mut rule_applied = false;
         for rule in &CONFIG.get_rules() {
@@ -6490,14 +6485,11 @@ impl Jwm {
                 break;
             }
         }
-
         if !rule_applied {
             info!("[applyrules_by_key] No matching rule found, using defaults");
+            // 设置默认标签
+            self.set_default_tags(client_key);
         }
-
-        // 设置默认标签
-        self.set_default_tags(client_key);
-
         // 最终日志
         if let Some(client) = self.clients.get(client_key) {
             info!(

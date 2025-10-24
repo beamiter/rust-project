@@ -1093,7 +1093,7 @@ pub fn initialize_logging(program_name: &str, shared_path: &str) -> Result<()> {
     };
 
     let log_filename = format!("{}_{}", file_name, timestamp);
-    let log_spec = std::env::var("RUST_LOG").unwrap_or_else(|_| "info".to_string());
+    let log_spec = std::env::var("RUST_LOG").unwrap_or_else(|_| "debug".to_string());
 
     Logger::try_with_str(log_spec)?
         .format_for_files(flexi_logger::detailed_format)
