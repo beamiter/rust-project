@@ -502,7 +502,14 @@ impl Config {
 
     // 获取默认规则
     fn get_default_rules() -> Vec<RuleConfig> {
-        vec![]
+        vec![RuleConfig {
+            name: "Feishu Meetings".to_string(),
+            class: "".to_string(),
+            instance: "".to_string(),
+            tags: 0,
+            is_floating: true,
+            monitor: -1,
+        }]
     }
 
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
@@ -831,36 +838,9 @@ impl Config {
         }
     }
 
-    // 生成默认鼠标绑定的辅助方法
-    fn get_default_buttons(&self) -> Vec<ButtonConfig> {
-        vec![
-            ButtonConfig {
-                click_type: "ClkClientWin".to_string(),
-                modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: 1,
-                function: "movemouse".to_string(),
-                argument: ArgumentConfig::Int(0),
-            },
-            ButtonConfig {
-                click_type: "ClkClientWin".to_string(),
-                modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: 2,
-                function: "togglefloating".to_string(),
-                argument: ArgumentConfig::Int(0),
-            },
-            ButtonConfig {
-                click_type: "ClkClientWin".to_string(),
-                modifier: vec![self.inner.keybindings.modkey.clone()],
-                button: 3,
-                function: "resizemouse".to_string(),
-                argument: ArgumentConfig::Int(0),
-            },
-        ]
-    }
-
     pub fn get_buttons(&self) -> Vec<WMButton> {
         let button_configs = if self.inner.mouse_bindings.buttons.is_empty() {
-            self.get_default_buttons()
+            Self::get_default_button_configs()
         } else {
             self.inner.mouse_bindings.buttons.clone()
         };

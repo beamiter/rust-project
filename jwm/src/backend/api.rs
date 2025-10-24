@@ -570,6 +570,4 @@ pub trait Backend: Send {
 
     fn event_source(&mut self) -> &mut dyn EventSource;
     fn root_window(&self) -> WindowId;
-
-    fn init_visual(&mut self) -> Result<(), Box<dyn std::error::Error>>;
 }

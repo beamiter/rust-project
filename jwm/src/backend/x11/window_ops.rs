@@ -109,7 +109,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
 
     fn set_input_focus_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         self.conn
-            .set_input_focus(InputFocus::POINTER_ROOT, win.0 as u32, 0u32)?
+            .set_input_focus(InputFocus::NONE, win.0 as u32, 0u32)?
             .check()?;
         Ok(())
     }
@@ -185,7 +185,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
 
     fn set_input_focus_root(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         self.conn
-            .set_input_focus(InputFocus::POINTER_ROOT, root.0 as u32, 0u32)?
+            .set_input_focus(InputFocus::NONE, root.0 as u32, 0u32)?
             .check()?;
         Ok(())
     }

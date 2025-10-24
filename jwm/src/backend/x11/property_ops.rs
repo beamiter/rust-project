@@ -136,49 +136,11 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         win: WindowId,
         on: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 直接 add/remove _NET_WM_STATE_FULLSCREEN
-        let mut atoms: Vec<u32> = Vec::new();
         if on {
-            atoms.push(self.atoms._NET_WM_STATE_FULLSCREEN);
-            self.conn
-                .change_property32(
-                    PropMode::APPEND,
-                    win.0 as u32,
-                    self.atoms._NET_WM_STATE,
-                    AtomEnum::ATOM,
-                    &atoms,
-                )?
-                .check()?;
+            self.add_net_wm_state_atom(win, self.atoms._NET_WM_STATE_FULLSCREEN)
         } else {
-            // 读取现有状态，去掉 FULLSCREEN 后重写
-            let current = self
-                .conn
-                .get_property(
-                    false,
-                    win.0 as u32,
-                    self.atoms._NET_WM_STATE,
-                    AtomEnum::ATOM,
-                    0,
-                    u32::MAX,
-                )?
-                .reply()?;
-            let list: Vec<u32> = current
-                .value32()
-                .into_iter()
-                .flatten()
-                .filter(|&a| a != self.atoms._NET_WM_STATE_FULLSCREEN)
-                .collect();
-            self.conn
-                .change_property32(
-                    PropMode::REPLACE,
-                    win.0 as u32,
-                    self.atoms._NET_WM_STATE,
-                    AtomEnum::ATOM,
-                    &list,
-                )?
-                .check()?;
+            self.remove_net_wm_state_atom(win, self.atoms._NET_WM_STATE_FULLSCREEN)
         }
-        Ok(())
     }
 
     fn get_wm_hints(&self, win: WindowId) -> Option<WmHints> {
@@ -366,7 +328,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
             false,
             win.0 as u32,
             AtomEnum::WM_HINTS,
-            AtomEnum::CARDINAL,
+            AtomEnum::WM_HINTS,
             0,
             20,
         )?;

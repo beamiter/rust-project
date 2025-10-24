@@ -1,10 +1,6 @@
 // src/backend/x11/backend.rs
 use std::sync::{Arc, Mutex};
-use log::info;
-use x11rb::connection::Connection as _;
-use x11rb::protocol::render::ConnectionExt as _;
-use x11rb::protocol::xproto::{ColormapAlloc, Screen, Visualtype};
-use x11rb::protocol::xproto::{ConnectionExt as _, VisualClass};
+use x11rb::protocol::xproto::Screen;
 use x11rb::rust_connection::RustConnection;
 
 use crate::backend::api::{
@@ -76,7 +72,11 @@ impl X11Backend {
             conn.clone(),
             screen.default_colormap,
         ));
-        let event_source: Box<dyn EventSource> = Box::new(X11EventSource::new(conn.clone()));
+        let event_source: Box<dyn EventSource> = Box::new(X11EventSource::new(
+            conn.clone(),
+            atoms.clone(),
+            screen.root,
+        ));
 
         let caps = Capabilities {
             can_warp_pointer: true,
@@ -109,44 +109,6 @@ impl X11Backend {
 
     pub fn screen(&self) -> &Screen {
         &self.screen
-    }
-
-    /// 在 render_query_pict_formats 的结果中，查找给定 Visualid 对应的 Pictforminfo
-    fn find_visual_format_local<'a>(
-        &self,
-        formats: &'a x11rb::protocol::render::QueryPictFormatsReply,
-        visual: x11rb::protocol::xproto::Visualid,
-    ) -> Option<&'a x11rb::protocol::render::Pictforminfo> {
-        // 步骤：在 screens[..].depths[..].visuals[..] 里找到与 visual 匹配的 Pictvisual，
-        // 再用它的 format 字段去 formats.formats 里找 Pictforminfo
-        for screen in &formats.screens {
-            for depth in &screen.depths {
-                for v in &depth.visuals {
-                    if v.visual == visual {
-                        let fmt = v.format;
-                        return formats.formats.iter().find(|f| f.id == fmt);
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    fn setup_argb_visual(
-        &mut self,
-        visualtype: &Visualtype,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let colormap_id = self.conn.generate_id()?;
-        self.conn
-            .create_colormap(
-                ColormapAlloc::NONE,
-                colormap_id,
-                self.root.0 as u32,
-                visualtype.visual_id,
-            )?
-            .check()?;
-
-        Ok(())
     }
 }
 
@@ -196,29 +158,5 @@ impl Backend for X11Backend {
 
     fn root_window(&self) -> WindowId {
         self.root
-    }
-
-    fn init_visual(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 查询 render pict formats
-        let formats = self.conn.render_query_pict_formats()?.reply()?;
-        // 优先寻找 32-bit TRUE_COLOR + 有 alpha 的 visual
-        for depth in self.screen.allowed_depths.iter().cloned() {
-            if depth.depth != 32 {
-                continue;
-            }
-            for visualtype in &depth.visuals {
-                if visualtype.class != VisualClass::TRUE_COLOR {
-                    continue;
-                }
-                if let Some(info) = self.find_visual_format_local(&formats, visualtype.visual_id) {
-                    if info.direct.alpha_mask != 0 {
-                        return self.setup_argb_visual(visualtype);
-                    }
-                }
-            }
-        }
-        // 没找到 32-bit ARGB，回退默认
-        info!("[xinit_visual] No 32-bit ARGB visual found. Falling back to default.");
-        Ok(())
     }
 }

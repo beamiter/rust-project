@@ -2161,6 +2161,10 @@ impl Jwm {
         // 清理 EWMH 属性
         self.cleanup_ewmh_properties()?;
 
+        if let Err(e) = self.backend.cursor_provider().cleanup() {
+            log::warn!("cursor cleanup failed: {:?}", e);
+        }
+
         info!("[cleanup_x11_resources] X11 resources cleaned");
         Ok(())
     }
@@ -4967,7 +4971,6 @@ impl Jwm {
 
     pub fn setup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[setup]");
-        self.backend.init_visual()?;
         let _ = self.updategeom();
         self.setup_ewmh()?;
 

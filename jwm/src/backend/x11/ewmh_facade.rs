@@ -60,6 +60,8 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
             self.atoms._NET_ACTIVE_WINDOW,
             self.atoms._NET_CLIENT_LIST,
             self.atoms._NET_SUPPORTED,
+            self.atoms._NET_CLIENT_LIST_STACKING,
+            self.atoms._NET_SUPPORTING_WM_CHECK,
         ]
         .iter()
         {
