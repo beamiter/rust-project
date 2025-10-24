@@ -5660,33 +5660,34 @@ impl Jwm {
         &mut self,
         target_monitor_key: MonitorKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[switch_to_monitor]");
-        // 获取旧选中显示器上的选中客户端
-        let previously_selected_client_opt = self.get_selected_client_key();
+        // 记录旧选中的客户端，但暂不把焦点设到root
+        let prev_sel = self.get_selected_client_key();
 
-        // 从旧显示器的选中客户端上移除焦点，并将X焦点设回根
-        self.unfocus_client_opt(previously_selected_client_opt, true)?;
-
-        // 更新选中显示器为当前事件发生的显示器
+        // 切换选中显示器
         self.sel_mon = Some(target_monitor_key);
 
-        if let Some(monitor) = self.monitors.get(target_monitor_key) {
-            info!("Switched to monitor {}", monitor.num);
-            let old_mon_id = self.current_bar_monitor_id;
-            let new_mon_id = monitor.num;
+        // 如果新屏有选中客户端，优先直接聚焦它（避免焦点落到 root）
+        self.focus(None)?; // 这会在新屏上挑一个可见客户端并 setfocus
 
-            if old_mon_id != Some(new_mon_id) {
-                self.current_bar_monitor_id = Some(new_mon_id);
-                self.position_statusbar_on_monitor(new_mon_id)?;
-                // 旧屏与新屏都 arrange 一次，更新偏移
-                if let Some(old_id) = old_mon_id {
-                    if let Some(old_key) = self.get_monitor_by_id(old_id) {
-                        self.arrange(Some(old_key));
-                    }
-                }
-                self.arrange(Some(target_monitor_key));
-                self.restack(Some(target_monitor_key))?;
+        // 此时旧客户端自然失焦了，但它的边框与按钮抓取可能还处于“焦点态”，补一次 UI 状态回退而不改焦点：
+        if let Some(old_key) = prev_sel {
+            // 仅做边框/按钮抓取退回，不调用 set_input_focus_root（将 setfocus 参数改为 false）
+            self.unfocus(old_key, false)?;
+        }
+
+        // 状态栏重定位和布局更新（与原逻辑一致）
+        let old_id = self.current_bar_monitor_id;
+        let new_id = self.monitors.get(target_monitor_key).map(|m| m.num);
+        if old_id != new_id {
+            if let Some(id) = new_id {
+                self.current_bar_monitor_id = Some(id);
+                self.position_statusbar_on_monitor(id)?;
             }
+            if let Some(old) = old_id.and_then(|oid| self.get_monitor_by_id(oid)) {
+                self.arrange(Some(old));
+            }
+            self.arrange(Some(target_monitor_key));
+            self.restack(Some(target_monitor_key))?;
         }
 
         Ok(())
