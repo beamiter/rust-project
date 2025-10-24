@@ -7073,7 +7073,9 @@ impl Jwm {
         client_key: ClientKey,
         destroyed: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[unmanage_regular_client] Removing client {:?}", client_key);
+        if let Some(client) = self.clients.get(client_key) {
+            info!("[unmanage_regular_client] Removing client {:?}", client);
+        }
 
         // 获取客户端的监视器信息
         let mon_key = self.clients.get(client_key).and_then(|client| client.mon);
@@ -7203,8 +7205,7 @@ impl Jwm {
         // info!("[unmapnotify]");
         if let Some(client_key) = self.wintoclient(window) {
             if from_configure {
-                // 这是由于配置请求导致的unmap（通常是合成窗口管理器）
-                debug!("Unmap from configure for window {}", window);
+                debug!("Unmap from configure for window 0x{:x}", window);
                 let client = if let Some(client) = self.clients.get(client_key) {
                     client
                 } else {
@@ -7212,12 +7213,11 @@ impl Jwm {
                 };
                 self.setclientstate(client.win, WITHDRAWN_STATE as i64)?;
             } else {
-                // 这是真正的窗口销毁或隐藏
-                debug!("Real unmap for window {}, unmanaging", window);
+                debug!("Real unmap for window 0x{:x}, unmanaging", window);
                 self.unmanage(Some(client_key), false)?;
             }
         } else {
-            debug!("Unmap event for unmanaged window: {}", window);
+            debug!("Unmap event for unmanaged window: 0x{:x}", window);
         }
         Ok(())
     }
