@@ -398,7 +398,7 @@ impl fmt::Display for WMClient {
             \x20\x20name: \"{}\",\n\
             \x20\x20class: \"{}\",\n\
             \x20\x20instance: \"{}\",\n\
-            \x20\x20win: 0x{},\n\
+            \x20\x20win: 0x{:x},\n\
             \x20\x20geometry: {},\n\
             \x20\x20size_hints: {:?},\n\
             \x20\x20state: {:?},\n\
@@ -6329,11 +6329,10 @@ impl Jwm {
                     if let Some(client) = self.clients.get_mut(client_key) {
                         client.mon = parent_mon;
                         client.state.tags = parent_tags;
-                        // 总是设置为floating
                         client.state.is_floating = true;
                         warn!(
                             "[handle_transient_for] Client {} is transient for parent",
-                            client.name
+                            client
                         );
                     }
                 } else {
@@ -6416,21 +6415,17 @@ impl Jwm {
         }
     }
 
-    /// 为客户端设置默认标签
     fn set_default_tags(&mut self, client_key: ClientKey) {
         if let Some(client) = self.clients.get_mut(client_key) {
-            let condition = client.state.tags & CONFIG.tagmask();
-            if condition > 0 {
-                // 如果客户端已有有效标签，保持现有标签
-                client.state.tags = condition;
+            let current_tags = client.state.tags & CONFIG.tagmask();
+            if current_tags > 0 {
+                client.state.tags = current_tags;
             } else {
-                // 如果没有有效标签，使用当前监视器的选中标签
                 if let Some(mon_key) = client.mon {
                     if let Some(monitor) = self.monitors.get(mon_key) {
                         client.state.tags = monitor.tag_set[monitor.sel_tags];
                     }
                 } else {
-                    // 如果没有监视器，使用第一个标签作为默认
                     client.state.tags = 1;
                 }
             }
@@ -6491,10 +6486,8 @@ impl Jwm {
         }
         if !rule_applied {
             info!("[applyrules_by_key] No matching rule found, using defaults");
-            // 设置默认标签
-            self.set_default_tags(client_key);
         }
-        // 最终日志
+        self.set_default_tags(client_key);
         if let Some(client) = self.clients.get(client_key) {
             info!(
                 "[applyrules_by_key] Final state - class: '{}', instance: '{}', name: '{}', tags: {}, floating: {}",
@@ -7078,7 +7071,7 @@ impl Jwm {
         destroyed: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.clients.get(client_key) {
-            info!("[unmanage_regular_client] Removing client {:?}", client);
+            info!("[unmanage_regular_client] Removing client {}", client);
         }
 
         // 获取客户端的监视器信息
