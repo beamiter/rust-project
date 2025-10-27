@@ -502,14 +502,24 @@ impl Config {
 
     // 获取默认规则
     fn get_default_rules() -> Vec<RuleConfig> {
-        vec![RuleConfig {
-            name: "Feishu Meetings".to_string(),
-            class: "".to_string(),
-            instance: "".to_string(),
-            tags: 0,
-            is_floating: true,
-            monitor: -1,
-        }]
+        vec![
+            RuleConfig {
+                name: "Feishu Meetings".to_string(),
+                class: "".to_string(),
+                instance: "".to_string(),
+                tags: 0,
+                is_floating: true,
+                monitor: -1,
+            },
+            RuleConfig {
+                name: "飞书会议".to_string(),
+                class: "".to_string(),
+                instance: "".to_string(),
+                tags: 0,
+                is_floating: true,
+                monitor: -1,
+            },
+        ]
     }
 
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self, ConfigError> {
