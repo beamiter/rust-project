@@ -25,7 +25,7 @@ macro_rules! status_bar_config {
                 } else
             )*
             {
-                pub const STATUS_BAR_NAME: &str = "egui_bar";
+                pub const STATUS_BAR_NAME: &str = "xcb_bar";
             }
         }
     };
@@ -503,22 +503,22 @@ impl Config {
     // 获取默认规则
     fn get_default_rules() -> Vec<RuleConfig> {
         vec![
-            RuleConfig {
-                name: "Feishu Meetings".to_string(),
-                class: "".to_string(),
-                instance: "".to_string(),
-                tags: 0,
-                is_floating: true,
-                monitor: -1,
-            },
-            RuleConfig {
-                name: "飞书会议".to_string(),
-                class: "".to_string(),
-                instance: "".to_string(),
-                tags: 0,
-                is_floating: true,
-                monitor: -1,
-            },
+            // RuleConfig {
+            //     name: "Feishu Meetings".to_string(),
+            //     class: "".to_string(),
+            //     instance: "".to_string(),
+            //     tags: 0,
+            //     is_floating: true,
+            //     monitor: -1,
+            // },
+            // RuleConfig {
+            //     name: "飞书会议".to_string(),
+            //     class: "".to_string(),
+            //     instance: "".to_string(),
+            //     tags: 0,
+            //     is_floating: true,
+            //     monitor: -1,
+            // },
         ]
     }
 
