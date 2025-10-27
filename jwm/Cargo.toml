@@ -23,7 +23,7 @@ nixgl = []
 cairo = []
 backend-x11 = []
 backend-wayland = []
-default = ["backend-x11"]
+default = ["backend-wayland"]
 
 [[bin]]
 name = "jwm-tool"
@@ -61,6 +61,10 @@ once_cell.workspace = true
 rand.workspace = true
 xkbcommon = "0.9.0"
 bitflags = "2.9.4"
+smithay = "0.7.0"
+calloop = "0.14.3"
+winit = "0.30.12"
+crossbeam-channel = "0.5.15"
 
 
 [build-dependencies]
