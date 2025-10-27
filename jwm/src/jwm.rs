@@ -1629,12 +1629,25 @@ impl Jwm {
             .and_then(|monitor| monitor.sel)
     }
 
-    fn attach(&mut self, client_key: ClientKey) {
+    // 原 attach 改名为 attach_front：头插（插入到列表开头）
+    fn attach_front(&mut self, client_key: ClientKey) {
         if let Some(client) = self.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
                 if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
-                    // 插入到列表开头（模拟链表头插入）
+                    // 头插：进入 master 区
                     client_list.insert(0, client_key);
+                }
+            }
+        }
+    }
+
+    // 新增：尾插（追加到列表末尾），保持 master 稳定
+    fn attach_back(&mut self, client_key: ClientKey) {
+        if let Some(client) = self.clients.get(client_key) {
+            if let Some(mon_key) = client.mon {
+                if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
+                    // 尾插：进入 stack 区
+                    client_list.push(client_key);
                 }
             }
         }
@@ -1675,10 +1688,10 @@ impl Jwm {
     /// 将客户端添加到指定监视器
     fn attach_to_monitor(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
         if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
-            client_list.insert(0, client_key);
+            client_list.push(client_key);
         }
         if let Some(stack_list) = self.monitor_stack.get_mut(mon_key) {
-            stack_list.insert(0, client_key);
+            stack_list.push(client_key);
         }
     }
 
@@ -1764,7 +1777,6 @@ impl Jwm {
     }
 
     fn pop(&mut self, client_key: ClientKey) {
-        // info!("[pop]");
         let mon_key = if let Some(client) = self.clients.get(client_key) {
             client.mon
         } else {
@@ -1772,9 +1784,10 @@ impl Jwm {
         };
 
         self.detach(client_key);
-        self.attach(client_key);
-        let _ = self.focus(Some(client_key));
+        // 关键：弹到 master 使用头插
+        self.attach_front(client_key);
 
+        let _ = self.focus(Some(client_key));
         if let Some(mon_key) = mon_key {
             self.arrange(Some(mon_key));
         }
@@ -3881,7 +3894,7 @@ impl Jwm {
         }
 
         // 将客户端附加到目标监视器
-        self.attach(client_key);
+        self.attach_back(client_key);
         self.attachstack(client_key);
 
         // 设置客户端标签属性
@@ -6276,7 +6289,8 @@ impl Jwm {
         self.updatewmhints(client_key);
 
         // 添加到管理结构
-        self.attach(client_key);
+        self.attach_back(client_key);
+
         self.attachstack(client_key);
 
         // 注册事件和抓取按钮
