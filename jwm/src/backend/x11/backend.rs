@@ -159,4 +159,8 @@ impl Backend for X11Backend {
     fn root_window(&self) -> WindowId {
         self.root
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }

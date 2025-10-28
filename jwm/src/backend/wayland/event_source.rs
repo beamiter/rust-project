@@ -13,10 +13,11 @@ use smithay::reexports::wayland_server::{
 use smithay::wayland::output::OutputHandler;
 
 use super::grabs::PointerMoveSurfaceGrab;
+use super::grabs::PointerResizeSurfaceGrab;
+use super::grabs::ResizeEdge;
 use super::window_ops::{WaylandRegistry, WindowRecord};
 use crate::backend::api::{BackendEvent, EventSource, WindowId};
 use crate::backend::common_define::Mods;
-// smithay 0.7.0 specific imports
 use smithay::backend::input::{Event, InputBackend, KeyState, KeyboardKeyEvent};
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
 use smithay::delegate_compositor;
@@ -48,11 +49,11 @@ use smithay::wayland::shell::xdg::{
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::socket::ListeningSocketSource;
 
-// 定义从 JWM Core 发往此线程的命令
 #[derive(Debug)]
 pub enum CompositorCommand {
     SetFocus(Option<WindowId>),
     StartMoveGrab(WindowId),
+    StartResizeGrab { window: WindowId, edges: ResizeEdge },
 }
 
 #[derive(Default)]
@@ -154,9 +155,8 @@ impl JwmWlState {
                 }
             }
             CompositorCommand::StartMoveGrab(id) => {
-                if let Some(surface) = self.surface_for_window(id) {
-                    let window = self
-                        .space
+                let window = if let Some(surface) = self.surface_for_window(id) {
+                    self.space
                         .lock()
                         .unwrap()
                         .elements()
@@ -165,25 +165,75 @@ impl JwmWlState {
                                 .map(|t| t.wl_surface() == &surface)
                                 .unwrap_or(false)
                         })
-                        .cloned();
+                        .cloned()
+                } else {
+                    None
+                };
 
-                    if let Some(window) = window {
-                        if let Some(start_data) = self.pointer.grab_start_data() {
-                            let serial = SERIAL_COUNTER.next_serial();
-                            let initial_location = self
-                                .space
+                if let Some(window) = window {
+                    if let Some(start_data) = self.pointer.grab_start_data() {
+                        let serial = SERIAL_COUNTER.next_serial();
+
+                        // --- 修复冲突 ---
+                        // 使用一个块来限制 MutexGuard 的生命周期
+                        let initial_location = {
+                            self.space
                                 .lock()
                                 .unwrap()
                                 .element_location(&window)
-                                .unwrap();
-                            let grab = PointerMoveSurfaceGrab {
-                                start_data,
-                                window,
-                                initial_window_location: initial_location,
-                            };
-                            let ptr = self.pointer.clone();
-                            ptr.set_grab(self, grab, serial, Focus::Clear);
-                        }
+                                .unwrap()
+                        }; // MutexGuard 在这里被释放
+
+                        let grab = PointerMoveSurfaceGrab {
+                            start_data,
+                            window,
+                            initial_window_location: initial_location,
+                        };
+                        let ptr = self.pointer.clone();
+                        ptr.set_grab(self, grab, serial, Focus::Clear);
+                    }
+                }
+            }
+
+            CompositorCommand::StartResizeGrab { window: id, edges } => {
+                let window = if let Some(surface) = self.surface_for_window(id) {
+                    self.space
+                        .lock()
+                        .unwrap()
+                        .elements()
+                        .find(|w| {
+                            w.toplevel()
+                                .map(|t| t.wl_surface() == &surface)
+                                .unwrap_or(false)
+                        })
+                        .cloned()
+                } else {
+                    None
+                };
+
+                if let Some(window) = window {
+                    if let Some(start_data) = self.pointer.grab_start_data() {
+                        let serial = SERIAL_COUNTER.next_serial();
+
+                        // --- 同样修复这里的冲突 ---
+                        let (initial_window_location, initial_window_size) = {
+                            let space = self.space.lock().unwrap();
+                            let loc = space.element_location(&window).unwrap();
+                            let size = window.geometry().size;
+                            (loc, size)
+                        }; // MutexGuard 在这里被释放
+
+                        let grab = PointerResizeSurfaceGrab {
+                            start_data,
+                            window,
+                            edges,
+                            initial_window_location,
+                            initial_window_size,
+                            last_window_size: initial_window_size,
+                        };
+
+                        let ptr = self.pointer.clone();
+                        ptr.set_grab(self, grab, serial, Focus::Clear);
                     }
                 }
             }

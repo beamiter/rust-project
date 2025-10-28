@@ -6,6 +6,7 @@ use super::event_source::CompositorCommand;
 use crate::backend::api::{Geometry, WindowAttributes, WindowId, WindowOps};
 use smithay::desktop::{Space, Window as SWindow};
 use smithay::reexports::calloop::channel::Sender as CommandSender;
+use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel::State as XdgToplevelState;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::wayland::shell::xdg::ToplevelSurface;
 
@@ -73,20 +74,65 @@ impl WindowOps for WaylandWindowOps {
 
     fn configure_xywh_border(
         &self,
-        _win: WindowId,
-        _x: Option<i32>,
-        _y: Option<i32>,
-        _w: Option<u32>,
-        _h: Option<u32>,
-        _border: Option<u32>,
+        win: WindowId,
+        x: Option<i32>,
+        y: Option<i32>,
+        w: Option<u32>,
+        h: Option<u32>,
+        _border: Option<u32>, // Wayland后端可以先忽略border
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let reg = self.reg.lock().unwrap();
+        if let Some(record) = reg.windows.get(&win.0) {
+            // --- 位置变更 ---
+            if let (Some(x_val), Some(y_val)) = (x, y) {
+                if let Some(handle) = &record.handle {
+                    // JWM 核心计算的位置是绝对位置，直接映射
+                    let mut space = self.space.lock().unwrap();
+                    space.map_element(handle.clone(), (x_val, y_val), true);
+                }
+            }
+
+            // --- 尺寸变更 ---
+            if let (Some(w_val), Some(h_val)) = (w, h) {
+                if let Some(toplevel) = &record.toplevel {
+                    // 检查窗口是否处于最大化或全屏状态，如果是，则先取消
+                    let current_state = toplevel.current_state();
+                    let mut should_unmaximize = false;
+                    if current_state.states.contains(XdgToplevelState::Maximized) {
+                        should_unmaximize = true;
+                    }
+                    // Wayland 中，不能直接为全屏窗口设置大小，需要先退出全屏
+                    if current_state.states.contains(XdgToplevelState::Fullscreen) {
+                        // 忽略尺寸变更请求或先退出全屏，这里先选择忽略
+                        return Ok(());
+                    }
+
+                    toplevel.with_pending_state(|state| {
+                        if should_unmaximize {
+                            state.states.unset(XdgToplevelState::Maximized);
+                        }
+                        state.size = Some((w_val as i32, h_val as i32).into());
+                    });
+                    toplevel.send_configure();
+                }
+            }
+        }
         Ok(())
     }
+
     fn configure_stack_above(
         &self,
-        _win: WindowId,
-        _sibling: Option<WindowId>,
+        win: WindowId,
+        _sibling: Option<WindowId>, // 简单的 raise to top 实现可以先忽略 sibling
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let reg = self.reg.lock().unwrap();
+        if let Some(record) = reg.windows.get(&win.0) {
+            if let Some(handle) = &record.handle {
+                let mut space = self.space.lock().unwrap();
+                // true 参数表示同时提升其父窗口（如果有）
+                space.raise_element(handle, true);
+            }
+        }
         Ok(())
     }
 

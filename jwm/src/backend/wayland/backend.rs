@@ -1,4 +1,5 @@
 // src/backend/wayland/backend.rs
+use std::any::Any;
 use std::sync::{Arc, Mutex};
 
 use super::{
@@ -12,7 +13,6 @@ use crate::backend::api::{
 };
 
 use super::event_source::CompositorCommand;
-// FIX 9: Use the correct Sender type to match the event loop
 use smithay::reexports::calloop::channel::Sender as CommandSender;
 
 pub struct WaylandBackend {
@@ -33,14 +33,12 @@ pub struct WaylandBackend {
 
 impl WaylandBackend {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        // FIX 10: Call the new WaylandEventSource::new and get the handles
         let event_source = WaylandEventSource::new()?;
         let command_tx = event_source.command_sender();
         // Get the handles from the event source instance
         let registry = event_source.registry();
         let space = event_source.space();
 
-        // FIX 11: Pass the handles to the modules that need them
         let window_ops: Box<dyn WindowOps> = Box::new(WaylandWindowOps::new(
             registry.clone(),
             space.clone(),
@@ -51,11 +49,9 @@ impl WaylandBackend {
             Arc::new(Mutex::new(WaylandInputOps::new(command_tx.clone())));
         let input_ops: Box<dyn InputOps> = Box::new(WaylandInputOps::new(command_tx.clone()));
 
-        // FIX 12: Remove the incorrect `?` operator and pass the handles
         let output_ops: Box<dyn OutputOps> =
             Box::new(WaylandOutputOps::new(registry.clone(), space.clone()));
 
-        // FIX 13: Pass the handle to property_ops
         let property_ops: Box<dyn PropertyOps> = Box::new(
             super::property_ops::WaylandPropertyOps::new(registry.clone()),
         );
@@ -89,6 +85,10 @@ impl WaylandBackend {
             event_source: Box::new(event_source),
             command_tx,
         })
+    }
+
+    pub fn command_sender(&self) -> CommandSender<CompositorCommand> {
+        self.command_tx.clone()
     }
 }
 
@@ -133,5 +133,8 @@ impl Backend for WaylandBackend {
 
     fn root_window(&self) -> WindowId {
         WindowId(0)
+    }
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }

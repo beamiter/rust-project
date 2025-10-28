@@ -7,6 +7,7 @@ use log::{debug, error};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 
+use downcast_rs::Downcast;
 use serde::{Deserialize, Serialize};
 use slotmap::{DefaultKey, SecondaryMap, SlotMap};
 use std::cmp::{max, min};
@@ -42,6 +43,9 @@ use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus}
 
 use bincode::config::standard;
 use bincode::{Decode, Encode};
+
+use crate::backend::wayland::event_source::CompositorCommand;
+use crate::backend::wayland::grabs::ResizeEdge;
 
 // definitions for initial window state.
 pub const WITHDRAWN_STATE: u8 = 0;
@@ -5465,21 +5469,46 @@ impl Jwm {
         self.cleanup_move(window_id, client_key)?;
         Ok(())
     }
+
     pub fn resizemouse(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         let client_key = match self.get_selected_client_key() {
             Some(k) => k,
             None => return Ok(()),
         };
-        if let Some(client) = self.clients.get(client_key) {
+
+        let client_win = if let Some(client) = self.clients.get(client_key) {
             if client.state.is_fullscreen {
                 return Ok(());
             }
+            client.win
         } else {
-            return Err("Selected client not found".into());
-        }
+            return Ok(());
+        };
 
         self.restack(self.sel_mon)?;
 
+        // --- Wayland 专用逻辑 ---
+        if self.backend.capabilities().can_warp_pointer == false {
+            let cmd = CompositorCommand::StartResizeGrab {
+                window: WindowId(client_win as u64),
+                edges: ResizeEdge::BOTTOM_RIGHT,
+            };
+
+            if let Some(wayland_backend) =
+                self.backend
+                    .as_any()
+                    .downcast_ref::<crate::backend::wayland::backend::WaylandBackend>()
+            {
+                wayland_backend
+                    .command_sender()
+                    .send(cmd)
+                    .map_err(|e| e.to_string())?;
+            }
+
+            return Ok(());
+        }
+
+        // --- X11 逻辑 (保持不变) ---
         let (start_x, start_y, border_w, window_id, start_w, start_h) = {
             let c = self.clients.get(client_key).unwrap();
             (
@@ -5506,6 +5535,8 @@ impl Jwm {
                 Some(warp_pos),
                 WindowId(window_id.into()),
                 &mut |root_x, root_y, _time| {
+                    // ... (这部分逻辑在Wayland中移到了Grab里) ...
+                    // ... (此处的 self 借用对于 Wayland 是个问题，所以异步模型是必须的) ...
                     let new_width =
                         ((root_x as i32 - start_x).max(1 + 2 * border_w) - 2 * border_w).max(1);
                     let new_height =

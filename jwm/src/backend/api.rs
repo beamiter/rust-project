@@ -3,6 +3,7 @@ use crate::backend::common_define::{ArgbColor, ColorScheme, SchemeType};
 pub use crate::backend::common_define::{
     CursorHandle, KeySym, Mods, Pixel, StdCursorKind, WindowId,
 };
+use std::any::Any;
 use std::fmt::Debug;
 
 #[derive(Clone, Copy, Debug)]
@@ -574,4 +575,6 @@ pub trait Backend: Send {
 
     fn event_source(&mut self) -> &mut dyn EventSource;
     fn root_window(&self) -> WindowId;
+
+    fn as_any(&self) -> &dyn Any;
 }
