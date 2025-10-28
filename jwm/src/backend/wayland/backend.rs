@@ -16,7 +16,6 @@ pub struct WaylandBackend {
 
     window_ops: Box<dyn WindowOps>,
     input_ops: Box<dyn InputOps>,
-    // 以 trait 对象形式存储，便于 input_ops_handle 返回
     input_ops_arc: Arc<Mutex<dyn InputOps + Send>>,
     property_ops: Box<dyn PropertyOps>,
     output_ops: Box<dyn OutputOps>,
@@ -31,19 +30,17 @@ impl WaylandBackend {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let event_source = WaylandEventSource::new()?;
 
-        // 显式传递 Registry、Space 与 Seat 给 WindowOps
         let window_ops: Box<dyn WindowOps> = Box::new(WaylandWindowOps::new(
             event_source.registry(),
             event_source.space(),
             event_source.seat(),
         )?);
 
-        // 输入子系统：分别构造 Box 与 Arc<Mutex<dyn InputOps + Send>>
-        let wl_input_for_arc = WaylandInputOps::new(event_source.pointer_controller());
+        let wl_input_for_arc = WaylandInputOps::new(super::input_ops::PointerController::new());
         let input_ops_arc: Arc<Mutex<dyn InputOps + Send>> = Arc::new(Mutex::new(wl_input_for_arc));
-
-        let input_ops: Box<dyn InputOps> =
-            Box::new(WaylandInputOps::new(event_source.pointer_controller()));
+        let input_ops: Box<dyn InputOps> = Box::new(WaylandInputOps::new(
+            super::input_ops::PointerController::new(),
+        ));
 
         let output_ops: Box<dyn OutputOps> =
             Box::new(WaylandOutputOps::new(event_source.registry())?);
@@ -53,17 +50,18 @@ impl WaylandBackend {
         );
 
         let key_ops: Box<dyn KeyOps> =
-            Box::new(WaylandKeyOps::new(event_source.keyboard_controller()));
+            Box::new(WaylandKeyOps::new(super::key_ops::KeyboardController::new()));
 
-        let cursor_provider: Box<dyn CursorProvider> =
-            Box::new(WaylandCursorProvider::new(event_source.cursor_controller()));
+        let cursor_provider: Box<dyn CursorProvider> = Box::new(WaylandCursorProvider::new(
+            super::cursor::CursorController::new(),
+        ));
 
         let color_allocator: Box<dyn ColorAllocator> = Box::new(WaylandColorAllocator::new());
 
         let caps = Capabilities {
-            can_warp_pointer: false,       // Wayland不支持warp
-            has_active_window_prop: false, // 无 _NET_ACTIVE_WINDOW
-            supports_client_list: false,   // 无 _NET_CLIENT_LIST
+            can_warp_pointer: false,
+            has_active_window_prop: false,
+            supports_client_list: false,
             ..Default::default()
         };
 
@@ -90,49 +88,38 @@ impl Backend for WaylandBackend {
     fn window_ops(&self) -> &dyn WindowOps {
         &*self.window_ops
     }
-
     fn input_ops(&self) -> &dyn InputOps {
         &*self.input_ops
     }
-
     fn input_ops_handle(&self) -> Arc<Mutex<dyn InputOps + Send>> {
         self.input_ops_arc.clone()
     }
-
     fn property_ops(&self) -> &dyn PropertyOps {
         &*self.property_ops
     }
-
     fn output_ops(&self) -> &dyn OutputOps {
         &*self.output_ops
     }
-
     fn key_ops(&self) -> &dyn KeyOps {
         &*self.key_ops
     }
-
     fn key_ops_mut(&mut self) -> &mut dyn KeyOps {
         &mut *self.key_ops
     }
-
     fn ewmh_facade(&self) -> Option<&dyn EwmhFacade> {
         None
     }
-
     fn cursor_provider(&mut self) -> &mut dyn CursorProvider {
         &mut *self.cursor_provider
     }
-
     fn color_allocator(&mut self) -> &mut dyn ColorAllocator {
         &mut *self.color_allocator
     }
-
     fn event_source(&mut self) -> &mut dyn EventSource {
         &mut *self.event_source
     }
 
     fn root_window(&self) -> WindowId {
-        // Wayland 下没有 root window 概念，返回内部“虚拟 root”
         WindowId(0)
     }
 }

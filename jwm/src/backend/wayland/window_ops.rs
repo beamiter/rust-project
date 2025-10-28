@@ -9,7 +9,7 @@ use smithay::wayland::shell::xdg::ToplevelSurface;
 
 use super::event_source::JwmWlState;
 use smithay::desktop::{Space, Window as SWindow};
-use smithay::utils::Size; // Seat 类型参数
+use smithay::utils::Size;
 
 #[derive(Clone)]
 pub struct WindowRecord {
@@ -119,7 +119,12 @@ impl WindowOps for WaylandWindowOps {
         Ok(())
     }
 
+    // Wayland 下暂时 no-op，避免 smithay 0.7 KeyboardHandle::set_focus 额外参数问题
     fn set_input_focus_window(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    fn set_input_focus_root(&self, _root: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 
@@ -133,7 +138,6 @@ impl WindowOps for WaylandWindowOps {
         _win: WindowId,
         _border: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Wayland下边框由客户端渲染/服务端主题管理，这里 no-op
         Ok(())
     }
     fn set_border_pixel(
@@ -143,36 +147,24 @@ impl WindowOps for WaylandWindowOps {
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
-
     fn change_event_mask(
         &self,
         _win: WindowId,
         _mask: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Wayland 无事件掩码概念
         Ok(())
     }
-
     fn map_window(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-        // Wayland 映射由 xdg configure/commit 驱动，这里 no-op
         Ok(())
     }
-
-    fn set_input_focus_root(&self, _root: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-        // 焦点由 seat.set_focus 控制，这里留作 TODO
-        Ok(())
-    }
-
     fn send_client_message(
         &self,
         _win: WindowId,
         _type_atom: u32,
         _data: [u32; 5],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Wayland 无 client message 概念
         Ok(())
     }
-
     fn delete_property(
         &self,
         _win: WindowId,
@@ -198,16 +190,12 @@ impl WindowOps for WaylandWindowOps {
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
-
     fn flush(&self) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
-
     fn kill_client(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-        // 通过 xdg_wm_base ping 或者直接 destroy，留作 TODO
         Ok(())
     }
-
     fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
@@ -274,12 +262,11 @@ impl WindowOps for WaylandWindowOps {
         _h: u16,
         _border: u16,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Wayland 下通过 xdg configure，而不是 X11 的 ConfigureNotify
         Ok(())
     }
 }
 
-// 提供一个 Wayland 下的 no-op PropertyOps
+// 保留 no-op PropertyOps（未改）
 pub fn no_op_property_ops() -> Box<dyn crate::backend::api::PropertyOps> {
     struct NoOpProps;
     impl crate::backend::api::PropertyOps for NoOpProps {

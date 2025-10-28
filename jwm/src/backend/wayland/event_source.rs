@@ -49,7 +49,6 @@ impl ClientData for ClientState {
 
 pub struct JwmWlState {
     display_handle: DisplayHandle,
-    // 变更：Arc 形式
     space: Arc<Mutex<Space<Window>>>,
 
     compositor_state: CompositorState,
@@ -57,14 +56,12 @@ pub struct JwmWlState {
     shm_state: ShmState,
     output_manager_state: OutputManagerState,
     seat_state: SeatState<JwmWlState>,
-    // 变更：Arc 形式
     seat: Arc<Mutex<Seat<JwmWlState>>>,
     data_device_state: DataDeviceState,
     popups: PopupManager,
 
     tx: Sender<BackendEvent>,
     registry: Arc<Mutex<WaylandRegistry>>,
-    // 用于把 seat Arc 传回事件源
     seat_holder: Arc<Mutex<Option<Arc<Mutex<Seat<JwmWlState>>>>>>,
 }
 
@@ -84,7 +81,6 @@ impl JwmWlState {
         let data_device_state = DataDeviceState::new::<JwmWlState>(dh);
         let popups = PopupManager::default();
 
-        // 创建 seat，并声明键盘与指针
         let mut seat: Seat<JwmWlState> = seat_state.new_wl_seat(dh, "jwm-wayland");
         let _ = seat.add_keyboard(Default::default(), 200, 25);
         seat.add_pointer();
@@ -139,7 +135,6 @@ impl CompositorHandler for JwmWlState {
                 window.on_commit();
             };
         }
-        // 如需在此向 tx 发送事件，可扩展
     }
 }
 
@@ -198,7 +193,6 @@ impl XdgShellHandler for JwmWlState {
     }
 
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
-        // 使用 Arc<Mutex<Space<Window>>>
         let mut space_guard = self.space.lock().unwrap();
         let window = Window::new_wayland_window(surface.clone());
         space_guard.map_element(window.clone(), (0, 0), false);
@@ -268,13 +262,8 @@ pub struct WaylandEventSource {
 
     registry: Arc<Mutex<WaylandRegistry>>,
 
-    // 新增：暴露 Space 与 Seat
     space: Arc<Mutex<Space<Window>>>,
     seat_holder: Arc<Mutex<Option<Arc<Mutex<Seat<JwmWlState>>>>>>,
-
-    pointer: super::input_ops::PointerController,
-    keyboard: super::key_ops::KeyboardController,
-    cursor: super::cursor::CursorController,
 }
 
 impl WaylandEventSource {
@@ -282,7 +271,6 @@ impl WaylandEventSource {
         let (tx, rx) = unbounded();
         let registry = Arc::new(Mutex::new(WaylandRegistry::new()));
 
-        // 预先创建 Space Arc；Seat 需在有 DisplayHandle 后创建，由状态内回填
         let space_arc = Arc::new(Mutex::new(Space::default()));
         let seat_holder: Arc<Mutex<Option<Arc<Mutex<Seat<JwmWlState>>>>>> =
             Arc::new(Mutex::new(None));
@@ -350,9 +338,6 @@ impl WaylandEventSource {
             registry,
             space: space_arc,
             seat_holder,
-            pointer: super::input_ops::PointerController::new(),
-            keyboard: super::key_ops::KeyboardController::new(),
-            cursor: super::cursor::CursorController::new(),
         })
     }
 
@@ -363,23 +348,12 @@ impl WaylandEventSource {
         self.space.clone()
     }
     pub fn seat(&self) -> Arc<Mutex<Seat<JwmWlState>>> {
-        // 简单阻塞等待 seat 初始化完成
         loop {
             if let Some(seat_arc) = self.seat_holder.lock().unwrap().as_ref() {
                 return seat_arc.clone();
             }
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
-    }
-
-    pub fn pointer_controller(&self) -> super::input_ops::PointerController {
-        self.pointer.clone()
-    }
-    pub fn keyboard_controller(&self) -> super::key_ops::KeyboardController {
-        self.keyboard.clone()
-    }
-    pub fn cursor_controller(&self) -> super::cursor::CursorController {
-        self.cursor.clone()
     }
 }
 
