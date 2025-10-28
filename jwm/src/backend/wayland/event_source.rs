@@ -1,55 +1,58 @@
 // src/backend/wayland/event_source.rs
 use std::sync::{Arc, Mutex};
 
-use crossbeam_channel::{unbounded, Receiver, Sender};
-
-use super::grabs::PointerMoveSurfaceGrab;
-use super::window_ops::{WaylandRegistry, WindowRecord};
-use crate::backend::api::{BackendEvent, EventSource, WindowId};
-use crate::backend::common_define::keys as k;
-use crate::backend::common_define::Mods;
-
-use smithay::input::pointer::Focus;
-use smithay::input::Seat;
-use smithay::reexports::wayland_server::protocol::{wl_seat::WlSeat, wl_surface::WlSurface};
+use calloop::channel::channel;
+use smithay::reexports::calloop::{
+    channel::Event as ChannelEvent, generic::Generic, EventLoop, Interest, Mode, PostAction,
+};
+use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::{
     backend::{ClientData, ClientId, DisconnectReason},
     Client, Display, DisplayHandle,
 };
-use smithay::utils::SERIAL_COUNTER;
-use smithay::{
-    backend::renderer::utils::on_commit_buffer_handler,
-    delegate_compositor, delegate_data_device, delegate_output, delegate_seat, delegate_shm,
-    delegate_xdg_shell,
-    desktop::{PopupKind, PopupManager, Space, Window},
-    input::{keyboard::ModifiersState, SeatHandler, SeatState},
-    output::{Mode, Output, PhysicalProperties, Subpixel},
-    wayland::{
-        buffer::BufferHandler,
-        compositor::{
-            get_parent, is_sync_subsurface, CompositorClientState, CompositorHandler,
-            CompositorState,
-        },
-        output::OutputManagerState,
-        selection::data_device::{
-            set_data_device_focus, ClientDndGrabHandler, DataDeviceHandler, DataDeviceState,
-            ServerDndGrabHandler,
-        },
-        selection::SelectionHandler,
-        shell::xdg::{
-            PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
-        },
-        shm::{ShmHandler, ShmState},
-        socket::ListeningSocketSource,
-    },
+use smithay::wayland::output::OutputHandler;
+
+use super::grabs::PointerMoveSurfaceGrab;
+use super::window_ops::{WaylandRegistry, WindowRecord};
+use crate::backend::api::{BackendEvent, EventSource, WindowId};
+use crate::backend::common_define::Mods;
+// smithay 0.7.0 specific imports
+use smithay::backend::input::{Event, InputBackend, KeyState, KeyboardKeyEvent};
+use smithay::backend::renderer::utils::on_commit_buffer_handler;
+use smithay::delegate_compositor;
+use smithay::delegate_data_device;
+use smithay::delegate_output;
+use smithay::delegate_seat;
+use smithay::delegate_shm;
+use smithay::delegate_xdg_shell;
+use smithay::desktop::{PopupKind, PopupManager, Space, Window};
+use smithay::input::keyboard::{FilterResult, KeysymHandle, ModifiersState}; // Import KeysymHandle
+use smithay::input::pointer::Focus;
+use smithay::input::{keyboard::KeyboardHandle, Seat, SeatHandler, SeatState}; // Simplified imports
+use smithay::output::{Output, PhysicalProperties, Subpixel};
+use smithay::reexports::wayland_server::protocol::{wl_seat::WlSeat, wl_surface::WlSurface};
+use smithay::utils::{Serial, SERIAL_COUNTER}; // Serial is needed
+use smithay::wayland::buffer::BufferHandler;
+use smithay::wayland::compositor::{
+    get_parent, is_sync_subsurface, CompositorClientState, CompositorHandler, CompositorState,
 };
+use smithay::wayland::output::OutputManagerState;
+use smithay::wayland::selection::data_device::{
+    set_data_device_focus, ClientDndGrabHandler, DataDeviceHandler, DataDeviceState,
+    ServerDndGrabHandler,
+};
+use smithay::wayland::selection::SelectionHandler;
+use smithay::wayland::shell::xdg::{
+    PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState,
+};
+use smithay::wayland::shm::{ShmHandler, ShmState};
+use smithay::wayland::socket::ListeningSocketSource;
 
 // 定义从 JWM Core 发往此线程的命令
 #[derive(Debug)]
 pub enum CompositorCommand {
     SetFocus(Option<WindowId>),
     StartMoveGrab(WindowId),
-    // 更多命令可以加在这里
 }
 
 #[derive(Default)]
@@ -63,8 +66,8 @@ impl ClientData for ClientState {
 
 pub struct JwmWlState {
     display_handle: DisplayHandle,
-    space: Arc<Mutex<Space<Window>>>,
-    registry: Arc<Mutex<WaylandRegistry>>,
+    pub space: Arc<Mutex<Space<Window>>>,
+    pub registry: Arc<Mutex<WaylandRegistry>>,
     compositor_state: CompositorState,
     xdg_shell_state: XdgShellState,
     shm_state: ShmState,
@@ -72,16 +75,16 @@ pub struct JwmWlState {
     data_device_state: DataDeviceState,
     popups: PopupManager,
     seat_state: SeatState<JwmWlState>,
-    pub seat: Arc<Mutex<Seat<JwmWlState>>>,
-    pub keyboard: smithay::input::keyboard::KeyboardHandle<JwmWlState>,
+    pub seat: Seat<JwmWlState>,
+    pub keyboard: KeyboardHandle<JwmWlState>,
     pub pointer: smithay::input::pointer::PointerHandle<JwmWlState>,
-    tx: Sender<BackendEvent>, // 发送事件回 JWM
+    tx: smithay::reexports::calloop::channel::Sender<BackendEvent>,
 }
 
 impl JwmWlState {
     fn new(
         dh: &DisplayHandle,
-        tx: Sender<BackendEvent>,
+        tx: smithay::reexports::calloop::channel::Sender<BackendEvent>,
         registry: Arc<Mutex<WaylandRegistry>>,
         space_arc: Arc<Mutex<Space<Window>>>,
     ) -> Self {
@@ -94,11 +97,8 @@ impl JwmWlState {
 
         let mut seat_state = SeatState::new();
         let mut seat: Seat<JwmWlState> = seat_state.new_wl_seat(dh, "jwm-wayland");
-        let keyboard = seat
-            .add_keyboard(Default::default(), 200, 25)
-            .expect("add keyboard");
+        let keyboard = seat.add_keyboard(Default::default(), 200, 25).unwrap();
         let pointer = seat.add_pointer();
-        let seat_arc = Arc::new(Mutex::new(seat));
 
         let output = Output::new(
             "JWM-Output".to_string(),
@@ -109,6 +109,7 @@ impl JwmWlState {
                 model: "Internal".into(),
             },
         );
+        use smithay::output::Mode;
         let mode = Mode {
             size: (1280, 800).into(),
             refresh: 60_000,
@@ -117,20 +118,14 @@ impl JwmWlState {
         output.change_current_state(Some(mode), None, None, Some((0, 0).into()));
         output.set_preferred(mode);
 
-        {
-            let mut reg = registry.lock().unwrap();
-            reg.screen_w = 1280;
-            reg.screen_h = 800;
-        }
-        {
-            let mut sp = space_arc.lock().unwrap();
-            sp.map_output(&output, (0, 0));
-        }
+        registry.lock().unwrap().screen_w = 1280;
+        registry.lock().unwrap().screen_h = 800;
+        space_arc.lock().unwrap().map_output(&output, (0, 0));
 
         Self {
             display_handle: dh.clone(),
-            space: space_arc.clone(),
-            registry: registry.clone(),
+            space: space_arc,
+            registry,
             compositor_state,
             xdg_shell_state,
             shm_state,
@@ -138,24 +133,20 @@ impl JwmWlState {
             data_device_state,
             popups,
             seat_state,
-            seat: seat_arc,
+            seat,
             keyboard,
             pointer,
             tx,
         }
     }
 
-    // 命令处理逻辑
     pub fn process_command(&mut self, cmd: CompositorCommand) {
         match cmd {
             CompositorCommand::SetFocus(opt_id) => {
                 let surface = opt_id.and_then(|id| self.surface_for_window(id));
                 let serial = SERIAL_COUNTER.next_serial();
-                self.seat
-                    .get_keyboard()
-                    .unwrap()
-                    .set_focus(self, surface.clone(), serial);
-
+                let kbd = self.keyboard.clone();
+                kbd.set_focus(self, surface.clone(), serial);
                 if let Some(s) = surface {
                     let _ = self.tx.send(BackendEvent::FocusIn {
                         event: self.window_id_from_surface(&s),
@@ -164,30 +155,34 @@ impl JwmWlState {
             }
             CompositorCommand::StartMoveGrab(id) => {
                 if let Some(surface) = self.surface_for_window(id) {
-                    if let Some(window) = self
+                    let window = self
                         .space
                         .lock()
                         .unwrap()
                         .elements()
-                        .find(|w| w.toplevel().unwrap().wl_surface() == &surface)
-                        .cloned()
-                    {
+                        .find(|w| {
+                            w.toplevel()
+                                .map(|t| t.wl_surface() == &surface)
+                                .unwrap_or(false)
+                        })
+                        .cloned();
+
+                    if let Some(window) = window {
                         if let Some(start_data) = self.pointer.grab_start_data() {
+                            let serial = SERIAL_COUNTER.next_serial();
                             let initial_location = self
                                 .space
                                 .lock()
                                 .unwrap()
                                 .element_location(&window)
                                 .unwrap();
-
                             let grab = PointerMoveSurfaceGrab {
                                 start_data,
                                 window,
                                 initial_window_location: initial_location,
                             };
-
-                            self.pointer
-                                .set_grab(self, grab, start_data.serial, Focus::Clear);
+                            let ptr = self.pointer.clone();
+                            ptr.set_grab(self, grab, serial, Focus::Clear);
                         }
                     }
                 }
@@ -195,47 +190,49 @@ impl JwmWlState {
         }
     }
 
-    // 键盘输入处理逻辑 (将被 libinput 等后端的事件循环调用)
-    pub fn handle_keyboard_input(&mut self, event: smithay::input::keyboard::KeyboardKeyEvent) {
-        let keysym = event.key_symbol();
+    pub fn handle_keyboard_input<B: InputBackend>(&mut self, event: &B::KeyboardKeyEvent) {
         let state = event.state();
+        let serial = SERIAL_COUNTER.next_serial();
+        let time = event.time();
 
-        let mods = smithay_mods_to_jwm_mods(self.keyboard.modifiers_state());
+        let tx = self.tx.clone();
 
-        for key_config in crate::config::CONFIG.get_keys().iter() {
-            let jwm_mask = key_config.mask & !(Mods::NUMLOCK | Mods::CAPS);
-            if mods == jwm_mask && keysym == key_config.key_sym {
-                if state == smithay::input::keyboard::KeyState::Pressed {
-                    // 找到了！发送事件回 JWM 主线程
-                    let _ = self.tx.send(BackendEvent::WmKeyboardShortcut {
-                        keysym: key_config.key_sym,
-                        mods: key_config.mask,
-                    });
-                }
-                // 无论按下还是抬起，我们都消耗掉这个事件，不发给客户端
-                return;
-            }
-        }
-
-        // 如果没有匹配的快捷键，将事件转发给当前聚焦的客户端
-        self.keyboard.input(
+        let keyboard = self.keyboard.clone();
+        keyboard.input(
             self,
             event.key_code(),
             state,
-            SERIAL_COUNTER.next_serial(),
-            event.time(),
-            |_, _, _| true,
+            serial,
+            time as u32,
+            move |_, modifiers, keysym: KeysymHandle<'_>| {
+                let jwm_mods = smithay_mods_to_jwm_mods(*modifiers);
+
+                for key_config in crate::config::CONFIG.get_keys().iter() {
+                    let jwm_mask = key_config.mask & !(Mods::NUMLOCK | Mods::CAPS);
+
+                    if jwm_mods == jwm_mask && keysym.modified_sym() == key_config.key_sym.into() {
+                        if state == KeyState::Pressed {
+                            let _ = tx.send(BackendEvent::WmKeyboardShortcut {
+                                keysym: keysym.modified_sym().into(),
+                                mods: jwm_mods,
+                            });
+                        }
+                        return FilterResult::Intercept(true);
+                    }
+                }
+                FilterResult::Forward
+            },
         );
     }
 
-    // 辅助函数
     fn surface_for_window(&self, id: WindowId) -> Option<WlSurface> {
         self.registry
             .lock()
             .unwrap()
             .windows
-            .get(&id.0)
-            .and_then(|rec| rec.wl_surface.clone())
+            .get(&id.0)?
+            .wl_surface
+            .clone()
     }
 
     fn window_id_from_surface(&self, s: &WlSurface) -> WindowId {
@@ -250,7 +247,6 @@ impl JwmWlState {
     }
 }
 
-// 辅助函数
 fn smithay_mods_to_jwm_mods(s_mods: ModifiersState) -> Mods {
     let mut j_mods = Mods::empty();
     if s_mods.shift {
@@ -268,15 +264,15 @@ fn smithay_mods_to_jwm_mods(s_mods: ModifiersState) -> Mods {
     j_mods
 }
 
-// --- Handler Trait 实现 ---
-
 impl CompositorHandler for JwmWlState {
     fn compositor_state(&mut self) -> &mut CompositorState {
         &mut self.compositor_state
     }
+
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
         &client.get_data::<ClientState>().unwrap().compositor_state
     }
+
     fn commit(&mut self, surface: &WlSurface) {
         on_commit_buffer_handler::<Self>(surface);
 
@@ -286,10 +282,11 @@ impl CompositorHandler for JwmWlState {
             while let Some(parent) = get_parent(&root) {
                 root = parent;
             }
-            if let Some(window) = space_guard
-                .elements()
-                .find(|w| w.toplevel().unwrap().wl_surface() == &root)
-            {
+            if let Some(window) = space_guard.elements().find(|w| {
+                w.toplevel()
+                    .map(|t| t.wl_surface() == &root)
+                    .unwrap_or(false)
+            }) {
                 window.on_commit();
             };
         }
@@ -318,12 +315,14 @@ impl SeatHandler for JwmWlState {
     fn seat_state(&mut self) -> &mut SeatState<JwmWlState> {
         &mut self.seat_state
     }
+
     fn cursor_image(
         &mut self,
         _seat: &Seat<Self>,
         _image: smithay::input::pointer::CursorImageStatus,
     ) {
     }
+
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
         let dh = &self.display_handle;
         let client = focused.and_then(|s| dh.get_client(s.id()).ok());
@@ -332,6 +331,7 @@ impl SeatHandler for JwmWlState {
 }
 
 impl OutputHandler for JwmWlState {}
+
 impl DataDeviceHandler for JwmWlState {
     fn data_device_state(&self) -> &DataDeviceState {
         &self.data_device_state
@@ -359,7 +359,7 @@ impl XdgShellHandler for JwmWlState {
         surface.send_configure();
 
         let mut reg = self.registry.lock().unwrap();
-        let new_id = (reg.windows.len() as u64) + 1;
+        let new_id = reg.windows.keys().max().copied().unwrap_or(0) + 1;
         reg.windows.insert(
             new_id,
             WindowRecord {
@@ -383,7 +383,7 @@ impl XdgShellHandler for JwmWlState {
     fn new_popup(&mut self, surface: PopupSurface, _positioner: PositionerState) {
         let _ = self.popups.track_popup(PopupKind::Xdg(surface));
     }
-    fn grab(&mut self, _surface: PopupSurface, _seat: WlSeat, _serial: smithay::utils::Serial) {}
+    fn grab(&mut self, _surface: PopupSurface, _seat: WlSeat, _serial: Serial) {}
     fn reposition_request(
         &mut self,
         surface: PopupSurface,
@@ -391,7 +391,8 @@ impl XdgShellHandler for JwmWlState {
         token: u32,
     ) {
         surface.with_pending_state(|state| {
-            state.geometry = positioner.get_geometry();
+            let geometry = positioner.get_geometry();
+            state.geometry = geometry;
             state.positioner = positioner;
         });
         surface.send_repositioned(token);
@@ -407,142 +408,109 @@ delegate_data_device!(JwmWlState);
 
 struct LoopData {
     state: JwmWlState,
-    display_handle: DisplayHandle,
 }
 
 pub struct WaylandEventSource {
-    rx: Receiver<BackendEvent>,
-    // tx 不再需要，因为事件直接在 JwmWlState 中发送
-    // tx: Sender<BackendEvent>,
-    command_tx: Sender<CompositorCommand>,
+    event_rx: crossbeam_channel::Receiver<BackendEvent>,
+    command_tx: smithay::reexports::calloop::channel::Sender<CompositorCommand>,
     registry: Arc<Mutex<WaylandRegistry>>,
     space: Arc<Mutex<Space<Window>>>,
-    seat: Arc<Mutex<Seat<JwmWlState>>>,
-    pointer: smithay::input::pointer::PointerHandle<JwmWlState>,
-    keyboard: smithay::input::keyboard::KeyboardHandle<JwmWlState>,
 }
 
 impl WaylandEventSource {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let (event_tx, event_rx) = unbounded();
-        let (command_tx, command_rx) = unbounded::<CompositorCommand>();
+        let (command_tx, command_rx) = channel();
+        let (event_tx_crossbeam, event_rx_crossbeam) = crossbeam_channel::unbounded();
 
         let registry = Arc::new(Mutex::new(WaylandRegistry::new()));
-        let space_arc = Arc::new(Mutex::new(Space::default()));
+        let space = Arc::new(Mutex::new(Space::default()));
 
-        let (seat_arc, pointer_handle, keyboard_handle) = {
-            let tx_clone = event_tx.clone();
-            let reg_clone = registry.clone();
-            let space_clone = space_arc.clone();
-            let (seat_sender, seat_receiver) = std::sync::mpsc::channel();
+        let registry_clone = registry.clone();
+        let space_clone = space.clone();
 
-            std::thread::spawn(move || {
-                use smithay::reexports::calloop::{
-                    generic::Generic, EventLoop, Interest, Mode, PostAction,
-                };
-                let mut event_loop: EventLoop<LoopData> = EventLoop::try_new().unwrap();
-                let display: Display<JwmWlState> = Display::new().unwrap();
-                let dh = display.handle();
+        std::thread::spawn(move || {
+            let mut event_loop: EventLoop<LoopData> = EventLoop::try_new().unwrap();
+            let display: Display<JwmWlState> = Display::new().unwrap();
+            let dh = display.handle();
 
-                let state = JwmWlState::new(&dh, tx_clone, reg_clone, space_clone);
-                let mut data = LoopData {
-                    state,
-                    display_handle: dh.clone(),
-                };
+            let (event_tx_for_loop, event_rx_for_loop) = channel();
+            event_loop
+                .handle()
+                .insert_source(event_rx_for_loop, move |event, _, _| {
+                    if let ChannelEvent::Msg(evt) = event {
+                        // Send to the crossbeam channel for the main thread
+                        let _ = event_tx_crossbeam.send(evt);
+                    }
+                })
+                .unwrap();
 
-                // 添加命令监听
-                event_loop
-                    .handle()
-                    .insert_source(
-                        Generic::new(command_rx, Interest::READ, Mode::Level),
-                        |_, rx, data| {
-                            while let Ok(cmd) = rx.try_recv() {
-                                data.state.process_command(cmd);
-                            }
-                            Ok(PostAction::Continue)
-                        },
-                    )
-                    .unwrap();
+            let state = JwmWlState::new(&dh, event_tx_for_loop, registry_clone, space_clone);
+            let mut data = LoopData { state };
 
-                let seat_arc = data.state.seat.clone();
-                let pointer_handle = data.state.pointer.clone();
-                let keyboard_handle = data.state.keyboard.clone();
-                let _ = seat_sender.send((seat_arc, pointer_handle, keyboard_handle));
+            event_loop
+                .handle()
+                .insert_source(command_rx, |event, _, data| {
+                    if let ChannelEvent::Msg(cmd) = event {
+                        data.state.process_command(cmd);
+                    }
+                })
+                .unwrap();
 
-                event_loop
-                    .handle()
-                    .insert_source(
-                        ListeningSocketSource::new_auto().unwrap(),
-                        move |client_stream, _, data| {
-                            data.display_handle
-                                .insert_client(client_stream, Arc::new(ClientState::default()))
-                                .unwrap();
-                        },
-                    )
-                    .expect("Failed to init Wayland event source");
-                event_loop
-                    .handle()
-                    .insert_source(
-                        Generic::new(display, Interest::READ, Mode::Level),
-                        |_, display, data| {
-                            unsafe {
-                                let d = display.get_mut();
-                                if let Err(e) = d.dispatch_clients(&mut data.state) {
-                                    eprintln!("dispatch_clients error: {:?}", e);
-                                }
-                                if let Err(e) = d.flush_clients() {
-                                    eprintln!("flush_clients error: {:?}", e);
-                                }
-                            }
-                            Ok(PostAction::Continue)
-                        },
-                    )
-                    .unwrap();
+            event_loop
+                .handle()
+                .insert_source(
+                    ListeningSocketSource::new_auto().unwrap(),
+                    move |client_stream, _, data| {
+                        data.state
+                            .display_handle
+                            .insert_client(client_stream, Arc::new(ClientState::default()))
+                            .unwrap();
+                    },
+                )
+                .unwrap();
 
-                event_loop.run(None, &mut data, move |_| {}).unwrap();
-            });
+            event_loop
+                .handle()
+                .insert_source(
+                    Generic::new(display, Interest::READ, Mode::Level),
+                    |_, display, data| {
+                        unsafe {
+                            display.get_mut().dispatch_clients(&mut data.state).unwrap();
+                        }
+                        Ok(PostAction::Continue)
+                    },
+                )
+                .unwrap();
 
-            let (seat_arc, pointer, keyboard) =
-                seat_receiver.recv().expect("Failed to get seat handles");
-            (seat_arc, pointer, keyboard)
-        };
+            event_loop.run(None, &mut data, |_| {}).unwrap();
+        });
 
         Ok(Self {
-            rx: event_rx,
-            // tx: event_tx,
+            event_rx: event_rx_crossbeam,
             command_tx,
             registry,
-            space: space_arc,
-            seat: seat_arc,
-            pointer: pointer_handle,
-            keyboard: keyboard_handle,
+            space,
         })
     }
 
-    pub fn command_sender(&self) -> Sender<CompositorCommand> {
+    pub fn command_sender(
+        &self,
+    ) -> smithay::reexports::calloop::channel::Sender<CompositorCommand> {
         self.command_tx.clone()
     }
 
     pub fn registry(&self) -> Arc<Mutex<WaylandRegistry>> {
         self.registry.clone()
     }
+
     pub fn space(&self) -> Arc<Mutex<Space<Window>>> {
         self.space.clone()
-    }
-    pub fn seat(&self) -> Arc<Mutex<Seat<JwmWlState>>> {
-        self.seat.clone()
-    }
-    pub fn pointer_handle(&self) -> smithay::input::pointer::PointerHandle<JwmWlState> {
-        self.pointer.clone()
-    }
-    pub fn keyboard_handle(&self) -> smithay::input::keyboard::KeyboardHandle<JwmWlState> {
-        self.keyboard.clone()
     }
 }
 
 impl EventSource for WaylandEventSource {
     fn poll_event(&mut self) -> Result<Option<BackendEvent>, Box<dyn std::error::Error>> {
-        Ok(self.rx.try_recv().ok())
+        Ok(self.event_rx.try_recv().ok())
     }
     fn flush(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())

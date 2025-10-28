@@ -1,7 +1,8 @@
 // src/backend/wayland/input_ops.rs
 use super::event_source::CompositorCommand;
 use crate::backend::api::{AllowMode, InputOps, WindowId};
-use crossbeam_channel::Sender as CommandSender;
+// FIX 8: Use the Sender from calloop to match the event source
+use smithay::reexports::calloop::channel::Sender as CommandSender;
 
 #[derive(Clone)]
 pub struct PointerController;
@@ -12,16 +13,12 @@ impl PointerController {
 }
 
 pub struct WaylandInputOps {
-    _ctrl: PointerController,
     command_tx: CommandSender<CompositorCommand>,
 }
 
 impl WaylandInputOps {
-    pub fn new(ctrl: PointerController, command_tx: CommandSender<CompositorCommand>) -> Self {
-        Self {
-            _ctrl: ctrl,
-            command_tx,
-        }
+    pub fn new(command_tx: CommandSender<CompositorCommand>) -> Self {
+        Self { command_tx }
     }
 }
 

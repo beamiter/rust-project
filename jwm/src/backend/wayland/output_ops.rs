@@ -1,274 +1,71 @@
-// src/backend/wayland/window_ops.rs
-use std::collections::HashMap;
+// src/backend/wayland/output_ops.rs
+use super::window_ops::WaylandRegistry;
+use crate::backend::api::{OutputInfo, OutputOps, ScreenInfo};
+use smithay::desktop::{Space, Window};
 use std::sync::{Arc, Mutex};
 
-use super::event_source::CompositorCommand;
-use crate::backend::api::{Geometry, WindowAttributes, WindowId, WindowOps};
-use crossbeam_channel::Sender as CommandSender;
-use smithay::desktop::{Space, Window as SWindow};
-use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::Size;
-use smithay::wayland::shell::xdg::ToplevelSurface;
-
-#[derive(Clone)]
-pub struct WindowRecord {
-    pub id: u64,
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
-    pub border: i32,
-    pub handle: Option<SWindow>,
-    pub wl_surface: Option<WlSurface>,
-    pub toplevel: Option<ToplevelSurface>,
-}
-
-#[derive(Clone)]
-pub struct WaylandRegistry {
-    pub windows: HashMap<u64, WindowRecord>,
-    pub screen_w: i32,
-    pub screen_h: i32,
-}
-impl WaylandRegistry {
-    pub fn new() -> Self {
-        Self {
-            windows: HashMap::new(),
-            screen_w: 1280,
-            screen_h: 800,
-        }
-    }
-}
-
-pub struct WaylandWindowOps {
+pub struct WaylandOutputOps {
     reg: Arc<Mutex<WaylandRegistry>>,
-    space: Arc<Mutex<Space<SWindow>>>,
-    command_tx: CommandSender<CompositorCommand>,
+    space: Arc<Mutex<Space<Window>>>,
 }
 
-impl WaylandWindowOps {
-    pub fn new(
-        reg: Arc<Mutex<WaylandRegistry>>,
-        space: Arc<Mutex<Space<SWindow>>>,
-        command_tx: CommandSender<CompositorCommand>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self {
-            reg,
-            space,
-            command_tx,
-        })
+impl WaylandOutputOps {
+    pub fn new(reg: Arc<Mutex<WaylandRegistry>>, space: Arc<Mutex<Space<Window>>>) -> Self {
+        Self { reg, space }
     }
 }
 
-impl WindowOps for WaylandWindowOps {
-    fn set_input_focus_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-        self.command_tx
-            .send(CompositorCommand::SetFocus(Some(win)))
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-    }
-
-    fn set_input_focus_root(&self, _root: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-        self.command_tx
-            .send(CompositorCommand::SetFocus(None))
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
-    }
-
-    // --- 其他函数保持不变 ---
-
-    fn configure_xywh_border(
-        &self,
-        win: WindowId,
-        x: Option<i32>,
-        y: Option<i32>,
-        w: Option<u32>,
-        h: Option<u32>,
-        border: Option<u32>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut reg = self.reg.lock().unwrap();
-        if let Some(rec) = reg.windows.get_mut(&win.0) {
-            if let Some(v) = x {
-                rec.x = v;
-            }
-            if let Some(v) = y {
-                rec.y = v;
-            }
-            if let Some(v) = w {
-                rec.w = v as i32;
-            }
-            if let Some(v) = h {
-                rec.h = v as i32;
-            }
-            if let Some(v) = border {
-                rec.border = v as i32;
-            }
-
-            if let Some(ref window) = rec.handle {
-                self.space
-                    .lock()
-                    .unwrap()
-                    .map_element(window.clone(), (rec.x, rec.y), false);
-            }
-            if let Some(ref toplevel) = rec.toplevel {
-                if w.is_some() || h.is_some() {
-                    toplevel.with_pending_state(|state| {
-                        state.size = Size::from((rec.w, rec.h)).into();
-                    });
-                    toplevel.send_pending_configure();
-                }
+impl OutputOps for WaylandOutputOps {
+    fn screen_info(&self) -> ScreenInfo {
+        // 优先从 Smithay 的 Space 中获取当前输出的几何信息
+        // 这更准确，因为它反映了 compositor 内部的实际布局
+        let space_guard = self.space.lock().unwrap();
+        if let Some(output) = space_guard.outputs().next() {
+            if let Some(geo) = space_guard.output_geometry(output) {
+                return ScreenInfo {
+                    width: geo.size.w,
+                    height: geo.size.h,
+                };
             }
         }
-        Ok(())
-    }
 
-    fn configure_stack_above(
-        &self,
-        win: WindowId,
-        _sibling: Option<WindowId>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let reg = self.reg.lock().unwrap();
-        if let Some(rec) = reg.windows.get(&win.0) {
-            if let Some(ref window) = rec.handle {
-                self.space
-                    .lock()
-                    .unwrap()
-                    .raise_element(&window.clone(), true);
-            }
-        }
-        Ok(())
-    }
-
-    fn get_tree_child(&self, _root: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>> {
-        let reg = self.reg.lock().unwrap();
-        Ok(reg.windows.keys().map(|&id| WindowId(id)).collect())
-    }
-
-    fn set_border_width(
-        &self,
-        _win: WindowId,
-        _border: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn set_border_pixel(
-        &self,
-        _win: WindowId,
-        _pixel: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn change_event_mask(
-        &self,
-        _win: WindowId,
-        _mask: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn map_window(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn send_client_message(
-        &self,
-        _win: WindowId,
-        _type_atom: u32,
-        _data: [u32; 5],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn delete_property(
-        &self,
-        _win: WindowId,
-        _atom: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn change_property32(
-        &self,
-        _win: WindowId,
-        _property: u32,
-        _ty: u32,
-        _data: &[u32],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn change_property8(
-        &self,
-        _win: WindowId,
-        _property: u32,
-        _ty: u32,
-        _data: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn flush(&self) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn kill_client(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn ungrab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-
-    fn get_window_attributes(
-        &self,
-        win: WindowId,
-    ) -> Result<WindowAttributes, Box<dyn std::error::Error>> {
-        let reg = self.reg.lock().unwrap();
-        let is_viewable = reg.windows.contains_key(&win.0);
-        Ok(WindowAttributes {
-            override_redirect: false,
-            map_state_viewable: is_viewable,
-        })
-    }
-
-    fn get_geometry_translated(
-        &self,
-        win: WindowId,
-    ) -> Result<Geometry, Box<dyn std::error::Error>> {
-        let reg = self.reg.lock().unwrap();
-        if let Some(rec) = reg.windows.get(&win.0) {
-            Ok(Geometry {
-                x: rec.x as i16,
-                y: rec.y as i16,
-                w: rec.w as u16,
-                h: rec.h as u16,
-                border: rec.border as u16,
-            })
-        } else {
-            Err("window not found".into())
+        // 如果 Space 中没有输出（例如初始化早期），则回退到 registry 中缓存的尺寸
+        let reg_guard = self.reg.lock().unwrap();
+        ScreenInfo {
+            width: reg_guard.screen_w,
+            height: reg_guard.screen_h,
         }
     }
 
-    fn ungrab_all_buttons(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn grab_button_any_anymod(
-        &self,
-        _win: WindowId,
-        _event_mask_bits: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn grab_button(
-        &self,
-        _win: WindowId,
-        _button: u8,
-        _event_mask_bits: u32,
-        _mods_bits: u16,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn send_configure_notify(
-        &self,
-        _win: WindowId,
-        _x: i16,
-        _y: i16,
-        _w: u16,
-        _h: u16,
-        _border: u16,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
+    fn enumerate_outputs(&self) -> Vec<OutputInfo> {
+        let space_guard = self.space.lock().unwrap();
+        let mut outputs_vec = Vec::new();
+
+        // 遍历所有由 Smithay管理的输出
+        for (i, output) in space_guard.outputs().enumerate() {
+            if let Some(geo) = space_guard.output_geometry(output) {
+                // 将 Smithay 的输出信息转换为 jwm 的通用 OutputInfo 结构
+                outputs_vec.push(OutputInfo {
+                    id: i as i32, // 使用枚举索引作为临时 ID
+                    x: geo.loc.x,
+                    y: geo.loc.y,
+                    width: geo.size.w,
+                    height: geo.size.h,
+                });
+            }
+        }
+
+        if outputs_vec.is_empty() {
+            let reg_guard = self.reg.lock().unwrap();
+            outputs_vec.push(OutputInfo {
+                id: 0,
+                x: 0,
+                y: 0,
+                width: reg_guard.screen_w,
+                height: reg_guard.screen_h,
+            });
+        }
+
+        outputs_vec
     }
 }

@@ -7,7 +7,6 @@ use crate::backend::api::{Geometry, WindowAttributes, WindowId, WindowOps};
 use smithay::desktop::{Space, Window as SWindow};
 use smithay::reexports::calloop::channel::Sender as CommandSender;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::Size;
 use smithay::wayland::shell::xdg::ToplevelSurface;
 
 #[derive(Clone)]
@@ -40,14 +39,22 @@ impl WaylandRegistry {
 }
 
 pub struct WaylandWindowOps {
+    reg: Arc<Mutex<WaylandRegistry>>,
+    space: Arc<Mutex<Space<SWindow>>>,
     command_tx: CommandSender<CompositorCommand>,
 }
 
 impl WaylandWindowOps {
     pub fn new(
+        reg: Arc<Mutex<WaylandRegistry>>,
+        space: Arc<Mutex<Space<SWindow>>>,
         command_tx: CommandSender<CompositorCommand>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self { command_tx })
+        Ok(Self {
+            reg,
+            space,
+            command_tx,
+        })
     }
 }
 
@@ -64,12 +71,6 @@ impl WindowOps for WaylandWindowOps {
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
     }
 
-    // --- 其他函数保持不变 ---
-    // 注意：这里的 configure_xywh_border 等函数现在不再直接访问 space 或 registry
-    // 在一个更完整的实现中，这些操作也应该通过 CompositorCommand 发送给事件循环线程处理。
-    // 但为了保持简单和让你先跑起来，我们暂时保留它们为空实现或只操作本地数据。
-    // 你需要把这些函数的逻辑也迁移到 JwmWlState::process_command 中去。
-
     fn configure_xywh_border(
         &self,
         _win: WindowId,
@@ -79,7 +80,6 @@ impl WindowOps for WaylandWindowOps {
         _h: Option<u32>,
         _border: Option<u32>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: This should be a CompositorCommand
         Ok(())
     }
     fn configure_stack_above(
@@ -87,11 +87,9 @@ impl WindowOps for WaylandWindowOps {
         _win: WindowId,
         _sibling: Option<WindowId>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // TODO: This should be a CompositorCommand
         Ok(())
     }
 
-    // ... 其他 no-op 函数 ...
     fn get_tree_child(&self, _root: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>> {
         Ok(vec![])
     }

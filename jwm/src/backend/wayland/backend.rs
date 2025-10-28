@@ -1,16 +1,9 @@
 // src/backend/wayland/backend.rs
-use std::{
-    cmp,
-    sync::{Arc, Mutex},
-};
+use std::sync::{Arc, Mutex};
 
 use super::{
-    color::WaylandColorAllocator,
-    cursor::WaylandCursorProvider,
-    event_source::WaylandEventSource,
-    input_ops::{PointerController, WaylandInputOps},
-    key_ops::WaylandKeyOps,
-    output_ops::WaylandOutputOps,
+    color::WaylandColorAllocator, cursor::WaylandCursorProvider, event_source::WaylandEventSource,
+    input_ops::WaylandInputOps, key_ops::WaylandKeyOps, output_ops::WaylandOutputOps,
     window_ops::WaylandWindowOps,
 };
 use crate::backend::api::{
@@ -19,7 +12,8 @@ use crate::backend::api::{
 };
 
 use super::event_source::CompositorCommand;
-use crossbeam_channel::Sender as CommandSender;
+// FIX 9: Use the correct Sender type to match the event loop
+use smithay::reexports::calloop::channel::Sender as CommandSender;
 
 pub struct WaylandBackend {
     caps: Capabilities,
@@ -39,28 +33,31 @@ pub struct WaylandBackend {
 
 impl WaylandBackend {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+        // FIX 10: Call the new WaylandEventSource::new and get the handles
         let event_source = WaylandEventSource::new()?;
         let command_tx = event_source.command_sender();
+        // Get the handles from the event source instance
+        let registry = event_source.registry();
+        let space = event_source.space();
 
+        // FIX 11: Pass the handles to the modules that need them
         let window_ops: Box<dyn WindowOps> = Box::new(WaylandWindowOps::new(
-            event_source.registry(),
-            event_source.space(),
+            registry.clone(),
+            space.clone(),
             command_tx.clone(),
         )?);
 
-        let ctrl = PointerController::new();
-        let input_ops_arc: Arc<Mutex<dyn InputOps + Send>> = Arc::new(Mutex::new(
-            WaylandInputOps::new(ctrl.clone(), command_tx.clone()),
-        ));
-        let input_ops: Box<dyn InputOps> = Box::new(WaylandInputOps::new(ctrl, command_tx.clone()));
+        let input_ops_arc: Arc<Mutex<dyn InputOps + Send>> =
+            Arc::new(Mutex::new(WaylandInputOps::new(command_tx.clone())));
+        let input_ops: Box<dyn InputOps> = Box::new(WaylandInputOps::new(command_tx.clone()));
 
-        let output_ops: Box<dyn OutputOps> = Box::new(WaylandOutputOps::new(
-            event_source.registry(),
-            event_source.space(),
-        )?);
+        // FIX 12: Remove the incorrect `?` operator and pass the handles
+        let output_ops: Box<dyn OutputOps> =
+            Box::new(WaylandOutputOps::new(registry.clone(), space.clone()));
 
+        // FIX 13: Pass the handle to property_ops
         let property_ops: Box<dyn PropertyOps> = Box::new(
-            super::property_ops::WaylandPropertyOps::new(event_source.registry()),
+            super::property_ops::WaylandPropertyOps::new(registry.clone()),
         );
 
         let key_ops: Box<dyn KeyOps> =

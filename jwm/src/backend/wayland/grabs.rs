@@ -1,6 +1,6 @@
 // src/backend/wayland/grabs.rs
 use smithay::{
-    desktop::{space::SpaceElement, Window},
+    desktop::Window,
     input::pointer::{
         AxisFrame, ButtonEvent, GrabStartData as PointerGrabStartData, MotionEvent, PointerGrab,
         PointerInnerHandle, RelativeMotionEvent,
@@ -10,13 +10,9 @@ use smithay::{
 };
 
 use super::event_source::JwmWlState;
-use smithay::input::{
-    pointer::{
-        GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
-        GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent,
-        GestureSwipeUpdateEvent,
-    },
-    SeatHandler,
+use smithay::input::pointer::{
+    GestureHoldBeginEvent, GestureHoldEndEvent, GesturePinchBeginEvent, GesturePinchEndEvent,
+    GesturePinchUpdateEvent, GestureSwipeBeginEvent, GestureSwipeEndEvent, GestureSwipeUpdateEvent,
 };
 
 pub struct PointerMoveSurfaceGrab {

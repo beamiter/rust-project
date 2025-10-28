@@ -1156,8 +1156,16 @@ impl Jwm {
 
     fn handle_backend_event(&mut self, ev: BackendEvent) -> Result<(), Box<dyn std::error::Error>> {
         match ev {
-            BackendEvent::WmFunction { func_type, arg } => {
-                let _ = func_type(self, &arg);
+            BackendEvent::WmKeyboardShortcut { keysym, mods } => {
+                // 复用现有的按键处理逻辑
+                for key_config in crate::config::CONFIG.get_keys().iter() {
+                    if keysym == key_config.key_sym && mods == key_config.mask {
+                        if let Some(func) = key_config.func_opt {
+                            let _ = func(self, &key_config.arg);
+                        }
+                        break;
+                    }
+                }
                 Ok(())
             }
             BackendEvent::ButtonPress {
