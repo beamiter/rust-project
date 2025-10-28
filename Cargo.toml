@@ -3,7 +3,7 @@
 [workspace]
 # 列出所有属于该工作区的成员 crate
 members = [
-    # "egui_bar",
+    "egui_bar",
     # "iced_bar",
     # "gtk_bar",
     # "relm_bar",
