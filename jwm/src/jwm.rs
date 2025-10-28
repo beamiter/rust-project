@@ -5578,11 +5578,13 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(key) = self.get_selected_client_key() {
             if let Some(client) = self.clients.get(key) {
-                self.backend.input_ops().warp_pointer_to_window(
-                    WindowId(window_id.into()),
-                    (client.geometry.w + border_width - 1) as i16,
-                    (client.geometry.h + border_width - 1) as i16,
-                )?;
+                if self.backend.capabilities().can_warp_pointer {
+                    let _ = self.backend.input_ops().warp_pointer_to_window(
+                        WindowId(window_id.into()),
+                        (client.geometry.w + border_width - 1) as i16,
+                        (client.geometry.h + border_width - 1) as i16,
+                    );
+                }
             }
         }
         self.backend.input_ops().ungrab_pointer()?;

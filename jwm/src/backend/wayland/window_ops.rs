@@ -4,6 +4,26 @@ use std::sync::{Arc, Mutex};
 
 use crate::backend::api::{Geometry, WindowAttributes, WindowId, WindowOps};
 
+use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
+use smithay::wayland::shell::xdg::ToplevelSurface;
+
+use super::event_source::JwmWlState;
+use smithay::desktop::{Space, Window as SWindow};
+use smithay::utils::Size; // Seat 类型参数
+
+#[derive(Clone)]
+pub struct WindowRecord {
+    pub id: u64,
+    pub x: i32,
+    pub y: i32,
+    pub w: i32,
+    pub h: i32,
+    pub border: i32,
+    pub handle: Option<SWindow>,
+    pub wl_surface: Option<WlSurface>,
+    pub toplevel: Option<ToplevelSurface>,
+}
+
 #[derive(Clone)]
 pub struct WaylandRegistry {
     pub windows: HashMap<u64, WindowRecord>,
@@ -20,28 +40,89 @@ impl WaylandRegistry {
     }
 }
 
-#[derive(Clone)]
-pub struct WindowRecord {
-    pub id: u64,
-    pub x: i32,
-    pub y: i32,
-    pub w: i32,
-    pub h: i32,
-    pub border: i32,
-    // 可扩展：smithay::desktop::Window 句柄、wl_surface、xdg_toplevel等
-}
-
 pub struct WaylandWindowOps {
     reg: Arc<Mutex<WaylandRegistry>>,
+    space: Arc<Mutex<Space<SWindow>>>,
+    seat: Arc<Mutex<smithay::input::Seat<JwmWlState>>>,
 }
 
 impl WaylandWindowOps {
-    pub fn new(reg: Arc<Mutex<WaylandRegistry>>) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self { reg })
+    pub fn new(
+        reg: Arc<Mutex<WaylandRegistry>>,
+        space: Arc<Mutex<Space<SWindow>>>,
+        seat: Arc<Mutex<smithay::input::Seat<JwmWlState>>>,
+    ) -> Result<Self, Box<dyn std::error::Error>> {
+        Ok(Self { reg, space, seat })
     }
 }
 
 impl WindowOps for WaylandWindowOps {
+    fn configure_xywh_border(
+        &self,
+        win: WindowId,
+        x: Option<i32>,
+        y: Option<i32>,
+        w: Option<u32>,
+        h: Option<u32>,
+        border: Option<u32>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mut reg = self.reg.lock().unwrap();
+        if let Some(rec) = reg.windows.get_mut(&win.0) {
+            if let Some(v) = x {
+                rec.x = v;
+            }
+            if let Some(v) = y {
+                rec.y = v;
+            }
+            if let Some(v) = w {
+                rec.w = v as i32;
+            }
+            if let Some(v) = h {
+                rec.h = v as i32;
+            }
+            if let Some(v) = border {
+                rec.border = v as i32;
+            }
+
+            if let Some(ref window) = rec.handle {
+                self.space
+                    .lock()
+                    .unwrap()
+                    .map_element(window.clone(), (rec.x, rec.y), false);
+            }
+            if let Some(ref toplevel) = rec.toplevel {
+                if w.is_some() || h.is_some() {
+                    toplevel.with_pending_state(|state| {
+                        state.size = Size::from((rec.w, rec.h)).into();
+                    });
+                    toplevel.send_configure();
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn configure_stack_above(
+        &self,
+        win: WindowId,
+        _sibling: Option<WindowId>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let reg = self.reg.lock().unwrap();
+        if let Some(rec) = reg.windows.get(&win.0) {
+            if let Some(ref window) = rec.handle {
+                self.space
+                    .lock()
+                    .unwrap()
+                    .raise_element(&window.clone(), true);
+            }
+        }
+        Ok(())
+    }
+
+    fn set_input_focus_window(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
     fn get_tree_child(&self, _root: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>> {
         let reg = self.reg.lock().unwrap();
         Ok(reg.windows.keys().map(|&id| WindowId(id)).collect())
@@ -74,46 +155,6 @@ impl WindowOps for WaylandWindowOps {
 
     fn map_window(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         // Wayland 映射由 xdg configure/commit 驱动，这里 no-op
-        Ok(())
-    }
-
-    fn configure_xywh_border(
-        &self,
-        win: WindowId,
-        x: Option<i32>,
-        y: Option<i32>,
-        w: Option<u32>,
-        h: Option<u32>,
-        border: Option<u32>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut reg = self.reg.lock().unwrap();
-        if let Some(rec) = reg.windows.get_mut(&win.0) {
-            if let Some(x) = x {
-                rec.x = x;
-            }
-            if let Some(y) = y {
-                rec.y = y;
-            }
-            if let Some(w) = w {
-                rec.w = w as i32;
-            }
-            if let Some(h) = h {
-                rec.h = h as i32;
-            }
-            if let Some(b) = border {
-                rec.border = b as i32;
-            }
-            // TODO: 调用 smithay xdg_toplevel.with_pending_state 设置 size，并 map 到 space 位置
-        }
-        Ok(())
-    }
-
-    fn configure_stack_above(
-        &self,
-        _win: WindowId,
-        _sibling: Option<WindowId>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        // 叠放关系由 space.raise_element 控制，这里留作 TODO
         Ok(())
     }
 
@@ -234,10 +275,6 @@ impl WindowOps for WaylandWindowOps {
         _border: u16,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // Wayland 下通过 xdg configure，而不是 X11 的 ConfigureNotify
-        Ok(())
-    }
-
-    fn set_input_focus_window(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 }

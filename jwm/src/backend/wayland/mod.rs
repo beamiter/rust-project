@@ -7,3 +7,4 @@ pub mod output_ops;
 pub mod key_ops;
 pub mod cursor;
 pub mod color;
+pub mod property_ops;

@@ -25,7 +25,7 @@ macro_rules! status_bar_config {
                 } else
             )*
             {
-                pub const STATUS_BAR_NAME: &str = "xcb_bar";
+                pub const STATUS_BAR_NAME: &str = "x11rb_bar";
             }
         }
     };
