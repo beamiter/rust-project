@@ -1156,6 +1156,10 @@ impl Jwm {
 
     fn handle_backend_event(&mut self, ev: BackendEvent) -> Result<(), Box<dyn std::error::Error>> {
         match ev {
+            BackendEvent::WmFunction { func_type, arg } => {
+                let _ = func_type(self, &arg);
+                Ok(())
+            }
             BackendEvent::ButtonPress {
                 window,
                 state,

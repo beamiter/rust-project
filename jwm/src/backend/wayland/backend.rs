@@ -1,5 +1,8 @@
 // src/backend/wayland/backend.rs
-use std::sync::{Arc, Mutex};
+use std::{
+    cmp,
+    sync::{Arc, Mutex},
+};
 
 use super::{
     color::WaylandColorAllocator,
@@ -15,6 +18,9 @@ use crate::backend::api::{
     KeyOps, OutputOps, PropertyOps, WindowId, WindowOps,
 };
 
+use super::event_source::CompositorCommand;
+use crossbeam_channel::Sender as CommandSender;
+
 pub struct WaylandBackend {
     caps: Capabilities,
 
@@ -28,23 +34,25 @@ pub struct WaylandBackend {
     cursor_provider: Box<dyn CursorProvider>,
     color_allocator: Box<dyn ColorAllocator>,
     event_source: Box<dyn EventSource>,
+    command_tx: CommandSender<CompositorCommand>,
 }
 
 impl WaylandBackend {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let event_source = WaylandEventSource::new()?;
+        let command_tx = event_source.command_sender();
 
         let window_ops: Box<dyn WindowOps> = Box::new(WaylandWindowOps::new(
             event_source.registry(),
             event_source.space(),
-            event_source.seat(),
-            event_source.keyboard_handle(),
+            command_tx.clone(),
         )?);
 
         let ctrl = PointerController::new();
-        let input_ops_arc: Arc<Mutex<dyn InputOps + Send>> =
-            Arc::new(Mutex::new(WaylandInputOps::new(ctrl.clone())));
-        let input_ops: Box<dyn InputOps> = Box::new(WaylandInputOps::new(ctrl));
+        let input_ops_arc: Arc<Mutex<dyn InputOps + Send>> = Arc::new(Mutex::new(
+            WaylandInputOps::new(ctrl.clone(), command_tx.clone()),
+        ));
+        let input_ops: Box<dyn InputOps> = Box::new(WaylandInputOps::new(ctrl, command_tx.clone()));
 
         let output_ops: Box<dyn OutputOps> = Box::new(WaylandOutputOps::new(
             event_source.registry(),
@@ -82,6 +90,7 @@ impl WaylandBackend {
             cursor_provider,
             color_allocator,
             event_source: Box::new(event_source),
+            command_tx,
         })
     }
 }

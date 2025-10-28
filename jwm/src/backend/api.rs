@@ -139,6 +139,10 @@ pub enum BackendEvent {
         window: WindowId,
         from_configure: bool,
     },
+    WmKeyboardShortcut {
+        keysym: KeySym,
+        mods: Mods,
+    },
 }
 
 // 窗口属性结构
