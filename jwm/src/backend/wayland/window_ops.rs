@@ -34,8 +34,8 @@ impl WaylandRegistry {
     pub fn new() -> Self {
         Self {
             windows: HashMap::new(),
-            screen_w: 1920,
-            screen_h: 1080,
+            screen_w: 1280,
+            screen_h: 800,
         }
     }
 }
@@ -44,6 +44,7 @@ pub struct WaylandWindowOps {
     reg: Arc<Mutex<WaylandRegistry>>,
     space: Arc<Mutex<Space<SWindow>>>,
     seat: Arc<Mutex<smithay::input::Seat<JwmWlState>>>,
+    keyboard: smithay::input::keyboard::KeyboardHandle<JwmWlState>,
 }
 
 impl WaylandWindowOps {
@@ -51,8 +52,14 @@ impl WaylandWindowOps {
         reg: Arc<Mutex<WaylandRegistry>>,
         space: Arc<Mutex<Space<SWindow>>>,
         seat: Arc<Mutex<smithay::input::Seat<JwmWlState>>>,
+        keyboard: smithay::input::keyboard::KeyboardHandle<JwmWlState>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self { reg, space, seat })
+        Ok(Self {
+            reg,
+            space,
+            seat,
+            keyboard,
+        })
     }
 }
 
@@ -95,7 +102,7 @@ impl WindowOps for WaylandWindowOps {
                     toplevel.with_pending_state(|state| {
                         state.size = Size::from((rec.w, rec.h)).into();
                     });
-                    toplevel.send_configure();
+                    toplevel.send_pending_configure();
                 }
             }
         }
@@ -119,11 +126,12 @@ impl WindowOps for WaylandWindowOps {
         Ok(())
     }
 
-    // Wayland 下暂时 no-op，避免 smithay 0.7 KeyboardHandle::set_focus 额外参数问题
+    // Wayland: 焦点需在状态上下文中设置，这里保持 no-op
     fn set_input_focus_window(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 
+    // Wayland: 清焦点亦需在状态上下文中，这里保持 no-op
     fn set_input_focus_root(&self, _root: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
@@ -264,115 +272,4 @@ impl WindowOps for WaylandWindowOps {
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
-}
-
-// 保留 no-op PropertyOps（未改）
-pub fn no_op_property_ops() -> Box<dyn crate::backend::api::PropertyOps> {
-    struct NoOpProps;
-    impl crate::backend::api::PropertyOps for NoOpProps {
-        fn set_window_strut_top(
-            &self,
-            _: WindowId,
-            _: u32,
-            _: u32,
-            _: u32,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            Ok(())
-        }
-        fn clear_window_strut(&self, _: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-            Ok(())
-        }
-        fn get_text_property_best_title(&self, win: WindowId) -> String {
-            format!("window-0x{:x}", win.0)
-        }
-        fn get_wm_class(&self, _: WindowId) -> Option<(String, String)> {
-            None
-        }
-        fn is_popup_type(&self, _: WindowId) -> bool {
-            false
-        }
-        fn is_fullscreen(&self, _: WindowId) -> Result<bool, Box<dyn std::error::Error>> {
-            Ok(false)
-        }
-        fn set_fullscreen_state(
-            &self,
-            _: WindowId,
-            _: bool,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            Ok(())
-        }
-        fn get_wm_hints(&self, _: WindowId) -> Option<crate::backend::api::WmHints> {
-            None
-        }
-        fn set_urgent_hint(&self, _: WindowId, _: bool) -> Result<(), Box<dyn std::error::Error>> {
-            Ok(())
-        }
-        fn transient_for(&self, _: WindowId) -> Option<WindowId> {
-            None
-        }
-        fn fetch_normal_hints(
-            &self,
-            _: WindowId,
-        ) -> Result<Option<crate::backend::api::NormalHints>, Box<dyn std::error::Error>> {
-            Ok(None)
-        }
-        fn supports_delete_window(&self, _: WindowId) -> bool {
-            false
-        }
-        fn send_delete_window(&self, _: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-            Ok(())
-        }
-        fn set_client_info(
-            &self,
-            _: WindowId,
-            _: u32,
-            _: u32,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            Ok(())
-        }
-        fn get_net_wm_state_atoms(
-            &self,
-            _: WindowId,
-        ) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
-            Ok(vec![])
-        }
-        fn has_net_wm_state(
-            &self,
-            _: WindowId,
-            _: u32,
-        ) -> Result<bool, Box<dyn std::error::Error>> {
-            Ok(false)
-        }
-        fn get_window_types(&self, _: WindowId) -> Vec<u32> {
-            vec![]
-        }
-        fn set_net_wm_state_atoms(
-            &self,
-            _: WindowId,
-            _: &[u32],
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            Ok(())
-        }
-        fn add_net_wm_state_atom(
-            &self,
-            _: WindowId,
-            _: u32,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            Ok(())
-        }
-        fn remove_net_wm_state_atom(
-            &self,
-            _: WindowId,
-            _: u32,
-        ) -> Result<(), Box<dyn std::error::Error>> {
-            Ok(())
-        }
-        fn get_wm_state(&self, _: WindowId) -> Result<i64, Box<dyn std::error::Error>> {
-            Ok(1)
-        }
-        fn set_wm_state(&self, _: WindowId, _: i64) -> Result<(), Box<dyn std::error::Error>> {
-            Ok(())
-        }
-    }
-    Box::new(NoOpProps)
 }

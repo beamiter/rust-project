@@ -2,8 +2,12 @@
 use std::sync::{Arc, Mutex};
 
 use super::{
-    color::WaylandColorAllocator, cursor::WaylandCursorProvider, event_source::WaylandEventSource,
-    input_ops::WaylandInputOps, key_ops::WaylandKeyOps, output_ops::WaylandOutputOps,
+    color::WaylandColorAllocator,
+    cursor::WaylandCursorProvider,
+    event_source::WaylandEventSource,
+    input_ops::{PointerController, WaylandInputOps},
+    key_ops::WaylandKeyOps,
+    output_ops::WaylandOutputOps,
     window_ops::WaylandWindowOps,
 };
 use crate::backend::api::{
@@ -34,16 +38,18 @@ impl WaylandBackend {
             event_source.registry(),
             event_source.space(),
             event_source.seat(),
+            event_source.keyboard_handle(),
         )?);
 
-        let wl_input_for_arc = WaylandInputOps::new(super::input_ops::PointerController::new());
-        let input_ops_arc: Arc<Mutex<dyn InputOps + Send>> = Arc::new(Mutex::new(wl_input_for_arc));
-        let input_ops: Box<dyn InputOps> = Box::new(WaylandInputOps::new(
-            super::input_ops::PointerController::new(),
-        ));
+        let ctrl = PointerController::new();
+        let input_ops_arc: Arc<Mutex<dyn InputOps + Send>> =
+            Arc::new(Mutex::new(WaylandInputOps::new(ctrl.clone())));
+        let input_ops: Box<dyn InputOps> = Box::new(WaylandInputOps::new(ctrl));
 
-        let output_ops: Box<dyn OutputOps> =
-            Box::new(WaylandOutputOps::new(event_source.registry())?);
+        let output_ops: Box<dyn OutputOps> = Box::new(WaylandOutputOps::new(
+            event_source.registry(),
+            event_source.space(),
+        )?);
 
         let property_ops: Box<dyn PropertyOps> = Box::new(
             super::property_ops::WaylandPropertyOps::new(event_source.registry()),

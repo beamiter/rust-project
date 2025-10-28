@@ -6,6 +6,8 @@ use crossbeam_channel::{unbounded, Receiver, Sender};
 use super::window_ops::{WaylandRegistry, WindowRecord};
 use crate::backend::api::{BackendEvent, EventSource, WindowId};
 
+use smithay::wayland::output::OutputHandler;
+
 use smithay::reexports::wayland_server::Resource;
 use smithay::{
     backend::renderer::utils::on_commit_buffer_handler,
@@ -13,6 +15,7 @@ use smithay::{
     delegate_xdg_shell,
     desktop::{PopupKind, PopupManager, Space, Window},
     input::{Seat, SeatHandler, SeatState},
+    output::{Mode, Output, PhysicalProperties, Subpixel},
     reexports::wayland_server::{
         backend::{ClientData, ClientId, DisconnectReason},
         protocol::{wl_seat::WlSeat, wl_surface::WlSurface},
@@ -24,7 +27,7 @@ use smithay::{
             get_parent, is_sync_subsurface, CompositorClientState, CompositorHandler,
             CompositorState,
         },
-        output::{OutputHandler, OutputManagerState},
+        output::OutputManagerState,
         selection::data_device::{
             set_data_device_focus, ClientDndGrabHandler, DataDeviceHandler, DataDeviceState,
             ServerDndGrabHandler,
@@ -50,19 +53,21 @@ impl ClientData for ClientState {
 pub struct JwmWlState {
     display_handle: DisplayHandle,
     space: Arc<Mutex<Space<Window>>>,
+    registry: Arc<Mutex<WaylandRegistry>>,
 
     compositor_state: CompositorState,
     xdg_shell_state: XdgShellState,
     shm_state: ShmState,
     output_manager_state: OutputManagerState,
-    seat_state: SeatState<JwmWlState>,
-    seat: Arc<Mutex<Seat<JwmWlState>>>,
     data_device_state: DataDeviceState,
     popups: PopupManager,
 
+    seat_state: SeatState<JwmWlState>,
+    seat: Arc<Mutex<Seat<JwmWlState>>>,
+    keyboard: smithay::input::keyboard::KeyboardHandle<JwmWlState>,
+    pointer: smithay::input::pointer::PointerHandle<JwmWlState>,
+
     tx: Sender<BackendEvent>,
-    registry: Arc<Mutex<WaylandRegistry>>,
-    seat_holder: Arc<Mutex<Option<Arc<Mutex<Seat<JwmWlState>>>>>>,
 }
 
 impl JwmWlState {
@@ -71,42 +76,81 @@ impl JwmWlState {
         tx: Sender<BackendEvent>,
         registry: Arc<Mutex<WaylandRegistry>>,
         space_arc: Arc<Mutex<Space<Window>>>,
-        seat_holder: Arc<Mutex<Option<Arc<Mutex<Seat<JwmWlState>>>>>>,
     ) -> Self {
         let compositor_state = CompositorState::new::<JwmWlState>(dh);
         let xdg_shell_state = XdgShellState::new::<JwmWlState>(dh);
         let shm_state = ShmState::new::<JwmWlState>(dh, vec![]);
         let output_manager_state = OutputManagerState::new_with_xdg_output::<JwmWlState>(dh);
-        let mut seat_state = SeatState::new();
         let data_device_state = DataDeviceState::new::<JwmWlState>(dh);
         let popups = PopupManager::default();
 
+        let mut seat_state = SeatState::new();
         let mut seat: Seat<JwmWlState> = seat_state.new_wl_seat(dh, "jwm-wayland");
-        let _ = seat.add_keyboard(Default::default(), 200, 25);
-        seat.add_pointer();
+        let keyboard = seat
+            .add_keyboard(Default::default(), 200, 25)
+            .expect("add keyboard");
+        let pointer = seat.add_pointer();
         let seat_arc = Arc::new(Mutex::new(seat));
+
+        // 创建一个输出并映射到 space（参考 anvil winit）
+        let output = Output::new(
+            "JWM-Output".to_string(),
+            PhysicalProperties {
+                size: (0, 0).into(),
+                subpixel: Subpixel::Unknown,
+                make: "Smithay".into(),
+                model: "Internal".into(),
+            },
+        );
+        let mode = Mode {
+            size: (1280, 800).into(),
+            refresh: 60_000,
+        };
+        output.create_global::<JwmWlState>(dh);
+        output.change_current_state(Some(mode), None, None, Some((0, 0).into()));
+        output.set_preferred(mode);
+
         {
-            let mut h = seat_holder.lock().unwrap();
-            *h = Some(seat_arc.clone());
+            let mut reg = registry.lock().unwrap();
+            reg.screen_w = 1280;
+            reg.screen_h = 800;
+        }
+        {
+            let mut sp = space_arc.lock().unwrap();
+            sp.map_output(&output, (0, 0));
         }
 
         Self {
             display_handle: dh.clone(),
             space: space_arc.clone(),
+            registry: registry.clone(),
 
             compositor_state,
             xdg_shell_state,
             shm_state,
             output_manager_state,
-            seat_state,
-            seat: seat_arc,
             data_device_state,
             popups,
 
+            seat_state,
+            seat: seat_arc,
+            keyboard,
+            pointer,
+
             tx,
-            registry,
-            seat_holder,
         }
+    }
+
+    fn window_id_from_surface(&self, s: &WlSurface) -> WindowId {
+        let reg = self.registry.lock().unwrap();
+        for (id, rec) in reg.windows.iter() {
+            if let Some(ws) = rec.wl_surface.as_ref() {
+                if ws == s {
+                    return WindowId(*id);
+                }
+            }
+        }
+        WindowId(0)
     }
 }
 
@@ -165,6 +209,7 @@ impl SeatHandler for JwmWlState {
         _seat: &Seat<Self>,
         _image: smithay::input::pointer::CursorImageStatus,
     ) {
+        // 可在此缓存 cursor 状态（后续集成到 CursorProvider）
     }
 
     fn focus_changed(&mut self, seat: &Seat<Self>, focused: Option<&WlSurface>) {
@@ -195,10 +240,10 @@ impl XdgShellHandler for JwmWlState {
     fn new_toplevel(&mut self, surface: ToplevelSurface) {
         let mut space_guard = self.space.lock().unwrap();
         let window = Window::new_wayland_window(surface.clone());
-        space_guard.map_element(window.clone(), (0, 0), false);
+        space_guard.map_element(window.clone(), (50, 50), true);
 
-        surface.with_pending_state(|state| {
-            state.size = Some(smithay::utils::Size::from((800, 600)));
+        surface.with_pending_state(|pending| {
+            pending.size = Some(smithay::utils::Size::from((800, 600)));
         });
         surface.send_configure();
 
@@ -208,14 +253,14 @@ impl XdgShellHandler for JwmWlState {
             new_id,
             WindowRecord {
                 id: new_id,
-                x: 0,
-                y: 0,
+                x: 50,
+                y: 50,
                 w: window.geometry().size.w,
                 h: window.geometry().size.h,
                 border: 0,
                 handle: Some(window.clone()),
                 wl_surface: Some(surface.wl_surface().clone()),
-                toplevel: Some(surface),
+                toplevel: Some(surface.clone()),
             },
         );
 
@@ -249,7 +294,7 @@ delegate_shm!(JwmWlState);
 delegate_seat!(JwmWlState);
 delegate_output!(JwmWlState);
 delegate_xdg_shell!(JwmWlState);
-delegate_data_device!(JwmWlState);
+delegate_data_device!(JwmWlState); // 修复 GlobalDispatch<WlDataDeviceManager, ()> 约束
 
 struct LoopData {
     state: JwmWlState,
@@ -263,23 +308,23 @@ pub struct WaylandEventSource {
     registry: Arc<Mutex<WaylandRegistry>>,
 
     space: Arc<Mutex<Space<Window>>>,
-    seat_holder: Arc<Mutex<Option<Arc<Mutex<Seat<JwmWlState>>>>>>,
+    seat: Arc<Mutex<Seat<JwmWlState>>>,
+    pointer: smithay::input::pointer::PointerHandle<JwmWlState>,
+    keyboard: smithay::input::keyboard::KeyboardHandle<JwmWlState>,
 }
 
 impl WaylandEventSource {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let (tx, rx) = unbounded();
         let registry = Arc::new(Mutex::new(WaylandRegistry::new()));
-
         let space_arc = Arc::new(Mutex::new(Space::default()));
-        let seat_holder: Arc<Mutex<Option<Arc<Mutex<Seat<JwmWlState>>>>>> =
-            Arc::new(Mutex::new(None));
 
-        {
+        let (seat_arc, pointer_handle, keyboard_handle) = {
             let tx_clone = tx.clone();
             let reg_clone = registry.clone();
             let space_clone = space_arc.clone();
-            let seat_holder_clone = seat_holder.clone();
+
+            let (seat_sender, seat_receiver) = std::sync::mpsc::channel();
 
             std::thread::spawn(move || {
                 use smithay::reexports::calloop::{
@@ -290,12 +335,20 @@ impl WaylandEventSource {
                 let display: Display<JwmWlState> = Display::new().unwrap();
                 let dh = display.handle();
 
-                let state =
-                    JwmWlState::new(&dh, tx_clone, reg_clone, space_clone, seat_holder_clone);
+                let state = JwmWlState::new(&dh, tx_clone, reg_clone, space_clone);
                 let mut data = LoopData {
                     state,
                     display_handle: dh.clone(),
                 };
+
+                let seat_arc = data.state.seat.clone();
+                let pointer_handle = data.state.pointer.clone();
+                let keyboard_handle = data.state.keyboard.clone();
+                let _ = seat_sender.send((
+                    seat_arc.clone(),
+                    pointer_handle.clone(),
+                    keyboard_handle.clone(),
+                ));
 
                 event_loop
                     .handle()
@@ -330,14 +383,20 @@ impl WaylandEventSource {
 
                 event_loop.run(None, &mut data, move |_| {}).unwrap();
             });
-        }
+
+            let (seat_arc, pointer, keyboard) =
+                seat_receiver.recv().expect("Failed to get seat handles");
+            (seat_arc, pointer, keyboard)
+        };
 
         Ok(Self {
             rx,
             tx,
             registry,
             space: space_arc,
-            seat_holder,
+            seat: seat_arc,
+            pointer: pointer_handle,
+            keyboard: keyboard_handle,
         })
     }
 
@@ -348,12 +407,13 @@ impl WaylandEventSource {
         self.space.clone()
     }
     pub fn seat(&self) -> Arc<Mutex<Seat<JwmWlState>>> {
-        loop {
-            if let Some(seat_arc) = self.seat_holder.lock().unwrap().as_ref() {
-                return seat_arc.clone();
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
+        self.seat.clone()
+    }
+    pub fn pointer_handle(&self) -> smithay::input::pointer::PointerHandle<JwmWlState> {
+        self.pointer.clone()
+    }
+    pub fn keyboard_handle(&self) -> smithay::input::keyboard::KeyboardHandle<JwmWlState> {
+        self.keyboard.clone()
     }
 }
 
