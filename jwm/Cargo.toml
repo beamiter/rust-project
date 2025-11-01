@@ -66,6 +66,8 @@ calloop = "0.14.3"
 winit = "0.30.12"
 crossbeam-channel = "0.5.15"
 downcast-rs = "2.0.2"
+xcursor = "0.3.10"
+tracing = "0.1.41"
 
 
 [build-dependencies]

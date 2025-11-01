@@ -59,9 +59,7 @@ impl WaylandBackend {
         let key_ops: Box<dyn KeyOps> =
             Box::new(WaylandKeyOps::new(super::key_ops::KeyboardController::new()));
 
-        let cursor_provider: Box<dyn CursorProvider> = Box::new(WaylandCursorProvider::new(
-            super::cursor::CursorController::new(),
-        ));
+        let cursor_provider: Box<dyn CursorProvider> = Box::new(WaylandCursorProvider::new());
 
         let color_allocator: Box<dyn ColorAllocator> = Box::new(WaylandColorAllocator::new());
 

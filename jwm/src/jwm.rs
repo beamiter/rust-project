@@ -3270,7 +3270,7 @@ impl Jwm {
                     .backend
                     .property_ops()
                     .get_wm_state(*win)
-                    .map_or(false, |s| s == ICONIC_STATE.into())
+                    .map_or(false, |s| s == i64::from(ICONIC_STATE))
             {
                 self.manage(win.0 as u32, geom)?;
             }
@@ -3282,7 +3282,7 @@ impl Jwm {
                         .backend
                         .property_ops()
                         .get_wm_state(*win)
-                        .map_or(false, |s| s == ICONIC_STATE.into())
+                        .map_or(false, |s| s == i64::from(ICONIC_STATE))
                 {
                     self.manage(win.0 as u32, geom)?;
                 }
@@ -5423,13 +5423,13 @@ impl Jwm {
         let (initial_mouse_x, initial_mouse_y) = (initial_x as u16, initial_y as u16);
 
         let cursor_handle = self.backend.cursor_provider().get(StdCursorKind::Hand)?.0;
+        let _ = self.backend.input_ops().set_cursor(StdCursorKind::Hand);
 
-        // 关键：先取后端输入句柄（Arc<Mutex<...>>），避免借用 self.backend
         let io = self.backend.input_ops_handle();
         {
             let ops = io.lock().unwrap();
             ops.drag_loop(
-                Some(cursor_handle),
+                Some(cursor_handle), // Now this variable exists
                 None,
                 WindowId(window_id.into()),
                 &mut |root_x, root_y, _time| {
@@ -5464,6 +5464,7 @@ impl Jwm {
                     Ok(())
                 },
             )?;
+            let _ = self.backend.input_ops().set_cursor(StdCursorKind::LeftPtr);
         }
 
         self.cleanup_move(window_id, client_key)?;
@@ -5526,12 +5527,13 @@ impl Jwm {
         );
 
         let cursor_handle = self.backend.cursor_provider().get(StdCursorKind::Fleur)?.0;
+        let _ = self.backend.input_ops().set_cursor(StdCursorKind::Fleur);
 
         let io = self.backend.input_ops_handle();
         {
             let ops = io.lock().unwrap();
             ops.drag_loop(
-                Some(cursor_handle),
+                Some(cursor_handle), // Now this variable exists
                 Some(warp_pos),
                 WindowId(window_id.into()),
                 &mut |root_x, root_y, _time| {

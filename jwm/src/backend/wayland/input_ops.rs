@@ -3,6 +3,7 @@ use super::event_source::CompositorCommand;
 use crate::backend::api::{AllowMode, InputOps, WindowId};
 // FIX 8: Use the Sender from calloop to match the event source
 use smithay::reexports::calloop::channel::Sender as CommandSender;
+use crate::backend::common_define::StdCursorKind;
 
 #[derive(Clone)]
 pub struct PointerController;
@@ -23,6 +24,13 @@ impl WaylandInputOps {
 }
 
 impl InputOps for WaylandInputOps {
+    fn set_cursor(&self, kind: StdCursorKind) -> Result<(), Box<dyn std::error::Error>> {
+        let name = super::cursor::WaylandCursorProvider::map_kind(kind);
+        self.command_tx
+            .send(CompositorCommand::SetCursor(name.to_string()))
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)
+    }
+
     fn grab_pointer(
         &self,
         _mask: u32,

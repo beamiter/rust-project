@@ -204,6 +204,8 @@ pub trait KeyOps: Send {
 }
 
 pub trait InputOps: Send {
+    fn set_cursor(&self, kind: StdCursorKind) -> Result<(), Box<dyn std::error::Error>>;
+
     fn grab_pointer(
         &self,
         mask: u32,
