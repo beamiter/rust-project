@@ -7,7 +7,6 @@ use log::{debug, error};
 use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 
-use downcast_rs::Downcast;
 use serde::{Deserialize, Serialize};
 use slotmap::{DefaultKey, SecondaryMap, SlotMap};
 use std::cmp::{max, min};
@@ -43,9 +42,6 @@ use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus}
 
 use bincode::config::standard;
 use bincode::{Decode, Encode};
-
-use crate::backend::wayland::event_source::CompositorCommand;
-use crate::backend::wayland::grabs::ResizeEdge;
 
 // definitions for initial window state.
 pub const WITHDRAWN_STATE: u8 = 0;
@@ -5411,9 +5407,7 @@ impl Jwm {
         } else {
             return Ok(());
         }
-
         self.restack(self.sel_mon)?;
-
         let (start_x, start_y, window_id) = {
             let c = self.clients.get(client_key).unwrap();
             (c.geometry.x, c.geometry.y, c.win)
@@ -5421,10 +5415,8 @@ impl Jwm {
         let (initial_x, initial_y, _mask, _unused) =
             self.backend.input_ops().query_pointer_root()?;
         let (initial_mouse_x, initial_mouse_y) = (initial_x as u16, initial_y as u16);
-
         let cursor_handle = self.backend.cursor_provider().get(StdCursorKind::Hand)?.0;
         let _ = self.backend.input_ops().set_cursor(StdCursorKind::Hand);
-
         let io = self.backend.input_ops_handle();
         {
             let ops = io.lock().unwrap();
@@ -5449,7 +5441,6 @@ impl Jwm {
                             m.geometry.w_h,
                         )
                     };
-
                     self.apply_edge_snapping(
                         client_key, &mut new_x, &mut new_y, mon_wx, mon_wy, mon_ww, mon_wh,
                     )?;
@@ -5466,7 +5457,6 @@ impl Jwm {
             )?;
             let _ = self.backend.input_ops().set_cursor(StdCursorKind::LeftPtr);
         }
-
         self.cleanup_move(window_id, client_key)?;
         Ok(())
     }
@@ -5476,8 +5466,7 @@ impl Jwm {
             Some(k) => k,
             None => return Ok(()),
         };
-
-        let client_win = if let Some(client) = self.clients.get(client_key) {
+        let _client_win = if let Some(client) = self.clients.get(client_key) {
             if client.state.is_fullscreen {
                 return Ok(());
             }
@@ -5485,30 +5474,7 @@ impl Jwm {
         } else {
             return Ok(());
         };
-
         self.restack(self.sel_mon)?;
-
-        // --- Wayland 专用逻辑 ---
-        if self.backend.capabilities().can_warp_pointer == false {
-            let cmd = CompositorCommand::StartResizeGrab {
-                window: WindowId(client_win as u64),
-                edges: ResizeEdge::BOTTOM_RIGHT,
-            };
-
-            if let Some(wayland_backend) =
-                self.backend
-                    .as_any()
-                    .downcast_ref::<crate::backend::wayland::backend::WaylandBackend>()
-            {
-                wayland_backend
-                    .command_sender()
-                    .send(cmd)
-                    .map_err(|e| e.to_string())?;
-            }
-
-            return Ok(());
-        }
-
         // --- X11 逻辑 (保持不变) ---
         let (start_x, start_y, border_w, window_id, start_w, start_h) = {
             let c = self.clients.get(client_key).unwrap();
@@ -5525,10 +5491,8 @@ impl Jwm {
             (start_w + border_w - 1) as i16,
             (start_h + border_w - 1) as i16,
         );
-
         let cursor_handle = self.backend.cursor_provider().get(StdCursorKind::Fleur)?.0;
         let _ = self.backend.input_ops().set_cursor(StdCursorKind::Fleur);
-
         let io = self.backend.input_ops_handle();
         {
             let ops = io.lock().unwrap();
@@ -5554,7 +5518,6 @@ impl Jwm {
                 },
             )?;
         }
-
         self.cleanup_resize(window_id, border_w)?;
         Ok(())
     }

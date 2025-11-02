@@ -24,7 +24,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
     info!("[main] Starting JWM instance");
 
-    let backend_name = env::var("JWM_BACKEND").unwrap_or_else(|_| "wayland".to_string());
+    let backend_name = env::var("JWM_BACKEND").unwrap_or_else(|_| "x11".to_string());
     let backend: Box<dyn jwm::backend::api::Backend> = match backend_name.as_str() {
         "wayland" => {
             #[cfg(feature = "backend-wayland")]

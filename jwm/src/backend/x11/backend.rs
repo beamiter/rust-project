@@ -1,4 +1,5 @@
 // src/backend/x11/backend.rs
+use std::any::Any;
 use std::sync::{Arc, Mutex};
 use x11rb::protocol::xproto::Screen;
 use x11rb::rust_connection::RustConnection;
