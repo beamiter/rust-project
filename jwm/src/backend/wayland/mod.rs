@@ -1,12 +1,10 @@
-// src/backend/wayland/mod.rs
 pub mod backend;
 pub mod color;
 pub mod cursor;
 pub mod event_source;
-pub mod grabs;
+pub mod ewmh_facade;
 pub mod input_ops;
 pub mod key_ops;
 pub mod output_ops;
 pub mod property_ops;
-pub mod render;
 pub mod window_ops;

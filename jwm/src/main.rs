@@ -9,6 +9,8 @@ use jwm::backend::wayland::backend::WaylandBackend;
 #[cfg(feature = "backend-x11")]
 use jwm::backend::x11::backend::X11Backend;
 
+use cfg_if::cfg_if;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_locale();
     jwm::miscellaneous::init_auto_command();
@@ -24,27 +26,19 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
     info!("[main] Starting JWM instance");
 
-    let backend_name = env::var("JWM_BACKEND").unwrap_or_else(|_| "x11".to_string());
-    let backend: Box<dyn jwm::backend::api::Backend> = match backend_name.as_str() {
-        "wayland" => {
-            #[cfg(feature = "backend-wayland")]
-            {
-                Box::new(WaylandBackend::new()?)
-            }
-            #[cfg(not(feature = "backend-wayland"))]
-            {
-                panic!("backend-wayland feature not enabled");
-            }
+    cfg_if! {
+        if #[cfg(feature = "backend-wayland")]
+        {
+            let backend: Box<dyn jwm::backend::api::Backend> =
+                Box::new(WaylandBackend::new()?);
         }
-        _ => {
-            #[cfg(feature = "backend-x11")]
-            {
-                Box::new(X11Backend::new()?)
-            }
-            #[cfg(not(feature = "backend-x11"))]
-            {
-                panic!("backend-x11 feature not enabled");
-            }
+        else if #[cfg(feature = "backend-x11")]
+        {
+            let backend: Box<dyn jwm::backend::api::Backend> =
+                Box::new(X11Backend::new()?);
+        }
+        else {
+            panic!("not supported feature");
         }
     };
 

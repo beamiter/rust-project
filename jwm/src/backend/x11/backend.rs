@@ -5,16 +5,14 @@ use x11rb::protocol::xproto::Screen;
 use x11rb::rust_connection::RustConnection;
 
 use crate::backend::api::{
-    Backend, Capabilities, EventSource, EwmhFacade, InputOps, KeyOps, OutputOps, PropertyOps,
-    WindowId, WindowOps,
+    Backend, Capabilities, ColorAllocator, CursorProvider, EventSource, EwmhFacade, InputOps,
+    KeyOps, OutputOps, PropertyOps, WindowId, WindowOps,
 };
-use crate::backend::api::{ColorAllocator, CursorProvider};
-use crate::backend::x11::key_ops::X11KeyOps;
 
 use super::{
     color::X11ColorAllocator, cursor::X11CursorProvider, event_source::X11EventSource,
-    ewmh_facade::X11EwmhFacade, input_ops::X11InputOps, output_ops::X11OutputOps,
-    property_ops::X11PropertyOps, window_ops::X11WindowOps, Atoms,
+    ewmh_facade::X11EwmhFacade, input_ops::X11InputOps, key_ops::X11KeyOps,
+    output_ops::X11OutputOps, property_ops::X11PropertyOps, window_ops::X11WindowOps, Atoms,
 };
 
 #[allow(dead_code)]
