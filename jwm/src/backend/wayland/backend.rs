@@ -1,7 +1,5 @@
 use std::any::Any;
 use std::sync::{Arc, Mutex};
-use x11rb::protocol::xproto::Screen;
-use x11rb::rust_connection::RustConnection;
 
 use crate::backend::api::{
     Backend, Capabilities, ColorAllocator, CursorProvider, EventSource, EwmhFacade, InputOps,
@@ -10,13 +8,11 @@ use crate::backend::api::{
 
 use super::{
     color::WaylandColorAllocator, cursor::WaylandCursorProvider, event_source::WaylandEventSource,
-    ewmh_facade::WaylandEwmhFacade, input_ops::WaylandInputOps, key_ops::WaylandKeyOps,
-    output_ops::WaylandOutputOps, property_ops::WaylandPropertyOps, window_ops::WaylandWindowOps,
+    input_ops::WaylandInputOps, key_ops::WaylandKeyOps, output_ops::WaylandOutputOps,
+    property_ops::WaylandPropertyOps, window_ops::WaylandWindowOps,
 };
 
 pub struct WaylandBackend {
-    conn: Arc<RustConnection>,
-    screen: Screen,
     root: WindowId,
 
     caps: Capabilities,
@@ -26,16 +22,48 @@ pub struct WaylandBackend {
     property_ops: Box<dyn PropertyOps>,
     output_ops: Box<dyn OutputOps>,
     key_ops: Box<dyn KeyOps>,
-    ewmh_facade: Option<Box<dyn EwmhFacade>>,
 
+    event_source: Box<dyn EventSource>,
+
+    ewmh_facade: Option<Box<dyn EwmhFacade>>,
     cursor_provider: Box<dyn CursorProvider>,
     color_allocator: Box<dyn ColorAllocator>,
-    event_source: Box<dyn EventSource>,
 }
 
 impl WaylandBackend {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        Ok(Self {})
+        let root = WindowId(0);
+        let caps = Capabilities {
+            can_warp_pointer: true,
+            has_active_window_prop: false,
+            supports_client_list: false,
+        };
+
+        let window_ops: Box<dyn WindowOps> = Box::new(WaylandWindowOps::new());
+        let input_ops: Box<dyn InputOps> = Box::new(WaylandInputOps::new());
+        let property_ops: Box<dyn PropertyOps> = Box::new(WaylandPropertyOps::new());
+        let output_ops: Box<dyn OutputOps> = Box::new(WaylandOutputOps::new());
+        let key_ops: Box<dyn KeyOps> = Box::new(WaylandKeyOps::new());
+
+        let event_source: Box<dyn EventSource> = Box::new(WaylandEventSource::new());
+
+        let ewmh_facade = None;
+        let cursor_provider: Box<dyn CursorProvider> = Box::new(WaylandCursorProvider::new());
+        let color_allocator: Box<dyn ColorAllocator> = Box::new(WaylandColorAllocator::new());
+
+        Ok(Self {
+            root,
+            caps,
+            window_ops,
+            input_ops,
+            property_ops,
+            output_ops,
+            key_ops,
+            event_source,
+            ewmh_facade,
+            cursor_provider,
+            color_allocator,
+        })
     }
 }
 

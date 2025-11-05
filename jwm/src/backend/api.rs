@@ -491,7 +491,6 @@ pub trait EwmhFacade: Send {
 
     fn declare_supported(&self, features: &[EwmhFeature])
         -> Result<(), Box<dyn std::error::Error>>;
-    // 可选：退出清理根属性
     fn reset_root_properties(&self) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
