@@ -1,4 +1,4 @@
-use libc::{setsid, sigaction, sigemptyset, SIGCHLD, SIG_DFL};
+use libc::{SIG_DFL, SIGCHLD, setsid, sigaction, sigemptyset};
 
 use log::info;
 use log::warn;
@@ -6515,7 +6515,11 @@ impl Jwm {
         if let Some(client) = self.clients.get(client_key) {
             info!(
                 "[applyrules_by_key] Final state - class: '{}', instance: '{}', name: '{}', tags: {}, floating: {}",
-                client.class, client.instance, client.name, client.state.tags, client.state.is_floating
+                client.class,
+                client.instance,
+                client.name,
+                client.state.tags,
+                client.state.is_floating
             );
         }
     }
@@ -6885,7 +6889,7 @@ impl Jwm {
             ("cleanup_shared_memory", self.cleanup_shared_memory_safe()),
         ];
         for (operation, result) in cleanup_results.iter() {
-            if let Err(ref e) = result {
+            if let Err(e) = result {
                 error!("[unmanage_statusbar] {} failed for {}", operation, e);
             }
         }
@@ -7472,7 +7476,9 @@ impl Jwm {
         let mon_key = match mon_key_opt {
             Some(key) => key,
             None => {
-                error!("[update_bar_message_for_monitor] Monitor key is None, cannot update bar message.");
+                error!(
+                    "[update_bar_message_for_monitor] Monitor key is None, cannot update bar message."
+                );
                 return;
             }
         };

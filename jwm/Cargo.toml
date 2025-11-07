@@ -1,7 +1,7 @@
 [package]
 name = "jwm"
-version = "0.1.0"
-edition = "2021"
+version = "0.2.0"
+edition = "2024"
 
 [features]
 egui_bar = []
@@ -61,7 +61,7 @@ once_cell.workspace = true
 rand.workspace = true
 xkbcommon = "0.9.0"
 bitflags = "2.9.4"
-smithay = { version = "0.7.0", features = ["use_system_lib", "wayland-backend", "wayland_frontend"] }
+smithay = { git = "https://github.com/Smithay/smithay.git", branch = "master", features = ["use_system_lib", "wayland-backend", "wayland_frontend"] }
 calloop = "0.14.3"
 winit = "0.30.12"
 crossbeam-channel = "0.5.15"

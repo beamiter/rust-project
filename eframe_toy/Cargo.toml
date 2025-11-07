@@ -1,8 +1,8 @@
 [package]
 name = "toy"
-version = "0.1.0"
+version = "0.2.0"
 authors = ["beamiter <beamiter@163.com>"]
-edition = "2021"
+edition = "2024"
 
 [workspace]
 
