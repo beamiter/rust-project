@@ -419,7 +419,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         if let Some(title) = self.get_text_property(win, AtomEnum::WM_NAME.into()) {
             return title;
         }
-        format!("Window 0x{:x}", win.0)
+        "".to_string()
     }
 
     fn get_wm_class(&self, win: WindowId) -> Option<(String, String)> {
