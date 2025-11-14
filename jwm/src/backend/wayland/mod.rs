@@ -45,7 +45,7 @@ pub fn test_main() -> Result<(), Box<dyn std::error::Error>> {
             std::process::Command::new(command).spawn().ok();
         }
         _ => {
-            std::process::Command::new("weston-terminal").spawn().ok();
+            std::process::Command::new("terminator").spawn().ok();
         }
     }
     event_loop.run(None, &mut data, move |_| {
