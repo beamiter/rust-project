@@ -2856,6 +2856,9 @@ impl Jwm {
         &mut self,
         event_window: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        if self.mouse_focus_blocked() {
+            return Ok(());
+        }
         let client_key_opt = self.wintoclient(event_window);
         let monitor_key_opt = if let Some(client_key) = client_key_opt {
             self.clients.get(client_key).and_then(|client| client.mon)
@@ -6326,6 +6329,9 @@ impl Jwm {
         // 处理焦点
         self.handle_new_client_focus(client_key)?;
 
+        self.suppress_mouse_focus_until =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(300));
+
         Ok(())
     }
 
@@ -6954,7 +6960,6 @@ impl Jwm {
 
     fn adjust_client_position(&mut self, client_key: ClientKey) {
         if self.is_popup_like(client_key) {
-            // 对弹出式窗口完全不做位置修正，让应用自己控制锚点/偏移
             return;
         }
 
@@ -6966,6 +6971,7 @@ impl Jwm {
                 return;
             };
 
+        let is_transient = self.get_transient_for(win).is_some();
         let client_mon_key = if let Some(mon_key) = client_mon_key_opt {
             mon_key
         } else {
@@ -7013,7 +7019,6 @@ impl Jwm {
             );
         }
 
-        // 计算客户端总高度
         let client_total_height = if let Some(client) = self.clients.get(client_key) {
             client.total_height()
         } else {
@@ -7062,8 +7067,7 @@ impl Jwm {
             );
         }
 
-        // 对于小窗口，居中显示
-        if client_w < mon_ww / 3 && client_h < mon_wh / 3 {
+        if !is_transient && client_w < mon_ww / 3 && client_h < mon_wh / 3 {
             client_x = mon_wx + (mon_ww - client_total_width) / 2;
             client_y = mon_wy + (mon_wh - client_total_height) / 2;
             info!(
