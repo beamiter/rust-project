@@ -6949,15 +6949,6 @@ impl Jwm {
         {
             return true;
         }
-        if self
-            .backend
-            .property_ops()
-            .transient_for(WindowId(c.win.into()))
-            .is_some()
-            && (c.geometry.w <= 700 && c.geometry.h <= 700)
-        {
-            return true;
-        }
         false
     }
 
