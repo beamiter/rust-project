@@ -6962,7 +6962,6 @@ impl Jwm {
         if self.is_popup_like(client_key) {
             return;
         }
-
         let (client_total_width, client_mon_key_opt, win) =
             if let Some(client) = self.clients.get(client_key) {
                 (client.total_width(), client.mon, client.win)
@@ -6970,15 +6969,12 @@ impl Jwm {
                 error!("[adjust_client_position] Client {:?} not found", client_key);
                 return;
             };
-
-        let is_transient = self.get_transient_for(win).is_some();
         let client_mon_key = if let Some(mon_key) = client_mon_key_opt {
             mon_key
         } else {
             error!("[adjust_client_position] Client has no monitor assigned!");
             return;
         };
-
         let (mon_wx, mon_wy, mon_ww, mon_wh) =
             if let Some(monitor) = self.monitors.get(client_mon_key) {
                 (
@@ -6994,11 +6990,9 @@ impl Jwm {
                 );
                 return;
             };
-
         info!("[adjust_client_position] 0x{:x}", win);
-
         // 获取当前客户端的几何信息
-        let (mut client_x, mut client_y, client_w, client_h) =
+        let (mut client_x, mut client_y, _client_w, _client_h) =
             if let Some(client) = self.clients.get(client_key) {
                 (
                     client.geometry.x,
@@ -7009,7 +7003,6 @@ impl Jwm {
             } else {
                 return;
             };
-
         // 确保窗口的右边界不超过显示器工作区的右边界
         if client_x + client_total_width > mon_wx + mon_ww {
             client_x = mon_wx + mon_ww - client_total_width;
@@ -7018,13 +7011,11 @@ impl Jwm {
                 client_x
             );
         }
-
         let client_total_height = if let Some(client) = self.clients.get(client_key) {
             client.total_height()
         } else {
             return;
         };
-
         // 确保窗口的下边界不超过显示器工作区的下边界
         if client_y + client_total_height > mon_wy + mon_wh {
             client_y = mon_wy + mon_wh - client_total_height;
@@ -7033,7 +7024,6 @@ impl Jwm {
                 client_y
             );
         }
-
         // 确保窗口的左边界不小于显示器工作区的左边界
         if client_x < mon_wx {
             client_x = mon_wx;
@@ -7042,7 +7032,6 @@ impl Jwm {
                 client_x
             );
         }
-
         // 确保窗口的上边界不小于显示器工作区的上边界
         if client_y < mon_wy {
             client_y = mon_wy;
@@ -7051,14 +7040,12 @@ impl Jwm {
                 client_y
             );
         }
-
         // 确保窗口上边界要低于状态栏高度
         let client_y_offset = if let Some(monitor) = self.monitors.get(client_mon_key) {
             self.get_client_y_offset(monitor)
         } else {
             0
         };
-
         if client_y < client_y_offset {
             client_y = client_y_offset;
             info!(
@@ -7066,21 +7053,10 @@ impl Jwm {
                 client_y
             );
         }
-
-        if !is_transient && client_w < mon_ww / 3 && client_h < mon_wh / 3 {
-            client_x = mon_wx + (mon_ww - client_total_width) / 2;
-            client_y = mon_wy + (mon_wh - client_total_height) / 2;
-            info!(
-                "[adjust_client_position] Centered small window at ({}, {})",
-                client_x, client_y
-            );
-        }
-
         // 应用调整后的位置
         if let Some(client) = self.clients.get_mut(client_key) {
             client.geometry.x = client_x;
             client.geometry.y = client_y;
-
             info!(
                 "[adjust_client_position] Final position: ({}, {}) {}x{}",
                 client.geometry.x, client.geometry.y, client.geometry.w, client.geometry.h
