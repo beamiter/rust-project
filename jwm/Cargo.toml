@@ -23,8 +23,8 @@ nixgl = []
 cairo = []
 backend-x11 = []
 backend-wayland = []
-default = ["backend-x11"]
-# default = ["backend-wayland"]
+# default = ["backend-x11"]
+default = ["backend-wayland"]
 
 [[bin]]
 name = "jwm-tool"
