@@ -5,6 +5,3 @@ pub mod common_define;
 
 #[cfg(feature = "backend-x11")]
 pub mod x11;
-
-#[cfg(feature = "backend-wayland")]
-pub mod wayland;
