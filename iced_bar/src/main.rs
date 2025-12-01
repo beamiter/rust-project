@@ -129,7 +129,7 @@ impl Default for IcedBar {
 impl IcedBar {
     const DEFAULT_COLOR: Color = color!(0x666666);
     const TAB_WIDTH: f32 = 40.0;
-    const TAB_HEIGHT: f32 = 32.0;
+    const TAB_HEIGHT: f32 = 36.0;
     const TAB_SPACING: f32 = 6.0;
 
     fn new() -> Self {
@@ -483,7 +483,7 @@ impl IcedBar {
         )
         .padding([4, 8])
         .width(Self::TAB_WIDTH)
-        .height(Self::TAB_HEIGHT + 4.)
+        .height(Self::TAB_HEIGHT)
         .style(move |_theme: &Theme, status: button::Status| {
             let mut background = bg;
             let mut border_width = border_w;
@@ -734,26 +734,26 @@ impl IcedBar {
 
         Row::new()
             .push(tags_row)
-            .push(Space::new().width(6))
+            .push(Space::new().width(6).height(Length::Fill))
             .push(layout_button)
-            .push(Space::new().width(6))
+            .push(Space::new().width(6).height(Length::Fill))
             .push(layout_selector)
-            .push(Space::new().width(Length::Fill))
+            .push(Space::new().width(Length::Fill).height(Length::Fill))
             .push(cpu_pill)
-            .push(Space::new().width(6))
+            .push(Space::new().width(6).height(Length::Fill))
             .push(memory_pill)
-            .push(Space::new().width(6))
+            .push(Space::new().width(6).height(Length::Fill))
             .push(
                 mouse_area(screenshot_pill)
                     .on_enter(Message::MouseEnterScreenShot)
                     .on_exit(Message::MouseExitScreenShot)
                     .on_press(Message::LeftClick),
             )
-            .push(Space::new().width(6))
+            .push(Space::new().width(6).height(Length::Fill))
             .push(mouse_area(time_pill).on_press(Message::ShowSecondsToggle))
-            .push(Space::new().width(6))
+            .push(Space::new().width(6).height(Length::Fill))
             .push(monitor_pill)
-            .push(Space::new().width(6))
+            .push(Space::new().width(6).height(Length::Fill))
             .align_y(iced::Alignment::Center)
             .into()
     }
