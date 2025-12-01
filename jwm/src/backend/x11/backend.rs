@@ -10,9 +10,9 @@ use crate::backend::api::{
 };
 
 use super::{
-    color::X11ColorAllocator, cursor::X11CursorProvider, event_source::X11EventSource,
+    Atoms, color::X11ColorAllocator, cursor::X11CursorProvider, event_source::X11EventSource,
     ewmh_facade::X11EwmhFacade, input_ops::X11InputOps, key_ops::X11KeyOps,
-    output_ops::X11OutputOps, property_ops::X11PropertyOps, window_ops::X11WindowOps, Atoms,
+    output_ops::X11OutputOps, property_ops::X11PropertyOps, window_ops::X11WindowOps,
 };
 
 #[allow(dead_code)]
@@ -44,12 +44,17 @@ impl X11Backend {
         use x11rb::connection::Connection;
         let screen = conn.setup().roots[screen_num].clone();
         let root = WindowId(screen.root as u64);
+        let numlock_mask = Arc::new(Mutex::new(0u16));
 
         // Atoms
         let atoms = Atoms::new(conn.as_ref())?.reply()?;
 
         // 子服务
-        let window_ops: Box<dyn WindowOps> = Box::new(X11WindowOps::new(conn.clone()));
+        let window_ops: Box<dyn WindowOps> = Box::new(X11WindowOps::new(
+            conn.clone(),
+            atoms.clone(),
+            numlock_mask.clone(),
+        ));
         let input_ops: Box<dyn InputOps> = Box::new(X11InputOps::new(conn.clone(), screen.root));
         let property_ops: Box<dyn PropertyOps> =
             Box::new(X11PropertyOps::new(conn.clone(), atoms.clone()));
@@ -59,7 +64,7 @@ impl X11Backend {
             screen.width_in_pixels as i32,
             screen.height_in_pixels as i32,
         ));
-        let key_ops: Box<dyn KeyOps> = Box::new(X11KeyOps::new(conn.clone()));
+        let key_ops: Box<dyn KeyOps> = Box::new(X11KeyOps::new(conn.clone(), numlock_mask.clone()));
         let ewmh_facade: Option<Box<dyn EwmhFacade>> = Some(Box::new(X11EwmhFacade::new(
             conn.clone(),
             root,

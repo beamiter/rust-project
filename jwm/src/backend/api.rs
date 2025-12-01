@@ -175,32 +175,26 @@ pub enum AllowMode {
     SyncBoth,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseResult {
+    Graceful, // 已发送关闭请求 (WM_DELETE_WINDOW)
+    Forced,   // 已强制杀死 (KillClient)
+}
+
 pub trait KeyOps: Send {
-    // 探测 NumLock 掩码，返回 (通用 Mods 标记, 后端掩码位 bits)
-    fn detect_numlock_mask(&mut self) -> Result<(Mods, u16), Box<dyn std::error::Error>>;
-
-    // 清理所有键抓取（针对 root）
-    fn clear_key_grabs(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-
-    // 抓取键绑定（通用形式：mods + keysym），numlock_mask_bits 为后端的掩码位
     fn grab_keys(
         &self,
         root: WindowId,
         bindings: &[(Mods, KeySym)],
-        numlock_mask_bits: u16,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
-    // 依据 keycode 获取 keysym（用于处理 KeyPress）
+    fn clean_mods(&self, raw_state: u16) -> Mods;
+
+    fn clear_key_grabs(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+
     fn keysym_from_keycode(&mut self, keycode: u8) -> Result<KeySym, Box<dyn std::error::Error>>;
 
-    // 清空内部键盘映射缓存（在 MappingNotify 时）
     fn clear_cache(&mut self);
-
-    // 新增：将后端原始修饰位转换为通用 Mods（JWM 用于清理掩码）
-    fn mods_from_raw_mask(&self, raw: u16, numlock_mask_bits: u16) -> Mods;
-
-    // 新增：将通用 Mods 转为后端抓取时需要的掩码位（JWM 用于 grab_button）
-    fn backend_mods_mask_for_grab(&self, mods: Mods, numlock_mask_bits: u16) -> u16;
 }
 
 pub trait InputOps: Send {
@@ -246,7 +240,6 @@ pub trait EventSource: Send {
     }
 }
 
-// 窗口接口
 pub trait WindowOps: Send {
     fn get_tree_child(&self, win: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>>;
 
@@ -256,10 +249,12 @@ pub trait WindowOps: Send {
         border: u32,
     ) -> Result<(), Box<dyn std::error::Error>>;
     fn set_border_pixel(&self, win: WindowId, pixel: u32)
-        -> Result<(), Box<dyn std::error::Error>>;
+    -> Result<(), Box<dyn std::error::Error>>;
 
     fn change_event_mask(&self, win: WindowId, mask: u32)
-        -> Result<(), Box<dyn std::error::Error>>;
+    -> Result<(), Box<dyn std::error::Error>>;
+
+    fn close_window(&self, win: WindowId) -> Result<CloseResult, Box<dyn std::error::Error>>;
 
     fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
@@ -311,8 +306,12 @@ pub trait WindowOps: Send {
 
     fn kill_client(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
-    fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>>;
-    fn ungrab_server(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+    fn ungrab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
 
     fn get_window_attributes(
         &self,
@@ -324,23 +323,20 @@ pub trait WindowOps: Send {
         win: WindowId,
     ) -> Result<Geometry, Box<dyn std::error::Error>>;
 
-    // 便捷：取消所有按钮抓取（X11 需要）
     fn ungrab_all_buttons(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
-    // 便捷：抓取任何按钮 + 任意修饰（未聚焦时启用）
     fn grab_button_any_anymod(
         &self,
         win: WindowId,
         event_mask_bits: u32,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
-    // 便捷：抓取具体按钮与修饰
     fn grab_button(
         &self,
         win: WindowId,
-        button: u8, // MouseButton::to_u8() 映射
+        button: u8,
         event_mask_bits: u32,
-        mods_bits: u16,
+        mods_bits: Mods,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
     fn send_configure_notify(
@@ -353,7 +349,6 @@ pub trait WindowOps: Send {
         border: u16,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
-    // 设置焦点到具体窗口（revert_to=POINTER_ROOT）
     fn set_input_focus_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 }
 
@@ -428,7 +423,7 @@ pub trait PropertyOps: Send {
     ) -> Result<(), Box<dyn std::error::Error>>;
 
     fn get_net_wm_state_atoms(&self, win: WindowId)
-        -> Result<Vec<u32>, Box<dyn std::error::Error>>;
+    -> Result<Vec<u32>, Box<dyn std::error::Error>>;
     fn has_net_wm_state(
         &self,
         win: WindowId,
@@ -480,7 +475,7 @@ pub trait EwmhFacade: Send {
     fn clear_active_window(&self) -> Result<(), Box<dyn std::error::Error>>;
     fn set_client_list(&self, list: &[WindowId]) -> Result<(), Box<dyn std::error::Error>>;
     fn set_client_list_stacking(&self, list: &[WindowId])
-        -> Result<(), Box<dyn std::error::Error>>;
+    -> Result<(), Box<dyn std::error::Error>>;
 
     fn setup_supporting_wm_check(
         &self,
@@ -490,7 +485,7 @@ pub trait EwmhFacade: Send {
     fn set_supported_atoms(&self, supported: &[u32]) -> Result<(), Box<dyn std::error::Error>>;
 
     fn declare_supported(&self, features: &[EwmhFeature])
-        -> Result<(), Box<dyn std::error::Error>>;
+    -> Result<(), Box<dyn std::error::Error>>;
     fn reset_root_properties(&self) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }

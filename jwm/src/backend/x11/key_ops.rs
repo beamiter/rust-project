@@ -1,26 +1,42 @@
 // src/backend/x11/key_ops.rs
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::Mutex;
 
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 
 use crate::backend::api::{KeyOps, WindowId};
 use crate::backend::common_define::{KeySym, Mods};
-use crate::backend::x11::adapter::{mods_from_x11, mods_to_x11};
+use crate::backend::x11::adapter::mods_to_x11;
 
 pub struct X11KeyOps<C: Connection> {
     conn: Arc<C>,
-    // 简单缓存：keycode -> keysym
     cache: HashMap<u8, u32>,
+    numlock_mask: Arc<Mutex<u16>>,
 }
 
 impl<C: Connection> X11KeyOps<C> {
-    pub fn new(conn: Arc<C>) -> Self {
-        Self {
-            conn,
+    pub fn new(conn: Arc<C>, numlock_mask: Arc<Mutex<u16>>) -> Self {
+        let mut ops = Self {
+            conn: conn.clone(),
             cache: HashMap::new(),
-        }
+            numlock_mask,
+        };
+        let _ = ops.detect_and_store_numlock();
+        ops
+    }
+
+    fn detect_and_store_numlock(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        let numkc = self.find_numlock_keycode()?;
+        let mask = if numkc == 0 {
+            0
+        } else {
+            self.find_modifier_mask(numkc)? as u16
+        };
+
+        *self.numlock_mask.lock().unwrap() = mask;
+        Ok(())
     }
 
     fn find_numlock_keycode(&self) -> Result<u8, Box<dyn std::error::Error>> {
@@ -67,30 +83,11 @@ impl<C: Connection> X11KeyOps<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
-    fn mods_from_raw_mask(&self, raw: u16, numlock_mask_bits: u16) -> Mods {
-        let raw_mask = KeyButMask::from(raw);
-        let numlock = KeyButMask::from(numlock_mask_bits);
-        mods_from_x11(raw_mask, numlock)
-    }
-
-    fn backend_mods_mask_for_grab(&self, mods: Mods, numlock_mask_bits: u16) -> u16 {
-        let numlock = KeyButMask::from(numlock_mask_bits);
-        mods_to_x11(mods, numlock).bits()
-    }
-
-    fn detect_numlock_mask(&mut self) -> Result<(Mods, u16), Box<dyn std::error::Error>> {
-        let numkc = self.find_numlock_keycode()?;
-        if numkc == 0 {
-            // 回退：使用 MOD2 语义，并无 X11 掩码位
-            Ok((Mods::MOD2, 0))
-        } else {
-            let m = self.find_modifier_mask(numkc)?;
-            if m != 0 {
-                Ok((Mods::NUMLOCK, m as u16))
-            } else {
-                Ok((Mods::empty(), 0))
-            }
-        }
+    fn clean_mods(&self, raw: u16) -> Mods {
+        let numlock = *self.numlock_mask.lock().unwrap();
+        let raw_mask = x11rb::protocol::xproto::KeyButMask::from(raw);
+        let numlock_mask = x11rb::protocol::xproto::KeyButMask::from(numlock);
+        crate::backend::x11::adapter::mods_from_x11(raw_mask, numlock_mask)
     }
 
     fn clear_key_grabs(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>> {
@@ -104,8 +101,9 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
         &self,
         root: WindowId,
         bindings: &[(Mods, KeySym)],
-        numlock_mask_bits: u16,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let numlock_local = *self.numlock_mask.lock().unwrap();
+
         let setup = self.conn.setup();
         let min = setup.min_keycode;
         let max = setup.max_keycode;
@@ -116,7 +114,7 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
         let per = mapping.keysyms_per_keycode as usize;
 
         use x11rb::protocol::xproto::{KeyButMask as KBM, ModMask};
-        let numlock_mask = KBM::from(numlock_mask_bits);
+        let numlock_mask_obj = KBM::from(numlock_local);
 
         for (mods, keysym) in bindings {
             // 遍历 keycodes 找到匹配的 keysym（first keysym）
@@ -125,12 +123,12 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
                 if let Some(&ks) = keysyms_for_keycode.first() {
                     if u32::from(ks) == *keysym {
                         // 组合 None / LOCK / NUMLOCK / LOCK|NUMLOCK
-                        let base = mods_to_x11(*mods, numlock_mask);
+                        let base = mods_to_x11(*mods, numlock_mask_obj);
                         let combos = [
                             base,
                             base | KBM::LOCK,
-                            base | numlock_mask,
-                            base | KBM::LOCK | numlock_mask,
+                            base | numlock_mask_obj,
+                            base | KBM::LOCK | numlock_mask_obj,
                         ];
                         for mm in combos {
                             self.conn

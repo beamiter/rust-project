@@ -640,7 +640,6 @@ pub struct Jwm {
     // 基础/环境
     pub s_w: i32,
     pub s_h: i32,
-    pub numlock_mask_bits: u16,
     pub running: AtomicBool,
     pub is_restarting: AtomicBool,
 
@@ -726,7 +725,6 @@ impl Jwm {
         Ok(Jwm {
             s_w,
             s_h,
-            numlock_mask_bits: 0,
             running: AtomicBool::new(true),
             is_restarting: AtomicBool::new(false),
 
@@ -762,11 +760,8 @@ impl Jwm {
     }
 
     fn clean_mask(&self, raw: u16) -> Mods {
-        // 使用 KeyOps 将后端原始修饰位转换为通用 Mods 并去掉 NUMLOCK/CAPS
-        let mods_all = self
-            .backend
-            .key_ops()
-            .mods_from_raw_mask(raw, self.numlock_mask_bits);
+        let mods_all = self.backend.key_ops().clean_mods(raw);
+
         mods_all
             & (Mods::SHIFT
                 | Mods::CONTROL
@@ -2494,28 +2489,17 @@ impl Jwm {
     }
 
     fn grabkeys(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 探测 NumLock（KeyOps）
-        self.setup_modifier_masks()?;
-
-        // 清除旧的抓取
         self.backend
             .key_ops()
             .clear_key_grabs(self.backend.root_window())?;
-
-        // 构造绑定列表（通用 Mods + KeySym）
         let bindings: Vec<(Mods, KeySym)> = CONFIG
             .get_keys()
             .iter()
             .map(|k| (k.mask, k.key_sym))
             .collect();
-
-        // 抓取
-        self.backend.key_ops().grab_keys(
-            self.backend.root_window(),
-            &bindings,
-            self.numlock_mask_bits,
-        )?;
-
+        self.backend
+            .key_ops()
+            .grab_keys(self.backend.root_window(), &bindings)?;
         Ok(())
     }
 
@@ -5041,82 +5025,30 @@ impl Jwm {
 
     pub fn killclient(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[killclient]");
+        let sel_client_key = match self.get_selected_client_key() {
+            Some(k) => k,
+            None => return Ok(()),
+        };
 
-        let sel_client_key = self.get_selected_client_key();
-        if sel_client_key.is_none() {
-            return Ok(());
-        }
-        let client_key = sel_client_key.unwrap();
-
-        // 获取客户端信息用于日志
-        let (client_name, client_win) = if let Some(client) = self.clients.get(client_key) {
-            (client.name.clone(), client.win)
+        let client_win = if let Some(c) = self.clients.get(sel_client_key) {
+            c.win
         } else {
             return Ok(());
         };
+        let wid = WindowId(client_win.into());
 
-        info!(
-            "[killclient] Attempting to kill client '{}' (window: 0x{:x})",
-            client_name, client_win
-        );
+        info!("[killclient] Closing window 0x{:x}", client_win);
 
-        // 首先尝试发送 WM_DELETE_WINDOW 协议消息（优雅关闭）
-        if self.sendevent_by_window(client_win) {
-            info!("[killclient] Sent WM_DELETE_WINDOW protocol message");
-            return Ok(());
+        // [修改] 不再手动构建 sendevent，也不再调用 grab_server
+        let res = self.backend.window_ops().close_window(wid)?;
+
+        if res == crate::backend::api::CloseResult::Forced {
+            info!("[killclient] Force killed client");
+        } else {
+            info!("[killclient] Sent graceful close request");
         }
-
-        // 如果优雅关闭失败，强制终止客户端
-        info!("[killclient] WM_DELETE_WINDOW failed, force killing client");
-        self.force_kill_client(client_key)?;
 
         Ok(())
-    }
-
-    fn sendevent_by_window(&mut self, window: u32) -> bool {
-        let wid = WindowId(window.into());
-        if !self.backend.property_ops().supports_delete_window(wid) {
-            return false;
-        }
-        if let Err(e) = self.backend.property_ops().send_delete_window(wid) {
-            warn!(
-                "[sendevent_by_window] Failed to send WM_DELETE_WINDOW: {}",
-                e
-            );
-            return false;
-        }
-        let _ = self.backend.window_ops().flush();
-        true
-    }
-
-    fn force_kill_client(
-        &mut self,
-        client_key: ClientKey,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let (win, client_name) = if let Some(client) = self.clients.get(client_key) {
-            (client.win, client.name.clone())
-        } else {
-            return Err("Client not found".into());
-        };
-
-        info!(
-            "[force_kill_client_by_key] Force killing client '{}' (window: 0x{:x})",
-            client_name, win
-        );
-
-        self.backend.window_ops().grab_server()?;
-        let res = self.backend.window_ops().kill_client(WindowId(win.into()));
-        // 无论成功失败，释放 server
-        let _ = self.backend.window_ops().ungrab_server();
-        self.backend.window_ops().flush()?;
-
-        match res {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                warn!("[force_kill_client_by_key] Kill client failed: {:?}", e);
-                Ok(()) // 容错：不让整个流程失败
-            }
-        }
     }
 
     fn handle_transient_for_change(
@@ -5633,27 +5565,6 @@ impl Jwm {
         Ok(())
     }
 
-    fn setup_modifier_masks(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("Setting up modifier masks (KeyOps)...");
-        let (_mods_flag, backend_bits) = self.backend.key_ops_mut().detect_numlock_mask()?;
-        self.numlock_mask_bits = backend_bits;
-        self.verify_modifier_setup()?;
-        Ok(())
-    }
-
-    fn verify_modifier_setup(&self) -> Result<(), Box<dyn std::error::Error>> {
-        let (_x, _y, mask, _unused) = self.backend.input_ops().query_pointer_root()?;
-        info!("Current modifier state: 0x{:04x}", mask);
-        if self.numlock_mask_bits != 0 {
-            let numlock_active = (mask & self.numlock_mask_bits) != 0;
-            info!(
-                "NumLock currently {}",
-                if numlock_active { "ON" } else { "OFF" }
-            );
-        }
-        Ok(())
-    }
-
     fn setclienttagprop(
         &mut self,
         client_key: ClientKey,
@@ -5833,15 +5744,11 @@ impl Jwm {
                 ];
                 let btn_u8 = button_config.button.to_u8();
                 for mm in combos {
-                    let mods_bits = self
-                        .backend
-                        .key_ops()
-                        .backend_mods_mask_for_grab(mm, self.numlock_mask_bits);
                     self.backend.window_ops().grab_button(
                         WindowId(client_win_id.into()),
                         btn_u8,
                         BUTTONMASK.bits(),
-                        mods_bits,
+                        mm,
                     )?;
                 }
             }
@@ -7132,9 +7039,6 @@ impl Jwm {
         let win = client.win;
         let old_border_w = client.geometry.old_border_w;
 
-        // 抓取服务器，保证接下来的更改原子性
-        self.backend.window_ops().grab_server()?;
-
         // 执行清理操作（单独捕获错误并记录日志，不中断整个流程）
         {
             // 取消事件监听
@@ -7178,10 +7082,6 @@ impl Jwm {
             }
         }
 
-        // 释放服务器（无论前面的操作是否成功）
-        if let Err(e) = self.backend.window_ops().ungrab_server() {
-            warn!("[cleanup_window_state] Ungrab server failed: {:?}", e);
-        }
         if let Err(e) = self.backend.window_ops().flush() {
             warn!("[cleanup_window_state] Final flush failed: {:?}", e);
         }

@@ -1,21 +1,76 @@
 // src/backend/x11/window_ops.rs
-use crate::backend::api::{Geometry, WindowAttributes, WindowId, WindowOps};
-use crate::backend::x11::adapter::event_mask_from_generic;
+use crate::backend::api::{CloseResult, Geometry, Mods, WindowAttributes, WindowId, WindowOps};
+use crate::backend::x11::Atoms;
+use crate::backend::x11::adapter::{event_mask_from_generic, mods_to_x11};
 use std::sync::Arc;
+use std::sync::Mutex;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 
 pub struct X11WindowOps<C: Connection> {
     conn: Arc<C>,
+    atoms: Atoms,
+    numlock_mask: Arc<Mutex<u16>>,
 }
 
 impl<C: Connection> X11WindowOps<C> {
-    pub fn new(conn: Arc<C>) -> Self {
-        Self { conn }
+    pub fn new(conn: Arc<C>, atoms: Atoms, numlock_mask: Arc<Mutex<u16>>) -> Self {
+        Self {
+            conn,
+            atoms,
+            numlock_mask,
+        }
+    }
+
+    fn supports_delete_window(&self, win: u32) -> bool {
+        let reply = match self.conn.get_property(
+            false,
+            win,
+            self.atoms.WM_PROTOCOLS,
+            AtomEnum::ATOM,
+            0,
+            1024,
+        ) {
+            Ok(c) => c.reply(),
+            Err(_) => return false,
+        };
+
+        if let Ok(r) = reply {
+            return r
+                .value32()
+                .into_iter()
+                .flatten()
+                .any(|a| a == self.atoms.WM_DELETE_WINDOW);
+        }
+        false
     }
 }
 
 impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
+    fn close_window(&self, win: WindowId) -> Result<CloseResult, Box<dyn std::error::Error>> {
+        let w = win.0 as u32;
+
+        // 1. 尝试 WM_DELETE_WINDOW
+        if self.supports_delete_window(w) {
+            let event = ClientMessageEvent::new(
+                32,
+                w,
+                self.atoms.WM_PROTOCOLS,
+                [self.atoms.WM_DELETE_WINDOW, 0, 0, 0, 0],
+            );
+            use x11rb::x11_utils::Serialize;
+            let data = event.serialize();
+            self.conn
+                .send_event(false, w, EventMask::NO_EVENT, data)?
+                .check()?;
+            return Ok(CloseResult::Graceful);
+        }
+
+        // 2. 强制 Kill
+        self.conn.kill_client(w)?.check()?;
+        Ok(CloseResult::Forced)
+    }
+
     fn change_event_mask(
         &self,
         win: WindowId,
@@ -57,11 +112,15 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         win: WindowId,
         button: u8,
         event_mask_bits: u32,
-        mods_bits: u16,
+        mods: Mods,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let x_mask = event_mask_from_generic(event_mask_bits);
         let bi = ButtonIndex::from(button);
-        let mods = ModMask::from(mods_bits);
+
+        let numlock_val = *self.numlock_mask.lock().unwrap();
+        let numlock_obj = KeyButMask::from(numlock_val);
+        let x_mods = mods_to_x11(mods, numlock_obj);
+        let mods_bits = ModMask::from(x_mods.bits());
         self.conn
             .grab_button(
                 false,
@@ -72,7 +131,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
                 0u32,
                 0u32,
                 bi,
-                mods,
+                mods_bits,
             )?
             .check()?;
         Ok(())
