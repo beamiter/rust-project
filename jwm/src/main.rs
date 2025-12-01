@@ -4,8 +4,6 @@ use log::{error, info, warn};
 use std::{env, process::Command, sync::atomic::Ordering};
 use xbar_core::initialize_logging;
 
-#[cfg(feature = "backend-wayland")]
-use jwm::backend::wayland::backend::WaylandBackend;
 #[cfg(feature = "backend-x11")]
 use jwm::backend::x11::backend::X11Backend;
 
@@ -29,8 +27,7 @@ fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
     cfg_if! {
         if #[cfg(feature = "backend-wayland")]
         {
-            let backend: Box<dyn jwm::backend::api::Backend> =
-                Box::new(WaylandBackend::new()?);
+            todo!("no support wayland yet");
         }
         else if #[cfg(feature = "backend-x11")]
         {
