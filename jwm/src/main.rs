@@ -6,8 +6,6 @@ use xbar_core::initialize_logging;
 
 #[cfg(feature = "backend-wayland")]
 use jwm::backend::wayland::backend::WaylandBackend;
-#[cfg(feature = "backend-wayland")]
-use jwm::backend::wayland::test_main;
 #[cfg(feature = "backend-x11")]
 use jwm::backend::x11::backend::X11Backend;
 
@@ -20,9 +18,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     initialize_logging("jwm", SHARED_PATH)?;
     info!("[main] begin");
-
-    #[cfg(feature = "backend-wayland")]
-    test_main()?;
 
     run_jwm()?;
     Ok(())

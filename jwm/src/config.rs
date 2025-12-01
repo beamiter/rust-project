@@ -25,7 +25,7 @@ macro_rules! status_bar_config {
                 } else
             )*
             {
-                pub const STATUS_BAR_NAME: &str = "winit_softbuffer_bar";
+                pub const STATUS_BAR_NAME: &str = "tao_softbuffer_bar";
             }
         }
     };
