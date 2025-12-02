@@ -27,6 +27,7 @@ use crate::backend::api::Geometry;
 use crate::backend::api::NetWmAction;
 use crate::backend::api::NetWmState;
 use crate::backend::api::PropertyKind;
+use crate::backend::api::WindowType;
 use crate::backend::api::{Backend, WindowId};
 use crate::backend::common_define::ArgbColor;
 use crate::backend::common_define::ColorScheme;
@@ -307,22 +308,22 @@ impl WMClient {
         }
     }
 
-    /// 获取包含边框的总宽度
+    // 获取包含边框的总宽度
     pub fn total_width(&self) -> i32 {
         self.geometry.w + 2 * self.geometry.border_w
     }
 
-    /// 获取包含边框的总高度
+    // 获取包含边框的总高度
     pub fn total_height(&self) -> i32 {
         self.geometry.h + 2 * self.geometry.border_w
     }
 
-    /// 检查是否为状态栏
+    // 检查是否为状态栏
     pub fn is_status_bar(&self) -> bool {
         self.name == CONFIG.status_bar_name()
     }
 
-    /// 获取客户端矩形区域
+    // 获取客户端矩形区域
     pub fn rect(&self) -> (i32, i32, i32, i32) {
         (
             self.geometry.x,
@@ -332,7 +333,7 @@ impl WMClient {
         )
     }
 
-    /// 设置客户端位置
+    // 设置客户端位置
     pub fn set_position(&mut self, x: i32, y: i32) {
         self.geometry.old_x = self.geometry.x;
         self.geometry.old_y = self.geometry.y;
@@ -340,7 +341,7 @@ impl WMClient {
         self.geometry.y = y;
     }
 
-    /// 设置客户端大小
+    // 设置客户端大小
     pub fn set_size(&mut self, w: i32, h: i32) {
         self.geometry.old_w = self.geometry.w;
         self.geometry.old_h = self.geometry.h;
@@ -370,20 +371,20 @@ impl WMMonitor {
         }
     }
 
-    /// 计算与给定矩形的交集面积
+    // 计算与给定矩形的交集面积
     pub fn intersect_area(&self, x: i32, y: i32, w: i32, h: i32) -> i32 {
         let geom = &self.geometry;
         max(0, min(x + w, geom.w_x + geom.w_w) - max(x, geom.w_x))
             * max(0, min(y + h, geom.w_y + geom.w_h) - max(y, geom.w_y))
     }
 
-    /// 检查点是否在工作区域内
+    // 检查点是否在工作区域内
     pub fn contains_point(&self, x: i32, y: i32) -> bool {
         let geom = &self.geometry;
         x >= geom.w_x && x < geom.w_x + geom.w_w && y >= geom.w_y && y < geom.w_y + geom.w_h
     }
 
-    /// 获取工作区域矩形
+    // 获取工作区域矩形
     pub fn work_area(&self) -> (i32, i32, i32, i32) {
         let geom = &self.geometry;
         (geom.w_x, geom.w_y, geom.w_w, geom.w_h)
@@ -1599,7 +1600,7 @@ impl Jwm {
         key
     }
 
-    /// 检查客户端是否是当前选中的客户端
+    // 检查客户端是否是当前选中的客户端
     fn is_client_selected(&self, client_key: ClientKey) -> bool {
         self.sel_mon
             .and_then(|sel_mon_key| self.monitors.get(sel_mon_key))
@@ -1682,7 +1683,7 @@ impl Jwm {
         }
     }
 
-    /// 从指定监视器移除客户端
+    // 从指定监视器移除客户端
     fn detach_from_monitor(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
         if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
             client_list.retain(|&k| k != client_key);
@@ -1692,7 +1693,7 @@ impl Jwm {
         }
     }
 
-    /// 将客户端添加到指定监视器
+    // 将客户端添加到指定监视器
     fn attach_to_monitor(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
         if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
             client_list.push(client_key);
@@ -1746,7 +1747,7 @@ impl Jwm {
         }
     }
 
-    /// 检查客户端是否可见（使用 ClientKey）
+    // 检查客户端是否可见（使用 ClientKey）
     fn is_client_visible_by_key(&self, client_key: ClientKey) -> bool {
         if let Some(client) = self.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
@@ -1815,7 +1816,7 @@ impl Jwm {
             .map(|(key, _)| key)
     }
 
-    /// 记录 X11 环境信息用于调试
+    // 记录 X11 环境信息用于调试
     fn log_x11_environment() {
         info!("[X11 Environment Debug]");
         info!("DISPLAY: {:?}", env::var("DISPLAY"));
@@ -1886,11 +1887,16 @@ impl Jwm {
         }
     }
 
-    /// 获取窗口的 WM_CLASS（即类名和实例名）
     fn get_wm_class(&self, window: u32) -> Option<(String, String)> {
-        self.backend
+        let (inst, cls) = self
+            .backend
             .property_ops()
-            .get_wm_class(WindowId(window.into()))
+            .get_class(WindowId(window.into()));
+        if inst.is_empty() && cls.is_empty() {
+            None
+        } else {
+            Some((inst, cls))
+        }
     }
 
     fn applysizehints(
@@ -1932,7 +1938,7 @@ impl Jwm {
             || *h != original_geometry.3)
     }
 
-    /// 应用边界约束
+    // 应用边界约束
     fn apply_boundary_constraints(
         &self,
         client_key: ClientKey,
@@ -1974,14 +1980,14 @@ impl Jwm {
         Ok(())
     }
 
-    /// 约束到屏幕边界
+    // 约束到屏幕边界
     fn constrain_to_screen(&self, x: &mut i32, y: &mut i32, total_width: i32, total_height: i32) {
         // 防止窗口完全离开屏幕
         *x = (*x).clamp(-(total_width - 1), self.s_w - 1);
         *y = (*y).clamp(-(total_height - 1), self.s_h - 1);
     }
 
-    /// 约束到监视器边界
+    // 约束到监视器边界
     fn constrain_to_monitor(
         &self,
         x: &mut i32,
@@ -2003,7 +2009,7 @@ impl Jwm {
         *y = (*y).clamp(wy - total_height + 1, wy + wh - 1);
     }
 
-    /// 应用尺寸提示约束
+    // 应用尺寸提示约束
     fn apply_size_hints_constraints(
         &mut self,
         client_key: ClientKey,
@@ -2040,7 +2046,7 @@ impl Jwm {
         Ok(changed)
     }
 
-    /// 确保尺寸提示有效
+    // 确保尺寸提示有效
     fn ensure_size_hints_valid(
         &mut self,
         client_key: ClientKey,
@@ -2058,7 +2064,7 @@ impl Jwm {
         Ok(())
     }
 
-    /// 计算受约束的尺寸
+    // 计算受约束的尺寸
     fn calculate_constrained_size(&self, mut w: i32, mut h: i32, hints: &SizeHints) -> (i32, i32) {
         // 1. 应用基础尺寸和增量
         w = self.apply_increments(w - hints.base_w, hints.inc_w) + hints.base_w;
@@ -2081,7 +2087,7 @@ impl Jwm {
         (w, h)
     }
 
-    /// 应用增量约束
+    // 应用增量约束
     fn apply_increments(&self, size: i32, increment: i32) -> i32 {
         if increment > 0 {
             (size / increment) * increment
@@ -2090,7 +2096,7 @@ impl Jwm {
         }
     }
 
-    /// 应用长宽比约束
+    // 应用长宽比约束
     fn apply_aspect_ratio_constraints(
         &self,
         mut w: i32,
@@ -2116,6 +2122,8 @@ impl Jwm {
             .get(client_key)
             .map(|c| c.win)
             .ok_or("Client not found")?;
+
+        // 使用新 API fetch_normal_hints
         match self
             .backend
             .property_ops()
@@ -2146,7 +2154,7 @@ impl Jwm {
         Ok(())
     }
 
-    /// 优化后的清理函数 - 只处理必须手动清理的资源
+    // 优化后的清理函数 - 只处理必须手动清理的资源
     pub fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[cleanup] Starting essential cleanup (letting Rust handle memory)");
 
@@ -2165,7 +2173,7 @@ impl Jwm {
         Ok(())
     }
 
-    /// 清理 X11 相关资源
+    // 清理 X11 相关资源
     fn cleanup_x11_resources(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[cleanup_x11_resources] Cleaning X11 resources");
 
@@ -2189,7 +2197,7 @@ impl Jwm {
         Ok(())
     }
 
-    /// 清理系统资源
+    // 清理系统资源
     fn cleanup_system_resources(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[cleanup_system_resources] Cleaning system resources");
 
@@ -2282,7 +2290,7 @@ impl Jwm {
         Ok(())
     }
 
-    /// 清理状态栏进程
+    // 清理状态栏进程
     fn cleanup_statusbar_processes(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut child = if let Some(child) = self.status_bar_child.take() {
             child
@@ -2330,7 +2338,7 @@ impl Jwm {
         Ok(())
     }
 
-    /// 清理共享内存资源
+    // 清理共享内存资源
     fn cleanup_shared_memory_resources(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(rb) = self.status_bar_shmem.take() {
             drop(rb);
@@ -2517,16 +2525,16 @@ impl Jwm {
         let is_fullscreen = self
             .clients
             .get(client_key)
-            .map(|client| client.state.is_fullscreen)
+            .map(|c| c.state.is_fullscreen)
             .unwrap_or(false);
 
         if fullscreen && !is_fullscreen {
-            // 设置全屏逻辑
+            // 设置全屏状态
             self.backend
                 .property_ops()
-                .set_fullscreen_state(WindowId(win.into()), fullscreen)?;
+                .set_fullscreen_state(WindowId(win.into()), true)?;
 
-            // 更新客户端状态
+            // ... (原有全屏逻辑: 更新状态, geometry, stack_above 等保持不变) ...
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.state.is_fullscreen = true;
                 client.state.old_state = client.state.is_floating;
@@ -2534,8 +2542,6 @@ impl Jwm {
                 client.geometry.border_w = 0;
                 client.state.is_floating = true;
             }
-
-            // 获取监视器信息并调整窗口大小
             if let Some(mon_key) = self.clients.get(client_key).and_then(|c| c.mon) {
                 if let Some(monitor) = self.monitors.get(mon_key) {
                     let (mx, my, mw, mh) = (
@@ -2547,18 +2553,17 @@ impl Jwm {
                     self.resizeclient(client_key, mx, my, mw, mh)?;
                 }
             }
-
-            // 提升窗口到顶层
             self.backend
                 .window_ops()
                 .configure_stack_above(WindowId(win.into()), None)?;
             self.backend.window_ops().flush()?;
         } else if !fullscreen && is_fullscreen {
-            // 取消全屏逻辑
+            // 取消全屏
             self.backend
                 .property_ops()
-                .set_fullscreen_state(WindowId(win.into()), fullscreen)?;
+                .set_fullscreen_state(WindowId(win.into()), false)?;
 
+            // ... (原有恢复逻辑) ...
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.state.is_fullscreen = false;
                 client.state.is_floating = client.state.old_state;
@@ -2568,8 +2573,6 @@ impl Jwm {
                 client.geometry.w = client.geometry.old_w;
                 client.geometry.h = client.geometry.old_h;
             }
-
-            // 恢复窗口大小
             let (x, y, w, h) = if let Some(client) = self.clients.get(client_key) {
                 (
                     client.geometry.x,
@@ -2580,50 +2583,38 @@ impl Jwm {
             } else {
                 return Ok(());
             };
-
             self.resizeclient(client_key, x, y, w, h)?;
-
-            // 重新排列
             if let Some(mon_key) = self.clients.get(client_key).and_then(|c| c.mon) {
                 self.arrange(Some(mon_key));
             }
         }
-
         Ok(())
     }
 
-    /// 更新 seturgent 方法签名
+    // 移除 set_urgent_flag，合并入 seturgent
     fn seturgent(
         &mut self,
         client_key: ClientKey,
         urgent: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 更新客户端状态
         if let Some(client) = self.clients.get_mut(client_key) {
             client.state.is_urgent = urgent;
         } else {
             return Err("Client not found".into());
         }
 
-        // 获取窗口ID
         let win = self
             .clients
             .get(client_key)
-            .map(|client| client.win)
-            .ok_or("Client not found after update")?;
-
-        self.set_urgent_flag(win, urgent)?;
-
-        Ok(())
-    }
-
-    fn set_urgent_flag(&self, win: u32, urgent: bool) -> Result<(), Box<dyn std::error::Error>> {
+            .map(|c| c.win)
+            .ok_or("Client not found")?;
+        // 直接调用 PropertyOps
         self.backend
             .property_ops()
-            .set_urgent_hint(WindowId(win as u64), urgent)
+            .set_urgent_hint(WindowId(win.into()), urgent)
     }
 
-    /// 显示/隐藏指定监视器上的窗口
+    // 显示/隐藏指定监视器上的窗口
     fn showhide_monitor(&mut self, mon_key: MonitorKey) {
         // 获取该监视器的堆栈顺序客户端列表
         if let Some(stack_clients) = self.monitor_stack.get(mon_key).cloned() {
@@ -2633,7 +2624,7 @@ impl Jwm {
         }
     }
 
-    /// 显示/隐藏单个客户端
+    // 显示/隐藏单个客户端
     fn showhide_client(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
         let is_visible = self.is_client_visible_on_monitor(client_key, mon_key);
 
@@ -2644,7 +2635,7 @@ impl Jwm {
         }
     }
 
-    /// 显示客户端（SlotMap版本）
+    // 显示客户端（SlotMap版本）
     fn show_client(&mut self, client_key: ClientKey) {
         let (win, x, y, is_floating, is_fullscreen) =
             if let Some(client) = self.clients.get(client_key) {
@@ -2676,7 +2667,7 @@ impl Jwm {
         }
     }
 
-    /// 隐藏客户端（SlotMap版本）
+    // 隐藏客户端（SlotMap版本）
     fn hide_client(&mut self, client_key: ClientKey) {
         let (win, y, width) = if let Some(client) = self.clients.get(client_key) {
             (client.win, client.geometry.y, client.total_width())
@@ -3230,6 +3221,14 @@ impl Jwm {
                 CommandType::None => {}
             }
         }
+    }
+
+    fn get_transient_for(&self, window: u32) -> Option<u32> {
+        // 使用新 API
+        self.backend
+            .property_ops()
+            .transient_for(WindowId(window.into()))
+            .map(|w| w.0 as u32)
     }
 
     pub fn scan(&mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -5154,7 +5153,7 @@ impl Jwm {
         let title = self
             .backend
             .property_ops()
-            .get_text_property_best_title(WindowId(window.into()));
+            .get_title(WindowId(window.into()));
         Self::truncate_chars(title, STEXT_MAX_LEN)
     }
 
@@ -5498,7 +5497,7 @@ impl Jwm {
         Ok(())
     }
 
-    /// 检查客户端是否应该被调整大小
+    // 检查客户端是否应该被调整大小
     fn should_resize_client(&self, client_key: ClientKey) -> bool {
         if let Some(client) = self.clients.get(client_key) {
             if client.state.is_floating {
@@ -5575,7 +5574,8 @@ impl Jwm {
                 .and_then(|mk| self.monitors.get(mk))
                 .map(|m| m.num as u32)
                 .unwrap_or(0);
-            self.backend.property_ops().set_client_info(
+
+            self.backend.property_ops().set_client_info_props(
                 WindowId(client.win.into()),
                 client.state.tags,
                 monitor_num,
@@ -5967,7 +5967,7 @@ impl Jwm {
     fn setclientstate(&self, win: u32, state: i64) -> Result<(), Box<dyn std::error::Error>> {
         self.backend
             .property_ops()
-            .set_wm_state(WindowId(win as u64), state)
+            .set_wm_state(WindowId(win.into()), state)
     }
 
     fn manage(&mut self, win: u32, geom: &Geometry) -> Result<(), Box<dyn std::error::Error>> {
@@ -6300,7 +6300,7 @@ impl Jwm {
         }
     }
 
-    /// 检查规则是否匹配客户端
+    // 检查规则是否匹配客户端
     fn rule_matches(&self, rule: &WMRule, name: &str, class: &str, instance: &str) -> bool {
         // 如果规则的所有字段都为空，则不匹配
         if rule.name.is_empty() && rule.class.is_empty() && rule.instance.is_empty() {
@@ -6313,7 +6313,7 @@ impl Jwm {
         name_matches && class_matches && instance_matches
     }
 
-    /// 应用单个规则到客户端
+    // 应用单个规则到客户端
     fn apply_single_rule(&mut self, client_key: ClientKey, rule: &WMRule) {
         if let Some(client) = self.clients.get_mut(client_key) {
             info!("[apply_single_rule] Applying rule: {:?}", rule);
@@ -6478,13 +6478,6 @@ impl Jwm {
         self.backend.window_ops().flush()?;
         info!("[map_client_window] Successfully mapped window 0x{:x}", win);
         Ok(())
-    }
-
-    fn get_transient_for(&self, window: u32) -> Option<u32> {
-        self.backend
-            .property_ops()
-            .transient_for(WindowId(window.into()))
-            .map(|w| w.0 as u32)
     }
 
     fn manage_statusbar(
@@ -6822,7 +6815,7 @@ impl Jwm {
         Ok(())
     }
 
-    /// 安全的共享内存清理方法
+    // 安全的共享内存清理方法
     fn cleanup_shared_memory_safe(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(shmem) = self.status_bar_shmem.take() {
             info!("[cleanup_shared_memory_safe] Cleaning up shared memory",);
@@ -6855,12 +6848,22 @@ impl Jwm {
         } else {
             return false;
         };
-        if self
-            .backend
-            .property_ops()
-            .is_popup_type(WindowId(c.win.into()))
-        {
-            return true;
+        let win_id = WindowId(c.win.into());
+        let types = self.backend.property_ops().get_window_types(win_id);
+        // 检查是否包含任何弹窗/辅助窗口类型
+        for t in types {
+            match t {
+                WindowType::Dialog
+                | WindowType::PopupMenu
+                | WindowType::DropdownMenu
+                | WindowType::Tooltip
+                | WindowType::Notification
+                | WindowType::Combo
+                | WindowType::Dnd
+                | WindowType::Utility
+                | WindowType::Splash => return true,
+                _ => {}
+            }
         }
         false
     }
@@ -7295,10 +7298,14 @@ impl Jwm {
     fn updatewindowtype(&mut self, client_key: ClientKey) {
         if let Some(client) = self.clients.get(client_key) {
             let win_id = WindowId(client.win.into());
-            if let Ok(true) = self.backend.property_ops().is_fullscreen(win_id) {
+
+            // 更新全屏状态
+            if self.backend.property_ops().is_fullscreen(win_id) {
                 let _ = self.setfullscreen(client_key, true);
             }
-            if self.backend.property_ops().is_popup_type(win_id) {
+
+            // 更新浮动状态 (如果是 Popup 类型)
+            if self.is_popup_like(client_key) {
                 if let Some(c) = self.clients.get_mut(client_key) {
                     c.state.is_floating = true;
                 }
@@ -7312,6 +7319,7 @@ impl Jwm {
             None => return,
         };
         let wid = WindowId(win.into());
+
         if let Some(hints) = self.backend.property_ops().get_wm_hints(wid) {
             // 处理紧急状态
             if hints.urgent {
@@ -7411,7 +7419,7 @@ impl Jwm {
         self.message.monitor_info = monitor_info_for_message;
     }
 
-    /// 计算标签掩码（占用和紧急）
+    // 计算标签掩码（占用和紧急）
     fn calculate_tag_masks(&self, mon_key: MonitorKey) -> (u32, u32) {
         let mut occupied_tags_mask = 0u32;
         let mut urgent_tags_mask = 0u32;
@@ -7431,7 +7439,7 @@ impl Jwm {
         (occupied_tags_mask, urgent_tags_mask)
     }
 
-    /// 检查指定标签是否为"填充"状态（选中客户端在此标签上）
+    // 检查指定标签是否为"填充"状态（选中客户端在此标签上）
     fn is_filled_tag(&self, mon_key: MonitorKey, tag_bit: u32) -> bool {
         // 检查是否为全局选中的监视器
         if self.sel_mon != Some(mon_key) {
@@ -7450,7 +7458,7 @@ impl Jwm {
         false
     }
 
-    /// 获取选中客户端的名称
+    // 获取选中客户端的名称
     fn get_selected_client_name(&self, mon_key: MonitorKey) -> String {
         if let Some(monitor) = self.monitors.get(mon_key) {
             if let Some(sel_client_key) = monitor.sel {

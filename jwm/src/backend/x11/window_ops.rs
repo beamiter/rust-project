@@ -264,37 +264,6 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         Ok(())
     }
 
-    fn delete_property(&self, win: WindowId, atom: u32) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn.delete_property(win.0 as u32, atom)?.check()?;
-        Ok(())
-    }
-
-    fn change_property32(
-        &self,
-        win: WindowId,
-        property: u32,
-        ty: u32,
-        data: &[u32],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        use x11rb::wrapper::ConnectionExt;
-        self.conn
-            .change_property32(PropMode::REPLACE, win.0 as u32, property, ty, data)?;
-        Ok(())
-    }
-
-    fn change_property8(
-        &self,
-        win: WindowId,
-        property: u32,
-        ty: u32,
-        data: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        use x11rb::wrapper::ConnectionExt;
-        self.conn
-            .change_property8(PropMode::REPLACE, win.0 as u32, property, ty, data)?;
-        Ok(())
-    }
-
     fn flush(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.conn.flush()?;
         Ok(())
