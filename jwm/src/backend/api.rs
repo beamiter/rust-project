@@ -253,17 +253,21 @@ pub trait EventSource: Send {
 
 pub trait WindowOps: Send {
     fn get_tree_child(&self, win: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>>;
-    fn set_border_width(
+
+    fn set_decoration_style(
         &self,
         win: WindowId,
-        border: u32,
+        border_width: u32,
+        border_color: Pixel,
     ) -> Result<(), Box<dyn std::error::Error>>;
-    fn set_border_pixel(&self, win: WindowId, pixel: u32)
-    -> Result<(), Box<dyn std::error::Error>>;
+
     fn change_event_mask(&self, win: WindowId, mask: u32)
     -> Result<(), Box<dyn std::error::Error>>;
+
     fn close_window(&self, win: WindowId) -> Result<CloseResult, Box<dyn std::error::Error>>;
+
     fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+
     fn configure_xywh_border(
         &self,
         win: WindowId,
@@ -273,6 +277,7 @@ pub trait WindowOps: Send {
         h: Option<u32>,
         border: Option<u32>,
     ) -> Result<(), Box<dyn std::error::Error>>;
+
     fn configure_stack_above(
         &self,
         win: WindowId,
@@ -280,7 +285,6 @@ pub trait WindowOps: Send {
     ) -> Result<(), Box<dyn std::error::Error>>;
     fn set_input_focus_root(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
-    // 仅供 X11 内部逻辑或特殊情况使用，尽量避免在业务逻辑中调用
     fn send_client_message(
         &self,
         win: WindowId,
@@ -289,6 +293,7 @@ pub trait WindowOps: Send {
     ) -> Result<(), Box<dyn std::error::Error>>;
 
     fn flush(&self) -> Result<(), Box<dyn std::error::Error>>;
+
     fn kill_client(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
     fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -302,16 +307,20 @@ pub trait WindowOps: Send {
         &self,
         win: WindowId,
     ) -> Result<WindowAttributes, Box<dyn std::error::Error>>;
+
     fn get_geometry_translated(
         &self,
         win: WindowId,
     ) -> Result<Geometry, Box<dyn std::error::Error>>;
+
     fn ungrab_all_buttons(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+
     fn grab_button_any_anymod(
         &self,
         win: WindowId,
         event_mask_bits: u32,
     ) -> Result<(), Box<dyn std::error::Error>>;
+
     fn grab_button(
         &self,
         win: WindowId,
@@ -319,6 +328,7 @@ pub trait WindowOps: Send {
         event_mask_bits: u32,
         mods_bits: Mods,
     ) -> Result<(), Box<dyn std::error::Error>>;
+
     fn send_configure_notify(
         &self,
         win: WindowId,
@@ -328,6 +338,7 @@ pub trait WindowOps: Send {
         h: u16,
         border: u16,
     ) -> Result<(), Box<dyn std::error::Error>>;
+
     fn set_input_focus_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 }
 

@@ -1,5 +1,7 @@
 // src/backend/x11/window_ops.rs
-use crate::backend::api::{CloseResult, Geometry, Mods, WindowAttributes, WindowId, WindowOps};
+use crate::backend::api::{
+    CloseResult, Geometry, Mods, Pixel, WindowAttributes, WindowId, WindowOps,
+};
 use crate::backend::x11::Atoms;
 use crate::backend::x11::adapter::{event_mask_from_generic, mods_to_x11};
 use std::sync::Arc;
@@ -49,8 +51,6 @@ impl<C: Connection> X11WindowOps<C> {
 impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     fn close_window(&self, win: WindowId) -> Result<CloseResult, Box<dyn std::error::Error>> {
         let w = win.0 as u32;
-
-        // 1. 尝试 WM_DELETE_WINDOW
         if self.supports_delete_window(w) {
             let event = ClientMessageEvent::new(
                 32,
@@ -65,8 +65,6 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
                 .check()?;
             return Ok(CloseResult::Graceful);
         }
-
-        // 2. 强制 Kill
         self.conn.kill_client(w)?.check()?;
         Ok(CloseResult::Forced)
     }
@@ -76,7 +74,6 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         win: WindowId,
         mask: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 使用通用位映射为 X11 EventMask
         let x_mask = event_mask_from_generic(mask);
         let aux = ChangeWindowAttributesAux::new().event_mask(x_mask);
         self.conn
@@ -84,6 +81,28 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
             .check()?;
         Ok(())
     }
+
+    fn set_decoration_style(
+        &self,
+        win: WindowId,
+        border_width: u32,
+        border_color: Pixel,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 1. 设置边框颜色
+        let aux_attr = ChangeWindowAttributesAux::new().border_pixel(border_color.0);
+        self.conn
+            .change_window_attributes(win.0 as u32, &aux_attr)?
+            .check()?;
+
+        // 2. 设置边框宽度
+        let aux_conf = ConfigureWindowAux::new().border_width(border_width);
+        self.conn
+            .configure_window(win.0 as u32, &aux_conf)?
+            .check()?;
+
+        Ok(())
+    }
+    // ----------------------
 
     fn grab_button_any_anymod(
         &self,
@@ -116,7 +135,6 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let x_mask = event_mask_from_generic(event_mask_bits);
         let bi = ButtonIndex::from(button);
-
         let numlock_val = *self.numlock_mask.lock().unwrap();
         let numlock_obj = KeyButMask::from(numlock_val);
         let x_mods = mods_to_x11(mods, numlock_obj);
@@ -146,7 +164,6 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         h: u16,
         border: u16,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 构造并发送 ConfigureNotify
         let event = ConfigureNotifyEvent {
             response_type: CONFIGURE_NOTIFY_EVENT,
             sequence: 0,
@@ -169,28 +186,6 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     fn set_input_focus_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         self.conn
             .set_input_focus(InputFocus::NONE, win.0 as u32, 0u32)?
-            .check()?;
-        Ok(())
-    }
-
-    fn set_border_width(
-        &self,
-        win: WindowId,
-        border: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let aux = ConfigureWindowAux::new().border_width(border);
-        self.conn.configure_window(win.0 as u32, &aux)?.check()?;
-        Ok(())
-    }
-
-    fn set_border_pixel(
-        &self,
-        win: WindowId,
-        pixel: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let aux = ChangeWindowAttributesAux::new().border_pixel(pixel);
-        self.conn
-            .change_window_attributes(win.0 as u32, &aux)?
             .check()?;
         Ok(())
     }

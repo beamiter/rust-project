@@ -811,7 +811,7 @@ impl Jwm {
         if let Some(target_mon_key) = self.wintomon(window) {
             if Some(target_mon_key) != self.sel_mon {
                 if let Some(cur) = self.get_selected_client_key() {
-                    self.unfocus(cur, true)?;
+                    self.unfocus_client(cur, true)?;
                 }
                 self.sel_mon = Some(target_mon_key);
                 self.focus(None)?;
@@ -2259,33 +2259,33 @@ impl Jwm {
         win: u32,
         old_border_w: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 清空事件掩码
         if let Err(e) = self
             .backend
             .window_ops()
             .change_event_mask(WindowId(win.into()), EventMaskBits::NONE.bits())
         {
-            warn!("Failed to clear events for {}: {:?}", win, e);
+            log::warn!("Failed to clear events for {}: {:?}", win, e);
         }
-        // 恢复边框宽度
-        if let Err(e) = self
-            .backend
-            .window_ops()
-            .set_border_width(WindowId(win.into()), old_border_w as u32)
-        {
-            warn!("Failed to restore border for {}: {:?}", win, e);
+        // 使用 configure_xywh_border 恢复宽度
+        if let Err(e) = self.backend.window_ops().configure_xywh_border(
+            WindowId(win.into()),
+            None,
+            None,
+            None,
+            None,
+            Some(old_border_w as u32),
+        ) {
+            log::warn!("Failed to restore border for {}: {:?}", win, e);
         }
-        // 取消按钮抓取
         if let Err(e) = self
             .backend
             .window_ops()
             .ungrab_all_buttons(WindowId(win.into()))
         {
-            warn!("Failed to ungrab buttons for {}: {:?}", win, e);
+            log::warn!("Failed to ungrab buttons for {}: {:?}", win, e);
         }
-        // 设置 Withdrawn 状态（保留原封装）
-        if let Err(e) = self.setclientstate(win, WITHDRAWN_STATE as i64) {
-            warn!("Failed to set withdrawn state for {}: {:?}", win, e);
+        if let Err(e) = self.setclientstate(win, crate::jwm::WITHDRAWN_STATE as i64) {
+            log::warn!("Failed to set withdrawn state for {}: {:?}", win, e);
         }
         Ok(())
     }
@@ -2463,35 +2463,29 @@ impl Jwm {
         Ok(())
     }
 
-    fn set_window_border_width(
-        &self,
-        window: u32,
-        border_width: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.backend
-            .window_ops()
-            .set_border_width(WindowId(window.into()), border_width)?;
-        Ok(())
-    }
-
-    fn set_window_border_color(
+    fn update_client_decoration(
         &mut self,
-        window: u32,
-        selected: bool,
+        client_key: ClientKey,
+        is_focused: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let scheme_type = if selected {
+        let (win, border_w) = if let Some(client) = self.clients.get(client_key) {
+            (client.win, client.geometry.border_w)
+        } else {
+            return Err("Client not found".into());
+        };
+
+        let scheme = if is_focused {
             SchemeType::Sel
         } else {
             SchemeType::Norm
         };
-        if let Ok(pixel) = self
-            .backend
-            .color_allocator()
-            .get_border_pixel_of(scheme_type)
-        {
-            self.backend
-                .window_ops()
-                .set_border_pixel(WindowId(window.into()), pixel.0)?;
+        // 获取颜色句柄 (Pixel)
+        if let Ok(pixel) = self.backend.color_allocator().get_border_pixel_of(scheme) {
+            self.backend.window_ops().set_decoration_style(
+                WindowId(win.into()),
+                border_w as u32,
+                pixel,
+            )?;
         }
         Ok(())
     }
@@ -3871,7 +3865,7 @@ impl Jwm {
         }
 
         // 取消客户端焦点
-        let _ = self.unfocus(client_key, true);
+        let _ = self.unfocus_client(client_key, true);
 
         // 从当前监视器分离客户端
         self.detach(client_key);
@@ -5612,7 +5606,7 @@ impl Jwm {
         // 此时旧客户端自然失焦了，但它的边框与按钮抓取可能还处于“焦点态”，补一次 UI 状态回退而不改焦点：
         if let Some(old_key) = prev_sel {
             // 仅做边框/按钮抓取退回，不调用 set_input_focus_root（将 setfocus 参数改为 false）
-            self.unfocus(old_key, false)?;
+            self.unfocus_client(old_key, false)?;
         }
 
         // 状态栏重定位和布局更新（与原逻辑一致）
@@ -5670,7 +5664,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 辅助方法：取消客户端焦点（可选版本）
     fn unfocus_client_opt(
         &mut self,
         client_key_opt: Option<ClientKey>,
@@ -5679,36 +5672,6 @@ impl Jwm {
         if let Some(client_key) = client_key_opt {
             self.unfocus_client(client_key, setfocus)?;
         }
-        Ok(())
-    }
-
-    // 辅助方法：取消单个客户端的焦点
-    fn unfocus_client(
-        &mut self,
-        client_key: ClientKey,
-        setfocus: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = self.clients.get(client_key) {
-            let win = client.win;
-
-            // 抓取按钮（设为非焦点状态）
-            self.grabbuttons(client_key, false)?;
-
-            // 设置边框颜色为非选中状态
-            self.set_window_border_color(win, false)?;
-
-            if setfocus {
-                self.backend
-                    .window_ops()
-                    .set_input_focus_root(self.backend.root_window())?;
-                if let Some(facade) = self.backend.ewmh_facade().as_ref() {
-                    let _ = facade.clear_active_window();
-                }
-            }
-
-            self.backend.window_ops().flush()?;
-        }
-
         Ok(())
     }
 
@@ -5826,7 +5789,7 @@ impl Jwm {
 
         if current_sel.is_some() && current_sel != *new_focus {
             if let Some(current_key) = current_sel {
-                self.unfocus(current_key, false)?;
+                self.unfocus_client(current_key, false)?;
             }
         }
 
@@ -5837,7 +5800,6 @@ impl Jwm {
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 检查客户端是否在当前选中的监视器上
         let client_monitor_key = if let Some(client) = self.clients.get(client_key) {
             client.mon
         } else {
@@ -5850,7 +5812,6 @@ impl Jwm {
             }
         }
 
-        // 清除紧急状态
         if let Some(client) = self.clients.get_mut(client_key) {
             if client.state.is_urgent {
                 client.state.is_urgent = false;
@@ -5858,21 +5819,14 @@ impl Jwm {
             }
         }
 
-        // 重新排列堆栈顺序
         self.detachstack(client_key);
         self.attachstack(client_key);
-
-        // 抓取按钮事件
         self.grabbuttons(client_key, true)?;
 
-        // 设置边框颜色为选中状态
-        if let Some(client) = self.clients.get(client_key) {
-            self.set_window_border_color(client.win, true)?;
-        }
+        // 设置为选中样式
+        self.update_client_decoration(client_key, true)?;
 
-        // 设置焦点
         self.setfocus(client_key)?;
-
         Ok(())
     }
 
@@ -5891,17 +5845,14 @@ impl Jwm {
         }
     }
 
-    fn unfocus(
+    fn unfocus_client(
         &mut self,
         client_key: ClientKey,
         setfocus: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = self.clients.get(client_key) {
-            let win = client.win;
-            // 抓取按钮（设为非焦点状态）
+        if let Some(_client) = self.clients.get(client_key) {
             self.grabbuttons(client_key, false)?;
-            // 设置边框颜色为非选中状态
-            self.set_window_border_color(win, false)?;
+            self.update_client_decoration(client_key, false)?;
             if setfocus {
                 self.backend
                     .window_ops()
@@ -6024,11 +5975,14 @@ impl Jwm {
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.geometry.border_w = 0;
             }
-            let win = self.clients.get(client_key).unwrap().win;
-            self.set_window_border_width(win, 0)?;
-            // 不设置选中边框色
+            // Popup: 0 宽度，颜色无所谓(这里复用Norm)
+            self.update_client_decoration(client_key, false)?;
+
             self.configure_client(client_key)?;
-            self.setclientstate(win, NORMAL_STATE as i64)?;
+            self.setclientstate(
+                self.clients.get(client_key).unwrap().win,
+                NORMAL_STATE as i64,
+            )?;
             self.backend.window_ops().flush()?;
             return Ok(());
         }
@@ -6044,15 +5998,13 @@ impl Jwm {
         if let Some(client) = self.clients.get_mut(client_key) {
             client.geometry.border_w = CONFIG.border_px() as i32;
         }
-        let border_w = self.clients.get(client_key).unwrap().geometry.border_w;
-        self.set_window_border_width(win, border_w as u32)?;
 
-        self.set_window_border_color(win, true)?;
+        // 设置初始装饰：有边框，且由于是新管理窗口，给予聚焦颜色(true)
+        self.update_client_decoration(client_key, true)?;
 
         self.configure_client(client_key)?;
 
         if !self.restoring_from_snapshot {
-            // 原来的“屏幕外临时位置”逻辑，仅在非恢复模式执行
             let (x, y, w, h) = if let Some(client) = self.clients.get(client_key) {
                 let offscreen_x = client.geometry.x + 2 * self.s_w;
                 (
@@ -6145,7 +6097,7 @@ impl Jwm {
                 // 先取消旧焦点（如果与新焦点不同），避免闪烁
                 if let Some(prev_sel) = current_sel {
                     if prev_sel != client_key {
-                        self.unfocus(prev_sel, false)?;
+                        self.unfocus_client(prev_sel, false)?;
                     }
                 }
                 self.focus(Some(client_key))?;
@@ -6739,7 +6691,7 @@ impl Jwm {
         // 从当前选中显示器的选中客户端上移除焦点
         let current_sel = self.get_selected_client_key();
         if let Some(sel_key) = current_sel {
-            self.unfocus(sel_key, true)?;
+            self.unfocus_client(sel_key, true)?;
         }
 
         // 切换到新显示器
@@ -7042,9 +6994,7 @@ impl Jwm {
         let win = client.win;
         let old_border_w = client.geometry.old_border_w;
 
-        // 执行清理操作（单独捕获错误并记录日志，不中断整个流程）
         {
-            // 取消事件监听
             if let Err(e) = self
                 .backend
                 .window_ops()
@@ -7053,19 +7003,20 @@ impl Jwm {
                 warn!("[cleanup_window_state] Failed to clear event mask: {:?}", e);
             }
 
-            // 恢复原始边框宽度
-            if let Err(e) = self
-                .backend
-                .window_ops()
-                .set_border_width(WindowId(win.into()), old_border_w as u32)
-            {
-                warn!(
+            if let Err(e) = self.backend.window_ops().configure_xywh_border(
+                WindowId(win.into()),
+                None,
+                None,
+                None,
+                None,
+                Some(old_border_w as u32),
+            ) {
+                log::warn!(
                     "[cleanup_window_state] Failed to restore border width: {:?}",
                     e
                 );
             }
 
-            // 取消所有按钮抓取
             if let Err(e) = self
                 .backend
                 .window_ops()
@@ -7074,12 +7025,10 @@ impl Jwm {
                 warn!("[cleanup_window_state] Failed to ungrab buttons: {:?}", e);
             }
 
-            // 设置客户端状态为 WithdrawnState
             if let Err(e) = self.setclientstate(win, WITHDRAWN_STATE as i64) {
                 warn!("[cleanup_window_state] Failed to set client state: {:?}", e);
             }
 
-            // 同步所有 X11 操作
             if let Err(e) = self.backend.window_ops().flush() {
                 warn!("[cleanup_window_state] Flush failed: {:?}", e);
             }
