@@ -1,4 +1,5 @@
 // src/backend/x11/window_ops.rs
+use crate::backend::api::{StackMode, WindowChanges};
 use crate::backend::api::{
     CloseResult, Geometry, Mods, Pixel, WindowAttributes, WindowId, WindowOps,
 };
@@ -88,13 +89,11 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         border_width: u32,
         border_color: Pixel,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 1. 设置边框颜色
         let aux_attr = ChangeWindowAttributesAux::new().border_pixel(border_color.0);
         self.conn
             .change_window_attributes(win.0 as u32, &aux_attr)?
             .check()?;
 
-        // 2. 设置边框宽度
         let aux_conf = ConfigureWindowAux::new().border_width(border_width);
         self.conn
             .configure_window(win.0 as u32, &aux_conf)?
@@ -102,7 +101,6 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
 
         Ok(())
     }
-    // ----------------------
 
     fn grab_button_any_anymod(
         &self,
@@ -195,44 +193,41 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         Ok(())
     }
 
-    fn configure_xywh_border(
+    fn apply_window_changes(
         &self,
         win: WindowId,
-        x: Option<i32>,
-        y: Option<i32>,
-        w: Option<u32>,
-        h: Option<u32>,
-        border: Option<u32>,
+        changes: WindowChanges,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut aux = ConfigureWindowAux::new();
-        if let Some(x) = x {
+        if let Some(x) = changes.x {
             aux = aux.x(x);
         }
-        if let Some(y) = y {
+        if let Some(y) = changes.y {
             aux = aux.y(y);
         }
-        if let Some(w) = w {
+        if let Some(w) = changes.width {
             aux = aux.width(w);
         }
-        if let Some(h) = h {
+        if let Some(h) = changes.height {
             aux = aux.height(h);
         }
-        if let Some(b) = border {
+        if let Some(b) = changes.border_width {
             aux = aux.border_width(b);
         }
-        self.conn.configure_window(win.0 as u32, &aux)?.check()?;
-        Ok(())
-    }
-
-    fn configure_stack_above(
-        &self,
-        win: WindowId,
-        sibling: Option<WindowId>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut aux = ConfigureWindowAux::new().stack_mode(StackMode::ABOVE);
-        if let Some(s) = sibling {
-            aux = aux.sibling(s.0 as u32);
+        if let Some(sibling) = changes.sibling {
+            aux = aux.sibling(sibling.0 as u32);
         }
+        if let Some(mode) = changes.stack_mode {
+            let x_mode = match mode {
+                StackMode::Above => x11rb::protocol::xproto::StackMode::ABOVE,
+                StackMode::Below => x11rb::protocol::xproto::StackMode::BELOW,
+                StackMode::TopIf => x11rb::protocol::xproto::StackMode::TOP_IF,
+                StackMode::BottomIf => x11rb::protocol::xproto::StackMode::BOTTOM_IF,
+                StackMode::Opposite => x11rb::protocol::xproto::StackMode::OPPOSITE,
+            };
+            aux = aux.stack_mode(x_mode);
+        }
+
         self.conn.configure_window(win.0 as u32, &aux)?.check()?;
         Ok(())
     }

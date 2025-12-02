@@ -34,6 +34,26 @@ pub enum NetWmState {
     // 后续可扩充: Modal, Sticky, etc.
 }
 
+#[derive(Debug, Clone, Default)]
+pub struct WindowChanges {
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub border_width: Option<u32>,
+    pub sibling: Option<WindowId>,
+    pub stack_mode: Option<StackMode>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum StackMode {
+    Above,
+    Below,
+    TopIf,
+    BottomIf,
+    Opposite,
+}
+
 #[derive(Debug, Clone, Copy)]
 pub enum NetWmAction {
     Add,
@@ -268,21 +288,12 @@ pub trait WindowOps: Send {
 
     fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
-    fn configure_xywh_border(
+    fn apply_window_changes(
         &self,
         win: WindowId,
-        x: Option<i32>,
-        y: Option<i32>,
-        w: Option<u32>,
-        h: Option<u32>,
-        border: Option<u32>,
+        changes: WindowChanges,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
-    fn configure_stack_above(
-        &self,
-        win: WindowId,
-        sibling: Option<WindowId>,
-    ) -> Result<(), Box<dyn std::error::Error>>;
     fn set_input_focus_root(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
     fn send_client_message(

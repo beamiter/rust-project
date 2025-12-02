@@ -27,6 +27,8 @@ use crate::backend::api::Geometry;
 use crate::backend::api::NetWmAction;
 use crate::backend::api::NetWmState;
 use crate::backend::api::PropertyKind;
+use crate::backend::api::StackMode;
+use crate::backend::api::WindowChanges;
 use crate::backend::api::WindowType;
 use crate::backend::api::{Backend, WindowId};
 use crate::backend::common_define::ArgbColor;
@@ -939,6 +941,7 @@ impl Jwm {
                 window, mask_bits, x, y, 0, h, 0, None, 0,
             );
         }
+        let mut changes = WindowChanges::default();
         let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
         {
             let bar_key = self.status_bar_client.unwrap();
@@ -946,22 +949,22 @@ impl Jwm {
 
             if mask.contains(ConfigWindowBits::X) {
                 statusbar_mut.geometry.x = x as i32;
+                changes.x = Some(x as i32);
             }
             if mask.contains(ConfigWindowBits::Y) {
                 statusbar_mut.geometry.y = y as i32;
+                changes.y = Some(y as i32);
             }
             if mask.contains(ConfigWindowBits::HEIGHT) {
-                statusbar_mut.geometry.h = (h.max(CONFIG.status_bar_height() as u16)) as i32;
+                let new_h = (h.max(CONFIG.status_bar_height() as u16)) as i32;
+                statusbar_mut.geometry.h = new_h;
+                changes.height = Some(new_h as u32);
             }
+            changes.width = Some(statusbar_mut.geometry.w as u32);
 
-            self.backend.window_ops().configure_xywh_border(
-                WindowId(window.into()),
-                Some(statusbar_mut.geometry.x),
-                Some(statusbar_mut.geometry.y),
-                Some(statusbar_mut.geometry.w as u32),
-                Some(statusbar_mut.geometry.h as u32),
-                None,
-            )?;
+            self.backend
+                .window_ops()
+                .apply_window_changes(WindowId(window.into()), changes)?;
         }
         let monitor_key = self.get_monitor_by_id(self.current_bar_monitor_id.unwrap());
         self.arrange(monitor_key);
@@ -1034,14 +1037,16 @@ impl Jwm {
                 }
 
                 if is_popup {
-                    self.backend.window_ops().configure_xywh_border(
-                        WindowId(client.win.into()),
-                        Some(client.geometry.x),
-                        Some(client.geometry.y),
-                        Some(client.geometry.w as u32),
-                        Some(client.geometry.h as u32),
-                        None,
-                    )?;
+                    let changes = WindowChanges {
+                        x: Some(client.geometry.x),
+                        y: Some(client.geometry.y),
+                        width: Some(client.geometry.w as u32),
+                        height: Some(client.geometry.h as u32),
+                        ..Default::default()
+                    };
+                    self.backend
+                        .window_ops()
+                        .apply_window_changes(WindowId(client.win.into()), changes)?;
                     self.backend.window_ops().flush()?;
                     return Ok(());
                 }
@@ -1065,14 +1070,16 @@ impl Jwm {
             // 可见则应用配置
             if self.is_client_visible_by_key(client_key) {
                 if let Some(client) = self.clients.get(client_key) {
-                    self.backend.window_ops().configure_xywh_border(
-                        WindowId(client.win.into()),
-                        Some(client.geometry.x),
-                        Some(client.geometry.y),
-                        Some(client.geometry.w as u32),
-                        Some(client.geometry.h as u32),
-                        None,
-                    )?;
+                    let changes = WindowChanges {
+                        x: Some(client.geometry.x),
+                        y: Some(client.geometry.y),
+                        width: Some(client.geometry.w as u32),
+                        height: Some(client.geometry.h as u32),
+                        ..Default::default()
+                    };
+                    self.backend
+                        .window_ops()
+                        .apply_window_changes(WindowId(client.win.into()), changes)?;
                     self.backend.window_ops().flush()?;
                 }
             }
@@ -1084,7 +1091,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 后端无关：unmanaged 窗口 configure
     fn handle_unmanaged_configure_request_params(
         &mut self,
         window: u32,
@@ -1102,49 +1108,31 @@ impl Jwm {
             window
         );
         let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
-        // 先用 window_ops 配置 xywh/border（逐步替换）
-        let ox = if mask.contains(ConfigWindowBits::X) {
-            Some(x as i32)
-        } else {
-            None
-        };
-        let oy = if mask.contains(ConfigWindowBits::Y) {
-            Some(y as i32)
-        } else {
-            None
-        };
-        let ow = if mask.contains(ConfigWindowBits::WIDTH) {
-            Some(w as u32)
-        } else {
-            None
-        };
-        let oh = if mask.contains(ConfigWindowBits::HEIGHT) {
-            Some(h as u32)
-        } else {
-            None
-        };
-        let ob = if mask.contains(ConfigWindowBits::BORDER_WIDTH) {
-            Some(border as u32)
-        } else {
-            None
-        };
-        if ox.is_some() || oy.is_some() || ow.is_some() || oh.is_some() || ob.is_some() {
-            let _ = self.backend.window_ops().configure_xywh_border(
-                WindowId(window.into()),
-                ox,
-                oy,
-                ow,
-                oh,
-                ob,
-            );
+        let mut changes = WindowChanges::default();
+        if mask.contains(ConfigWindowBits::X) {
+            changes.x = Some(x as i32);
         }
-
-        if mask.contains(ConfigWindowBits::SIBLING) || mask.contains(ConfigWindowBits::STACK_MODE) {
-            self.backend.window_ops().configure_stack_above(
-                WindowId(window.into()),
-                sibling.map(|s| WindowId(s.into())),
-            )?;
+        if mask.contains(ConfigWindowBits::Y) {
+            changes.y = Some(y as i32);
         }
+        if mask.contains(ConfigWindowBits::WIDTH) {
+            changes.width = Some(w as u32);
+        }
+        if mask.contains(ConfigWindowBits::HEIGHT) {
+            changes.height = Some(h as u32);
+        }
+        if mask.contains(ConfigWindowBits::BORDER_WIDTH) {
+            changes.border_width = Some(border as u32);
+        }
+        if mask.contains(ConfigWindowBits::SIBLING) {
+            changes.sibling = sibling.map(|s| WindowId(s.into()));
+        }
+        if mask.contains(ConfigWindowBits::STACK_MODE) {
+            changes.stack_mode = Some(StackMode::Above);
+        }
+        self.backend
+            .window_ops()
+            .apply_window_changes(WindowId(window.into()), changes)?;
         self.backend.window_ops().flush()?;
 
         Ok(())
@@ -2266,15 +2254,15 @@ impl Jwm {
         {
             log::warn!("Failed to clear events for {}: {:?}", win, e);
         }
-        // 使用 configure_xywh_border 恢复宽度
-        if let Err(e) = self.backend.window_ops().configure_xywh_border(
-            WindowId(win.into()),
-            None,
-            None,
-            None,
-            None,
-            Some(old_border_w as u32),
-        ) {
+        let changes = WindowChanges {
+            border_width: Some(old_border_w as u32),
+            ..Default::default()
+        };
+        if let Err(e) = self
+            .backend
+            .window_ops()
+            .apply_window_changes(WindowId(win.into()), changes)
+        {
             log::warn!("Failed to restore border for {}: {:?}", win, e);
         }
         if let Err(e) = self
@@ -2528,7 +2516,6 @@ impl Jwm {
                 .property_ops()
                 .set_fullscreen_state(WindowId(win.into()), true)?;
 
-            // ... (原有全屏逻辑: 更新状态, geometry, stack_above 等保持不变) ...
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.state.is_fullscreen = true;
                 client.state.old_state = client.state.is_floating;
@@ -2547,17 +2534,19 @@ impl Jwm {
                     self.resizeclient(client_key, mx, my, mw, mh)?;
                 }
             }
+            let changes = WindowChanges {
+                stack_mode: Some(StackMode::Above),
+                ..Default::default()
+            };
             self.backend
                 .window_ops()
-                .configure_stack_above(WindowId(win.into()), None)?;
+                .apply_window_changes(WindowId(win.into()), changes)?;
             self.backend.window_ops().flush()?;
         } else if !fullscreen && is_fullscreen {
-            // 取消全屏
             self.backend
                 .property_ops()
                 .set_fullscreen_state(WindowId(win.into()), false)?;
 
-            // ... (原有恢复逻辑) ...
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.state.is_fullscreen = false;
                 client.state.is_floating = client.state.old_state;
@@ -2585,7 +2574,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 移除 set_urgent_flag，合并入 seturgent
     fn seturgent(
         &mut self,
         client_key: ClientKey,
@@ -2713,14 +2701,18 @@ impl Jwm {
             client.geometry.w = w;
             client.geometry.h = h;
 
-            self.backend.window_ops().configure_xywh_border(
-                WindowId(client.win.into()),
-                Some(x),
-                Some(y),
-                Some(w as u32),
-                Some(h as u32),
-                Some(client.geometry.border_w as u32),
-            )?;
+            let changes = WindowChanges {
+                x: Some(x),
+                y: Some(y),
+                width: Some(w as u32),
+                height: Some(h as u32),
+                border_width: Some(client.geometry.border_w as u32),
+                ..Default::default()
+            };
+
+            self.backend
+                .window_ops()
+                .apply_window_changes(WindowId(client.win.into()), changes)?;
             self.configure_client(client_key)?;
             self.backend.window_ops().flush()?;
         }
@@ -2742,14 +2734,14 @@ impl Jwm {
     }
 
     fn move_window(&mut self, win: u32, x: i32, y: i32) -> Result<(), Box<dyn std::error::Error>> {
-        self.backend.window_ops().configure_xywh_border(
-            WindowId(win.into()),
-            Some(x),
-            Some(y),
-            None,
-            None,
-            None,
-        )?;
+        let changes = WindowChanges {
+            x: Some(x),
+            y: Some(y),
+            ..Default::default()
+        };
+        self.backend
+            .window_ops()
+            .apply_window_changes(WindowId(win.into()), changes)?;
         self.backend.window_ops().flush()?;
         Ok(())
     }
@@ -2997,9 +2989,14 @@ impl Jwm {
                 } else {
                     None
                 };
+                let changes = WindowChanges {
+                    sibling: sibling,
+                    stack_mode: Some(StackMode::Above),
+                    ..Default::default()
+                };
                 self.backend
                     .window_ops()
-                    .configure_stack_above(WindowId(win.into()), sibling)?;
+                    .apply_window_changes(WindowId(win.into()), changes)?;
             }
             self.last_stacking
                 .insert(mon_key, final_bottom_to_top.clone());
@@ -3016,9 +3013,13 @@ impl Jwm {
                         .copied()
                         .unwrap_or(true);
                     if show_bar {
+                        let changes = WindowChanges {
+                            stack_mode: Some(StackMode::Above),
+                            ..Default::default()
+                        };
                         self.backend
                             .window_ops()
-                            .configure_stack_above(WindowId(bar_client.win.into()), None)?;
+                            .apply_window_changes(WindowId(bar_client.win.into()), changes)?;
                     }
                 }
             }
@@ -6016,14 +6017,16 @@ impl Jwm {
             } else {
                 return Err("Client not found".into());
             };
-            self.backend.window_ops().configure_xywh_border(
-                WindowId(win.into()),
-                Some(x),
-                Some(y),
-                Some(w as u32),
-                Some(h as u32),
-                None,
-            )?;
+            let changes = WindowChanges {
+                x: Some(x),
+                y: Some(y),
+                width: Some(w as u32),
+                height: Some(h as u32),
+                ..Default::default()
+            };
+            self.backend
+                .window_ops()
+                .apply_window_changes(WindowId(win.into()), changes)?;
             self.backend.window_ops().flush()?;
         }
 
@@ -6062,9 +6065,14 @@ impl Jwm {
             let sibling = parent_key_opt
                 .and_then(|pk| self.clients.get(pk))
                 .map(|pc| WindowId(pc.win.into()));
+            let changes = WindowChanges {
+                sibling: sibling,
+                stack_mode: Some(StackMode::Above),
+                ..Default::default()
+            };
             self.backend
                 .window_ops()
-                .configure_stack_above(WindowId(client_win.into()), sibling)?;
+                .apply_window_changes(WindowId(client_win.into()), changes)?;
             self.backend.window_ops().flush()?;
 
             // 明确保持焦点：优先父窗口 -> 之前选中 -> 根焦点
@@ -6512,24 +6520,26 @@ impl Jwm {
                 client.geometry.w = monitor.geometry.m_w - 2 * pad;
                 client.geometry.h = CONFIG.status_bar_height();
 
-                self.backend.window_ops().configure_xywh_border(
-                    WindowId(client.win.into()),
-                    Some(client.geometry.x),
-                    Some(client.geometry.y),
-                    Some(client.geometry.w as u32),
-                    Some(client.geometry.h as u32),
-                    None,
-                )?;
+                let changes = WindowChanges {
+                    x: Some(client.geometry.x),
+                    y: Some(client.geometry.y),
+                    width: Some(client.geometry.w as u32),
+                    height: Some(client.geometry.h as u32),
+                    ..Default::default()
+                };
+                self.backend
+                    .window_ops()
+                    .apply_window_changes(WindowId(client.win.into()), changes)?;
                 (client.win, Some(client.geometry.h))
             } else {
-                self.backend.window_ops().configure_xywh_border(
-                    WindowId(client.win.into()),
-                    Some(-1000),
-                    Some(-1000),
-                    None,
-                    None,
-                    None,
-                )?;
+                let changes = WindowChanges {
+                    x: Some(-1000),
+                    y: Some(-1000),
+                    ..Default::default()
+                };
+                self.backend
+                    .window_ops()
+                    .apply_window_changes(WindowId(client.win.into()), changes)?;
                 (client.win, None)
             }
         } else {
@@ -7003,14 +7013,15 @@ impl Jwm {
                 warn!("[cleanup_window_state] Failed to clear event mask: {:?}", e);
             }
 
-            if let Err(e) = self.backend.window_ops().configure_xywh_border(
-                WindowId(win.into()),
-                None,
-                None,
-                None,
-                None,
-                Some(old_border_w as u32),
-            ) {
+            let changes = WindowChanges {
+                border_width: Some(old_border_w as u32),
+                ..Default::default()
+            };
+            if let Err(e) = self
+                .backend
+                .window_ops()
+                .apply_window_changes(WindowId(win.into()), changes)
+            {
                 log::warn!(
                     "[cleanup_window_state] Failed to restore border width: {:?}",
                     e
