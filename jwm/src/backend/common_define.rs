@@ -1,9 +1,18 @@
 // src/backend/common_define.rs
+use bincode::Decode;
+use bincode::Encode;
 use bitflags::bitflags;
+use serde::Deserialize;
+use serde::Serialize;
 
-// 通用后端窗口ID（X11: Window; Wayland: 自定义句柄）
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Decode, Encode)]
 pub struct WindowId(pub u64);
+
+impl Default for WindowId {
+    fn default() -> Self {
+        WindowId(0)
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Pixel(pub u32); // 通用像素句柄（X11=像素ID，Wayland=ABGR/RGBA值或纹理句柄）

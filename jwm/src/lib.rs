@@ -3,6 +3,7 @@
 
 pub mod backend;
 pub mod config;
+pub mod core;
 pub mod jwm;
 pub mod miscellaneous;
 pub mod terminal_prober;
