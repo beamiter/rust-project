@@ -4655,10 +4655,6 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.clients.get_mut(client_key) {
             client.size_hints.hints_valid = false;
-            debug!(
-                "Normal hints changed for window {:?}, invalidating cache",
-                client.win
-            );
         }
         Ok(())
     }

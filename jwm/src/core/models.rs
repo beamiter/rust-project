@@ -124,8 +124,10 @@ impl fmt::Display for WMClient {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(
             f,
-            "WMClient {{ name: \"{}\", win: {:?}, geometry: {}, monitor: {} }}",
+            "WMClient {{ name: \"{}\", class: \"{}\", instance: \"{}\", win: {:?}, geometry: {}, monitor: {} }}",
             self.name,
+            self.class,
+            self.instance,
             self.win,
             self.geometry,
             if self.mon.is_some() { "Some" } else { "None" }
