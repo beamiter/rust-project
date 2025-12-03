@@ -213,9 +213,8 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
             }
         }
         if result.is_empty() {
-            // 尝试读取 WM_TRANSIENT_FOR，如果存在则倾向于 Dialog
             if self.transient_for(win).is_some() {
-                result.push(WindowType::Dialog);
+                result.push(WindowType::Dnd);
             } else {
                 result.push(WindowType::Normal);
             }

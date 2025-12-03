@@ -634,7 +634,12 @@ impl Jwm {
                     client.geometry.old_h = client.geometry.h;
                     client.geometry.h = h as i32;
                 }
-
+                if (client.geometry.x + client.geometry.w) > mx + mw && client.state.is_floating {
+                    client.geometry.x = mx + (mw / 2 - client.total_width() / 2);
+                }
+                if (client.geometry.y + client.geometry.h) > my + mh && client.state.is_floating {
+                    client.geometry.y = my + (mh / 2 - client.total_height() / 2);
+                }
                 if is_popup {
                     let changes = WindowChanges {
                         x: Some(client.geometry.x),
@@ -649,24 +654,12 @@ impl Jwm {
                     self.backend.window_ops().flush()?;
                     return Ok(());
                 }
-
-                // 保持在 monitor 内
-                if (client.geometry.x + client.geometry.w) > mx + mw && client.state.is_floating {
-                    client.geometry.x = mx + (mw / 2 - client.total_width() / 2);
-                }
-                if (client.geometry.y + client.geometry.h) > my + mh && client.state.is_floating {
-                    client.geometry.y = my + (mh / 2 - client.total_height() / 2);
-                }
             }
-
-            // 如果只是位置变化，发送配置确认
             if mask.contains(ConfigWindowBits::X | ConfigWindowBits::Y)
                 && !mask.contains(ConfigWindowBits::WIDTH | ConfigWindowBits::HEIGHT)
             {
                 self.configure_client(client_key)?;
             }
-
-            // 可见则应用配置
             if self.is_client_visible_by_key(client_key) {
                 if let Some(client) = self.clients.get(client_key) {
                     let changes = WindowChanges {
@@ -683,7 +676,6 @@ impl Jwm {
                 }
             }
         } else {
-            // 平铺窗口：仅确认当前几何
             self.configure_client(client_key)?;
         }
 
@@ -1332,7 +1324,6 @@ impl Jwm {
         }
     }
 
-    // 检查客户端是否可见（使用 ClientKey）
     fn is_client_visible_by_key(&self, client_key: ClientKey) -> bool {
         if let Some(client) = self.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
@@ -5599,7 +5590,6 @@ impl Jwm {
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 预取必要信息，避免后续借用冲突
         let (client_win, client_mon_key, is_never_focus) =
             if let Some(c) = self.clients.get(client_key) {
                 (c.win, c.mon, c.state.never_focus)
@@ -5608,10 +5598,7 @@ impl Jwm {
             };
         let current_sel = self.get_selected_client_key();
         let current_sel_mon = self.sel_mon;
-
-        // 1) popup-like（菜单/提示/小尺寸 transient 等）
         if self.is_popup_like(client_key) {
-            // 叠放到父窗口之上（如可用），否则顶层
             let parent_key_opt = self.parent_client_of(client_key);
             let sibling = parent_key_opt
                 .and_then(|pk| self.clients.get(pk))
@@ -5626,23 +5613,17 @@ impl Jwm {
                 .apply_window_changes(client_win, changes)?;
             self.backend.window_ops().flush()?;
 
-            // 明确保持焦点：优先父窗口 -> 之前选中 -> 根焦点
             if let Some(pk) = parent_key_opt {
-                // 若父窗口在不同屏，可选是否切屏，这里不切屏，仅保持父焦点
                 let _ = self.set_client_focus_by_key(pk);
             } else if let Some(prev_sel) = current_sel {
                 let _ = self.set_client_focus_by_key(prev_sel);
             } else {
                 let _ = self.set_root_focus();
             }
-            // 不修改 monitor.sel，不抢焦点
             return Ok(());
         }
-
-        // 2) 非 popup-like，新窗口属于当前选中屏
         let is_on_selected_monitor = client_mon_key.is_some() && client_mon_key == current_sel_mon;
         if is_on_selected_monitor {
-            // 设置该屏选中为新窗口
             if let Some(mon_key) = client_mon_key {
                 if let Some(monitor) = self.monitors.get_mut(mon_key) {
                     monitor.sel = Some(client_key);
@@ -5700,35 +5681,25 @@ impl Jwm {
         Ok(())
     }
 
-    // 常规客户端管理
     fn manage_regular_client(
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 处理 WM_TRANSIENT_FOR
         self.handle_transient_for(client_key)?;
 
-        // 调整窗口位置
         self.adjust_client_position(client_key);
 
-        // 设置窗口属性
         self.setup_client_window(client_key)?;
 
-        // 更新各种提示
         self.updatewindowtype(client_key);
         self.updatesizehints(client_key)?;
         self.updatewmhints(client_key);
 
-        // 添加到管理结构
         self.attach_back(client_key);
-
         self.attachstack(client_key);
 
-        // 注册事件和抓取按钮
         self.register_client_events(client_key)?;
 
-        // 映射窗口
-        // 已映射窗口避免再次 map
         let already_mapped = {
             let win = self.clients.get(client_key).unwrap().win;
             self.backend
@@ -5741,10 +5712,8 @@ impl Jwm {
             self.map_client_window(client_key)?;
         }
 
-        // 更新客户端列表
         self.update_net_client_list()?;
 
-        // 处理焦点
         self.handle_new_client_focus(client_key)?;
 
         self.suppress_mouse_focus_until =
@@ -5765,7 +5734,6 @@ impl Jwm {
 
         match self.get_transient_for(win) {
             Some(transient_for_win) => {
-                // 找到 transient_for 窗口对应的客户端
                 if let Some(parent_client_key) = self.wintoclient(transient_for_win) {
                     let (parent_mon, parent_tags) =
                         if let Some(parent) = self.clients.get(parent_client_key) {
@@ -5785,7 +5753,6 @@ impl Jwm {
                     }
                 } else {
                     info!("[handle_transient_for] parent client is None");
-                    // 父窗口不是我们管理的客户端
                     if let Some(client) = self.clients.get_mut(client_key) {
                         client.mon = self.sel_mon;
                     }
@@ -5794,7 +5761,6 @@ impl Jwm {
             }
             None => {
                 info!("no WM_TRANSIENT_FOR property");
-                // 没有 WM_TRANSIENT_FOR 属性
                 if let Some(client) = self.clients.get_mut(client_key) {
                     client.mon = self.sel_mon;
                 }
@@ -5921,7 +5887,7 @@ impl Jwm {
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.state.is_floating = true;
             }
-            info!("[applyrules_by_key] No window info available, setting as floating");
+            info!("No window info available, setting as floating");
         }
         // 应用配置规则
         let mut rule_applied = false;
@@ -5933,12 +5899,12 @@ impl Jwm {
             }
         }
         if !rule_applied {
-            info!("[applyrules_by_key] No matching rule found, using defaults");
+            info!("No matching rule found, using defaults");
         }
         self.set_default_tags(client_key);
         if let Some(client) = self.clients.get(client_key) {
             info!(
-                "[applyrules_by_key] Final state - class: '{}', instance: '{}', name: '{}', tags: {}, floating: {}",
+                "Final state - class: '{}', instance: '{}', name: '{}', tags: {}, floating: {}",
                 client.class,
                 client.instance,
                 client.name,
@@ -6352,13 +6318,12 @@ impl Jwm {
     }
 
     fn is_popup_like(&self, client_key: ClientKey) -> bool {
-        let c = if let Some(c) = self.clients.get(client_key) {
-            c
+        let client = if let Some(client) = self.clients.get(client_key) {
+            client
         } else {
             return false;
         };
-        let types = self.backend.property_ops().get_window_types(c.win);
-        // 检查是否包含任何弹窗/辅助窗口类型
+        let types = self.backend.property_ops().get_window_types(client.win);
         for t in types {
             match t {
                 WindowType::Dialog
@@ -6369,7 +6334,10 @@ impl Jwm {
                 | WindowType::Combo
                 | WindowType::Dnd
                 | WindowType::Utility
-                | WindowType::Splash => return true,
+                | WindowType::Splash => {
+                    info!("popup type {:?}", t);
+                    return true;
+                }
                 _ => {}
             }
         }
@@ -6377,20 +6345,22 @@ impl Jwm {
     }
 
     fn adjust_client_position(&mut self, client_key: ClientKey) {
+        info!("[adjust_client_position]");
         if self.is_popup_like(client_key) {
+            info!("is_popup_like");
             return;
         }
         let (client_total_width, client_mon_key_opt, win) =
             if let Some(client) = self.clients.get(client_key) {
                 (client.total_width(), client.mon, client.win)
             } else {
-                error!("[adjust_client_position] Client {:?} not found", client_key);
+                error!("Client {:?} not found", client_key);
                 return;
             };
         let client_mon_key = if let Some(mon_key) = client_mon_key_opt {
             mon_key
         } else {
-            error!("[adjust_client_position] Client has no monitor assigned!");
+            error!("Client has no monitor assigned!");
             return;
         };
         let (mon_wx, mon_wy, mon_ww, mon_wh) =
@@ -6402,14 +6372,10 @@ impl Jwm {
                     monitor.geometry.w_h,
                 )
             } else {
-                error!(
-                    "[adjust_client_position] Monitor {:?} not found",
-                    client_mon_key
-                );
+                error!("Monitor {:?} not found", client_mon_key);
                 return;
             };
-        info!("[adjust_client_position] {:?}", win);
-        // 获取当前客户端的几何信息
+        info!("{:?}", win);
         let (mut client_x, mut client_y, _client_w, _client_h) =
             if let Some(client) = self.clients.get(client_key) {
                 (
@@ -6421,28 +6387,19 @@ impl Jwm {
             } else {
                 return;
             };
-        // 确保窗口的右边界不超过显示器工作区的右边界
         if client_x + client_total_width > mon_wx + mon_ww {
             client_x = mon_wx + mon_ww - client_total_width;
-            info!(
-                "[adjust_client_position] Adjusted X to prevent overflow: {}",
-                client_x
-            );
+            info!("Adjusted X to prevent overflow: {}", client_x);
         }
         let client_total_height = if let Some(client) = self.clients.get(client_key) {
             client.total_height()
         } else {
             return;
         };
-        // 确保窗口的下边界不超过显示器工作区的下边界
         if client_y + client_total_height > mon_wy + mon_wh {
             client_y = mon_wy + mon_wh - client_total_height;
-            info!(
-                "[adjust_client_position] Adjusted Y to prevent overflow: {}",
-                client_y
-            );
+            info!("Adjusted Y to prevent overflow: {}", client_y);
         }
-        // 确保窗口的左边界不小于显示器工作区的左边界
         if client_x < mon_wx {
             client_x = mon_wx;
             info!(
@@ -6450,7 +6407,6 @@ impl Jwm {
                 client_x
             );
         }
-        // 确保窗口的上边界不小于显示器工作区的上边界
         if client_y < mon_wy {
             client_y = mon_wy;
             info!(
@@ -6458,7 +6414,6 @@ impl Jwm {
                 client_y
             );
         }
-        // 确保窗口上边界要低于状态栏高度
         let client_y_offset = if let Some(monitor) = self.monitors.get(client_mon_key) {
             self.get_client_y_offset(monitor)
         } else {
@@ -6471,7 +6426,6 @@ impl Jwm {
                 client_y
             );
         }
-        // 应用调整后的位置
         if let Some(client) = self.clients.get_mut(client_key) {
             client.geometry.x = client_x;
             client.geometry.y = client_y;
@@ -6490,32 +6444,18 @@ impl Jwm {
         if let Some(client) = self.clients.get(client_key) {
             info!("[unmanage_regular_client] Removing client {}", client);
         }
-
-        // 获取客户端的监视器信息
         let mon_key = self.clients.get(client_key).and_then(|client| client.mon);
-
-        // 清理 pertag 中的选中客户端引用
         if let Some(mon_key) = mon_key {
             self.clear_pertag_references(client_key, mon_key);
         }
-
-        // 从链表中移除客户端
         self.detach(client_key);
         self.detachstack(client_key);
-
-        // 如果窗口没有被销毁，需要清理窗口状态
         if !destroyed {
             self.cleanup_window_state(client_key)?;
         }
-
-        // 从 SlotMap 中移除客户端
         self.clients.remove(client_key);
-
-        // 从顺序列表中移除
         self.client_order.retain(|&k| k != client_key);
         self.client_stack_order.retain(|&k| k != client_key);
-
-        // 重新聚焦和排列
         self.focus(None)?;
         self.update_net_client_list()?;
         if let Some(mon_key) = mon_key {
@@ -6541,7 +6481,6 @@ impl Jwm {
         &self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 获取客户端与必要信息
         let client = if let Some(client) = self.clients.get(client_key) {
             client
         } else {
@@ -6615,7 +6554,6 @@ impl Jwm {
         let dirty = if outputs.len() <= 1 {
             self.setup_single_monitor()
         } else {
-            // 把 outputs 转换为 (x,y,w,h)
             let mons: Vec<(i32, i32, i32, i32)> = outputs
                 .iter()
                 .map(|o| (o.x, o.y, o.width, o.height))

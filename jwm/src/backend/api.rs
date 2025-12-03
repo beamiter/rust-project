@@ -31,7 +31,6 @@ pub struct Capabilities {
 #[derive(Debug, Clone, Copy)]
 pub enum NetWmState {
     Fullscreen,
-    // 后续可扩充: Modal, Sticky, etc.
 }
 
 #[derive(Debug, Clone, Default)]
@@ -72,7 +71,6 @@ pub enum PropertyKind {
     Other,
 }
 
-// 新增：通用的窗口类型定义，替代 X11 Atom
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum WindowType {
     Normal,
