@@ -111,7 +111,6 @@ impl X11StdCursor {
         Ok(cursor_id)
     }
 
-    /// 创建自定义颜色的光标
     pub fn create_colored(
         &self,
         conn: &impl Connection,
@@ -141,7 +140,6 @@ impl X11StdCursor {
         Ok(cursor_id)
     }
 
-    /// 获取光标的描述
     pub fn description(&self) -> &'static str {
         match self {
             Self::XCursor => "Default X cursor",
@@ -224,7 +222,6 @@ impl X11StdCursor {
         }
     }
 
-    /// 获取常用光标列表
     pub fn common_cursors() -> &'static [X11StdCursor] {
         &[
             Self::LeftPtr,           // 标准箭头
@@ -243,7 +240,6 @@ impl X11StdCursor {
         ]
     }
 
-    /// 获取所有光标列表
     pub fn all_cursors() -> &'static [X11StdCursor] {
         &[
             Self::XCursor,

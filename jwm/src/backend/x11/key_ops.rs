@@ -66,7 +66,6 @@ impl<C: Connection> X11KeyOps<C> {
     fn find_modifier_mask(&self, target_keycode: u8) -> Result<u8, Box<dyn std::error::Error>> {
         let mm = self.conn.get_modifier_mapping()?.reply()?;
         let per = mm.keycodes_per_modifier() as usize;
-        // 8 个修饰组：Shift, Lock, Control, Mod1..Mod5
         for mod_index in 0..8 {
             let start = mod_index * per;
             let end = start + per;
@@ -117,12 +116,10 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
         let numlock_mask_obj = KBM::from(numlock_local);
 
         for (mods, keysym) in bindings {
-            // 遍历 keycodes 找到匹配的 keysym（first keysym）
             for (offset, keysyms_for_keycode) in mapping.keysyms.chunks(per).enumerate() {
                 let keycode = min + offset as u8;
                 if let Some(&ks) = keysyms_for_keycode.first() {
                     if u32::from(ks) == *keysym {
-                        // 组合 None / LOCK / NUMLOCK / LOCK|NUMLOCK
                         let base = mods_to_x11(*mods, numlock_mask_obj);
                         let combos = [
                             base,

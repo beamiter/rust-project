@@ -55,7 +55,6 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
     }
 
     fn reset_root_properties(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // 清除常用根属性，Jwm 调用用于清理
         for &prop in [
             self.atoms._NET_ACTIVE_WINDOW,
             self.atoms._NET_CLIENT_LIST,
@@ -73,7 +72,6 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         &self,
         wm_name: &str,
     ) -> Result<WindowId, Box<dyn std::error::Error>> {
-        // 创建 1x1 supporting window
         let frame_win = self.conn.generate_id()?;
         let aux = CreateWindowAux::new().event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS);
         self.conn
@@ -91,7 +89,6 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
                 &aux,
             )?
             .check()?;
-        // 设置 _NET_SUPPORTING_WM_CHECK on root and frame_win
         self.conn.change_property32(
             PropMode::REPLACE,
             self.root.0 as u32,

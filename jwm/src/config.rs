@@ -207,10 +207,8 @@ impl Default for Config {
 
 #[allow(dead_code)]
 impl Config {
-    // 获取默认按键绑定
     fn get_default_keys() -> Vec<KeyConfig> {
         vec![
-            // 应用启动
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "e".to_string(),
@@ -265,7 +263,6 @@ impl Config {
                 function: "togglebar".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
-            // 窗口焦点控制
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "j".to_string(),
@@ -278,7 +275,6 @@ impl Config {
                 function: "focusstack".to_string(),
                 argument: ArgumentConfig::Int(-1),
             },
-            // 主窗口数量控制
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "i".to_string(),
@@ -291,7 +287,6 @@ impl Config {
                 function: "incnmaster".to_string(),
                 argument: ArgumentConfig::Int(-1),
             },
-            // 窗口大小调整
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "h".to_string(),
@@ -304,7 +299,6 @@ impl Config {
                 function: "setmfact".to_string(),
                 argument: ArgumentConfig::Float(0.025),
             },
-            // 客户端高度调整
             KeyConfig {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
                 key: "h".to_string(),
@@ -323,7 +317,6 @@ impl Config {
                 function: "setcfact".to_string(),
                 argument: ArgumentConfig::Float(0.0),
             },
-            // 窗口移动
             KeyConfig {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
                 key: "j".to_string(),
@@ -336,14 +329,12 @@ impl Config {
                 function: "movestack".to_string(),
                 argument: ArgumentConfig::Int(-1),
             },
-            // 主窗口切换
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "Return".to_string(),
                 function: "zoom".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
-            // 标签切换
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "Tab".to_string(),
@@ -368,14 +359,12 @@ impl Config {
                 function: "loopview".to_string(),
                 argument: ArgumentConfig::Int(1),
             },
-            // 窗口关闭
             KeyConfig {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
                 key: "c".to_string(),
                 function: "killclient".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
-            // 布局切换
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "t".to_string(),
@@ -394,7 +383,6 @@ impl Config {
                 function: "setlayout".to_string(),
                 argument: ArgumentConfig::String("monocle".to_string()),
             },
-            // 布局切换
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "space".to_string(),
@@ -413,7 +401,6 @@ impl Config {
                 function: "togglefullscr".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
-            // 全标签视图
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "0".to_string(),
@@ -426,7 +413,6 @@ impl Config {
                 function: "tag".to_string(),
                 argument: ArgumentConfig::UInt(!0), // 所有标签
             },
-            // 显示器切换
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "comma".to_string(),
@@ -457,7 +443,6 @@ impl Config {
                 function: "tagmon".to_string(),
                 argument: ArgumentConfig::Int(1),
             },
-            // 退出
             KeyConfig {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
                 key: "q".to_string(),
@@ -473,7 +458,6 @@ impl Config {
         ]
     }
 
-    // 获取默认鼠标绑定配置
     fn get_default_button_configs() -> Vec<ButtonConfig> {
         vec![
             ButtonConfig {
@@ -500,7 +484,6 @@ impl Config {
         ]
     }
 
-    // 获取默认规则
     fn get_default_rules() -> Vec<RuleConfig> {
         vec![
             // RuleConfig {
@@ -538,7 +521,6 @@ impl Config {
         Self::load_from_file(&default_config_path).unwrap_or_else(|_| Self::default())
     }
 
-    // 访问器方法
     pub fn border_px(&self) -> u32 {
         self.inner.appearance.border_px
     }
@@ -595,7 +577,6 @@ impl Config {
         (1 << self.tags_length()) - 1
     }
 
-    // 转换方法
     pub fn get_keys(&self) -> Vec<WMKey> {
         let mut keys = Vec::new();
 
@@ -604,12 +585,9 @@ impl Config {
                 keys.push(key);
             }
         }
-
-        // 添加标签键
         for i in 0..self.tags_length() {
             keys.extend(self.generate_tag_keys(i));
         }
-
         keys
     }
 
@@ -631,7 +609,6 @@ impl Config {
     }
 
     pub fn get_dmenucmd(&self) -> Vec<String> {
-        // 从配置中查找 dmenu 命令，或使用默认值
         self.inner
             .keybindings
             .keys
@@ -645,7 +622,6 @@ impl Config {
     }
 
     pub fn get_termcmd() -> Vec<String> {
-        // 类似地从配置中获取终端命令
         ADVANCED_TERMINAL_PROBER
             .get_available_terminal()
             .map(|config| vec![config.command.clone()])
@@ -682,10 +658,8 @@ impl Config {
         }
     }
 
-    // 扩展 parse_function 以支持更多函数
     fn parse_function(&self, func_name: &str) -> Option<WMFuncType> {
         match func_name {
-            // 窗口管理
             "spawn" => Some(Jwm::spawn),
             "focusstack" => Some(Jwm::focusstack),
             "focusmon" => Some(Jwm::focusmon),
@@ -695,7 +669,6 @@ impl Config {
             "killclient" => Some(Jwm::killclient),
             "zoom" => Some(Jwm::zoom),
 
-            // 布局相关
             "setlayout" => Some(Jwm::setlayout),
             "togglefloating" => Some(Jwm::togglefloating),
             "togglefullscr" => Some(Jwm::togglefullscr),
@@ -705,7 +678,6 @@ impl Config {
             "incnmaster" => Some(Jwm::incnmaster),
             "movestack" => Some(Jwm::movestack),
 
-            // 标签相关
             "view" => Some(Jwm::view),
             "tag" => Some(Jwm::tag),
             "toggleview" => Some(Jwm::toggleview),
@@ -713,7 +685,6 @@ impl Config {
             "tagmon" => Some(Jwm::tagmon),
             "loopview" => Some(Jwm::loopview),
 
-            // 鼠标相关
             "movemouse" => Some(Jwm::movemouse),
             "resizemouse" => Some(Jwm::resizemouse),
 
@@ -726,7 +697,6 @@ impl Config {
 
     fn parse_keysym(&self, key: &str) -> Option<KeySym> {
         let ks: KeySym = match key {
-            // 特殊键
             "Return" => k::KEY_Return,
             "Tab" => k::KEY_Tab,
             "space" => k::KEY_space,
@@ -735,7 +705,6 @@ impl Config {
             "comma" => k::KEY_comma,
             "period" => k::KEY_period,
 
-            // 字母键
             "a" => k::KEY_a,
             "b" => k::KEY_b,
             "c" => k::KEY_c,
@@ -763,7 +732,6 @@ impl Config {
             "y" => k::KEY_y,
             "z" => k::KEY_z,
 
-            // 数字键
             "0" => k::KEY_0,
             "1" => k::KEY_1,
             "2" => k::KEY_2,
@@ -775,7 +743,6 @@ impl Config {
             "8" => k::KEY_8,
             "9" => k::KEY_9,
 
-            // 功能键
             "F1" => k::KEY_F1,
             "F2" => k::KEY_F2,
             "F3" => k::KEY_F3,
@@ -789,13 +756,11 @@ impl Config {
             "F11" => k::KEY_F11,
             "F12" => k::KEY_F12,
 
-            // 方向键
             "Left" => k::KEY_Left,
             "Right" => k::KEY_Right,
             "Up" => k::KEY_Up,
             "Down" => k::KEY_Down,
 
-            // 其他常用键
             "Escape" => k::KEY_Escape,
             "BackSpace" => k::KEY_BackSpace,
             "Delete" => k::KEY_Delete,
@@ -829,7 +794,6 @@ impl Config {
         mask
     }
 
-    // 扩展 convert_argument 以支持布局参数
     fn convert_argument(&self, arg: &ArgumentConfig) -> jwm::WMArgEnum {
         match arg {
             ArgumentConfig::Int(i) => jwm::WMArgEnum::Int(*i),
@@ -837,7 +801,6 @@ impl Config {
             ArgumentConfig::Float(f) => jwm::WMArgEnum::Float(*f),
             ArgumentConfig::StringVec(v) => jwm::WMArgEnum::StringVec(v.clone()),
             ArgumentConfig::String(s) => {
-                // 特殊处理布局字符串
                 match s.as_str() {
                     "tile" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::TILE)),
                     "float" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::FLOAT)),
@@ -908,27 +871,21 @@ impl Config {
         ]
     }
 
-    /// 保存当前配置到指定文件
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<(), ConfigError> {
         let toml_string =
             toml::to_string_pretty(&self.inner).map_err(|e| ConfigError::Serialize(e))?;
-
-        // 确保目录存在
         if let Some(parent) = path.as_ref().parent() {
             fs::create_dir_all(parent)?;
         }
-
         fs::write(path, toml_string)?;
         Ok(())
     }
 
-    /// 保存配置到默认位置
     pub fn save_default(&self) -> Result<(), ConfigError> {
         let config_path = Self::get_default_config_path();
         self.save_to_file(config_path)
     }
 
-    /// 获取默认配置文件路径
     pub fn get_default_config_path() -> std::path::PathBuf {
         dirs::config_dir()
             .unwrap_or_else(|| std::env::current_dir().unwrap())
@@ -936,13 +893,11 @@ impl Config {
             .join("config.toml")
     }
 
-    /// 生成配置文件模板并保存
     pub fn generate_template<P: AsRef<Path>>(path: P) -> Result<(), ConfigError> {
         let default_config = Self::default();
         default_config.save_to_file(path)
     }
 
-    /// 备份当前配置文件
     pub fn backup_config<P: AsRef<Path>>(
         original_path: P,
     ) -> Result<std::path::PathBuf, ConfigError> {
@@ -956,7 +911,6 @@ impl Config {
         Ok(backup_path)
     }
 
-    /// 从备份恢复配置文件
     pub fn restore_from_backup<P: AsRef<Path>>(
         backup_path: P,
         target_path: P,
@@ -975,20 +929,16 @@ impl Config {
         Ok(())
     }
 
-    /// 验证配置文件是否有效
     pub fn validate_config_file<P: AsRef<Path>>(path: P) -> Result<(), ConfigError> {
         let content = fs::read_to_string(path)?;
         let _config: TomlConfig = toml::from_str(&content)?;
         Ok(())
     }
 
-    /// 合并配置（用于部分更新）
     pub fn merge_config(&mut self, other: TomlConfig) {
-        // 这里可以实现选择性合并逻辑
         self.inner = other;
     }
 
-    /// 重新加载配置文件
     pub fn reload(&mut self) -> Result<(), ConfigError> {
         let config_path = Self::get_default_config_path();
         if config_path.exists() {
@@ -998,12 +948,10 @@ impl Config {
         Ok(())
     }
 
-    /// 检查配置文件是否存在
     pub fn config_exists() -> bool {
         Self::get_default_config_path().exists()
     }
 
-    /// 获取配置文件的最后修改时间
     pub fn get_config_modified_time() -> Result<std::time::SystemTime, ConfigError> {
         let config_path = Self::get_default_config_path();
         let metadata = fs::metadata(config_path)?;
@@ -1011,7 +959,6 @@ impl Config {
     }
 }
 
-// 完整的 ConfigError 定义和 From trait 实现
 #[derive(Debug)]
 pub enum ConfigError {
     Io(std::io::Error),
@@ -1039,7 +986,6 @@ impl std::error::Error for ConfigError {
     }
 }
 
-// 添加缺失的 From trait 实现
 impl From<std::io::Error> for ConfigError {
     fn from(err: std::io::Error) -> Self {
         ConfigError::Io(err)
@@ -1058,15 +1004,12 @@ impl From<toml::ser::Error> for ConfigError {
     }
 }
 
-// 全局配置实例
 pub static CONFIG: Lazy<Config> = Lazy::new(|| {
     if !LOAD_LOCAL_CONFIG {
         return Config::default();
     }
 
-    // 加载配置
     let config = Config::load_default();
-    // 生成配置文件模板（如果不存在）
     if !Config::config_exists() {
         Config::generate_template(Config::get_default_config_path()).unwrap();
         println!(

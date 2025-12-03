@@ -371,16 +371,12 @@ pub struct WmHints {
     pub input: Option<bool>,
 }
 
-// 属性接口 - 经过优化，移除通用 Atom 操作，完全语义化
 pub trait PropertyOps: Send {
-    // 获取窗口标识信息
     fn get_title(&self, win: WindowId) -> String;
     fn get_class(&self, win: WindowId) -> (String, String); // (instance, class)
 
-    // 窗口类型查询
     fn get_window_types(&self, win: WindowId) -> Vec<WindowType>;
 
-    // 状态查询与设置
     fn is_fullscreen(&self, win: WindowId) -> bool;
     fn set_fullscreen_state(
         &self,
@@ -401,11 +397,9 @@ pub trait PropertyOps: Send {
         win: WindowId,
     ) -> Result<Option<NormalHints>, Box<dyn std::error::Error>>;
 
-    // 协议相关
     fn supports_delete_window(&self, win: WindowId) -> bool;
     fn send_delete_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
-    // 状态栏/Strut
     fn set_window_strut_top(
         &self,
         win: WindowId,
@@ -415,7 +409,6 @@ pub trait PropertyOps: Send {
     ) -> Result<(), Box<dyn std::error::Error>>;
     fn clear_window_strut(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
-    // JWM 内部状态保存 (替代 _NET_CLIENT_INFO Atom 直接操作)
     fn set_client_info_props(
         &self,
         win: WindowId,
@@ -423,7 +416,6 @@ pub trait PropertyOps: Send {
         monitor_num: u32,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
-    // ICCCM WM_STATE 读写 (用于 restart snapshot 或 iconify)
     fn get_wm_state(&self, win: WindowId) -> Result<i64, Box<dyn std::error::Error>>;
     fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), Box<dyn std::error::Error>>;
 }

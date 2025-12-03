@@ -21,7 +21,6 @@ impl<C: Connection> X11PropertyOps<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
-    // 内部私有方法： Atom 操作
     fn get_text_property(&self, window: WindowId, atom: Atom) -> Option<String> {
         let reply = self
             .conn

@@ -31,7 +31,6 @@ impl<C: Connection> X11EventSource<C> {
     }
 
     fn map_net_wm_action(action: u32) -> Option<NetWmAction> {
-        // EWMH: 0=Remove,1=Add,2=Toggle
         match action {
             0 => Some(NetWmAction::Remove),
             1 => Some(NetWmAction::Add),
@@ -66,7 +65,6 @@ impl<C: Connection> X11EventSource<C> {
                 request: u8::from(e.request),
             }),
             XEvent::ClientMessage(e) => {
-                // 只在我们关心的 EWMH 类型时转成语义事件，否则原样透传
                 let data32 = e.data.as_data32();
                 if e.type_ == self.atoms._NET_WM_STATE && e.format == 32 && data32.len() >= 3 {
                     let window = WindowId(e.window as u64);
@@ -93,7 +91,6 @@ impl<C: Connection> X11EventSource<C> {
                         window: WindowId(e.window as u64),
                     });
                 }
-                // 其它类型按原样透传（若上层需要）
                 Some(BackendEvent::ClientMessage {
                     window: WindowId(e.window as u64),
                     type_: e.type_,
@@ -122,7 +119,7 @@ impl<C: Connection> X11EventSource<C> {
                 window: WindowId(e.window as u64),
             }),
             XEvent::EnterNotify(e) => Some(BackendEvent::EnterNotify {
-                window: WindowId(self.root as u64), // 维持现有 enter_notify(root, event, ..) 语义
+                window: WindowId(self.root as u64),
                 event: WindowId(e.event as u64),
                 mode: e.mode.into(),
                 detail: e.detail.into(),

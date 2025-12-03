@@ -77,12 +77,6 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
         Ok(mapping.keysyms.get(0).copied().unwrap_or(0))
     }
 
-    /// 通用拖拽循环
-    /// - grab_mask: 抓取的事件掩码（通常是 BUTTON_PRESS|BUTTON_RELEASE|POINTER_MOTION）
-    /// - cursor: 拖拽时光标（可选）
-    /// - warp_to: 可选，相对窗口坐标（例如 resize 时定位到右下角）
-    /// - target_window: 关联窗口，用于 Destroy/Unmap 的中止条件
-    /// - on_motion: MotionNotify 时的回调（由上层实现移动/缩放逻辑）
     pub fn drag_loop<F>(
         &self,
         grab_mask: EventMask,
@@ -94,7 +88,6 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
     where
         F: FnMut(&MotionNotifyEvent) -> Result<(), Box<dyn std::error::Error>>,
     {
-        // 抓指针
         match self.grab_pointer_raw(grab_mask, cursor) {
             Ok(GrabStatus::SUCCESS) => {}
             Ok(status) => {
@@ -110,7 +103,6 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
             Err(e) => return Err(e),
         }
 
-        // 可选 warp
         if let Some((wx, wy)) = warp_to {
             self.warp_pointer_to_window(WindowId(target_window.into()), wx, wy)?;
         }
@@ -121,7 +113,6 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
         loop {
             match self.conn.poll_for_event()? {
                 Some(Event::MotionNotify(e)) => {
-                    // ~16ms 节流
                     if e.time.wrapping_sub(last_motion_time) <= 16 {
                         continue;
                     }
@@ -129,12 +120,10 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
                     on_motion(&e)?;
                 }
                 Some(Event::ButtonRelease(_)) => {
-                    // 松开按键，结束
                     break;
                 }
                 Some(Event::KeyPress(e)) => {
-                    // ESC 取消
-                    const XK_ESCAPE: u32 = 0xff1b; // x11::keysym::XK_Escape
+                    const XK_ESCAPE: u32 = 0xff1b;
                     let ks = self.keycode_to_keysym(e.detail)?;
                     if ks == XK_ESCAPE {
                         break;
@@ -151,10 +140,8 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
                     }
                 }
                 Some(_other) => {
-                    // 其他事件忽略（如需，后续可增加 on_event 回调转发）
                 }
                 None => {
-                    // 暂无事件，稍微退避，避免busy loop
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }
             }
@@ -174,7 +161,6 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
         mask_bits: u32,
         cursor: Option<u64>,
     ) -> Result<bool, Box<dyn std::error::Error>> {
-        // 将通用 mask 转为 X11 EventMask
         let x_mask = event_mask_from_generic(mask_bits);
         let cursor_id = cursor.map(|c| c as u32);
         let status = self.grab_pointer_raw(x_mask, cursor_id)?;
@@ -193,7 +179,6 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
 
     fn query_pointer_root(&self) -> Result<(i32, i32, u16, u16), Box<dyn std::error::Error>> {
         let reply = self.query_pointer()?;
-        // 返回 (root_x, root_y, 修饰键mask, 预留值 0)
         Ok((
             reply.root_x as i32,
             reply.root_y as i32,
@@ -221,7 +206,6 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
         target: WindowId,
         on_motion: &mut dyn FnMut(i16, i16, u32) -> Result<(), Box<dyn std::error::Error>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 通用实现：抓取 BUTTON_PRESS|BUTTON_RELEASE|POINTER_MOTION
         use x11rb::protocol::xproto::EventMask;
         let grab_mask =
             EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;

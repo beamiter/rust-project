@@ -76,11 +76,9 @@ pub struct RestartSnapshot {
 pub struct MonitorSnapshot {
     pub num: i32,
 
-    // tag 集与当前选择
     pub tag_set: [u32; 2],
     pub sel_tags: usize,
 
-    // per-tag 信息
     pub pertag: PertagSnapshot,
 
     pub monitor_clients_order: Vec<WindowId>,
@@ -94,9 +92,9 @@ pub struct PertagSnapshot {
     pub n_masters: Vec<u32>,
     pub m_facts: Vec<f32>,
     pub sel_lts: Vec<usize>,
-    pub lt_pairs: Vec<[u32; 2]>, // 每 tag 两个 layout 的编号：0=TILE,1=FLOAT,2=MONOCLE
+    pub lt_pairs: Vec<[u32; 2]>,
     pub show_bars: Vec<bool>,
-    pub sel_by_tag: Vec<Option<WindowId>>, // 每个 tag 的选中窗口（Window）
+    pub sel_by_tag: Vec<Option<WindowId>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -241,7 +239,6 @@ impl WMRule {
 pub type MonitorIndex = i32;
 
 pub struct Jwm {
-    // 基础/环境
     pub s_w: i32,
     pub s_h: i32,
     pub running: AtomicBool,
@@ -249,10 +246,8 @@ pub struct Jwm {
 
     backend: Box<dyn Backend>,
 
-    // 与状态栏进程通信的消息缓存（写到 ring buffer）
     pub message: SharedMessage,
 
-    // 客户端/显示器存储（SlotMap 体系）
     pub clients: SlotMap<ClientKey, WMClient>,
     pub monitors: SlotMap<MonitorKey, WMMonitor>,
     pub client_order: Vec<ClientKey>,
@@ -263,23 +258,18 @@ pub struct Jwm {
     pub monitor_clients: SecondaryMap<MonitorKey, Vec<ClientKey>>,
     pub monitor_stack: SecondaryMap<MonitorKey, Vec<ClientKey>>,
 
-    // ——— 单实例状态栏（Single Bar）———
-    // 共享内存与子进程（单实例）
-    pub status_bar_shmem: Option<SharedRingBuffer>, // 全局唯一 ring buffer（例如 /dev/shm/jwm_bar_global）
-    pub status_bar_child: Option<Child>,            // 单个状态栏进程
-    pub status_bar_pid: Option<u32>,                // 子进程 PID（可选）
+    pub status_bar_shmem: Option<SharedRingBuffer>,
+    pub status_bar_child: Option<Child>,
+    pub status_bar_pid: Option<u32>,
 
-    // 状态栏窗口（单实例）
-    pub status_bar_client: Option<ClientKey>, // 唯一的 bar 客户端
-    pub status_bar_window: Option<WindowId>,  // 唯一的 bar 窗口
-    pub current_bar_monitor_id: Option<i32>,  // bar 当前所在显示器的编号（monitor.num）
+    pub status_bar_client: Option<ClientKey>,
+    pub status_bar_window: Option<WindowId>,
+    pub current_bar_monitor_id: Option<i32>,
 
-    // 去抖/差异更新
     pub last_bar_payload: Option<Vec<u8>>,
     pub last_bar_update_at: Option<std::time::Instant>,
     pub bar_min_interval: std::time::Duration,
 
-    // per-monitor 的待刷新集合（仍按显示器维度存）
     pub pending_bar_updates: HashSet<MonitorIndex>,
 
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
@@ -292,10 +282,8 @@ pub struct Jwm {
 impl Jwm {
     pub fn new(mut backend: Box<dyn Backend>) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[new] Starting JWM initialization");
-        // 显示当前的 X11 环境信息
         Self::log_x11_environment();
         backend.cursor_provider().preload_common()?;
-        // 屏幕尺寸来自 OutputOps
         let si = backend.output_ops().screen_info();
         let s_w = si.width;
         let s_h = si.height;
@@ -323,7 +311,6 @@ impl Jwm {
                 ArgbColor::from_hex(&colors.cyan, colors.opaque)?,
             ),
         );
-        // 预分配
         backend.color_allocator().allocate_schemes_pixels()?;
         info!("[new] JWM initialization completed successfully");
         Ok(Jwm {
@@ -508,14 +495,12 @@ impl Jwm {
             );
         }
 
-        // 是否 managed 客户端
         let client_key_opt = self.wintoclient(window);
         if let Some(client_key) = client_key_opt {
             return self.handle_regular_configure_request_params(
                 client_key, mask_bits, x, y, w, h, border, sibling, stack_mode,
             );
         } else {
-            // 未管理的窗口
             return self.handle_unmanaged_configure_request_params(
                 window, mask_bits, x, y, w, h, border, sibling, stack_mode,
             );
@@ -587,7 +572,6 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let is_popup = self.is_popup_like(client_key);
 
-        // 边框更新
         let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
         if mask.contains(ConfigWindowBits::BORDER_WIDTH) {
             if let Some(client) = self.clients.get_mut(client_key) {
@@ -732,7 +716,6 @@ impl Jwm {
     fn handle_backend_event(&mut self, ev: BackendEvent) -> Result<(), Box<dyn std::error::Error>> {
         match ev {
             BackendEvent::WmKeyboardShortcut { keysym, mods } => {
-                // 复用现有的按键处理逻辑
                 for key_config in crate::config::CONFIG.get_keys().iter() {
                     if keysym == key_config.key_sym && mods == key_config.mask {
                         if let Some(func) = key_config.func_opt {
@@ -796,7 +779,6 @@ impl Jwm {
             } => self.unmapnotify(window, from_configure),
 
             BackendEvent::MappingNotify { request: _ } => {
-                // 统一处理：键盘映射变化，清缓存+重新抓取
                 self.backend.key_ops_mut().clear_cache();
                 self.grabkeys()
             }
@@ -915,12 +897,8 @@ impl Jwm {
             monitors: Vec::new(),
             clients: HashMap::new(),
         };
-
-        // 监视器快照
         for &mon_key in &self.monitor_order {
             let m = self.monitors.get(mon_key).unwrap();
-
-            // pertag 拆出
             let pertag_snap = if let Some(p) = m.pertag.as_ref() {
                 let mut lt_pairs = Vec::with_capacity(p.lt_idxs.len());
                 for i in 0..p.lt_idxs.len() {
@@ -951,7 +929,6 @@ impl Jwm {
                     sel_by_tag,
                 }
             } else {
-                // fallback：按 tags_length()+1 填入基本值
                 let len = CONFIG.tags_length() + 1;
                 PertagSnapshot {
                     cur_tag: 1,
@@ -965,7 +942,6 @@ impl Jwm {
                 }
             };
 
-            // 顺序（Window）
             let mc_order = self
                 .monitor_clients
                 .get(mon_key)
@@ -995,7 +971,6 @@ impl Jwm {
             });
         }
 
-        // 客户端快照（Window -> WMClient）
         for (_, c) in self.clients.iter() {
             let mut cc = c.clone();
             cc.monitor_num = c
@@ -1003,11 +978,10 @@ impl Jwm {
                 .and_then(|mk| self.monitors.get(mk))
                 .map(|m| m.num as u32)
                 .unwrap_or(0);
-            cc.mon = None; // 快照不存 SlotMap 键
+            cc.mon = None;
             snapshot.clients.insert(cc.win, cc);
         }
 
-        // 写盘（原子）
         let data = bincode::encode_to_vec(&snapshot, standard())?;
         Self::atomic_write(RESTART_SNAPSHOT_PATH, &data)?;
         Ok(())
@@ -1039,7 +1013,6 @@ impl Jwm {
             }
         }
 
-        // 1) 恢复 monitor 的 tag_set/sel_tags 与 pertag（layout、nmaster、mfact、show_bar）
         for ms in &snap.monitors {
             if let Some(mon_key) = self.get_monitor_by_id(ms.num) {
                 if let Some(m) = self.monitors.get_mut(mon_key) {
@@ -1053,13 +1026,11 @@ impl Jwm {
                         p.m_facts = ms.pertag.m_facts.clone();
                         p.sel_lts = ms.pertag.sel_lts.clone();
                         p.show_bars = ms.pertag.show_bars.clone();
-                        // 重建 lt_idxs
                         for i in 0..p.lt_idxs.len().min(ms.pertag.lt_pairs.len()) {
                             let [id0, id1] = ms.pertag.lt_pairs[i];
                             p.lt_idxs[i][0] = Some(Self::id_to_layout(id0));
                             p.lt_idxs[i][1] = Some(Self::id_to_layout(id1));
                         }
-                        // 应用当前 tag 的选择到 WMMonitor
                         let cur = p.cur_tag;
                         m.layout.n_master = p.n_masters[cur];
                         m.layout.m_fact = p.m_facts[cur];
@@ -1071,7 +1042,6 @@ impl Jwm {
             }
         }
 
-        // 2) 清空并按快照重建 monitor_clients/monitor_stack（保持顺序）
         for &mon_key in &self.monitor_order {
             if let Some(v) = self.monitor_clients.get_mut(mon_key) {
                 v.clear();
@@ -1082,13 +1052,11 @@ impl Jwm {
         }
         for ms in &snap.monitors {
             if let Some(mon_key) = self.get_monitor_by_id(ms.num) {
-                // clients 顺序
                 for &win in &ms.monitor_clients_order {
                     if let Some(ck) = self.wintoclient(win) {
                         self.attach_to_monitor_end(ck, mon_key);
                     }
                 }
-                // stack 顺序
                 for &win in &ms.monitor_stack_order {
                     if let Some(ck) = self.wintoclient(win) {
                         self.attach_to_monitor_stack_end(ck, mon_key);
@@ -1097,20 +1065,16 @@ impl Jwm {
             }
         }
 
-        // 3) 恢复 per-tag 的选中 client 与 monitor.sel
         for ms in &snap.monitors {
             if let Some(mon_key) = self.get_monitor_by_id(ms.num) {
-                // 收集所有需要的信息
                 let mut updates = Vec::new();
                 for (i, &win_opt) in ms.pertag.sel_by_tag.iter().enumerate() {
                     let client_key = win_opt.and_then(|w| self.wintoclient(w));
                     updates.push((i, client_key));
                 }
                 let next_visible = self.find_next_visible_client_by_mon(mon_key);
-                // 现在安全地更新
                 if let Some(m) = self.monitors.get_mut(mon_key) {
                     if let Some(p) = m.pertag.as_mut() {
-                        // 应用更新
                         for (i, client_key) in updates {
                             if i < p.sel.len() {
                                 p.sel[i] = client_key;
@@ -1123,7 +1087,6 @@ impl Jwm {
             }
         }
 
-        // 4) 恢复 sel_mon 与 bar monitor
         if let Some(id) = snap.sel_monitor_num {
             self.sel_mon = self.get_monitor_by_id(id);
         }
@@ -1132,17 +1095,14 @@ impl Jwm {
             let _ = self.position_statusbar_on_monitor(id);
         }
 
-        // 5) 一次性更新“可见性 + 叠放 + 焦点”，不要触发布局计算以免改动几何
-        // self.arrange(None);
         for &mon_key in self.monitor_order.clone().iter() {
-            self.showhide_monitor(mon_key); // 只根据 tag 显示/隐藏，不改变尺寸
+            self.showhide_monitor(mon_key);
         }
         let _ = self.restack(self.sel_mon);
         let _ = self.focus(None);
         self.mark_bar_update_needed_if_visible(None);
     }
 
-    // 尾插：保持快照顺序
     fn attach_to_monitor_end(&mut self, ck: ClientKey, mon: MonitorKey) {
         if let Some(v) = self.monitor_clients.get_mut(mon) {
             if !v.iter().any(|&k| k == ck) {
@@ -1161,14 +1121,12 @@ impl Jwm {
         }
     }
 
-    // 创建新的客户端
     fn insert_client(&mut self, client: WMClient) -> ClientKey {
         let key = self.clients.insert(client);
         self.client_order.push(key);
         key
     }
 
-    // 创建新的监视器
     fn insert_monitor(&mut self, monitor: WMMonitor) -> MonitorKey {
         let key = self.monitors.insert(monitor);
         self.monitor_order.push(key);
@@ -1177,7 +1135,6 @@ impl Jwm {
         key
     }
 
-    // 检查客户端是否是当前选中的客户端
     fn is_client_selected(&self, client_key: ClientKey) -> bool {
         self.sel_mon
             .and_then(|sel_mon_key| self.monitors.get(sel_mon_key))
@@ -1186,7 +1143,6 @@ impl Jwm {
             .unwrap_or(false)
     }
 
-    // 获取监视器的所有客户端
     fn get_monitor_clients(&self, mon_key: MonitorKey) -> &[ClientKey] {
         self.monitor_clients
             .get(mon_key)
@@ -1194,7 +1150,6 @@ impl Jwm {
             .unwrap_or(&[])
     }
 
-    // 获取监视器的堆栈顺序
     fn get_monitor_stack(&self, mon_key: MonitorKey) -> &[ClientKey] {
         self.monitor_stack
             .get(mon_key)
@@ -1214,24 +1169,20 @@ impl Jwm {
             .and_then(|monitor| monitor.sel)
     }
 
-    // 原 attach 改名为 attach_front：头插（插入到列表开头）
     fn attach_front(&mut self, client_key: ClientKey) {
         if let Some(client) = self.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
                 if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
-                    // 头插：进入 master 区
                     client_list.insert(0, client_key);
                 }
             }
         }
     }
 
-    // 新增：尾插（追加到列表末尾），保持 master 稳定
     fn attach_back(&mut self, client_key: ClientKey) {
         if let Some(client) = self.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
                 if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
-                    // 尾插：进入 stack 区
                     client_list.push(client_key);
                 }
             }
@@ -1260,7 +1211,6 @@ impl Jwm {
         }
     }
 
-    // 从指定监视器移除客户端
     fn detach_from_monitor(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
         if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
             client_list.retain(|&k| k != client_key);
@@ -1270,7 +1220,6 @@ impl Jwm {
         }
     }
 
-    // 将客户端添加到指定监视器
     fn attach_to_monitor(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
         if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
             client_list.push(client_key);
@@ -1288,11 +1237,9 @@ impl Jwm {
                         stack_list.remove(pos);
                     }
                 }
-                // 更新选中客户端
                 let next_visible_client = self.find_next_visible_client_by_mon(mon_key);
                 if let Some(monitor) = self.monitors.get_mut(mon_key) {
                     if monitor.sel == Some(client_key) {
-                        // 找到下一个可见客户端
                         monitor.sel = next_visible_client;
                     }
                 }
@@ -1300,7 +1247,6 @@ impl Jwm {
         }
     }
 
-    // 查找下一个可见客户端
     fn find_next_visible_client_by_mon(&self, mon_key: MonitorKey) -> Option<ClientKey> {
         if let Some(stack_list) = self.monitor_stack.get(mon_key) {
             for &client_key in stack_list {
@@ -1368,7 +1314,6 @@ impl Jwm {
         };
 
         self.detach(client_key);
-        // 关键：弹到 master 使用头插
         self.attach_front(client_key);
 
         let _ = self.focus(Some(client_key));
@@ -1389,7 +1334,6 @@ impl Jwm {
             .map(|(key, _)| key)
     }
 
-    // 记录 X11 环境信息用于调试
     fn log_x11_environment() {
         info!("[X11 Environment Debug]");
         info!("DISPLAY: {:?}", env::var("DISPLAY"));
@@ -1398,7 +1342,6 @@ impl Jwm {
         info!("USER: {:?}", env::var("USER"));
         info!("HOME: {:?}", env::var("HOME"));
 
-        // 检查 X11 socket 文件
         if let Ok(display) = env::var("DISPLAY") {
             let socket_path = format!("/tmp/.X11-unix/X{}", display.trim_start_matches(":"));
             info!("X11 socket path: {}", socket_path);
@@ -1408,7 +1351,6 @@ impl Jwm {
             );
         }
 
-        // 检查 X 服务器是否在运行
         let x_running = std::process::Command::new("pgrep")
             .arg("-f")
             .arg("X|Xorg")
@@ -1420,11 +1362,9 @@ impl Jwm {
 
     pub fn restart(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[restart] Preparing seamless restart");
-        // 先保存快照
         if let Err(e) = self.save_restart_snapshot() {
             warn!("[restart] save_restart_snapshot failed: {:?}", e);
         }
-        // 标记重启，退出主循环
         self.running.store(false, Ordering::SeqCst);
         self.is_restarting.store(true, Ordering::SeqCst);
         Ok(())
@@ -1438,7 +1378,6 @@ impl Jwm {
                 }
             }
         }
-        // 没有 pertag 或越界时，保守返回 true（与现有默认行为一致）
         true
     }
     fn mark_bar_update_needed_if_visible(&mut self, monitor_id: Option<i32>) {
@@ -1478,11 +1417,8 @@ impl Jwm {
         h: &mut i32,
         interact: bool,
     ) -> Result<bool, Box<dyn std::error::Error>> {
-        // 设置最小可能的客户端区域大小
         *w = (*w).max(1);
         *h = (*h).max(1);
-
-        // 获取当前几何信息用于后续比较
         let original_geometry = if let Some(client) = self.clients.get(client_key) {
             (
                 client.geometry.x,
@@ -1493,14 +1429,8 @@ impl Jwm {
         } else {
             return Err("Client not found".into());
         };
-
-        // 边界检查
         self.apply_boundary_constraints(client_key, x, y, w, h, interact)?;
-
-        // 尺寸提示处理
         let geometry_changed = self.apply_size_hints_constraints(client_key, w, h)?;
-
-        // 检查最终几何形状是否与客户端当前几何形状不同
         Ok(geometry_changed
             || *x != original_geometry.0
             || *y != original_geometry.1
@@ -1508,7 +1438,6 @@ impl Jwm {
             || *h != original_geometry.3)
     }
 
-    // 应用边界约束
     fn apply_boundary_constraints(
         &self,
         client_key: ClientKey,
@@ -1530,10 +1459,8 @@ impl Jwm {
             };
 
         if interact {
-            // 屏幕边界约束
             self.constrain_to_screen(x, y, client_total_width, client_total_height);
         } else {
-            // 监视器边界约束
             if let Some(mon_key) = mon_key {
                 if let Some(monitor) = self.monitors.get(mon_key) {
                     self.constrain_to_monitor(
@@ -1550,14 +1477,11 @@ impl Jwm {
         Ok(())
     }
 
-    // 约束到屏幕边界
     fn constrain_to_screen(&self, x: &mut i32, y: &mut i32, total_width: i32, total_height: i32) {
-        // 防止窗口完全离开屏幕
         *x = (*x).clamp(-(total_width - 1), self.s_w - 1);
         *y = (*y).clamp(-(total_height - 1), self.s_h - 1);
     }
 
-    // 约束到监视器边界
     fn constrain_to_monitor(
         &self,
         x: &mut i32,
@@ -1573,13 +1497,10 @@ impl Jwm {
             w_h: wh,
             ..
         } = *monitor_geometry;
-
-        // 防止窗口完全离开监视器
         *x = (*x).clamp(wx - total_width + 1, wx + ww - 1);
         *y = (*y).clamp(wy - total_height + 1, wy + wh - 1);
     }
 
-    // 应用尺寸提示约束
     fn apply_size_hints_constraints(
         &mut self,
         client_key: ClientKey,
@@ -1592,22 +1513,18 @@ impl Jwm {
             .map(|client| client.state.is_floating)
             .unwrap_or(false);
 
-        // 只有在需要时才应用尺寸提示
         if !CONFIG.behavior().resize_hints && !is_floating {
             return Ok(false);
         }
 
-        // 确保尺寸提示有效
         self.ensure_size_hints_valid(client_key)?;
 
-        // 获取尺寸提示
         let hints = if let Some(client) = self.clients.get(client_key) {
             client.size_hints.clone()
         } else {
             return Err("Client not found".into());
         };
 
-        // 应用所有尺寸约束
         let (new_w, new_h) = self.calculate_constrained_size(*w, *h, &hints);
         let changed = *w != new_w || *h != new_h;
         *w = new_w;
@@ -1616,7 +1533,6 @@ impl Jwm {
         Ok(changed)
     }
 
-    // 确保尺寸提示有效
     fn ensure_size_hints_valid(
         &mut self,
         client_key: ClientKey,
@@ -1626,7 +1542,6 @@ impl Jwm {
             .get(client_key)
             .map(|client| client.size_hints.hints_valid)
             .unwrap_or(false);
-
         if !hints_valid {
             self.updatesizehints(client_key)?;
         }
@@ -1634,16 +1549,12 @@ impl Jwm {
         Ok(())
     }
 
-    // 计算受约束的尺寸
     fn calculate_constrained_size(&self, mut w: i32, mut h: i32, hints: &SizeHints) -> (i32, i32) {
-        // 1. 应用基础尺寸和增量
         w = self.apply_increments(w - hints.base_w, hints.inc_w) + hints.base_w;
         h = self.apply_increments(h - hints.base_h, hints.inc_h) + hints.base_h;
 
-        // 2. 应用长宽比限制
         (w, h) = self.apply_aspect_ratio_constraints(w, h, hints);
 
-        // 3. 应用最小/最大尺寸限制
         w = w.max(hints.min_w);
         h = h.max(hints.min_h);
 
@@ -1657,7 +1568,6 @@ impl Jwm {
         (w, h)
     }
 
-    // 应用增量约束
     fn apply_increments(&self, size: i32, increment: i32) -> i32 {
         if increment > 0 {
             (size / increment) * increment
@@ -1666,7 +1576,6 @@ impl Jwm {
         }
     }
 
-    // 应用长宽比约束
     fn apply_aspect_ratio_constraints(
         &self,
         mut w: i32,
@@ -1693,7 +1602,6 @@ impl Jwm {
             .map(|c| c.win)
             .ok_or("Client not found")?;
 
-        // 使用新 API fetch_normal_hints
         match self.backend.property_ops().fetch_normal_hints(win)? {
             Some(h) => {
                 let c = self.clients.get_mut(client_key).ok_or("Client not found")?;
@@ -1720,39 +1628,25 @@ impl Jwm {
         Ok(())
     }
 
-    // 优化后的清理函数 - 只处理必须手动清理的资源
     pub fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[cleanup] Starting essential cleanup (letting Rust handle memory)");
-
-        // 2. 清理 X11 相关资源（必须手动处理）
         self.cleanup_x11_resources()?;
-
-        // 3. 清理系统资源（必须手动处理）
         self.cleanup_system_resources()?;
-
         self.backend.color_allocator().free_all_theme_pixels()?;
-
-        // 4. 同步所有 X11 操作
         self.backend.window_ops().flush()?;
-
         info!("[cleanup] Essential cleanup completed (Rust will handle the rest)");
         Ok(())
     }
 
-    // 清理 X11 相关资源
     fn cleanup_x11_resources(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[cleanup_x11_resources] Cleaning X11 resources");
 
-        // 清理所有客户端的 X11 状态（恢复窗口到合理状态）
         self.cleanup_all_clients_x11_state()?;
 
-        // 释放按键抓取
         self.cleanup_key_grabs()?;
 
-        // 重置输入焦点到根窗口
         self.reset_input_focus()?;
 
-        // 清理 EWMH 属性
         self.cleanup_ewmh_properties()?;
 
         if let Err(e) = self.backend.cursor_provider().cleanup() {
@@ -1763,14 +1657,11 @@ impl Jwm {
         Ok(())
     }
 
-    // 清理系统资源
     fn cleanup_system_resources(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         info!("[cleanup_system_resources] Cleaning system resources");
 
-        // 终止状态栏进程
         self.cleanup_statusbar_processes()?;
 
-        // 清理共享内存（如果需要显式清理）
         self.cleanup_shared_memory_resources()?;
 
         info!("[cleanup_system_resources] System resources cleaned");
@@ -1781,19 +1672,16 @@ impl Jwm {
         info!("[cleanup_all_clients_x11_state]");
         let restarting = self.is_restarting.load(Ordering::SeqCst);
 
-        // 先收集所有需要处理的客户端信息
         let mut clients_to_process = Vec::new();
         for &mon_key in &self.monitor_order {
             if let Some(stack) = self.monitor_stack.get(mon_key) {
                 for &ck in stack {
                     if let Some(c) = self.clients.get(ck) {
-                        // 收集需要的信息而不是直接操作
                         clients_to_process.push((c.win, c.geometry.old_border_w, ck));
                     }
                 }
             }
         }
-        // 现在可以安全地进行操作
         for (win, old_border_w, ck) in clients_to_process {
             if let Some(_) = self.clients.get(ck) {
                 if restarting {
@@ -1801,13 +1689,10 @@ impl Jwm {
                     let mask = EventMaskBits::NONE.bits();
                     self.backend.window_ops().change_event_mask(win, mask)?;
                 } else {
-                    // 抓取服务器确保操作原子性
                     self.backend.window_ops().grab_server()?;
 
-                    // 正常退出：执行完整恢复
                     let _ = self.restore_client_x11_state(win, old_border_w);
 
-                    // 无论成功失败都要释放服务器
                     let _ = self.backend.window_ops().ungrab_server();
                 }
             }
@@ -1844,30 +1729,24 @@ impl Jwm {
         Ok(())
     }
 
-    // 清理状态栏进程
     fn cleanup_statusbar_processes(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let mut child = if let Some(child) = self.status_bar_child.take() {
             child
         } else {
             return Ok(());
         };
-        // 获取进程 ID
         let pid = child.id();
         let nix_pid = Pid::from_raw(pid as i32);
-        // 检查进程是否存在
         match signal::kill(nix_pid, None) {
             Err(_) => {
-                // 进程已经不存在
                 info!("Process already terminated",);
                 return Ok(());
             }
-            Ok(_) => {} // 进程存在，继续终止流程
+            Ok(_) => {}
         }
-        // 尝试优雅终止
         if let Ok(_) = signal::kill(nix_pid, Signal::SIGTERM) {
             let timeout = Duration::from_secs(3);
             let start = Instant::now();
-            // 等待进程退出
             while start.elapsed() < timeout {
                 match child.try_wait() {
                     Ok(Some(status)) => {
@@ -1882,17 +1761,14 @@ impl Jwm {
                     }
                 }
             }
-            // 超时后强制终止
             warn!("Graceful termination timeout, forcing kill");
         }
-        // 强制终止
         self.status_bar_pid = None;
         signal::kill(nix_pid, Signal::SIGKILL)?;
 
         Ok(())
     }
 
-    // 清理共享内存资源
     fn cleanup_shared_memory_resources(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(rb) = self.status_bar_shmem.take() {
             drop(rb);
@@ -1929,7 +1805,7 @@ impl Jwm {
 
     fn cleanup_ewmh_properties(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(facade) = self.backend.ewmh_facade().as_ref() {
-            let _ = facade.reset_root_properties(); // 后端内部清理 _NET_ACTIVE_WINDOW/_NET_CLIENT_LIST/_NET_SUPPORTED
+            let _ = facade.reset_root_properties();
         }
         Ok(())
     }
@@ -1942,7 +1818,6 @@ impl Jwm {
         w: u16,
         h: u16,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 检查是否是根窗口的配置变更
         if window == self.backend.root_window() {
             let dirty = self.s_w != w as i32 || self.s_h != h as i32;
             self.s_w = w as i32;
@@ -1957,11 +1832,9 @@ impl Jwm {
 
     fn handle_screen_geometry_change(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[handle_screen_geometry_change]");
-        // 遍历所有显示器
         for &mon_key in self.monitor_order.clone().iter() {
             self.update_fullscreen_clients_on_monitor(mon_key)?;
         }
-        // 重新聚焦和排列
         self.focus(None)?;
         self.arrange(None);
         Ok(())
@@ -1971,7 +1844,6 @@ impl Jwm {
         &mut self,
         mon_key: MonitorKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 获取监视器几何信息
         let monitor_geometry = if let Some(monitor) = self.monitors.get(mon_key) {
             (
                 monitor.geometry.m_x,
@@ -1987,7 +1859,6 @@ impl Jwm {
             return Ok(());
         };
 
-        // 收集该监视器上的全屏客户端
         let fullscreen_clients: Vec<ClientKey> =
             if let Some(client_keys) = self.monitor_clients.get(mon_key) {
                 client_keys
@@ -2004,7 +1875,6 @@ impl Jwm {
                 Vec::new()
             };
 
-        // 调整全屏客户端到新的显示器尺寸
         for client_key in fullscreen_clients {
             let _ = self.resizeclient(
                 client_key,
@@ -2033,7 +1903,6 @@ impl Jwm {
         } else {
             SchemeType::Norm
         };
-        // 获取颜色句柄 (Pixel)
         if let Ok(pixel) = self.backend.color_allocator().get_border_pixel_of(scheme) {
             self.backend
                 .window_ops()
@@ -2075,7 +1944,6 @@ impl Jwm {
             .unwrap_or(false);
 
         if fullscreen && !is_fullscreen {
-            // 设置全屏状态
             self.backend
                 .property_ops()
                 .set_fullscreen_state(win, true)?;
@@ -2154,13 +2022,10 @@ impl Jwm {
             .get(client_key)
             .map(|c| c.win)
             .ok_or("Client not found")?;
-        // 直接调用 PropertyOps
         self.backend.property_ops().set_urgent_hint(win, urgent)
     }
 
-    // 显示/隐藏指定监视器上的窗口
     fn showhide_monitor(&mut self, mon_key: MonitorKey) {
-        // 获取该监视器的堆栈顺序客户端列表
         if let Some(stack_clients) = self.monitor_stack.get(mon_key).cloned() {
             for client_key in stack_clients {
                 self.showhide_client(client_key, mon_key);
@@ -2168,7 +2033,6 @@ impl Jwm {
         }
     }
 
-    // 显示/隐藏单个客户端
     fn showhide_client(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
         let is_visible = self.is_client_visible_on_monitor(client_key, mon_key);
 
@@ -2179,7 +2043,6 @@ impl Jwm {
         }
     }
 
-    // 显示客户端（SlotMap版本）
     fn show_client(&mut self, client_key: ClientKey) {
         let (win, x, y, is_floating, is_fullscreen) =
             if let Some(client) = self.clients.get(client_key) {
@@ -2195,12 +2058,10 @@ impl Jwm {
                 return;
             };
 
-        // 移动窗口到可见位置
         if let Err(e) = self.move_window(win, x, y) {
             warn!("[show_client] Failed to move window {:?}: {:?}", win, e);
         }
 
-        // 如果是浮动窗口且非全屏，调整大小
         if is_floating && !is_fullscreen {
             let (w, h) = if let Some(client) = self.clients.get(client_key) {
                 (client.geometry.w, client.geometry.h)
@@ -2211,7 +2072,6 @@ impl Jwm {
         }
     }
 
-    // 隐藏客户端（SlotMap版本）
     fn hide_client(&mut self, client_key: ClientKey) {
         let (win, y, width) = if let Some(client) = self.clients.get(client_key) {
             (client.win, client.geometry.y, client.total_width())
@@ -2220,7 +2080,6 @@ impl Jwm {
             return;
         };
 
-        // 将窗口移动到屏幕外隐藏
         let hidden_x = width * -2;
         if let Err(e) = self.move_window(win, hidden_x, y) {
             warn!("[hide_client] Failed to hide window {:?}: {:?}", win, e);
@@ -2348,11 +2207,9 @@ impl Jwm {
         mode: u8,
         detail: u8,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // NOTE: X11 语义：mode=0(NORMAL), detail=2(INFERIOR)
         if (mode != 0 || detail == 2) && event_window != self.backend.root_window() {
             return Ok(());
         }
-        // 检查是否进入状态栏
         if self.handle_statusbar_enter_generic(event_window)? {
             return Ok(());
         }
@@ -2418,7 +2275,6 @@ impl Jwm {
     fn arrangemon(&mut self, mon_key: MonitorKey) {
         info!("[arrangemon]");
 
-        // 获取布局类型和更新符号
         let (layout_type, layout_symbol) = if let Some(monitor) = self.monitors.get(mon_key) {
             let sel_lt = monitor.sel_lt;
             let layout = &monitor.lt[sel_lt];
@@ -2428,7 +2284,6 @@ impl Jwm {
             return;
         };
 
-        // 更新布局符号
         if let Some(monitor) = self.monitors.get_mut(mon_key) {
             monitor.lt_symbol = layout_symbol;
             info!(
@@ -2437,7 +2292,6 @@ impl Jwm {
             );
         }
 
-        // 应用布局
         match *layout_type {
             LayoutEnum::TILE => self.tile(mon_key),
             LayoutEnum::MONOCLE => self.monocle(mon_key),
@@ -2446,23 +2300,20 @@ impl Jwm {
     }
 
     fn dirtomon(&mut self, dir: &i32) -> Option<MonitorKey> {
-        let selected_monitor_key = self.sel_mon?; // Return None if sel_mon is None
+        let selected_monitor_key = self.sel_mon?;
         if self.monitor_order.is_empty() {
             return None;
         }
-        // 找到当前选中监视器在顺序列表中的位置
         let current_index = self
             .monitor_order
             .iter()
             .position(|&key| key == selected_monitor_key)?;
         if *dir > 0 {
-            // Next monitor (向前)
             let next_index = (current_index + 1) % self.monitor_order.len();
             Some(self.monitor_order[next_index])
         } else {
-            // Previous monitor (向后)
             let prev_index = if current_index == 0 {
-                self.monitor_order.len() - 1 // 循环到最后一个
+                self.monitor_order.len() - 1
             } else {
                 current_index - 1
             };
@@ -2504,10 +2355,8 @@ impl Jwm {
         let monitor = self.monitors.get(mon_key).ok_or("Monitor not found")?;
         let monitor_num = monitor.num;
 
-        // 1) 从顶部到下的栈
         let stack = self.get_monitor_stack(mon_key);
 
-        // 2) 分离 tiled 与 floating（仅可见）
         let mut tiled_bottom_to_top: Vec<WindowId> = Vec::new();
         let mut floating_bottom_to_top: Vec<WindowId> = Vec::new();
 
@@ -2524,7 +2373,6 @@ impl Jwm {
             }
         }
 
-        // 3) 选中的浮动窗口置顶
         if let Some(sel_ck) = monitor.sel {
             if let Some(sel_c) = self.clients.get(sel_ck) {
                 if sel_c.state.is_floating {
@@ -2536,13 +2384,11 @@ impl Jwm {
             }
         }
 
-        // 4) 最终顺序（底->顶）
         let mut final_bottom_to_top: Vec<WindowId> =
             Vec::with_capacity(tiled_bottom_to_top.len() + floating_bottom_to_top.len());
         final_bottom_to_top.extend(tiled_bottom_to_top.into_iter());
         final_bottom_to_top.extend(floating_bottom_to_top.into_iter());
 
-        // 5) 如果顺序未变化，跳过
         let need_restack_windows = match self.last_stacking.get(mon_key) {
             Some(prev) => prev.as_slice() != final_bottom_to_top.as_slice(),
             None => true,
@@ -2569,7 +2415,6 @@ impl Jwm {
                 .insert(mon_key, final_bottom_to_top.clone());
         }
 
-        // 6) bar 置顶（若显示）
         if self.current_bar_monitor_id == Some(monitor_num) {
             if let Some(bar_key) = self.status_bar_client {
                 if let Some(bar_client) = self.clients.get(bar_key) {
@@ -2604,7 +2449,6 @@ impl Jwm {
             return;
         }
 
-        // 选择目标 monitor
         let target_mon_id = self
             .current_bar_monitor_id
             .or_else(|| {
@@ -2621,10 +2465,8 @@ impl Jwm {
                     return;
                 }
 
-                // 1) 构造消息（更新 self.message）
                 self.update_bar_message_for_monitor(Some(mon_key));
 
-                // 2) 序列化用于差异比较
                 let payload = match bincode::encode_to_vec(&self.message, standard()) {
                     Ok(v) => v,
                     Err(_) => {
@@ -2633,22 +2475,18 @@ impl Jwm {
                     }
                 };
 
-                // 3) 去抖：时间间隔
                 let now = std::time::Instant::now();
                 if let Some(last) = self.last_bar_update_at {
                     if now.duration_since(last) < self.bar_min_interval {
-                        // 未到发送间隔，先保留 pending，下个 tick 再发
                         return;
                     }
                 }
 
-                // 4) 差异比较：相同则跳过
                 if self.last_bar_payload.as_ref().map(|p| &**p) == Some(&payload[..]) {
                     self.pending_bar_updates.clear();
                     return;
                 }
 
-                // 5) 确保 ring buffer 与进程
                 if self.status_bar_shmem.is_none() {
                     let ring_buffer = SharedRingBuffer::create_aux(SHARED_PATH, None, None)
                         .expect("Create bar shmem failed");
@@ -2657,12 +2495,10 @@ impl Jwm {
                 }
                 self.ensure_bar_is_running(SHARED_PATH);
 
-                // 6) 写消息
                 if let Some(rb) = self.status_bar_shmem.as_mut() {
                     let _ = rb.try_write_message(&self.message);
                 }
 
-                // 7) 记录发送状态
                 self.last_bar_payload = Some(payload);
                 self.last_bar_update_at = Some(now);
             }
@@ -2672,7 +2508,6 @@ impl Jwm {
     }
 
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 选择运行模式
         if env::var("JWM_USE_SYNC").is_ok() {
             self.run_sync()
         } else {
@@ -2684,27 +2519,22 @@ impl Jwm {
     }
 
     pub async fn run_async(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 后端 flush，确保挂起请求发出
         self.backend.event_source().flush()?;
         let mut event_count: u64 = 0;
 
-        // 定时器用于节拍处理（状态栏等）
         let mut update_timer = tokio::time::interval(std::time::Duration::from_millis(10));
 
         while self.running.load(std::sync::atomic::Ordering::SeqCst) {
-            // 抽干所有可用事件
             while let Some(ev) = self.backend.event_source().poll_event()? {
                 event_count = event_count.wrapping_add(1);
                 let _ = self.handle_backend_event(ev);
             }
 
-            // 处理状态栏命令与待更新
             self.process_commands_from_status_bar();
             if !self.pending_bar_updates.is_empty() {
                 self.flush_pending_bar_updates();
             }
 
-            // 等待下一个 tick
             tokio::select! {
                 _ = update_timer.tick() => {
                     self.process_commands_from_status_bar();
@@ -2718,43 +2548,35 @@ impl Jwm {
     }
 
     fn run_sync(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // 使用简化的阻塞循环 + 小睡眠，完全走 backend 事件源
         self.backend.event_source().flush()?;
         let mut event_count: u64 = 0;
 
         while self.running.load(std::sync::atomic::Ordering::SeqCst) {
-            // 抽干所有可用事件
             while let Some(ev) = self.backend.event_source().poll_event()? {
                 event_count = event_count.wrapping_add(1);
                 let _ = self.handle_backend_event(ev);
             }
 
-            // 处理状态栏命令与待更新
             self.process_commands_from_status_bar();
             if !self.pending_bar_updates.is_empty() {
                 self.flush_pending_bar_updates();
             }
 
-            // 轻微退避，避免 busy loop
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         Ok(())
     }
 
     fn process_commands_from_status_bar(&mut self) {
-        // 创建一个临时向量来收集所有命令
         let mut commands_to_process: Vec<SharedCommand> = Vec::new();
-        // 第一步：遍历共享内存缓冲区并收集命令
         if let Some(buffer) = self.status_bar_shmem.as_mut() {
             while let Some(cmd) = buffer.receive_command() {
                 commands_to_process.push(cmd);
             }
         }
-        // 第二步：处理收集到的命令
         for cmd in commands_to_process {
             match cmd.cmd_type.into() {
                 CommandType::ViewTag => {
-                    // 切换到指定标签
                     info!(
                         "[process_commands] ViewTag command received: {}",
                         cmd.parameter
@@ -2763,7 +2585,6 @@ impl Jwm {
                     let _ = self.view(&arg);
                 }
                 CommandType::ToggleTag => {
-                    // 切换标签
                     info!(
                         "[process_commands] ToggleTag command received: {}",
                         cmd.parameter
@@ -2772,7 +2593,6 @@ impl Jwm {
                     let _ = self.toggletag(&arg);
                 }
                 CommandType::SetLayout => {
-                    // 设置布局
                     info!(
                         "[process_commands] SetLayout command received: {}",
                         cmd.parameter
@@ -2834,18 +2654,15 @@ impl Jwm {
     fn arrange(&mut self, m_target: Option<MonitorKey>) {
         info!("[arrange]");
 
-        // 确定要操作的监视器
         let monitors_to_process: Vec<MonitorKey> = match m_target {
-            Some(monitor_key) => vec![monitor_key], // 操作单个监视器
-            None => self.monitor_order.clone(),     // 操作所有监视器
+            Some(monitor_key) => vec![monitor_key],
+            None => self.monitor_order.clone(),
         };
 
-        // Phase 1: Show/Hide windows for each targeted monitor
         for &mon_key in &monitors_to_process {
             self.showhide_monitor(mon_key);
         }
 
-        // Phase 2: Arrange layout and restack for each targeted monitor
         for &mon_key in &monitors_to_process {
             self.arrangemon(mon_key);
             let _ = self.restack(Some(mon_key));
@@ -2876,7 +2693,6 @@ impl Jwm {
     }
 
     fn wintomon(&mut self, w: WindowId) -> Option<MonitorKey> {
-        // 处理根窗口
         if w == self.backend.root_window() {
             match self.getrootptr() {
                 Ok((x, y)) => return self.recttomon(x, y, 1, 1),
@@ -2887,7 +2703,6 @@ impl Jwm {
             }
         }
 
-        // 查找客户端对应的监视器
         match self.wintoclient(w) {
             Some(client_key) => match self.clients.get(client_key) {
                 Some(client) => client.mon.or(self.sel_mon),
@@ -2933,7 +2748,6 @@ impl Jwm {
 
         let mut mut_arg: WMArgEnum = arg.clone();
         if let WMArgEnum::StringVec(ref mut v) = mut_arg {
-            // 处理 dmenu 命令的特殊情况
             if *v == *CONFIG.get_dmenucmd() {
                 let monitor_num = self.get_sel_mon().unwrap().num;
                 let tmp = (b'0' + monitor_num as u8) as char;
@@ -2944,17 +2758,14 @@ impl Jwm {
 
             info!("[spawn] spawning command: {:?}", v);
 
-            // 使用 Rust 的 Command API，它会自动处理 fork/exec
             let mut command = Command::new(&v[0]);
             command.args(&v[1..]);
 
-            // 配置子进程
             command
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::inherit())
                 .stderr(std::process::Stdio::inherit());
 
-            // 使用 pre_exec 来设置子进程环境
             use std::os::unix::process::CommandExt;
 
             unsafe {
@@ -2969,14 +2780,12 @@ impl Jwm {
                 });
             }
 
-            // 启动子进程
             match command.spawn() {
                 Ok(child) => {
                     debug!(
                         "[spawn] successfully spawned process with PID: {}",
                         child.id()
                     );
-                    // 不等待子进程，让它在后台运行
                 }
                 Err(e) => {
                     error!("[spawn] failed to spawn command {:?}: {}", v, e);
@@ -2991,11 +2800,9 @@ impl Jwm {
     fn tile(&mut self, mon_key: MonitorKey) {
         info!("[tile]");
 
-        // 获取监视器基本信息
         let (wx, wy, ww, wh, mfact, nmaster, monitor_num, client_y_offset) =
             self.get_monitor_info(mon_key);
 
-        // 收集所有可平铺的客户端
         let clients = self.collect_tileable_clients(mon_key);
 
         if clients.is_empty() {
@@ -3008,10 +2815,8 @@ impl Jwm {
             clients.len()
         );
 
-        // 计算布局参数
         let (mw, mfacts, sfacts) = self.calculate_layout_params(&clients, ww, mfact, nmaster);
 
-        // 安排客户端位置
         self.arrange_clients(
             &clients,
             wx,
@@ -3026,7 +2831,6 @@ impl Jwm {
         );
     }
 
-    // 获取监视器基本信息
     fn get_monitor_info(&self, mon_key: MonitorKey) -> (i32, i32, i32, i32, f32, u32, i32, i32) {
         if let Some(monitor) = self.monitors.get(mon_key) {
             let client_y_offset = self.get_client_y_offset(monitor);
@@ -3042,11 +2846,10 @@ impl Jwm {
             )
         } else {
             warn!("[get_monitor_info] Monitor {:?} not found", mon_key);
-            (0, 0, 0, 0, 0.55, 1, 0, 0) // 默认值
+            (0, 0, 0, 0, 0.55, 1, 0, 0)
         }
     }
 
-    // 收集所有可平铺的客户端
     fn collect_tileable_clients(&self, mon_key: MonitorKey) -> Vec<(ClientKey, f32, i32)> {
         let mut clients = Vec::new();
         let mut current_client = self.nexttiled(mon_key, None);
@@ -3058,7 +2861,6 @@ impl Jwm {
 
                 clients.push((client_key, client_fact, border_w));
 
-                // 找下一个平铺客户端
                 current_client = self.nexttiled(mon_key, Some(client_key));
             } else {
                 break;
@@ -3068,7 +2870,6 @@ impl Jwm {
         clients
     }
 
-    // 计算布局参数
     fn calculate_layout_params(
         &self,
         clients: &[(ClientKey, f32, i32)],
@@ -3078,7 +2879,6 @@ impl Jwm {
     ) -> (i32, f32, f32) {
         let n = clients.len() as u32;
 
-        // 计算主区域和堆栈区域的cfact总和
         let (mfacts, sfacts) = clients.iter().enumerate().fold(
             (0.0, 0.0),
             |(mfacts, sfacts), (i, (_, client_fact, _))| {
@@ -3090,7 +2890,6 @@ impl Jwm {
             },
         );
 
-        // 计算主区域宽度
         let mw = if n > nmaster && nmaster > 0 {
             (ww as f32 * mfact) as i32
         } else {
@@ -3100,7 +2899,6 @@ impl Jwm {
         (mw, mfacts, sfacts)
     }
 
-    // 安排客户端位置
     fn arrange_clients(
         &mut self,
         clients: &[(ClientKey, f32, i32)],
@@ -3160,7 +2958,6 @@ impl Jwm {
         }
     }
 
-    // 计算主区域窗口几何形状（保持不变）
     fn calculate_master_geometry(
         &self,
         wx: i32,
@@ -3197,7 +2994,6 @@ impl Jwm {
         )
     }
 
-    // 计算堆栈区域窗口几何形状（保持不变）
     fn calculate_stack_geometry(
         &self,
         wx: i32,
@@ -3239,7 +3035,6 @@ impl Jwm {
     }
 
     fn get_client_y_offset(&self, monitor: &WMMonitor) -> i32 {
-        // 只按该 monitor 当前 tag 的 show_bars 决定是否保留顶部 gap
         let show_bar = monitor
             .pertag
             .as_ref()
@@ -3261,7 +3056,6 @@ impl Jwm {
             None => return Ok(()),
         };
 
-        // 获取当前选中的客户端
         let sel_client_key = if let Some(monitor) = self.monitors.get(sel_mon_key) {
             monitor.sel
         } else {
@@ -3270,10 +3064,9 @@ impl Jwm {
 
         let sel_client_key = match sel_client_key {
             Some(key) => key,
-            None => return Ok(()), // 没有选中的客户端
+            None => return Ok(()),
         };
 
-        // 检查是否为全屏窗口（全屏窗口不支持切换浮动）
         if let Some(client) = self.clients.get(sel_client_key) {
             if client.state.is_fullscreen {
                 return Ok(());
@@ -3282,14 +3075,11 @@ impl Jwm {
             return Ok(());
         }
 
-        // 切换浮动状态
         let (new_floating_state, geometry) =
             if let Some(client) = self.clients.get_mut(sel_client_key) {
-                // 计算新的浮动状态
                 let new_floating = !client.state.is_floating || client.state.is_fixed;
                 client.state.is_floating = new_floating;
 
-                // 如果变为浮动状态，获取当前几何信息用于调整大小
                 let geom = if new_floating {
                     Some((
                         client.geometry.x,
@@ -3306,14 +3096,12 @@ impl Jwm {
                 return Ok(());
             };
 
-        // 如果变为浮动状态，调整窗口大小
         if new_floating_state {
             if let Some((x, y, w, h)) = geometry {
                 self.resize_client(sel_client_key, x, y, w, h, false);
             }
         }
 
-        // 重新排列布局
         self.arrange(Some(sel_mon_key));
 
         Ok(())
@@ -3340,13 +3128,10 @@ impl Jwm {
 
         if let WMArgEnum::Int(i) = arg {
             if let Some(target_mon_key) = self.dirtomon(i) {
-                // 已经在目标屏则无动作
                 if Some(target_mon_key) == self.sel_mon {
                     return Ok(());
                 }
-                // 统一走切屏逻辑：会更新 current_bar_monitor_id 并移动状态栏
                 self.switch_to_monitor(target_mon_key)?;
-                // 切屏后在目标屏上重新评估焦点
                 self.focus(None)?;
             }
         }
@@ -3366,15 +3151,11 @@ impl Jwm {
 
             if let Some(client_key) = sel_client_key {
                 if target_tag > 0 {
-                    // 更新客户端标签
                     if let Some(client) = self.clients.get_mut(client_key) {
                         client.state.tags = target_tag;
                     }
-
-                    // 设置客户端标签属性
                     let _ = self.setclienttagprop(client_key);
 
-                    // 重新聚焦和排列
                     self.focus(None)?;
                     self.arrange(self.sel_mon);
                 }
@@ -3386,17 +3167,13 @@ impl Jwm {
     pub fn tagmon(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[tagmon]");
 
-        // 检查是否有选中的客户端
         let sel_client_key = self.get_selected_client_key();
         if sel_client_key.is_none() {
             return Ok(());
         }
-
-        // 检查是否只有一个监视器
         if self.monitor_order.len() <= 1 {
             return Ok(());
         }
-
         if let WMArgEnum::Int(i) = *arg {
             let target_mon = self.dirtomon(&i);
             if let (Some(client_key), Some(target_mon_key)) = (sel_client_key, target_mon) {
@@ -3419,28 +3196,23 @@ impl Jwm {
             None => return,
         };
 
-        // 检查客户端当前是否已在目标监视器上
         if let Some(client) = self.clients.get(client_key) {
             if client.mon == Some(target_mon_key) {
-                return; // 客户端已在目标监视器上，无需移动
+                return;
             }
         } else {
             return;
         }
 
-        // 取消客户端焦点
         let _ = self.unfocus_client(client_key, true);
 
-        // 从当前监视器分离客户端
         self.detach(client_key);
         self.detachstack(client_key);
 
-        // 更新客户端的监视器归属
         if let Some(client) = self.clients.get_mut(client_key) {
             client.mon = Some(target_mon_key);
         }
 
-        // 获取目标监视器的标签集并分配给客户端
         if let Some(target_monitor) = self.monitors.get(target_mon_key) {
             let target_tags = target_monitor.tag_set[target_monitor.sel_tags];
 
@@ -3449,20 +3221,16 @@ impl Jwm {
             }
         }
 
-        // 将客户端附加到目标监视器
         self.attach_back(client_key);
         self.attachstack(client_key);
 
-        // 设置客户端标签属性
         let _ = self.setclienttagprop(client_key);
 
-        // 重新聚焦和排列
         let _ = self.focus(None);
         self.arrange(None);
     }
 
     pub fn focusstack(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        // 提取输入参数
         let direction = match *arg {
             WMArgEnum::Int(i) => i,
             _ => return Ok(()),
@@ -3472,19 +3240,16 @@ impl Jwm {
             return Ok(());
         }
 
-        // 检查是否可以切换焦点
         if !self.can_focus_switch()? {
             return Ok(());
         }
 
-        // 根据方向查找目标客户端
         let target_client = if direction > 0 {
             self.find_next_visible_client()?
         } else {
             self.find_previous_visible_client()?
         };
 
-        // 切换焦点
         if let Some(client_key) = target_client {
             self.focus(Some(client_key))?;
             self.restack(self.sel_mon)?;
@@ -3492,7 +3257,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 辅助方法：检查是否可以切换焦点
     fn can_focus_switch(&self) -> Result<bool, Box<dyn std::error::Error>> {
         let sel_client_key = self.get_selected_client_key().ok_or("No selected client")?;
 
@@ -3505,23 +3269,18 @@ impl Jwm {
         }
     }
 
-    // 辅助方法：查找下一个可见客户端
     fn find_next_visible_client(&self) -> Result<Option<ClientKey>, Box<dyn std::error::Error>> {
         let sel_mon_key = self.sel_mon.ok_or("No selected monitor")?;
         let current_sel = self.get_selected_client_key().ok_or("No selected client")?;
 
-        // 获取监视器的客户端列表
         if let Some(client_list) = self.monitor_clients.get(sel_mon_key) {
-            // 找到当前选中客户端的位置
             if let Some(current_index) = client_list.iter().position(|&k| k == current_sel) {
-                // 从下一个位置开始查找
                 for &client_key in &client_list[current_index + 1..] {
                     if self.is_client_visible_by_key(client_key) {
                         return Ok(Some(client_key));
                     }
                 }
 
-                // 如果没找到，从头开始查找
                 for &client_key in &client_list[..current_index] {
                     if self.is_client_visible_by_key(client_key) {
                         return Ok(Some(client_key));
@@ -3533,25 +3292,20 @@ impl Jwm {
         Ok(None)
     }
 
-    // 辅助方法：查找上一个可见客户端
     fn find_previous_visible_client(
         &self,
     ) -> Result<Option<ClientKey>, Box<dyn std::error::Error>> {
         let sel_mon_key = self.sel_mon.ok_or("No selected monitor")?;
         let current_sel = self.get_selected_client_key().ok_or("No selected client")?;
 
-        // 获取监视器的客户端列表
         if let Some(client_list) = self.monitor_clients.get(sel_mon_key) {
-            // 找到当前选中客户端的位置
             if let Some(current_index) = client_list.iter().position(|&k| k == current_sel) {
-                // 从前一个位置开始向前查找
                 for &client_key in client_list[..current_index].iter().rev() {
                     if self.is_client_visible_by_key(client_key) {
                         return Ok(Some(client_key));
                     }
                 }
 
-                // 如果没找到，从末尾开始查找
                 for &client_key in client_list[current_index + 1..].iter().rev() {
                     if self.is_client_visible_by_key(client_key) {
                         return Ok(Some(client_key));
@@ -3571,7 +3325,6 @@ impl Jwm {
             None => return Ok(()),
         };
 
-        // 先在一个小作用域中完成对 pertag.show_bars 的修改，并取出 monitor_num
         let mut monitor_num_opt: Option<i32> = None;
         {
             if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
@@ -3587,9 +3340,8 @@ impl Jwm {
                     }
                 }
             }
-        } // 到这里，monitor 的可变借用生命周期已结束
+        }
 
-        // 现在可以安全调用 &mut self 方法
         if let Some(mon_num) = monitor_num_opt {
             if self.current_bar_monitor_id == Some(mon_num) {
                 self.position_statusbar_on_monitor(mon_num)?;
@@ -3605,7 +3357,6 @@ impl Jwm {
     fn refresh_bar_visibility_on_selected_monitor(
         &mut self,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 先读取必要信息并结束借用
         let (sel_mon_key, mon_num) = match self.sel_mon {
             Some(k) => {
                 if let Some(m) = self.monitors.get(k) {
@@ -3617,7 +3368,6 @@ impl Jwm {
             None => return Ok(()),
         };
 
-        // 再调用需要 &mut self 的方法
         if self.current_bar_monitor_id == Some(mon_num) {
             self.position_statusbar_on_monitor(mon_num)?;
             self.arrange(Some(sel_mon_key));
@@ -3638,10 +3388,8 @@ impl Jwm {
                     let cur_tag = pertag.cur_tag;
                     let new_n_master = (monitor.layout.n_master as i32 + i).max(0) as u32;
 
-                    // 更新per-tag的n_master
                     pertag.n_masters[cur_tag] = new_n_master;
 
-                    // 更新当前布局的n_master
                     monitor.layout.n_master = new_n_master;
 
                     info!(
@@ -3667,26 +3415,22 @@ impl Jwm {
         let client_key = sel_client_key.unwrap();
 
         if let WMArgEnum::Float(f0) = *arg {
-            // 获取当前的client_fact
             let current_fact = if let Some(client) = self.clients.get(client_key) {
                 client.state.client_fact
             } else {
                 return Ok(());
             };
 
-            // 计算新的factor
             let new_fact = if f0.abs() < 0.0001 {
-                1.0 // 重置为默认值
+                1.0
             } else {
                 f0 + current_fact
             };
 
-            // 限制范围
             if new_fact < 0.25 || new_fact > 4.0 {
                 return Ok(());
             }
 
-            // 更新客户端的client_fact
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.state.client_fact = new_fact;
                 info!(
@@ -3694,8 +3438,6 @@ impl Jwm {
                     new_fact, client.name
                 );
             }
-
-            // 重新排列布局
             self.arrange(self.sel_mon);
         }
 
@@ -3704,32 +3446,25 @@ impl Jwm {
 
     pub fn movestack(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[movestack]");
-        // 提取并验证参数
         let direction = match arg {
             WMArgEnum::Int(i) => *i,
             _ => return Ok(()),
         };
 
-        // 获取当前选中的客户端
         let selected_client_key = self.get_selected_client_key().ok_or("No client selected")?;
 
-        // 根据方向查找目标客户端
         let target_client_key = if direction > 0 {
             self.find_next_tiled_client(selected_client_key)?
         } else {
             self.find_previous_tiled_client(selected_client_key)?
         };
 
-        // 如果找到目标客户端且不是同一个，则交换它们
         if let Some(target_key) = target_client_key {
             if selected_client_key != target_key {
-                // 交换客户端在向量中的位置
                 self.swap_clients_in_monitor(selected_client_key, target_key)?;
 
-                // 重新排列布局
                 self.arrange(self.sel_mon);
 
-                // 短暂屏蔽鼠标抢焦点（比如 150~200ms）
                 self.suppress_mouse_focus_until =
                     Some(std::time::Instant::now() + std::time::Duration::from_millis(200));
             }
@@ -3738,7 +3473,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 辅助方法：检查客户端是否为可见且非浮动的平铺窗口
     fn is_tiled_and_visible(&self, client_key: ClientKey) -> bool {
         if let Some(client) = self.clients.get(client_key) {
             self.is_client_visible_by_key(client_key) && !client.state.is_floating
@@ -3747,7 +3481,6 @@ impl Jwm {
         }
     }
 
-    // 辅助方法：查找下一个平铺客户端
     fn find_next_tiled_client(
         &self,
         current_key: ClientKey,
@@ -3758,20 +3491,17 @@ impl Jwm {
             .get(sel_mon_key)
             .ok_or("Monitor client list not found")?;
 
-        // 找到当前客户端的位置
         let current_index = client_list
             .iter()
             .position(|&k| k == current_key)
             .ok_or("Current client not found in monitor list")?;
 
-        // 第一轮：从当前位置向后查找
         for &client_key in &client_list[current_index + 1..] {
             if self.is_tiled_and_visible(client_key) {
                 return Ok(Some(client_key));
             }
         }
 
-        // 第二轮：从头开始查找（循环查找）
         for &client_key in &client_list[..current_index] {
             if self.is_tiled_and_visible(client_key) {
                 return Ok(Some(client_key));
@@ -3781,7 +3511,6 @@ impl Jwm {
         Ok(None)
     }
 
-    // 辅助方法：查找上一个平铺客户端
     fn find_previous_tiled_client(
         &self,
         current_key: ClientKey,
@@ -3792,20 +3521,17 @@ impl Jwm {
             .get(sel_mon_key)
             .ok_or("Monitor client list not found")?;
 
-        // 找到当前客户端的位置
         let current_index = client_list
             .iter()
             .position(|&k| k == current_key)
             .ok_or("Current client not found in monitor list")?;
 
-        // 第一轮：从当前位置向前查找
         for &client_key in client_list[..current_index].iter().rev() {
             if self.is_tiled_and_visible(client_key) {
                 return Ok(Some(client_key));
             }
         }
 
-        // 第二轮：从末尾开始查找（循环查找）
         for &client_key in client_list[current_index + 1..].iter().rev() {
             if self.is_tiled_and_visible(client_key) {
                 return Ok(Some(client_key));
@@ -3815,7 +3541,6 @@ impl Jwm {
         Ok(None)
     }
 
-    // 辅助方法：在监视器的客户端列表中交换两个客户端的位置
     fn swap_clients_in_monitor(
         &mut self,
         client1_key: ClientKey,
@@ -3823,7 +3548,6 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let sel_mon_key = self.sel_mon.ok_or("No selected monitor")?;
 
-        // 在客户端列表中交换位置
         if let Some(client_list) = self.monitor_clients.get_mut(sel_mon_key) {
             let pos1 = client_list
                 .iter()
@@ -3837,7 +3561,6 @@ impl Jwm {
             client_list.swap(pos1, pos2);
         }
 
-        // 在堆栈列表中也交换位置
         if let Some(stack_list) = self.monitor_stack.get_mut(sel_mon_key) {
             if let (Some(pos1), Some(pos2)) = (
                 stack_list.iter().position(|&k| k == client1_key),
@@ -3860,21 +3583,17 @@ impl Jwm {
         if let WMArgEnum::Float(f) = arg {
             let sel_mon_key = self.sel_mon.ok_or("No monitor selected")?;
             if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
-                // 计算新的mfact值
                 let new_mfact = if f < &1.0 {
                     f + monitor.layout.m_fact
                 } else {
                     f - 1.0
                 };
-                // 检查范围限制
                 if new_mfact < 0.05 || new_mfact > 0.95 {
                     return Ok(());
                 }
-                // 更新per-tag的mfact
                 if let Some(ref mut pertag) = monitor.pertag {
                     let cur_tag = pertag.cur_tag;
                     pertag.m_facts[cur_tag] = new_mfact;
-                    // 更新当前布局的mfact
                     monitor.layout.m_fact = new_mfact;
                     info!(
                         "[setmfact] Updated m_fact to {} for tag {}",
@@ -3894,13 +3613,10 @@ impl Jwm {
         info!("[setlayout]");
         let sel_mon_key = self.sel_mon.ok_or("No selected monitor")?;
 
-        // 处理布局设置逻辑
         self.update_layout_selection(sel_mon_key, arg)?;
 
-        // 更新布局符号并检查是否需要重新排列
         let (should_arrange, mon_num) = self.finalize_layout_update(sel_mon_key);
 
-        // 根据情况进行排列或更新状态栏
         if should_arrange {
             self.arrange(Some(sel_mon_key));
         } else {
@@ -3910,7 +3626,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 更新布局选择逻辑
     fn update_layout_selection(
         &mut self,
         sel_mon_key: MonitorKey,
@@ -3922,7 +3637,6 @@ impl Jwm {
         }
     }
 
-    // 处理指定布局的情况
     fn handle_specific_layout(
         &mut self,
         sel_mon_key: MonitorKey,
@@ -3938,17 +3652,14 @@ impl Jwm {
             .cur_tag;
 
         if **layout == *current_layout {
-            // 如果是相同布局，则切换选择
             self.toggle_layout_selection_impl(sel_mon_key, cur_tag);
         } else {
-            // 如果是不同布局，则设置新布局
             self.set_new_layout(sel_mon_key, layout, cur_tag);
         }
 
         Ok(())
     }
 
-    // 切换布局选择（无参数情况）
     fn toggle_layout_selection(
         &mut self,
         sel_mon_key: MonitorKey,
@@ -3964,7 +3675,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 切换布局选择的具体实现
     fn toggle_layout_selection_impl(&mut self, sel_mon_key: MonitorKey, cur_tag: usize) {
         if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
             if let Some(ref mut pertag) = monitor.pertag {
@@ -3974,7 +3684,6 @@ impl Jwm {
         }
     }
 
-    // 设置新布局
     fn set_new_layout(&mut self, sel_mon_key: MonitorKey, layout: &Rc<LayoutEnum>, cur_tag: usize) {
         if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
             let sel_lt = monitor.sel_lt;
@@ -3985,13 +3694,10 @@ impl Jwm {
         }
     }
 
-    // 完成布局更新并返回后续操作信息
     fn finalize_layout_update(&mut self, sel_mon_key: MonitorKey) -> (bool, Option<i32>) {
         if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
-            // 更新布局符号
             monitor.lt_symbol = monitor.lt[monitor.sel_lt].symbol().to_string();
 
-            // 检查是否有选中的客户端
             let has_selection = monitor.sel.is_some();
             let mon_num = monitor.num;
 
@@ -4009,7 +3715,6 @@ impl Jwm {
             None => return Ok(()),
         };
 
-        // 获取当前选中的客户端
         let selected_client_key = if let Some(monitor) = self.monitors.get(sel_mon_key) {
             monitor.sel
         } else {
@@ -4021,7 +3726,6 @@ impl Jwm {
             None => return Ok(()), // 没有选中的客户端
         };
 
-        // 检查选中的客户端是否为浮动窗口
         if let Some(client) = self.clients.get(selected_client_key) {
             if client.state.is_floating {
                 return Ok(()); // 浮动窗口不参与zoom
@@ -4030,18 +3734,14 @@ impl Jwm {
             return Ok(());
         }
 
-        // 找到第一个平铺窗口
         let first_tiled = self.nexttiled(sel_mon_key, None);
 
         let target_client_key = if Some(selected_client_key) == first_tiled {
-            // 如果选中的客户端就是第一个平铺窗口，找下一个
             self.nexttiled(sel_mon_key, Some(selected_client_key))
         } else {
-            // 否则将选中的客户端移到第一位
             Some(selected_client_key)
         };
 
-        // 执行pop操作（将客户端移到第一位）
         if let Some(client_key) = target_client_key {
             self.pop(client_key);
         }
@@ -4052,7 +3752,6 @@ impl Jwm {
     pub fn loopview(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[loopview]");
 
-        // 提取并验证参数
         let direction = match arg {
             WMArgEnum::Int(val) => *val,
             _ => return Ok(()),
@@ -4062,10 +3761,8 @@ impl Jwm {
             return Ok(());
         }
 
-        // 计算下一个标签
         let next_tag = self.calculate_next_tag(direction);
 
-        // 检查是否需要切换标签
         if self.is_same_tag(next_tag) {
             return Ok(());
         }
@@ -4075,13 +3772,10 @@ impl Jwm {
             next_tag, direction
         );
 
-        // 执行标签切换
         let cur_tag = self.switch_to_tag(next_tag, next_tag)?;
 
-        // 应用per-tag设置
         let sel_opt = self.apply_pertag_settings(cur_tag)?;
 
-        // 更新焦点和布局
         self.focus(sel_opt)?;
         self.arrange(self.sel_mon.clone());
 
@@ -4090,7 +3784,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 计算下一个标签的辅助函数
     fn calculate_next_tag(&self, direction: i32) -> u32 {
         let current_tag = if let Some(sel_mon_key) = self.sel_mon {
             if let Some(monitor) = self.monitors.get(sel_mon_key) {
@@ -4104,7 +3797,6 @@ impl Jwm {
             return 1; // 返回默认的第一个标签
         };
 
-        // 找到当前tag的位置
         let current_tag_index = if current_tag == 0 {
             0 // 如果当前没有选中的tag，从第一个开始
         } else {
@@ -4113,18 +3805,14 @@ impl Jwm {
 
         const MAX_TAGS: usize = 9;
         let next_tag_index = if direction > 0 {
-            // 向前循环：1>2>3>...>9>1
             (current_tag_index + 1) % MAX_TAGS
         } else {
-            // 向后循环：1>9>8>...>2>1
             if current_tag_index == 0 {
                 MAX_TAGS - 1
             } else {
                 current_tag_index - 1
             }
         };
-
-        // 将索引转换为tag位掩码
         let next_tag = 1 << next_tag_index;
 
         info!(
@@ -4137,7 +3825,6 @@ impl Jwm {
 
     pub fn view(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[view]");
-        // 提取并验证参数
         let ui = match arg {
             WMArgEnum::UInt(val) => *val,
             _ => return Ok(()),
@@ -4145,20 +3832,16 @@ impl Jwm {
 
         let target_tag = ui & CONFIG.tagmask();
 
-        // 检查是否需要切换标签
         if self.is_same_tag(target_tag) {
             return Ok(());
         }
 
         info!("[view] ui: {}, target_tag: {}", ui, target_tag);
 
-        // 执行标签切换
         let cur_tag = self.switch_to_tag(target_tag, ui)?;
 
-        // 应用per-tag设置
         let sel_opt = self.apply_pertag_settings(cur_tag)?;
 
-        // 更新焦点和布局
         self.focus(sel_opt)?;
         self.arrange(self.sel_mon.clone());
 
@@ -4167,7 +3850,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 检查是否是相同标签
     fn is_same_tag(&self, target_tag: u32) -> bool {
         if let Some(sel_mon_key) = self.sel_mon {
             if let Some(monitor) = self.monitors.get(sel_mon_key) {
@@ -4177,7 +3859,6 @@ impl Jwm {
         false
     }
 
-    // 切换到指定标签
     fn switch_to_tag(
         &mut self,
         target_tag: u32,
@@ -4196,24 +3877,19 @@ impl Jwm {
         info!("[switch_to_tag] tag_set: {:?}", sel_mon_mut.tag_set);
         info!("[switch_to_tag] old sel_tags: {}", sel_mon_mut.sel_tags);
 
-        // 切换标签集
         sel_mon_mut.sel_tags ^= 1;
         let new_sel_tags = sel_mon_mut.sel_tags;
         info!("[switch_to_tag] new sel_tags: {}", new_sel_tags);
 
-        // 更新per-tag信息
         let cur_tag = if target_tag > 0 {
-            // 设置新标签
             sel_mon_mut.tag_set[new_sel_tags] = target_tag;
 
-            // 计算当前标签索引
             let new_cur_tag = if ui == !0 {
                 0 // 显示所有标签
             } else {
                 ui.trailing_zeros() as usize + 1
             };
 
-            // 更新 pertag
             if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
                 pertag.prev_tag = pertag.cur_tag;
                 pertag.cur_tag = new_cur_tag;
@@ -4221,7 +3897,6 @@ impl Jwm {
 
             new_cur_tag
         } else {
-            // 切换到上一个标签
             if let Some(pertag) = sel_mon_mut.pertag.as_mut() {
                 std::mem::swap(&mut pertag.prev_tag, &mut pertag.cur_tag);
                 pertag.cur_tag
@@ -4245,7 +3920,6 @@ impl Jwm {
     ) -> Result<Option<ClientKey>, Box<dyn std::error::Error>> {
         let sel_mon_key = self.sel_mon.ok_or("No monitor selected")?;
 
-        // 先提取所有需要的值，避免借用冲突
         let (n_master, m_fact, sel_lt, layout_0, layout_1, sel_client_key) = {
             let monitor = self
                 .monitors
@@ -4272,7 +3946,6 @@ impl Jwm {
             )
         };
 
-        // 现在安全地应用设置
         if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
             monitor.layout.n_master = n_master;
             monitor.layout.m_fact = m_fact;
@@ -4283,7 +3956,6 @@ impl Jwm {
             return Err("Monitor disappeared during operation".into());
         }
 
-        // 记录选中的客户端信息
         if let Some(client_key) = sel_client_key {
             if let Some(client) = self.clients.get(client_key) {
                 info!(
@@ -4304,7 +3976,6 @@ impl Jwm {
     pub fn toggleview(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[toggleview]");
 
-        // 提取并验证参数
         let ui = match arg {
             WMArgEnum::UInt(val) => *val,
             _ => return Ok(()),
@@ -4315,7 +3986,6 @@ impl Jwm {
             None => return Ok(()),
         };
 
-        // 计算新的标签集
         let (sel_tags, newtagset) = if let Some(monitor) = self.monitors.get(sel_mon_key) {
             let sel_tags = monitor.sel_tags;
             let newtagset = monitor.tag_set[sel_tags] ^ (ui & CONFIG.tagmask());
@@ -4330,10 +4000,8 @@ impl Jwm {
 
         info!("[toggleview] newtagset: {}", newtagset);
 
-        // 更新标签集和per-tag设置
         self.update_tagset_and_pertag(sel_mon_key, sel_tags, newtagset)?;
 
-        // 更新焦点和布局
         self.focus(None)?;
         self.arrange(Some(sel_mon_key));
 
@@ -4342,7 +4010,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 更新标签集和per-tag设置
     fn update_tagset_and_pertag(
         &mut self,
         mon_key: MonitorKey,
@@ -4352,19 +4019,15 @@ impl Jwm {
         let first_tag = self.find_first_active_tag(newtagset);
         let monitor = self.monitors.get_mut(mon_key).ok_or("Monitor not found")?;
 
-        // 设置新的标签集
         monitor.tag_set[sel_tags] = newtagset;
 
-        // 更新当前标签
         let new_cur_tag = if newtagset == !0 {
-            // 显示所有标签
             if let Some(ref mut pertag) = monitor.pertag {
                 pertag.prev_tag = pertag.cur_tag;
                 pertag.cur_tag = 0;
             }
             0
         } else {
-            // 检查当前标签是否还在新的标签集中
             let current_cur_tag = monitor
                 .pertag
                 .as_ref()
@@ -4372,11 +4035,8 @@ impl Jwm {
                 .cur_tag;
 
             if current_cur_tag > 0 && (newtagset & (1 << (current_cur_tag - 1))) > 0 {
-                // 当前标签仍在新集合中，保持不变
                 current_cur_tag
             } else {
-                // 当前标签不在新集合中，找到第一个有效标签
-
                 if let Some(ref mut pertag) = monitor.pertag {
                     pertag.prev_tag = current_cur_tag;
                     pertag.cur_tag = first_tag;
@@ -4385,13 +4045,11 @@ impl Jwm {
             }
         };
 
-        // 应用per-tag设置
         self.apply_pertag_settings_for_monitor(mon_key, new_cur_tag)?;
 
         Ok(())
     }
 
-    // 查找第一个激活的标签
     fn find_first_active_tag(&self, tagset: u32) -> usize {
         for i in 0..32 {
             if (tagset & (1 << i)) > 0 {
@@ -4401,7 +4059,6 @@ impl Jwm {
         1 // 默认返回第一个标签
     }
 
-    // 为指定监视器应用per-tag设置
     fn apply_pertag_settings_for_monitor(
         &mut self,
         mon_key: MonitorKey,
@@ -4409,7 +4066,6 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let monitor = self.monitors.get_mut(mon_key).ok_or("Monitor not found")?;
 
-        // 提取所有需要的值
         let (n_master, m_fact, sel_lt, layout_0, layout_1) = {
             let pertag = monitor
                 .pertag
@@ -4430,7 +4086,6 @@ impl Jwm {
             )
         };
 
-        // 应用设置
         let monitor = self.monitors.get_mut(mon_key).unwrap();
         monitor.layout.n_master = n_master;
         monitor.layout.m_fact = m_fact;
@@ -4464,7 +4119,6 @@ impl Jwm {
     pub fn toggletag(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[toggletag]");
 
-        // 获取当前选中的客户端key
         let sel_client_key = if let Some(sel_mon_key) = self.sel_mon {
             if let Some(monitor) = self.monitors.get(sel_mon_key) {
                 monitor.sel
@@ -4481,7 +4135,6 @@ impl Jwm {
         };
 
         if let WMArgEnum::UInt(ui) = *arg {
-            // 获取当前标签并计算新标签
             let current_tags = if let Some(client) = self.clients.get(sel_client_key) {
                 client.state.tags
             } else {
@@ -4492,17 +4145,14 @@ impl Jwm {
             let newtags = current_tags ^ (ui & CONFIG.tagmask());
 
             if newtags > 0 {
-                // 更新客户端标签
                 if let Some(client) = self.clients.get_mut(sel_client_key) {
                     client.state.tags = newtags;
                 } else {
                     return Ok(());
                 }
 
-                // 设置客户端标签属性
                 self.setclienttagprop(sel_client_key)?;
 
-                // 重新聚焦和排列
                 self.focus(None)?;
                 self.arrange(self.sel_mon);
             }
@@ -4616,12 +4266,9 @@ impl Jwm {
         };
 
         if !is_floating {
-            // 获取transient_for属性
             let transient_for = self.get_transient_for(win);
             if let Some(parent_window) = transient_for {
-                // 检查父窗口是否是我们管理的客户端
                 if self.wintoclient(parent_window).is_some() {
-                    // 设置为浮动
                     if let Some(client) = self.clients.get_mut(client_key) {
                         client.state.is_floating = true;
                     }
@@ -4631,7 +4278,6 @@ impl Jwm {
                         client_name, parent_window
                     );
 
-                    // 重新排列布局
                     let mon_key = self.clients.get(client_key).and_then(|c| c.mon);
                     self.arrange(mon_key);
                 }
@@ -4655,7 +4301,6 @@ impl Jwm {
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.updatewmhints(client_key);
-        // WM_HINTS 改变可能影响紧急状态，需要重绘状态栏
         self.mark_bar_update_needed_if_visible(None);
 
         if let Some(client) = self.clients.get(client_key) {
@@ -4665,22 +4310,18 @@ impl Jwm {
     }
 
     fn updatetitle_by_key(&mut self, client_key: ClientKey) {
-        // 获取窗口ID
         let win = if let Some(client) = self.clients.get(client_key) {
             client.win
         } else {
             return;
         };
-        // 获取新标题
         let new_title = self.fetch_window_title(win);
-        // 更新客户端标题
         if let Some(client) = self.clients.get_mut(client_key) {
             client.name = new_title;
             debug!("Updated title for window {:?}: '{}'", win, client.name);
         }
     }
 
-    // 截断到字符数（非字节数）上限
     fn truncate_chars(input: String, max_chars: usize) -> String {
         if input.is_empty() {
             return input;
@@ -4708,14 +4349,11 @@ impl Jwm {
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 更新标题
         self.updatetitle_by_key(client_key);
 
-        // 检查是否需要更新状态栏
         let should_update_bar = self.is_client_selected(client_key);
 
         if should_update_bar {
-            // 获取监视器ID
             let monitor_id = self
                 .clients
                 .get(client_key)
@@ -4783,21 +4421,15 @@ impl Jwm {
 
         let snap_distance = CONFIG.snap() as i32;
 
-        // 吸附到左边缘
         if (mon_wx - *new_x).abs() < snap_distance {
             *new_x = mon_wx;
-        }
-        // 吸附到右边缘
-        else if ((mon_wx + mon_ww) - (*new_x + client_total_width)).abs() < snap_distance {
+        } else if ((mon_wx + mon_ww) - (*new_x + client_total_width)).abs() < snap_distance {
             *new_x = mon_wx + mon_ww - client_total_width;
         }
 
-        // 吸附到上边缘
         if (mon_wy - *new_y).abs() < snap_distance {
             *new_y = mon_wy;
-        }
-        // 吸附到下边缘
-        else if ((mon_wy + mon_wh) - (*new_y + client_total_height)).abs() < snap_distance {
+        } else if ((mon_wy + mon_wh) - (*new_y + client_total_height)).abs() < snap_distance {
             *new_y = mon_wy + mon_wh - client_total_height;
         }
 
@@ -4832,7 +4464,6 @@ impl Jwm {
                 return Ok(());
             };
 
-        // 如果窗口不是浮动的且当前是平铺布局，并且移动距离超过阈值
         if !is_floating
             && current_layout_is_tile
             && ((new_x - current_x).abs() > CONFIG.snap() as i32
@@ -4951,7 +4582,6 @@ impl Jwm {
             return Ok(());
         };
         self.restack(self.sel_mon)?;
-        // --- X11 逻辑 (保持不变) ---
         let (start_x, start_y, border_w, window_id, start_w, start_h) = {
             let c = self.clients.get(client_key).unwrap();
             (
@@ -5037,7 +4667,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 检查客户端是否应该被调整大小
     fn should_resize_client(&self, client_key: ClientKey) -> bool {
         if let Some(client) = self.clients.get(client_key) {
             if client.state.is_floating {
@@ -5130,7 +4759,6 @@ impl Jwm {
             if std::time::Instant::now() < deadline {
                 return true;
             }
-            // 超时后清掉标记
             self.suppress_mouse_focus_until = None;
         }
         false
@@ -5140,22 +4768,15 @@ impl Jwm {
         &mut self,
         target_monitor_key: MonitorKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 记录旧选中的客户端，但暂不把焦点设到root
         let prev_sel = self.get_selected_client_key();
 
-        // 切换选中显示器
         self.sel_mon = Some(target_monitor_key);
 
-        // 如果新屏有选中客户端，优先直接聚焦它（避免焦点落到 root）
-        self.focus(None)?; // 这会在新屏上挑一个可见客户端并 setfocus
-
-        // 此时旧客户端自然失焦了，但它的边框与按钮抓取可能还处于“焦点态”，补一次 UI 状态回退而不改焦点：
+        self.focus(None)?;
         if let Some(old_key) = prev_sel {
-            // 仅做边框/按钮抓取退回，不调用 set_input_focus_root（将 setfocus 参数改为 false）
             self.unfocus_client(old_key, false)?;
         }
 
-        // 状态栏重定位和布局更新（与原逻辑一致）
         let old_id = self.current_bar_monitor_id;
         let new_id = self.monitors.get(target_monitor_key).map(|m| m.num);
         if old_id != new_id {
@@ -5178,29 +4799,24 @@ impl Jwm {
         client_key_opt: Option<ClientKey>,
         is_on_selected_monitor: bool,
     ) -> bool {
-        // 如果切换了显示器，需要重新聚焦
         if !is_on_selected_monitor {
             return true;
         }
 
-        // 如果鼠标进入了根窗口（没有具体客户端），需要重新聚焦
         if client_key_opt.is_none() {
             return true;
         }
 
-        // 如果进入的客户端与当前选中客户端不同，需要重新聚焦
         let current_selected = self.get_selected_client_key();
         current_selected != client_key_opt
     }
 
     fn expose(&mut self, window: WindowId, count: u16) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[expose]");
-        // 只处理最后一个expose事件（count为0时）
         if count != 0 {
             return Ok(());
         }
 
-        // 检查窗口所在的显示器并标记状态栏需要更新
         if let Some(monitor_key) = self.wintomon(window) {
             if let Some(monitor) = self.monitors.get(monitor_key) {
                 self.mark_bar_update_needed_if_visible(Some(monitor.num));
@@ -5273,7 +4889,6 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[focus]");
 
-        // 如果传入的是状态栏客户端，忽略并寻找合适的替代
         if let Some(client_key) = client_key_opt {
             if let Some(client) = self.clients.get(client_key) {
                 info!("[focus] {}", client);
@@ -5283,7 +4898,6 @@ impl Jwm {
             }
         }
 
-        // 检查客户端是否可见，如果不可见则寻找可见的客户端
         let is_visible = match client_key_opt {
             Some(client_key) => self.is_client_visible_by_key(client_key),
             None => false,
@@ -5293,20 +4907,16 @@ impl Jwm {
             client_key_opt = self.find_visible_client();
         }
 
-        // 处理焦点切换
         self.handle_focus_change_by_key(&client_key_opt)?;
 
-        // 设置新的焦点客户端
         if let Some(client_key) = client_key_opt {
             self.set_client_focus_by_key(client_key)?;
         } else {
             self.set_root_focus()?;
         }
 
-        // 更新选中监视器的状态
         self.update_monitor_selection_by_key(client_key_opt);
 
-        // 标记状态栏需要更新
         self.mark_bar_update_needed_if_visible(None);
 
         Ok(())
@@ -5315,7 +4925,6 @@ impl Jwm {
     fn find_visible_client(&self) -> Option<ClientKey> {
         let sel_mon_key = self.sel_mon?;
 
-        // 从监视器的堆栈顺序中查找可见客户端
         if let Some(stack_clients) = self.monitor_stack.get(sel_mon_key) {
             for &client_key in stack_clients {
                 if self.is_client_visible_by_key(client_key) {
@@ -5369,7 +4978,6 @@ impl Jwm {
         self.attachstack(client_key);
         self.grabbuttons(client_key, true)?;
 
-        // 设置为选中样式
         self.update_client_decoration(client_key, true)?;
 
         self.setfocus(client_key)?;
@@ -5468,14 +5076,11 @@ impl Jwm {
 
     fn manage(&mut self, win: WindowId, geom: &Geometry) -> Result<(), Box<dyn std::error::Error>> {
         info!("[manage] Managing window {:?}", win);
-        // 检查窗口是否已被管理
         if self.wintoclient(win).is_some() {
             warn!("[manage] Window {:?} already managed", win);
             return Ok(());
         }
-        // 创建新的客户端对象
         let mut client = WMClient::new(win);
-        // 从几何信息中设置初始属性
         client.geometry.x = geom.x as i32;
         client.geometry.old_x = geom.x as i32;
         client.geometry.y = geom.y as i32;
@@ -5490,12 +5095,9 @@ impl Jwm {
         self.update_class_info(&mut client);
 
         info!("[manage] {}", client);
-        // 检查是否是状态栏
         if client.is_status_bar(CONFIG.status_bar_name()) {
             info!("[manage] Detected status bar, managing as statusbar");
-            // 插入到SlotMap
             let client_key = self.insert_client(client);
-            // 绑定到当前聚焦显示器
             let current_mon_id = self.get_sel_mon().map(|m| m.num).unwrap_or(0);
             self.status_bar_client = Some(client_key);
             self.status_bar_window = Some(win);
@@ -5504,9 +5106,7 @@ impl Jwm {
             return self.manage_statusbar(client_key, win, current_mon_id);
         }
 
-        // 插入到SlotMap
         let client_key = self.insert_client(client);
-        // 常规客户端管理流程
         self.manage_regular_client(client_key)
     }
 
@@ -5518,7 +5118,6 @@ impl Jwm {
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.geometry.border_w = 0;
             }
-            // Popup: 0 宽度，颜色无所谓(这里复用Norm)
             self.update_client_decoration(client_key, false)?;
 
             self.configure_client(client_key)?;
@@ -5542,7 +5141,6 @@ impl Jwm {
             client.geometry.border_w = CONFIG.border_px() as i32;
         }
 
-        // 设置初始装饰：有边框，且由于是新管理窗口，给予聚焦颜色(true)
         self.update_client_decoration(client_key, true)?;
 
         self.configure_client(client_key)?;
@@ -5628,13 +5226,10 @@ impl Jwm {
                 if let Some(monitor) = self.monitors.get_mut(mon_key) {
                     monitor.sel = Some(client_key);
                 }
-                // 重排该屏
                 self.arrange(Some(mon_key));
             }
 
-            // 焦点策略：只有在允许抢焦点时才抢（非 never_focus）
             if !is_never_focus {
-                // 先取消旧焦点（如果与新焦点不同），避免闪烁
                 if let Some(prev_sel) = current_sel {
                     if prev_sel != client_key {
                         self.unfocus_client(prev_sel, false)?;
@@ -5642,7 +5237,6 @@ impl Jwm {
                 }
                 self.focus(Some(client_key))?;
             } else {
-                // 不抢焦点：明确保持之前焦点（若不存在则设根焦点）
                 if let Some(prev_sel) = current_sel {
                     let _ = self.set_client_focus_by_key(prev_sel);
                 } else {
@@ -5652,25 +5246,19 @@ impl Jwm {
             return Ok(());
         }
 
-        // 3) 非 popup-like，新窗口处于非选中屏
         if let Some(target_mon_key) = client_mon_key {
-            // 该屏选中设为新窗口，并排列该屏
             if let Some(monitor) = self.monitors.get_mut(target_mon_key) {
                 monitor.sel = Some(client_key);
             }
             self.arrange(Some(target_mon_key));
         }
 
-        // 根据配置决定是否切屏并抢焦点
         if CONFIG.behavior().focus_follows_new_window && !is_never_focus {
             if let Some(target_mon_key) = client_mon_key {
-                // 使用统一的切屏逻辑（会处理状态栏与 restack）
                 self.switch_to_monitor(target_mon_key)?;
-                // 切屏后设置焦点到新窗口
                 self.focus(Some(client_key))?;
             }
         } else {
-            // 不切屏：保持当前屏焦点（优先之前选中，否则根焦点）
             if let Some(prev_sel) = current_sel {
                 let _ = self.set_client_focus_by_key(prev_sel);
             } else {
@@ -5777,32 +5365,24 @@ impl Jwm {
         }
     }
 
-    // 检查规则是否匹配客户端
     fn rule_matches(&self, rule: &WMRule, name: &str, class: &str, instance: &str) -> bool {
-        // 如果规则的所有字段都为空，则不匹配
         if rule.name.is_empty() && rule.class.is_empty() && rule.instance.is_empty() {
             return false;
         }
-        // 检查每个字段是否匹配（空字符串表示忽略该字段）
         let name_matches = rule.name.is_empty() || name.contains(&rule.name);
         let class_matches = rule.class.is_empty() || class.contains(&rule.class);
         let instance_matches = rule.instance.is_empty() || instance.contains(&rule.instance);
         name_matches && class_matches && instance_matches
     }
 
-    // 应用单个规则到客户端
     fn apply_single_rule(&mut self, client_key: ClientKey, rule: &WMRule) {
         if let Some(client) = self.clients.get_mut(client_key) {
             info!("[apply_single_rule] Applying rule: {:?}", rule);
-            // 设置浮动状态
             client.state.is_floating = rule.is_floating;
-            // 设置标签
             if rule.tags > 0 {
                 client.state.tags |= rule.tags as u32;
             }
-            // 设置监视器
             if rule.monitor >= 0 {
-                // 查找指定的监视器
                 let target_monitor = self
                     .monitor_order
                     .iter()
@@ -5862,13 +5442,11 @@ impl Jwm {
             } else {
                 return;
             };
-        // 如果类信息为空，尝试从 X11 获取
         if class.is_empty() && instance.is_empty() {
             if let Some((inst, cls)) = self.get_wm_class(win) {
                 instance = inst;
                 class = cls;
 
-                // 更新客户端的类信息
                 if let Some(client) = self.clients.get_mut(client_key) {
                     client.instance = instance.clone();
                     client.class = class.clone();
@@ -5879,7 +5457,6 @@ impl Jwm {
             "[applyrules_by_key] win: {:?}, name: '{}', instance: '{}', class: '{}'",
             win, name, instance, class
         );
-        // 重置浮动状态
         if let Some(client) = self.clients.get_mut(client_key) {
             client.state.is_floating = false;
         }
@@ -5889,7 +5466,6 @@ impl Jwm {
             }
             info!("No window info available, setting as floating");
         }
-        // 应用配置规则
         let mut rule_applied = false;
         for rule in &CONFIG.get_rules() {
             if self.rule_matches(rule, &name, &class, &instance) {
@@ -5961,7 +5537,6 @@ impl Jwm {
         win: WindowId,
         current_mon_id: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 配置状态栏客户端
         let mon_key = self.get_monitor_by_id(current_mon_id);
         if let Some(client) = self.clients.get_mut(client_key) {
             client.mon = mon_key;
@@ -5971,13 +5546,10 @@ impl Jwm {
             client.geometry.border_w = CONFIG.border_px() as i32;
         }
 
-        // 调整状态栏位置（通常在顶部）
         self.position_statusbar_on_monitor(current_mon_id)?;
 
-        // 设置状态栏特有的窗口属性
         self.setup_statusbar_window_by_key(client_key)?;
 
-        // 映射状态栏窗口
         self.backend.window_ops().map_window(win)?;
         self.backend.window_ops().flush()?;
         Ok(())
@@ -6099,7 +5671,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 辅助函数：根据ID获取显示器
     fn get_monitor_by_id(&self, monitor_id: i32) -> Option<MonitorKey> {
         self.monitors
             .iter()
@@ -6131,7 +5702,6 @@ impl Jwm {
     fn monocle(&mut self, mon_key: MonitorKey) {
         info!("[monocle]");
 
-        // 获取监视器信息
         let (wx, wy, ww, wh, monitor_num) = if let Some(monitor) = self.monitors.get(mon_key) {
             (
                 monitor.geometry.w_x,
@@ -6145,11 +5715,9 @@ impl Jwm {
             return;
         };
 
-        // 统计可见客户端数量并收集平铺客户端
         let mut visible_count = 0u32;
         let mut tiled_clients = Vec::new();
 
-        // 获取监视器的客户端列表
         if let Some(client_keys) = self.monitor_clients.get(mon_key) {
             for &client_key in client_keys {
                 if let Some(client) = self.clients.get(client_key) {
@@ -6157,7 +5725,6 @@ impl Jwm {
 
                     if is_visible {
                         visible_count += 1;
-                        // 收集平铺客户端（可见且非浮动）
                         if !client.state.is_floating {
                             tiled_clients.push((client_key, client.geometry.border_w));
                         }
@@ -6166,7 +5733,6 @@ impl Jwm {
             }
         }
 
-        // 更新布局符号
         if visible_count > 0 {
             let formatted_string = format!("[{}]", visible_count);
             if let Some(monitor) = self.monitors.get_mut(mon_key) {
@@ -6178,12 +5744,10 @@ impl Jwm {
             );
         }
 
-        // 如果没有平铺客户端，直接返回
         if tiled_clients.is_empty() {
             return;
         }
 
-        // 获取Y轴偏移
         let client_y_offset = if let Some(monitor) = self.monitors.get(mon_key) {
             self.get_client_y_offset(monitor)
         } else {
@@ -6191,7 +5755,6 @@ impl Jwm {
         };
         info!("[monocle] client_y_offset: {}", client_y_offset);
 
-        // 调整所有平铺客户端为全屏大小
         for (client_key, border_w) in tiled_clients {
             self.resize_client(
                 client_key,
@@ -6208,16 +5771,13 @@ impl Jwm {
         &mut self,
         new_monitor_key: Option<MonitorKey>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 从当前选中显示器的选中客户端上移除焦点
         let current_sel = self.get_selected_client_key();
         if let Some(sel_key) = current_sel {
             self.unfocus_client(sel_key, true)?;
         }
 
-        // 切换到新显示器
         self.sel_mon = new_monitor_key;
 
-        // 在新显示器上设置焦点
         self.focus(None)?;
 
         if let Some(monitor_key) = new_monitor_key {
@@ -6239,7 +5799,6 @@ impl Jwm {
             None => return Ok(()),
         };
 
-        // 获取窗口ID
         let win = if let Some(client) = self.clients.get(client_key) {
             client.win
         } else {
@@ -6247,13 +5806,11 @@ impl Jwm {
             return Ok(());
         };
 
-        // 检查是否是状态栏
         if Some(win) == self.status_bar_window {
             self.unmanage_statusbar(destroyed)?;
             return Ok(());
         }
 
-        // 常规客户端的 unmanage 逻辑
         self.unmanage_regular_client(client_key, destroyed)?;
         Ok(())
     }
@@ -6290,7 +5847,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 安全的共享内存清理方法
     fn cleanup_shared_memory_safe(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(shmem) = self.status_bar_shmem.take() {
             info!("[cleanup_shared_memory_safe] Cleaning up shared memory",);
@@ -6605,7 +6161,6 @@ impl Jwm {
         let num_detected_monitors = monitors.len();
         let current_num_monitors = self.monitor_order.len();
 
-        // 如果检测到的显示器数量多于当前管理的数量，创建新的显示器
         if num_detected_monitors > current_num_monitors {
             dirty = true;
             for _ in current_num_monitors..num_detected_monitors {
@@ -6618,11 +6173,9 @@ impl Jwm {
             }
         }
 
-        // 更新现有显示器的几何信息
         for (i, &(x, y, w, h)) in monitors.iter().enumerate() {
             if let Some(&mon_key) = self.monitor_order.get(i) {
                 if let Some(monitor) = self.monitors.get_mut(mon_key) {
-                    // 检查几何信息是否需要更新
                     if monitor.geometry.m_x != x
                         || monitor.geometry.m_y != y
                         || monitor.geometry.m_w != w
@@ -6643,7 +6196,6 @@ impl Jwm {
             }
         }
 
-        // 如果当前显示器数量多于检测到的数量，移除多余的显示器
         if num_detected_monitors < current_num_monitors {
             dirty = true;
             self.remove_excess_monitors(num_detected_monitors);
@@ -6653,18 +6205,14 @@ impl Jwm {
     }
 
     fn remove_excess_monitors(&mut self, target_count: usize) {
-        // 从后往前移除多余的显示器
         while self.monitor_order.len() > target_count {
             if let Some(mon_key_to_remove) = self.monitor_order.pop() {
-                // 将该显示器上的客户端移动到第一个显示器
                 self.move_clients_to_first_monitor(mon_key_to_remove);
 
-                // 如果被移除的是当前选中的显示器，切换到第一个
                 if self.sel_mon == Some(mon_key_to_remove) {
                     self.sel_mon = self.monitor_order.first().copied();
                 }
 
-                // 从所有相关数据结构中移除
                 self.monitors.remove(mon_key_to_remove);
                 self.monitor_clients.remove(mon_key_to_remove);
                 self.monitor_stack.remove(mon_key_to_remove);
@@ -6685,32 +6233,26 @@ impl Jwm {
             return;
         };
 
-        // 获取需要移动的客户端
         let clients_to_move: Vec<ClientKey> = self
             .monitor_clients
             .get(from_monitor_key)
             .cloned()
             .unwrap_or_default();
 
-        // 获取目标监视器的标签集
         let target_tags = if let Some(target_monitor) = self.monitors.get(target_monitor_key) {
             target_monitor.tag_set[target_monitor.sel_tags]
         } else {
-            1 // 默认标签
+            1
         };
 
-        // 移动所有客户端
         for client_key in clients_to_move {
-            // 更新客户端的监视器和标签
             if let Some(client) = self.clients.get_mut(client_key) {
                 client.mon = Some(target_monitor_key);
                 client.state.tags = target_tags;
             }
 
-            // 从原监视器移除
             self.detach_from_monitor(client_key, from_monitor_key);
 
-            // 添加到目标监视器
             self.attach_to_monitor(client_key, target_monitor_key);
 
             info!(
@@ -6739,7 +6281,6 @@ impl Jwm {
             None => return,
         };
         if let Some(hints) = self.backend.property_ops().get_wm_hints(win) {
-            // 处理紧急状态
             if hints.urgent {
                 let is_focused = self.is_client_selected(client_key);
                 if is_focused {
@@ -6754,7 +6295,6 @@ impl Jwm {
                     c.state.is_urgent = false;
                 }
             }
-            // 处理 InputHint
             if let Some(input_ok) = hints.input {
                 if let Some(c) = self.clients.get_mut(client_key) {
                     c.state.never_focus = !input_ok;
@@ -6780,7 +6320,6 @@ impl Jwm {
             }
         };
 
-        // 检查监视器是否存在
         let monitor = if let Some(monitor) = self.monitors.get(mon_key) {
             monitor
         } else {
@@ -6794,7 +6333,6 @@ impl Jwm {
         self.message = SharedMessage::default();
         let mut monitor_info_for_message = MonitorInfo::default();
 
-        // 设置监视器基本信息
         monitor_info_for_message.monitor_x = monitor.geometry.w_x;
         monitor_info_for_message.monitor_y = monitor.geometry.w_y;
         monitor_info_for_message.monitor_width = monitor.geometry.w_w;
@@ -6802,47 +6340,34 @@ impl Jwm {
         monitor_info_for_message.monitor_num = monitor.num;
         monitor_info_for_message.set_ltsymbol(&monitor.lt_symbol);
 
-        // 计算标签掩码
         let (occupied_tags_mask, urgent_tags_mask) = self.calculate_tag_masks(mon_key);
 
-        // 处理标签状态
         for i in 0..CONFIG.tags_length() {
             let tag_bit = 1 << i;
 
-            // 计算是否为填充标签（当前选中客户端是否在此标签上）
             let is_filled_tag = self.is_filled_tag(mon_key, tag_bit);
 
-            // 获取监视器信息（重新借用）
             let monitor = self.monitors.get(mon_key).unwrap();
             let active_tagset = monitor.tag_set[monitor.sel_tags];
-
             let is_selected_tag = (active_tagset & tag_bit) != 0;
             let is_urgent_tag = (urgent_tags_mask & tag_bit) != 0;
             let is_occupied_tag = (occupied_tags_mask & tag_bit) != 0;
-
             let tag_status = TagStatus::new(
                 is_selected_tag,
                 is_urgent_tag,
                 is_filled_tag,
                 is_occupied_tag,
             );
-
             monitor_info_for_message.set_tag_status(i, tag_status);
         }
-
-        // 设置选中客户端名称
         let selected_client_name = self.get_selected_client_name(mon_key);
         monitor_info_for_message.set_client_name(&selected_client_name);
-
         self.message.monitor_info = monitor_info_for_message;
     }
 
-    // 计算标签掩码（占用和紧急）
     fn calculate_tag_masks(&self, mon_key: MonitorKey) -> (u32, u32) {
         let mut occupied_tags_mask = 0u32;
         let mut urgent_tags_mask = 0u32;
-
-        // 遍历该监视器的所有客户端
         if let Some(client_keys) = self.monitor_clients.get(mon_key) {
             for &client_key in client_keys {
                 if let Some(client) = self.clients.get(client_key) {
@@ -6853,18 +6378,13 @@ impl Jwm {
                 }
             }
         }
-
         (occupied_tags_mask, urgent_tags_mask)
     }
 
-    // 检查指定标签是否为"填充"状态（选中客户端在此标签上）
     fn is_filled_tag(&self, mon_key: MonitorKey, tag_bit: u32) -> bool {
-        // 检查是否为全局选中的监视器
         if self.sel_mon != Some(mon_key) {
             return false;
         }
-
-        // 获取选中的客户端
         if let Some(monitor) = self.monitors.get(mon_key) {
             if let Some(sel_client_key) = monitor.sel {
                 if let Some(client) = self.clients.get(sel_client_key) {
@@ -6872,11 +6392,9 @@ impl Jwm {
                 }
             }
         }
-
         false
     }
 
-    // 获取选中客户端的名称
     fn get_selected_client_name(&self, mon_key: MonitorKey) -> String {
         if let Some(monitor) = self.monitors.get(mon_key) {
             if let Some(sel_client_key) = monitor.sel {

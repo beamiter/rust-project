@@ -38,7 +38,6 @@ pub struct X11Backend {
 
 impl X11Backend {
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        // 连接 X11
         let (raw_conn, screen_num) = x11rb::rust_connection::RustConnection::connect(None)?;
         let conn = Arc::new(raw_conn);
         use x11rb::connection::Connection;
@@ -46,10 +45,8 @@ impl X11Backend {
         let root = WindowId(screen.root as u64);
         let numlock_mask = Arc::new(Mutex::new(0u16));
 
-        // Atoms
         let atoms = Atoms::new(conn.as_ref())?.reply()?;
 
-        // 子服务
         let window_ops: Box<dyn WindowOps> = Box::new(X11WindowOps::new(
             conn.clone(),
             atoms.clone(),

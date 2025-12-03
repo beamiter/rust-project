@@ -85,7 +85,6 @@ impl AdvancedTerminalProber {
         }
     }
 
-    /// 获取可用的终端配置
     pub fn get_available_terminal(&self) -> Option<&TerminalConfig> {
         for terminal_name in &self.priority_order {
             if let Some(config) = self.configs.get(terminal_name) {
@@ -98,25 +97,18 @@ impl AdvancedTerminalProber {
         None
     }
 
-    /// 检查命令是否可用（带线程安全缓存）
     fn is_command_available(&self, cmd: &str) -> bool {
-        // 尝试读取缓存
         {
             let cache_reader = self.cache.read().unwrap();
             if let Some(&cached_result) = cache_reader.get(cmd) {
                 return cached_result;
             }
         }
-
-        // 缓存未命中，执行检查
         let result = self.check_command_exists(cmd);
-
-        // 更新缓存
         {
             let mut cache_writer = self.cache.write().unwrap();
             cache_writer.insert(cmd.to_string(), result);
         }
-
         result
     }
 
@@ -128,7 +120,6 @@ impl AdvancedTerminalProber {
             .unwrap_or(false)
     }
 
-    /// 构建启动命令
     #[allow(dead_code)]
     pub fn build_command(
         &self,
@@ -138,27 +129,19 @@ impl AdvancedTerminalProber {
     ) -> Option<Vec<String>> {
         let config = self.get_available_terminal()?;
         let mut cmd = vec![config.command.clone()];
-
-        // 添加标题
         if let (Some(title), Some(title_flag)) = (title, &config.title_flag) {
             cmd.push(title_flag.clone());
             cmd.push(title.to_string());
         }
-
-        // 添加工作目录
         if let (Some(working_dir), Some(dir_flag)) = (working_dir, &config.working_dir_flag) {
             cmd.push(dir_flag.clone());
             cmd.push(working_dir.to_string());
         }
-
-        // 添加执行命令
         cmd.push(config.execute_flag.clone());
         cmd.push(command.to_string());
-
         Some(cmd)
     }
 
-    /// 清除缓存
     #[allow(dead_code)]
     pub fn clear_cache(&self) {
         let mut cache_writer = self.cache.write().unwrap();
@@ -166,6 +149,5 @@ impl AdvancedTerminalProber {
     }
 }
 
-// 全局实例（线程安全）
 pub static ADVANCED_TERMINAL_PROBER: Lazy<AdvancedTerminalProber> =
     Lazy::new(|| AdvancedTerminalProber::new());

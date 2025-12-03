@@ -11,27 +11,21 @@ use std::rc::Rc;
 pub type ClientKey = DefaultKey;
 pub type MonitorKey = DefaultKey;
 
-// 移动自 jwm.rs 的结构体，注意 win 字段类型的变化
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Decode, Encode)]
 pub struct WMClient {
-    // === 基本信息 ===
     pub name: String,
     pub class: String,
     pub instance: String,
-    pub win: WindowId, // [修改] u32 -> WindowId
+    pub win: WindowId,
 
-    // === 几何信息 ===
     pub geometry: ClientGeometry,
     pub size_hints: SizeHints,
 
-    // === 状态信息 ===
     pub state: ClientState,
 
-    // === 链表和关联 ===
     #[bincode(with_serde)]
     pub mon: Option<MonitorKey>,
 
-    // === 重启时记录 ===
     pub monitor_num: u32,
 }
 
@@ -82,14 +76,13 @@ pub struct ClientState {
     pub is_fullscreen: bool,
 }
 
-// 实现 WMClient 的方法
 impl WMClient {
     pub fn new(win: WindowId) -> Self {
         Self {
             name: String::new(),
             class: String::new(),
             instance: String::new(),
-            win, // 直接使用 WindowId
+            win,
             geometry: ClientGeometry::default(),
             size_hints: SizeHints::default(),
             state: ClientState::default(),
@@ -135,7 +128,6 @@ impl fmt::Display for WMClient {
     }
 }
 
-// Monitor 相关结构体
 #[derive(Debug, Clone, PartialEq)]
 pub struct WMMonitor {
     pub num: i32,
@@ -175,7 +167,7 @@ pub struct Pertag {
     pub n_masters: Vec<u32>,
     pub m_facts: Vec<f32>,
     pub sel_lts: Vec<usize>,
-    pub lt_idxs: Vec<Vec<Option<Rc<LayoutEnum>>>>, // 注意这里使用了 jwm::LayoutEnum
+    pub lt_idxs: Vec<Vec<Option<Rc<LayoutEnum>>>>,
     pub show_bars: Vec<bool>,
     pub sel: Vec<Option<ClientKey>>,
 }
