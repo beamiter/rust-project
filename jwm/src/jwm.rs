@@ -5211,13 +5211,39 @@ impl Jwm {
                 .apply_window_changes(client_win, changes)?;
             self.backend.window_ops().flush()?;
 
-            if let Some(pk) = parent_key_opt {
-                let _ = self.set_client_focus_by_key(pk);
-            } else if let Some(prev_sel) = current_sel {
-                let _ = self.set_client_focus_by_key(prev_sel);
+            // 判断是否应该给予该弹窗焦点
+            let should_focus_this = if let Some(c) = self.clients.get(client_key) {
+                // 如果窗口声明自己不需要焦点，那就别给
+                if c.state.never_focus {
+                    false
+                } else {
+                    // 获取具体类型
+                    let types = self.backend.property_ops().get_window_types(c.win);
+                    // Tooltip 绝对不能拿焦点，否则会导致主窗口闪烁
+                    let is_tooltip = types.contains(&WindowType::Tooltip);
+
+                    // 其他类型（Dialog, Menu, Combo, Notification等）
+                    // 如果它们是受管窗口且接受输入，通常意味着它们是交互式的菜单
+                    !is_tooltip
+                }
             } else {
-                let _ = self.set_root_focus();
+                false
+            };
+
+            if should_focus_this {
+                // 如果是交互式弹窗，给予焦点，这样应用就不会自动关闭它了
+                self.focus(Some(client_key))?;
+            } else {
+                // 如果是被动弹窗（如 Tooltip），保持原样，聚焦父窗口
+                if let Some(pk) = parent_key_opt {
+                    let _ = self.set_client_focus_by_key(pk);
+                } else if let Some(prev_sel) = current_sel {
+                    let _ = self.set_client_focus_by_key(prev_sel);
+                } else {
+                    let _ = self.set_root_focus();
+                }
             }
+
             return Ok(());
         }
         let is_on_selected_monitor = client_mon_key.is_some() && client_mon_key == current_sel_mon;
