@@ -1,8 +1,8 @@
 // src/backend/x11/input_ops.rs
 use std::sync::Arc;
 use x11rb::connection::Connection;
-use x11rb::protocol::xproto::*;
 use x11rb::protocol::Event;
+use x11rb::protocol::xproto::*;
 
 use crate::backend::api::AllowMode;
 use crate::backend::api::{InputOps as InputOpsTrait, WindowId};
@@ -12,6 +12,15 @@ use crate::backend::x11::adapter::event_mask_from_generic;
 pub struct X11InputOps<C: Connection> {
     conn: Arc<C>,
     root: Window,
+}
+
+impl<C: Connection> Clone for X11InputOps<C> {
+    fn clone(&self) -> Self {
+        Self {
+            conn: self.conn.clone(), // 这里只是增加 Arc 的引用计数，非常廉价
+            root: self.root,         // Window 本质是 u32/u64，是 Copy 的
+        }
+    }
 }
 
 impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
@@ -139,8 +148,7 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
                         break;
                     }
                 }
-                Some(_other) => {
-                }
+                Some(_other) => {}
                 None => {
                     std::thread::sleep(std::time::Duration::from_millis(10));
                 }

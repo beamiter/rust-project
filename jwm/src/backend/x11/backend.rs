@@ -26,6 +26,7 @@ pub struct X11Backend {
 
     window_ops: Box<dyn WindowOps>,
     input_ops: Box<dyn InputOps>,
+    input_ops_handle: Arc<Mutex<dyn InputOps + Send>>,
     property_ops: Box<dyn PropertyOps>,
     output_ops: Box<dyn OutputOps>,
     key_ops: Box<dyn KeyOps>,
@@ -52,7 +53,10 @@ impl X11Backend {
             atoms.clone(),
             numlock_mask.clone(),
         ));
-        let input_ops: Box<dyn InputOps> = Box::new(X11InputOps::new(conn.clone(), screen.root));
+
+        let x11_input_ops = X11InputOps::new(conn.clone(), screen.root);
+        let input_ops_box: Box<dyn InputOps> = Box::new(x11_input_ops.clone());
+        let input_ops_handle = Arc::new(Mutex::new(x11_input_ops));
         let property_ops: Box<dyn PropertyOps> =
             Box::new(X11PropertyOps::new(conn.clone(), atoms.clone()));
         let output_ops: Box<dyn OutputOps> = Box::new(X11OutputOps::new(
@@ -93,7 +97,8 @@ impl X11Backend {
             atoms,
             caps,
             window_ops,
-            input_ops,
+            input_ops: input_ops_box,
+            input_ops_handle,
             property_ops,
             output_ops,
             key_ops,
@@ -125,10 +130,7 @@ impl Backend for X11Backend {
         &*self.input_ops
     }
     fn input_ops_handle(&self) -> std::sync::Arc<std::sync::Mutex<dyn InputOps + Send>> {
-        Arc::new(Mutex::new(super::input_ops::X11InputOps::new(
-            self.conn.clone(),
-            self.screen.root,
-        )))
+        self.input_ops_handle.clone()
     }
     fn property_ops(&self) -> &dyn PropertyOps {
         &*self.property_ops

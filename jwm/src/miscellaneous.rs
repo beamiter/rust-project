@@ -1,57 +1,52 @@
-use dirs_next::home_dir;
+// src/miscellaneous.rs
 use log::{error, info};
-use std::process::Command;
+use std::process::{Command, Stdio};
 
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
-const USE_PICOM: bool = false;
-
 pub fn init_auto_command() {
+    // 仅仅保留终端检测日志，这对于调试很有用
     let prober = &*ADVANCED_TERMINAL_PROBER;
     if let Some(terminal) = prober.get_available_terminal() {
         info!("Found terminal: {}", terminal.command);
     } else {
         error!("No terminal found!");
     }
-    let start_amixer = "amixer";
-    if let Err(_) = Command::new(start_amixer)
-        .arg("sset")
-        .arg("Master")
-        .arg("80%")
-        .arg("unmute")
-        .spawn()
-    {
-        error!("[spawn] Start Master volume failed");
-    }
-    if let Err(_) = Command::new(start_amixer)
-        .arg("sset")
-        .arg("Headphone")
-        .arg("80%")
-        .arg("unmute")
-        .spawn()
-    {
-        error!("[spawn] Start Headphone volume failed");
-    }
 }
 
 pub fn init_auto_start() {
-    match home_dir() {
-        Some(path) => {
-            let start_fehbg = path.as_path().join(".fehbg");
-            info!("fehbg: {:?}", start_fehbg);
-            if let Err(_) = Command::new(start_fehbg).spawn() {
-                error!("[spawn] Start fehbg failed");
-            } else {
-                info!("[spawn] Start fehbg succed");
+    // 1. 确定 autostart.sh 的路径
+    // 优先查找 XDG_CONFIG_HOME/jwm/autostart.sh (通常是 ~/.config/jwm/autostart.sh)
+    let config_path = dirs::config_dir()
+        .map(|p| p.join("jwm").join("autostart.sh"))
+        .or_else(|| {
+            // 回退方案：尝试找 ~/.jwm/autostart.sh
+            dirs::home_dir().map(|p| p.join(".jwm").join("autostart.sh"))
+        });
+
+    if let Some(path) = config_path {
+        if path.exists() {
+            info!("Found autostart script at: {:?}", path);
+
+            // 2. 执行脚本
+            // 使用 "sh" 来执行，这样即使用户忘记 chmod +x 也能运行
+            match Command::new("sh")
+                .arg(&path)
+                .stdin(Stdio::null())
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .spawn()
+            {
+                Ok(_) => info!("Autostart script spawned successfully"),
+                Err(e) => error!("Failed to execute autostart script: {}", e),
             }
-        }
-        None => error!("Could not find the home directory."),
-    }
-    if USE_PICOM {
-        if let Err(_) = Command::new("picom").spawn() {
-            error!("[spawn] Start picom failed");
         } else {
-            info!("[spawn] Start picom succed");
+            info!(
+                "No autostart script found at {:?}, skipping auto start tasks.",
+                path
+            );
         }
+    } else {
+        error!("Could not determine configuration directory.");
     }
 }

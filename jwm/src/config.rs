@@ -208,48 +208,35 @@ impl Default for Config {
 #[allow(dead_code)]
 impl Config {
     fn get_default_keys() -> Vec<KeyConfig> {
+        let dmenu_cmd = vec![
+            "dmenu_run".to_string(),
+            "-m".to_string(),
+            "0".to_string(),
+            "-fn".to_string(),
+            "SauceCodePro Nerd Font Regular 11".to_string(),
+            "-nb".to_string(),
+            "#2e3440".to_string(),
+            "-nf".to_string(),
+            "#d8dee9".to_string(),
+            "-sb".to_string(),
+            "#81a1c1".to_string(),
+            "-sf".to_string(),
+            "#eceff4".to_string(),
+            "-b".to_string(),
+        ];
+
         vec![
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "e".to_string(),
                 function: "spawn".to_string(),
-                argument: ArgumentConfig::StringVec(vec![
-                    "dmenu_run".to_string(),
-                    "-m".to_string(),
-                    "0".to_string(),
-                    "-fn".to_string(),
-                    "SauceCodePro Nerd Font Regular 11".to_string(),
-                    "-nb".to_string(),
-                    "#2e3440".to_string(), // 普通背景：Nord Black
-                    "-nf".to_string(),
-                    "#d8dee9".to_string(), // 普通文本：Snow Storm
-                    "-sb".to_string(),
-                    "#81a1c1".to_string(), // 选中背景：Frost Blue
-                    "-sf".to_string(),
-                    "#eceff4".to_string(), // 选中文本：Very Light Blue
-                    "-b".to_string(),      // 在底部显示（可选）
-                ]),
+                argument: ArgumentConfig::StringVec(dmenu_cmd.clone()),
             },
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "r".to_string(),
                 function: "spawn".to_string(),
-                argument: ArgumentConfig::StringVec(vec![
-                    "dmenu_run".to_string(),
-                    "-m".to_string(),
-                    "0".to_string(),
-                    "-fn".to_string(),
-                    "SauceCodePro Nerd Font Regular 11".to_string(),
-                    "-nb".to_string(),
-                    "#2e3440".to_string(), // 普通背景：Nord Black
-                    "-nf".to_string(),
-                    "#d8dee9".to_string(), // 普通文本：Snow Storm
-                    "-sb".to_string(),
-                    "#81a1c1".to_string(), // 选中背景：Frost Blue
-                    "-sf".to_string(),
-                    "#eceff4".to_string(), // 选中文本：Very Light Blue
-                    "-b".to_string(),      // 在底部显示（可选）
-                ]),
+                argument: ArgumentConfig::StringVec(dmenu_cmd),
             },
             KeyConfig {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
@@ -800,14 +787,12 @@ impl Config {
             ArgumentConfig::UInt(u) => jwm::WMArgEnum::UInt(*u),
             ArgumentConfig::Float(f) => jwm::WMArgEnum::Float(*f),
             ArgumentConfig::StringVec(v) => jwm::WMArgEnum::StringVec(v.clone()),
-            ArgumentConfig::String(s) => {
-                match s.as_str() {
-                    "tile" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::TILE)),
-                    "float" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::FLOAT)),
-                    "monocle" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::MONOCLE)),
-                    _ => jwm::WMArgEnum::StringVec(vec![s.clone()]),
-                }
-            }
+            ArgumentConfig::String(s) => match s.as_str() {
+                "tile" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::TILE)),
+                "float" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::FLOAT)),
+                "monocle" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::MONOCLE)),
+                _ => jwm::WMArgEnum::StringVec(vec![s.clone()]),
+            },
         }
     }
 

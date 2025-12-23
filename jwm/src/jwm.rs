@@ -1095,7 +1095,8 @@ impl Jwm {
             let _ = self.position_statusbar_on_monitor(id);
         }
 
-        for &mon_key in self.monitor_order.clone().iter() {
+        let monitors: Vec<_> = self.monitor_order.to_vec();
+        for mon_key in monitors {
             self.showhide_monitor(mon_key);
         }
         let _ = self.restack(self.sel_mon);
@@ -1832,7 +1833,8 @@ impl Jwm {
 
     fn handle_screen_geometry_change(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[handle_screen_geometry_change]");
-        for &mon_key in self.monitor_order.clone().iter() {
+        let monitors: Vec<_> = self.monitor_order.to_vec();
+        for mon_key in monitors {
             self.update_fullscreen_clients_on_monitor(mon_key)?;
         }
         self.focus(None)?;
