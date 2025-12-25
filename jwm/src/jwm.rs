@@ -277,6 +277,8 @@ pub struct Jwm {
     pub restoring_from_snapshot: bool,
 
     pub last_stacking: SecondaryMap<MonitorKey, Vec<WindowId>>,
+
+    key_bindings: Vec<WMKey>,
 }
 
 impl Jwm {
@@ -347,6 +349,7 @@ impl Jwm {
 
             restoring_from_snapshot: false,
             last_stacking: SecondaryMap::new(),
+            key_bindings: CONFIG.get_keys(),
         })
     }
 
@@ -370,7 +373,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let keysym = self.backend.key_ops_mut().keysym_from_keycode(keycode)?;
         let clean_state = self.clean_mask(state_bits);
-        for key_config in CONFIG.get_keys().iter() {
+        for key_config in self.key_bindings.to_vec().iter() {
             let kc_mask = key_config.mask
                 & (Mods::SHIFT
                     | Mods::CONTROL
@@ -716,7 +719,7 @@ impl Jwm {
     fn handle_backend_event(&mut self, ev: BackendEvent) -> Result<(), Box<dyn std::error::Error>> {
         match ev {
             BackendEvent::WmKeyboardShortcut { keysym, mods } => {
-                for key_config in crate::config::CONFIG.get_keys().iter() {
+                for key_config in self.key_bindings.to_vec().iter() {
                     if keysym == key_config.key_sym && mods == key_config.mask {
                         if let Some(func) = key_config.func_opt {
                             let _ = func(self, &key_config.arg);
@@ -1917,8 +1920,8 @@ impl Jwm {
         self.backend
             .key_ops()
             .clear_key_grabs(self.backend.root_window())?;
-        let bindings: Vec<(Mods, KeySym)> = CONFIG
-            .get_keys()
+        let bindings: Vec<(Mods, KeySym)> = self
+            .key_bindings
             .iter()
             .map(|k| (k.mask, k.key_sym))
             .collect();
