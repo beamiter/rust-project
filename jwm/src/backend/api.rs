@@ -248,13 +248,6 @@ pub trait InputOps: Send {
         x: i16,
         y: i16,
     ) -> Result<(), Box<dyn std::error::Error>>;
-    fn drag_loop(
-        &self,
-        cursor: Option<u64>,
-        warp_to: Option<(i16, i16)>,
-        target: WindowId,
-        on_motion: &mut dyn FnMut(i16, i16, u32) -> Result<(), Box<dyn std::error::Error>>,
-    ) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 pub trait OutputOps: Send {

@@ -1,7 +1,6 @@
 // src/backend/x11/input_ops.rs
 use std::sync::Arc;
 use x11rb::connection::Connection;
-use x11rb::protocol::Event;
 use x11rb::protocol::xproto::*;
 
 use crate::backend::api::AllowMode;
@@ -80,83 +79,6 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
         self.conn.flush()?;
         Ok(())
     }
-
-    fn keycode_to_keysym(&self, keycode: u8) -> Result<u32, Box<dyn std::error::Error>> {
-        let mapping = self.conn.get_keyboard_mapping(keycode, 1)?.reply()?;
-        Ok(mapping.keysyms.get(0).copied().unwrap_or(0))
-    }
-
-    pub fn drag_loop<F>(
-        &self,
-        grab_mask: EventMask,
-        cursor: Option<Cursor>,
-        warp_to: Option<(i16, i16)>,
-        target_window: Window,
-        mut on_motion: F,
-    ) -> Result<(), Box<dyn std::error::Error>>
-    where
-        F: FnMut(&MotionNotifyEvent) -> Result<(), Box<dyn std::error::Error>>,
-    {
-        match self.grab_pointer_raw(grab_mask, cursor) {
-            Ok(GrabStatus::SUCCESS) => {}
-            Ok(status) => {
-                let status_str = match status {
-                    GrabStatus::ALREADY_GRABBED => "AlreadyGrabbed",
-                    GrabStatus::FROZEN => "Frozen",
-                    GrabStatus::INVALID_TIME => "InvalidTime",
-                    GrabStatus::NOT_VIEWABLE => "NotViewable",
-                    _ => "Unknown",
-                };
-                return Err(format!("Failed to grab pointer: {}", status_str).into());
-            }
-            Err(e) => return Err(e),
-        }
-
-        if let Some((wx, wy)) = warp_to {
-            self.warp_pointer_to_window(WindowId(target_window.into()), wx, wy)?;
-        }
-        self.flush()?;
-
-        let mut last_motion_time: u32 = 0;
-
-        loop {
-            match self.conn.poll_for_event()? {
-                Some(Event::MotionNotify(e)) => {
-                    if e.time.wrapping_sub(last_motion_time) <= 16 {
-                        continue;
-                    }
-                    last_motion_time = e.time;
-                    on_motion(&e)?;
-                }
-                Some(Event::ButtonRelease(_)) => {
-                    break;
-                }
-                Some(Event::KeyPress(e)) => {
-                    const XK_ESCAPE: u32 = 0xff1b;
-                    let ks = self.keycode_to_keysym(e.detail)?;
-                    if ks == XK_ESCAPE {
-                        break;
-                    }
-                }
-                Some(Event::DestroyNotify(e)) => {
-                    if e.window == target_window {
-                        break;
-                    }
-                }
-                Some(Event::UnmapNotify(e)) => {
-                    if e.window == target_window {
-                        break;
-                    }
-                }
-                Some(_other) => {}
-                None => {
-                    std::thread::sleep(std::time::Duration::from_millis(10));
-                }
-            }
-        }
-
-        Ok(())
-    }
 }
 
 impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
@@ -205,21 +127,5 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
             .warp_pointer(0u32, win.0 as u32, 0, 0, 0, 0, x, y)?
             .check()?;
         Ok(())
-    }
-
-    fn drag_loop(
-        &self,
-        cursor: Option<u64>,
-        warp_to: Option<(i16, i16)>,
-        target: WindowId,
-        on_motion: &mut dyn FnMut(i16, i16, u32) -> Result<(), Box<dyn std::error::Error>>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        use x11rb::protocol::xproto::EventMask;
-        let grab_mask =
-            EventMask::BUTTON_PRESS | EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
-        let cursor_id = cursor.map(|c| c as u32);
-        self.drag_loop(grab_mask, cursor_id, warp_to, target.0 as u32, |e| {
-            on_motion(e.root_x, e.root_y, e.time)
-        })
     }
 }

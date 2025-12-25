@@ -238,6 +238,22 @@ impl WMRule {
 
 pub type MonitorIndex = i32;
 
+#[derive(Debug, Clone, Copy)]
+pub enum InteractionAction {
+    Move,
+    Resize,
+}
+
+#[derive(Debug, Clone)]
+pub struct InteractionState {
+    pub client_key: ClientKey,
+    pub action: InteractionAction,
+    pub start_win_geom: Geometry, // 记录开始时的窗口位置/大小
+    pub start_mouse_x: i32,       // 记录开始时的鼠标位置
+    pub start_mouse_y: i32,
+    pub last_update_time: std::time::Instant, // 用于限流
+}
+
 pub struct Jwm {
     pub s_w: i32,
     pub s_h: i32,
@@ -279,6 +295,7 @@ pub struct Jwm {
     pub last_stacking: SecondaryMap<MonitorKey, Vec<WindowId>>,
 
     key_bindings: Vec<WMKey>,
+    pub interaction: Option<InteractionState>,
 }
 
 impl Jwm {
@@ -350,6 +367,7 @@ impl Jwm {
             restoring_from_snapshot: false,
             last_stacking: SecondaryMap::new(),
             key_bindings: CONFIG.get_keys(),
+            interaction: None,
         })
     }
 
@@ -466,6 +484,75 @@ impl Jwm {
         root_y: i16,
         _time: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // 1. 优先处理交互状态
+        if let Some(state) = self.interaction.clone() {
+            // 限流：避免事件过多导致计算卡顿 (例如每 10ms 处理一次)
+            if state.last_update_time.elapsed().as_millis() < 10 {
+                return Ok(());
+            }
+
+            // 更新时间戳
+            if let Some(ref mut s) = self.interaction {
+                s.last_update_time = std::time::Instant::now();
+            }
+
+            match state.action {
+                InteractionAction::Move => {
+                    let dx = root_x as i32 - state.start_mouse_x;
+                    let dy = root_y as i32 - state.start_mouse_y;
+                    let mut new_x = state.start_win_geom.x as i32 + dx;
+                    let mut new_y = state.start_win_geom.y as i32 + dy;
+
+                    // 获取当前显示器信息用于边缘吸附
+                    if let Some(sel_mon_key) = self.sel_mon {
+                        if let Some(m) = self.monitors.get(sel_mon_key) {
+                            self.apply_edge_snapping(
+                                state.client_key,
+                                &mut new_x,
+                                &mut new_y,
+                                m.geometry.w_x,
+                                m.geometry.w_y,
+                                m.geometry.w_w,
+                                m.geometry.w_h,
+                            )?;
+                        }
+                    }
+
+                    self.check_and_toggle_floating_for_move(state.client_key, new_x, new_y)?;
+
+                    if self.should_move_client(state.client_key) {
+                        // 保持大小不变，只改位置
+                        let w = state.start_win_geom.w as i32;
+                        let h = state.start_win_geom.h as i32;
+                        self.resize_client(state.client_key, new_x, new_y, w, h, true);
+                    }
+                }
+                InteractionAction::Resize => {
+                    // 计算新的宽高
+                    let dx = root_x as i32 - state.start_mouse_x;
+                    let dy = root_y as i32 - state.start_mouse_y;
+
+                    // 确保最小尺寸
+                    let new_w = (state.start_win_geom.w as i32 + dx).max(1);
+                    let new_h = (state.start_win_geom.h as i32 + dy).max(1);
+
+                    self.check_and_toggle_floating_for_resize(state.client_key, new_w, new_h)?;
+
+                    if self.should_resize_client(state.client_key) {
+                        self.resize_client(
+                            state.client_key,
+                            state.start_win_geom.x as i32,
+                            state.start_win_geom.y as i32,
+                            new_w,
+                            new_h,
+                            true,
+                        );
+                    }
+                }
+            }
+            return Ok(()); // 处于交互模式时，不再处理后续的 monitor switch 逻辑
+        }
+
         if window != self.backend.root_window() {
             return Ok(());
         }
@@ -851,7 +938,32 @@ impl Jwm {
                 Ok(())
             }
             BackendEvent::ClientMessage { .. } | BackendEvent::PropertyNotify { .. } => Ok(()),
-            BackendEvent::ButtonRelease { .. } => Ok(()),
+            BackendEvent::ButtonRelease { window: _, time: _ } => {
+                // 无论在哪个窗口释放，只要处于交互状态，都结束它
+                if let Some(state) = self.interaction.take() {
+                    info!("[Interaction] Finished {:?}", state.action);
+
+                    // 1. 停止抓取
+                    self.backend.input_ops().ungrab_pointer()?;
+
+                    // 2. 恢复光标
+                    self.backend
+                        .input_ops()
+                        .set_cursor(StdCursorKind::LeftPtr)?;
+
+                    // 3. 执行特定动作的清理
+                    match state.action {
+                        InteractionAction::Move => {
+                            self.cleanup_move(state.client_key)?;
+                        }
+                        InteractionAction::Resize => {
+                            // Resize 后的清理 (如更新 monitor 归属)
+                            self.check_monitor_change_after_resize()?;
+                        }
+                    }
+                }
+                Ok(())
+            }
         }
     }
 
@@ -4211,7 +4323,6 @@ impl Jwm {
             .change_event_mask(self.backend.root_window(), mask)?;
         self.grabkeys()?;
         self.focus(None)?;
-        self.backend.window_ops().flush()?;
 
         let snapshot_opt = Self::load_restart_snapshot();
 
@@ -4227,6 +4338,7 @@ impl Jwm {
             let _ = self.restack(self.sel_mon);
             let _ = self.focus(None);
         }
+        self.backend.window_ops().flush()?;
         Ok(())
     }
 
@@ -4507,64 +4619,59 @@ impl Jwm {
             Some(k) => k,
             None => return Ok(()),
         };
-        if let Some(client) = self.clients.get(client_key) {
-            if client.state.is_fullscreen {
+
+        // 1. 获取初始信息
+        let (start_geom, _) = if let Some(c) = self.clients.get(client_key) {
+            if c.state.is_fullscreen {
                 return Ok(());
             }
+            (
+                Geometry {
+                    x: c.geometry.x as i16,
+                    y: c.geometry.y as i16,
+                    w: c.geometry.w as u16,
+                    h: c.geometry.h as u16,
+                    border: c.geometry.border_w as u16,
+                },
+                c.win,
+            )
         } else {
             return Ok(());
-        }
-        self.restack(self.sel_mon)?;
-        let (start_x, start_y, window_id) = {
-            let c = self.clients.get(client_key).unwrap();
-            (c.geometry.x, c.geometry.y, c.win)
         };
-        let (initial_x, initial_y, _mask, _unused) =
-            self.backend.input_ops().query_pointer_root()?;
-        let (initial_mouse_x, initial_mouse_y) = (initial_x as u16, initial_y as u16);
-        let cursor_handle = self.backend.cursor_provider().get(StdCursorKind::Hand)?.0;
-        let _ = self.backend.input_ops().set_cursor(StdCursorKind::Hand);
-        let io = self.backend.input_ops_handle();
-        {
-            let ops = io.lock().unwrap();
-            ops.drag_loop(
-                Some(cursor_handle), // Now this variable exists
-                None,
-                window_id,
-                &mut |root_x, root_y, _time| {
-                    let mut new_x = start_x + (root_x as i32 - initial_mouse_x as i32);
-                    let mut new_y = start_y + (root_y as i32 - initial_mouse_y as i32);
 
-                    let (mon_wx, mon_wy, mon_ww, mon_wh) = {
-                        let sel_mon_key = match self.sel_mon {
-                            Some(k) => k,
-                            None => return Ok(()),
-                        };
-                        let m = self.monitors.get(sel_mon_key).unwrap();
-                        (
-                            m.geometry.w_x,
-                            m.geometry.w_y,
-                            m.geometry.w_w,
-                            m.geometry.w_h,
-                        )
-                    };
-                    self.apply_edge_snapping(
-                        client_key, &mut new_x, &mut new_y, mon_wx, mon_wy, mon_ww, mon_wh,
-                    )?;
-                    self.check_and_toggle_floating_for_move(client_key, new_x, new_y)?;
-                    if self.should_move_client(client_key) {
-                        let (w, h) = {
-                            let c = self.clients.get(client_key).unwrap();
-                            (c.geometry.w, c.geometry.h)
-                        };
-                        self.resize_client(client_key, new_x, new_y, w, h, true);
-                    }
-                    Ok(())
-                },
-            )?;
-            let _ = self.backend.input_ops().set_cursor(StdCursorKind::LeftPtr);
+        self.restack(self.sel_mon)?;
+
+        // 2. 获取当前鼠标位置
+        let (ptr_x, ptr_y) = self.getrootptr()?;
+
+        // 3. 设置光标
+        let cursor_handle = self.backend.cursor_provider().get(StdCursorKind::Hand)?.0;
+        self.backend.input_ops().set_cursor(StdCursorKind::Hand)?;
+
+        // 4. 抓取指针 (Wayland 中这一步通常意味着开始隐式抓取)
+        // 这里的 mask 对应 MOUSEMASK
+        let success = self.backend.input_ops().grab_pointer(
+            (EventMaskBits::BUTTON_RELEASE | EventMaskBits::POINTER_MOTION).bits(),
+            Some(cursor_handle),
+        )?;
+
+        if success {
+            // 5. 进入交互状态
+            self.interaction = Some(InteractionState {
+                client_key,
+                action: InteractionAction::Move,
+                start_win_geom: start_geom,
+                start_mouse_x: ptr_x,
+                start_mouse_y: ptr_y,
+                last_update_time: std::time::Instant::now(),
+            });
+            info!("[movemouse] Started interactive move");
+        } else {
+            self.backend
+                .input_ops()
+                .set_cursor(StdCursorKind::LeftPtr)?;
         }
-        self.cleanup_move(client_key)?;
+
         Ok(())
     }
 
@@ -4573,56 +4680,63 @@ impl Jwm {
             Some(k) => k,
             None => return Ok(()),
         };
-        let _client_win = if let Some(client) = self.clients.get(client_key) {
-            if client.state.is_fullscreen {
+
+        let (start_geom, win_id) = if let Some(c) = self.clients.get(client_key) {
+            if c.state.is_fullscreen {
                 return Ok(());
             }
-            client.win
+            (
+                Geometry {
+                    x: c.geometry.x as i16,
+                    y: c.geometry.y as i16,
+                    w: c.geometry.w as u16,
+                    h: c.geometry.h as u16,
+                    border: c.geometry.border_w as u16,
+                },
+                c.win,
+            )
         } else {
             return Ok(());
         };
-        self.restack(self.sel_mon)?;
-        let (start_x, start_y, border_w, window_id, start_w, start_h) = {
-            let c = self.clients.get(client_key).unwrap();
-            (
-                c.geometry.x,
-                c.geometry.y,
-                c.geometry.border_w,
-                c.win,
-                c.geometry.w,
-                c.geometry.h,
-            )
-        };
-        let warp_pos = (
-            (start_w + border_w - 1) as i16,
-            (start_h + border_w - 1) as i16,
-        );
-        let cursor_handle = self.backend.cursor_provider().get(StdCursorKind::Fleur)?.0;
-        let _ = self.backend.input_ops().set_cursor(StdCursorKind::Fleur);
-        let io = self.backend.input_ops_handle();
-        {
-            let ops = io.lock().unwrap();
-            ops.drag_loop(
-                Some(cursor_handle), // Now this variable exists
-                Some(warp_pos),
-                window_id,
-                &mut |root_x, root_y, _time| {
-                    let new_width =
-                        ((root_x as i32 - start_x).max(1 + 2 * border_w) - 2 * border_w).max(1);
-                    let new_height =
-                        ((root_y as i32 - start_y).max(1 + 2 * border_w) - 2 * border_w).max(1);
 
-                    self.check_and_toggle_floating_for_resize(client_key, new_width, new_height)?;
-                    if self.should_resize_client(client_key) {
-                        self.resize_client(
-                            client_key, start_x, start_y, new_width, new_height, true,
-                        );
-                    }
-                    Ok(())
-                },
-            )?;
+        self.restack(self.sel_mon)?;
+
+        // 2. Warp 指针到右下角 (仅 X11 需要，Wayland 通常不这样做，为了兼容可以保留 backend cap 检查)
+        if self.backend.capabilities().can_warp_pointer {
+            let _ = self.backend.input_ops().warp_pointer_to_window(
+                win_id,
+                (start_geom.w as i32 + start_geom.border as i32 - 1) as i16,
+                (start_geom.h as i32 + start_geom.border as i32 - 1) as i16,
+            );
         }
-        self.cleanup_resize(window_id, border_w)?;
+
+        // 获取 warp 后的位置作为起始点
+        let (ptr_x, ptr_y) = self.getrootptr()?;
+
+        let cursor_handle = self.backend.cursor_provider().get(StdCursorKind::Fleur)?.0;
+        self.backend.input_ops().set_cursor(StdCursorKind::Fleur)?;
+
+        let success = self.backend.input_ops().grab_pointer(
+            (EventMaskBits::BUTTON_RELEASE | EventMaskBits::POINTER_MOTION).bits(),
+            Some(cursor_handle),
+        )?;
+
+        if success {
+            self.interaction = Some(InteractionState {
+                client_key,
+                action: InteractionAction::Resize,
+                start_win_geom: start_geom,
+                start_mouse_x: ptr_x,
+                start_mouse_y: ptr_y,
+                last_update_time: std::time::Instant::now(),
+            });
+            info!("[resizemouse] Started interactive resize");
+        } else {
+            self.backend
+                .input_ops()
+                .set_cursor(StdCursorKind::LeftPtr)?;
+        }
+
         Ok(())
     }
 
@@ -4680,27 +4794,6 @@ impl Jwm {
             }
         }
         false
-    }
-
-    fn cleanup_resize(
-        &mut self,
-        window_id: WindowId,
-        border_width: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(key) = self.get_selected_client_key() {
-            if let Some(client) = self.clients.get(key) {
-                if self.backend.capabilities().can_warp_pointer {
-                    let _ = self.backend.input_ops().warp_pointer_to_window(
-                        window_id,
-                        (client.geometry.w + border_width - 1) as i16,
-                        (client.geometry.h + border_width - 1) as i16,
-                    );
-                }
-            }
-        }
-        self.backend.input_ops().ungrab_pointer()?;
-        self.check_monitor_change_after_resize()?;
-        Ok(())
     }
 
     fn check_monitor_change_after_resize(&mut self) -> Result<(), Box<dyn std::error::Error>> {
