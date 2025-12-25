@@ -638,7 +638,6 @@ impl Jwm {
                     self.backend
                         .window_ops()
                         .apply_window_changes(client.win, changes)?;
-                    self.backend.window_ops().flush()?;
                     return Ok(());
                 }
             }
@@ -659,7 +658,6 @@ impl Jwm {
                     self.backend
                         .window_ops()
                         .apply_window_changes(client.win, changes)?;
-                    self.backend.window_ops().flush()?;
                 }
             }
         } else {
@@ -711,7 +709,6 @@ impl Jwm {
         self.backend
             .window_ops()
             .apply_window_changes(window, changes)?;
-        self.backend.window_ops().flush()?;
 
         Ok(())
     }
@@ -1803,7 +1800,6 @@ impl Jwm {
         self.backend
             .window_ops()
             .set_input_focus_root(self.backend.root_window())?;
-        self.backend.window_ops().flush()?;
         Ok(())
     }
 
@@ -1978,7 +1974,6 @@ impl Jwm {
             self.backend
                 .window_ops()
                 .apply_window_changes(win, changes)?;
-            self.backend.window_ops().flush()?;
         } else if !fullscreen && is_fullscreen {
             self.backend
                 .property_ops()
@@ -2140,7 +2135,6 @@ impl Jwm {
                 .window_ops()
                 .apply_window_changes(client.win, changes)?;
             self.configure_client(client_key)?;
-            self.backend.window_ops().flush()?;
         }
         Ok(())
     }
@@ -2173,7 +2167,6 @@ impl Jwm {
         self.backend
             .window_ops()
             .apply_window_changes(win, changes)?;
-        self.backend.window_ops().flush()?;
         Ok(())
     }
 
@@ -2442,7 +2435,6 @@ impl Jwm {
             }
         }
 
-        self.backend.window_ops().flush()?;
         self.mark_bar_update_needed_if_visible(Some(monitor_num));
 
         info!("[restack] finish");
@@ -2548,6 +2540,8 @@ impl Jwm {
                     }
                 }
             }
+
+            self.backend.window_ops().flush()?;
         }
         Ok(())
     }
@@ -2567,6 +2561,7 @@ impl Jwm {
                 self.flush_pending_bar_updates();
             }
 
+            self.backend.window_ops().flush()?;
             std::thread::sleep(std::time::Duration::from_millis(10));
         }
         Ok(())
@@ -2672,6 +2667,7 @@ impl Jwm {
             self.arrangemon(mon_key);
             let _ = self.restack(Some(mon_key));
         }
+        let _ = self.backend.window_ops().flush();
     }
 
     fn getrootptr(&mut self) -> Result<(i32, i32), Box<dyn std::error::Error>> {
@@ -4189,7 +4185,6 @@ impl Jwm {
             ];
             facade.declare_supported(&supported)?;
         }
-        self.backend.window_ops().flush()?;
         Ok(())
     }
 
@@ -4754,7 +4749,6 @@ impl Jwm {
                 client.state.tags,
                 monitor_num,
             )?;
-            self.backend.window_ops().flush()?;
         }
         Ok(())
     }
@@ -4884,7 +4878,6 @@ impl Jwm {
             }
         }
 
-        self.backend.window_ops().flush()?;
         Ok(())
     }
 
@@ -5020,7 +5013,6 @@ impl Jwm {
                     let _ = facade.clear_active_window();
                 }
             }
-            self.backend.window_ops().flush()?;
         }
         Ok(())
     }
@@ -5033,7 +5025,6 @@ impl Jwm {
             if let Some(facade) = self.backend.ewmh_facade().as_ref() {
                 let _ = facade.set_active_window(client.win);
             }
-            self.backend.window_ops().flush()?;
         }
         Ok(())
     }
@@ -5045,7 +5036,6 @@ impl Jwm {
         if let Some(facade) = self.backend.ewmh_facade().as_ref() {
             let _ = facade.clear_active_window();
         }
-        self.backend.window_ops().flush()?;
         Ok(())
     }
 
@@ -5130,7 +5120,6 @@ impl Jwm {
                 self.clients.get(client_key).unwrap().win,
                 NORMAL_STATE as i64,
             )?;
-            self.backend.window_ops().flush()?;
             return Ok(());
         }
 
@@ -5172,14 +5161,12 @@ impl Jwm {
             self.backend
                 .window_ops()
                 .apply_window_changes(win, changes)?;
-            self.backend.window_ops().flush()?;
         }
 
         if let Some(client) = self.clients.get(client_key) {
             self.setclientstate(client.win, NORMAL_STATE as i64)?;
         }
 
-        self.backend.window_ops().flush()?;
         Ok(())
     }
 
@@ -5214,7 +5201,6 @@ impl Jwm {
             self.backend
                 .window_ops()
                 .apply_window_changes(client_win, changes)?;
-            self.backend.window_ops().flush()?;
 
             // 判断是否应该给予该弹窗焦点
             let should_focus_this = if let Some(c) = self.clients.get(client_key) {
@@ -5557,7 +5543,6 @@ impl Jwm {
         };
 
         self.backend.window_ops().map_window(win)?;
-        self.backend.window_ops().flush()?;
         info!("[map_client_window] Successfully mapped window {:?}", win);
         Ok(())
     }
@@ -5582,7 +5567,6 @@ impl Jwm {
         self.setup_statusbar_window_by_key(client_key)?;
 
         self.backend.window_ops().map_window(win)?;
-        self.backend.window_ops().flush()?;
         Ok(())
     }
 
@@ -5659,7 +5643,6 @@ impl Jwm {
                 (client.win, None)
             }
         } else {
-            self.backend.window_ops().flush()?;
             return Ok(());
         };
 
@@ -5668,7 +5651,6 @@ impl Jwm {
         } else {
             self.remove_bar_strut(client_win)?;
         }
-        self.backend.window_ops().flush()?;
         Ok(())
     }
 
@@ -5694,7 +5676,6 @@ impl Jwm {
             .window_ops()
             .change_event_mask(win, mask_bits)?;
         self.configure_client(client_key)?;
-        self.backend.window_ops().flush()?;
         info!(
             "[setup_statusbar_window_by_key] Statusbar window setup completed for {:?}",
             win
@@ -5870,7 +5851,6 @@ impl Jwm {
         self.backend
             .window_ops()
             .change_event_mask(win, EventMaskBits::NONE.bits())?;
-        self.backend.window_ops().flush()?;
         debug!(
             "[cleanup_statusbar_window] Cleared events for statusbar window {:?}",
             win
@@ -6099,9 +6079,6 @@ impl Jwm {
             warn!("[cleanup_window_state] Failed to set client state: {:?}", e);
         }
 
-        if let Err(e) = self.backend.window_ops().flush() {
-            warn!("[cleanup_window_state] Final flush failed: {:?}", e);
-        }
         info!(
             "[cleanup_window_state] Window cleanup completed for {:?}",
             win
