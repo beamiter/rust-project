@@ -38,6 +38,7 @@ use crate::backend::common_define::SchemeType;
 use crate::backend::common_define::{KeySym, Mods, MouseButton, StdCursorKind};
 use crate::backend::x11::WindowHandleExt;
 use crate::config::CONFIG;
+use crate::core::layout::LayoutEnum;
 use crate::core::models::{ClientKey, MonitorKey, Pertag, SizeHints, WMClient, WMMonitor};
 
 use crate::core::layout::{self, LayoutClient, LayoutParams};
@@ -164,48 +165,6 @@ impl WMKey {
             key_sym: keysym,
             func_opt: func,
             arg,
-        }
-    }
-}
-
-pub const DEFAULT_TILE_SYMBOL: &'static str = "[]=";
-pub const DEFAULT_FLOAT_SYMBOL: &'static str = "><>";
-pub const DEFAULT_MONOCLE_SYMBOL: &'static str = "[M]";
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct LayoutEnum(&'static str);
-impl LayoutEnum {
-    pub const ANY: Self = Self("");
-    pub const TILE: Self = Self("tile");
-    pub const FLOAT: Self = Self("float");
-    pub const MONOCLE: Self = Self("monocle");
-    pub fn symbol(&self) -> &str {
-        match self {
-            &LayoutEnum::TILE => DEFAULT_TILE_SYMBOL,
-            &LayoutEnum::FLOAT => DEFAULT_FLOAT_SYMBOL,
-            &LayoutEnum::MONOCLE => DEFAULT_MONOCLE_SYMBOL,
-            _ => "",
-        }
-    }
-    pub fn is_tile(&self) -> bool {
-        self == &LayoutEnum::TILE
-    }
-    pub fn is_float(&self) -> bool {
-        self == &LayoutEnum::FLOAT
-    }
-    pub fn is_monocle(&self) -> bool {
-        self == &LayoutEnum::MONOCLE
-    }
-}
-
-impl From<u32> for LayoutEnum {
-    #[inline]
-    fn from(value: u32) -> Self {
-        match value {
-            0 => LayoutEnum::TILE,
-            1 => LayoutEnum::FLOAT,
-            2 => LayoutEnum::MONOCLE,
-            _ => LayoutEnum::ANY,
         }
     }
 }
@@ -3338,30 +3297,18 @@ impl Jwm {
     }
 
     pub fn incnmaster(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[incnmaster]");
-
         if let WMArgEnum::Int(i) = *arg {
             let sel_mon_key = self.sel_mon.ok_or("No monitor selected")?;
 
             if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
-                if let Some(ref mut pertag) = monitor.pertag {
-                    let cur_tag = pertag.cur_tag;
-                    let new_n_master = (monitor.layout.n_master as i32 + i).max(0) as u32;
-
-                    pertag.n_masters[cur_tag] = new_n_master;
-
-                    monitor.layout.n_master = new_n_master;
-
-                    info!(
-                        "[incnmaster] Updated n_master to {} for tag {}",
-                        new_n_master, cur_tag
-                    );
-                }
+                let new_n = (monitor.layout.n_master as i32 + i).max(0) as u32;
+                monitor.layout.n_master = new_n;
+                // 关键：调用新方法同步状态
+                monitor.update_current_tag_layout_params();
+                info!("[incnmaster] Updated n_master to {}", new_n);
             }
-
             self.arrange(Some(sel_mon_key));
         }
-
         Ok(())
     }
 
@@ -3538,8 +3485,6 @@ impl Jwm {
     }
 
     pub fn setmfact(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[setmfact]");
-
         if let WMArgEnum::Float(f) = arg {
             let sel_mon_key = self.sel_mon.ok_or("No monitor selected")?;
             if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
@@ -3548,24 +3493,14 @@ impl Jwm {
                 } else {
                     f - 1.0
                 };
-                if new_mfact < 0.05 || new_mfact > 0.95 {
-                    return Ok(());
-                }
-                if let Some(ref mut pertag) = monitor.pertag {
-                    let cur_tag = pertag.cur_tag;
-                    pertag.m_facts[cur_tag] = new_mfact;
+                if new_mfact >= 0.05 && new_mfact <= 0.95 {
                     monitor.layout.m_fact = new_mfact;
-                    info!(
-                        "[setmfact] Updated m_fact to {} for tag {}",
-                        new_mfact, cur_tag
-                    );
+                    // 关键：调用新方法同步状态
+                    monitor.update_current_tag_layout_params();
                 }
             }
             self.arrange(Some(sel_mon_key));
-            self.suppress_mouse_focus_until =
-                Some(std::time::Instant::now() + std::time::Duration::from_millis(200));
         }
-
         Ok(())
     }
 
@@ -3784,27 +3719,35 @@ impl Jwm {
     }
 
     pub fn view(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[view]");
         let ui = match arg {
             WMArgEnum::UInt(val) => *val,
             _ => return Ok(()),
         };
+        let target_mask = ui & CONFIG.tagmask();
 
-        let target_tag = ui & CONFIG.tagmask();
+        let sel_mon_key = match self.sel_mon {
+            Some(k) => k,
+            None => return Ok(()),
+        };
 
-        if self.is_same_tag(target_tag) {
-            return Ok(());
+        // 1. 检查是否无需切换
+        if let Some(mon) = self.monitors.get(sel_mon_key) {
+            if crate::core::workspace::WorkspaceManager::is_same_tag(mon, target_mask) {
+                return Ok(());
+            }
         }
 
-        info!("[view] ui: {}, target_tag: {}", ui, target_tag);
+        // 2. 状态变更 (纯逻辑)
+        let mut client_to_focus = None;
+        if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+            monitor.view_tag(target_mask, false); // false = not toggle, direct set
+            // 获取该 Tag 上次选中的 Client
+            client_to_focus = monitor.get_selected_client_for_current_tag();
+        }
 
-        let cur_tag = self.switch_to_tag(target_tag, ui)?;
-
-        let sel_opt = self.apply_pertag_settings(cur_tag)?;
-
-        self.focus(sel_opt)?;
-        self.arrange(self.sel_mon.clone());
-
+        // 3. 副作用 (Backend / Arrange)
+        self.focus(client_to_focus)?;
+        self.arrange(Some(sel_mon_key));
         self.refresh_bar_visibility_on_selected_monitor()?;
 
         Ok(())
@@ -3934,129 +3877,22 @@ impl Jwm {
     }
 
     pub fn toggleview(&mut self, arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[toggleview]");
-
         let ui = match arg {
             WMArgEnum::UInt(val) => *val,
             _ => return Ok(()),
         };
+        let mask = ui & CONFIG.tagmask();
+        let sel_mon_key = self.sel_mon.ok_or("No monitor selected")?;
 
-        let sel_mon_key = match self.sel_mon {
-            Some(key) => key,
-            None => return Ok(()),
-        };
-
-        let (sel_tags, newtagset) = if let Some(monitor) = self.monitors.get(sel_mon_key) {
-            let sel_tags = monitor.sel_tags;
-            let newtagset = monitor.tag_set[sel_tags] ^ (ui & CONFIG.tagmask());
-            (sel_tags, newtagset)
-        } else {
-            return Ok(());
-        };
-
-        if newtagset == 0 {
-            return Ok(());
+        // 1. 状态变更
+        if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+            monitor.view_tag(mask, true); // true = toggle
         }
 
-        info!("[toggleview] newtagset: {}", newtagset);
-
-        self.update_tagset_and_pertag(sel_mon_key, sel_tags, newtagset)?;
-
+        // 2. 副作用
         self.focus(None)?;
         self.arrange(Some(sel_mon_key));
-
         self.refresh_bar_visibility_on_selected_monitor()?;
-
-        Ok(())
-    }
-
-    fn update_tagset_and_pertag(
-        &mut self,
-        mon_key: MonitorKey,
-        sel_tags: usize,
-        newtagset: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let first_tag = self.find_first_active_tag(newtagset);
-        let monitor = self.monitors.get_mut(mon_key).ok_or("Monitor not found")?;
-
-        monitor.tag_set[sel_tags] = newtagset;
-
-        let new_cur_tag = if newtagset == !0 {
-            if let Some(ref mut pertag) = monitor.pertag {
-                pertag.prev_tag = pertag.cur_tag;
-                pertag.cur_tag = 0;
-            }
-            0
-        } else {
-            let current_cur_tag = monitor
-                .pertag
-                .as_ref()
-                .ok_or("No pertag information")?
-                .cur_tag;
-
-            if current_cur_tag > 0 && (newtagset & (1 << (current_cur_tag - 1))) > 0 {
-                current_cur_tag
-            } else {
-                if let Some(ref mut pertag) = monitor.pertag {
-                    pertag.prev_tag = current_cur_tag;
-                    pertag.cur_tag = first_tag;
-                }
-                first_tag
-            }
-        };
-
-        self.apply_pertag_settings_for_monitor(mon_key, new_cur_tag)?;
-
-        Ok(())
-    }
-
-    fn find_first_active_tag(&self, tagset: u32) -> usize {
-        for i in 0..32 {
-            if (tagset & (1 << i)) > 0 {
-                return i + 1;
-            }
-        }
-        1 // 默认返回第一个标签
-    }
-
-    fn apply_pertag_settings_for_monitor(
-        &mut self,
-        mon_key: MonitorKey,
-        cur_tag: usize,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let monitor = self.monitors.get_mut(mon_key).ok_or("Monitor not found")?;
-
-        let (n_master, m_fact, sel_lt, layout_0, layout_1) = {
-            let pertag = monitor
-                .pertag
-                .as_ref()
-                .ok_or("No pertag information available")?;
-
-            let sel_lt = pertag.sel_lts[cur_tag];
-            (
-                pertag.n_masters[cur_tag],
-                pertag.m_facts[cur_tag],
-                sel_lt,
-                pertag.lt_idxs[cur_tag][sel_lt]
-                    .clone()
-                    .ok_or("Layout not found")?,
-                pertag.lt_idxs[cur_tag][sel_lt ^ 1]
-                    .clone()
-                    .ok_or("Alternative layout not found")?,
-            )
-        };
-
-        let monitor = self.monitors.get_mut(mon_key).unwrap();
-        monitor.layout.n_master = n_master;
-        monitor.layout.m_fact = m_fact;
-        monitor.sel_lt = sel_lt;
-        monitor.lt[sel_lt] = layout_0;
-        monitor.lt[sel_lt ^ 1] = layout_1;
-
-        info!(
-            "[apply_pertag_settings_for_monitor] Applied settings for tag {}: n_master={}, m_fact={}, sel_lt={}",
-            cur_tag, n_master, m_fact, sel_lt
-        );
 
         Ok(())
     }
@@ -4925,14 +4761,8 @@ impl Jwm {
     fn update_monitor_selection_by_key(&mut self, client_key_opt: Option<ClientKey>) {
         if let Some(sel_mon_key) = self.sel_mon {
             if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
-                monitor.sel = client_key_opt;
-
-                if let Some(ref mut pertag) = monitor.pertag {
-                    let cur_tag = pertag.cur_tag;
-                    if cur_tag < pertag.sel.len() {
-                        pertag.sel[cur_tag] = client_key_opt;
-                    }
-                }
+                // 使用新方法
+                monitor.set_selected_client_for_current_tag(client_key_opt);
             }
         }
     }

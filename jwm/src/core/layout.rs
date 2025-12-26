@@ -20,6 +20,50 @@ pub struct LayoutResult<K> {
     pub rect: Rect,
 }
 
+// 追加到 src/core/layout.rs
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LayoutEnum(pub &'static str);
+
+impl LayoutEnum {
+    pub const TILE: Self = Self("tile");
+    pub const FLOAT: Self = Self("float");
+    pub const MONOCLE: Self = Self("monocle");
+    // 用于兼容旧代码的占位符
+    pub const ANY: Self = Self("");
+
+    pub fn symbol(&self) -> &str {
+        match self.0 {
+            "tile" => "[]=",
+            "float" => "><>",
+            "monocle" => "[M]",
+            _ => "",
+        }
+    }
+
+    pub fn is_tile(&self) -> bool {
+        self.0 == "tile"
+    }
+    pub fn is_float(&self) -> bool {
+        self.0 == "float"
+    }
+    pub fn is_monocle(&self) -> bool {
+        self.0 == "monocle"
+    }
+}
+
+// 保持兼容性的转换
+impl From<u32> for LayoutEnum {
+    fn from(value: u32) -> Self {
+        match value {
+            0 => LayoutEnum::TILE,
+            1 => LayoutEnum::FLOAT,
+            2 => LayoutEnum::MONOCLE,
+            _ => LayoutEnum::ANY,
+        }
+    }
+}
+
 pub fn calculate_tile<K: Copy>(
     params: &LayoutParams,
     clients: &[LayoutClient<K>],

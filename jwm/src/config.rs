@@ -7,8 +7,9 @@ use std::path::Path;
 use std::fmt;
 use std::rc::Rc;
 
+use crate::core::layout::LayoutEnum;
 use crate::jwm::WMFuncType;
-use crate::jwm::{self, Jwm, LayoutEnum, WMButton, WMClickType, WMKey, WMRule};
+use crate::jwm::{self, Jwm, WMButton, WMClickType, WMKey, WMRule};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 
 use crate::backend::common_define::keys as k;
