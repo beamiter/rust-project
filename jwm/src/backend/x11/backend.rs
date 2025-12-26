@@ -42,7 +42,7 @@ impl X11Backend {
         let conn = Arc::new(raw_conn);
         use x11rb::connection::Connection;
         let screen = conn.setup().roots[screen_num].clone();
-        let root = WindowId(screen.root as u64);
+        let root = WindowId::X11(screen.root as u64);
         let numlock_mask = Arc::new(Mutex::new(0u16));
 
         let atoms = Atoms::new(conn.as_ref())?.reply()?;

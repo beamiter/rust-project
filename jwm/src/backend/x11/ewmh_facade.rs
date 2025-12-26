@@ -2,6 +2,7 @@
 use crate::backend::api::WindowId;
 use crate::backend::api::{EwmhFacade, EwmhFeature};
 use crate::backend::x11::Atoms;
+use crate::backend::x11::WindowHandleExt;
 use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
@@ -42,10 +43,11 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         features: &[EwmhFeature],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let atoms: Vec<u32> = features.iter().map(|f| self.feature_to_atom(*f)).collect();
+        let r = self.root.to_x11_id()?;
         self.conn
             .change_property32(
                 PropMode::REPLACE,
-                self.root.0 as u32,
+                r,
                 self.atoms._NET_SUPPORTED,
                 AtomEnum::ATOM,
                 &atoms,
@@ -64,7 +66,8 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         ]
         .iter()
         {
-            let _ = self.conn.delete_property(self.root.0 as u32, prop);
+            let r = self.root.to_x11_id()?;
+            let _ = self.conn.delete_property(r, prop);
         }
         Ok(())
     }
@@ -74,11 +77,12 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
     ) -> Result<WindowId, Box<dyn std::error::Error>> {
         let frame_win = self.conn.generate_id()?;
         let aux = CreateWindowAux::new().event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS);
+        let r = self.root.to_x11_id()?;
         self.conn
             .create_window(
                 x11rb::COPY_DEPTH_FROM_PARENT,
                 frame_win,
-                self.root.0 as u32,
+                r,
                 0,
                 0,
                 1,
@@ -91,7 +95,7 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
             .check()?;
         self.conn.change_property32(
             PropMode::REPLACE,
-            self.root.0 as u32,
+            r,
             self.atoms._NET_SUPPORTING_WM_CHECK,
             AtomEnum::WINDOW,
             &[frame_win],
@@ -112,13 +116,14 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
             AtomEnum::STRING,
             wm_name.as_bytes(),
         )?;
-        Ok(WindowId(frame_win as u64))
+        Ok(WindowId::X11(frame_win as u64))
     }
 
     fn set_supported_atoms(&self, supported: &[u32]) -> Result<(), Box<dyn std::error::Error>> {
+        let r = self.root.to_x11_id()?;
         self.conn.change_property32(
             PropMode::REPLACE,
-            self.root.0 as u32,
+            r,
             self.atoms._NET_SUPPORTED,
             AtomEnum::ATOM,
             supported,
@@ -127,28 +132,32 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
     }
 
     fn set_active_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
+        let r = self.root.to_x11_id()?;
         self.conn.change_property32(
             PropMode::REPLACE,
-            self.root.0 as u32,
+            r,
             self.atoms._NET_ACTIVE_WINDOW,
             AtomEnum::WINDOW,
-            &[win.0 as u32],
+            &[w],
         )?;
         Ok(())
     }
 
     fn clear_active_window(&self) -> Result<(), Box<dyn std::error::Error>> {
         use x11rb::protocol::xproto::ConnectionExt as RawExt;
+        let r = self.root.to_x11_id()?;
         self.conn
-            .delete_property(self.root.0 as u32, self.atoms._NET_ACTIVE_WINDOW)?;
+            .delete_property(r, self.atoms._NET_ACTIVE_WINDOW)?;
         Ok(())
     }
 
     fn set_client_list(&self, list: &[WindowId]) -> Result<(), Box<dyn std::error::Error>> {
-        let raw: Vec<u32> = list.iter().map(|w| w.0 as u32).collect();
+        let r = self.root.to_x11_id()?;
+        let raw: Vec<u32> = list.iter().map(|w| w.to_x11_id().unwrap()).collect();
         self.conn.change_property32(
             PropMode::REPLACE,
-            self.root.0 as u32,
+            r,
             self.atoms._NET_CLIENT_LIST,
             AtomEnum::WINDOW,
             &raw,
@@ -160,10 +169,11 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         &self,
         list: &[WindowId],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let raw: Vec<u32> = list.iter().map(|w| w.0 as u32).collect();
+        let r = self.root.to_x11_id()?;
+        let raw: Vec<u32> = list.iter().map(|w| w.to_x11_id().unwrap()).collect();
         self.conn.change_property32(
             PropMode::REPLACE,
-            self.root.0 as u32,
+            r,
             self.atoms._NET_CLIENT_LIST_STACKING,
             AtomEnum::WINDOW,
             &raw,

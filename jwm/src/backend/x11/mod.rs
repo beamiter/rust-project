@@ -48,3 +48,16 @@ x11rb::atom_manager! {
         COMPOUND_TEXT,
     }
 }
+
+use crate::backend::common_define::WindowHandle;
+
+pub trait WindowHandleExt {
+    fn to_x11_id(&self) -> Result<u32, Box<dyn std::error::Error>>;
+}
+
+impl WindowHandleExt for WindowHandle {
+    fn to_x11_id(&self) -> Result<u32, Box<dyn std::error::Error>> {
+        self.as_x11()
+            .ok_or_else(|| "Invalid WindowHandle: Not an X11 handle".into())
+    }
+}

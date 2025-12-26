@@ -6,6 +6,7 @@ use x11rb::protocol::xproto::*;
 use crate::backend::api::AllowMode;
 use crate::backend::api::{InputOps as InputOpsTrait, WindowId};
 use crate::backend::common_define::StdCursorKind;
+use crate::backend::x11::WindowHandleExt;
 use crate::backend::x11::adapter::event_mask_from_generic;
 
 pub struct X11InputOps<C: Connection> {
@@ -123,9 +124,8 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
         x: i16,
         y: i16,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn
-            .warp_pointer(0u32, win.0 as u32, 0, 0, 0, 0, x, y)?
-            .check()?;
+        let w = win.to_x11_id()?;
+        self.conn.warp_pointer(0u32, w, 0, 0, 0, 0, x, y)?.check()?;
         Ok(())
     }
 }

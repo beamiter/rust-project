@@ -8,6 +8,7 @@ use x11rb::protocol::xproto::*;
 
 use crate::backend::api::{KeyOps, WindowId};
 use crate::backend::common_define::{KeySym, Mods};
+use crate::backend::x11::WindowHandleExt;
 use crate::backend::x11::adapter::mods_to_x11;
 
 pub struct X11KeyOps<C: Connection> {
@@ -90,8 +91,9 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
     }
 
     fn clear_key_grabs(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        let r = root.to_x11_id()?;
         self.conn
-            .ungrab_key(Grab::ANY, root.0 as u32, ModMask::ANY.into())?
+            .ungrab_key(Grab::ANY, r, ModMask::ANY.into())?
             .check()?;
         Ok(())
     }
@@ -102,6 +104,7 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
         bindings: &[(Mods, KeySym)],
     ) -> Result<(), Box<dyn std::error::Error>> {
         let numlock_local = *self.numlock_mask.lock().unwrap();
+        let r = root.to_x11_id()?;
 
         let setup = self.conn.setup();
         let min = setup.min_keycode;
@@ -131,7 +134,7 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
                             self.conn
                                 .grab_key(
                                     false,
-                                    root.0 as u32,
+                                    r,
                                     ModMask::from(mm.bits()),
                                     keycode,
                                     GrabMode::ASYNC,

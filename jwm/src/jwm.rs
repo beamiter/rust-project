@@ -36,6 +36,7 @@ use crate::backend::common_define::ConfigWindowBits;
 use crate::backend::common_define::EventMaskBits;
 use crate::backend::common_define::SchemeType;
 use crate::backend::common_define::{KeySym, Mods, MouseButton, StdCursorKind};
+use crate::backend::x11::WindowHandleExt;
 use crate::config::CONFIG;
 use crate::core::models::{ClientKey, MonitorKey, Pertag, SizeHints, WMClient, WMMonitor};
 
@@ -788,7 +789,7 @@ impl Jwm {
             changes.border_width = Some(border as u32);
         }
         if mask.contains(ConfigWindowBits::SIBLING) {
-            changes.sibling = sibling.map(|s| WindowId(s.into()));
+            changes.sibling = sibling.map(|s| WindowId::X11(s.into()));
         }
         if mask.contains(ConfigWindowBits::STACK_MODE) {
             changes.stack_mode = Some(StackMode::Above);
@@ -843,7 +844,7 @@ impl Jwm {
                 w,
                 h,
                 border,
-                sibling.map(|s| s.0 as u32),
+                sibling.map(|s| s.to_x11_id().unwrap()),
                 stack_mode,
             ),
             BackendEvent::KeyPress { keycode, state } => self.on_key_press(keycode, state),
@@ -4317,7 +4318,7 @@ impl Jwm {
         let root = self.backend.root_window();
         self.backend
             .cursor_provider()
-            .apply(root.0, StdCursorKind::LeftPtr)?;
+            .apply(root.to_x11_id().unwrap() as u64, StdCursorKind::LeftPtr)?;
         self.backend
             .window_ops()
             .change_event_mask(self.backend.root_window(), mask)?;

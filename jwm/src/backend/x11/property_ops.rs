@@ -3,6 +3,7 @@ use crate::backend::api::NormalHints;
 use crate::backend::api::WmHints;
 use crate::backend::api::{PropertyOps as PropertyOpsTrait, WindowId, WindowType};
 use crate::backend::x11::Atoms;
+use crate::backend::x11::WindowHandleExt;
 use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::properties::WmSizeHints;
@@ -21,10 +22,11 @@ impl<C: Connection> X11PropertyOps<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
-    fn get_text_property(&self, window: WindowId, atom: Atom) -> Option<String> {
+    fn get_text_property(&self, win: WindowId, atom: Atom) -> Option<String> {
+        let w = win.to_x11_id().ok()?;
         let reply = self
             .conn
-            .get_property(false, window.0 as u32, atom, AtomEnum::ANY, 0, u32::MAX)
+            .get_property(false, w, atom, AtomEnum::ANY, 0, u32::MAX)
             .ok()?
             .reply()
             .ok()?;
@@ -54,11 +56,12 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
         &self,
         win: WindowId,
     ) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
         let reply = self
             .conn
             .get_property(
                 false,
-                win.0 as u32,
+                w,
                 self.atoms._NET_WM_STATE,
                 AtomEnum::ATOM,
                 0,
@@ -76,9 +79,10 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
         win: WindowId,
         atoms: &[u32],
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
         self.conn.change_property32(
             PropMode::REPLACE,
-            win.0 as u32,
+            w,
             self.atoms._NET_WM_STATE,
             AtomEnum::ATOM,
             atoms,
@@ -158,17 +162,15 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn get_class(&self, win: WindowId) -> (String, String) {
-        let reply = match self.conn.get_property(
-            false,
-            win.0 as u32,
-            AtomEnum::WM_CLASS,
-            AtomEnum::STRING,
-            0,
-            256,
-        ) {
-            Ok(cookie) => cookie.reply().ok(),
-            Err(_) => None,
-        };
+        let w = win.to_x11_id().unwrap();
+        let reply =
+            match self
+                .conn
+                .get_property(false, w, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)
+            {
+                Ok(cookie) => cookie.reply().ok(),
+                Err(_) => None,
+            };
 
         if let Some(reply) = reply {
             if reply.type_ == u32::from(AtomEnum::STRING) && reply.format == 8 {
@@ -191,10 +193,11 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn get_window_types(&self, win: WindowId) -> Vec<WindowType> {
+        let w = win.to_x11_id().unwrap();
         let mut result = Vec::new();
         if let Ok(reply) = self.conn.get_property(
             false,
-            win.0 as u32,
+            w,
             self.atoms._NET_WM_WINDOW_TYPE,
             AtomEnum::ATOM,
             0,
@@ -241,16 +244,10 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn get_wm_hints(&self, win: WindowId) -> Option<WmHints> {
+        let w = win.to_x11_id().ok()?;
         let prop = self
             .conn
-            .get_property(
-                false,
-                win.0 as u32,
-                AtomEnum::WM_HINTS,
-                AtomEnum::WM_HINTS,
-                0,
-                20,
-            )
+            .get_property(false, w, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 20)
             .ok()?
             .reply()
             .ok()?;
@@ -275,14 +272,10 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         urgent: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         const X_URGENCY_HINT: u32 = 1 << 8;
-        let cookie = self.conn.get_property(
-            false,
-            win.0 as u32,
-            AtomEnum::WM_HINTS,
-            AtomEnum::WM_HINTS,
-            0,
-            20,
-        )?;
+        let w = win.to_x11_id()?;
+        let cookie =
+            self.conn
+                .get_property(false, w, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 20)?;
 
         let mut data = Vec::new();
         if let Ok(reply) = cookie.reply() {
@@ -300,7 +293,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
 
         self.conn.change_property32(
             PropMode::REPLACE,
-            win.0 as u32,
+            w,
             AtomEnum::WM_HINTS,
             AtomEnum::WM_HINTS,
             &data,
@@ -309,11 +302,12 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn transient_for(&self, win: WindowId) -> Option<WindowId> {
+        let w = win.to_x11_id().ok()?;
         let r = self
             .conn
             .get_property(
                 false,
-                win.0 as u32,
+                w,
                 self.atoms.WM_TRANSIENT_FOR,
                 AtomEnum::WINDOW,
                 0,
@@ -325,8 +319,8 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
 
         if r.format == 32 {
             if let Some(t) = r.value32()?.next() {
-                if t != 0 && t != win.0 as u32 {
-                    return Some(WindowId(t as u64));
+                if t != 0 && t != w {
+                    return Some(WindowId::X11(t as u64));
                 }
             }
         }
@@ -337,7 +331,8 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         &self,
         win: WindowId,
     ) -> Result<Option<NormalHints>, Box<dyn std::error::Error>> {
-        let reply_opt = WmSizeHints::get_normal_hints(&self.conn, win.0 as u32)?.reply()?;
+        let w = win.to_x11_id()?;
+        let reply_opt = WmSizeHints::get_normal_hints(&self.conn, w)?.reply()?;
         if let Some(r) = reply_opt {
             let (mut base_w, mut base_h) = (0, 0);
             let (mut inc_w, mut inc_h) = (0, 0);
@@ -383,14 +378,11 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn supports_delete_window(&self, win: WindowId) -> bool {
-        if let Ok(reply) = self.conn.get_property(
-            false,
-            win.0 as u32,
-            self.atoms.WM_PROTOCOLS,
-            AtomEnum::ATOM,
-            0,
-            1024,
-        ) {
+        let w = win.to_x11_id().unwrap();
+        if let Ok(reply) =
+            self.conn
+                .get_property(false, w, self.atoms.WM_PROTOCOLS, AtomEnum::ATOM, 0, 1024)
+        {
             if let Ok(reply) = reply.reply() {
                 return reply
                     .value32()
@@ -403,16 +395,17 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn send_delete_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
         let event = ClientMessageEvent::new(
             32,
-            win.0 as u32,
+            w,
             self.atoms.WM_PROTOCOLS,
             [self.atoms.WM_DELETE_WINDOW, 0, 0, 0, 0],
         );
         use x11rb::x11_utils::Serialize;
         let data = event.serialize();
         self.conn
-            .send_event(false, win.0 as u32, EventMask::NO_EVENT, data)?
+            .send_event(false, w, EventMask::NO_EVENT, data)?
             .check()?;
         Ok(())
     }
@@ -424,11 +417,12 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         start_x: u32,
         end_x: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
         let strut = [0, 0, top, 0];
         self.conn
             .change_property32(
                 PropMode::REPLACE,
-                win.0 as u32,
+                w,
                 self.atoms._NET_WM_STRUT,
                 AtomEnum::CARDINAL,
                 &strut,
@@ -438,7 +432,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         self.conn
             .change_property32(
                 PropMode::REPLACE,
-                win.0 as u32,
+                w,
                 self.atoms._NET_WM_STRUT_PARTIAL,
                 AtomEnum::CARDINAL,
                 &partial,
@@ -448,12 +442,11 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn clear_window_strut(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
+        let _ = self.conn.delete_property(w, self.atoms._NET_WM_STRUT);
         let _ = self
             .conn
-            .delete_property(win.0 as u32, self.atoms._NET_WM_STRUT);
-        let _ = self
-            .conn
-            .delete_property(win.0 as u32, self.atoms._NET_WM_STRUT_PARTIAL);
+            .delete_property(w, self.atoms._NET_WM_STRUT_PARTIAL);
         Ok(())
     }
 
@@ -463,11 +456,12 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         tags: u32,
         monitor_num: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
         let data = [tags, monitor_num];
         self.conn
             .change_property32(
                 PropMode::REPLACE,
-                win.0 as u32,
+                w,
                 self.atoms._NET_CLIENT_INFO,
                 AtomEnum::CARDINAL,
                 &data,
@@ -477,16 +471,10 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn get_wm_state(&self, win: WindowId) -> Result<i64, Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
         let reply = self
             .conn
-            .get_property(
-                false,
-                win.0 as u32,
-                self.atoms.WM_STATE,
-                self.atoms.WM_STATE,
-                0,
-                2,
-            )?
+            .get_property(false, w, self.atoms.WM_STATE, self.atoms.WM_STATE, 0, 2)?
             .reply()?;
         if reply.format != 32 {
             return Ok(-1);
@@ -501,10 +489,11 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
         let data: [u32; 2] = [state as u32, 0];
         self.conn.change_property32(
             PropMode::REPLACE,
-            win.0 as u32,
+            w,
             self.atoms.WM_STATE,
             self.atoms.WM_STATE,
             &data,

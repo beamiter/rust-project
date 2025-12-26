@@ -4,13 +4,43 @@ use bincode::Encode;
 use bitflags::bitflags;
 use serde::Deserialize;
 use serde::Serialize;
+use std::fmt;
 
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug, Serialize, Deserialize, Decode, Encode)]
-pub struct WindowId(pub u64);
+// 1. 定义 WindowHandle 枚举替代原来的 WindowId 结构体
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Decode, Encode)]
+pub enum WindowHandle {
+    X11(u64),
+    // 未来在这里添加 Wayland 支持
+    // Wayland(SmithayObjectId),
+    Mock(u64), // 用于测试
+}
 
-impl Default for WindowId {
+pub type WindowId = WindowHandle;
+
+impl WindowHandle {
+    // 辅助方法：仅在 X11 后端内部使用
+    pub fn as_x11(&self) -> Option<u32> {
+        match self {
+            WindowHandle::X11(id) => Some(*id as u32),
+            _ => None,
+        }
+    }
+}
+
+// 实现 Debug 以便打印日志
+impl fmt::Debug for WindowHandle {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::X11(id) => write!(f, "X11({:#x})", id),
+            Self::Mock(id) => write!(f, "Mock({})", id),
+        }
+    }
+}
+
+// 提供一个默认值，用于初始化
+impl Default for WindowHandle {
     fn default() -> Self {
-        WindowId(0)
+        WindowHandle::X11(0)
     }
 }
 

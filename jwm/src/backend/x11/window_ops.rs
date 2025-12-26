@@ -1,9 +1,10 @@
 // src/backend/x11/window_ops.rs
-use crate::backend::api::{StackMode, WindowChanges};
 use crate::backend::api::{
     CloseResult, Geometry, Mods, Pixel, WindowAttributes, WindowId, WindowOps,
 };
+use crate::backend::api::{StackMode, WindowChanges};
 use crate::backend::x11::Atoms;
+use crate::backend::x11::WindowHandleExt;
 use crate::backend::x11::adapter::{event_mask_from_generic, mods_to_x11};
 use std::sync::Arc;
 use std::sync::Mutex;
@@ -51,7 +52,7 @@ impl<C: Connection> X11WindowOps<C> {
 
 impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     fn close_window(&self, win: WindowId) -> Result<CloseResult, Box<dyn std::error::Error>> {
-        let w = win.0 as u32;
+        let w = win.to_x11_id()?;
         if self.supports_delete_window(w) {
             let event = ClientMessageEvent::new(
                 32,
@@ -75,11 +76,10 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         win: WindowId,
         mask: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
         let x_mask = event_mask_from_generic(mask);
         let aux = ChangeWindowAttributesAux::new().event_mask(x_mask);
-        self.conn
-            .change_window_attributes(win.0 as u32, &aux)?
-            .check()?;
+        self.conn.change_window_attributes(w, &aux)?.check()?;
         Ok(())
     }
 
@@ -90,14 +90,11 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         border_color: Pixel,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let aux_attr = ChangeWindowAttributesAux::new().border_pixel(border_color.0);
-        self.conn
-            .change_window_attributes(win.0 as u32, &aux_attr)?
-            .check()?;
+        let w = win.to_x11_id()?;
+        self.conn.change_window_attributes(w, &aux_attr)?.check()?;
 
         let aux_conf = ConfigureWindowAux::new().border_width(border_width);
-        self.conn
-            .configure_window(win.0 as u32, &aux_conf)?
-            .check()?;
+        self.conn.configure_window(w, &aux_conf)?.check()?;
 
         Ok(())
     }
@@ -108,10 +105,11 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         event_mask_bits: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let x_mask = event_mask_from_generic(event_mask_bits);
+        let w = win.to_x11_id()?;
         self.conn
             .grab_button(
                 false,
-                win.0 as u32,
+                w,
                 x_mask,
                 GrabMode::ASYNC,
                 GrabMode::ASYNC,
@@ -137,10 +135,11 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         let numlock_obj = KeyButMask::from(numlock_val);
         let x_mods = mods_to_x11(mods, numlock_obj);
         let mods_bits = ModMask::from(x_mods.bits());
+        let w = win.to_x11_id()?;
         self.conn
             .grab_button(
                 false,
-                win.0 as u32,
+                w,
                 x_mask,
                 GrabMode::ASYNC,
                 GrabMode::ASYNC,
@@ -158,38 +157,41 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         win: WindowId,
         x: i16,
         y: i16,
-        w: u16,
-        h: u16,
+        width: u16,
+        height: u16,
         border: u16,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
         let event = ConfigureNotifyEvent {
             response_type: CONFIGURE_NOTIFY_EVENT,
             sequence: 0,
-            event: win.0 as u32,
-            window: win.0 as u32,
+            event: w,
+            window: w,
             x,
             y,
-            width: w,
-            height: h,
+            width,
+            height,
             border_width: border,
             above_sibling: 0,
             override_redirect: false,
         };
         self.conn
-            .send_event(false, win.0 as u32, EventMask::STRUCTURE_NOTIFY, event)?;
+            .send_event(false, w, EventMask::STRUCTURE_NOTIFY, event)?;
         self.conn.flush()?;
         Ok(())
     }
 
     fn set_input_focus_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
         self.conn
-            .set_input_focus(InputFocus::NONE, win.0 as u32, 0u32)?
+            .set_input_focus(InputFocus::NONE, w, 0u32)?
             .check()?;
         Ok(())
     }
 
     fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn.map_window(win.0 as u32)?.check()?;
+        let w = win.to_x11_id()?;
+        self.conn.map_window(w)?.check()?;
         Ok(())
     }
 
@@ -215,7 +217,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
             aux = aux.border_width(b);
         }
         if let Some(sibling) = changes.sibling {
-            aux = aux.sibling(sibling.0 as u32);
+            aux = aux.sibling(sibling.to_x11_id().unwrap());
         }
         if let Some(mode) = changes.stack_mode {
             let x_mode = match mode {
@@ -228,13 +230,15 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
             aux = aux.stack_mode(x_mode);
         }
 
-        self.conn.configure_window(win.0 as u32, &aux)?.check()?;
+        let w = win.to_x11_id()?;
+        self.conn.configure_window(w, &aux)?.check()?;
         Ok(())
     }
 
     fn set_input_focus_root(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        let r = root.to_x11_id()?;
         self.conn
-            .set_input_focus(InputFocus::NONE, root.0 as u32, 0u32)?
+            .set_input_focus(InputFocus::NONE, r, 0u32)?
             .check()?;
         Ok(())
     }
@@ -245,11 +249,12 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         type_atom: u32,
         data: [u32; 5],
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let event = ClientMessageEvent::new(32, win.0 as u32, type_atom, data);
+        let w = win.to_x11_id()?;
+        let event = ClientMessageEvent::new(32, w, type_atom, data);
         use x11rb::x11_utils::Serialize;
         let buf = event.serialize();
         self.conn
-            .send_event(false, win.0 as u32, EventMask::NO_EVENT, buf)?
+            .send_event(false, w, EventMask::NO_EVENT, buf)?
             .check()?;
         Ok(())
     }
@@ -260,7 +265,8 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     }
 
     fn kill_client(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn.kill_client(win.0 as u32)?.check()?;
+        let w = win.to_x11_id()?;
+        self.conn.kill_client(w)?.check()?;
         Ok(())
     }
 
@@ -278,7 +284,8 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         &self,
         win: WindowId,
     ) -> Result<WindowAttributes, Box<dyn std::error::Error>> {
-        let r = self.conn.get_window_attributes(win.0 as u32)?.reply()?;
+        let w = win.to_x11_id()?;
+        let r = self.conn.get_window_attributes(w)?.reply()?;
         Ok(WindowAttributes {
             override_redirect: r.override_redirect,
             map_state_viewable: r.map_state == MapState::VIEWABLE,
@@ -289,11 +296,12 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         &self,
         win: WindowId,
     ) -> Result<Geometry, Box<dyn std::error::Error>> {
-        let geom_reply = self.conn.get_geometry(win.0 as u32)?.reply()?;
-        let tree_reply = self.conn.query_tree(win.0 as u32)?.reply()?;
+        let w = win.to_x11_id()?;
+        let geom_reply = self.conn.get_geometry(w)?.reply()?;
+        let tree_reply = self.conn.query_tree(w)?.reply()?;
         let trans_coord = self
             .conn
-            .translate_coordinates(win.0 as u32, tree_reply.parent, geom_reply.x, geom_reply.y)?
+            .translate_coordinates(w, tree_reply.parent, geom_reply.x, geom_reply.y)?
             .reply()?;
         Ok(Geometry {
             x: trans_coord.dst_x,
@@ -305,17 +313,19 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     }
 
     fn get_tree_child(&self, win: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>> {
-        let tree_reply = self.conn.query_tree(win.0 as u32)?.reply()?;
+        let w = win.to_x11_id()?;
+        let tree_reply = self.conn.query_tree(w)?.reply()?;
         Ok(tree_reply
             .children
             .iter()
-            .map(|c| WindowId(*c as u64))
+            .map(|c| WindowId::X11(*c as u64))
             .collect())
     }
 
     fn ungrab_all_buttons(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
         self.conn
-            .ungrab_button(ButtonIndex::ANY, win.0 as u32, ModMask::ANY.into())?
+            .ungrab_button(ButtonIndex::ANY, w, ModMask::ANY.into())?
             .check()?;
         Ok(())
     }
