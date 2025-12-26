@@ -40,6 +40,8 @@ use crate::backend::x11::WindowHandleExt;
 use crate::config::CONFIG;
 use crate::core::models::{ClientKey, MonitorKey, Pertag, SizeHints, WMClient, WMMonitor};
 
+use crate::core::layout::{self, LayoutClient, LayoutParams};
+use crate::core::types::Rect;
 use shared_structures::CommandType;
 use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
@@ -2912,37 +2914,45 @@ impl Jwm {
     }
 
     fn tile(&mut self, mon_key: MonitorKey) {
-        info!("[tile]");
+        info!("[tile] via pure layout engine");
 
-        let (wx, wy, ww, wh, mfact, nmaster, monitor_num, client_y_offset) =
+        // 1. 准备数据
+        let (wx, wy, ww, wh, mfact, nmaster, _monitor_num, client_y_offset) =
             self.get_monitor_info(mon_key);
 
-        let clients = self.collect_tileable_clients(mon_key);
+        // 计算可用区域 (减去 bar 的高度)
+        let screen_area = Rect::new(wx, wy + client_y_offset, ww, wh - client_y_offset);
 
-        if clients.is_empty() {
+        // 获取需要布局的客户端
+        let raw_clients = self.collect_tileable_clients(mon_key);
+        if raw_clients.is_empty() {
             return;
         }
 
-        info!(
-            "[tile] monitor_num: {}, clients: {}",
-            monitor_num,
-            clients.len()
-        );
+        // 转换为纯数据结构 LayoutClient
+        let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
+            .iter()
+            .map(|&(key, factor, border_w)| LayoutClient {
+                key,
+                factor,
+                border_w,
+            })
+            .collect();
 
-        let (mw, mfacts, sfacts) = self.calculate_layout_params(&clients, ww, mfact, nmaster);
+        // 2. 调用纯计算逻辑 (无副作用)
+        let params = LayoutParams {
+            screen_area,
+            n_master: nmaster,
+            m_fact: mfact,
+        };
+        let results = layout::calculate_tile(&params, &layout_clients);
 
-        self.arrange_clients(
-            &clients,
-            wx,
-            wy,
-            ww,
-            wh,
-            mw,
-            mfacts,
-            sfacts,
-            nmaster,
-            client_y_offset,
-        );
+        // 3. 应用结果 (执行副作用：移动窗口)
+        for res in results {
+            self.resize_client(
+                res.key, res.rect.x, res.rect.y, res.rect.w, res.rect.h, false,
+            );
+        }
     }
 
     fn get_monitor_info(&self, mon_key: MonitorKey) -> (i32, i32, i32, i32, f32, u32, i32, i32) {
@@ -2982,170 +2992,6 @@ impl Jwm {
         }
 
         clients
-    }
-
-    fn calculate_layout_params(
-        &self,
-        clients: &[(ClientKey, f32, i32)],
-        ww: i32,
-        mfact: f32,
-        nmaster: u32,
-    ) -> (i32, f32, f32) {
-        let n = clients.len() as u32;
-
-        let (mfacts, sfacts) = clients.iter().enumerate().fold(
-            (0.0, 0.0),
-            |(mfacts, sfacts), (i, (_, client_fact, _))| {
-                if i < nmaster as usize {
-                    (mfacts + client_fact, sfacts)
-                } else {
-                    (mfacts, sfacts + client_fact)
-                }
-            },
-        );
-
-        let mw = if n > nmaster && nmaster > 0 {
-            (ww as f32 * mfact) as i32
-        } else {
-            ww
-        };
-
-        (mw, mfacts, sfacts)
-    }
-
-    fn arrange_clients(
-        &mut self,
-        clients: &[(ClientKey, f32, i32)],
-        wx: i32,
-        wy: i32,
-        ww: i32,
-        wh: i32,
-        mw: i32,
-        mfacts: f32,
-        sfacts: f32,
-        nmaster: u32,
-        client_y_offset: i32,
-    ) {
-        let available_height = wh - client_y_offset;
-        let mut my = 0i32; // 主区域Y偏移
-        let mut ty = 0i32; // 堆栈区域Y偏移
-        let mut remaining_mfacts = mfacts;
-        let mut remaining_sfacts = sfacts;
-
-        for (i, &(client_key, client_fact, border_w)) in clients.iter().enumerate() {
-            let is_master = i < nmaster as usize;
-
-            let (x, y, w, h) = if is_master {
-                self.calculate_master_geometry(
-                    wx,
-                    wy,
-                    mw,
-                    available_height,
-                    client_y_offset,
-                    client_fact,
-                    border_w,
-                    i,
-                    nmaster,
-                    &mut my,
-                    &mut remaining_mfacts,
-                )
-            } else {
-                self.calculate_stack_geometry(
-                    wx,
-                    wy,
-                    ww,
-                    mw,
-                    available_height,
-                    client_y_offset,
-                    client_fact,
-                    border_w,
-                    i,
-                    nmaster,
-                    clients.len(),
-                    &mut ty,
-                    &mut remaining_sfacts,
-                )
-            };
-
-            // 调整客户端大小
-            self.resize_client(client_key, x, y, w, h, false);
-        }
-    }
-
-    fn calculate_master_geometry(
-        &self,
-        wx: i32,
-        wy: i32,
-        mw: i32,
-        available_height: i32,
-        client_y_offset: i32,
-        client_fact: f32,
-        border_w: i32,
-        index: usize,
-        nmaster: u32,
-        my: &mut i32,
-        remaining_mfacts: &mut f32,
-    ) -> (i32, i32, i32, i32) {
-        let remaining_masters = nmaster - index as u32;
-        let remaining_height = (available_height - *my).max(0);
-
-        let height = if *remaining_mfacts > 0.001 {
-            (remaining_height as f32 * (client_fact / *remaining_mfacts)) as i32
-        } else if remaining_masters > 0 {
-            remaining_height / remaining_masters as i32
-        } else {
-            remaining_height
-        };
-
-        *my += height;
-        *remaining_mfacts -= client_fact;
-
-        (
-            wx,
-            wy + *my - height + client_y_offset,
-            mw - 2 * border_w,
-            height - 2 * border_w,
-        )
-    }
-
-    fn calculate_stack_geometry(
-        &self,
-        wx: i32,
-        wy: i32,
-        ww: i32,
-        mw: i32,
-        available_height: i32,
-        client_y_offset: i32,
-        client_fact: f32,
-        border_w: i32,
-        index: usize,
-        nmaster: u32,
-        total_clients: usize,
-        ty: &mut i32,
-        remaining_sfacts: &mut f32,
-    ) -> (i32, i32, i32, i32) {
-        let stack_index = index - nmaster as usize;
-        let stack_count = total_clients - nmaster as usize;
-        let remaining_stacks = stack_count - stack_index;
-        let remaining_height = (available_height - *ty).max(0);
-
-        let height = if *remaining_sfacts > 0.001 {
-            (remaining_height as f32 * (client_fact / *remaining_sfacts)) as i32
-        } else if remaining_stacks > 0 {
-            remaining_height / remaining_stacks as i32
-        } else {
-            remaining_height
-        };
-
-        *ty += height;
-        *remaining_sfacts -= client_fact;
-
-        (
-            wx + mw,
-            wy + *ty - height + client_y_offset,
-            ww - mw - 2 * border_w,
-            height - 2 * border_w,
-        )
     }
 
     fn get_client_y_offset(&self, monitor: &WMMonitor) -> i32 {
@@ -5806,24 +5652,10 @@ impl Jwm {
     }
 
     fn monocle(&mut self, mon_key: MonitorKey) {
-        info!("[monocle]");
-
-        let (wx, wy, ww, wh, monitor_num) = if let Some(monitor) = self.monitors.get(mon_key) {
-            (
-                monitor.geometry.w_x,
-                monitor.geometry.w_y,
-                monitor.geometry.w_w,
-                monitor.geometry.w_h,
-                monitor.num,
-            )
-        } else {
-            warn!("[monocle] Monitor {:?} not found", mon_key);
-            return;
-        };
-
+        info!("[monocle] via pure layout engine");
+        let (wx, wy, ww, wh, _, _, monitor_num, client_y_offset) = self.get_monitor_info(mon_key);
         let mut visible_count = 0u32;
-        let mut tiled_clients = Vec::new();
-
+        let mut layout_clients = Vec::new();
         if let Some(client_keys) = self.monitor_clients.get(mon_key) {
             for &client_key in client_keys {
                 if let Some(client) = self.clients.get(client_key) {
@@ -5832,13 +5664,16 @@ impl Jwm {
                     if is_visible {
                         visible_count += 1;
                         if !client.state.is_floating {
-                            tiled_clients.push((client_key, client.geometry.border_w));
+                            layout_clients.push(LayoutClient {
+                                key: client_key,
+                                factor: 1.0, // Monocle 不关心 factor
+                                border_w: client.geometry.border_w,
+                            });
                         }
                     }
                 }
             }
         }
-
         if visible_count > 0 {
             let formatted_string = format!("[{}]", visible_count);
             if let Some(monitor) = self.monitors.get_mut(mon_key) {
@@ -5849,26 +5684,20 @@ impl Jwm {
                 formatted_string, monitor_num
             );
         }
-
-        if tiled_clients.is_empty() {
+        if layout_clients.is_empty() {
             return;
         }
-
-        let client_y_offset = if let Some(monitor) = self.monitors.get(mon_key) {
-            self.get_client_y_offset(monitor)
-        } else {
-            0
+        // 纯计算
+        let params = LayoutParams {
+            screen_area: Rect::new(wx, wy + client_y_offset, ww, wh - client_y_offset),
+            n_master: 0, // 不相关
+            m_fact: 0.0, // 不相关
         };
-        info!("[monocle] client_y_offset: {}", client_y_offset);
-
-        for (client_key, border_w) in tiled_clients {
+        let results = layout::calculate_monocle(&params, &layout_clients);
+        // 应用
+        for res in results {
             self.resize_client(
-                client_key,
-                wx,
-                wy + client_y_offset,
-                ww - 2 * border_w,
-                wh - 2 * border_w - client_y_offset,
-                false,
+                res.key, res.rect.x, res.rect.y, res.rect.w, res.rect.h, false,
             );
         }
     }
