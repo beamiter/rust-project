@@ -781,95 +781,102 @@ impl Jwm {
                 detail,
                 time,
             } => self.on_button_press(window, state, detail, time),
+
             BackendEvent::MotionNotify {
                 window,
                 root_x,
                 root_y,
                 time,
             } => self.on_motion_notify(window, root_x, root_y, time),
+
+            // 配置请求：解包 changes 结构体以适配旧接口
             BackendEvent::ConfigureRequest {
                 window,
-                mask,
-                x,
-                y,
-                w,
-                h,
-                border,
-                sibling,
-                stack_mode,
-            } => self.on_configure_request(
-                window,
-                mask,
-                x,
-                y,
-                w,
-                h,
-                border,
-                sibling.map(|s| s.to_x11_id().unwrap()),
-                stack_mode,
-            ),
-            BackendEvent::KeyPress { keycode, state } => self.on_key_press(keycode, state),
-            BackendEvent::ConfigureNotify { window, x, y, w, h } => {
-                self.configurenotify(window, x, y, w, h)
+                mask_bits,
+                changes,
+            } => {
+                let x = changes.x.unwrap_or(0) as i16;
+                let y = changes.y.unwrap_or(0) as i16;
+                let w = changes.width.unwrap_or(0) as u16;
+                let h = changes.height.unwrap_or(0) as u16;
+                let border = changes.border_width.unwrap_or(0) as u16;
+                let sibling = changes.sibling.and_then(|s| s.as_x11());
+                let stack_mode = match changes.stack_mode {
+                    Some(StackMode::Above) => 0, // X11 StackMode::Above
+                    Some(StackMode::Below) => 1,
+                    _ => 0,
+                };
+
+                self.on_configure_request(
+                    window, mask_bits, x, y, w, h, border, sibling, stack_mode,
+                )
             }
-            BackendEvent::DestroyNotify { window } => self.destroynotify(window),
+
+            BackendEvent::KeyPress { keycode, state } => self.on_key_press(keycode, state),
+
+            // 窗口配置变更（替代 ConfigureNotify）
+            BackendEvent::WindowConfigured {
+                window,
+                x,
+                y,
+                width,
+                height,
+            } => self.configurenotify(window, x, y, width, height),
+
+            // 窗口销毁（替代 DestroyNotify）
+            BackendEvent::WindowDestroyed(window) => self.destroynotify(window),
+
+            // 进入通知
             BackendEvent::EnterNotify {
                 window,
-                event,
-                mode,
-                detail,
-            } => self.enter_notify(window, event, mode, detail),
-            BackendEvent::Expose { window, count } => self.expose(window, count),
-            BackendEvent::FocusIn { event } => self.focusin(event),
-            BackendEvent::MapRequest { window } => self.maprequest(window),
-            BackendEvent::UnmapNotify {
-                window,
-                from_configure,
-            } => self.unmapnotify(window, from_configure),
+                subwindow: _,
+            } => self.enter_notify(window),
 
-            BackendEvent::MappingNotify { request: _ } => {
+            // 暴露事件
+            BackendEvent::Expose { window } => self.expose(window, 0),
+
+            // 焦点事件
+            BackendEvent::FocusIn { window } => self.focusin(window),
+
+            // 映射请求
+            BackendEvent::WindowCreated(window) => self.maprequest(window),
+
+            // 取消映射
+            BackendEvent::WindowUnmapped(window) => {
+                // 这里无法区分 from_configure，默认为 false
+                self.unmapnotify(window, false)
+            }
+
+            // 映射通知 (MappingNotify 是 X11 键盘映射变更，不是窗口映射)
+            BackendEvent::MappingNotify => {
                 self.backend.key_ops_mut().clear_cache();
                 self.grabkeys()
             }
 
-            BackendEvent::PropertyChanged {
-                window,
-                kind,
-                deleted,
-            } => {
-                if deleted {
-                    return Ok(());
-                }
+            // 属性变更
+            BackendEvent::PropertyChanged { window, kind } => {
                 if let Some(client_key) = self.wintoclient(window) {
                     match kind {
-                        PropertyKind::WmTransientFor => {
+                        PropertyKind::TransientFor => {
                             self.handle_transient_for_change(client_key)?
                         }
-                        PropertyKind::WmNormalHints => {
-                            self.handle_normal_hints_change(client_key)?
-                        }
-                        PropertyKind::WmHints => self.handle_wm_hints_change(client_key)?,
-                        PropertyKind::WmName | PropertyKind::NetWmName => {
-                            self.handle_title_change(client_key)?
-                        }
-                        PropertyKind::NetWmWindowType => {
-                            self.handle_window_type_change(client_key)?
-                        }
-                        PropertyKind::Other => {}
+                        PropertyKind::SizeHints => self.handle_normal_hints_change(client_key)?,
+                        PropertyKind::Urgency => self.handle_wm_hints_change(client_key)?,
+                        PropertyKind::Title => self.handle_title_change(client_key)?,
+                        PropertyKind::WindowType => self.handle_window_type_change(client_key)?,
+                        _ => {}
                     }
                 }
                 Ok(())
             }
-            BackendEvent::EwmhState {
+
+            // 状态请求 (EWMH State)
+            BackendEvent::WindowStateRequest {
                 window,
                 action,
-                states,
+                state,
             } => {
-                let fullscreen_requested = states
-                    .iter()
-                    .flatten()
-                    .any(|s| matches!(s, NetWmState::Fullscreen));
-                if fullscreen_requested {
+                if matches!(state, NetWmState::Fullscreen) {
                     if let Some(ck) = self.wintoclient(window) {
                         let is_fullscreen = self
                             .clients
@@ -886,6 +893,7 @@ impl Jwm {
                 }
                 Ok(())
             }
+
             BackendEvent::ActiveWindowMessage { window } => {
                 if let Some(ck) = self.wintoclient(window) {
                     let is_urgent = self
@@ -899,7 +907,6 @@ impl Jwm {
                 }
                 Ok(())
             }
-            BackendEvent::ClientMessage { .. } | BackendEvent::PropertyNotify { .. } => Ok(()),
             BackendEvent::ButtonRelease { window: _, time: _ } => {
                 // 无论在哪个窗口释放，只要处于交互状态，都结束它
                 if let Some(state) = self.interaction.take() {
@@ -926,6 +933,9 @@ impl Jwm {
                 }
                 Ok(())
             }
+
+            // 忽略未处理事件
+            _ => Ok(()),
         }
     }
 
@@ -2272,16 +2282,7 @@ impl Jwm {
         return m;
     }
 
-    fn enter_notify(
-        &mut self,
-        _root: WindowId,
-        event_window: WindowId,
-        mode: u8,
-        detail: u8,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if (mode != 0 || detail == 2) && event_window != self.backend.root_window() {
-            return Ok(());
-        }
+    fn enter_notify(&mut self, event_window: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         if self.handle_statusbar_enter_generic(event_window)? {
             return Ok(());
         }
@@ -2578,6 +2579,11 @@ impl Jwm {
         self.pending_bar_updates.clear();
     }
 
+    // 新增：处理单个事件的入口点，不再依赖内部 Loop
+    pub fn process_event(&mut self, event: BackendEvent) -> Result<(), Box<dyn std::error::Error>> {
+        self.handle_backend_event(event)
+    }
+
     pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         if env::var("JWM_USE_SYNC").is_ok() {
             self.run_sync()
@@ -2598,7 +2604,7 @@ impl Jwm {
         while self.running.load(std::sync::atomic::Ordering::SeqCst) {
             while let Some(ev) = self.backend.event_source().poll_event()? {
                 event_count = event_count.wrapping_add(1);
-                let _ = self.handle_backend_event(ev);
+                self.process_event(ev)?;
             }
 
             self.process_commands_from_status_bar();
@@ -2627,7 +2633,7 @@ impl Jwm {
         while self.running.load(std::sync::atomic::Ordering::SeqCst) {
             while let Some(ev) = self.backend.event_source().poll_event()? {
                 event_count = event_count.wrapping_add(1);
-                let _ = self.handle_backend_event(ev);
+                self.process_event(ev)?;
             }
 
             self.process_commands_from_status_bar();

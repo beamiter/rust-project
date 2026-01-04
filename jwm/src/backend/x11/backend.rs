@@ -75,15 +75,11 @@ impl X11Backend {
             conn.clone(),
             screen.default_colormap,
         ));
-        let event_source: Box<dyn EventSource> = Box::new(X11EventSource::new(
-            conn.clone(),
-            atoms.clone(),
-            screen.root,
-        ));
+        let event_source: Box<dyn EventSource> =
+            Box::new(X11EventSource::new(conn.clone(), atoms.clone()));
 
         let caps = Capabilities {
             can_warp_pointer: true,
-            has_active_window_prop: true,
             supports_client_list: true,
             ..Default::default()
         };

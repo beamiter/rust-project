@@ -6,13 +6,14 @@ use serde::Deserialize;
 use serde::Serialize;
 use std::fmt;
 
-// 1. 定义 WindowHandle 枚举替代原来的 WindowId 结构体
+/// 通用窗口句柄
+/// 在 X11 下是 u64 (Window ID)
+/// 在 Wayland 下可以是 slotmap 的 Key 或 ObjectId 的 hash
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Decode, Encode)]
 pub enum WindowHandle {
     X11(u64),
-    // 未来在这里添加 Wayland 支持
-    // Wayland(SmithayObjectId),
-    Mock(u64), // 用于测试
+    Wayland(u64), // 使用 ObjectId 的 hash 或 slotmap key
+    Mock(u64),
 }
 
 pub type WindowId = WindowHandle;
@@ -27,17 +28,16 @@ impl WindowHandle {
     }
 }
 
-// 实现 Debug 以便打印日志
 impl fmt::Debug for WindowHandle {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::X11(id) => write!(f, "X11({:#x})", id),
+            Self::Wayland(id) => write!(f, "WL({:#x})", id),
             Self::Mock(id) => write!(f, "Mock({})", id),
         }
     }
 }
 
-// 提供一个默认值，用于初始化
 impl Default for WindowHandle {
     fn default() -> Self {
         WindowHandle::X11(0)
@@ -114,7 +114,6 @@ bitflags! {
 
 pub mod keys {
     pub use xkbcommon::xkb::keysyms::*;
-    pub use xkbcommon::xkb::*;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
