@@ -2,7 +2,6 @@
 
 use crate::backend::common_define::WindowId;
 use crate::core::layout::LayoutEnum;
-use bincode::{Decode, Encode};
 use serde::{Deserialize, Serialize};
 use slotmap::DefaultKey;
 use std::fmt;
@@ -11,7 +10,7 @@ use std::rc::Rc;
 pub type ClientKey = DefaultKey;
 pub type MonitorKey = DefaultKey;
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Decode, Encode)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct WMClient {
     pub name: String,
     pub class: String,
@@ -23,13 +22,12 @@ pub struct WMClient {
 
     pub state: ClientState,
 
-    #[bincode(with_serde)]
     pub mon: Option<MonitorKey>,
 
     pub monitor_num: u32,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Decode, Encode, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ClientGeometry {
     pub x: i32,
     pub y: i32,
@@ -49,7 +47,7 @@ impl fmt::Display for ClientGeometry {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Decode, Encode, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct SizeHints {
     pub base_w: i32,
     pub base_h: i32,
@@ -64,7 +62,7 @@ pub struct SizeHints {
     pub hints_valid: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Decode, Encode, Default)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]
 pub struct ClientState {
     pub tags: u32,
     pub client_fact: f32,

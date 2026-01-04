@@ -8,11 +8,9 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 
 use crate::core::models::MonitorGeometry;
-use serde::{Deserialize, Serialize};
 use slotmap::{SecondaryMap, SlotMap};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::env;
-use std::io::Write;
 use std::process::{Child, Command};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -48,57 +46,17 @@ use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 
 use bincode::config::standard;
-use bincode::{Decode, Encode};
 
 // definitions for initial window state.
 pub const WITHDRAWN_STATE: u8 = 0;
 pub const STEXT_MAX_LEN: usize = 512;
 pub const NORMAL_STATE: u8 = 1;
 pub const ICONIC_STATE: u8 = 2;
-pub const RESTART_SNAPSHOT_PATH: &str = "/var/tmp/jwm/restart_snapshot.bin";
 pub const SHARED_PATH: &str = "/dev/shm/jwm_bar_global";
 
 lazy_static::lazy_static! {
     pub static ref BUTTONMASK: EventMaskBits  = EventMaskBits::BUTTON_PRESS | EventMaskBits::BUTTON_RELEASE;
     pub static ref MOUSEMASK: EventMaskBits   = EventMaskBits::BUTTON_PRESS | EventMaskBits::BUTTON_RELEASE | EventMaskBits::POINTER_MOTION;
-}
-
-#[derive(Debug, Serialize, Deserialize, Decode, Encode)]
-pub struct RestartSnapshot {
-    pub version: u32,
-    pub timestamp: u64,
-
-    pub sel_monitor_num: Option<i32>,
-    pub current_bar_monitor_id: Option<i32>,
-
-    pub monitors: Vec<MonitorSnapshot>,
-
-    pub clients: HashMap<WindowId, WMClient>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Decode, Encode)]
-pub struct MonitorSnapshot {
-    pub num: i32,
-
-    pub tag_set: [u32; 2],
-    pub sel_tags: usize,
-
-    pub pertag: PertagSnapshot,
-
-    pub monitor_clients_order: Vec<WindowId>,
-    pub monitor_stack_order: Vec<WindowId>,
-}
-
-#[derive(Debug, Serialize, Deserialize, Decode, Encode)]
-pub struct PertagSnapshot {
-    pub cur_tag: usize,
-    pub prev_tag: usize,
-    pub n_masters: Vec<u32>,
-    pub m_facts: Vec<f32>,
-    pub sel_lts: Vec<usize>,
-    pub lt_pairs: Vec<[u32; 2]>,
-    pub show_bars: Vec<bool>,
-    pub sel_by_tag: Vec<Option<WindowId>>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -252,8 +210,6 @@ pub struct Jwm {
 
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
 
-    pub restoring_from_snapshot: bool,
-
     pub last_stacking: SecondaryMap<MonitorKey, Vec<WindowId>>,
 
     key_bindings: Vec<WMKey>,
@@ -326,7 +282,6 @@ impl Jwm {
 
             suppress_mouse_focus_until: None,
 
-            restoring_from_snapshot: false,
             last_stacking: SecondaryMap::new(),
             key_bindings: CONFIG.get_keys(),
             interaction: None,
@@ -939,273 +894,6 @@ impl Jwm {
         }
     }
 
-    fn layout_to_id(l: &LayoutEnum) -> u32 {
-        match *l {
-            LayoutEnum::TILE => 0,
-            LayoutEnum::FLOAT => 1,
-            LayoutEnum::MONOCLE => 2,
-            _ => 0,
-        }
-    }
-    fn id_to_layout(id: u32) -> Rc<LayoutEnum> {
-        Rc::new(LayoutEnum::from(id))
-    }
-
-    fn atomic_write(path: &str, data: &[u8]) -> std::io::Result<()> {
-        let tmp = format!("{}.tmp", path);
-        {
-            let mut f = std::fs::File::create(&tmp)?;
-            f.write_all(data)?;
-            f.sync_all()?;
-        }
-        std::fs::rename(&tmp, path)?;
-        Ok(())
-    }
-
-    fn unix_ts() -> u64 {
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_secs()
-    }
-
-    fn save_restart_snapshot(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        let mut snapshot = RestartSnapshot {
-            version: 1,
-            timestamp: Self::unix_ts(),
-            sel_monitor_num: self
-                .sel_mon
-                .and_then(|k| self.monitors.get(k))
-                .map(|m| m.num),
-            current_bar_monitor_id: self.current_bar_monitor_id,
-            monitors: Vec::new(),
-            clients: HashMap::new(),
-        };
-        for &mon_key in &self.monitor_order {
-            let m = self.monitors.get(mon_key).unwrap();
-            let pertag_snap = if let Some(p) = m.pertag.as_ref() {
-                let mut lt_pairs = Vec::with_capacity(p.lt_idxs.len());
-                for i in 0..p.lt_idxs.len() {
-                    let id0 = p.lt_idxs[i][0]
-                        .as_ref()
-                        .map(|rc| Self::layout_to_id(&*rc))
-                        .unwrap_or(0);
-                    let id1 = p.lt_idxs[i][1]
-                        .as_ref()
-                        .map(|rc| Self::layout_to_id(&*rc))
-                        .unwrap_or(1);
-                    lt_pairs.push([id0, id1]);
-                }
-                let sel_by_tag = p
-                    .sel
-                    .iter()
-                    .map(|opt_ck| opt_ck.and_then(|ck| self.clients.get(ck)).map(|c| c.win))
-                    .collect();
-
-                PertagSnapshot {
-                    cur_tag: p.cur_tag,
-                    prev_tag: p.prev_tag,
-                    n_masters: p.n_masters.clone(),
-                    m_facts: p.m_facts.clone(),
-                    sel_lts: p.sel_lts.clone(),
-                    lt_pairs,
-                    show_bars: p.show_bars.clone(),
-                    sel_by_tag,
-                }
-            } else {
-                let len = CONFIG.tags_length() + 1;
-                PertagSnapshot {
-                    cur_tag: 1,
-                    prev_tag: 1,
-                    n_masters: vec![m.layout.n_master; len],
-                    m_facts: vec![m.layout.m_fact; len],
-                    sel_lts: vec![m.sel_lt; len],
-                    lt_pairs: vec![[0, 1]; len],
-                    show_bars: vec![true; len],
-                    sel_by_tag: vec![None; len],
-                }
-            };
-
-            let mc_order = self
-                .monitor_clients
-                .get(mon_key)
-                .map(|v| {
-                    v.iter()
-                        .filter_map(|&ck| self.clients.get(ck).map(|c| c.win))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-            let ms_order = self
-                .monitor_stack
-                .get(mon_key)
-                .map(|v| {
-                    v.iter()
-                        .filter_map(|&ck| self.clients.get(ck).map(|c| c.win))
-                        .collect::<Vec<_>>()
-                })
-                .unwrap_or_default();
-
-            snapshot.monitors.push(MonitorSnapshot {
-                num: m.num,
-                tag_set: m.tag_set,
-                sel_tags: m.sel_tags,
-                pertag: pertag_snap,
-                monitor_clients_order: mc_order,
-                monitor_stack_order: ms_order,
-            });
-        }
-
-        for (_, c) in self.clients.iter() {
-            let mut cc = c.clone();
-            cc.monitor_num = c
-                .mon
-                .and_then(|mk| self.monitors.get(mk))
-                .map(|m| m.num as u32)
-                .unwrap_or(0);
-            cc.mon = None;
-            snapshot.clients.insert(cc.win, cc);
-        }
-
-        let data = bincode::encode_to_vec(&snapshot, standard())?;
-        Self::atomic_write(RESTART_SNAPSHOT_PATH, &data)?;
-        Ok(())
-    }
-
-    fn load_restart_snapshot() -> Option<RestartSnapshot> {
-        let path = std::path::Path::new(RESTART_SNAPSHOT_PATH);
-        if !path.exists() {
-            return None;
-        }
-        let data = std::fs::read(path).ok()?;
-        bincode::decode_from_slice(&data, standard())
-            .ok()
-            .map(|(snapshot, _bytes_read)| snapshot)
-    }
-
-    fn apply_snapshot(&mut self, snap: &RestartSnapshot) {
-        for (win_id, sc) in &snap.clients {
-            if let Some(ck) = self.wintoclient(*win_id) {
-                let mon_key_opt = self.get_monitor_by_id(sc.monitor_num as i32);
-                if let Some(c) = self.clients.get_mut(ck) {
-                    c.state = sc.state.clone();
-                    c.geometry = sc.geometry.clone();
-                    c.size_hints = sc.size_hints.clone();
-                    if mon_key_opt.is_some() {
-                        c.mon = mon_key_opt;
-                    }
-                }
-            }
-        }
-
-        for ms in &snap.monitors {
-            if let Some(mon_key) = self.get_monitor_by_id(ms.num) {
-                if let Some(m) = self.monitors.get_mut(mon_key) {
-                    m.tag_set = ms.tag_set;
-                    m.sel_tags = ms.sel_tags;
-
-                    if let Some(p) = m.pertag.as_mut() {
-                        p.cur_tag = ms.pertag.cur_tag;
-                        p.prev_tag = ms.pertag.prev_tag;
-                        p.n_masters = ms.pertag.n_masters.clone();
-                        p.m_facts = ms.pertag.m_facts.clone();
-                        p.sel_lts = ms.pertag.sel_lts.clone();
-                        p.show_bars = ms.pertag.show_bars.clone();
-                        for i in 0..p.lt_idxs.len().min(ms.pertag.lt_pairs.len()) {
-                            let [id0, id1] = ms.pertag.lt_pairs[i];
-                            p.lt_idxs[i][0] = Some(Self::id_to_layout(id0));
-                            p.lt_idxs[i][1] = Some(Self::id_to_layout(id1));
-                        }
-                        let cur = p.cur_tag;
-                        m.layout.n_master = p.n_masters[cur];
-                        m.layout.m_fact = p.m_facts[cur];
-                        m.sel_lt = p.sel_lts[cur];
-                        m.lt[0] = p.lt_idxs[cur][0].as_ref().unwrap().clone();
-                        m.lt[1] = p.lt_idxs[cur][1].as_ref().unwrap().clone();
-                    }
-                }
-            }
-        }
-
-        for &mon_key in &self.monitor_order {
-            if let Some(v) = self.monitor_clients.get_mut(mon_key) {
-                v.clear();
-            }
-            if let Some(v) = self.monitor_stack.get_mut(mon_key) {
-                v.clear();
-            }
-        }
-        for ms in &snap.monitors {
-            if let Some(mon_key) = self.get_monitor_by_id(ms.num) {
-                for &win in &ms.monitor_clients_order {
-                    if let Some(ck) = self.wintoclient(win) {
-                        self.attach_to_monitor_end(ck, mon_key);
-                    }
-                }
-                for &win in &ms.monitor_stack_order {
-                    if let Some(ck) = self.wintoclient(win) {
-                        self.attach_to_monitor_stack_end(ck, mon_key);
-                    }
-                }
-            }
-        }
-
-        for ms in &snap.monitors {
-            if let Some(mon_key) = self.get_monitor_by_id(ms.num) {
-                let mut updates = Vec::new();
-                for (i, &win_opt) in ms.pertag.sel_by_tag.iter().enumerate() {
-                    let client_key = win_opt.and_then(|w| self.wintoclient(w));
-                    updates.push((i, client_key));
-                }
-                let next_visible = self.find_next_visible_client_by_mon(mon_key);
-                if let Some(m) = self.monitors.get_mut(mon_key) {
-                    if let Some(p) = m.pertag.as_mut() {
-                        for (i, client_key) in updates {
-                            if i < p.sel.len() {
-                                p.sel[i] = client_key;
-                            }
-                        }
-                        let cur = p.cur_tag;
-                        m.sel = p.sel.get(cur).copied().flatten().or(next_visible);
-                    }
-                }
-            }
-        }
-
-        if let Some(id) = snap.sel_monitor_num {
-            self.sel_mon = self.get_monitor_by_id(id);
-        }
-        if let Some(id) = snap.current_bar_monitor_id {
-            self.current_bar_monitor_id = Some(id);
-            let _ = self.position_statusbar_on_monitor(id);
-        }
-
-        let monitors: Vec<_> = self.monitor_order.to_vec();
-        for mon_key in monitors {
-            self.showhide_monitor(mon_key);
-        }
-        let _ = self.restack(self.sel_mon);
-        let _ = self.focus(None);
-        self.mark_bar_update_needed_if_visible(None);
-    }
-
-    fn attach_to_monitor_end(&mut self, ck: ClientKey, mon: MonitorKey) {
-        if let Some(v) = self.monitor_clients.get_mut(mon) {
-            if !v.iter().any(|&k| k == ck) {
-                v.push(ck);
-            }
-        }
-        if let Some(c) = self.clients.get_mut(ck) {
-            c.mon = Some(mon);
-        }
-    }
-    fn attach_to_monitor_stack_end(&mut self, ck: ClientKey, mon: MonitorKey) {
-        if let Some(v) = self.monitor_stack.get_mut(mon) {
-            if !v.iter().any(|&k| k == ck) {
-                v.push(ck);
-            }
-        }
-    }
-
     fn insert_client(&mut self, client: WMClient) -> ClientKey {
         let key = self.clients.insert(client);
         self.client_order.push(key);
@@ -1447,9 +1135,6 @@ impl Jwm {
 
     pub fn restart(&mut self, _arg: &WMArgEnum) -> Result<(), Box<dyn std::error::Error>> {
         info!("[restart] Preparing seamless restart");
-        if let Err(e) = self.save_restart_snapshot() {
-            warn!("[restart] save_restart_snapshot failed: {:?}", e);
-        }
         self.running.store(false, Ordering::SeqCst);
         self.is_restarting.store(true, Ordering::SeqCst);
         Ok(())
@@ -4013,20 +3698,12 @@ impl Jwm {
         self.grabkeys()?;
         self.focus(None)?;
 
-        let snapshot_opt = Self::load_restart_snapshot();
-
-        self.restoring_from_snapshot = snapshot_opt.is_some();
-
         self.scan()?;
 
-        if let Some(snap) = snapshot_opt {
-            info!("[setup] applying snapshot...");
-            self.apply_snapshot(&snap);
-        } else {
-            self.arrange(None);
-            let _ = self.restack(self.sel_mon);
-            let _ = self.focus(None);
-        }
+        self.arrange(None);
+        let _ = self.restack(self.sel_mon);
+        let _ = self.focus(None);
+
         self.backend.window_ops().flush()?;
         Ok(())
     }
@@ -4915,29 +4592,27 @@ impl Jwm {
 
         self.configure_client(client_key)?;
 
-        if !self.restoring_from_snapshot {
-            let (x, y, w, h) = if let Some(client) = self.clients.get(client_key) {
-                let offscreen_x = client.geometry.x + 2 * self.s_w;
-                (
-                    offscreen_x,
-                    client.geometry.y,
-                    client.geometry.w,
-                    client.geometry.h,
-                )
-            } else {
-                return Err("Client not found".into());
-            };
-            let changes = WindowChanges {
-                x: Some(x),
-                y: Some(y),
-                width: Some(w as u32),
-                height: Some(h as u32),
-                ..Default::default()
-            };
-            self.backend
-                .window_ops()
-                .apply_window_changes(win, changes)?;
-        }
+        let (x, y, w, h) = if let Some(client) = self.clients.get(client_key) {
+            let offscreen_x = client.geometry.x + 2 * self.s_w;
+            (
+                offscreen_x,
+                client.geometry.y,
+                client.geometry.w,
+                client.geometry.h,
+            )
+        } else {
+            return Err("Client not found".into());
+        };
+        let changes = WindowChanges {
+            x: Some(x),
+            y: Some(y),
+            width: Some(w as u32),
+            height: Some(h as u32),
+            ..Default::default()
+        };
+        self.backend
+            .window_ops()
+            .apply_window_changes(win, changes)?;
 
         if let Some(client) = self.clients.get(client_key) {
             self.setclientstate(client.win, NORMAL_STATE as i64)?;
