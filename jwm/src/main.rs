@@ -7,8 +7,6 @@ use xbar_core::initialize_logging;
 #[cfg(feature = "backend-x11")]
 use jwm::backend::x11::backend::X11Backend;
 
-use cfg_if::cfg_if;
-
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_locale();
     jwm::miscellaneous::init_auto_command();

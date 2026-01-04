@@ -157,8 +157,6 @@ impl Backend for X11Backend {
     fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), Box<dyn std::error::Error>> {
         while !handler.should_exit() {
             while let Some(ev) = self.event_source.poll_event()? {
-                // 将 self (即 backend) 传给 handler
-                // 注意：这里需要先把 event 拿出来，避免同时借用 self
                 handler.handle_event(self, ev)?;
             }
             handler.update(self)?;
