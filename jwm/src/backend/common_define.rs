@@ -1,13 +1,11 @@
 // src/backend/common_define.rs
 use bitflags::bitflags;
-use serde::Deserialize;
-use serde::Serialize;
 use std::fmt;
 
 /// 通用窗口句柄
 /// 在 X11 下是 u64 (Window ID)
 /// 在 Wayland 下可以是 slotmap 的 Key 或 ObjectId 的 hash
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WindowHandle {
     X11(u64),
     Wayland(u64), // 使用 ObjectId 的 hash 或 slotmap key
