@@ -1,4 +1,5 @@
 // src/backend/x11/backend.rs
+use crate::backend::api::EventHandler;
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 use x11rb::protocol::xproto::Screen;
@@ -145,15 +146,24 @@ impl Backend for X11Backend {
         &mut *self.color_allocator
     }
 
-    fn event_source(&mut self) -> &mut dyn EventSource {
-        &mut *self.event_source
-    }
-
     fn root_window(&self) -> WindowId {
         self.root
     }
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), Box<dyn std::error::Error>> {
+        while !handler.should_exit() {
+            while let Some(ev) = self.event_source.poll_event()? {
+                // 将 self (即 backend) 传给 handler
+                // 注意：这里需要先把 event 拿出来，避免同时借用 self
+                handler.handle_event(self, ev)?;
+            }
+            handler.update(self)?;
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        Ok(())
     }
 }

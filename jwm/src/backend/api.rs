@@ -274,9 +274,6 @@ pub trait OutputOps: Send {
 /// Wayland: Smithay 驱动，这里可能只需要处理内部消息队列
 pub trait EventSource: Send {
     fn poll_event(&mut self) -> Result<Option<BackendEvent>, Box<dyn std::error::Error>>;
-    fn flush(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
 }
 
 pub trait WindowOps: Send {
@@ -503,6 +500,21 @@ pub trait CursorProvider: Send {
     fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>>;
 }
 
+pub trait EventHandler {
+    /// 处理具体的后端事件 (如 KeyPress, WindowCreated)
+    fn handle_event(
+        &mut self,
+        backend: &mut dyn Backend,
+        event: BackendEvent,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// 每一轮循环的更新回调 (用于处理定时任务、刷新状态栏、Flush窗口流等)
+    fn update(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// 询问 Handler 是否应该退出主循环
+    fn should_exit(&self) -> bool;
+}
+
 pub trait Backend: Send {
     fn capabilities(&self) -> Capabilities;
     fn window_ops(&self) -> &dyn WindowOps;
@@ -514,7 +526,8 @@ pub trait Backend: Send {
     fn ewmh_facade(&self) -> Option<&dyn EwmhFacade>;
     fn cursor_provider(&mut self) -> &mut dyn CursorProvider;
     fn color_allocator(&mut self) -> &mut dyn ColorAllocator;
-    fn event_source(&mut self) -> &mut dyn EventSource;
     fn root_window(&self) -> WindowId;
     fn as_any(&self) -> &dyn Any;
+
+    fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), Box<dyn std::error::Error>>;
 }

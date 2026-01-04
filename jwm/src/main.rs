@@ -24,27 +24,23 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
     info!("[main] Starting JWM instance");
 
-    cfg_if! {
-        if #[cfg(feature = "backend-wayland")]
-        {
-            todo!("no support wayland yet");
-        }
-        else if #[cfg(feature = "backend-x11")]
-        {
-            let backend: Box<dyn jwm::backend::api::Backend> =
-                Box::new(X11Backend::new()?);
-        }
-        else {
-            panic!("not supported feature");
-        }
-    };
+    // 1. 创建 Backend 所有权
+    let mut backend: Box<dyn jwm::backend::api::Backend> = Box::new(X11Backend::new()?);
 
-    let mut jwm = Jwm::new(backend)?;
-    jwm.checkotherwm()?;
-    jwm.setup()?;
-    jwm.scan()?;
-    jwm.run()?;
-    jwm.cleanup()?;
+    // 2. 创建 Jwm，传入 backend 引用
+    let mut jwm = Jwm::new(&mut *backend)?;
+
+    // 3. 调用生命周期方法，现在需要手动传 backend
+    jwm.checkotherwm(&mut *backend)?;
+    jwm.setup(&mut *backend)?;
+    jwm.scan(&mut *backend)?;
+
+    // 4. 启动循环
+    // backend 拥有控制权，jwm 借用给它
+    backend.run(&mut jwm)?;
+
+    // 5. 清理
+    jwm.cleanup(&mut *backend)?;
 
     if !jwm.is_restarting.load(Ordering::SeqCst) {
         if let Err(_) = Command::new("jwm-tool").arg("quit").spawn() {
