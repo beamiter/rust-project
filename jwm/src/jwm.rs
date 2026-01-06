@@ -2169,7 +2169,6 @@ impl Jwm {
 
     fn ensure_bar_is_running(&mut self, shared_path: &str) {
         if self.try_spawn_status_bar {
-            debug!("status bar client not ready");
             return;
         }
 
