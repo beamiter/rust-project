@@ -47,8 +47,6 @@ use shared_structures::CommandType;
 use shared_structures::SharedCommand;
 use shared_structures::{MonitorInfo, SharedMessage, SharedRingBuffer, TagStatus};
 
-use bincode::config::standard;
-
 // definitions for initial window state.
 pub const WITHDRAWN_STATE: u8 = 0;
 pub const STEXT_MAX_LEN: usize = 512;
@@ -197,14 +195,10 @@ pub struct Jwm {
 
     pub status_bar_shmem: Option<SharedRingBuffer>,
     pub status_bar_child: Option<Child>,
-    pub last_bar_spawn_attempt: Option<std::time::Instant>,
     pub status_bar_client: Option<ClientKey>,
     pub status_bar_window: Option<WindowId>,
+    pub try_spawn_status_bar: bool,
     pub current_bar_monitor_id: Option<i32>,
-
-    pub last_bar_payload: Option<Vec<u8>>,
-    pub last_bar_update_at: Option<std::time::Instant>,
-    pub bar_min_interval: std::time::Duration,
 
     pub pending_bar_updates: HashSet<MonitorIndex>,
 
@@ -234,14 +228,7 @@ impl EventHandler for Jwm {
             self.status_bar_shmem = Some(ring_buffer);
             return Ok(());
         }
-        if let Some(last_attempt) = self.last_bar_spawn_attempt {
-            const BAR_SPAWN_COOLDOWN: Duration = Duration::from_millis(500);
-            if last_attempt.elapsed() > BAR_SPAWN_COOLDOWN {
-                self.ensure_bar_is_running(SHARED_PATH);
-            }
-        } else {
-            self.last_bar_spawn_attempt = Some(Instant::now());
-        }
+        self.ensure_bar_is_running(SHARED_PATH);
         self.process_commands_from_status_bar(backend);
         self.flush_pending_bar_updates();
         backend.window_ops().flush()?;
@@ -310,10 +297,7 @@ impl Jwm {
             status_bar_client: None,
             status_bar_window: None,
             current_bar_monitor_id: None,
-            last_bar_payload: None,
-            last_bar_update_at: None,
-            bar_min_interval: std::time::Duration::from_millis(10),
-            last_bar_spawn_attempt: None,
+            try_spawn_status_bar: false,
             pending_bar_updates: HashSet::new(),
 
             suppress_mouse_focus_until: None,
@@ -2184,25 +2168,9 @@ impl Jwm {
     }
 
     fn ensure_bar_is_running(&mut self, shared_path: &str) {
-        // 1. 检查现有进程状态
-        if let Some(child) = self.status_bar_child.as_mut() {
-            match child.try_wait() {
-                Ok(Some(status)) => {
-                    info!("Status bar process exited with: {status}, preparing to respawn.");
-                    // 进程已退出，我们将继续向下执行以重新启动
-                }
-                Ok(None) => {
-                    // 进程还在运行，不需要做任何事
-                    debug!("Status bar is running.");
-                    return;
-                }
-                Err(e) => {
-                    info!(
-                        "Error attempting to wait on status bar child: {e}, will try to respawn."
-                    );
-                    // 出错，假设需要重启
-                }
-            }
+        if self.try_spawn_status_bar {
+            debug!("status bar client not ready");
+            return;
         }
 
         // 3. 准备启动命令
@@ -2217,6 +2185,7 @@ impl Jwm {
         };
 
         // 4. 执行启动并更新时间戳
+        self.try_spawn_status_bar = true;
         match command
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
@@ -2334,7 +2303,6 @@ impl Jwm {
         if self.pending_bar_updates.is_empty() {
             return;
         }
-
         let target_mon_id = self
             .current_bar_monitor_id
             .or_else(|| {
@@ -2343,45 +2311,18 @@ impl Jwm {
                     .map(|m| m.num)
             })
             .or_else(|| self.pending_bar_updates.iter().copied().next());
-
         if let Some(mon_id) = target_mon_id {
             if let Some(mon_key) = self.get_monitor_by_id(mon_id) {
                 if !self.is_bar_visible_on_mon(mon_key) {
                     self.pending_bar_updates.clear();
                     return;
                 }
-
                 self.update_bar_message_for_monitor(Some(mon_key));
-
-                let payload = match bincode::encode_to_vec(&self.message, standard()) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        self.pending_bar_updates.clear();
-                        return;
-                    }
-                };
-
-                let now = std::time::Instant::now();
-                if let Some(last) = self.last_bar_update_at {
-                    if now.duration_since(last) < self.bar_min_interval {
-                        return;
-                    }
-                }
-
-                if self.last_bar_payload.as_ref().map(|p| &**p) == Some(&payload[..]) {
-                    self.pending_bar_updates.clear();
-                    return;
-                }
-
                 if let Some(rb) = self.status_bar_shmem.as_mut() {
                     let _ = rb.try_write_message(&self.message);
                 }
-
-                self.last_bar_payload = Some(payload);
-                self.last_bar_update_at = Some(now);
             }
         }
-
         self.pending_bar_updates.clear();
     }
 
@@ -5493,6 +5434,7 @@ impl Jwm {
         self.status_bar_child = None;
         self.status_bar_client = None;
         self.status_bar_window = None;
+        self.try_spawn_status_bar = false;
         info!("Successfully removed statusbar",);
         Ok(())
     }
