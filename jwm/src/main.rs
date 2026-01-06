@@ -28,14 +28,12 @@ fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
     // 2. 创建 Jwm，传入 backend 引用
     let mut jwm = Jwm::new(&mut *backend)?;
 
-    // 3. 调用生命周期方法，现在需要手动传 backend
     jwm.checkotherwm(&mut *backend)?;
     jwm.setup(&mut *backend)?;
     jwm.scan(&mut *backend)?;
 
     // 4. 启动循环
-    // backend 拥有控制权，jwm 借用给它
-    backend.run(&mut jwm)?;
+    jwm.run(&mut *backend)?;
 
     // 5. 清理
     jwm.cleanup(&mut *backend)?;

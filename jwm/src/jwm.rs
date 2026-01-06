@@ -12,6 +12,7 @@ use crate::core::models::MonitorGeometry;
 use slotmap::{SecondaryMap, SlotMap};
 use std::collections::HashSet;
 use std::env;
+use std::process::Stdio;
 use std::process::{Child, Command};
 use std::rc::Rc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -197,6 +198,7 @@ pub struct Jwm {
     pub status_bar_shmem: Option<SharedRingBuffer>,
     pub status_bar_child: Option<Child>,
     pub status_bar_pid: Option<u32>,
+    pub last_bar_spawn_attempt: Option<std::time::Instant>,
 
     pub status_bar_client: Option<ClientKey>,
     pub status_bar_window: Option<WindowId>,
@@ -301,6 +303,7 @@ impl Jwm {
             last_bar_update_at: None,
             bar_min_interval: std::time::Duration::from_millis(10),
             status_bar_pid: None,
+            last_bar_spawn_attempt: None,
             pending_bar_updates: HashSet::new(),
 
             suppress_mouse_focus_until: None,
@@ -2172,26 +2175,53 @@ impl Jwm {
     }
 
     fn ensure_bar_is_running(&mut self, shared_path: &str) {
+        // 1. 检查现有进程状态
         if let Some(child) = self.status_bar_child.as_mut() {
-            if child.try_wait().ok().flatten().is_none() {
-                return; // 仍在运行
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    info!("Status bar process exited with: {status}, preparing to respawn.");
+                    // 进程已退出，我们将继续向下执行以重新启动
+                }
+                Ok(None) => {
+                    // 进程还在运行，不需要做任何事
+                    debug!("Status bar is running.");
+                    return;
+                }
+                Err(e) => {
+                    info!(
+                        "Error attempting to wait on status bar child: {e}, will try to respawn."
+                    );
+                    // 出错，假设需要重启
+                }
             }
-            self.status_bar_child = None;
-            self.status_bar_pid = None;
         }
 
+        // 3. 准备启动命令
         let mut command = if cfg!(feature = "nixgl") {
             let mut cmd = Command::new("nixGL");
-            cmd.arg(CONFIG.status_bar_name());
+            cmd.arg(CONFIG.status_bar_name()).arg(shared_path);
             cmd
         } else {
-            Command::new(CONFIG.status_bar_name())
+            let mut cmd = Command::new(CONFIG.status_bar_name());
+            cmd.arg(shared_path);
+            cmd
         };
-        command.arg(shared_path);
 
-        if let Ok(child) = command.spawn() {
-            self.status_bar_pid = Some(child.id());
-            self.status_bar_child = Some(child);
+        // 4. 执行启动并更新时间戳
+        match command
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit())
+            .spawn()
+        {
+            Ok(child) => {
+                info!("Spawning status bar (PID: {})", child.id());
+                self.status_bar_pid = Some(child.id());
+                self.status_bar_child = Some(child);
+            }
+            Err(e) => {
+                error!("Failed to spawn status bar: {}", e);
+            }
         }
     }
 
@@ -2296,6 +2326,8 @@ impl Jwm {
         if self.pending_bar_updates.is_empty() {
             return;
         }
+        // 定义冷却时间，例如 1 秒
+        const BAR_SPAWN_COOLDOWN: Duration = Duration::from_secs(1);
 
         let target_mon_id = self
             .current_bar_monitor_id
@@ -2341,7 +2373,14 @@ impl Jwm {
                     info!("Create bar shmem");
                     self.status_bar_shmem = Some(ring_buffer);
                 }
-                self.ensure_bar_is_running(SHARED_PATH);
+
+                if let Some(last_attempt) = self.last_bar_spawn_attempt {
+                    if last_attempt.elapsed() > BAR_SPAWN_COOLDOWN {
+                        self.ensure_bar_is_running(SHARED_PATH);
+                    }
+                } else {
+                    self.last_bar_spawn_attempt = Some(Instant::now());
+                }
 
                 if let Some(rb) = self.status_bar_shmem.as_mut() {
                     let _ = rb.try_write_message(&self.message);
@@ -5949,9 +5988,7 @@ impl Jwm {
         let mon_key = match mon_key_opt {
             Some(key) => key,
             None => {
-                error!(
-                    "[update_bar_message_for_monitor] Monitor key is None, cannot update bar message."
-                );
+                error!("Monitor key is None, cannot update bar message.");
                 return;
             }
         };
@@ -5959,10 +5996,7 @@ impl Jwm {
         let monitor = if let Some(monitor) = self.monitors.get(mon_key) {
             monitor
         } else {
-            error!(
-                "[update_bar_message_for_monitor] Monitor {:?} not found",
-                mon_key
-            );
+            error!("Monitor {:?} not found", mon_key);
             return;
         };
 
