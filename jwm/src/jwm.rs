@@ -199,7 +199,6 @@ pub struct Jwm {
     pub status_bar_child: Option<Child>,
     pub status_bar_pid: Option<u32>,
     pub last_bar_spawn_attempt: Option<std::time::Instant>,
-
     pub status_bar_client: Option<ClientKey>,
     pub status_bar_window: Option<WindowId>,
     pub current_bar_monitor_id: Option<i32>,
@@ -1600,7 +1599,6 @@ impl Jwm {
             }
             warn!("Graceful termination timeout, forcing kill");
         }
-        self.status_bar_pid = None;
         signal::kill(nix_pid, Signal::SIGKILL)?;
 
         Ok(())
@@ -5488,77 +5486,23 @@ impl Jwm {
         };
 
         if Some(win) == self.status_bar_window {
-            self.unmanage_statusbar(backend, destroyed)?;
-            return Ok(());
+            return self.unmanage_statusbar();
         }
 
         self.unmanage_regular_client(backend, client_key, destroyed)?;
         Ok(())
     }
 
-    fn unmanage_statusbar(
-        &mut self,
-        backend: &mut dyn Backend,
-        destroyed: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn unmanage_statusbar(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         debug!("unmanage_statusbar");
-        if !destroyed {
-            self.cleanup_statusbar_window(backend, self.status_bar_window.unwrap())?;
-            return Ok(());
-        }
-        let cleanup_results = [
-            ("terminate_process", self.cleanup_statusbar_processes()),
-            ("cleanup_shared_memory", self.cleanup_shared_memory_safe()),
-        ];
-        for (operation, result) in cleanup_results.iter() {
-            if let Err(e) = result {
-                error!("[unmanage_statusbar] {} failed for {}", operation, e);
-            }
-        }
-        info!("[unmanage_statusbar] Successfully removed statusbar",);
+        self.cleanup_statusbar_processes()?;
+        self.status_bar_shmem = None;
+        self.status_bar_pid = None;
+        self.status_bar_child = None;
+        self.status_bar_client = None;
+        self.status_bar_window = None;
+        info!("Successfully removed statusbar",);
         Ok(())
-    }
-
-    fn cleanup_statusbar_window(
-        &mut self,
-        backend: &mut dyn Backend,
-        win: WindowId,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        debug!("cleanup_statusbar_window");
-        backend
-            .window_ops()
-            .change_event_mask(win, EventMaskBits::NONE.bits())?;
-        debug!(
-            "[cleanup_statusbar_window] Cleared events for statusbar window {:?}",
-            win
-        );
-        Ok(())
-    }
-
-    fn cleanup_shared_memory_safe(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(shmem) = self.status_bar_shmem.take() {
-            info!("[cleanup_shared_memory_safe] Cleaning up shared memory",);
-            drop(shmem);
-            #[cfg(unix)]
-            {
-                if let Ok(c_name) = std::ffi::CString::new(SHARED_PATH) {
-                    unsafe {
-                        let result = libc::shm_unlink(c_name.as_ptr());
-                        if result != 0 {
-                            let errno = *libc::__errno_location();
-                            if errno != libc::ENOENT {
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-            }
-            info!("[cleanup_shared_memory_safe] Shared memory cleaned successfully",);
-            Ok(())
-        } else {
-            info!("[cleanup_shared_memory_safe] No shared memory found",);
-            Ok(())
-        }
     }
 
     fn is_popup_like(&self, backend: &mut dyn Backend, client_key: ClientKey) -> bool {
