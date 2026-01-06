@@ -197,7 +197,6 @@ pub struct Jwm {
 
     pub status_bar_shmem: Option<SharedRingBuffer>,
     pub status_bar_child: Option<Child>,
-    pub status_bar_pid: Option<u32>,
     pub last_bar_spawn_attempt: Option<std::time::Instant>,
     pub status_bar_client: Option<ClientKey>,
     pub status_bar_window: Option<WindowId>,
@@ -228,10 +227,23 @@ impl EventHandler for Jwm {
     }
 
     fn update(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
-        self.process_commands_from_status_bar(backend);
-        if !self.pending_bar_updates.is_empty() {
-            self.flush_pending_bar_updates();
+        if self.status_bar_shmem.is_none() {
+            let ring_buffer = SharedRingBuffer::create_aux(SHARED_PATH, None, None)
+                .expect("Create bar shmem failed");
+            info!("Create bar shmem");
+            self.status_bar_shmem = Some(ring_buffer);
+            return Ok(());
         }
+        if let Some(last_attempt) = self.last_bar_spawn_attempt {
+            const BAR_SPAWN_COOLDOWN: Duration = Duration::from_millis(500);
+            if last_attempt.elapsed() > BAR_SPAWN_COOLDOWN {
+                self.ensure_bar_is_running(SHARED_PATH);
+            }
+        } else {
+            self.last_bar_spawn_attempt = Some(Instant::now());
+        }
+        self.process_commands_from_status_bar(backend);
+        self.flush_pending_bar_updates();
         backend.window_ops().flush()?;
         Ok(())
     }
@@ -301,7 +313,6 @@ impl Jwm {
             last_bar_payload: None,
             last_bar_update_at: None,
             bar_min_interval: std::time::Duration::from_millis(10),
-            status_bar_pid: None,
             last_bar_spawn_attempt: None,
             pending_bar_updates: HashSet::new(),
 
@@ -2214,7 +2225,6 @@ impl Jwm {
         {
             Ok(child) => {
                 info!("Spawning status bar (PID: {})", child.id());
-                self.status_bar_pid = Some(child.id());
                 self.status_bar_child = Some(child);
             }
             Err(e) => {
@@ -2324,8 +2334,6 @@ impl Jwm {
         if self.pending_bar_updates.is_empty() {
             return;
         }
-        // 定义冷却时间，例如 1 秒
-        const BAR_SPAWN_COOLDOWN: Duration = Duration::from_secs(1);
 
         let target_mon_id = self
             .current_bar_monitor_id
@@ -2363,21 +2371,6 @@ impl Jwm {
                 if self.last_bar_payload.as_ref().map(|p| &**p) == Some(&payload[..]) {
                     self.pending_bar_updates.clear();
                     return;
-                }
-
-                if self.status_bar_shmem.is_none() {
-                    let ring_buffer = SharedRingBuffer::create_aux(SHARED_PATH, None, None)
-                        .expect("Create bar shmem failed");
-                    info!("Create bar shmem");
-                    self.status_bar_shmem = Some(ring_buffer);
-                }
-
-                if let Some(last_attempt) = self.last_bar_spawn_attempt {
-                    if last_attempt.elapsed() > BAR_SPAWN_COOLDOWN {
-                        self.ensure_bar_is_running(SHARED_PATH);
-                    }
-                } else {
-                    self.last_bar_spawn_attempt = Some(Instant::now());
                 }
 
                 if let Some(rb) = self.status_bar_shmem.as_mut() {
@@ -5497,7 +5490,6 @@ impl Jwm {
         debug!("unmanage_statusbar");
         self.cleanup_statusbar_processes()?;
         self.status_bar_shmem = None;
-        self.status_bar_pid = None;
         self.status_bar_child = None;
         self.status_bar_client = None;
         self.status_bar_window = None;
