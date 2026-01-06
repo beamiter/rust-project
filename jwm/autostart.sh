@@ -16,6 +16,7 @@ run_if_not_running() {
 # 如果你是虚拟机或多显示器，在这里取消注释并配置
 # xrandr --output Virtual-1 --mode 1920x1080
 # xrandr --output HDMI-1 --right-of eDP-1 --auto
+xrandr --output HDMI-1 --rotate normal --left-of eDP-1 --auto &
 
 # --- 2. 设置壁纸 (原 .fehbg 逻辑) ---
 # 这是一个更通用的写法，如果 ~/.fehbg 存在则执行它
@@ -41,8 +42,8 @@ fi
 # --- 4. 音频设置 (原 amixer 硬编码逻辑) ---
 # 将主音量和耳机音量设置为 80% 并取消静音
 if command -v amixer > /dev/null; then
-    amixer sset Master 80% unmute > /dev/null 2>&1
-    amixer sset Headphone 80% unmute > /dev/null 2>&1
+    amixer sset Master 70 unmute > /dev/null 2>&1
+    amixer sset Headphone 70 unmute > /dev/null 2>&1
 fi
 
 # --- 5. 输入法 (Fcitx5 / IBus) ---

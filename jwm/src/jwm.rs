@@ -5474,6 +5474,7 @@ impl Jwm {
         client_key: Option<ClientKey>,
         destroyed: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("unmanage");
         let client_key = match client_key {
             Some(key) => key,
             None => return Ok(()),
@@ -5500,8 +5501,10 @@ impl Jwm {
         backend: &mut dyn Backend,
         destroyed: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("unmanage_statusbar");
         if !destroyed {
             self.cleanup_statusbar_window(backend, self.status_bar_window.unwrap())?;
+            return Ok(());
         }
         let cleanup_results = [
             ("terminate_process", self.cleanup_statusbar_processes()),
@@ -5521,6 +5524,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         win: WindowId,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("cleanup_statusbar_window");
         backend
             .window_ops()
             .change_event_mask(win, EventMaskBits::NONE.bits())?;

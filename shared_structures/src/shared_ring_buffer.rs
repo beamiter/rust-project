@@ -594,12 +594,12 @@ impl Drop for SharedRingBuffer {
             self.backend.cleanup(self.is_creator);
         }
 
-        // 如果是创建者，负责删除共享内存的链接文件
-        if self.is_creator {
-            if let Some(path) = self.shmem.get_flink_path() {
-                info!("(Creator) Removing shmem flink: {:?}", path);
-                let _ = std::fs::remove_file(path);
-            }
-        }
+        // // 如果是创建者，负责删除共享内存的链接文件
+        // if self.is_creator {
+        //     if let Some(path) = self.shmem.get_flink_path() {
+        //         info!("(Creator) Removing shmem flink: {:?}", path);
+        //         let _ = std::fs::remove_file(path);
+        //     }
+        // }
     }
 }

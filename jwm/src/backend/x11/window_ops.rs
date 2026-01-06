@@ -6,6 +6,7 @@ use crate::backend::api::{StackMode, WindowChanges};
 use crate::backend::x11::Atoms;
 use crate::backend::x11::WindowHandleExt;
 use crate::backend::x11::adapter::{event_mask_from_generic, mods_to_x11};
+use log::debug;
 use std::sync::Arc;
 use std::sync::Mutex;
 use x11rb::connection::Connection;
@@ -76,10 +77,11 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         win: WindowId,
         mask: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("[change_event_mask]");
         let w = win.to_x11_id()?;
         let x_mask = event_mask_from_generic(mask);
         let aux = ChangeWindowAttributesAux::new().event_mask(x_mask);
-        self.conn.change_window_attributes(w, &aux)?.check()?;
+        self.conn.change_window_attributes(w, &aux)?;
         Ok(())
     }
 
@@ -91,7 +93,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let aux_attr = ChangeWindowAttributesAux::new().border_pixel(border_color.0);
         let w = win.to_x11_id()?;
-        self.conn.change_window_attributes(w, &aux_attr)?.check()?;
+        self.conn.change_window_attributes(w, &aux_attr)?;
 
         let aux_conf = ConfigureWindowAux::new().border_width(border_width);
         self.conn.configure_window(w, &aux_conf)?.check()?;

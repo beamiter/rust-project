@@ -3,10 +3,10 @@
 
 sudo rm /usr/local/bin/jwm
 sudo rm /usr/local/bin/jwm-tool
-sudo cp ../target/release/jwm /usr/local/bin/
-sudo cp ../target/release/jwm-tool /usr/local/bin/
-sudo cp jwm.desktop /usr/local/share/xsessions/
-sudo cp jwm.desktop /usr/share/xsessions/
+sudo install ../target/release/jwm /usr/local/bin/
+sudo install ../target/release/jwm-tool /usr/local/bin/
+sudo install jwm.desktop /usr/local/share/xsessions/
+sudo install jwm.desktop /usr/share/xsessions/
 mkdir -p ~/.config/picom/
 cp picom.conf ~/.config/picom/picom.conf
 
