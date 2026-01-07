@@ -1,7 +1,8 @@
 // src/backend/x11/property_ops.rs
 use crate::backend::api::NormalHints;
 use crate::backend::api::WmHints;
-use crate::backend::api::{PropertyOps as PropertyOpsTrait, WindowId, WindowType};
+use crate::backend::api::{PropertyOps as PropertyOpsTrait, WindowType};
+use crate::backend::common_define::WindowId;
 use crate::backend::x11::Atoms;
 use crate::backend::x11::WindowHandleExt;
 use std::sync::Arc;
@@ -375,37 +376,6 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         } else {
             Ok(None)
         }
-    }
-
-    fn supports_delete_window(&self, win: WindowId) -> bool {
-        let w = win.to_x11_id().unwrap();
-        if let Ok(reply) =
-            self.conn
-                .get_property(false, w, self.atoms.WM_PROTOCOLS, AtomEnum::ATOM, 0, 1024)
-        {
-            if let Ok(reply) = reply.reply() {
-                return reply
-                    .value32()
-                    .into_iter()
-                    .flatten()
-                    .any(|a| a == self.atoms.WM_DELETE_WINDOW);
-            }
-        }
-        false
-    }
-
-    fn send_delete_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-        let w = win.to_x11_id()?;
-        let event = ClientMessageEvent::new(
-            32,
-            w,
-            self.atoms.WM_PROTOCOLS,
-            [self.atoms.WM_DELETE_WINDOW, 0, 0, 0, 0],
-        );
-        use x11rb::x11_utils::Serialize;
-        let data = event.serialize();
-        self.conn.send_event(false, w, EventMask::NO_EVENT, data)?;
-        Ok(())
     }
 
     fn set_window_strut_top(

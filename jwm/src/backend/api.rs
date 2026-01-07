@@ -1,47 +1,57 @@
 // src/backend/api.rs
-use crate::backend::common_define::{ArgbColor, ColorScheme, SchemeType};
-pub use crate::backend::common_define::{
-    CursorHandle, KeySym, Mods, Pixel, StdCursorKind, WindowId,
+
+use crate::backend::common_define::OutputId;
+use crate::backend::common_define::{
+    ColorScheme, CursorHandle, KeySym, Mods, Pixel, SchemeType, StdCursorKind, WindowId,
 };
 use std::any::Any;
 use std::fmt::Debug;
 
+/// 屏幕/输出信息
+#[derive(Clone, Debug)]
+pub struct OutputInfo {
+    pub id: OutputId,
+    pub name: String,
+    /// 全局坐标系中的 X 位置
+    pub x: i32,
+    /// 全局坐标系中的 Y 位置
+    pub y: i32,
+    /// 物理像素宽度
+    pub width: i32,
+    /// 物理像素高度
+    pub height: i32,
+    /// 缩放因子 (X11 通常为 1.0, Wayland HiDPI 可能为 1.5, 2.0 等)
+    pub scale: f32,
+    /// 刷新率 (mHz)
+    pub refresh_rate: u32,
+}
+
+/// 简单的屏幕概览 (通常指整个桌面的边界)
 #[derive(Clone, Copy, Debug)]
 pub struct ScreenInfo {
     pub width: i32,
     pub height: i32,
 }
 
-#[derive(Clone, Copy, Debug)]
-pub struct OutputInfo {
-    pub id: i32,
-    pub x: i32,
-    pub y: i32,
-    pub width: i32,
-    pub height: i32,
-}
-
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Capabilities {
+    /// 后端是否支持强制移动鼠标指针 (Wayland 通常不支持)
     pub can_warp_pointer: bool,
-    // Wayland 通常不支持客户端列表查询，而是 Compositor 维护
+    /// 后端是否支持查询所有客户端列表 (X11 支持，Wayland 不支持需自维护)
     pub supports_client_list: bool,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetWmState {
     Fullscreen,
+    // MaximizeVert, MaximizeHorz, etc...
 }
 
-#[derive(Debug, Clone, Default)]
-pub struct WindowChanges {
-    pub x: Option<i32>,
-    pub y: Option<i32>,
-    pub width: Option<u32>,
-    pub height: Option<u32>,
-    pub border_width: Option<u32>,
-    pub sibling: Option<WindowId>,
-    pub stack_mode: Option<StackMode>,
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NetWmAction {
+    Add,
+    Remove,
+    Toggle,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -53,24 +63,16 @@ pub enum StackMode {
     Opposite,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum NetWmAction {
-    Add,
-    Remove,
-    Toggle,
-}
-
-/// 属性变更类型抽象
-#[derive(Debug, Clone, Copy)]
-pub enum PropertyKind {
-    Title,        // 标题变更 (WM_NAME / _NET_WM_NAME / XDG Toplevel title)
-    Class,        // 类型变更 (WM_CLASS / AppID)
-    TransientFor, // 父窗口关系
-    SizeHints,    // 尺寸限制
-    Urgency,      // 紧急状态
-    WindowType,   // 窗口类型 (Dialog, Dock etc.)
-    Protocols,    // 支持的协议 (Delete window etc.)
-    Other,
+/// 客户端发起的配置请求参数
+#[derive(Debug, Clone, Default)]
+pub struct WindowChanges {
+    pub x: Option<i32>,
+    pub y: Option<i32>,
+    pub width: Option<u32>,
+    pub height: Option<u32>,
+    pub border_width: Option<u32>,
+    pub sibling: Option<WindowId>,
+    pub stack_mode: Option<StackMode>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,56 +94,115 @@ pub enum WindowType {
     Unknown,
 }
 
-/// 核心事件定义：混合了 X11 原生事件和抽象事件
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PropertyKind {
+    Title,
+    Class,
+    TransientFor,
+    SizeHints,
+    Urgency,
+    WindowType,
+    Protocols,
+    Other,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NotifyMode {
+    Normal,
+    Grab,
+    Ungrab,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CloseResult {
+    /// 优雅关闭 (发送 WM_DELETE_WINDOW 或 xdg_toplevel.close)
+    Graceful,
+    /// 强制销毁 (Kill Client / Destroy Resource)
+    Forced,
+}
+
+#[derive(Debug, Clone)]
+pub struct WindowAttributes {
+    /// 是否绕过窗口管理器 (Tooltip, Menu, DND 等)
+    /// X11: override_redirect=true
+    /// Wayland: 非 xdg_toplevel (如 popup) 或特殊的 layer shell surface
+    pub override_redirect: bool,
+    /// 窗口是否可见
+    pub map_state_viewable: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Geometry {
+    pub x: i32,
+    pub y: i32,
+    pub w: u32,
+    pub h: u32,
+    pub border: u32,
+}
+
+// --- 事件定义 ---
+
 #[derive(Debug, Clone)]
 pub enum BackendEvent {
-    // --- 通用高层事件 ---
-    /// 窗口创建 (X11 MapRequest / Wayland NewToplevel)
-    WindowCreated(WindowId),
-    /// 窗口销毁 (X11 DestroyNotify / Wayland SurfaceDestroy)
-    WindowDestroyed(WindowId),
-    /// 窗口映射 (X11 MapNotify / Wayland SurfaceCommit with buffer)
-    WindowMapped(WindowId),
-    /// 窗口取消映射
-    WindowUnmapped(WindowId),
+    // === 硬件与输出 ===
+    OutputAdded(OutputInfo),
+    OutputRemoved(OutputId),
+    OutputChanged(OutputInfo),
 
+    // === 窗口生命周期 ===
+    /// 窗口已创建 (X11: MapRequest, Wayland: New Surface/Toplevel)
+    WindowCreated(WindowId),
+    /// 窗口已销毁
+    WindowDestroyed(WindowId),
+    /// 窗口已映射 (内容准备好，可以显示)
+    WindowMapped(WindowId),
+    /// 窗口已取消映射 (隐藏)
+    WindowUnmapped(WindowId),
+    /// 客户端确认了配置 (X11: ConfigureNotify, Wayland: ack_configure)
     WindowConfigured {
         window: WindowId,
-        x: i16,
-        y: i16,
-        width: u16,
-        height: u16,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
     },
 
-    // --- 输入事件 ---
+    // === 输入事件 (标准化坐标为 f64) ===
     ButtonPress {
-        window: WindowId,
+        window: Option<WindowId>,
         state: u16,
         detail: u8,
         time: u32,
+        root_x: f64,
+        root_y: f64,
     },
     ButtonRelease {
-        window: WindowId,
+        window: Option<WindowId>,
         time: u32,
     },
     MotionNotify {
-        window: WindowId,
-        root_x: i16,
-        root_y: i16,
+        window: Option<WindowId>,
+        root_x: f64,
+        root_y: f64,
         time: u32,
     },
     KeyPress {
+        // 注意：Wayland 使用 scancode，X11 使用 keycode
+        // 后端应负责将其转换为统一格式或提供转换 Trait
         keycode: u8,
         state: u16,
+        time: u32,
     },
 
-    // --- 窗口管理事件 ---
+    // === 焦点与状态 ===
     EnterNotify {
         window: WindowId,
         subwindow: Option<WindowId>,
+        mode: NotifyMode,
     },
     LeaveNotify {
         window: WindowId,
+        mode: NotifyMode,
     },
     FocusIn {
         window: WindowId,
@@ -150,30 +211,41 @@ pub enum BackendEvent {
         window: WindowId,
     },
 
-    /// 客户端请求配置 (X11 ConfigureRequest / Wayland xdg_toplevel.request_bounds)
+    // === 客户端请求 (Policy) ===
+    /// 客户端请求改变自身位置或大小
     ConfigureRequest {
         window: WindowId,
-        changes: WindowChanges, // 使用结构体封装参数
-        mask_bits: u16,         // 仅 X11 需要，Wayland 可忽略
+        changes: WindowChanges,
+        // X11 mask, Wayland 后端可忽略或模拟
+        mask_bits: u16,
     },
-
-    /// 属性变更
-    PropertyChanged {
-        window: WindowId,
-        kind: PropertyKind,
-    },
-
-    /// 状态变更请求 (Fullscreen, Minimize etc.)
+    /// 客户端请求改变状态 (全屏, 最大化等)
     WindowStateRequest {
         window: WindowId,
         action: NetWmAction,
         state: NetWmState,
     },
+    /// 属性变更通知
+    PropertyChanged {
+        window: WindowId,
+        kind: PropertyKind,
+    },
 
-    // --- 传统 X11 特定事件保留 (为了兼容现有代码) ---
+    // === 杂项与兼容 ===
+    /// 自定义快捷键触发 (后端处理快捷键绑定时触发)
+    WmKeyboardShortcut {
+        keysym: KeySym,
+        mods: Mods,
+    },
+    /// 暴露事件 (X11 必须，Wayland 可忽略)
+    Expose {
+        window: WindowId,
+    },
+    /// 兼容旧代码的消息
     ActiveWindowMessage {
         window: WindowId,
     },
+    /// 通用客户端消息 (X11 ClientMessage)
     ClientMessage {
         window: WindowId,
         type_: u32,
@@ -181,105 +253,34 @@ pub enum BackendEvent {
         format: u8,
     },
     MappingNotify,
-    Expose {
-        window: WindowId,
-    },
-
-    // --- 自定义快捷键 ---
-    WmKeyboardShortcut {
-        keysym: KeySym,
-        mods: Mods,
-    },
-}
-
-#[derive(Debug, Clone)]
-pub struct WindowAttributes {
-    pub override_redirect: bool, // Wayland 下对应非受管 Surface
-    pub map_state_viewable: bool,
-}
-
-#[derive(Debug, Clone)]
-pub struct Geometry {
-    pub x: i16,
-    pub y: i16,
-    pub w: u16,
-    pub h: u16,
-    pub border: u16,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum AllowMode {
-    AsyncPointer,
-    ReplayPointer,
-    SyncPointer,
-    AsyncKeyboard,
-    SyncKeyboard,
-    ReplayKeyboard,
-    AsyncBoth,
-    SyncBoth,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CloseResult {
-    Graceful,
-    Forced,
 }
 
 // --- Traits 定义 ---
 
-pub trait KeyOps: Send {
-    fn grab_keys(
-        &self,
-        root: WindowId,
-        bindings: &[(Mods, KeySym)],
-    ) -> Result<(), Box<dyn std::error::Error>>;
-    fn clean_mods(&self, raw_state: u16) -> Mods;
-    fn clear_key_grabs(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-    fn keysym_from_keycode(&mut self, keycode: u8) -> Result<KeySym, Box<dyn std::error::Error>>;
-    fn clear_cache(&mut self);
-}
+/// 窗口操作接口
+pub trait WindowOps: Send {
+    /// 强制设置窗口位置 (服务端视角)
+    /// Wayland: 仅修改 Compositor 内部状态，不发送事件给客户端
+    /// X11: XMoveWindow
+    fn set_position(&self, win: WindowId, x: i32, y: i32)
+    -> Result<(), Box<dyn std::error::Error>>;
 
-pub trait InputOps: Send {
-    fn set_cursor(&self, kind: StdCursorKind) -> Result<(), Box<dyn std::error::Error>>;
-
-    /// 抓取指针：在 Wayland 中通常是隐式的或通过 Serial 处理
-    fn grab_pointer(
-        &self,
-        mask: u32,
-        cursor: Option<u64>,
-    ) -> Result<bool, Box<dyn std::error::Error>>;
-    fn ungrab_pointer(&self) -> Result<(), Box<dyn std::error::Error>>;
-
-    /// 允许事件继续：主要用于 X11 的 Sync Grab 模式
-    fn allow_events(&self, mode: AllowMode, time: u32) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn query_pointer_root(&self) -> Result<(i32, i32, u16, u16), Box<dyn std::error::Error>>;
-
-    /// 警告：Wayland 协议通常禁止强制移动鼠标
-    fn warp_pointer_to_window(
+    /// 请求/协商窗口几何属性 (位置 + 大小)
+    /// Wayland: 发送 xdg_toplevel.configure (位置由合成器决定，大小协商)
+    /// X11: 发送 ConfigureWindow
+    fn configure(
         &self,
         win: WindowId,
-        x: i16,
-        y: i16,
+        x: i32,
+        y: i32,
+        w: u32,
+        h: u32,
+        border: u32,
     ) -> Result<(), Box<dyn std::error::Error>>;
-}
 
-pub trait OutputOps: Send {
-    fn screen_info(&self) -> ScreenInfo;
-    fn enumerate_outputs(&self) -> Vec<OutputInfo>;
-}
-
-/// 事件源抽象
-/// X11: 主动 Poll
-/// Wayland: Smithay 驱动，这里可能只需要处理内部消息队列
-pub trait EventSource: Send {
-    fn poll_event(&mut self) -> Result<Option<BackendEvent>, Box<dyn std::error::Error>>;
-}
-
-pub trait WindowOps: Send {
-    fn get_tree_child(&self, win: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>>;
-
-    /// 设置服务端装饰 (Wayland 下可能需要绘制 SSD)
+    /// 设置窗口装饰 (边框)
+    /// Wayland: 标记是否需要 SSD (Server Side Decorations) 绘制
+    /// X11: XChangeWindowAttributes (BorderPixel) + ConfigureWindow (BorderWidth)
     fn set_decoration_style(
         &self,
         win: WindowId,
@@ -287,34 +288,46 @@ pub trait WindowOps: Send {
         border_color: Pixel,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
-    fn change_event_mask(&self, win: WindowId, mask: u32)
-    -> Result<(), Box<dyn std::error::Error>>;
-    fn close_window(&self, win: WindowId) -> Result<CloseResult, Box<dyn std::error::Error>>;
+    /// 控制窗口堆叠顺序
+    fn raise_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+    // fn lower_window(&self, win: WindowId) -> ... (如果需要)
 
-    /// 将窗口显示在屏幕上 (X11 Map / Wayland Commit)
+    /// 映射窗口 (显示)
     fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
-    /// 应用位置、大小、堆叠顺序变更
-    /// Wayland 下，位置变更只影响 SSD 或 Popup，Toplevel 位置由 Compositor 渲染时决定
-    fn apply_window_changes(
+    /// 取消映射窗口 (隐藏)
+    fn unmap_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// 关闭窗口
+    fn close_window(&self, win: WindowId) -> Result<CloseResult, Box<dyn std::error::Error>>;
+
+    /// 设置输入焦点
+    fn set_input_focus(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// 将焦点设置到根窗口/背景 (取消所有窗口焦点)
+    fn set_input_focus_root(&self) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// 获取窗口属性 (OverrideRedirect 等)
+    fn get_window_attributes(
         &self,
         win: WindowId,
-        changes: WindowChanges,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<WindowAttributes, Box<dyn std::error::Error>>;
 
-    fn set_input_focus_root(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-    fn set_input_focus_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+    /// 获取窗口当前几何信息
+    fn get_geometry(&self, win: WindowId) -> Result<Geometry, Box<dyn std::error::Error>>;
 
-    fn send_client_message(
-        &self,
-        win: WindowId,
-        type_atom: u32,
-        data: [u32; 5],
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    // --- 兼容性/辅助方法 ---
+
+    /// 初始扫描 (X11 only). Wayland 返回空 Vec 即可
+    fn scan_windows(&self) -> Result<Vec<WindowId>, Box<dyn std::error::Error>>;
+
+    /// 刷新命令队列 (X11 Flush)
     fn flush(&self) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// 强制杀死客户端连接
     fn kill_client(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
-    // X11 特定，Wayland 实现为空即可
+    // 下面两个在 Wayland 中通常是空实现，但为了兼容 X11 Backend 保留
     fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
@@ -322,39 +335,169 @@ pub trait WindowOps: Send {
         Ok(())
     }
 
-    fn get_window_attributes(
+    // 旧接口兼容，建议在实现中转调 configure 或 set_position
+    fn apply_window_changes(
         &self,
         win: WindowId,
-    ) -> Result<WindowAttributes, Box<dyn std::error::Error>>;
-    fn get_geometry_translated(
-        &self,
-        win: WindowId,
-    ) -> Result<Geometry, Box<dyn std::error::Error>>;
-
-    fn ungrab_all_buttons(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-    fn grab_button(
-        &self,
-        win: WindowId,
-        button: u8,
-        event_mask_bits: u32,
-        mods_bits: Mods,
+        changes: WindowChanges,
     ) -> Result<(), Box<dyn std::error::Error>>;
+
+    // X11 Grab 兼容，Wayland 空实现
+    fn ungrab_all_buttons(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
     fn grab_button_any_anymod(
         &self,
-        win: WindowId,
-        event_mask_bits: u32,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+        _win: WindowId,
+        _mask: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+    fn grab_button(
+        &self,
+        _win: WindowId,
+        _btn: u8,
+        _mask: u32,
+        _mods: Mods,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
 
-    /// 通知客户端尺寸变更 (Wayland configure event)
+    // 兼容接口：发送 ConfigureNotify (X11 专有回执)
     fn send_configure_notify(
         &self,
+        _win: WindowId,
+        _x: i16,
+        _y: i16,
+        _w: u16,
+        _h: u16,
+        _border: u16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    // X11 Client Message 兼容
+    fn send_client_message(
+        &self,
+        _win: WindowId,
+        _type_: u32,
+        _data: [u32; 5],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    // 兼容接口：更改事件掩码 (X11 Only)
+    fn change_event_mask(
+        &self,
+        _win: WindowId,
+        _mask: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    // 兼容接口：查询子窗口 (X11 Only)
+    fn get_tree_child(&self, _win: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>> {
+        Ok(vec![])
+    }
+}
+
+/// 输入设备操作接口
+pub trait InputOps: Send {
+    /// 设置当前光标形状
+    fn set_cursor(&self, kind: StdCursorKind) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// 获取当前指针绝对坐标
+    fn get_pointer_position(&self) -> Result<(f64, f64), Box<dyn std::error::Error>>;
+
+    /// 显式抓取指针 (用于 Interactive Move/Resize)
+    /// X11: XGrabPointer
+    /// Wayland: 开启内部抓取状态，将后续事件独占发送给 Handler
+    fn grab_pointer(
+        &self,
+        mask: u32,
+        cursor: Option<u64>,
+    ) -> Result<bool, Box<dyn std::error::Error>>;
+
+    /// 释放指针抓取
+    fn ungrab_pointer(&self) -> Result<(), Box<dyn std::error::Error>>;
+
+    /// 强制移动指针 (X11 only, Wayland 返回 Ok 但不做任何事)
+    fn warp_pointer(&self, _x: f64, _y: f64) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    // 兼容旧接口
+    fn query_pointer_root(&self) -> Result<(i32, i32, u16, u16), Box<dyn std::error::Error>>;
+    fn warp_pointer_to_window(
+        &self,
+        _win: WindowId,
+        _x: i16,
+        _y: i16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+    fn allow_events(
+        &self,
+        _mode: crate::backend::api::AllowMode,
+        _time: u32,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+}
+
+/// 窗口属性读取接口
+pub trait PropertyOps: Send {
+    fn get_title(&self, win: WindowId) -> String;
+    fn get_class(&self, win: WindowId) -> (String, String); // (instance, class)
+    fn get_window_types(&self, win: WindowId) -> Vec<WindowType>;
+
+    fn is_fullscreen(&self, win: WindowId) -> bool;
+    fn set_fullscreen_state(
+        &self,
         win: WindowId,
-        x: i16,
-        y: i16,
-        w: u16,
-        h: u16,
-        border: u16,
+        on: bool,
     ) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn transient_for(&self, win: WindowId) -> Option<WindowId>;
+
+    // Hints
+    fn get_wm_hints(&self, win: WindowId) -> Option<crate::backend::api::WmHints>;
+    fn set_urgent_hint(
+        &self,
+        win: WindowId,
+        urgent: bool,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+    fn fetch_normal_hints(
+        &self,
+        win: WindowId,
+    ) -> Result<Option<crate::backend::api::NormalHints>, Box<dyn std::error::Error>>;
+
+    // Legacy / EWMH Struts (Wayland 使用 Layer Shell)
+    fn set_window_strut_top(
+        &self,
+        win: WindowId,
+        top: u32,
+        start_x: u32,
+        end_x: u32,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+    fn clear_window_strut(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+
+    // EWMH State (X11 Only)
+    fn get_wm_state(&self, win: WindowId) -> Result<i64, Box<dyn std::error::Error>>;
+    fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), Box<dyn std::error::Error>>;
+
+    // Client Info (X11 Only)
+    fn set_client_info_props(
+        &self,
+        win: WindowId,
+        tags: u32,
+        monitor_num: u32,
+    ) -> Result<(), Box<dyn std::error::Error>>;
+}
+
+pub struct WmHints {
+    pub urgent: bool,
+    pub input: Option<bool>,
 }
 
 #[derive(Debug, Clone, Copy, Default)]
@@ -371,62 +514,42 @@ pub struct NormalHints {
     pub max_aspect: f32,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub struct WmHints {
-    pub urgent: bool,
-    pub input: Option<bool>,
+pub trait OutputOps: Send {
+    /// 获取当前所有连接的输出设备
+    fn enumerate_outputs(&self) -> Vec<OutputInfo>;
+    /// 获取主屏幕信息 (兼容旧接口)
+    fn screen_info(&self) -> ScreenInfo;
 }
 
-pub trait PropertyOps: Send {
-    fn get_title(&self, win: WindowId) -> String;
-    fn get_class(&self, win: WindowId) -> (String, String); // (instance, class)
-    fn get_window_types(&self, win: WindowId) -> Vec<WindowType>;
-
-    fn is_fullscreen(&self, win: WindowId) -> bool;
-    fn set_fullscreen_state(
+pub trait KeyOps: Send {
+    // 注册全局快捷键
+    fn grab_keys(
         &self,
-        win: WindowId,
-        on: bool,
+        root: WindowId,
+        bindings: &[(Mods, KeySym)],
     ) -> Result<(), Box<dyn std::error::Error>>;
+    fn clear_key_grabs(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
-    fn get_wm_hints(&self, win: WindowId) -> Option<WmHints>;
-    fn set_urgent_hint(
+    // 辅助转换
+    fn clean_mods(&self, raw_state: u16) -> Mods;
+    fn keysym_from_keycode(&mut self, keycode: u8) -> Result<KeySym, Box<dyn std::error::Error>>;
+    fn clear_cache(&mut self);
+}
+
+// X11 EWMH 兼容层 (Wayland 下通常为空实现或通过 Xwayland 桥接)
+pub trait EwmhFacade: Send {
+    fn set_active_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+    fn clear_active_window(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn set_client_list(&self, list: &[WindowId]) -> Result<(), Box<dyn std::error::Error>>;
+    fn set_client_list_stacking(&self, list: &[WindowId])
+    -> Result<(), Box<dyn std::error::Error>>;
+    fn setup_supporting_wm_check(
         &self,
-        win: WindowId,
-        urgent: bool,
-    ) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn transient_for(&self, win: WindowId) -> Option<WindowId>;
-    fn fetch_normal_hints(
-        &self,
-        win: WindowId,
-    ) -> Result<Option<NormalHints>, Box<dyn std::error::Error>>;
-
-    fn supports_delete_window(&self, win: WindowId) -> bool;
-    // Wayland 下没有 send_delete_window 概念，通常是在 WindowOps::close_window 处理
-    fn send_delete_window(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-
-    fn set_window_strut_top(
-        &self,
-        win: WindowId,
-        top: u32,
-        start_x: u32,
-        end_x: u32,
-    ) -> Result<(), Box<dyn std::error::Error>>;
-    fn clear_window_strut(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-
-    // EWMH client info, Wayland 无需实现
-    fn set_client_info_props(
-        &self,
-        win: WindowId,
-        tags: u32,
-        monitor_num: u32,
-    ) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn get_wm_state(&self, win: WindowId) -> Result<i64, Box<dyn std::error::Error>>;
-    fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), Box<dyn std::error::Error>>;
+        wm_name: &str,
+    ) -> Result<WindowId, Box<dyn std::error::Error>>;
+    fn declare_supported(&self, features: &[EwmhFeature])
+    -> Result<(), Box<dyn std::error::Error>>;
+    fn reset_root_properties(&self) -> Result<(), Box<dyn std::error::Error>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -443,50 +566,11 @@ pub enum EwmhFeature {
     WmWindowTypeDialog,
 }
 
-pub trait EwmhFacade: Send {
-    fn set_active_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-    fn clear_active_window(&self) -> Result<(), Box<dyn std::error::Error>>;
-    fn set_client_list(&self, list: &[WindowId]) -> Result<(), Box<dyn std::error::Error>>;
-    fn set_client_list_stacking(&self, list: &[WindowId])
-    -> Result<(), Box<dyn std::error::Error>>;
-    fn setup_supporting_wm_check(
-        &self,
-        wm_name: &str,
-    ) -> Result<WindowId, Box<dyn std::error::Error>>;
-    fn set_supported_atoms(&self, supported: &[u32]) -> Result<(), Box<dyn std::error::Error>>;
-    fn declare_supported(&self, features: &[EwmhFeature])
-    -> Result<(), Box<dyn std::error::Error>>;
-    fn reset_root_properties(&self) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-}
-
 pub trait ColorAllocator: Send {
-    fn alloc_rgb(&mut self, r: u8, g: u8, b: u8) -> Result<Pixel, Box<dyn std::error::Error>>;
-    fn free_pixels(&mut self, pixels: &[Pixel]) -> Result<(), Box<dyn std::error::Error>>;
     fn set_scheme(&mut self, t: SchemeType, s: ColorScheme);
-    fn get_scheme(&self, t: SchemeType) -> Option<ColorScheme>;
-    fn ensure_pixel(&mut self, color: ArgbColor) -> Result<Pixel, Box<dyn std::error::Error>>;
-    fn get_pixel_cached(&self, color: ArgbColor) -> Option<Pixel>;
     fn allocate_schemes_pixels(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+    fn get_border_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, Box<dyn std::error::Error>>;
     fn free_all_theme_pixels(&mut self) -> Result<(), Box<dyn std::error::Error>>;
-
-    // Helper methods with default impls
-    fn get_border_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, Box<dyn std::error::Error>> {
-        self.get_scheme(t)
-            .ok_or("scheme not found".into())
-            .and_then(|s| self.ensure_pixel(s.border))
-    }
-    fn get_fg_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, Box<dyn std::error::Error>> {
-        self.get_scheme(t)
-            .ok_or("scheme not found".into())
-            .and_then(|s| self.ensure_pixel(s.fg))
-    }
-    fn get_bg_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, Box<dyn std::error::Error>> {
-        self.get_scheme(t)
-            .ok_or("scheme not found".into())
-            .and_then(|s| self.ensure_pixel(s.bg))
-    }
 }
 
 pub trait CursorProvider: Send {
@@ -500,15 +584,17 @@ pub trait CursorProvider: Send {
     fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>>;
 }
 
+// --- 核心驱动接口 ---
+
 pub trait EventHandler {
-    /// 处理具体的后端事件 (如 KeyPress, WindowCreated)
+    /// 处理具体的后端事件
     fn handle_event(
         &mut self,
         backend: &mut dyn Backend,
         event: BackendEvent,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
-    /// 每一轮循环的更新回调 (用于处理定时任务、刷新状态栏、Flush窗口流等)
+    /// 每一轮循环的更新回调 (用于处理定时任务、动画帧等)
     fn update(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>>;
 
     /// 询问 Handler 是否应该退出主循环
@@ -517,17 +603,37 @@ pub trait EventHandler {
 
 pub trait Backend: Send {
     fn capabilities(&self) -> Capabilities;
+    fn root_window(&self) -> WindowId;
+    fn as_any(&self) -> &dyn Any;
+
+    // Ops Getters
     fn window_ops(&self) -> &dyn WindowOps;
     fn input_ops(&self) -> &dyn InputOps;
     fn property_ops(&self) -> &dyn PropertyOps;
     fn output_ops(&self) -> &dyn OutputOps;
     fn key_ops(&self) -> &dyn KeyOps;
+
+    // Mutable Getters (some ops have caches)
     fn key_ops_mut(&mut self) -> &mut dyn KeyOps;
-    fn ewmh_facade(&self) -> Option<&dyn EwmhFacade>;
     fn cursor_provider(&mut self) -> &mut dyn CursorProvider;
     fn color_allocator(&mut self) -> &mut dyn ColorAllocator;
-    fn root_window(&self) -> WindowId;
-    fn as_any(&self) -> &dyn Any;
 
+    // Optional Facades
+    fn ewmh_facade(&self) -> Option<&dyn EwmhFacade>;
+
+    /// 启动事件循环，控制权移交给 Backend
     fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), Box<dyn std::error::Error>>;
+}
+
+// 兼容性定义
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AllowMode {
+    AsyncPointer,
+    ReplayPointer,
+    SyncPointer,
+    AsyncKeyboard,
+    SyncKeyboard,
+    ReplayKeyboard,
+    AsyncBoth,
+    SyncBoth,
 }

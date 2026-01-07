@@ -4,10 +4,10 @@ use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 
 use crate::backend::api::AllowMode;
-use crate::backend::api::{InputOps as InputOpsTrait, WindowId};
+use crate::backend::api::InputOps as InputOpsTrait;
 use crate::backend::common_define::StdCursorKind;
+use crate::backend::common_define::WindowId;
 use crate::backend::x11::WindowHandleExt;
-use crate::backend::x11::adapter::event_mask_from_generic;
 
 pub struct X11InputOps<C: Connection> {
     conn: Arc<C>,
@@ -17,8 +17,8 @@ pub struct X11InputOps<C: Connection> {
 impl<C: Connection> Clone for X11InputOps<C> {
     fn clone(&self) -> Self {
         Self {
-            conn: self.conn.clone(), // 这里只是增加 Arc 的引用计数，非常廉价
-            root: self.root,         // Window 本质是 u32/u64，是 Copy 的
+            conn: self.conn.clone(),
+            root: self.root,
         }
     }
 }
@@ -41,28 +41,6 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
         }
     }
 
-    fn grab_pointer_raw(
-        &self,
-        event_mask: EventMask,
-        cursor: Option<Cursor>,
-    ) -> Result<GrabStatus, Box<dyn std::error::Error>> {
-        let cursor_id = cursor.unwrap_or(0);
-        let reply = self
-            .conn
-            .grab_pointer(
-                false,
-                self.root,
-                event_mask,
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-                0u32,
-                cursor_id,
-                0u32,
-            )?
-            .reply()?;
-        Ok(reply.status)
-    }
-
     pub fn allow_events_raw(
         &self,
         mode: Allow,
@@ -83,19 +61,40 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
-    fn set_cursor(&self, _kind: StdCursorKind) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
+    fn get_pointer_position(&self) -> Result<(f64, f64), Box<dyn std::error::Error>> {
+        let reply = self.query_pointer()?;
+        // X11 是整数坐标，转换为 f64
+        Ok((reply.root_x as f64, reply.root_y as f64))
     }
 
     fn grab_pointer(
         &self,
-        mask_bits: u32,
+        _mask: u32,
         cursor: Option<u64>,
     ) -> Result<bool, Box<dyn std::error::Error>> {
-        let x_mask = event_mask_from_generic(mask_bits);
-        let cursor_id = cursor.map(|c| c as u32);
-        let status = self.grab_pointer_raw(x_mask, cursor_id)?;
-        Ok(status == GrabStatus::SUCCESS)
+        let cursor_id = cursor.map(|c| c as u32).unwrap_or(0);
+        // 通常 Grab Pointer 需要监听 ButtonRelease 和 Motion
+        let mask = EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
+
+        let reply = self
+            .conn
+            .grab_pointer(
+                false,
+                self.root,
+                mask,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+                0u32, // None confine_to
+                cursor_id,
+                0u32, // Current time
+            )?
+            .reply()?;
+
+        Ok(reply.status == GrabStatus::SUCCESS)
+    }
+
+    fn set_cursor(&self, _kind: StdCursorKind) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
     }
 
     fn ungrab_pointer(&self) -> Result<(), Box<dyn std::error::Error>> {

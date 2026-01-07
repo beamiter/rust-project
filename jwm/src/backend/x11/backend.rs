@@ -1,13 +1,14 @@
 // src/backend/x11/backend.rs
 use crate::backend::api::EventHandler;
+use crate::backend::common_define::WindowId;
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 use x11rb::protocol::xproto::Screen;
 use x11rb::rust_connection::RustConnection;
 
 use crate::backend::api::{
-    Backend, Capabilities, ColorAllocator, CursorProvider, EventSource, EwmhFacade, InputOps,
-    KeyOps, OutputOps, PropertyOps, WindowId, WindowOps,
+    Backend, Capabilities, ColorAllocator, CursorProvider, EwmhFacade, InputOps, KeyOps, OutputOps,
+    PropertyOps, WindowOps,
 };
 
 use super::{
@@ -34,7 +35,7 @@ pub struct X11Backend {
 
     cursor_provider: Box<dyn CursorProvider>,
     color_allocator: Box<dyn ColorAllocator>,
-    event_source: Box<dyn EventSource>,
+    event_source: X11EventSource<RustConnection>,
 }
 
 impl X11Backend {
@@ -76,8 +77,7 @@ impl X11Backend {
             conn.clone(),
             screen.default_colormap,
         ));
-        let event_source: Box<dyn EventSource> =
-            Box::new(X11EventSource::new(conn.clone(), atoms.clone()));
+        let event_source = X11EventSource::new(conn.clone(), atoms.clone());
 
         let caps = Capabilities {
             can_warp_pointer: true,

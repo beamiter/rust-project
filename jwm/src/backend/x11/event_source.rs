@@ -4,10 +4,11 @@ use x11rb::connection::Connection;
 use x11rb::protocol::Event as XEvent;
 use x11rb::protocol::xproto as x;
 
+use crate::backend::api::NotifyMode;
 use crate::backend::api::{
-    BackendEvent, EventSource, NetWmAction, NetWmState, PropertyKind, StackMode, WindowChanges,
-    WindowId,
+    BackendEvent, NetWmAction, NetWmState, PropertyKind, StackMode, WindowChanges,
 };
+use crate::backend::common_define::WindowId;
 use crate::backend::x11::Atoms;
 
 pub struct X11EventSource<C: Connection> {
@@ -51,25 +52,28 @@ impl<C: Connection> X11EventSource<C> {
 
     fn map_event(&self, ev: XEvent) -> Option<BackendEvent> {
         match ev {
+            XEvent::ButtonRelease(e) => Some(BackendEvent::ButtonRelease {
+                window: Some(WindowId::X11(e.event as u64)),
+                time: e.time,
+            }),
             XEvent::ButtonPress(e) => Some(BackendEvent::ButtonPress {
-                window: WindowId::X11(e.event as u64),
+                window: Some(WindowId::X11(e.event as u64)),
                 state: e.state.bits(),
                 detail: e.detail,
                 time: e.time,
-            }),
-            XEvent::ButtonRelease(e) => Some(BackendEvent::ButtonRelease {
-                window: WindowId::X11(e.event as u64),
-                time: e.time,
+                root_x: e.root_x as f64, // 转换
+                root_y: e.root_y as f64,
             }),
             XEvent::MotionNotify(e) => Some(BackendEvent::MotionNotify {
-                window: WindowId::X11(e.event as u64),
-                root_x: e.root_x,
-                root_y: e.root_y,
+                window: Some(WindowId::X11(e.event as u64)),
+                root_x: e.root_x as f64,
+                root_y: e.root_y as f64,
                 time: e.time,
             }),
             XEvent::KeyPress(e) => Some(BackendEvent::KeyPress {
                 keycode: e.detail,
                 state: e.state.bits(),
+                time: e.time,
             }),
 
             // 映射生命周期事件
@@ -86,13 +90,12 @@ impl<C: Connection> X11EventSource<C> {
                 e.window as u64,
             ))),
 
-            // 映射 ConfigureNotify 到 WindowConfigured
             XEvent::ConfigureNotify(e) => Some(BackendEvent::WindowConfigured {
                 window: WindowId::X11(e.window as u64),
-                x: e.x,
-                y: e.y,
-                width: e.width,
-                height: e.height,
+                x: e.x as i32,
+                y: e.y as i32,
+                width: e.width as u32,
+                height: e.height as u32,
             }),
 
             XEvent::EnterNotify(e) => Some(BackendEvent::EnterNotify {
@@ -102,10 +105,13 @@ impl<C: Connection> X11EventSource<C> {
                 } else {
                     None
                 },
+                mode: NotifyMode::Normal,
             }),
             XEvent::LeaveNotify(e) => Some(BackendEvent::LeaveNotify {
                 window: WindowId::X11(e.event as u64),
+                mode: NotifyMode::Normal,
             }),
+
             XEvent::FocusIn(e) => Some(BackendEvent::FocusIn {
                 window: WindowId::X11(e.event as u64),
             }),
@@ -220,8 +226,8 @@ impl<C: Connection> X11EventSource<C> {
     }
 }
 
-impl<C: Connection + Send + Sync + 'static> EventSource for X11EventSource<C> {
-    fn poll_event(&mut self) -> Result<Option<BackendEvent>, Box<dyn std::error::Error>> {
+impl<C: Connection + Send + Sync + 'static> X11EventSource<C> {
+    pub fn poll_event(&mut self) -> Result<Option<BackendEvent>, Box<dyn std::error::Error>> {
         let ev = self.conn.poll_for_event()?;
         Ok(ev.and_then(|e| self.map_event(e)))
     }

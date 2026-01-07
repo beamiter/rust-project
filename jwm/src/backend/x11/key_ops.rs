@@ -6,7 +6,8 @@ use std::sync::Mutex;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
 
-use crate::backend::api::{KeyOps, WindowId};
+use crate::backend::api::KeyOps;
+use crate::backend::common_define::WindowId;
 use crate::backend::common_define::{KeySym, Mods};
 use crate::backend::x11::WindowHandleExt;
 use crate::backend::x11::adapter::mods_to_x11;

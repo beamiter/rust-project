@@ -1,5 +1,6 @@
 // src/backend/x11/output_ops.rs
 use crate::backend::api::{OutputInfo, OutputOps, ScreenInfo};
+use crate::backend::common_define::OutputId;
 use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::protocol::randr::ConnectionExt as RandrExt;
@@ -38,11 +39,14 @@ impl<C: Connection + Send + Sync + 'static> OutputOps for X11OutputOps<C> {
                         for (i, m) in reply.unwrap().monitors.into_iter().enumerate() {
                             if m.width > 0 && m.height > 0 {
                                 out.push(OutputInfo {
-                                    id: i as i32,
+                                    id: OutputId(i as u64),
+                                    name: format!("Monitor-{}", i),
                                     x: m.x as i32,
                                     y: m.y as i32,
                                     width: m.width as i32,
                                     height: m.height as i32,
+                                    scale: 1.0,
+                                    refresh_rate: 60000, // 60Hz
                                 });
                             }
                         }
@@ -69,11 +73,14 @@ impl<C: Connection + Send + Sync + 'static> OutputOps for X11OutputOps<C> {
                     let ci = ci.unwrap();
                     if ci.width > 0 && ci.height > 0 {
                         out.push(OutputInfo {
-                            id: i as i32,
+                            id: OutputId(i as u64),
+                            name: format!("CRTC-{}", i),
                             x: ci.x as i32,
                             y: ci.y as i32,
                             width: ci.width as i32,
                             height: ci.height as i32,
+                            scale: 1.0,
+                            refresh_rate: 60000,
                         });
                     }
                 }
@@ -81,11 +88,14 @@ impl<C: Connection + Send + Sync + 'static> OutputOps for X11OutputOps<C> {
             return out;
         }
         vec![OutputInfo {
-            id: 0,
+            id: OutputId(0),
+            name: "Default".to_string(),
             x: 0,
             y: 0,
             width: self.sw,
             height: self.sh,
+            scale: 1.0,
+            refresh_rate: 60000,
         }]
     }
 }

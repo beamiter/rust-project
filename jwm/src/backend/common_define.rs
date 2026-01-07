@@ -2,13 +2,10 @@
 use bitflags::bitflags;
 use std::fmt;
 
-/// 通用窗口句柄
-/// 在 X11 下是 u64 (Window ID)
-/// 在 Wayland 下可以是 slotmap 的 Key 或 ObjectId 的 hash
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
 pub enum WindowHandle {
     X11(u64),
-    Wayland(u64), // 使用 ObjectId 的 hash 或 slotmap key
+    Wayland(u64),
     Mock(u64),
 }
 
@@ -19,6 +16,12 @@ impl WindowHandle {
     pub fn as_x11(&self) -> Option<u32> {
         match self {
             WindowHandle::X11(id) => Some(*id as u32),
+            _ => None,
+        }
+    }
+    pub fn as_wayland(&self) -> Option<u64> {
+        match self {
+            WindowHandle::Wayland(id) => Some(*id),
             _ => None,
         }
     }
@@ -45,6 +48,11 @@ pub struct Pixel(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CursorHandle(pub u64);
+
+/// 输出设备（显示器）的唯一标识符
+/// 在 X11 下可能是索引或 RROutput ID，在 Wayland 下是 Smithay Output 的唯一 ID
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OutputId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StdCursorKind {

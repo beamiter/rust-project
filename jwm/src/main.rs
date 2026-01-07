@@ -30,7 +30,8 @@ fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
 
     jwm.checkotherwm(&mut *backend)?;
     jwm.setup(&mut *backend)?;
-    jwm.scan(&mut *backend)?;
+    // jwm.scan(&mut *backend)?;
+    jwm.setup_initial_windows(&mut *backend)?;
 
     // 4. 启动循环
     jwm.run(&mut *backend)?;

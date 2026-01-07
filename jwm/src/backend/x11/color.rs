@@ -23,9 +23,17 @@ impl<C: Connection> X11ColorAllocator<C> {
             schemes: HashMap::new(),
         }
     }
-}
 
-impl<C: Connection + Send + Sync + 'static> ColorAllocator for X11ColorAllocator<C> {
+    fn ensure_pixel(&mut self, color: ArgbColor) -> Result<Pixel, Box<dyn std::error::Error>> {
+        if let Some(p) = self.pixel_cache.get(&color.value).copied() {
+            return Ok(p);
+        }
+        let (_, r, g, b) = color.components();
+        let pix = self.alloc_rgb(r, g, b)?;
+        self.pixel_cache.insert(color.value, pix);
+        Ok(pix)
+    }
+
     fn alloc_rgb(&mut self, r: u8, g: u8, b: u8) -> Result<Pixel, Box<dyn std::error::Error>> {
         use x11rb::protocol::xproto::ConnectionExt;
         let reply = (*self.conn)
@@ -48,26 +56,16 @@ impl<C: Connection + Send + Sync + 'static> ColorAllocator for X11ColorAllocator
         (*self.conn).free_colors(self.colormap, 0, &raw)?;
         Ok(())
     }
+}
 
+impl<C: Connection + Send + Sync + 'static> ColorAllocator for X11ColorAllocator<C> {
     fn set_scheme(&mut self, t: SchemeType, s: ColorScheme) {
         self.schemes.insert(t, s);
     }
-    fn get_scheme(&self, t: SchemeType) -> Option<ColorScheme> {
-        self.schemes.get(&t).cloned()
-    }
 
-    fn ensure_pixel(&mut self, color: ArgbColor) -> Result<Pixel, Box<dyn std::error::Error>> {
-        if let Some(p) = self.pixel_cache.get(&color.value).copied() {
-            return Ok(p);
-        }
-        let (_, r, g, b) = color.components();
-        let pix = self.alloc_rgb(r, g, b)?;
-        self.pixel_cache.insert(color.value, pix);
-        Ok(pix)
-    }
-
-    fn get_pixel_cached(&self, color: ArgbColor) -> Option<Pixel> {
-        self.pixel_cache.get(&color.value).copied()
+    fn get_border_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, Box<dyn std::error::Error>> {
+        let s = self.schemes.get(&t).ok_or("scheme not found")?.clone();
+        self.ensure_pixel(s.border)
     }
 
     fn allocate_schemes_pixels(&mut self) -> Result<(), Box<dyn std::error::Error>> {

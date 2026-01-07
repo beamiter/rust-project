@@ -8,6 +8,8 @@ use nix::sys::signal::{self, Signal};
 use nix::unistd::Pid;
 
 use crate::backend::api::EventHandler;
+use crate::backend::common_define::OutputId;
+use crate::backend::common_define::WindowId;
 use crate::core::models::MonitorGeometry;
 use slotmap::{SecondaryMap, SlotMap};
 use std::collections::HashSet;
@@ -20,6 +22,7 @@ use std::time::{Duration, Instant};
 use std::usize;
 
 use crate::backend::api::AllowMode;
+use crate::backend::api::Backend;
 use crate::backend::api::BackendEvent;
 use crate::backend::api::EwmhFeature;
 use crate::backend::api::Geometry;
@@ -29,7 +32,6 @@ use crate::backend::api::PropertyKind;
 use crate::backend::api::StackMode;
 use crate::backend::api::WindowChanges;
 use crate::backend::api::WindowType;
-use crate::backend::api::{Backend, WindowId};
 use crate::backend::common_define::ArgbColor;
 use crate::backend::common_define::ColorScheme;
 use crate::backend::common_define::ConfigWindowBits;
@@ -188,6 +190,7 @@ pub struct Jwm {
     pub client_order: Vec<ClientKey>,
     pub client_stack_order: Vec<ClientKey>,
     pub monitor_order: Vec<MonitorKey>,
+    pub output_map: SecondaryMap<MonitorKey, OutputId>,
     pub sel_mon: Option<MonitorKey>,
     pub motion_mon: Option<MonitorKey>,
     pub monitor_clients: SecondaryMap<MonitorKey, Vec<ClientKey>>,
@@ -215,8 +218,14 @@ impl EventHandler for Jwm {
         backend: &mut dyn Backend,
         event: BackendEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 传递 backend
-        self.process_event(backend, event)
+        // 统一处理事件
+        match event {
+            // 处理热插拔
+            BackendEvent::OutputAdded(info) => self.handle_output_added(backend, info),
+            BackendEvent::OutputRemoved(id) => self.handle_output_removed(backend, id),
+            BackendEvent::OutputChanged(info) => self.handle_output_changed(backend, info),
+            _ => self.handle_backend_event(backend, event),
+        }
     }
 
     fn update(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
@@ -274,7 +283,8 @@ impl Jwm {
         );
         backend.color_allocator().allocate_schemes_pixels()?;
         info!("[new] JWM initialization completed successfully");
-        Ok(Jwm {
+        let outputs = backend.output_ops().enumerate_outputs();
+        let mut jwm = Jwm {
             s_w,
             s_h,
             running: AtomicBool::new(true),
@@ -285,6 +295,7 @@ impl Jwm {
             client_order: Vec::new(),
             client_stack_order: Vec::new(),
             monitor_order: Vec::new(),
+            output_map: SecondaryMap::new(),
             sel_mon: None,
             motion_mon: None,
             monitor_clients: SecondaryMap::new(),
@@ -303,7 +314,137 @@ impl Jwm {
             last_stacking: SecondaryMap::new(),
             key_bindings: CONFIG.get_keys(),
             interaction: None,
-        })
+        };
+        // 手动添加初始屏幕
+        for out in outputs {
+            jwm.add_monitor(out);
+        }
+
+        // 选定默认 Monitor
+        if !jwm.monitor_order.is_empty() {
+            jwm.sel_mon = Some(jwm.monitor_order[0]);
+        }
+        Ok(jwm)
+    }
+
+    // --- 热插拔处理逻辑 ---
+
+    fn add_monitor(&mut self, info: crate::backend::api::OutputInfo) {
+        info!("[add_monitor] Adding output: {:?}", info);
+        let mut m = self.createmon(CONFIG.show_bar());
+
+        // 设置 Monitor 几何属性
+        m.geometry.m_x = info.x;
+        m.geometry.m_y = info.y;
+        m.geometry.m_w = info.width;
+        m.geometry.m_h = info.height;
+        // 工作区通常等于屏幕区，减去 Bar 的计算在 layout 中动态进行
+        m.geometry.w_x = info.x;
+        m.geometry.w_y = info.y;
+        m.geometry.w_w = info.width;
+        m.geometry.w_h = info.height;
+        m.num = self.monitors.len() as i32;
+
+        let key = self.monitors.insert(m);
+        self.monitor_order.push(key);
+        self.output_map.insert(key, info.id);
+        self.monitor_clients.insert(key, Vec::new());
+        self.monitor_stack.insert(key, Vec::new());
+
+        if self.sel_mon.is_none() {
+            self.sel_mon = Some(key);
+        }
+    }
+
+    fn handle_output_added(
+        &mut self,
+        backend: &mut dyn Backend,
+        info: crate::backend::api::OutputInfo,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.add_monitor(info);
+        self.arrange(backend, None);
+        Ok(())
+    }
+
+    fn handle_output_removed(
+        &mut self,
+        backend: &mut dyn Backend,
+        id: OutputId,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[handle_output_removed] Removing output {:?}", id);
+
+        // 查找对应的 MonitorKey
+        let mon_key_opt = self
+            .output_map
+            .iter()
+            .find(|&(_, &oid)| oid == id)
+            .map(|(k, _)| k);
+
+        if let Some(mon_key) = mon_key_opt {
+            self.move_clients_to_first_monitor(mon_key);
+
+            // 移除数据
+            self.monitors.remove(mon_key);
+            self.output_map.remove(mon_key);
+            self.monitor_clients.remove(mon_key);
+            self.monitor_stack.remove(mon_key);
+            self.monitor_order.retain(|&k| k != mon_key);
+
+            // 如果删除了当前选中的 Monitor，重置选中
+            if self.sel_mon == Some(mon_key) {
+                self.sel_mon = self.monitor_order.first().copied();
+                self.focus(backend, None)?;
+            }
+
+            self.arrange(backend, None);
+        }
+        Ok(())
+    }
+
+    fn handle_output_changed(
+        &mut self,
+        backend: &mut dyn Backend,
+        info: crate::backend::api::OutputInfo,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let mon_key_opt = self
+            .output_map
+            .iter()
+            .find(|&(_, &oid)| oid == info.id)
+            .map(|(k, _)| k);
+        if let Some(mon_key) = mon_key_opt {
+            if let Some(m) = self.monitors.get_mut(mon_key) {
+                m.geometry.m_x = info.x;
+                m.geometry.m_y = info.y;
+                m.geometry.m_w = info.width;
+                m.geometry.m_h = info.height;
+                m.geometry.w_x = info.x;
+                m.geometry.w_y = info.y;
+                m.geometry.w_w = info.width;
+                m.geometry.w_h = info.height;
+            }
+            self.arrange(backend, Some(mon_key));
+        }
+        Ok(())
+    }
+
+    // 替换原 scan 方法，改名为 setup_initial_windows，且只在 X11 后端下有效
+    // Wayland 不需要扫描，窗口创建是通过 WindowCreated 事件触发的
+    pub fn setup_initial_windows(
+        &mut self,
+        backend: &mut dyn Backend,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 只有后端支持扫描才执行 (X11)
+        if let Ok(windows) = backend.window_ops().scan_windows() {
+            info!("[setup_initial_windows] Scanning {} windows", windows.len());
+            for win in windows {
+                let attr = backend.window_ops().get_window_attributes(win)?;
+                if !attr.override_redirect {
+                    let geom = backend.window_ops().get_geometry(win)?;
+                    self.manage(backend, win, &geom)?;
+                }
+            }
+        }
+        Ok(())
     }
 
     fn clean_mask(&self, backend: &mut dyn Backend, raw: u16) -> Mods {
@@ -771,14 +912,28 @@ impl Jwm {
                 state,
                 detail,
                 time,
-            } => self.on_button_press(backend, window, state, detail, time),
+                root_x: _, // f64
+                root_y: _, // f64
+            } => {
+                let root = backend.root_window();
+                self.on_button_press(backend, window.unwrap_or(root), state, detail, time)
+            }
 
             BackendEvent::MotionNotify {
                 window,
                 root_x,
                 root_y,
                 time,
-            } => self.on_motion_notify(backend, window, root_x, root_y, time),
+            } => {
+                let root = backend.root_window();
+                self.on_motion_notify(
+                    backend,
+                    window.unwrap_or(root),
+                    root_x as i16,
+                    root_y as i16,
+                    time,
+                )
+            }
 
             // 配置请求：解包 changes 结构体以适配旧接口
             BackendEvent::ConfigureRequest {
@@ -803,9 +958,12 @@ impl Jwm {
                 )
             }
 
-            BackendEvent::KeyPress { keycode, state } => self.on_key_press(backend, keycode, state),
+            BackendEvent::KeyPress {
+                keycode,
+                state,
+                time: _,
+            } => self.on_key_press(backend, keycode, state),
 
-            // 窗口配置变更（替代 ConfigureNotify）
             BackendEvent::WindowConfigured {
                 window,
                 x,
@@ -821,6 +979,7 @@ impl Jwm {
             BackendEvent::EnterNotify {
                 window,
                 subwindow: _,
+                mode: _,
             } => self.enter_notify(backend, window),
 
             // 暴露事件
@@ -1626,9 +1785,7 @@ impl Jwm {
         &mut self,
         backend: &mut dyn Backend,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        backend
-            .window_ops()
-            .set_input_focus_root(backend.root_window())?;
+        backend.window_ops().set_input_focus_root()?;
         Ok(())
     }
 
@@ -1646,10 +1803,10 @@ impl Jwm {
         &mut self,
         backend: &mut dyn Backend,
         window: WindowId,
-        _x: i16,
-        _y: i16,
-        w: u16,
-        h: u16,
+        _x: i32,
+        _y: i32,
+        w: u32,
+        h: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if window == backend.root_window() {
             let dirty = self.s_w != w as i32 || self.s_h != h as i32;
@@ -1964,19 +2121,14 @@ impl Jwm {
             client.geometry.w = w;
             client.geometry.h = h;
 
-            let changes = WindowChanges {
-                x: Some(x),
-                y: Some(y),
-                width: Some(w as u32),
-                height: Some(h as u32),
-                border_width: Some(client.geometry.border_w as u32),
-                ..Default::default()
-            };
-
-            backend
-                .window_ops()
-                .apply_window_changes(client.win, changes)?;
-            self.configure_client(backend, client_key)?;
+            backend.window_ops().configure(
+                client.win,
+                x,
+                y,
+                w as u32,
+                h as u32,
+                client.geometry.border_w as u32,
+            )?;
         }
         Ok(())
     }
@@ -1987,13 +2139,23 @@ impl Jwm {
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.clients.get(client_key) {
-            backend.window_ops().send_configure_notify(
+            backend.window_ops().configure(
                 client.win,
-                client.geometry.x as i16,
-                client.geometry.y as i16,
-                client.geometry.w as u16,
-                client.geometry.h as u16,
-                client.geometry.border_w as u16,
+                client.geometry.x,
+                client.geometry.y,
+                client.geometry.w as u32,
+                client.geometry.h as u32,
+                client.geometry.border_w as u32,
+            )?;
+
+            // 分离装饰设置
+            let border_color = backend
+                .color_allocator()
+                .get_border_pixel_of(SchemeType::Norm)?;
+            backend.window_ops().set_decoration_style(
+                client.win,
+                client.geometry.border_w as u32,
+                border_color,
             )?;
         }
         Ok(())
@@ -2006,12 +2168,7 @@ impl Jwm {
         x: i32,
         y: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let changes = WindowChanges {
-            x: Some(x),
-            y: Some(y),
-            ..Default::default()
-        };
-        backend.window_ops().apply_window_changes(win, changes)?;
+        backend.window_ops().set_position(win, x, y)?;
         Ok(())
     }
 
@@ -2265,17 +2422,7 @@ impl Jwm {
         if need_restack_windows {
             for i in 0..final_bottom_to_top.len() {
                 let win = final_bottom_to_top[i];
-                let sibling = if i > 0 {
-                    Some(final_bottom_to_top[i - 1])
-                } else {
-                    None
-                };
-                let changes = WindowChanges {
-                    sibling: sibling,
-                    stack_mode: Some(StackMode::Above),
-                    ..Default::default()
-                };
-                backend.window_ops().apply_window_changes(win, changes)?;
+                backend.window_ops().raise_window(win)?;
             }
             self.last_stacking
                 .insert(mon_key, final_bottom_to_top.clone());
@@ -2336,14 +2483,6 @@ impl Jwm {
         self.pending_bar_updates.clear();
     }
 
-    pub fn process_event(
-        &mut self,
-        backend: &mut dyn Backend,
-        event: BackendEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        self.handle_backend_event(backend, event)
-    }
-
     pub fn run(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
         info!("[run] Handing over control to backend");
         backend.run(self)
@@ -2396,7 +2535,7 @@ impl Jwm {
         let mut cookies = Vec::with_capacity(tree_child.len());
         for win in tree_child {
             let attr = backend.window_ops().get_window_attributes(win)?;
-            let geom = backend.window_ops().get_geometry_translated(win)?;
+            let geom = backend.window_ops().get_geometry(win)?;
             let trans = self.get_transient_for(backend, win);
             cookies.push((win, attr, geom, trans));
         }
@@ -2451,8 +2590,8 @@ impl Jwm {
         &mut self,
         backend: &mut dyn Backend,
     ) -> Result<(i32, i32), Box<dyn std::error::Error>> {
-        let (x, y, _mask, _unused) = backend.input_ops().query_pointer_root()?;
-        Ok((x, y))
+        let (x, y) = backend.input_ops().get_pointer_position()?;
+        Ok((x as i32, y as i32))
     }
 
     fn recttomon(&mut self, x: i32, y: i32, w: i32, h: i32) -> Option<MonitorKey> {
@@ -3806,7 +3945,8 @@ impl Jwm {
         self.grabkeys(backend)?;
         self.focus(backend, None)?;
 
-        self.scan(backend)?;
+        // self.scan(backend)?;
+        self.setup_initial_windows(backend)?;
 
         self.arrange(backend, None);
         let _ = self.restack(backend, self.sel_mon);
@@ -4118,11 +4258,11 @@ impl Jwm {
             }
             (
                 Geometry {
-                    x: c.geometry.x as i16,
-                    y: c.geometry.y as i16,
-                    w: c.geometry.w as u16,
-                    h: c.geometry.h as u16,
-                    border: c.geometry.border_w as u16,
+                    x: c.geometry.x,
+                    y: c.geometry.y,
+                    w: c.geometry.w as u32,
+                    h: c.geometry.h as u32,
+                    border: c.geometry.border_w as u32,
                 },
                 c.win,
             )
@@ -4180,11 +4320,11 @@ impl Jwm {
             }
             (
                 Geometry {
-                    x: c.geometry.x as i16,
-                    y: c.geometry.y as i16,
-                    w: c.geometry.w as u16,
-                    h: c.geometry.h as u16,
-                    border: c.geometry.border_w as u16,
+                    x: c.geometry.x,
+                    y: c.geometry.y,
+                    w: c.geometry.w as u32,
+                    h: c.geometry.h as u32,
+                    border: c.geometry.border_w as u32,
                 },
                 c.win,
             )
@@ -4432,50 +4572,6 @@ impl Jwm {
         Ok(())
     }
 
-    fn grabbuttons(
-        &mut self,
-        backend: &mut dyn Backend,
-        client_key: ClientKey,
-        focused: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let client_win_id = if let Some(client) = self.clients.get(client_key) {
-            client.win
-        } else {
-            return Err("Client not found".into());
-        };
-
-        backend.window_ops().ungrab_all_buttons(client_win_id)?;
-
-        if !focused {
-            backend
-                .window_ops()
-                .grab_button_any_anymod(client_win_id, BUTTONMASK.bits())?;
-        }
-
-        for button_config in CONFIG.get_buttons().iter() {
-            if button_config.click_type == WMClickType::ClickClientWin {
-                let base = button_config.mask;
-                let combos = [
-                    base,
-                    base | Mods::CAPS,
-                    base | Mods::NUMLOCK,
-                    base | Mods::CAPS | Mods::NUMLOCK,
-                ];
-                let btn_u8 = button_config.button.to_u8();
-                for mm in combos {
-                    backend.window_ops().grab_button(
-                        client_win_id,
-                        btn_u8,
-                        BUTTONMASK.bits(),
-                        mm,
-                    )?;
-                }
-            }
-        }
-
-        Ok(())
-    }
-
     fn focus(
         &mut self,
         backend: &mut dyn Backend,
@@ -4572,7 +4668,6 @@ impl Jwm {
 
         self.detachstack(client_key);
         self.attachstack(client_key);
-        self.grabbuttons(backend, client_key, true)?;
 
         self.update_client_decoration(backend, client_key, true)?;
 
@@ -4596,12 +4691,9 @@ impl Jwm {
         setfocus: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(_client) = self.clients.get(client_key) {
-            self.grabbuttons(backend, client_key, false)?;
             self.update_client_decoration(backend, client_key, false)?;
             if setfocus {
-                backend
-                    .window_ops()
-                    .set_input_focus_root(backend.root_window())?;
+                backend.window_ops().set_input_focus_root()?;
                 if let Some(facade) = backend.ewmh_facade().as_ref() {
                     let _ = facade.clear_active_window();
                 }
@@ -4616,7 +4708,7 @@ impl Jwm {
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.clients.get(client_key) {
-            backend.window_ops().set_input_focus_window(client.win)?;
+            backend.window_ops().set_input_focus(client.win)?;
             if let Some(facade) = backend.ewmh_facade().as_ref() {
                 let _ = facade.set_active_window(client.win);
             }
@@ -4628,9 +4720,7 @@ impl Jwm {
         &mut self,
         backend: &mut dyn Backend,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        backend
-            .window_ops()
-            .set_input_focus_root(backend.root_window())?;
+        backend.window_ops().set_input_focus_root()?;
         if let Some(facade) = backend.ewmh_facade().as_ref() {
             let _ = facade.clear_active_window();
         }
@@ -5139,9 +5229,7 @@ impl Jwm {
             | EventMaskBits::PROPERTY_CHANGE
             | EventMaskBits::STRUCTURE_NOTIFY)
             .bits();
-        // haha
         backend.window_ops().change_event_mask(win, mask)?;
-        self.grabbuttons(backend, client_key, false)?;
         info!(
             "[register_client_events] Events registered for window {:?}",
             win
@@ -5325,7 +5413,7 @@ impl Jwm {
             return Ok(());
         }
         if self.wintoclient(window).is_none() {
-            let geom = backend.window_ops().get_geometry_translated(window)?;
+            let geom = backend.window_ops().get_geometry(window)?;
             self.manage(backend, window, &geom)?;
         } else {
             debug!(

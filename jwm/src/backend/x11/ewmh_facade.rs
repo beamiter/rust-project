@@ -1,6 +1,6 @@
 // src/backend/x11/ewmh_facade.rs
-use crate::backend::api::WindowId;
 use crate::backend::api::{EwmhFacade, EwmhFeature};
+use crate::backend::common_define::WindowId;
 use crate::backend::x11::Atoms;
 use crate::backend::x11::WindowHandleExt;
 use std::sync::Arc;
@@ -113,18 +113,6 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
             wm_name.as_bytes(),
         )?;
         Ok(WindowId::X11(frame_win as u64))
-    }
-
-    fn set_supported_atoms(&self, supported: &[u32]) -> Result<(), Box<dyn std::error::Error>> {
-        let r = self.root.to_x11_id()?;
-        self.conn.change_property32(
-            PropMode::REPLACE,
-            r,
-            self.atoms._NET_SUPPORTED,
-            AtomEnum::ATOM,
-            supported,
-        )?;
-        Ok(())
     }
 
     fn set_active_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
