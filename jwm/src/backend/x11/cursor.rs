@@ -333,7 +333,7 @@ impl<C: Connection> X11CursorProvider<C> {
     pub fn new(conn: Arc<C>) -> Result<Self, Box<dyn std::error::Error>> {
         use x11rb::protocol::xproto::ConnectionExt;
         let font = conn.generate_id()?;
-        conn.open_font(font, b"cursor")?.check()?;
+        conn.open_font(font, b"cursor")?;
         Ok(Self {
             conn,
             cursor_font: font,

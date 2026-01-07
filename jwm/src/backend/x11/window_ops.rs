@@ -63,12 +63,10 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
             );
             use x11rb::x11_utils::Serialize;
             let data = event.serialize();
-            self.conn
-                .send_event(false, w, EventMask::NO_EVENT, data)?
-                .check()?;
+            self.conn.send_event(false, w, EventMask::NO_EVENT, data)?;
             return Ok(CloseResult::Graceful);
         }
-        self.conn.kill_client(w)?.check()?;
+        self.conn.kill_client(w)?;
         Ok(CloseResult::Forced)
     }
 
@@ -96,7 +94,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         self.conn.change_window_attributes(w, &aux_attr)?;
 
         let aux_conf = ConfigureWindowAux::new().border_width(border_width);
-        self.conn.configure_window(w, &aux_conf)?.check()?;
+        self.conn.configure_window(w, &aux_conf)?;
 
         Ok(())
     }
@@ -108,19 +106,17 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let x_mask = event_mask_from_generic(event_mask_bits);
         let w = win.to_x11_id()?;
-        self.conn
-            .grab_button(
-                false,
-                w,
-                x_mask,
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-                0u32,
-                0u32,
-                ButtonIndex::ANY,
-                ModMask::ANY.into(),
-            )?
-            .check()?;
+        self.conn.grab_button(
+            false,
+            w,
+            x_mask,
+            GrabMode::ASYNC,
+            GrabMode::ASYNC,
+            0u32,
+            0u32,
+            ButtonIndex::ANY,
+            ModMask::ANY.into(),
+        )?;
         Ok(())
     }
 
@@ -138,19 +134,17 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         let x_mods = mods_to_x11(mods, numlock_obj);
         let mods_bits = ModMask::from(x_mods.bits());
         let w = win.to_x11_id()?;
-        self.conn
-            .grab_button(
-                false,
-                w,
-                x_mask,
-                GrabMode::ASYNC,
-                GrabMode::ASYNC,
-                0u32,
-                0u32,
-                bi,
-                mods_bits,
-            )?
-            .check()?;
+        self.conn.grab_button(
+            false,
+            w,
+            x_mask,
+            GrabMode::ASYNC,
+            GrabMode::ASYNC,
+            0u32,
+            0u32,
+            bi,
+            mods_bits,
+        )?;
         Ok(())
     }
 
@@ -185,15 +179,13 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
 
     fn set_input_focus_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         let w = win.to_x11_id()?;
-        self.conn
-            .set_input_focus(InputFocus::NONE, w, 0u32)?
-            .check()?;
+        self.conn.set_input_focus(InputFocus::NONE, w, 0u32)?;
         Ok(())
     }
 
     fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         let w = win.to_x11_id()?;
-        self.conn.map_window(w)?.check()?;
+        self.conn.map_window(w)?;
         Ok(())
     }
 
@@ -233,15 +225,13 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         }
 
         let w = win.to_x11_id()?;
-        self.conn.configure_window(w, &aux)?.check()?;
+        self.conn.configure_window(w, &aux)?;
         Ok(())
     }
 
     fn set_input_focus_root(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         let r = root.to_x11_id()?;
-        self.conn
-            .set_input_focus(InputFocus::NONE, r, 0u32)?
-            .check()?;
+        self.conn.set_input_focus(InputFocus::NONE, r, 0u32)?;
         Ok(())
     }
 
@@ -255,9 +245,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         let event = ClientMessageEvent::new(32, w, type_atom, data);
         use x11rb::x11_utils::Serialize;
         let buf = event.serialize();
-        self.conn
-            .send_event(false, w, EventMask::NO_EVENT, buf)?
-            .check()?;
+        self.conn.send_event(false, w, EventMask::NO_EVENT, buf)?;
         Ok(())
     }
 
@@ -268,12 +256,12 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
 
     fn kill_client(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         let w = win.to_x11_id()?;
-        self.conn.kill_client(w)?.check()?;
+        self.conn.kill_client(w)?;
         Ok(())
     }
 
     fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn.grab_server()?.check()?;
+        self.conn.grab_server()?;
         Ok(())
     }
 
@@ -327,8 +315,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     fn ungrab_all_buttons(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         let w = win.to_x11_id()?;
         self.conn
-            .ungrab_button(ButtonIndex::ANY, w, ModMask::ANY.into())?
-            .check()?;
+            .ungrab_button(ButtonIndex::ANY, w, ModMask::ANY.into())?;
         Ok(())
     }
 }

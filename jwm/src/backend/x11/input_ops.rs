@@ -68,7 +68,7 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
         mode: Allow,
         time: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn.allow_events(mode, time)?.check()?;
+        self.conn.allow_events(mode, time)?;
         Ok(())
     }
 
@@ -99,7 +99,7 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
     }
 
     fn ungrab_pointer(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn.ungrab_pointer(0u32)?.check()?;
+        self.conn.ungrab_pointer(0u32)?;
         Ok(())
     }
 
@@ -125,7 +125,7 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
         y: i16,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let w = win.to_x11_id()?;
-        self.conn.warp_pointer(0u32, w, 0, 0, 0, 0, x, y)?.check()?;
+        self.conn.warp_pointer(0u32, w, 0, 0, 0, 0, x, y)?;
         Ok(())
     }
 }

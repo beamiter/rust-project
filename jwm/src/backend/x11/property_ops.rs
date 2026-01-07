@@ -404,9 +404,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         );
         use x11rb::x11_utils::Serialize;
         let data = event.serialize();
-        self.conn
-            .send_event(false, w, EventMask::NO_EVENT, data)?
-            .check()?;
+        self.conn.send_event(false, w, EventMask::NO_EVENT, data)?;
         Ok(())
     }
 
@@ -419,25 +417,21 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     ) -> Result<(), Box<dyn std::error::Error>> {
         let w = win.to_x11_id()?;
         let strut = [0, 0, top, 0];
-        self.conn
-            .change_property32(
-                PropMode::REPLACE,
-                w,
-                self.atoms._NET_WM_STRUT,
-                AtomEnum::CARDINAL,
-                &strut,
-            )?
-            .check()?;
+        self.conn.change_property32(
+            PropMode::REPLACE,
+            w,
+            self.atoms._NET_WM_STRUT,
+            AtomEnum::CARDINAL,
+            &strut,
+        )?;
         let partial = [0, 0, top, 0, 0, 0, 0, 0, start_x, end_x, 0, 0];
-        self.conn
-            .change_property32(
-                PropMode::REPLACE,
-                w,
-                self.atoms._NET_WM_STRUT_PARTIAL,
-                AtomEnum::CARDINAL,
-                &partial,
-            )?
-            .check()?;
+        self.conn.change_property32(
+            PropMode::REPLACE,
+            w,
+            self.atoms._NET_WM_STRUT_PARTIAL,
+            AtomEnum::CARDINAL,
+            &partial,
+        )?;
         Ok(())
     }
 
@@ -458,15 +452,13 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     ) -> Result<(), Box<dyn std::error::Error>> {
         let w = win.to_x11_id()?;
         let data = [tags, monitor_num];
-        self.conn
-            .change_property32(
-                PropMode::REPLACE,
-                w,
-                self.atoms._NET_CLIENT_INFO,
-                AtomEnum::CARDINAL,
-                &data,
-            )?
-            .check()?;
+        self.conn.change_property32(
+            PropMode::REPLACE,
+            w,
+            self.atoms._NET_CLIENT_INFO,
+            AtomEnum::CARDINAL,
+            &data,
+        )?;
         Ok(())
     }
 

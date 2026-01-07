@@ -92,9 +92,7 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
 
     fn clear_key_grabs(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         let r = root.to_x11_id()?;
-        self.conn
-            .ungrab_key(Grab::ANY, r, ModMask::ANY.into())?
-            .check()?;
+        self.conn.ungrab_key(Grab::ANY, r, ModMask::ANY.into())?;
         Ok(())
     }
 
@@ -131,16 +129,14 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
                             base | KBM::LOCK | numlock_mask_obj,
                         ];
                         for mm in combos {
-                            self.conn
-                                .grab_key(
-                                    false,
-                                    r,
-                                    ModMask::from(mm.bits()),
-                                    keycode,
-                                    GrabMode::ASYNC,
-                                    GrabMode::ASYNC,
-                                )?
-                                .check()?;
+                            self.conn.grab_key(
+                                false,
+                                r,
+                                ModMask::from(mm.bits()),
+                                keycode,
+                                GrabMode::ASYNC,
+                                GrabMode::ASYNC,
+                            )?;
                         }
                     }
                 }

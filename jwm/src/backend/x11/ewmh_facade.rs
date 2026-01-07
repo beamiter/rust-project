@@ -44,15 +44,13 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let atoms: Vec<u32> = features.iter().map(|f| self.feature_to_atom(*f)).collect();
         let r = self.root.to_x11_id()?;
-        self.conn
-            .change_property32(
-                PropMode::REPLACE,
-                r,
-                self.atoms._NET_SUPPORTED,
-                AtomEnum::ATOM,
-                &atoms,
-            )?
-            .check()?;
+        self.conn.change_property32(
+            PropMode::REPLACE,
+            r,
+            self.atoms._NET_SUPPORTED,
+            AtomEnum::ATOM,
+            &atoms,
+        )?;
         Ok(())
     }
 
@@ -78,21 +76,19 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         let frame_win = self.conn.generate_id()?;
         let aux = CreateWindowAux::new().event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS);
         let r = self.root.to_x11_id()?;
-        self.conn
-            .create_window(
-                x11rb::COPY_DEPTH_FROM_PARENT,
-                frame_win,
-                r,
-                0,
-                0,
-                1,
-                1,
-                0,
-                WindowClass::INPUT_OUTPUT,
-                0,
-                &aux,
-            )?
-            .check()?;
+        self.conn.create_window(
+            x11rb::COPY_DEPTH_FROM_PARENT,
+            frame_win,
+            r,
+            0,
+            0,
+            1,
+            1,
+            0,
+            WindowClass::INPUT_OUTPUT,
+            0,
+            &aux,
+        )?;
         self.conn.change_property32(
             PropMode::REPLACE,
             r,
