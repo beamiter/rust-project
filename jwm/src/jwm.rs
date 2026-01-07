@@ -197,7 +197,6 @@ pub struct Jwm {
     pub status_bar_child: Option<Child>,
     pub status_bar_client: Option<ClientKey>,
     pub status_bar_window: Option<WindowId>,
-    pub try_spawn_status_bar: bool,
     pub current_bar_monitor_id: Option<i32>,
 
     pub pending_bar_updates: HashSet<MonitorIndex>,
@@ -297,7 +296,6 @@ impl Jwm {
             status_bar_client: None,
             status_bar_window: None,
             current_bar_monitor_id: None,
-            try_spawn_status_bar: false,
             pending_bar_updates: HashSet::new(),
 
             suppress_mouse_focus_until: None,
@@ -2168,8 +2166,22 @@ impl Jwm {
     }
 
     fn ensure_bar_is_running(&mut self, shared_path: &str) {
-        if self.try_spawn_status_bar {
-            return;
+        // 1. 检查现有进程状态
+        if let Some(child) = self.status_bar_child.as_mut() {
+            match child.try_wait() {
+                Ok(Some(status)) => {
+                    info!("Status bar process exited with: {status}, preparing to respawn.");
+                }
+                Ok(None) => {
+                    debug!("Status bar is running.");
+                    return;
+                }
+                Err(e) => {
+                    info!(
+                        "Error attempting to wait on status bar child: {e}, will try to respawn."
+                    );
+                }
+            }
         }
 
         // 3. 准备启动命令
@@ -2184,7 +2196,6 @@ impl Jwm {
         };
 
         // 4. 执行启动并更新时间戳
-        self.try_spawn_status_bar = true;
         match command
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())
@@ -5433,7 +5444,6 @@ impl Jwm {
         self.status_bar_child = None;
         self.status_bar_client = None;
         self.status_bar_window = None;
-        self.try_spawn_status_bar = false;
         info!("Successfully removed statusbar",);
         Ok(())
     }

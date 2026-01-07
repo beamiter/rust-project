@@ -1,6 +1,5 @@
 //! src/shared_ring_buffer.rs
 
-// --- 修改点 1：导入 AnySyncBackend ---
 use crate::backends::common::{AnySyncBackend, GenericHeader, SyncBackend, SyncStrategy};
 use crate::shared_message::{SharedCommand, SharedMessage};
 
@@ -11,14 +10,12 @@ use std::mem::size_of;
 use std::sync::atomic::Ordering;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-// --- 常量 ---
 const RING_BUFFER_MAGIC: u64 = 0x52494E47_42554646;
 const RING_BUFFER_VERSION: u64 = 8; // 版本号因结构调整而递增
 const DEFAULT_BUFFER_SIZE: usize = 16;
 const CMD_BUFFER_SIZE: usize = 16;
 const DEFAULT_ADAPTIVE_POLL_SPINS: u32 = 400;
 
-// --- 辅助函数 ---
 #[inline]
 fn align_up(value: usize, align: usize) -> usize {
     (value + align - 1) & !(align - 1)
@@ -32,8 +29,6 @@ fn now_millis() -> u64 {
         .as_millis() as u64
 }
 
-// --- 内部数据结构 ---
-
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
 struct MessageSlot {
@@ -43,7 +38,6 @@ struct MessageSlot {
     message: SharedMessage,
 }
 
-// 确保在读取可能包含 padding 的结构时，只校验有效数据
 fn calculate_message_checksum(m: &SharedMessage) -> u32 {
     let mut sum = 0u32;
 
@@ -97,32 +91,24 @@ pub struct SharedRingBuffer {
     cmd_buffer_start: *mut SharedCommand,
     is_creator: bool,
     adaptive_poll_spins: u32,
-    // --- 修改点 2：将 backend 类型改为 AnySyncBackend ---
     backend: AnySyncBackend,
 }
 impl std::hash::Hash for SharedRingBuffer {
     fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
-        // 核心逻辑：我们通过 get_os_id() 获取共享内存的唯一标识符（一个字符串），
-        // 然后对这个标识符进行哈希。
-        // 这确保了所有指向同一块共享内存的 SharedRingBuffer 实例都具有相同的哈希值。
         self.shmem.get_os_id().hash(state);
     }
 }
 impl PartialEq for SharedRingBuffer {
     fn eq(&self, other: &Self) -> bool {
-        // 保持与 Hash 一致：两个 SharedRingBuffer 相等，当且仅当
-        // 它们引用的共享内存的唯一标识符相同。
         self.shmem.get_os_id() == other.shmem.get_os_id()
     }
 }
-// 因为 PartialEq 的实现满足了自反性、对称性和传递性，所以我们可以安全地实现 Eq。
 impl Eq for SharedRingBuffer {}
 
 unsafe impl Send for SharedRingBuffer {}
 unsafe impl Sync for SharedRingBuffer {}
 
 impl SharedRingBuffer {
-    // --- 内部辅助方法 ---
     #[inline]
     fn buffer_size(&self) -> u32 {
         unsafe { (*self.header).buffer_size }
@@ -138,9 +124,6 @@ impl SharedRingBuffer {
         (CMD_BUFFER_SIZE as u32) - 1
     }
 
-    // --- 构造与析构 ---
-
-    /// 一个便捷的工厂函数，尝试打开一个已存在的缓冲区，如果失败则创建一个新的。
     pub fn create_shared_ring_buffer_aux(shared_path: &str) -> Option<Self> {
         return Self::create_shared_ring_buffer(shared_path, Self::get_default_strategy());
     }
@@ -173,7 +156,6 @@ impl SharedRingBuffer {
         }
     }
 
-    /// 创建一个新的共享内存环形缓冲区。
     pub fn create_aux(
         path: &str,
         buffer_size: Option<usize>,
@@ -258,7 +240,6 @@ impl SharedRingBuffer {
         })
     }
 
-    /// 打开一个已存在的共享内存环形缓冲区。
     #[allow(unreachable_code)]
     fn get_default_strategy() -> SyncStrategy {
         #[cfg(feature = "use-eventfd")]
@@ -338,8 +319,6 @@ impl SharedRingBuffer {
         })
     }
 
-    // --- 修改点 3：修改 `new_backend` 的返回类型 ---
-    /// 工厂方法，根据枚举创建对应的后端实例，并包装在 AnySyncBackend 枚举中。
     fn new_backend(strategy: SyncStrategy) -> AnySyncBackend {
         match strategy {
             #[cfg(feature = "futex")]
@@ -357,14 +336,11 @@ impl SharedRingBuffer {
                 AnySyncBackend::EventFd(crate::backends::eventfd::EventFdBackend::new())
             }
 
-            // 如果 SyncStrategy 是空枚举，这个 match 是详尽的，不需要通配符。
-            // 否则，添加一个处理分支。
             #[cfg(not(any(feature = "futex", feature = "semaphore", feature = "eventfd")))]
-            _ => unreachable!(), // 如果 SyncStrategy 为空，此分支永远不会到达
+            _ => unreachable!(),
         }
     }
 
-    // --- 消息 API ---
     pub fn try_write_message(&self, message: &SharedMessage) -> Result<bool> {
         if self.is_destroyed() {
             return Err(Error::new(ErrorKind::BrokenPipe, "Buffer is destroyed"));
@@ -419,7 +395,6 @@ impl SharedRingBuffer {
             let slot = &*self.message_slots.add(slot_idx);
 
             if calculate_message_checksum(&slot.message) != slot.checksum {
-                // 清理并前进，避免卡死
                 (*self.header)
                     .read_idx
                     .store(read_idx.wrapping_add(1), Ordering::Release);
@@ -472,7 +447,6 @@ impl SharedRingBuffer {
         }
     }
 
-    // --- 命令 API ---
     pub fn send_command(&self, command: SharedCommand) -> Result<bool> {
         if self.is_destroyed() {
             return Err(Error::new(ErrorKind::BrokenPipe, "Buffer is destroyed"));
@@ -579,27 +553,20 @@ impl SharedRingBuffer {
 
 impl Drop for SharedRingBuffer {
     fn drop(&mut self) {
-        // 由于 as_ptr() 可能在某些 shmem 版本中不存在，我们暂时假设它返回一个非空指针
-        // 如果你的 shmem 库版本没有 as_ptr()，你可能需要另一种方式检查 shmem 的有效性
-        // 或者直接执行清理逻辑。
         if !self.header.is_null() {
-            // 使用 header 指针检查有效性
-            // 标记为销毁状态
             if !self.is_destroyed() {
                 unsafe {
                     (*self.header).is_destroyed.store(true, Ordering::Release);
                 }
             }
-            // 委托给后端进行清理，并唤醒所有等待者
             self.backend.cleanup(self.is_creator);
         }
 
-        // // 如果是创建者，负责删除共享内存的链接文件
-        // if self.is_creator {
-        //     if let Some(path) = self.shmem.get_flink_path() {
-        //         info!("(Creator) Removing shmem flink: {:?}", path);
-        //         let _ = std::fs::remove_file(path);
-        //     }
-        // }
+        if self.is_creator {
+            if let Some(path) = self.shmem.get_flink_path() {
+                info!("(Creator) Removing shmem flink: {:?}", path);
+                let _ = std::fs::remove_file(path);
+            }
+        }
     }
 }
