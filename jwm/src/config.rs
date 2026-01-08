@@ -360,6 +360,12 @@ impl Config {
                 argument: ArgumentConfig::String("tile".to_string()),
             },
             KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "t".to_string(),
+                function: "setlayout".to_string(),
+                argument: ArgumentConfig::String("fibonacci".to_string()),
+            },
+            KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "f".to_string(),
                 function: "setlayout".to_string(),
@@ -792,6 +798,7 @@ impl Config {
                 "tile" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::TILE)),
                 "float" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::FLOAT)),
                 "monocle" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::MONOCLE)),
+                "fibonacci" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::FIBONACCI)),
                 _ => jwm::WMArgEnum::StringVec(vec![s.clone()]),
             },
         }

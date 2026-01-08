@@ -2191,8 +2191,8 @@ impl Jwm {
         m.tag_set[1] = 1;
         m.layout.m_fact = CONFIG.m_fact();
         m.layout.n_master = CONFIG.n_master();
-        m.lt[0] = Rc::new(LayoutEnum::TILE);
-        m.lt[1] = Rc::new(LayoutEnum::FLOAT);
+        m.lt[0] = Rc::new(LayoutEnum::FIBONACCI);
+        m.lt[1] = Rc::new(LayoutEnum::TILE);
         m.lt_symbol = m.lt[0].symbol().to_string();
         m.pertag = Some(Pertag::new(show_bar, CONFIG.tags_length()));
         let ref_pertag = m.pertag.as_mut().unwrap();
@@ -2308,7 +2308,52 @@ impl Jwm {
         match *layout_type {
             LayoutEnum::TILE => self.tile(backend, mon_key),
             LayoutEnum::MONOCLE => self.monocle(backend, mon_key),
+            LayoutEnum::FIBONACCI => self.fibonacci(backend, mon_key),
             LayoutEnum::FLOAT | _ => {}
+        }
+    }
+
+    fn fibonacci(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
+        info!("[fibonacci] via pure layout engine");
+
+        // 1. 获取显示器信息和配置
+        let (wx, wy, ww, wh, mfact, nmaster, _monitor_num, client_y_offset) =
+            self.get_monitor_info(mon_key);
+
+        // 计算可用区域 (减去 bar 的高度)
+        let screen_area = Rect::new(wx, wy + client_y_offset, ww, wh - client_y_offset);
+
+        // 2. 收集需要参与布局的客户端 (使用现有的辅助函数)
+        let raw_clients = self.collect_tileable_clients(mon_key);
+        if raw_clients.is_empty() {
+            return;
+        }
+
+        // 转换为 LayoutClient 结构
+        let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
+            .iter()
+            .map(|&(key, factor, border_w)| LayoutClient {
+                key,
+                factor,
+                border_w,
+            })
+            .collect();
+
+        // 3. 构造参数
+        let params = LayoutParams {
+            screen_area,
+            n_master: nmaster,
+            m_fact: mfact,
+        };
+
+        // 4. 计算布局
+        let results = layout::calculate_fibonacci(&params, &layout_clients);
+
+        // 5. 应用结果 (调整窗口大小和位置)
+        for res in results {
+            self.resize_client(
+                backend, res.key, res.rect.x, res.rect.y, res.rect.w, res.rect.h, false,
+            );
         }
     }
 

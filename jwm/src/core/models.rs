@@ -208,7 +208,7 @@ impl WMMonitor {
             sel_lt: 0,
             tag_set: [0; 2],
             sel: None,
-            lt: [Rc::new(LayoutEnum::TILE), Rc::new(LayoutEnum::TILE)],
+            lt: [Rc::new(LayoutEnum::FIBONACCI), Rc::new(LayoutEnum::TILE)],
             pertag: None,
         }
     }
@@ -274,7 +274,6 @@ impl WMMonitor {
             self.layout.m_fact = pertag.m_facts[new_tag_idx];
             self.sel_lt = pertag.sel_lts[new_tag_idx];
 
-            // 恢复 Layout 引用
             if let Some(l0) = &pertag.lt_idxs[new_tag_idx][0] {
                 self.lt[0] = l0.clone();
             }
