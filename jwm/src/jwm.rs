@@ -224,6 +224,20 @@ impl EventHandler for Jwm {
             BackendEvent::OutputAdded(info) => self.handle_output_added(backend, info),
             BackendEvent::OutputRemoved(id) => self.handle_output_removed(backend, id),
             BackendEvent::OutputChanged(info) => self.handle_output_changed(backend, info),
+
+            // --- 处理热插拔触发的全局刷新 ---
+            BackendEvent::ScreenLayoutChanged => {
+                log::info!(
+                    "[handle_event] Screen Layout Changed (Hotplug detected), refreshing geometry..."
+                );
+                // updategeom 会调用 enumerate_outputs 并更新 self.monitors
+                if self.updategeom(backend) {
+                    // 如果确实有变化，重新安排布局
+                    self.handle_screen_geometry_change(backend)?;
+                }
+                Ok(())
+            }
+            // ------------------------------------
             _ => self.handle_backend_event(backend, event),
         }
     }
@@ -427,8 +441,6 @@ impl Jwm {
         Ok(())
     }
 
-    // 替换原 scan 方法，改名为 setup_initial_windows，且只在 X11 后端下有效
-    // Wayland 不需要扫描，窗口创建是通过 WindowCreated 事件触发的
     pub fn setup_initial_windows(
         &mut self,
         backend: &mut dyn Backend,
@@ -2530,43 +2542,6 @@ impl Jwm {
         backend.property_ops().transient_for(window)
     }
 
-    pub fn scan(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
-        let tree_child = backend.window_ops().get_tree_child(backend.root_window())?;
-        let mut cookies = Vec::with_capacity(tree_child.len());
-        for win in tree_child {
-            let attr = backend.window_ops().get_window_attributes(win)?;
-            let geom = backend.window_ops().get_geometry(win)?;
-            let trans = self.get_transient_for(backend, win);
-            cookies.push((win, attr, geom, trans));
-        }
-        for (win, attr, geom, trans) in &cookies {
-            if attr.override_redirect || trans.is_some() {
-                continue;
-            }
-            if attr.map_state_viewable
-                || backend
-                    .property_ops()
-                    .get_wm_state(*win)
-                    .map_or(false, |s| s == i64::from(ICONIC_STATE))
-            {
-                self.manage(backend, *win, geom)?;
-            }
-        }
-        for (win, attr, geom, trans) in &cookies {
-            if trans.is_some() {
-                if attr.map_state_viewable
-                    || backend
-                        .property_ops()
-                        .get_wm_state(*win)
-                        .map_or(false, |s| s == i64::from(ICONIC_STATE))
-                {
-                    self.manage(backend, *win, geom)?;
-                }
-            }
-        }
-        Ok(())
-    }
-
     fn arrange(&mut self, backend: &mut dyn Backend, m_target: Option<MonitorKey>) {
         info!("[arrange]");
 
@@ -3945,7 +3920,6 @@ impl Jwm {
         self.grabkeys(backend)?;
         self.focus(backend, None)?;
 
-        // self.scan(backend)?;
         self.setup_initial_windows(backend)?;
 
         self.arrange(backend, None);

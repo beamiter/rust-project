@@ -149,6 +149,9 @@ pub enum BackendEvent {
     OutputRemoved(OutputId),
     OutputChanged(OutputInfo),
 
+    /// 屏幕布局发生重大变化（如热插拔），建议 WM 重新枚举输出设备
+    ScreenLayoutChanged,
+
     // === 窗口生命周期 ===
     /// 窗口已创建 (X11: MapRequest, Wayland: New Surface/Toplevel)
     WindowCreated(WindowId),

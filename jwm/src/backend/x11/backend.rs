@@ -3,6 +3,9 @@ use crate::backend::api::EventHandler;
 use crate::backend::common_define::WindowId;
 use std::any::Any;
 use std::sync::{Arc, Mutex};
+use x11rb::connection::RequestConnection;
+use x11rb::protocol::randr::ConnectionExt as RandrExt;
+use x11rb::protocol::randr::NotifyMask;
 use x11rb::protocol::xproto::Screen;
 use x11rb::rust_connection::RustConnection;
 
@@ -45,6 +48,17 @@ impl X11Backend {
         use x11rb::connection::Connection;
         let screen = conn.setup().roots[screen_num].clone();
         let root = WindowId::X11(screen.root as u64);
+        // --- 初始化 RandR 并订阅事件 ---
+        if conn
+            .extension_information(x11rb::protocol::randr::X11_EXTENSION_NAME)?
+            .is_some()
+        {
+            let mask =
+                NotifyMask::SCREEN_CHANGE | NotifyMask::OUTPUT_CHANGE | NotifyMask::CRTC_CHANGE;
+            // 注意：X11RB 的 randr_select_input 需要 root window
+            conn.randr_select_input(screen.root, mask)?;
+        }
+
         let numlock_mask = Arc::new(Mutex::new(0u16));
 
         let atoms = Atoms::new(conn.as_ref())?.reply()?;

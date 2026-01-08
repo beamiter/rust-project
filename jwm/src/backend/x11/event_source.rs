@@ -1,8 +1,7 @@
 // src/backend/x11/event_source.rs
 use std::sync::Arc;
 use x11rb::connection::Connection;
-use x11rb::protocol::Event as XEvent;
-use x11rb::protocol::xproto as x;
+use x11rb::protocol::{Event as XEvent, xproto};
 
 use crate::backend::api::NotifyMode;
 use crate::backend::api::{
@@ -24,13 +23,13 @@ impl<C: Connection> X11EventSource<C> {
     fn map_property_kind(&self, atom: u32) -> PropertyKind {
         if atom == self.atoms.WM_TRANSIENT_FOR {
             PropertyKind::TransientFor
-        } else if atom == u32::from(x::AtomEnum::WM_NORMAL_HINTS) {
+        } else if atom == u32::from(xproto::AtomEnum::WM_NORMAL_HINTS) {
             PropertyKind::SizeHints
-        } else if atom == u32::from(x::AtomEnum::WM_HINTS) {
+        } else if atom == u32::from(xproto::AtomEnum::WM_HINTS) {
             PropertyKind::Urgency
-        } else if atom == u32::from(x::AtomEnum::WM_NAME) || atom == self.atoms._NET_WM_NAME {
+        } else if atom == u32::from(xproto::AtomEnum::WM_NAME) || atom == self.atoms._NET_WM_NAME {
             PropertyKind::Title
-        } else if atom == u32::from(x::AtomEnum::WM_CLASS) {
+        } else if atom == u32::from(xproto::AtomEnum::WM_CLASS) {
             PropertyKind::Class
         } else if atom == self.atoms._NET_WM_WINDOW_TYPE {
             PropertyKind::WindowType
@@ -64,6 +63,12 @@ impl<C: Connection> X11EventSource<C> {
                 root_x: e.root_x as f64, // 转换
                 root_y: e.root_y as f64,
             }),
+            // --- 处理 RandR 事件 ---
+            // 屏幕整体配置改变（分辨率变化、旋转等）
+            XEvent::RandrScreenChangeNotify(_) => Some(BackendEvent::ScreenLayoutChanged),
+            // 具体的 RandR 通知（Output 连接/断开，CRTC 配置变化）
+            XEvent::RandrNotify(_) => Some(BackendEvent::ScreenLayoutChanged),
+            // ---------------------------
             XEvent::MotionNotify(e) => Some(BackendEvent::MotionNotify {
                 window: Some(WindowId::X11(e.event as u64)),
                 root_x: e.root_x as f64,
@@ -121,43 +126,43 @@ impl<C: Connection> X11EventSource<C> {
 
             XEvent::ConfigureRequest(e) => {
                 let changes = WindowChanges {
-                    x: if e.value_mask.contains(x::ConfigWindow::X) {
+                    x: if e.value_mask.contains(xproto::ConfigWindow::X) {
                         Some(e.x as i32)
                     } else {
                         None
                     },
-                    y: if e.value_mask.contains(x::ConfigWindow::Y) {
+                    y: if e.value_mask.contains(xproto::ConfigWindow::Y) {
                         Some(e.y as i32)
                     } else {
                         None
                     },
-                    width: if e.value_mask.contains(x::ConfigWindow::WIDTH) {
+                    width: if e.value_mask.contains(xproto::ConfigWindow::WIDTH) {
                         Some(e.width as u32)
                     } else {
                         None
                     },
-                    height: if e.value_mask.contains(x::ConfigWindow::HEIGHT) {
+                    height: if e.value_mask.contains(xproto::ConfigWindow::HEIGHT) {
                         Some(e.height as u32)
                     } else {
                         None
                     },
-                    border_width: if e.value_mask.contains(x::ConfigWindow::BORDER_WIDTH) {
+                    border_width: if e.value_mask.contains(xproto::ConfigWindow::BORDER_WIDTH) {
                         Some(e.border_width as u32)
                     } else {
                         None
                     },
-                    sibling: if e.value_mask.contains(x::ConfigWindow::SIBLING) {
+                    sibling: if e.value_mask.contains(xproto::ConfigWindow::SIBLING) {
                         Some(WindowId::X11(e.sibling as u64))
                     } else {
                         None
                     },
-                    stack_mode: if e.value_mask.contains(x::ConfigWindow::STACK_MODE) {
+                    stack_mode: if e.value_mask.contains(xproto::ConfigWindow::STACK_MODE) {
                         match e.stack_mode {
-                            x::StackMode::ABOVE => Some(StackMode::Above),
-                            x::StackMode::BELOW => Some(StackMode::Below),
-                            x::StackMode::TOP_IF => Some(StackMode::TopIf),
-                            x::StackMode::BOTTOM_IF => Some(StackMode::BottomIf),
-                            x::StackMode::OPPOSITE => Some(StackMode::Opposite),
+                            xproto::StackMode::ABOVE => Some(StackMode::Above),
+                            xproto::StackMode::BELOW => Some(StackMode::Below),
+                            xproto::StackMode::TOP_IF => Some(StackMode::TopIf),
+                            xproto::StackMode::BOTTOM_IF => Some(StackMode::BottomIf),
+                            xproto::StackMode::OPPOSITE => Some(StackMode::Opposite),
                             _ => None,
                         }
                     } else {
@@ -172,7 +177,7 @@ impl<C: Connection> X11EventSource<C> {
             }
 
             XEvent::PropertyNotify(e) => {
-                if e.state == x::Property::DELETE.into() {
+                if e.state == xproto::Property::DELETE.into() {
                     return None;
                 }
                 let kind = self.map_property_kind(e.atom);
