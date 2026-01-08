@@ -145,7 +145,7 @@ fn ScreenshotButton() -> Element {
             class: "pill screenshot-pill",
             onclick: take_screenshot,
             title: "截图 (Flameshot)",
-            { if is_taking_screenshot() { "⏳" } else { "📸" } }
+            {if is_taking_screenshot() { "⏳" } else { "📸" }}
         }
     }
 }
@@ -248,7 +248,9 @@ fn TimeText(show_seconds: bool) -> Element {
     };
     let time_str = current_time().format(time_format).to_string();
 
-    rsx! { span { "{time_str}" } }
+    rsx! {
+        span { "{time_str}" }
+    }
 }
 
 // 将按钮数据定义为静态常量（可改为你的动物 emoji，以保持样式不变，这里用更语义化的）
@@ -502,7 +504,7 @@ fn App() -> Element {
 
             div { class: "buttons-container",
                 // 工作区按钮（Tag）
-                for (i, emoji) in BUTTONS.iter().enumerate() {
+                for (i , emoji) in BUTTONS.iter().enumerate() {
                     {
                         let base_class = get_button_class(i, &button_states());
                         let is_pressed = pressed_button() == Some(i);
@@ -511,7 +513,6 @@ fn App() -> Element {
                         } else {
                             base_class.to_string()
                         };
-
                         rsx! {
                             button {
                                 key: "{i}",
@@ -536,14 +537,10 @@ fn App() -> Element {
                     {
                         let toggle_class = format!(
                             "pill layout-toggle {}",
-                            if layout_open() { "open" } else { "closed" }
+                            if layout_open() { "open" } else { "closed" },
                         );
                         rsx! {
-                            div {
-                                class: "{toggle_class}",
-                                onclick: toggle_layout_panel,
-                                "{layout_symbol()}"
-                            }
+                            div { class: "{toggle_class}", onclick: toggle_layout_panel, "{layout_symbol()}" }
                         }
                     }
 
@@ -551,27 +548,23 @@ fn App() -> Element {
                     if layout_open() {
                         {
                             let current = layout_symbol();
-                            let lo0 = format!("pill layout-option {}", if current.contains("[]=") { "current" } else { "" });
-                            let lo1 = format!("pill layout-option {}", if current.contains("><>") { "current" } else { "" });
-                            let lo2 = format!("pill layout-option {}", if current.contains("[M]") { "current" } else { "" });
-
+                            let lo0 = format!(
+                                "pill layout-option {}",
+                                if current.contains("[]=") { "current" } else { "" },
+                            );
+                            let lo1 = format!(
+                                "pill layout-option {}",
+                                if current.contains("><>") { "current" } else { "" },
+                            );
+                            let lo2 = format!(
+                                "pill layout-option {}",
+                                if current.contains("[M]") { "current" } else { "" },
+                            );
                             rsx! {
                                 div { class: "layout-selector",
-                                    div {
-                                        class: "{lo0}",
-                                        onclick: move |_| select_layout(0),
-                                        "[]="
-                                    }
-                                    div {
-                                        class: "{lo1}",
-                                        onclick: move |_| select_layout(1),
-                                        "><>"
-                                    }
-                                    div {
-                                        class: "{lo2}",
-                                        onclick: move |_| select_layout(2),
-                                        "[M]"
-                                    }
+                                    div { class: "{lo0}", onclick: move |_| select_layout(0), "[]=" }
+                                    div { class: "{lo1}", onclick: move |_| select_layout(1), "><>" }
+                                    div { class: "{lo2}", onclick: move |_| select_layout(2), "[M]" }
                                 }
                             }
                         }
@@ -603,9 +596,7 @@ fn App() -> Element {
                 }
 
                 // Scale factor pill
-                div { class: "pill scale-pill",
-                    {format!("s: {:.2}", scale_factor())}
-                }
+                div { class: "pill scale-pill", {format!("s: {:.2}", scale_factor())} }
             }
         }
     }

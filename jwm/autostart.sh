@@ -48,10 +48,10 @@ fi
 
 # --- 5. 输入法 (Fcitx5 / IBus) ---
 # 对于中文用户非常重要
-# export GTK_IM_MODULE=fcitx
-# export QT_IM_MODULE=fcitx
-# export XMODIFIERS=@im=fcitx
-# run_if_not_running fcitx5 -d
+export GTK_IM_MODULE=fcitx
+export QT_IM_MODULE=fcitx
+export XMODIFIERS=@im=fcitx
+run_if_not_running fcitx -d
 
 # --- 6. 身份认证代理 (Polkit) ---
 # 用于 GUI 程序请求 root 权限 (如 GParted, Synaptic)
@@ -68,13 +68,13 @@ fi
 
 # --- 8. 电源管理 (xfce4-power-manager) ---
 # 防止屏幕自动休眠或处理笔记本盖子关闭
-if command -v xfce4-power-manager > /dev/null; then
-    run_if_not_running xfce4-power-manager
-fi
+# if command -v xfce4-power-manager > /dev/null; then
+#     run_if_not_running xfce4-power-manager
+# fi
 
 # --- 9. 网络管理器托盘 ---
-if command -v nm-applet > /dev/null; then
-    run_if_not_running nm-applet
-fi
+# if command -v nm-applet > /dev/null; then
+#     run_if_not_running nm-applet
+# fi
 
 echo "[autostart.sh] Initialization finished."

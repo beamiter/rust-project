@@ -43,6 +43,7 @@
             pkgs.patchelf
             pkgs.fuse
             pkgs.fakeroot
+            pkgs.openssl
           ];
 
           # shellHook 内容不变
