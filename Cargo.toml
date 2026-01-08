@@ -7,7 +7,7 @@ members = [
     # "iced_bar",
     # "gtk_bar",
     # "relm_bar",
-    "dioxus_bar",
+    # "dioxus_bar",
     "jwm",
     "shared_structures",
     # "x11rb_bar",
