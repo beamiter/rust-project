@@ -3185,7 +3185,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[setcfact]");
+        info!("[setcfact]");
 
         let sel_client_key = self.get_selected_client_key();
         if sel_client_key.is_none() {
@@ -4965,6 +4965,50 @@ impl Jwm {
         Ok(())
     }
 
+    fn grabbuttons(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
+        let win = if let Some(c) = self.clients.get(client_key) {
+            c.win
+        } else {
+            return;
+        };
+        // 1. 先清除该窗口上所有的按钮抓取
+        let _ = backend.window_ops().ungrab_all_buttons(win);
+        // 2. 获取配置中的鼠标绑定
+        let buttons = CONFIG.get_buttons();
+        // 3. 定义需要处理的修饰键组合 (忽略 CapsLock 和 NumLock 的影响)
+        // 这样无论 CapsLock 是否开启，快捷键都能生效
+        let modifiers_combinations = [
+            Mods::NONE,
+            Mods::CAPS,
+            Mods::NUMLOCK,
+            Mods::CAPS | Mods::NUMLOCK,
+        ];
+        for btn_conf in buttons {
+            // 只处理针对客户端窗口的点击
+            if btn_conf.click_type == WMClickType::ClickClientWin {
+                // 过滤掉无关的修饰位，只保留 Shift, Ctrl, Alt, Super 等
+                let clean_conf_mask = btn_conf.mask
+                    & (Mods::SHIFT
+                        | Mods::CONTROL
+                        | Mods::ALT
+                        | Mods::SUPER
+                        | Mods::MOD2
+                        | Mods::MOD3
+                        | Mods::MOD5);
+                // 为每种锁键状态组合进行抓取
+                for &lock_state in &modifiers_combinations {
+                    let final_mask = clean_conf_mask | lock_state;
+                    let _ = backend.window_ops().grab_button(
+                        win,
+                        btn_conf.button.to_u8(),
+                        (EventMaskBits::BUTTON_PRESS | EventMaskBits::BUTTON_RELEASE).bits(),
+                        final_mask,
+                    );
+                }
+            }
+        }
+    }
+
     fn manage_regular_client(
         &mut self,
         backend: &mut dyn Backend,
@@ -4984,6 +5028,7 @@ impl Jwm {
         self.attachstack(client_key);
 
         self.register_client_events(backend, client_key)?;
+        self.grabbuttons(backend, client_key);
 
         let already_mapped = {
             let win = self.clients.get(client_key).unwrap().win;

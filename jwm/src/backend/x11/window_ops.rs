@@ -10,6 +10,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::*;
+use x11rb::x11_utils::Serialize;
 
 pub struct X11WindowOps<C: Connection> {
     conn: Arc<C>,
@@ -107,13 +108,20 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         };
 
         if supports_delete {
-            let _event = ClientMessageEvent::new(
+            let event = ClientMessageEvent::new(
                 32,
                 w,
                 self.atoms.WM_PROTOCOLS,
                 [self.atoms.WM_DELETE_WINDOW, 0, 0, 0, 0],
             );
-            // (TODO)
+            self.conn.send_event(
+                false,
+                w,
+                EventMask::NO_EVENT,
+                event.serialize(), // 序列化为字节流
+            )?;
+            // 刷新请求队列，确保消息立即发出
+            self.conn.flush()?;
             return Ok(CloseResult::Graceful);
         }
 

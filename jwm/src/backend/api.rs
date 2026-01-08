@@ -345,7 +345,6 @@ pub trait WindowOps: Send {
         changes: WindowChanges,
     ) -> Result<(), Box<dyn std::error::Error>>;
 
-    // X11 Grab 兼容，Wayland 空实现
     fn ungrab_all_buttons(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
