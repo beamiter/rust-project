@@ -1,11 +1,11 @@
 use once_cell::sync::Lazy;
 use regex::Regex;
 use ssh2::Session;
-use std::io::Read;
+use std::io::{Read, Write};
 use std::net::TcpStream;
+use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
-use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 // --- Custom Error Type ---
 #[allow(dead_code)]
@@ -13,10 +13,10 @@ use std::time::{Duration, Instant};
 pub enum SshError {
     ConnectionFailed(String),
     AuthenticationFailed,
-    CommandExecutionFailed(String), // General command failure
+    CommandExecutionFailed(String),
     IoError(std::io::Error),
     Ssh2Error(ssh2::Error),
-    ChannelSendError(String), // For mpsc send errors
+    ChannelSendError(String),
 }
 
 impl std::fmt::Display for SshError {
@@ -62,14 +62,6 @@ pub enum LoopMode {
 }
 
 impl LoopMode {
-    #[allow(dead_code)]
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            LoopMode::OpenLoop => "--open-loop",
-            LoopMode::CloseLoop => "",
-        }
-    }
-
     pub fn display_name(&self) -> &'static str {
         match self {
             LoopMode::OpenLoop => "Open Loop",
@@ -91,23 +83,24 @@ impl Default for LoopMode {
     }
 }
 
-// --- SSH Connection Struct (for main thread cache) ---
-struct SSHConnection {
-    session: Session,
-    last_used: Instant,
+// --- Interaction Messages ---
+#[derive(Debug)]
+pub enum ShellMsg {
+    Output(String),
+    Error(String),
+    Finished(i32),
 }
 
-/// We derive Deserialize/Serialize so we can persist app state on shutdown.
+/// SSHCommander App State
 #[derive(serde::Deserialize, serde::Serialize)]
-#[serde(default)] // if we add new fields, give them default values when deserializing old state
+#[serde(default)]
 pub struct SSHCommander {
     // Connection
     host: String,
     username: String,
-    // #[serde(skip)]
     password: String,
     show_password: bool,
-    remember_server: bool, // whether to persist host/username
+    remember_server: bool,
 
     // Command params
     ddp_time: String,
@@ -115,13 +108,13 @@ pub struct SSHCommander {
     bag: String,
     loop_mode: LoopMode,
 
-    // Parametrized command parts (replaces hard-coded prefix)
-    container_name: String, // e.g., "my-container"
-    sim_cmd: String,        // e.g., "./sim fpp play -v"
+    // Parametrized command parts
+    container_name: String,
+    sim_cmd: String,
 
-    // UI and runtime state
+    // UI State
     #[serde(skip)]
-    output: String,
+    output: String, // Log buffer
     #[serde(skip)]
     show_file_dialog: bool,
     current_directory: String,
@@ -133,29 +126,30 @@ pub struct SSHCommander {
     directory_list_error: Option<String>,
 
     #[serde(skip)]
-    ssh_connection: Option<Arc<Mutex<SSHConnection>>>, // Cached connection for main thread (e.g., keep-alive)
-    #[serde(skip)]
     output_command: String,
     #[serde(skip)]
     need_execute_flag: bool,
     #[serde(skip)]
-    force_connect: bool, // For the cached connection
+    force_connect: bool,
 
-    // Receivers for async operations
+    // Async Receivers
     #[serde(skip)]
     dir_list_receiver: Option<Receiver<Result<Vec<String>, SshError>>>,
+
+    // Interactive Execution State
     #[serde(skip)]
-    cmd_exec_receiver: Option<Receiver<Result<String, SshError>>>,
+    shell_rx: Option<Receiver<ShellMsg>>,
+    #[serde(skip)]
+    stdin_tx: Option<Sender<String>>,
     #[serde(skip)]
     is_executing_command: bool,
     #[serde(skip)]
-    command_execution_error: Option<String>,
+    user_input_buffer: String,
 }
 
 impl Default for SSHCommander {
     fn default() -> Self {
         Self {
-            // Safe, generic defaults
             host: "127.0.0.1:22".into(),
             username: "user".into(),
             password: String::new(),
@@ -177,78 +171,46 @@ impl Default for SSHCommander {
             directory_contents: Vec::new(),
             is_loading_directory: false,
             directory_list_error: None,
-            ssh_connection: None,
             need_execute_flag: false,
             force_connect: false,
             dir_list_receiver: None,
-            cmd_exec_receiver: None,
+
+            shell_rx: None,
+            stdin_tx: None,
             is_executing_command: false,
-            command_execution_error: None,
+            user_input_buffer: String::new(),
         }
     }
 }
 
-// --- Helpers: Shell Escape and Redaction ---
+// --- Helpers ---
 fn shell_escape(s: &str) -> String {
-    // Simple POSIX-like single-quote escaping
     if s.is_empty() {
         "''".to_string()
-    } else if !s.contains('\'')
-        && !s.contains(' ')
-        && !s.contains('\t')
-        && !s.contains('"')
-        && !s.contains('\\')
-        && !s.contains('$')
-        && !s.contains('`')
-        && !s.contains('!')
-        && !s.contains('&')
-        && !s.contains('|')
-        && !s.contains(';')
-        && !s.contains('(')
-        && !s.contains(')')
-        && !s.contains('<')
-        && !s.contains('>')
-        && !s.contains('*')
-        && !s.contains('?')
-        && !s.contains('[')
-    {
+    } else if !s.contains(
+        &[
+            '\'', ' ', '\t', '"', '\\', '$', '`', '!', '&', '|', ';', '(', ')', '<', '>', '*', '?',
+            '[',
+        ][..],
+    ) {
         s.to_string()
     } else {
         format!("'{}'", s.replace('\'', "'\"'\"'"))
     }
 }
 
-fn redact_path(p: &str) -> String {
-    // Keep last two components only
-    let parts: Vec<&str> = p.split('/').filter(|s| !s.is_empty()).collect();
-    if parts.len() <= 12 {
-        p.to_string()
-    } else {
-        format!(".../{}/{}", parts[parts.len() - 2], parts[parts.len() - 1])
-    }
-}
-
-fn redact_command(cmd: &str) -> String {
-    let mut tokens: Vec<String> = cmd.split_whitespace().map(|s| s.to_string()).collect();
-    if let Some(last) = tokens.last_mut() {
-        if last.contains('/') || last.ends_with(".bag") {
-            *last = redact_path(last);
-        }
-    }
-    tokens.join(" ")
-}
-
-// --- Helper: Establish SSH Session (for worker threads) ---
 fn establish_ssh_session(host: &str, username: &str, password: &str) -> Result<Session, SshError> {
     let tcp = TcpStream::connect(host).map_err(|e| SshError::ConnectionFailed(e.to_string()))?;
-    tcp.set_read_timeout(Some(Duration::from_secs(30))).ok();
-    tcp.set_write_timeout(Some(Duration::from_secs(30))).ok();
+    // For interactive sessions, setting a timeout can be tricky.
+    // We rely on non-blocking reads in the worker loop.
+    tcp.set_read_timeout(Some(Duration::from_secs(60))).ok();
+    tcp.set_write_timeout(Some(Duration::from_secs(60))).ok();
 
-    let mut sess = Session::new().or_else(|_| {
-        Err(SshError::Ssh2Error(ssh2::Error::new(
-            ssh2::ErrorCode::Session(-1), // Generic session error code
-            "Session::new() failed",
-        )))
+    let mut sess = Session::new().map_err(|_| {
+        SshError::Ssh2Error(ssh2::Error::new(
+            ssh2::ErrorCode::Session(-1),
+            "Session::new failed",
+        ))
     })?;
     sess.set_tcp_stream(tcp);
     sess.handshake()?;
@@ -257,6 +219,34 @@ fn establish_ssh_session(host: &str, username: &str, password: &str) -> Result<S
         return Err(SshError::AuthenticationFailed);
     }
     Ok(sess)
+}
+
+// --- Regex for Links ---
+static URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"https?://[^\s]+").unwrap());
+
+/// Helper to render log lines with clickable links
+fn render_log_line(ui: &mut egui::Ui, line: &str) {
+    if let Some(mat) = URL_RE.find(line) {
+        let url_start = mat.start();
+        let url_end = mat.end();
+        let url_str = mat.as_str();
+
+        ui.horizontal_wrapped(|ui| {
+            ui.spacing_mut().item_spacing.x = 0.0;
+            // Text before URL
+            if url_start > 0 {
+                ui.label(&line[..url_start]);
+            }
+            // The URL itself
+            ui.hyperlink(url_str);
+            // Text after URL
+            if url_end < line.len() {
+                ui.label(&line[url_end..]);
+            }
+        });
+    } else {
+        ui.label(line);
+    }
 }
 
 // --- Worker: List Remote Directory ---
@@ -271,6 +261,7 @@ fn list_remote_directory_worker(
     let result = || -> Result<Vec<String>, SshError> {
         let session = establish_ssh_session(&host, &username, &password)?;
         let mut channel = session.channel_session()?;
+        // ls does not need PTY
         let command = format!(
             "docker exec {} ls -1 --indicator-style=slash {}",
             shell_escape(&container_name),
@@ -281,51 +272,95 @@ fn list_remote_directory_worker(
         channel.read_to_string(&mut output_str)?;
 
         channel.send_eof()?;
-        channel.wait_close()?; // Wait for command to finish
+        channel.wait_close()?;
 
         let mut entries: Vec<String> = output_str
             .lines()
             .map(|s| s.trim().to_string())
             .filter(|name| !name.is_empty() && name != "." && name != "..")
             .collect();
-
-        // Optional: directories and .bag files only
         entries.retain(|e| e.ends_with('/') || e.ends_with(".bag"));
-
+        // Sort: directories first
+        entries.sort_by(|a, b| {
+            let a_is_dir = a.ends_with('/');
+            let b_is_dir = b.ends_with('/');
+            match (a_is_dir, b_is_dir) {
+                (true, false) => std::cmp::Ordering::Less,
+                (false, true) => std::cmp::Ordering::Greater,
+                _ => a.cmp(b),
+            }
+        });
         Ok(entries)
     }();
     let _ = sender.send(result);
 }
 
-// --- Worker: Execute Command ---
-fn execute_command_worker(
+// --- Worker: Interactive Command Execution ---
+fn interactive_command_worker(
     host: String,
     username: String,
     password: String,
     command_to_execute: String,
-    sender: Sender<Result<String, SshError>>,
+    shell_tx: Sender<ShellMsg>,
+    stdin_rx: Receiver<String>,
 ) {
-    let result = || -> Result<String, SshError> {
+    let run = || -> Result<(), SshError> {
         let session = establish_ssh_session(&host, &username, &password)?;
         let mut channel = session.channel_session()?;
+
+        // 1. Request PTY for interactivity (crucial for docker -it and password prompts)
+        channel.request_pty("xterm", None, None)?;
+
+        // 2. Execute command
         channel.exec(&command_to_execute)?;
-        let mut out = String::new();
-        let mut err = String::new();
 
-        // Read stdout and stderr (stderr best-effort)
-        channel.read_to_string(&mut out)?;
-        channel.stderr().read_to_string(&mut err).ok();
+        // 3. Set non-blocking to handle read/write loop
+        session.set_blocking(false);
 
-        channel.send_eof()?;
-        channel.wait_close()?;
+        let mut buf = [0u8; 2048];
+        loop {
+            // A. Read from remote
+            match channel.read(&mut buf) {
+                Ok(n) if n > 0 => {
+                    let s = String::from_utf8_lossy(&buf[..n]).to_string();
+                    if shell_tx.send(ShellMsg::Output(s)).is_err() {
+                        break; // Receiver dropped
+                    }
+                }
+                Ok(_) => { /* EOF or empty read */ }
+                Err(e) => {
+                    if e.kind() != std::io::ErrorKind::WouldBlock {
+                        return Err(e.into());
+                    }
+                }
+            }
 
-        if !err.is_empty() {
-            Ok(format!("STDOUT:\n{}\n\nSTDERR:\n{}", out, err))
-        } else {
-            Ok(out)
+            // B. Check if process finished
+            if channel.eof() {
+                break;
+            }
+
+            // C. Write user input to remote
+            while let Ok(input_str) = stdin_rx.try_recv() {
+                channel.write_all(input_str.as_bytes())?;
+                channel.flush()?;
+            }
+
+            // Sleep to prevent 100% CPU usage
+            std::thread::sleep(Duration::from_millis(10));
         }
-    }();
-    let _ = sender.send(result);
+
+        session.set_blocking(true);
+        channel.wait_close()?;
+        let exit_status = channel.exit_status()?;
+
+        let _ = shell_tx.send(ShellMsg::Finished(exit_status));
+        Ok(())
+    };
+
+    if let Err(e) = run() {
+        let _ = shell_tx.send(ShellMsg::Error(e.to_string()));
+    }
 }
 
 impl SSHCommander {
@@ -340,8 +375,9 @@ impl SSHCommander {
         let mut parts = vec![
             "docker".to_string(),
             "exec".to_string(),
+            "-it".to_string(), // Interactive PTY
             shell_escape(&self.container_name),
-            self.sim_cmd.clone(), // e.g., "./sim fpp play -v"
+            self.sim_cmd.clone(),
             "--ddp-time".to_string(),
             shell_escape(&self.ddp_time),
             "--product".to_string(),
@@ -356,14 +392,13 @@ impl SSHCommander {
         parts.join(" ")
     }
 
-    // Renamed to avoid conflict with async trigger
     fn trigger_load_directory_contents(&mut self) {
         if self.is_loading_directory {
-            return; // Already loading
+            return;
         }
         self.is_loading_directory = true;
-        self.directory_list_error = None; // Clear previous error
-        self.directory_contents.clear(); // Clear previous content
+        self.directory_list_error = None;
+        self.directory_contents.clear();
 
         let (sender, receiver) = std::sync::mpsc::channel();
         self.dir_list_receiver = Some(receiver);
@@ -379,108 +414,97 @@ impl SSHCommander {
         });
     }
 
-    fn close_ssh_channel(channel: &mut ssh2::Channel) -> Result<(), SshError> {
-        channel.send_eof()?;
-        let mut buffer = Vec::new();
-        let _ = channel.read_to_end(&mut buffer); // consume any remaining output
-        channel.close()?;
-        // do not propagate wait_close error as fatal for keep-alive
-        if let Err(e) = channel.wait_close() {
-            eprintln!("Keep-alive channel wait_close warning: {}", e);
-        }
-        Ok(())
-    }
-
-    // Manages the cached SSH connection for the main thread (e.g., keep-alive)
-    fn ensure_ssh_connection_cached(&mut self) -> Result<Arc<Mutex<SSHConnection>>, SshError> {
-        if !self.force_connect {
-            if let Some(conn_arc) = &self.ssh_connection {
-                let mut conn_guard = conn_arc.lock().unwrap(); // Handle poisoning better in prod
-                if conn_guard.last_used.elapsed() <= Duration::from_secs(300) {
-                    conn_guard.last_used = Instant::now();
-                    return Ok(conn_arc.clone());
-                } else {
-                    // Refresh connection (keep-alive)
-                    println!("SSH cached connection: sending keep-alive.");
-                    match conn_guard.session.channel_session() {
-                        Ok(mut channel) => {
-                            if channel.exec("echo").is_ok() {
-                                if Self::close_ssh_channel(&mut channel).is_err() {
-                                    eprintln!("Failed to gracefully close keep-alive channel. Forcing reconnect.");
-                                    self.force_connect = true;
-                                } else {
-                                    conn_guard.last_used = Instant::now();
-                                    return Ok(conn_arc.clone());
-                                }
-                            } else {
-                                eprintln!("Keep-alive exec failed. Forcing reconnect.");
-                                self.force_connect = true;
-                            }
-                        }
-                        Err(_) => {
-                            eprintln!("Keep-alive channel session failed. Forcing reconnect.");
-                            self.force_connect = true;
-                        }
-                    }
-                }
-            }
-        }
-
-        // Establish new cached connection
-        println!("Establishing new cached SSH connection to {}", self.host);
-        let tcp = TcpStream::connect(&self.host)
-            .map_err(|e| SshError::ConnectionFailed(e.to_string()))?;
-        tcp.set_read_timeout(Some(Duration::from_secs(30))).ok();
-        tcp.set_write_timeout(Some(Duration::from_secs(30))).ok();
-
-        let mut sess = Session::new().or_else(|_| {
-            Err(SshError::Ssh2Error(ssh2::Error::new(
-                ssh2::ErrorCode::Session(-1),
-                "Session::new() failed for cached connection",
-            )))
-        })?;
-        sess.set_tcp_stream(tcp);
-        sess.handshake()?;
-        sess.userauth_password(&self.username, &self.password)?;
-        if !sess.authenticated() {
-            return Err(SshError::AuthenticationFailed);
-        }
-        println!("Cached SSH connection established.");
-        let connection = Arc::new(Mutex::new(SSHConnection {
-            session: sess,
-            last_used: Instant::now(),
-        }));
-        self.ssh_connection = Some(connection.clone());
-        self.force_connect = false;
-        Ok(connection)
-    }
-
     fn trigger_execute_command(&mut self) {
         if self.is_executing_command {
-            return; // Already executing
+            return;
         }
         self.is_executing_command = true;
-        self.command_execution_error = None;
-        self.output = "Executing...".to_string(); // Provide immediate feedback
+        self.output.clear();
+        self.output
+            .push_str("Initializing interactive session...\n");
 
-        let (sender, receiver) = std::sync::mpsc::channel();
-        self.cmd_exec_receiver = Some(receiver);
+        let (shell_tx, shell_rx) = std::sync::mpsc::channel();
+        let (stdin_tx, stdin_rx) = std::sync::mpsc::channel();
 
-        // Build command with parameterized parts and escaping
+        self.shell_rx = Some(shell_rx);
+        self.stdin_tx = Some(stdin_tx);
+
         self.output_command = self.build_command();
-        println!(
-            "Executing command (redacted): {}",
-            redact_command(&self.output_command)
-        );
-
         let host = self.host.clone();
         let username = self.username.clone();
         let password = self.password.clone();
         let command_to_run = self.output_command.clone();
 
         std::thread::spawn(move || {
-            execute_command_worker(host, username, password, command_to_run, sender);
+            interactive_command_worker(
+                host,
+                username,
+                password,
+                command_to_run,
+                shell_tx,
+                stdin_rx,
+            );
         });
+    }
+
+    fn send_user_input(&mut self) {
+        if self.user_input_buffer.is_empty() {
+            return;
+        }
+
+        if let Some(tx) = &self.stdin_tx {
+            let mut input = self.user_input_buffer.clone();
+            // Append newline as if Enter was pressed
+            if !input.ends_with('\n') {
+                input.push('\n');
+            }
+            if let Err(e) = tx.send(input) {
+                self.output
+                    .push_str(&format!("\n[Error sending input: {}]\n", e));
+            }
+        }
+        self.user_input_buffer.clear();
+    }
+
+    fn handle_async_shell_msg(&mut self, ctx: &egui::Context) {
+        if let Some(rx) = &self.shell_rx {
+            loop {
+                match rx.try_recv() {
+                    Ok(ShellMsg::Output(data)) => {
+                        self.output.push_str(&data);
+                    }
+                    Ok(ShellMsg::Error(e)) => {
+                        self.output
+                            .push_str(&format!("\n[Execution Error: {}]\n", e));
+                        self.is_executing_command = false;
+                        self.shell_rx = None;
+                        self.stdin_tx = None;
+                        break;
+                    }
+                    Ok(ShellMsg::Finished(code)) => {
+                        self.output
+                            .push_str(&format!("\n[Process exited with code: {}]\n", code));
+                        self.is_executing_command = false;
+                        self.shell_rx = None;
+                        self.stdin_tx = None;
+                        break;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Empty) => {
+                        break;
+                    }
+                    Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                        self.output.push_str("\n[Disconnected]\n");
+                        self.is_executing_command = false;
+                        self.shell_rx = None;
+                        self.stdin_tx = None;
+                        break;
+                    }
+                }
+            }
+            if self.is_executing_command {
+                ctx.request_repaint();
+            }
+        }
     }
 
     fn handle_async_directory_list(&mut self, ctx: &egui::Context) {
@@ -492,81 +516,31 @@ impl SSHCommander {
                     self.dir_list_receiver = None;
                 }
                 Ok(Err(e)) => {
-                    let err_msg = format!("Error listing directory: {}", e);
-                    eprintln!("{}", err_msg);
-                    self.directory_contents = vec![err_msg.clone()];
-                    self.directory_list_error = Some(err_msg);
+                    self.directory_list_error = Some(e.to_string());
                     self.is_loading_directory = false;
                     self.dir_list_receiver = None;
                 }
                 Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    ctx.request_repaint(); // Keep checking
+                    ctx.request_repaint();
                 }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    let err_msg = "Error: Directory listing thread disconnected.".to_string();
-                    eprintln!("{}", err_msg);
-                    self.directory_contents = vec![err_msg.clone()];
-                    self.directory_list_error = Some(err_msg);
+                Err(_) => {
                     self.is_loading_directory = false;
                     self.dir_list_receiver = None;
                 }
             }
         }
     }
-
-    fn handle_async_command_execution(&mut self, ctx: &egui::Context) {
-        if let Some(receiver) = &self.cmd_exec_receiver {
-            match receiver.try_recv() {
-                Ok(Ok(cmd_output)) => {
-                    self.output = cmd_output;
-                    self.is_executing_command = false;
-                    self.cmd_exec_receiver = None;
-                }
-                Ok(Err(e)) => {
-                    let err_msg = format!("Error executing command: {}", e);
-                    eprintln!("{}", err_msg);
-                    self.output = err_msg.clone();
-                    self.command_execution_error = Some(err_msg);
-                    self.is_executing_command = false;
-                    self.cmd_exec_receiver = None;
-                }
-                Err(std::sync::mpsc::TryRecvError::Empty) => {
-                    ctx.request_repaint(); // Keep checking
-                }
-                Err(std::sync::mpsc::TryRecvError::Disconnected) => {
-                    let err_msg = "Error: Command execution thread disconnected.".to_string();
-                    eprintln!("{}", err_msg);
-                    self.output = err_msg.clone();
-                    self.command_execution_error = Some(err_msg);
-                    self.is_executing_command = false;
-                    self.cmd_exec_receiver = None;
-                }
-            }
-        }
-    }
-}
-
-// URL regex compiled once
-static URL_RE: Lazy<Regex> = Lazy::new(|| Regex::new(r"https?://[^\s]+").unwrap());
-
-pub fn parse_hyperlink(line: &str) -> Option<String> {
-    URL_RE.find(line).map(|m| m.as_str().to_string())
 }
 
 impl eframe::App for SSHCommander {
     fn save(&mut self, storage: &mut dyn eframe::Storage) {
-        // Only persist host/username if remember_server is true
         let host_bak = self.host.clone();
         let username_bak = self.username.clone();
-
         if !self.remember_server {
             self.host.clear();
             self.username.clear();
         }
-
         eframe::set_value(storage, eframe::APP_KEY, self);
-
-        // Restore in-memory values so UI is not affected during runtime
         if !self.remember_server {
             self.host = host_bak;
             self.username = username_bak;
@@ -574,17 +548,8 @@ impl eframe::App for SSHCommander {
     }
 
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        // Handle async results
         self.handle_async_directory_list(ctx);
-        self.handle_async_command_execution(ctx);
-
-        // Try to ensure main thread cached connection is alive if it exists
-        if self.ssh_connection.is_some() || self.force_connect {
-            if let Err(e) = self.ensure_ssh_connection_cached() {
-                eprintln!("Cached SSH connection error: {}", e);
-                self.ssh_connection = None; // Clear bad connection
-            }
-        }
+        self.handle_async_shell_msg(ctx);
 
         if self.need_execute_flag && !self.is_executing_command {
             self.need_execute_flag = false;
@@ -595,52 +560,54 @@ impl eframe::App for SSHCommander {
             ui.heading("SSH Commander");
             ui.separator();
 
-            egui::CollapsingHeader::new("connection setting")
+            // --- Connection & Parameters (Collapsible) ---
+            egui::CollapsingHeader::new("Connection & Parameters")
                 .default_open(true)
                 .show(ui, |ui| {
+                    // Row 1: Connection Info
                     ui.horizontal(|ui| {
                         ui.label("Host:");
-                        ui.add(egui::TextEdit::singleline(&mut self.host).desired_width(200.));
-                        ui.label("Username:");
-                        ui.add(egui::TextEdit::singleline(&mut self.username).desired_width(120.));
-                        ui.label("Password:");
-                        let pw = egui::TextEdit::singleline(&mut self.password)
-                            .password(!self.show_password)
-                            .desired_width(120.);
-                        ui.add(pw);
-                        if ui
-                            .button(if self.show_password { "Hide" } else { "Show" })
-                            .clicked()
-                        {
-                            self.show_password = !self.show_password;
-                        }
-                    });
-                    ui.horizontal(|ui| {
-                        ui.checkbox(
-                            &mut self.remember_server,
-                            "save server info(save Host/Username, password)",
+                        ui.add(egui::TextEdit::singleline(&mut self.host).desired_width(150.0));
+                        ui.label("User:");
+                        ui.add(egui::TextEdit::singleline(&mut self.username).desired_width(100.0));
+                        ui.label("Pwd:");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.password)
+                                .password(!self.show_password)
+                                .desired_width(100.0),
                         );
+                        ui.checkbox(&mut self.show_password, "👁");
                     });
-                });
 
-            egui::CollapsingHeader::new("command parameter")
-                .default_open(true)
-                .show(ui, |ui| {
+                    ui.separator();
+
+                    // Row 2: Container (Flexible Width)
                     ui.horizontal(|ui| {
                         ui.label("Container:");
                         ui.add(
                             egui::TextEdit::singleline(&mut self.container_name)
-                                .desired_width(200.),
+                                .desired_width(ui.available_width()),
                         );
-                        ui.label("Sim Cmd:");
-                        ui.add(egui::TextEdit::singleline(&mut self.sim_cmd).desired_width(300.));
                     });
+
+                    // Row 3: Sim Cmd (Flexible Width)
                     ui.horizontal(|ui| {
-                        ui.label("ddp_time:");
-                        ui.add(egui::TextEdit::singleline(&mut self.ddp_time).desired_width(80.));
-                        ui.label("product:");
+                        ui.label("Sim Cmd:   ");
+                        ui.add(
+                            egui::TextEdit::singleline(&mut self.sim_cmd)
+                                .desired_width(ui.available_width()),
+                        );
+                    });
+
+                    // Row 4: Short Params
+                    ui.horizontal(|ui| {
+                        ui.label("DDP:");
+                        ui.add(egui::TextEdit::singleline(&mut self.ddp_time).desired_width(60.));
+                        ui.label("Product:");
                         ui.add(egui::TextEdit::singleline(&mut self.product).desired_width(100.));
-                        ui.label("Loop Mode:");
+
+                        ui.separator();
+                        ui.label("Loop:");
                         egui::ComboBox::from_label("")
                             .selected_text(self.loop_mode.display_name())
                             .show_ui(ui, |ui| {
@@ -656,175 +623,170 @@ impl eframe::App for SSHCommander {
                                 );
                             });
                     });
-                });
 
-            egui::CollapsingHeader::new("choose file")
-                .default_open(true)
-                .show(ui, |ui| {
+                    // Row 5: Bag Path (Browse + Flexible Input)
                     ui.horizontal(|ui| {
-                        ui.label("bag:");
-                        let remaining_width =
-                            ui.available_width() - ui.spacing().interact_size.x * 1.5; // Approx button width
-                        if ui.button("Browse...").clicked() {
+                        ui.label("Bag Path: ");
+                        if ui.button("📂 Browse").clicked() {
                             self.show_file_dialog = true;
+                            // Ensure valid start dir
+                            if self.current_directory.trim().is_empty() {
+                                self.current_directory = "/".to_string();
+                            }
                             self.trigger_load_directory_contents();
                         }
                         ui.add(
                             egui::TextEdit::singleline(&mut self.bag)
-                                .desired_width(remaining_width.max(120.0)),
+                                .desired_width(ui.available_width()),
                         );
                     });
+                });
 
-                    if self.show_file_dialog {
-                        let mut open = self.show_file_dialog; // For window's open state
-                        egui::Window::new("Select Bag File")
-                            .open(&mut open)
-                            .fixed_size([450.0, 350.0])
-                            .show(ctx, |ui| {
-                                ui.horizontal(|ui| {
-                                    ui.label("Current directory: ");
-                                    let path_edit_width =
-                                        ui.available_width() - ui.spacing().interact_size.x * 1.2;
-                                    ui.add(
-                                        egui::TextEdit::singleline(&mut self.current_directory)
-                                            .desired_width(path_edit_width.max(100.0)),
-                                    );
-                                    if ui.button("Go").clicked() {
+            // --- File Dialog Window ---
+            if self.show_file_dialog {
+                let mut open = true;
+                egui::Window::new("Select Bag File")
+                    .open(&mut open)
+                    .default_size([600.0, 450.0])
+                    .show(ctx, |ui| {
+                        ui.horizontal(|ui| {
+                            ui.label("Dir:");
+                            let resp = ui.add(
+                                egui::TextEdit::singleline(&mut self.current_directory)
+                                    .desired_width(ui.available_width() - 50.0),
+                            );
+                            if resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)) {
+                                self.trigger_load_directory_contents();
+                            }
+                            if ui.button("Go").clicked() {
+                                self.trigger_load_directory_contents();
+                            }
+                        });
+
+                        ui.separator();
+                        if self.is_loading_directory {
+                            ui.horizontal(|ui| {
+                                ui.spinner();
+                                ui.label("Loading...");
+                            });
+                        }
+                        if let Some(err) = &self.directory_list_error {
+                            ui.colored_label(egui::Color32::RED, err);
+                        }
+
+                        egui::ScrollArea::vertical()
+                            .max_height(350.0)
+                            .show(ui, |ui| {
+                                // Up Directory Logic
+                                if ui.button("⬆️ Up .. (Parent Directory)").clicked() {
+                                    let p = Path::new(&self.current_directory);
+                                    if let Some(parent) = p.parent() {
+                                        let mut s = parent.to_string_lossy().to_string();
+                                        if s.is_empty() {
+                                            s = "/".to_string();
+                                        }
+                                        if !s.ends_with('/') {
+                                            s.push('/');
+                                        }
+                                        self.current_directory = s;
                                         self.trigger_load_directory_contents();
                                     }
-                                });
-                                ui.separator();
-
-                                if self.is_loading_directory {
-                                    ui.horizontal(|ui| {
-                                        ui.spinner();
-                                        ui.label("Loading directory contents...");
-                                    });
-                                } else if let Some(err_msg) = &self.directory_list_error {
-                                    ui.colored_label(egui::Color32::RED, err_msg);
                                 }
-
-                                egui::ScrollArea::vertical().show(ui, |ui| {
-                                    if ui.selectable_label(false, ".. (Up a directory)").clicked() {
-                                        if let Some(parent_end) = self.current_directory.rfind('/')
-                                        {
-                                            if parent_end > 0 {
-                                                self.current_directory = self.current_directory
-                                                    [..parent_end]
-                                                    .to_string();
-                                            } else if &self.current_directory != "/" {
-                                                self.current_directory = "/".to_string();
-                                            }
-                                            self.trigger_load_directory_contents();
-                                        } else if !self.current_directory.is_empty()
-                                            && self.current_directory != "/"
-                                        {
-                                            self.trigger_load_directory_contents();
-                                        }
-                                    }
-                                    // Display directory contents
-                                    for item_name in self.directory_contents.clone() {
-                                        let is_dir = item_name.ends_with('/');
-                                        let label = if is_dir {
-                                            format!("📁 {}", item_name)
-                                        } else {
-                                            format!("📄 {}", item_name)
-                                        };
-                                        if ui.selectable_label(false, label).clicked() {
-                                            if is_dir {
-                                                let mut new_path = self.current_directory.clone();
-                                                if !new_path.ends_with('/') {
-                                                    new_path.push('/');
-                                                }
-                                                new_path.push_str(item_name.trim_end_matches('/'));
-                                                self.current_directory = new_path;
-                                                self.trigger_load_directory_contents();
-                                            } else {
-                                                let mut new_bag_path =
-                                                    self.current_directory.clone();
-                                                if !new_bag_path.ends_with('/') {
-                                                    new_bag_path.push('/');
-                                                }
-                                                new_bag_path.push_str(item_name.as_str());
-                                                self.bag = new_bag_path;
-                                                self.show_file_dialog = false; // Close dialog on selection
-                                            }
-                                        }
-                                    }
-                                });
                                 ui.separator();
-                                ui.horizontal(|ui| {
-                                    if ui.button("Cancel").clicked() {
-                                        self.show_file_dialog = false;
+
+                                // Clone to avoid E0502 borrow error
+                                let contents = self.directory_contents.clone();
+                                for item in &contents {
+                                    let is_dir = item.ends_with('/');
+                                    let icon = if is_dir { "📁" } else { "📄" };
+                                    let label = format!("{} {}", icon, item);
+
+                                    if ui.selectable_label(false, label).clicked() {
+                                        if is_dir {
+                                            // Handle Path Join safely
+                                            let p = Path::new(&self.current_directory).join(item);
+                                            self.current_directory =
+                                                p.to_string_lossy().to_string();
+                                            if !self.current_directory.ends_with('/') {
+                                                self.current_directory.push('/');
+                                            }
+                                            self.trigger_load_directory_contents();
+                                        } else {
+                                            // Select file
+                                            let p = Path::new(&self.current_directory).join(item);
+                                            self.bag = p.to_string_lossy().to_string();
+                                            self.show_file_dialog = false;
+                                        }
                                     }
-                                });
+                                }
                             });
-                        if !open {
-                            // If window was closed by user (e.g. 'x' button)
+
+                        ui.separator();
+                        if ui.button("Cancel").clicked() {
                             self.show_file_dialog = false;
                         }
+                    });
+                if !open {
+                    self.show_file_dialog = false;
+                }
+            }
+
+            ui.separator();
+
+            // --- Control Bar ---
+            ui.horizontal(|ui| {
+                if self.is_executing_command {
+                    if ui.button("⏹ Stop").clicked() {
+                        self.shell_rx = None;
+                        self.stdin_tx = None;
+                        self.is_executing_command = false;
+                        self.output.push_str("\n[Terminated by user]\n");
                     }
-                });
-
-            ui.separator();
-            if ui.button("Execute").clicked() && !self.is_executing_command {
-                self.need_execute_flag = true;
-            }
-            if self.is_executing_command {
-                ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.label("Executing command...");
-                });
-            }
-
-            // Show redacted command
-            if !self.output_command.is_empty() {
-                let to_show = redact_command(&self.output_command);
-                ui.label(format!("Command (redacted): {}", to_show));
-            }
-
-            if let Some(err_msg) = &self.command_execution_error {
-                ui.colored_label(egui::Color32::RED, err_msg);
-            }
-
-            ui.separator();
-            ui.heading("Output:");
-            egui::ScrollArea::vertical().show(ui, |ui| {
-                for line in self.output.lines() {
-                    if let Some(link) = parse_hyperlink(line) {
-                        ui.hyperlink_to(line, link);
-                    } else {
-                        ui.label(line);
+                    ui.label("Running...");
+                } else {
+                    if ui.button("▶ Execute").clicked() {
+                        self.need_execute_flag = true;
+                    }
+                    if ui.button("🗑 Clear Log").clicked() {
+                        self.output.clear();
                     }
                 }
             });
 
-            ui.with_layout(egui::Layout::bottom_up(egui::Align::LEFT), |ui| {
-                powered_by_egui_and_eframe(ui);
-                egui::warn_if_debug_build(ui);
-            });
+            // --- Output Log Area (Rich Text / Hyperlinks) ---
+            ui.separator();
+            egui::ScrollArea::vertical()
+                .id_salt("log_output")
+                .stick_to_bottom(true)
+                // Reserve space for bottom input field (approx 40px)
+                .max_height(ui.available_height() - 40.0)
+                .show(ui, |ui| {
+                    for line in self.output.lines() {
+                        render_log_line(ui, line);
+                    }
+                });
+
+            // --- Interactive Input Area ---
+            if self.is_executing_command {
+                ui.separator();
+                ui.horizontal(|ui| {
+                    ui.label("Input >");
+                    let resp = ui.add(
+                        egui::TextEdit::singleline(&mut self.user_input_buffer)
+                            .desired_width(ui.available_width() - 60.0)
+                            .hint_text("Type password or command..."),
+                    );
+
+                    // Send on Enter or Button Click
+                    if (resp.lost_focus() && ui.input(|i| i.key_pressed(egui::Key::Enter)))
+                        || ui.button("Send").clicked()
+                    {
+                        self.send_user_input();
+                        resp.request_focus();
+                    }
+                });
+            }
         });
-
-        // Request repaint if there are active async operations
-        if self.dir_list_receiver.is_some()
-            || self.cmd_exec_receiver.is_some()
-            || self.need_execute_flag
-        {
-            ctx.request_repaint();
-        }
     }
-}
-
-fn powered_by_egui_and_eframe(ui: &mut egui::Ui) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        ui.label("Powered by ");
-        ui.hyperlink_to("egui", "https://github.com/emilk/egui");
-        ui.label(" and ");
-        ui.hyperlink_to(
-            "eframe",
-            "https://github.com/emilk/egui/tree/master/crates/eframe",
-        );
-        ui.label(".");
-    });
 }
