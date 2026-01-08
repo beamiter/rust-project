@@ -1,7 +1,9 @@
 // src/backend/x11/event_source.rs
+use std::os::unix::io::{AsRawFd, BorrowedFd};
 use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::protocol::{Event as XEvent, xproto};
+use x11rb::rust_connection::RustConnection;
 
 use crate::backend::api::NotifyMode;
 use crate::backend::api::{
@@ -10,13 +12,15 @@ use crate::backend::api::{
 use crate::backend::common_define::WindowId;
 use crate::backend::x11::Atoms;
 
-pub struct X11EventSource<C: Connection> {
-    conn: Arc<C>,
+use calloop::{EventSource, Interest, Mode, Poll, PostAction, Readiness, Token, TokenFactory};
+
+pub struct X11EventSource {
+    conn: Arc<RustConnection>,
     atoms: Atoms,
 }
 
-impl<C: Connection> X11EventSource<C> {
-    pub fn new(conn: Arc<C>, atoms: Atoms) -> Self {
+impl X11EventSource {
+    pub fn new(conn: Arc<RustConnection>, atoms: Atoms) -> Self {
         Self { conn, atoms }
     }
 
@@ -60,15 +64,11 @@ impl<C: Connection> X11EventSource<C> {
                 state: e.state.bits(),
                 detail: e.detail,
                 time: e.time,
-                root_x: e.root_x as f64, // 转换
+                root_x: e.root_x as f64,
                 root_y: e.root_y as f64,
             }),
-            // --- 处理 RandR 事件 ---
-            // 屏幕整体配置改变（分辨率变化、旋转等）
             XEvent::RandrScreenChangeNotify(_) => Some(BackendEvent::ScreenLayoutChanged),
-            // 具体的 RandR 通知（Output 连接/断开，CRTC 配置变化）
             XEvent::RandrNotify(_) => Some(BackendEvent::ScreenLayoutChanged),
-            // ---------------------------
             XEvent::MotionNotify(e) => Some(BackendEvent::MotionNotify {
                 window: Some(WindowId::X11(e.event as u64)),
                 root_x: e.root_x as f64,
@@ -80,8 +80,6 @@ impl<C: Connection> X11EventSource<C> {
                 state: e.state.bits(),
                 time: e.time,
             }),
-
-            // 映射生命周期事件
             XEvent::MapRequest(e) => {
                 Some(BackendEvent::WindowCreated(WindowId::X11(e.window as u64)))
             }
@@ -94,7 +92,6 @@ impl<C: Connection> X11EventSource<C> {
             XEvent::DestroyNotify(e) => Some(BackendEvent::WindowDestroyed(WindowId::X11(
                 e.window as u64,
             ))),
-
             XEvent::ConfigureNotify(e) => Some(BackendEvent::WindowConfigured {
                 window: WindowId::X11(e.window as u64),
                 x: e.x as i32,
@@ -102,7 +99,6 @@ impl<C: Connection> X11EventSource<C> {
                 width: e.width as u32,
                 height: e.height as u32,
             }),
-
             XEvent::EnterNotify(e) => Some(BackendEvent::EnterNotify {
                 window: WindowId::X11(e.event as u64),
                 subwindow: if e.child != 0 {
@@ -116,14 +112,12 @@ impl<C: Connection> X11EventSource<C> {
                 window: WindowId::X11(e.event as u64),
                 mode: NotifyMode::Normal,
             }),
-
             XEvent::FocusIn(e) => Some(BackendEvent::FocusIn {
                 window: WindowId::X11(e.event as u64),
             }),
             XEvent::FocusOut(e) => Some(BackendEvent::FocusOut {
                 window: WindowId::X11(e.event as u64),
             }),
-
             XEvent::ConfigureRequest(e) => {
                 let changes = WindowChanges {
                     x: if e.value_mask.contains(xproto::ConfigWindow::X) {
@@ -175,7 +169,6 @@ impl<C: Connection> X11EventSource<C> {
                     changes,
                 })
             }
-
             XEvent::PropertyNotify(e) => {
                 if e.state == xproto::Property::DELETE.into() {
                     return None;
@@ -186,7 +179,6 @@ impl<C: Connection> X11EventSource<C> {
                     kind,
                 })
             }
-
             XEvent::ClientMessage(e) => {
                 let data32 = e.data.as_data32();
                 if e.type_ == self.atoms._NET_WM_STATE && e.format == 32 && data32.len() >= 2 {
@@ -221,7 +213,6 @@ impl<C: Connection> X11EventSource<C> {
                     format: e.format,
                 })
             }
-
             XEvent::MappingNotify(_) => Some(BackendEvent::MappingNotify),
             XEvent::Expose(e) => Some(BackendEvent::Expose {
                 window: WindowId::X11(e.window as u64),
@@ -229,11 +220,70 @@ impl<C: Connection> X11EventSource<C> {
             _ => None,
         }
     }
-}
 
-impl<C: Connection + Send + Sync + 'static> X11EventSource<C> {
     pub fn poll_event(&mut self) -> Result<Option<BackendEvent>, Box<dyn std::error::Error>> {
         let ev = self.conn.poll_for_event()?;
         Ok(ev.and_then(|e| self.map_event(e)))
+    }
+}
+
+impl EventSource for X11EventSource {
+    type Event = BackendEvent;
+    type Metadata = ();
+    type Ret = ();
+    type Error = Box<dyn std::error::Error + Send + Sync>;
+
+    fn process_events<F>(
+        &mut self,
+        _readiness: Readiness,
+        _token: Token,
+        mut callback: F,
+    ) -> Result<PostAction, Self::Error>
+    where
+        F: FnMut(Self::Event, &mut Self::Metadata) -> Self::Ret,
+    {
+        loop {
+            match self.poll_event() {
+                Ok(Some(event)) => {
+                    callback(event, &mut ());
+                }
+                Ok(None) => break,
+                Err(e) => {
+                    log::error!("X11 poll error: {:?}", e);
+                    // 转换错误类型以满足 Send + Sync 约束
+                    let err_msg = format!("X11 poll error: {}", e);
+                    return Err(err_msg.into());
+                }
+            }
+        }
+        Ok(PostAction::Continue)
+    }
+
+    fn register(
+        &mut self,
+        poll: &mut Poll,
+        token_factory: &mut TokenFactory,
+    ) -> calloop::Result<()> {
+        let raw_fd = self.conn.stream().as_raw_fd();
+        unsafe {
+            let fd = BorrowedFd::borrow_raw(raw_fd);
+            poll.register(fd, Interest::READ, Mode::Level, token_factory.token())
+        }
+    }
+
+    fn reregister(
+        &mut self,
+        poll: &mut Poll,
+        token_factory: &mut TokenFactory,
+    ) -> calloop::Result<()> {
+        let raw_fd = self.conn.stream().as_raw_fd();
+        let fd = unsafe { BorrowedFd::borrow_raw(raw_fd) };
+        poll.reregister(fd, Interest::READ, Mode::Level, token_factory.token())
+    }
+
+    fn unregister(&mut self, poll: &mut Poll) -> calloop::Result<()> {
+        let raw_fd = self.conn.stream().as_raw_fd();
+        let fd = unsafe { BorrowedFd::borrow_raw(raw_fd) };
+        poll.unregister(fd)
     }
 }
