@@ -2342,7 +2342,6 @@ impl Jwm {
                     info!("Status bar process exited with: {status}, preparing to respawn.");
                 }
                 Ok(None) => {
-                    debug!("Status bar is running.");
                     return;
                 }
                 Err(e) => {
@@ -4220,6 +4219,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         _arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        debug!("[movemouse]");
         let client_key = match self.get_selected_client_key() {
             Some(k) => k,
             None => return Ok(()),
@@ -4283,6 +4283,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         _arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        info!("resizemouse");
         let client_key = match self.get_selected_client_key() {
             Some(k) => k,
             None => return Ok(()),
