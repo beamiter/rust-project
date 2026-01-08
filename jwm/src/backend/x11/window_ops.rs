@@ -15,14 +15,16 @@ pub struct X11WindowOps<C: Connection> {
     conn: Arc<C>,
     atoms: Atoms,
     numlock_mask: Arc<Mutex<u16>>,
+    root: u32,
 }
 
 impl<C: Connection> X11WindowOps<C> {
-    pub fn new(conn: Arc<C>, atoms: Atoms, numlock_mask: Arc<Mutex<u16>>) -> Self {
+    pub fn new(conn: Arc<C>, atoms: Atoms, numlock_mask: Arc<Mutex<u16>>, root: u32) -> Self {
         Self {
             conn,
             atoms,
             numlock_mask,
+            root,
         }
     }
 }
@@ -270,9 +272,8 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     }
 
     fn set_input_focus_root(&self) -> Result<(), Box<dyn std::error::Error>> {
-        // 使用 POINTER_ROOT 将焦点重置到根窗口/无焦点状态
         self.conn
-            .set_input_focus(InputFocus::POINTER_ROOT, x11rb::NONE, x11rb::CURRENT_TIME)?;
+            .set_input_focus(InputFocus::POINTER_ROOT, self.root, x11rb::CURRENT_TIME)?;
         Ok(())
     }
 

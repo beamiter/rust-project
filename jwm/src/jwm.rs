@@ -450,7 +450,7 @@ impl Jwm {
             info!("[setup_initial_windows] Scanning {} windows", windows.len());
             for win in windows {
                 let attr = backend.window_ops().get_window_attributes(win)?;
-                if !attr.override_redirect {
+                if !attr.override_redirect && attr.map_state_viewable {
                     let geom = backend.window_ops().get_geometry(win)?;
                     self.manage(backend, win, &geom)?;
                 }

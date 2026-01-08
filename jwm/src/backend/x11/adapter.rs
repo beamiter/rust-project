@@ -6,6 +6,10 @@ use x11rb::protocol::xproto::{ButtonIndex, EventMask, KeyButMask};
 pub fn mods_from_x11(mask: KeyButMask, numlock_mask: KeyButMask) -> Mods {
     let mut m = Mods::empty();
     let raw = mask.bits();
+    let numlock_val = numlock_mask.bits();
+
+    // 修复逻辑：如果某个 Mod 位同时也是 NumLock 的位，则不将其视为通用的 Mod 键
+    // 这样避免 NumLock (Mod2) 污染了快捷键的匹配掩码
 
     if raw & KeyButMask::SHIFT.bits() != 0 {
         m |= Mods::SHIFT;
@@ -13,30 +17,45 @@ pub fn mods_from_x11(mask: KeyButMask, numlock_mask: KeyButMask) -> Mods {
     if raw & KeyButMask::CONTROL.bits() != 0 {
         m |= Mods::CONTROL;
     }
-    if raw & KeyButMask::MOD1.bits() != 0 {
+
+    // 检查 Mod1 (通常是 Alt)
+    if (raw & KeyButMask::MOD1.bits() != 0) && (KeyButMask::MOD1.bits() & numlock_val == 0) {
         m |= Mods::ALT;
     }
-    if raw & KeyButMask::MOD2.bits() != 0 {
+
+    // 检查 Mod2 (通常是 NumLock，这里是问题高发区)
+    if (raw & KeyButMask::MOD2.bits() != 0) && (KeyButMask::MOD2.bits() & numlock_val == 0) {
         m |= Mods::MOD2;
     }
-    if raw & KeyButMask::MOD3.bits() != 0 {
+
+    // 检查 Mod3
+    if (raw & KeyButMask::MOD3.bits() != 0) && (KeyButMask::MOD3.bits() & numlock_val == 0) {
         m |= Mods::MOD3;
     }
-    if raw & KeyButMask::MOD4.bits() != 0 {
+
+    // 检查 Mod4 (通常是 Super/Win)
+    if (raw & KeyButMask::MOD4.bits() != 0) && (KeyButMask::MOD4.bits() & numlock_val == 0) {
         m |= Mods::SUPER;
     }
-    if raw & KeyButMask::MOD5.bits() != 0 {
+
+    // 检查 Mod5 (通常是 AltGr)
+    if (raw & KeyButMask::MOD5.bits() != 0) && (KeyButMask::MOD5.bits() & numlock_val == 0) {
         m |= Mods::MOD5;
     }
+
+    // 独立处理 Lock (Caps) 和 NumLock
     if raw & KeyButMask::LOCK.bits() != 0 {
         m |= Mods::CAPS;
     }
-    if raw & numlock_mask.bits() != 0 {
+    // 这里专门标记 NUMLOCK
+    if raw & numlock_val != 0 {
         m |= Mods::NUMLOCK;
     }
+
     m
 }
 
+// mods_to_x11 不需要改动，因为它是从 Rust 内部状态转 X11
 pub fn mods_to_x11(mods: Mods, numlock_mask: KeyButMask) -> KeyButMask {
     let mut m = KeyButMask::default();
     if mods.contains(Mods::SHIFT) {

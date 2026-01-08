@@ -78,6 +78,7 @@ impl X11Backend {
             conn.clone(),
             atoms.clone(),
             numlock_mask.clone(),
+            screen.root,
         ));
 
         let x11_input_ops = X11InputOps::new(conn.clone(), screen.root);

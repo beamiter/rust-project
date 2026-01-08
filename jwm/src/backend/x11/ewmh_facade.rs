@@ -74,7 +74,9 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         wm_name: &str,
     ) -> Result<WindowId, Box<dyn std::error::Error>> {
         let frame_win = self.conn.generate_id()?;
-        let aux = CreateWindowAux::new().event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS);
+        let aux = CreateWindowAux::new()
+            .event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS)
+            .override_redirect(1);
         let r = self.root.to_x11_id()?;
         self.conn.create_window(
             x11rb::COPY_DEPTH_FROM_PARENT,
