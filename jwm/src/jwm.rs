@@ -501,45 +501,33 @@ impl Jwm {
     fn on_button_press(
         &mut self,
         backend: &mut dyn Backend,
-        window: WindowId,
-        is_root: bool,
+        window: Option<WindowId>,
         state_bits: u16,
         detail_btn: u8,
         time: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut click_type = WMClickType::ClickRootWin;
-
-        if is_root {
-            let (ptr_x, ptr_y) = self.getrootptr(backend)?;
-            if let Some(target_mon_key) = self.recttomon(ptr_x, ptr_y, 1, 1) {
-                if Some(target_mon_key) != self.sel_mon {
-                    if let Some(cur) = self.get_selected_client_key() {
-                        self.unfocus_client(backend, cur, true)?;
-                    }
-                    self.sel_mon = Some(target_mon_key);
-                    self.focus(backend, None)?;
+        // 1. 确定目标显示器
+        if let Some(target_mon_key) = self.wintomon(backend, window) {
+            if Some(target_mon_key) != self.sel_mon {
+                if let Some(cur) = self.get_selected_client_key() {
+                    self.unfocus_client(backend, cur, true)?;
                 }
-            }
-        } else {
-            // 如果点击的是非 Root 窗口，尝试通过 WindowId 找 Monitor
-            if let Some(target_mon_key) = self.wintomon(backend, window) {
-                if Some(target_mon_key) != self.sel_mon {
-                    if let Some(cur) = self.get_selected_client_key() {
-                        self.unfocus_client(backend, cur, true)?;
-                    }
-                    self.sel_mon = Some(target_mon_key);
-                    self.focus(backend, None)?;
-                }
+                self.sel_mon = Some(target_mon_key);
+                self.focus(backend, None)?;
             }
         }
-
+        // 2. 检查是否点击了 Client
         let mut is_client_click = false;
-        if !is_root {
-            if let Some(client_key) = self.wintoclient(window) {
-                is_client_click = true;
-                self.focus(backend, Some(client_key))?;
-                let _ = self.restack(backend, self.sel_mon);
-                click_type = WMClickType::ClickClientWin;
+        // 只有当 window 有值且不是 root 时才查找 client
+        if let Some(wid) = window {
+            if Some(wid) != backend.root_window() {
+                if let Some(client_key) = self.wintoclient(wid) {
+                    is_client_click = true;
+                    self.focus(backend, Some(client_key))?;
+                    let _ = self.restack(backend, self.sel_mon);
+                    click_type = WMClickType::ClickClientWin;
+                }
             }
         }
 
@@ -586,32 +574,24 @@ impl Jwm {
     fn on_motion_notify(
         &mut self,
         backend: &mut dyn Backend,
-        _window: WindowId,
-        is_root: bool,
+        window: Option<WindowId>,
         root_x: i16,
         root_y: i16,
         _time: u32,
-        monitor_id_opt: Option<OutputId>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 1. 优先处理交互状态
         if let Some(state) = self.interaction.clone() {
             if state.last_update_time.elapsed().as_millis() < 10 {
                 return Ok(());
             }
-
-            // 更新时间戳
             if let Some(ref mut s) = self.interaction {
                 s.last_update_time = std::time::Instant::now();
             }
-
             match state.action {
                 InteractionAction::Move => {
                     let dx = root_x as i32 - state.start_mouse_x;
                     let dy = root_y as i32 - state.start_mouse_y;
                     let mut new_x = state.start_win_geom.x as i32 + dx;
                     let mut new_y = state.start_win_geom.y as i32 + dy;
-
-                    // 获取当前显示器信息用于边缘吸附
                     if let Some(sel_mon_key) = self.sel_mon {
                         if let Some(m) = self.monitors.get(sel_mon_key) {
                             self.apply_edge_snapping(
@@ -672,21 +652,14 @@ impl Jwm {
             backend.request_render();
             return Ok(());
         }
+        let is_root = window.is_none() || window == backend.root_window();
         if !is_root {
             return Ok(());
         }
         if self.mouse_focus_blocked() {
             return Ok(());
         }
-
-        let new_monitor_key = if let Some(oid) = monitor_id_opt {
-            self.output_map
-                .iter()
-                .find(|&(_, &id)| id == oid)
-                .map(|(k, _)| k)
-        } else {
-            self.recttomon(root_x as i32, root_y as i32, 1, 1)
-        };
+        let new_monitor_key = self.recttomon(backend, root_x as i32, root_y as i32);
         if new_monitor_key != self.motion_mon {
             self.handle_monitor_switch_by_key(backend, new_monitor_key)?;
         }
@@ -951,33 +924,14 @@ impl Jwm {
                 time,
                 root_x: _, // f64
                 root_y: _, // f64
-                monitor_id: _,
-            } => {
-                let is_root = window.is_none() || window == backend.root_window();
-                let target_win = window.unwrap_or_else(|| WindowId::default());
-
-                self.on_button_press(backend, target_win, is_root, state, detail, time)
-            }
+            } => self.on_button_press(backend, window, state, detail, time),
 
             BackendEvent::MotionNotify {
                 window,
                 root_x,
                 root_y,
                 time,
-                monitor_id,
-            } => {
-                let is_root = window.is_none() || window == backend.root_window();
-                let target_win = window.unwrap_or_else(|| WindowId::default());
-                self.on_motion_notify(
-                    backend,
-                    target_win,
-                    is_root,
-                    root_x as i16,
-                    root_y as i16,
-                    time,
-                    monitor_id,
-                )
-            }
+            } => self.on_motion_notify(backend, window, root_x as i16, root_y as i16, time),
 
             BackendEvent::ConfigureRequest {
                 window,
@@ -2270,7 +2224,7 @@ impl Jwm {
         let monitor_key_opt = if let Some(client_key) = client_key_opt {
             self.clients.get(client_key).and_then(|client| client.mon)
         } else {
-            self.wintomon(backend, event_window)
+            self.wintomon(backend, Some(event_window))
         };
         let current_event_monitor_key = match monitor_key_opt {
             Some(monitor_key) => monitor_key,
@@ -2626,76 +2580,31 @@ impl Jwm {
         Ok((x as i32, y as i32))
     }
 
-    fn recttomon(&mut self, x: i32, y: i32, w: i32, h: i32) -> Option<MonitorKey> {
-        // info!("[recttomon]");
-        let mut max_area = 0;
-        let mut result_monitor = self.sel_mon;
-
-        for &mon_key in &self.monitor_order {
-            if let Some(monitor) = self.monitors.get(mon_key) {
-                let area = monitor.intersect_area(x, y, w, h);
-                if area > max_area {
-                    max_area = area;
-                    result_monitor = Some(mon_key);
+    fn recttomon(&mut self, backend: &mut dyn Backend, x: i32, y: i32) -> Option<MonitorKey> {
+        if let Some(output_id) = backend.output_ops().output_at(x, y) {
+            for (mon_key, &oid) in &self.output_map {
+                if oid == output_id {
+                    return Some(mon_key);
                 }
             }
         }
-
-        result_monitor
+        self.sel_mon
     }
 
-    fn wintomon(&mut self, backend: &mut dyn Backend, w: WindowId) -> Option<MonitorKey> {
-        if Some(w) == backend.root_window() {
-            match self.getrootptr(backend) {
-                Ok((x, y)) => return self.recttomon(x, y, 1, 1),
-                Err(e) => {
-                    warn!("[wintomon] Failed to get root pointer: {:?}", e);
-                    return self.sel_mon;
-                }
+    fn wintomon(&mut self, backend: &mut dyn Backend, w: Option<WindowId>) -> Option<MonitorKey> {
+        if w.is_none() || w == backend.root_window() {
+            if let Ok((x, y)) = self.getrootptr(backend) {
+                return self.recttomon(backend, x, y);
+            }
+            return self.sel_mon;
+        }
+        let win_id = w.unwrap();
+        if let Some(client_key) = self.wintoclient(win_id) {
+            if let Some(client) = self.clients.get(client_key) {
+                return client.mon.or(self.sel_mon);
             }
         }
-
-        match self.wintoclient(w) {
-            Some(client_key) => match self.clients.get(client_key) {
-                Some(client) => client.mon.or(self.sel_mon),
-                None => {
-                    warn!(
-                        "[wintomon] Client key {:?} not found in clients",
-                        client_key
-                    );
-                    self.sel_mon
-                }
-            },
-            None => {
-                info!(
-                    "[wintomon] Window {:?} not managed, returning selected monitor",
-                    w
-                );
-                self.sel_mon
-            }
-        }
-    }
-
-    pub fn checkotherwm(
-        &mut self,
-        backend: &mut dyn Backend,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let mask_bits = EventMaskBits::SUBSTRUCTURE_REDIRECT.bits();
-        let root = backend.root_window().expect("no root window");
-        match backend.window_ops().change_event_mask(root, mask_bits) {
-            Ok(_) => {
-                info!("[checkotherwm] SubstructureRedirect acquired, no other WM running");
-                Ok(())
-            }
-            Err(e) => {
-                error!(
-                    "[checkotherwm] Failed to acquire SubstructureRedirect: {:?}",
-                    e
-                );
-                eprintln!("jwm: another window manager may already be running");
-                std::process::exit(1);
-            }
-        }
+        self.sel_mon
     }
 
     pub fn spawn(
@@ -4247,7 +4156,7 @@ impl Jwm {
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         backend.input_ops().ungrab_pointer()?;
-        let (final_x, final_y, final_w, final_h) =
+        let (final_x, final_y, _final_w, _final_h) =
             if let Some(client) = self.clients.get(client_key) {
                 (
                     client.geometry.x,
@@ -4259,7 +4168,7 @@ impl Jwm {
                 return Ok(());
             };
 
-        let target_monitor_opt = self.recttomon(final_x, final_y, final_w, final_h);
+        let target_monitor_opt = self.recttomon(backend, final_x, final_y);
 
         if let Some(target_mon_key) = target_monitor_opt {
             if Some(target_mon_key) != self.sel_mon {
@@ -4470,7 +4379,7 @@ impl Jwm {
             None => return Ok(()),
         };
 
-        let (x, y, w, h) = {
+        let (x, y, _w, _h) = {
             let client = self.clients.get(client_key).unwrap();
             (
                 client.geometry.x,
@@ -4480,7 +4389,7 @@ impl Jwm {
             )
         };
 
-        let target_monitor = self.recttomon(x, y, w, h);
+        let target_monitor = self.recttomon(backend, x, y);
 
         if let Some(target_mon_key) = target_monitor {
             if Some(target_mon_key) != self.sel_mon {
@@ -4584,7 +4493,7 @@ impl Jwm {
             return Ok(());
         }
 
-        if let Some(monitor_key) = self.wintomon(backend, window) {
+        if let Some(monitor_key) = self.wintomon(backend, Some(window)) {
             if let Some(monitor) = self.monitors.get(monitor_key) {
                 self.mark_bar_update_needed_if_visible(Some(monitor.num));
             }
@@ -5849,7 +5758,7 @@ impl Jwm {
         };
 
         if dirty {
-            let root_window = backend.root_window().expect("no root window");
+            let root_window = backend.root_window();
             self.sel_mon = self.wintomon(backend, root_window);
             if self.sel_mon.is_none() && !self.monitor_order.is_empty() {
                 self.sel_mon = self.monitor_order.first().copied();

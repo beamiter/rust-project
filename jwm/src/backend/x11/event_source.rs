@@ -66,7 +66,6 @@ impl X11EventSource {
                 time: e.time,
                 root_x: e.root_x as f64,
                 root_y: e.root_y as f64,
-                monitor_id: None,
             }),
             XEvent::RandrScreenChangeNotify(_) => Some(BackendEvent::ScreenLayoutChanged),
             XEvent::RandrNotify(_) => Some(BackendEvent::ScreenLayoutChanged),
@@ -75,7 +74,6 @@ impl X11EventSource {
                 root_x: e.root_x as f64,
                 root_y: e.root_y as f64,
                 time: e.time,
-                monitor_id: None,
             }),
             XEvent::KeyPress(e) => Some(BackendEvent::KeyPress {
                 keycode: e.detail,

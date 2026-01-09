@@ -170,7 +170,7 @@ pub enum BackendEvent {
         time: u32,
         root_x: f64,
         root_y: f64,
-        monitor_id: Option<OutputId>,
+        // monitor_id: Option<OutputId>,
     },
     ButtonRelease {
         window: Option<WindowId>,
@@ -181,7 +181,7 @@ pub enum BackendEvent {
         root_x: f64,
         root_y: f64,
         time: u32,
-        monitor_id: Option<OutputId>,
+        // monitor_id: Option<OutputId>,
     },
     KeyPress {
         keycode: u8,
@@ -491,6 +491,8 @@ pub trait OutputOps: Send {
     fn enumerate_outputs(&self) -> Vec<OutputInfo>;
     /// 获取主屏幕信息 (兼容旧接口)
     fn screen_info(&self) -> ScreenInfo;
+
+    fn output_at(&self, x: i32, y: i32) -> Option<OutputId>;
 }
 
 pub trait KeyOps: Send {
@@ -575,6 +577,8 @@ pub trait Backend: Send {
     fn capabilities(&self) -> Capabilities;
     fn root_window(&self) -> Option<WindowId>;
     fn as_any(&self) -> &dyn Any;
+
+    fn check_existing_wm(&self) -> Result<(), Box<dyn std::error::Error>>;
 
     // Ops Getters
     fn window_ops(&self) -> &dyn WindowOps;

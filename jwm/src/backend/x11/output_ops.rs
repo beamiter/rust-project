@@ -26,6 +26,20 @@ impl<C: Connection + Send + Sync + 'static> OutputOps for X11OutputOps<C> {
         }
     }
 
+    fn output_at(&self, x: i32, y: i32) -> Option<OutputId> {
+        let outputs = self.enumerate_outputs();
+        for output in outputs {
+            if x >= output.x
+                && x < output.x + output.width
+                && y >= output.y
+                && y < output.y + output.height
+            {
+                return Some(output.id);
+            }
+        }
+        None
+    }
+
     fn enumerate_outputs(&self) -> Vec<OutputInfo> {
         if let Ok(ver) = self.conn.randr_query_version(1, 5) {
             if let Ok(v) = ver.reply() {

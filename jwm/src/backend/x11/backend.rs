@@ -1,5 +1,6 @@
 // src/backend/x11/backend.rs
 use crate::backend::api::EventHandler;
+use crate::backend::common_define::EventMaskBits;
 use crate::backend::common_define::WindowId;
 use std::any::Any;
 use std::sync::{Arc, Mutex};
@@ -147,6 +148,13 @@ impl Backend for X11Backend {
 
     fn root_window(&self) -> Option<WindowId> {
         Some(self.root)
+    }
+
+    fn check_existing_wm(&self) -> Result<(), Box<dyn std::error::Error>> {
+        let mask_bits = EventMaskBits::SUBSTRUCTURE_REDIRECT.bits();
+        self.window_ops
+            .change_event_mask(self.root, mask_bits)
+            .map_err(|e| format!("Another window manager is already running: {:?}", e).into())
     }
 
     fn request_render(&mut self) {
