@@ -21,21 +21,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
     info!("[main] Starting JWM instance");
-
-    // 1. 创建 Backend 所有权
     let mut backend: Box<dyn jwm::backend::api::Backend> = Box::new(X11Backend::new()?);
 
-    // 2. 创建 Jwm，传入 backend 引用
     let mut jwm = Jwm::new(&mut *backend)?;
-
     jwm.checkotherwm(&mut *backend)?;
     jwm.setup(&mut *backend)?;
     jwm.setup_initial_windows(&mut *backend)?;
-
-    // 4. 启动循环
     jwm.run(&mut *backend)?;
-
-    // 5. 清理
     jwm.cleanup(&mut *backend)?;
 
     if !jwm.is_restarting.load(Ordering::SeqCst) {

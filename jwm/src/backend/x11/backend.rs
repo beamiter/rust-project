@@ -4,6 +4,7 @@ use crate::backend::common_define::WindowId;
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use x11rb::connection::Connection;
 use x11rb::connection::RequestConnection;
 use x11rb::protocol::randr::ConnectionExt as RandrExt;
 use x11rb::protocol::randr::NotifyMask;
@@ -143,8 +144,13 @@ impl Backend for X11Backend {
     fn capabilities(&self) -> Capabilities {
         self.caps
     }
-    fn root_window(&self) -> WindowId {
-        self.root
+
+    fn root_window(&self) -> Option<WindowId> {
+        Some(self.root)
+    }
+
+    fn request_render(&mut self) {
+        let _ = self.conn.flush();
     }
     fn as_any(&self) -> &dyn Any {
         self

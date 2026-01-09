@@ -148,20 +148,13 @@ pub enum BackendEvent {
     OutputAdded(OutputInfo),
     OutputRemoved(OutputId),
     OutputChanged(OutputInfo),
-
-    /// 屏幕布局发生重大变化（如热插拔），建议 WM 重新枚举输出设备
     ScreenLayoutChanged,
 
     // === 窗口生命周期 ===
-    /// 窗口已创建 (X11: MapRequest, Wayland: New Surface/Toplevel)
     WindowCreated(WindowId),
-    /// 窗口已销毁
     WindowDestroyed(WindowId),
-    /// 窗口已映射 (内容准备好，可以显示)
     WindowMapped(WindowId),
-    /// 窗口已取消映射 (隐藏)
     WindowUnmapped(WindowId),
-    /// 客户端确认了配置 (X11: ConfigureNotify, Wayland: ack_configure)
     WindowConfigured {
         window: WindowId,
         x: i32,
@@ -170,7 +163,6 @@ pub enum BackendEvent {
         height: u32,
     },
 
-    // === 输入事件 (标准化坐标为 f64) ===
     ButtonPress {
         window: Option<WindowId>,
         state: u16,
@@ -178,6 +170,7 @@ pub enum BackendEvent {
         time: u32,
         root_x: f64,
         root_y: f64,
+        monitor_id: Option<OutputId>,
     },
     ButtonRelease {
         window: Option<WindowId>,
@@ -188,10 +181,9 @@ pub enum BackendEvent {
         root_x: f64,
         root_y: f64,
         time: u32,
+        monitor_id: Option<OutputId>,
     },
     KeyPress {
-        // 注意：Wayland 使用 scancode，X11 使用 keycode
-        // 后端应负责将其转换为统一格式或提供转换 Trait
         keycode: u8,
         state: u16,
         time: u32,
@@ -215,40 +207,30 @@ pub enum BackendEvent {
     },
 
     // === 客户端请求 (Policy) ===
-    /// 客户端请求改变自身位置或大小
     ConfigureRequest {
         window: WindowId,
         changes: WindowChanges,
-        // X11 mask, Wayland 后端可忽略或模拟
         mask_bits: u16,
     },
-    /// 客户端请求改变状态 (全屏, 最大化等)
     WindowStateRequest {
         window: WindowId,
         action: NetWmAction,
         state: NetWmState,
     },
-    /// 属性变更通知
     PropertyChanged {
         window: WindowId,
         kind: PropertyKind,
     },
-
-    // === 杂项与兼容 ===
-    /// 自定义快捷键触发 (后端处理快捷键绑定时触发)
     WmKeyboardShortcut {
         keysym: KeySym,
         mods: Mods,
     },
-    /// 暴露事件 (X11 必须，Wayland 可忽略)
     Expose {
         window: WindowId,
     },
-    /// 兼容旧代码的消息
     ActiveWindowMessage {
         window: WindowId,
     },
-    /// 通用客户端消息 (X11 ClientMessage)
     ClientMessage {
         window: WindowId,
         type_: u32,
@@ -258,9 +240,6 @@ pub enum BackendEvent {
     MappingNotify,
 }
 
-// --- Traits 定义 ---
-
-/// 窗口操作接口
 pub trait WindowOps: Send {
     /// 强制设置窗口位置 (服务端视角)
     /// Wayland: 仅修改 Compositor 内部状态，不发送事件给客户端
@@ -293,7 +272,6 @@ pub trait WindowOps: Send {
 
     /// 控制窗口堆叠顺序
     fn raise_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-    // fn lower_window(&self, win: WindowId) -> ... (如果需要)
 
     /// 映射窗口 (显示)
     fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
@@ -319,8 +297,6 @@ pub trait WindowOps: Send {
     /// 获取窗口当前几何信息
     fn get_geometry(&self, win: WindowId) -> Result<Geometry, Box<dyn std::error::Error>>;
 
-    // --- 兼容性/辅助方法 ---
-
     /// 初始扫描 (X11 only). Wayland 返回空 Vec 即可
     fn scan_windows(&self) -> Result<Vec<WindowId>, Box<dyn std::error::Error>>;
 
@@ -330,7 +306,6 @@ pub trait WindowOps: Send {
     /// 强制杀死客户端连接
     fn kill_client(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
 
-    // 下面两个在 Wayland 中通常是空实现，但为了兼容 X11 Backend 保留
     fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
@@ -338,7 +313,6 @@ pub trait WindowOps: Send {
         Ok(())
     }
 
-    // 旧接口兼容，建议在实现中转调 configure 或 set_position
     fn apply_window_changes(
         &self,
         win: WindowId,
@@ -365,7 +339,6 @@ pub trait WindowOps: Send {
         Ok(())
     }
 
-    // 兼容接口：发送 ConfigureNotify (X11 专有回执)
     fn send_configure_notify(
         &self,
         _win: WindowId,
@@ -378,7 +351,6 @@ pub trait WindowOps: Send {
         Ok(())
     }
 
-    // X11 Client Message 兼容
     fn send_client_message(
         &self,
         _win: WindowId,
@@ -388,7 +360,6 @@ pub trait WindowOps: Send {
         Ok(())
     }
 
-    // 兼容接口：更改事件掩码 (X11 Only)
     fn change_event_mask(
         &self,
         _win: WindowId,
@@ -397,7 +368,6 @@ pub trait WindowOps: Send {
         Ok(())
     }
 
-    // 兼容接口：查询子窗口 (X11 Only)
     fn get_tree_child(&self, _win: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>> {
         Ok(vec![])
     }
@@ -586,8 +556,6 @@ pub trait CursorProvider: Send {
     fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>>;
 }
 
-// --- 核心驱动接口 ---
-
 pub trait EventHandler {
     /// 处理具体的后端事件
     fn handle_event(
@@ -605,7 +573,7 @@ pub trait EventHandler {
 
 pub trait Backend: Send {
     fn capabilities(&self) -> Capabilities;
-    fn root_window(&self) -> WindowId;
+    fn root_window(&self) -> Option<WindowId>;
     fn as_any(&self) -> &dyn Any;
 
     // Ops Getters
@@ -623,8 +591,9 @@ pub trait Backend: Send {
     // Optional Facades
     fn ewmh_facade(&self) -> Option<&dyn EwmhFacade>;
 
-    /// 启动事件循环，控制权移交给 Backend
     fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), Box<dyn std::error::Error>>;
+
+    fn request_render(&mut self) {}
 }
 
 // 兼容性定义

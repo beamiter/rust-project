@@ -237,7 +237,6 @@ impl EventHandler for Jwm {
                 }
                 Ok(())
             }
-            // ------------------------------------
             _ => self.handle_backend_event(backend, event),
         }
     }
@@ -503,28 +502,45 @@ impl Jwm {
         &mut self,
         backend: &mut dyn Backend,
         window: WindowId,
+        is_root: bool,
         state_bits: u16,
         detail_btn: u8,
         time: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut click_type = WMClickType::ClickRootWin;
 
-        if let Some(target_mon_key) = self.wintomon(backend, window) {
-            if Some(target_mon_key) != self.sel_mon {
-                if let Some(cur) = self.get_selected_client_key() {
-                    self.unfocus_client(backend, cur, true)?;
+        if is_root {
+            let (ptr_x, ptr_y) = self.getrootptr(backend)?;
+            if let Some(target_mon_key) = self.recttomon(ptr_x, ptr_y, 1, 1) {
+                if Some(target_mon_key) != self.sel_mon {
+                    if let Some(cur) = self.get_selected_client_key() {
+                        self.unfocus_client(backend, cur, true)?;
+                    }
+                    self.sel_mon = Some(target_mon_key);
+                    self.focus(backend, None)?;
                 }
-                self.sel_mon = Some(target_mon_key);
-                self.focus(backend, None)?;
+            }
+        } else {
+            // 如果点击的是非 Root 窗口，尝试通过 WindowId 找 Monitor
+            if let Some(target_mon_key) = self.wintomon(backend, window) {
+                if Some(target_mon_key) != self.sel_mon {
+                    if let Some(cur) = self.get_selected_client_key() {
+                        self.unfocus_client(backend, cur, true)?;
+                    }
+                    self.sel_mon = Some(target_mon_key);
+                    self.focus(backend, None)?;
+                }
             }
         }
 
         let mut is_client_click = false;
-        if let Some(client_key) = self.wintoclient(window) {
-            is_client_click = true;
-            self.focus(backend, Some(client_key))?;
-            let _ = self.restack(backend, self.sel_mon);
-            click_type = WMClickType::ClickClientWin;
+        if !is_root {
+            if let Some(client_key) = self.wintoclient(window) {
+                is_client_click = true;
+                self.focus(backend, Some(client_key))?;
+                let _ = self.restack(backend, self.sel_mon);
+                click_type = WMClickType::ClickClientWin;
+            }
         }
 
         let event_mask = self.clean_mask(backend, state_bits);
@@ -570,14 +586,15 @@ impl Jwm {
     fn on_motion_notify(
         &mut self,
         backend: &mut dyn Backend,
-        window: WindowId,
+        _window: WindowId,
+        is_root: bool,
         root_x: i16,
         root_y: i16,
         _time: u32,
+        monitor_id_opt: Option<OutputId>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // 1. 优先处理交互状态
         if let Some(state) = self.interaction.clone() {
-            // 限流：避免事件过多导致计算卡顿 (例如每 10ms 处理一次)
             if state.last_update_time.elapsed().as_millis() < 10 {
                 return Ok(());
             }
@@ -652,16 +669,24 @@ impl Jwm {
                     }
                 }
             }
-            return Ok(()); // 处于交互模式时，不再处理后续的 monitor switch 逻辑
+            backend.request_render();
+            return Ok(());
         }
-
-        if window != backend.root_window() {
+        if !is_root {
             return Ok(());
         }
         if self.mouse_focus_blocked() {
             return Ok(());
         }
-        let new_monitor_key = self.recttomon(root_x as i32, root_y as i32, 1, 1);
+
+        let new_monitor_key = if let Some(oid) = monitor_id_opt {
+            self.output_map
+                .iter()
+                .find(|&(_, &id)| id == oid)
+                .map(|(k, _)| k)
+        } else {
+            self.recttomon(root_x as i32, root_y as i32, 1, 1)
+        };
         if new_monitor_key != self.motion_mon {
             self.handle_monitor_switch_by_key(backend, new_monitor_key)?;
         }
@@ -926,9 +951,12 @@ impl Jwm {
                 time,
                 root_x: _, // f64
                 root_y: _, // f64
+                monitor_id: _,
             } => {
-                let root = backend.root_window();
-                self.on_button_press(backend, window.unwrap_or(root), state, detail, time)
+                let is_root = window.is_none() || window == backend.root_window();
+                let target_win = window.unwrap_or_else(|| WindowId::default());
+
+                self.on_button_press(backend, target_win, is_root, state, detail, time)
             }
 
             BackendEvent::MotionNotify {
@@ -936,18 +964,21 @@ impl Jwm {
                 root_x,
                 root_y,
                 time,
+                monitor_id,
             } => {
-                let root = backend.root_window();
+                let is_root = window.is_none() || window == backend.root_window();
+                let target_win = window.unwrap_or_else(|| WindowId::default());
                 self.on_motion_notify(
                     backend,
-                    window.unwrap_or(root),
+                    target_win,
+                    is_root,
                     root_x as i16,
                     root_y as i16,
                     time,
+                    monitor_id,
                 )
             }
 
-            // 配置请求：解包 changes 结构体以适配旧接口
             BackendEvent::ConfigureRequest {
                 window,
                 mask_bits,
@@ -984,38 +1015,27 @@ impl Jwm {
                 height,
             } => self.configurenotify(backend, window, x, y, width, height),
 
-            // 窗口销毁（替代 DestroyNotify）
             BackendEvent::WindowDestroyed(window) => self.destroynotify(backend, window),
 
-            // 进入通知
             BackendEvent::EnterNotify {
                 window,
                 subwindow: _,
                 mode: _,
             } => self.enter_notify(backend, window),
 
-            // 暴露事件
             BackendEvent::Expose { window } => self.expose(backend, window, 0),
 
-            // 焦点事件
             BackendEvent::FocusIn { window } => self.focusin(backend, window),
 
-            // 映射请求
             BackendEvent::WindowCreated(window) => self.maprequest(backend, window),
 
-            // 取消映射
-            BackendEvent::WindowUnmapped(window) => {
-                // 这里无法区分 from_configure，默认为 false
-                self.unmapnotify(backend, window, false)
-            }
+            BackendEvent::WindowUnmapped(window) => self.unmapnotify(backend, window, false),
 
-            // 映射通知 (MappingNotify 是 X11 键盘映射变更，不是窗口映射)
             BackendEvent::MappingNotify => {
                 backend.key_ops_mut().clear_cache();
                 self.grabkeys(backend)
             }
 
-            // 属性变更
             BackendEvent::PropertyChanged { window, kind } => {
                 if let Some(client_key) = self.wintoclient(window) {
                     match kind {
@@ -1033,10 +1053,9 @@ impl Jwm {
                         _ => {}
                     }
                 }
-                Ok(())
+                return Ok(());
             }
 
-            // 状态请求 (EWMH State)
             BackendEvent::WindowStateRequest {
                 window,
                 action,
@@ -1057,7 +1076,7 @@ impl Jwm {
                         self.setfullscreen(backend, ck, fullscreen)?;
                     }
                 }
-                Ok(())
+                return Ok(());
             }
 
             BackendEvent::ActiveWindowMessage { window } => {
@@ -1071,36 +1090,28 @@ impl Jwm {
                         self.seturgent(backend, ck, true)?;
                     }
                 }
-                Ok(())
+                return Ok(());
             }
             BackendEvent::ButtonRelease { window: _, time: _ } => {
-                // 无论在哪个窗口释放，只要处于交互状态，都结束它
                 if let Some(state) = self.interaction.take() {
                     info!("[Interaction] Finished {:?}", state.action);
-
-                    // 1. 停止抓取
                     backend.input_ops().ungrab_pointer()?;
-
-                    // 2. 恢复光标
                     backend.input_ops().set_cursor(StdCursorKind::LeftPtr)?;
-
-                    // 3. 执行特定动作的清理
                     match state.action {
                         InteractionAction::Move => {
                             self.cleanup_move(backend, state.client_key)?;
                         }
                         InteractionAction::Resize => {
-                            // Resize 后的清理 (如更新 monitor 归属)
                             self.check_monitor_change_after_resize(backend)?;
                         }
                     }
                 }
                 Ok(())
             }
-
-            // 忽略未处理事件
             _ => Ok(()),
-        }
+        }?;
+        backend.request_render();
+        return Ok(());
     }
 
     fn insert_client(&mut self, client: WMClient) -> ClientKey {
@@ -1787,7 +1798,10 @@ impl Jwm {
         &mut self,
         backend: &mut dyn Backend,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Err(e) = backend.key_ops().clear_key_grabs(backend.root_window()) {
+        if let Err(e) = backend
+            .key_ops()
+            .clear_key_grabs(backend.root_window().expect("no root window"))
+        {
             warn!("[cleanup_key_grabs] Failed to ungrab keys: {:?}", e);
         }
         Ok(())
@@ -1820,7 +1834,7 @@ impl Jwm {
         w: u32,
         h: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if window == backend.root_window() {
+        if window == backend.root_window().expect("no root window") {
             let dirty = self.s_w != w as i32 || self.s_h != h as i32;
             self.s_w = w as i32;
             self.s_h = h as i32;
@@ -1921,15 +1935,14 @@ impl Jwm {
     }
 
     fn grabkeys(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
-        backend.key_ops().clear_key_grabs(backend.root_window())?;
+        let root_window = backend.root_window().expect("no root window");
+        backend.key_ops().clear_key_grabs(root_window)?;
         let bindings: Vec<(Mods, KeySym)> = self
             .key_bindings
             .iter()
             .map(|k| (k.mask, k.key_sym))
             .collect();
-        backend
-            .key_ops()
-            .grab_keys(backend.root_window(), &bindings)?;
+        backend.key_ops().grab_keys(root_window, &bindings)?;
         Ok(())
     }
 
@@ -2632,7 +2645,7 @@ impl Jwm {
     }
 
     fn wintomon(&mut self, backend: &mut dyn Backend, w: WindowId) -> Option<MonitorKey> {
-        if w == backend.root_window() {
+        if Some(w) == backend.root_window() {
             match self.getrootptr(backend) {
                 Ok((x, y)) => return self.recttomon(x, y, 1, 1),
                 Err(e) => {
@@ -2668,7 +2681,7 @@ impl Jwm {
         backend: &mut dyn Backend,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mask_bits = EventMaskBits::SUBSTRUCTURE_REDIRECT.bits();
-        let root = backend.root_window();
+        let root = backend.root_window().expect("no root window");
         match backend.window_ops().change_event_mask(root, mask_bits) {
             Ok(_) => {
                 info!("[checkotherwm] SubstructureRedirect acquired, no other WM running");
@@ -3954,13 +3967,13 @@ impl Jwm {
             | EventMaskBits::PROPERTY_CHANGE)
             .bits();
 
-        let root = backend.root_window();
+        let root = backend.root_window().expect("no root window");
         backend
             .cursor_provider()
             .apply(root.to_x11_id().unwrap() as u64, StdCursorKind::LeftPtr)?;
         backend
             .window_ops()
-            .change_event_mask(backend.root_window(), mask)?;
+            .change_event_mask(backend.root_window().expect("no root window"), mask)?;
         self.grabkeys(backend)?;
         self.focus(backend, None)?;
 
@@ -5836,7 +5849,7 @@ impl Jwm {
         };
 
         if dirty {
-            let root_window = { backend.root_window() };
+            let root_window = backend.root_window().expect("no root window");
             self.sel_mon = self.wintomon(backend, root_window);
             if self.sel_mon.is_none() && !self.monitor_order.is_empty() {
                 self.sel_mon = self.monitor_order.first().copied();
