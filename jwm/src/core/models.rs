@@ -38,6 +38,11 @@ pub struct ClientGeometry {
     pub old_h: i32,
     pub border_w: i32,
     pub old_border_w: i32,
+
+    pub floating_x: i32,
+    pub floating_y: i32,
+    pub floating_w: i32,
+    pub floating_h: i32,
 }
 
 impl fmt::Display for ClientGeometry {

@@ -253,6 +253,18 @@ impl EventHandler for Jwm {
         self.process_commands_from_status_bar(backend);
         self.flush_pending_bar_updates();
         backend.window_ops().flush()?;
+
+        // 添加僵尸进程回收，防止长时间运行后产生大量僵尸进程
+        use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
+        loop {
+            match waitpid(None, Some(WaitPidFlag::WNOHANG)) {
+                Ok(WaitStatus::Exited(pid, _)) => log::debug!("Child process {} exited", pid),
+                Ok(WaitStatus::Signaled(pid, _, _)) => log::debug!("Child process {} killed", pid),
+                Ok(WaitStatus::StillAlive) => break,
+                Err(_) => break, // ECHILD
+                _ => break,
+            }
+        }
         Ok(())
     }
 
@@ -2767,59 +2779,37 @@ impl Jwm {
         _arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[togglefloating]");
-        let sel_mon_key = match self.sel_mon {
-            Some(key) => key,
-            None => return Ok(()),
-        };
-
-        let sel_client_key = if let Some(monitor) = self.monitors.get(sel_mon_key) {
-            monitor.sel
-        } else {
+        let Some(sel_mon_key) = self.sel_mon else {
             return Ok(());
         };
-
-        let sel_client_key = match sel_client_key {
-            Some(key) => key,
-            None => return Ok(()),
-        };
-
-        if let Some(client) = self.clients.get(sel_client_key) {
-            if client.state.is_fullscreen {
-                return Ok(());
-            }
-        } else {
+        let Some(sel_client_key) = self.monitors.get(sel_mon_key).and_then(|m| m.sel) else {
             return Ok(());
-        }
-
-        let (new_floating_state, geometry) =
-            if let Some(client) = self.clients.get_mut(sel_client_key) {
-                let new_floating = !client.state.is_floating || client.state.is_fixed;
-                client.state.is_floating = new_floating;
-
-                let geom = if new_floating {
-                    Some((
-                        client.geometry.x,
-                        client.geometry.y,
-                        client.geometry.w,
-                        client.geometry.h,
-                    ))
-                } else {
-                    None
-                };
-
-                (new_floating, geom)
+        };
+        let geom = if let Some(client) = self.clients.get_mut(sel_client_key) {
+            client.state.is_floating = !client.state.is_floating;
+            if client.state.is_floating {
+                Some((
+                    client.geometry.floating_x,
+                    client.geometry.floating_y,
+                    client.geometry.floating_w,
+                    client.geometry.floating_h,
+                ))
             } else {
-                return Ok(());
-            };
-
-        if new_floating_state {
-            if let Some((x, y, w, h)) = geometry {
-                self.resize_client(backend, sel_client_key, x, y, w, h, false);
+                client.geometry.floating_x = client.geometry.x;
+                client.geometry.floating_y = client.geometry.y;
+                client.geometry.floating_w = client.geometry.w;
+                client.geometry.floating_h = client.geometry.h;
+                None
             }
+        } else {
+            return Ok(());
+        };
+
+        if let Some((x, y, w, h)) = geom {
+            self.resize_client(backend, sel_client_key, x, y, w, h, false);
         }
 
         self.arrange(backend, Some(sel_mon_key));
-
         Ok(())
     }
 
@@ -5253,7 +5243,7 @@ impl Jwm {
             client.state.never_focus = true;
             client.state.is_floating = true;
             client.state.tags = CONFIG.tagmask();
-            client.geometry.border_w = CONFIG.border_px() as i32;
+            client.geometry.border_w = 0;
         }
 
         self.position_statusbar_on_monitor(backend, current_mon_id)?;
@@ -5312,9 +5302,10 @@ impl Jwm {
         let (client_win, client_height) = if let Some(client) = self.clients.get_mut(client_key) {
             if show_bar {
                 let pad = CONFIG.status_bar_padding();
+                let border_width = client.geometry.border_w;
                 client.geometry.x = monitor.geometry.m_x + pad;
                 client.geometry.y = monitor.geometry.m_y + pad;
-                client.geometry.w = monitor.geometry.m_w - 2 * pad;
+                client.geometry.w = monitor.geometry.m_w - 2 * pad - 2 * border_width;
                 client.geometry.h = CONFIG.status_bar_height();
 
                 let changes = WindowChanges {
