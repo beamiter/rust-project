@@ -2154,7 +2154,7 @@ impl Jwm {
     fn createmon(&mut self, show_bar: bool) -> WMMonitor {
         // info!("[createmon]");
         let mut m: WMMonitor = WMMonitor::new();
-        m.tag_set[0] = 0;
+        m.tag_set[0] = 1;
         m.tag_set[1] = 1;
         m.layout.m_fact = CONFIG.m_fact();
         m.layout.n_master = CONFIG.n_master();
