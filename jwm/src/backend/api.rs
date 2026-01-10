@@ -195,6 +195,8 @@ pub enum BackendEvent {
         window: WindowId,
         subwindow: Option<WindowId>,
         mode: NotifyMode,
+        root_x: f64,
+        root_y: f64,
     },
     LeaveNotify {
         window: WindowId,

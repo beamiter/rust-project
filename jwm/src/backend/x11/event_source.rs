@@ -99,19 +99,37 @@ impl X11EventSource {
                 width: e.width as u32,
                 height: e.height as u32,
             }),
-            XEvent::EnterNotify(e) => Some(BackendEvent::EnterNotify {
-                window: WindowId::X11(e.event as u64),
-                subwindow: if e.child != 0 {
-                    Some(WindowId::X11(e.child as u64))
-                } else {
-                    None
-                },
-                mode: NotifyMode::Normal,
-            }),
-            XEvent::LeaveNotify(e) => Some(BackendEvent::LeaveNotify {
-                window: WindowId::X11(e.event as u64),
-                mode: NotifyMode::Normal,
-            }),
+            XEvent::EnterNotify(e) => {
+                let mode = match e.mode {
+                    xproto::NotifyMode::NORMAL => NotifyMode::Normal,
+                    xproto::NotifyMode::GRAB => NotifyMode::Grab,
+                    xproto::NotifyMode::UNGRAB => NotifyMode::Ungrab,
+                    _ => NotifyMode::Grab,
+                };
+                Some(BackendEvent::EnterNotify {
+                    window: WindowId::X11(e.event as u64),
+                    subwindow: if e.child != 0 {
+                        Some(WindowId::X11(e.child as u64))
+                    } else {
+                        None
+                    },
+                    mode,
+                    root_x: e.root_x as f64,
+                    root_y: e.root_y as f64,
+                })
+            }
+            XEvent::LeaveNotify(e) => {
+                let mode = match e.mode {
+                    xproto::NotifyMode::NORMAL => NotifyMode::Normal,
+                    xproto::NotifyMode::GRAB => NotifyMode::Grab,
+                    xproto::NotifyMode::UNGRAB => NotifyMode::Ungrab,
+                    _ => NotifyMode::Grab,
+                };
+                Some(BackendEvent::LeaveNotify {
+                    window: WindowId::X11(e.event as u64),
+                    mode,
+                })
+            }
             XEvent::FocusIn(e) => Some(BackendEvent::FocusIn {
                 window: WindowId::X11(e.event as u64),
             }),

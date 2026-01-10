@@ -185,6 +185,7 @@ pub struct Jwm {
     pub s_h: i32,
     pub running: AtomicBool,
     pub is_restarting: AtomicBool,
+    pub last_mouse_root: (f64, f64),
 
     pub message: SharedMessage,
 
@@ -332,13 +333,14 @@ impl Jwm {
             last_stacking: SecondaryMap::new(),
             key_bindings: CONFIG.get_keys(),
             interaction: None,
+            last_mouse_root: (0.0, 0.0),
         };
-        // 手动添加初始屏幕
+        if let Ok((x, y)) = backend.input_ops().get_pointer_position() {
+            jwm.last_mouse_root = (x, y);
+        }
         for out in outputs {
             jwm.add_monitor(out);
         }
-
-        // 选定默认 Monitor
         if !jwm.monitor_order.is_empty() {
             jwm.sel_mon = Some(jwm.monitor_order[0]);
         }
@@ -346,7 +348,6 @@ impl Jwm {
     }
 
     // --- 热插拔处理逻辑 ---
-
     fn add_monitor(&mut self, info: crate::backend::api::OutputInfo) {
         info!("[add_monitor] Adding output: {:?}", info);
         let mut m = self.createmon(CONFIG.show_bar());
@@ -930,14 +931,15 @@ impl Jwm {
                 root_x: _, // f64
                 root_y: _, // f64
             } => self.on_button_press(backend, window, state, detail, time),
-
             BackendEvent::MotionNotify {
                 window,
                 root_x,
                 root_y,
                 time,
-            } => self.on_motion_notify(backend, window, root_x as i16, root_y as i16, time),
-
+            } => {
+                self.last_mouse_root = (root_x, root_y);
+                self.on_motion_notify(backend, window, root_x as i16, root_y as i16, time)
+            }
             BackendEvent::ConfigureRequest {
                 window,
                 mask_bits,
@@ -954,18 +956,15 @@ impl Jwm {
                     Some(StackMode::Below) => 1,
                     _ => 0,
                 };
-
                 self.on_configure_request(
                     backend, window, mask_bits, x, y, w, h, border, sibling, stack_mode,
                 )
             }
-
             BackendEvent::KeyPress {
                 keycode,
                 state,
                 time: _,
             } => self.on_key_press(backend, keycode, state),
-
             BackendEvent::WindowConfigured {
                 window,
                 x,
@@ -973,28 +972,35 @@ impl Jwm {
                 width,
                 height,
             } => self.configurenotify(backend, window, x, y, width, height),
-
             BackendEvent::WindowDestroyed(window) => self.destroynotify(backend, window),
-
             BackendEvent::EnterNotify {
                 window,
                 subwindow: _,
-                mode: _,
-            } => self.enter_notify(backend, window),
-
+                mode,
+                root_x,
+                root_y,
+            } => {
+                if mode != crate::backend::api::NotifyMode::Normal {
+                    return Ok(());
+                }
+                let dx = (root_x - self.last_mouse_root.0).abs();
+                let dy = (root_y - self.last_mouse_root.1).abs();
+                if dx < 1.0 && dy < 1.0 {
+                    // debug!("Ignored fake EnterNotify caused by popup");
+                    return Ok(());
+                }
+                // 更新缓存位置
+                self.last_mouse_root = (root_x, root_y);
+                self.enter_notify(backend, window)
+            }
             BackendEvent::Expose { window } => self.expose(backend, window, 0),
-
             BackendEvent::FocusIn { window } => self.focusin(backend, window),
-
             BackendEvent::WindowCreated(window) => self.maprequest(backend, window),
-
             BackendEvent::WindowUnmapped(window) => self.unmapnotify(backend, window, false),
-
             BackendEvent::MappingNotify => {
                 backend.key_ops_mut().clear_cache();
                 self.grabkeys(backend)
             }
-
             BackendEvent::PropertyChanged { window, kind } => {
                 if let Some(client_key) = self.wintoclient(window) {
                     match kind {
@@ -1014,7 +1020,6 @@ impl Jwm {
                 }
                 return Ok(());
             }
-
             BackendEvent::WindowStateRequest {
                 window,
                 action,
@@ -1037,7 +1042,6 @@ impl Jwm {
                 }
                 return Ok(());
             }
-
             BackendEvent::ActiveWindowMessage { window } => {
                 if let Some(ck) = self.wintoclient(window) {
                     let is_urgent = self
@@ -2841,15 +2845,20 @@ impl Jwm {
     fn focusin(
         &mut self,
         backend: &mut dyn Backend,
-        event: WindowId,
+        event_window: WindowId,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // info!("[focusin]");
+        // info!("[focusin] Window {:?} got focus", event_window);
         let sel_client_key = self.get_selected_client_key();
-
         if let Some(client_key) = sel_client_key {
             if let Some(client) = self.clients.get(client_key) {
-                if event != client.win {
-                    self.setfocus(backend, client_key)?;
+                if event_window != client.win {
+                    if self.wintoclient(event_window).is_some() {
+                        self.setfocus(backend, client_key)?;
+                    } else {
+                        // 是未知窗口（可能是输入法、系统弹窗等），允许它持有焦点
+                        // 不要调用 setfocus
+                        // debug!("Focus stolen by unmanaged window, ignoring allow...");
+                    }
                 }
             }
         }
