@@ -5,6 +5,9 @@ use log::warn;
 use log::{debug, error};
 
 use nix::sys::signal::{self, Signal};
+use nix::sys::wait::WaitPidFlag;
+use nix::sys::wait::WaitStatus;
+use nix::sys::wait::waitpid;
 use nix::unistd::Pid;
 
 use crate::backend::api::EventHandler;
@@ -224,17 +227,19 @@ impl EventHandler for Jwm {
             BackendEvent::OutputAdded(info) => self.handle_output_added(backend, info),
             BackendEvent::OutputRemoved(id) => self.handle_output_removed(backend, id),
             BackendEvent::OutputChanged(info) => self.handle_output_changed(backend, info),
-
             // --- 处理热插拔触发的全局刷新 ---
             BackendEvent::ScreenLayoutChanged => {
                 log::info!(
                     "[handle_event] Screen Layout Changed (Hotplug detected), refreshing geometry..."
                 );
-                // updategeom 会调用 enumerate_outputs 并更新 self.monitors
                 if self.updategeom(backend) {
-                    // 如果确实有变化，重新安排布局
                     self.handle_screen_geometry_change(backend)?;
                 }
+                Ok(())
+            }
+            BackendEvent::ChildProcessExited => {
+                debug!("Received SIGCHLD, reaping zombies...");
+                self.reap_zombies();
                 Ok(())
             }
             _ => self.handle_backend_event(backend, event),
@@ -253,18 +258,6 @@ impl EventHandler for Jwm {
         self.process_commands_from_status_bar(backend);
         self.flush_pending_bar_updates();
         backend.window_ops().flush()?;
-
-        // 添加僵尸进程回收，防止长时间运行后产生大量僵尸进程
-        use nix::sys::wait::{WaitPidFlag, WaitStatus, waitpid};
-        loop {
-            match waitpid(None, Some(WaitPidFlag::WNOHANG)) {
-                Ok(WaitStatus::Exited(pid, _)) => log::debug!("Child process {} exited", pid),
-                Ok(WaitStatus::Signaled(pid, _, _)) => log::debug!("Child process {} killed", pid),
-                Ok(WaitStatus::StillAlive) => break,
-                Err(_) => break, // ECHILD
-                _ => break,
-            }
-        }
         Ok(())
     }
 
@@ -2675,6 +2668,38 @@ impl Jwm {
         }
 
         Ok(())
+    }
+
+    pub fn reap_zombies(&mut self) {
+        // 使用 WNOHANG 循环回收所有已退出的子进程
+        loop {
+            match waitpid(None, Some(WaitPidFlag::WNOHANG)) {
+                Ok(WaitStatus::Exited(pid, status)) => {
+                    info!("Child process {} exited with status {}", pid, status);
+
+                    // 检查是否是状态栏退出了，如果是，清理句柄以便重启
+                    if let Some(child) = &self.status_bar_child {
+                        if child.id() as i32 == pid.as_raw() {
+                            warn!("Status bar process died.");
+                            self.status_bar_child = None;
+                        }
+                    }
+                }
+                Ok(WaitStatus::Signaled(pid, sig, _)) => {
+                    info!("Child process {} killed by signal {:?}", pid, sig);
+                    if let Some(child) = &self.status_bar_child {
+                        if child.id() as i32 == pid.as_raw() {
+                            self.status_bar_child = None;
+                        }
+                    }
+                }
+                // StillAlive 表示还有子进程在运行，Break 退出循环
+                Ok(WaitStatus::StillAlive) => break,
+                // Err 通常表示没有子进程了 (ECHILD)，也退出循环
+                Err(_) => break,
+                _ => break,
+            }
+        }
     }
 
     fn tile(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {

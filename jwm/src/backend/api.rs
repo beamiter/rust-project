@@ -149,6 +149,7 @@ pub enum BackendEvent {
     OutputRemoved(OutputId),
     OutputChanged(OutputInfo),
     ScreenLayoutChanged,
+    ChildProcessExited,
 
     // === 窗口生命周期 ===
     WindowCreated(WindowId),

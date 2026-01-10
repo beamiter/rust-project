@@ -63,7 +63,7 @@ rand.workspace = true
 xkbcommon = "0.9.0"
 bitflags = "2.9.4"
 smithay = { git = "https://github.com/Smithay/smithay.git", branch = "master", features = ["use_system_lib", "wayland-backend", "wayland_frontend"] }
-calloop = "0.14.3"
+calloop = { version = "0.14.3", features = ["signals"] }
 winit = "0.30.12"
 crossbeam-channel = "0.5.15"
 downcast-rs = "2.0.2"

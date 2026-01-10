@@ -2,6 +2,7 @@
 use crate::backend::api::EventHandler;
 use crate::backend::common_define::EventMaskBits;
 use crate::backend::common_define::WindowId;
+use calloop::signals::{Signal, Signals};
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
@@ -195,7 +196,9 @@ impl Backend for X11Backend {
         let mut event_loop: EventLoop<X11LoopData> =
             EventLoop::try_new().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
         let handle = event_loop.handle();
-        // 1. 注册 X11 事件源
+        // =========================================================
+        // 1. 注册 X11 事件源 (这是主要的事件来源)
+        // =========================================================
         let x11_source = if let Some(src) = self._init_event_source.take() {
             src
         } else {
@@ -204,13 +207,31 @@ impl Backend for X11Backend {
         handle
             .insert_source(x11_source, |event, _, data| {
                 if let Err(e) = data.handler.handle_event(data.backend, event) {
-                    log::error!("Error handling event: {:?}", e);
+                    log::error!("Error handling X11 event: {:?}", e);
                 }
             })
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-
-        // 2. 注册 Update 定时器
-        let update_interval = Duration::from_millis(10);
+        // =========================================================
+        // 2. [新增] 注册 Signals 事件源 (专门处理僵尸进程)
+        // =========================================================
+        let signals = Signals::new(&[Signal::SIGCHLD])
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        handle
+            .insert_source(signals, |event, _, data| {
+                if event.signal() == Signal::SIGCHLD {
+                    if let Err(e) = data.handler.handle_event(
+                        data.backend,
+                        crate::backend::api::BackendEvent::ChildProcessExited,
+                    ) {
+                        log::error!("Error handling SIGCHLD: {:?}", e);
+                    }
+                }
+            })
+            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        // =========================================================
+        // 3. 注册 Update 定时器
+        // =========================================================
+        let update_interval = Duration::from_millis(20);
         let timer = Timer::from_duration(update_interval);
         handle
             .insert_source(timer, move |_, _, data| {
@@ -223,15 +244,14 @@ impl Backend for X11Backend {
                 TimeoutAction::ToDuration(update_interval)
             })
             .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
-
-        // 3. 构造 LoopData
+        // =========================================================
+        // 4. 运行事件循环
+        // =========================================================
         let mut loop_data = X11LoopData {
             backend: self,
             handler,
             should_exit: false,
         };
-
-        // 4. 运行事件循环
         loop {
             event_loop
                 .dispatch(None, &mut loop_data)
