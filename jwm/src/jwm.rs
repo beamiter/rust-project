@@ -13,7 +13,9 @@ use nix::unistd::Pid;
 use crate::backend::api::EventHandler;
 use crate::backend::common_define::OutputId;
 use crate::backend::common_define::WindowId;
+use crate::core::controller::WMController;
 use crate::core::models::MonitorGeometry;
+use crate::core::state::WMState;
 use slotmap::{SecondaryMap, SlotMap};
 use std::collections::HashSet;
 use std::env;
@@ -181,6 +183,9 @@ pub struct InteractionState {
 }
 
 pub struct Jwm {
+    // 纯状态数据
+    pub state: WMState,
+
     pub s_w: i32,
     pub s_h: i32,
     pub running: AtomicBool,
@@ -188,17 +193,6 @@ pub struct Jwm {
     pub last_mouse_root: (f64, f64),
 
     pub message: SharedMessage,
-
-    pub clients: SlotMap<ClientKey, WMClient>,
-    pub monitors: SlotMap<MonitorKey, WMMonitor>,
-    pub client_order: Vec<ClientKey>,
-    pub client_stack_order: Vec<ClientKey>,
-    pub monitor_order: Vec<MonitorKey>,
-    pub output_map: SecondaryMap<MonitorKey, OutputId>,
-    pub sel_mon: Option<MonitorKey>,
-    pub motion_mon: Option<MonitorKey>,
-    pub monitor_clients: SecondaryMap<MonitorKey, Vec<ClientKey>>,
-    pub monitor_stack: SecondaryMap<MonitorKey, Vec<ClientKey>>,
 
     pub status_bar_shmem: Option<SharedRingBuffer>,
     pub status_bar_child: Option<Child>,
@@ -215,6 +209,51 @@ pub struct Jwm {
     key_bindings: Vec<WMKey>,
     pub interaction: Option<InteractionState>,
 }
+
+// impl WMController for Jwm {
+//     fn on_map_request(&mut self, backend: &mut dyn Backend, win: WindowId) {
+//         self.maprequest(backend, win);
+//     }
+//     fn on_unmap_notify(&mut self, backend: &mut dyn Backend, win: WindowId) {
+//         self.unmapnotify(backend, win, false);
+//     }
+//     fn on_destroy_notify(&mut self, backend: &mut dyn Backend, win: WindowId) {
+//         self.destroynotify(backend, win);
+//     }
+//     fn on_configure_notify(&mut self, backend: &mut dyn Backend, win: WindowId, geom: Geometry) {
+//         self.configurenotify(backend, window, x, y, width, height);
+//     }
+//
+//     fn on_key_press(&mut self, backend: &mut dyn Backend, mods: Mods, key: KeySym) {
+//         self.on_key_press(backend, keycode, state);
+//     }
+//     fn on_enter_notify(&mut self, backend: &mut dyn Backend, win: WindowId) {
+//         if mode != crate::backend::api::NotifyMode::Normal {
+//             return Ok(());
+//         }
+//         let dx = (root_x - self.last_mouse_root.0).abs();
+//         let dy = (root_y - self.last_mouse_root.1).abs();
+//         if dx < 1.0 && dy < 1.0 {
+//             // debug!("Ignored fake EnterNotify caused by popup");
+//             return Ok(());
+//         }
+//         // 更新缓存位置
+//         self.last_mouse_root = (root_x, root_y);
+//         self.enter_notify(backend, window);
+//     }
+//     fn on_focus_in(&mut self, backend: &mut dyn Backend, win: WindowId) {
+//         self.focusin(backend, window);
+//     }
+//
+//     fn on_screen_layout_change(&mut self, backend: &mut dyn Backend) {
+//         log::info!(
+//             "[handle_event] Screen Layout Changed (Hotplug detected), refreshing geometry..."
+//         );
+//         if self.updategeom(backend) {
+//             self.handle_screen_geometry_change(backend)?;
+//         }
+//     }
+// }
 
 impl EventHandler for Jwm {
     fn handle_event(
@@ -304,25 +343,17 @@ impl Jwm {
         info!("[new] JWM initialization completed successfully");
         let outputs = backend.output_ops().enumerate_outputs();
         let mut jwm = Jwm {
+            state: WMState::new(),
+
             s_w,
             s_h,
             running: AtomicBool::new(true),
             is_restarting: AtomicBool::new(false),
 
-            clients: SlotMap::new(),
-            monitors: SlotMap::new(),
-            client_order: Vec::new(),
-            client_stack_order: Vec::new(),
-            monitor_order: Vec::new(),
-            output_map: SecondaryMap::new(),
-            sel_mon: None,
-            motion_mon: None,
-            monitor_clients: SecondaryMap::new(),
-            monitor_stack: SecondaryMap::new(),
+            message: SharedMessage::default(),
 
             status_bar_shmem: None,
             status_bar_child: None,
-            message: SharedMessage::default(),
             status_bar_client: None,
             status_bar_window: None,
             current_bar_monitor_id: None,
@@ -341,8 +372,8 @@ impl Jwm {
         for out in outputs {
             jwm.add_monitor(out);
         }
-        if !jwm.monitor_order.is_empty() {
-            jwm.sel_mon = Some(jwm.monitor_order[0]);
+        if !jwm.state.monitor_order.is_empty() {
+            jwm.state.sel_mon = Some(jwm.state.monitor_order[0]);
         }
         Ok(jwm)
     }
@@ -362,16 +393,16 @@ impl Jwm {
         m.geometry.w_y = info.y;
         m.geometry.w_w = info.width;
         m.geometry.w_h = info.height;
-        m.num = self.monitors.len() as i32;
+        m.num = self.state.monitors.len() as i32;
 
-        let key = self.monitors.insert(m);
-        self.monitor_order.push(key);
-        self.output_map.insert(key, info.id);
-        self.monitor_clients.insert(key, Vec::new());
-        self.monitor_stack.insert(key, Vec::new());
+        let key = self.state.monitors.insert(m);
+        self.state.monitor_order.push(key);
+        self.state.output_map.insert(key, info.id);
+        self.state.monitor_clients.insert(key, Vec::new());
+        self.state.monitor_stack.insert(key, Vec::new());
 
-        if self.sel_mon.is_none() {
-            self.sel_mon = Some(key);
+        if self.state.sel_mon.is_none() {
+            self.state.sel_mon = Some(key);
         }
     }
 
@@ -394,6 +425,7 @@ impl Jwm {
 
         // 查找对应的 MonitorKey
         let mon_key_opt = self
+            .state
             .output_map
             .iter()
             .find(|&(_, &oid)| oid == id)
@@ -403,15 +435,15 @@ impl Jwm {
             self.move_clients_to_first_monitor(mon_key);
 
             // 移除数据
-            self.monitors.remove(mon_key);
-            self.output_map.remove(mon_key);
-            self.monitor_clients.remove(mon_key);
-            self.monitor_stack.remove(mon_key);
-            self.monitor_order.retain(|&k| k != mon_key);
+            self.state.monitors.remove(mon_key);
+            self.state.output_map.remove(mon_key);
+            self.state.monitor_clients.remove(mon_key);
+            self.state.monitor_stack.remove(mon_key);
+            self.state.monitor_order.retain(|&k| k != mon_key);
 
             // 如果删除了当前选中的 Monitor，重置选中
-            if self.sel_mon == Some(mon_key) {
-                self.sel_mon = self.monitor_order.first().copied();
+            if self.state.sel_mon == Some(mon_key) {
+                self.state.sel_mon = self.state.monitor_order.first().copied();
                 self.focus(backend, None)?;
             }
 
@@ -426,12 +458,13 @@ impl Jwm {
         info: crate::backend::api::OutputInfo,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mon_key_opt = self
+            .state
             .output_map
             .iter()
             .find(|&(_, &oid)| oid == info.id)
             .map(|(k, _)| k);
         if let Some(mon_key) = mon_key_opt {
-            if let Some(m) = self.monitors.get_mut(mon_key) {
+            if let Some(m) = self.state.monitors.get_mut(mon_key) {
                 m.geometry.m_x = info.x;
                 m.geometry.m_y = info.y;
                 m.geometry.m_w = info.width;
@@ -515,11 +548,11 @@ impl Jwm {
         let mut click_type = WMClickType::ClickRootWin;
         // 1. 确定目标显示器
         if let Some(target_mon_key) = self.wintomon(backend, window) {
-            if Some(target_mon_key) != self.sel_mon {
+            if Some(target_mon_key) != self.state.sel_mon {
                 if let Some(cur) = self.get_selected_client_key() {
                     self.unfocus_client(backend, cur, true)?;
                 }
-                self.sel_mon = Some(target_mon_key);
+                self.state.sel_mon = Some(target_mon_key);
                 self.focus(backend, None)?;
             }
         }
@@ -531,7 +564,7 @@ impl Jwm {
                 if let Some(client_key) = self.wintoclient(wid) {
                     is_client_click = true;
                     self.focus(backend, Some(client_key))?;
-                    let _ = self.restack(backend, self.sel_mon);
+                    let _ = self.restack(backend, self.state.sel_mon);
                     click_type = WMClickType::ClickClientWin;
                 }
             }
@@ -598,8 +631,8 @@ impl Jwm {
                     let dy = root_y as i32 - state.start_mouse_y;
                     let mut new_x = state.start_win_geom.x as i32 + dx;
                     let mut new_y = state.start_win_geom.y as i32 + dy;
-                    if let Some(sel_mon_key) = self.sel_mon {
-                        if let Some(m) = self.monitors.get(sel_mon_key) {
+                    if let Some(sel_mon_key) = self.state.sel_mon {
+                        if let Some(m) = self.state.monitors.get(sel_mon_key) {
                             self.apply_edge_snapping(
                                 state.client_key,
                                 &mut new_x,
@@ -666,10 +699,10 @@ impl Jwm {
             return Ok(());
         }
         let new_monitor_key = self.recttomon(backend, root_x as i32, root_y as i32);
-        if new_monitor_key != self.motion_mon {
+        if new_monitor_key != self.state.motion_mon {
             self.handle_monitor_switch_by_key(backend, new_monitor_key)?;
         }
-        self.motion_mon = new_monitor_key;
+        self.state.motion_mon = new_monitor_key;
         Ok(())
     }
 
@@ -727,7 +760,7 @@ impl Jwm {
         let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
         {
             let bar_key = self.status_bar_client.unwrap();
-            let statusbar_mut = self.clients.get_mut(bar_key).unwrap();
+            let statusbar_mut = self.state.clients.get_mut(bar_key).unwrap();
 
             if mask.contains(ConfigWindowBits::X) {
                 statusbar_mut.geometry.x = x as i32;
@@ -771,12 +804,12 @@ impl Jwm {
 
         let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
         if mask.contains(ConfigWindowBits::BORDER_WIDTH) {
-            if let Some(client) = self.clients.get_mut(client_key) {
+            if let Some(client) = self.state.clients.get_mut(client_key) {
                 client.geometry.border_w = border as i32;
             }
         }
 
-        let (is_floating, mon_key_opt) = if let Some(client) = self.clients.get(client_key) {
+        let (is_floating, mon_key_opt) = if let Some(client) = self.state.clients.get(client_key) {
             (client.state.is_floating, client.mon)
         } else {
             return Err("Client not found".into());
@@ -784,7 +817,7 @@ impl Jwm {
 
         if is_floating {
             let (mx, my, mw, mh) = if let Some(mon_key) = mon_key_opt {
-                if let Some(monitor) = self.monitors.get(mon_key) {
+                if let Some(monitor) = self.state.monitors.get(mon_key) {
                     (
                         monitor.geometry.m_x,
                         monitor.geometry.m_y,
@@ -798,7 +831,7 @@ impl Jwm {
                 return Err("Client has no monitor assigned".into());
             };
 
-            if let Some(client) = self.clients.get_mut(client_key) {
+            if let Some(client) = self.state.clients.get_mut(client_key) {
                 if mask.contains(ConfigWindowBits::X) {
                     client.geometry.old_x = client.geometry.x;
                     client.geometry.x = mx + x as i32;
@@ -841,7 +874,7 @@ impl Jwm {
                 self.configure_client(backend, client_key)?;
             }
             if self.is_client_visible_by_key(client_key) {
-                if let Some(client) = self.clients.get(client_key) {
+                if let Some(client) = self.state.clients.get(client_key) {
                     let changes = WindowChanges {
                         x: Some(client.geometry.x),
                         y: Some(client.geometry.y),
@@ -1028,6 +1061,7 @@ impl Jwm {
                 if matches!(state, NetWmState::Fullscreen) {
                     if let Some(ck) = self.wintoclient(window) {
                         let is_fullscreen = self
+                            .state
                             .clients
                             .get(ck)
                             .map(|c| c.state.is_fullscreen)
@@ -1045,6 +1079,7 @@ impl Jwm {
             BackendEvent::ActiveWindowMessage { window } => {
                 if let Some(ck) = self.wintoclient(window) {
                     let is_urgent = self
+                        .state
                         .clients
                         .get(ck)
                         .map(|c| c.state.is_urgent)
@@ -1078,57 +1113,62 @@ impl Jwm {
     }
 
     fn insert_client(&mut self, client: WMClient) -> ClientKey {
-        let key = self.clients.insert(client);
-        self.client_order.push(key);
+        let key = self.state.clients.insert(client);
+        self.state.client_order.push(key);
         key
     }
 
     fn insert_monitor(&mut self, monitor: WMMonitor) -> MonitorKey {
-        let key = self.monitors.insert(monitor);
-        self.monitor_order.push(key);
-        self.monitor_clients.insert(key, Vec::new());
-        self.monitor_stack.insert(key, Vec::new());
+        let key = self.state.monitors.insert(monitor);
+        self.state.monitor_order.push(key);
+        self.state.monitor_clients.insert(key, Vec::new());
+        self.state.monitor_stack.insert(key, Vec::new());
         key
     }
 
     fn is_client_selected(&self, client_key: ClientKey) -> bool {
-        self.sel_mon
-            .and_then(|sel_mon_key| self.monitors.get(sel_mon_key))
+        self.state
+            .sel_mon
+            .and_then(|sel_mon_key| self.state.monitors.get(sel_mon_key))
             .and_then(|monitor| monitor.sel)
             .map(|sel_client| sel_client == client_key)
             .unwrap_or(false)
     }
 
     fn get_monitor_clients(&self, mon_key: MonitorKey) -> &[ClientKey] {
-        self.monitor_clients
+        self.state
+            .monitor_clients
             .get(mon_key)
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
 
     fn get_monitor_stack(&self, mon_key: MonitorKey) -> &[ClientKey] {
-        self.monitor_stack
+        self.state
+            .monitor_stack
             .get(mon_key)
             .map(|v| v.as_slice())
             .unwrap_or(&[])
     }
 
     fn get_sel_mon(&self) -> Option<&WMMonitor> {
-        self.sel_mon
-            .and_then(|sel_mon_key| self.monitors.get(sel_mon_key))
+        self.state
+            .sel_mon
+            .and_then(|sel_mon_key| self.state.monitors.get(sel_mon_key))
             .and_then(|monitor| Some(monitor))
     }
 
     fn get_selected_client_key(&self) -> Option<ClientKey> {
-        self.sel_mon
-            .and_then(|sel_mon_key| self.monitors.get(sel_mon_key))
+        self.state
+            .sel_mon
+            .and_then(|sel_mon_key| self.state.monitors.get(sel_mon_key))
             .and_then(|monitor| monitor.sel)
     }
 
     fn attach_front(&mut self, client_key: ClientKey) {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
-                if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
+                if let Some(client_list) = self.state.monitor_clients.get_mut(mon_key) {
                     client_list.insert(0, client_key);
                 }
             }
@@ -1136,9 +1176,9 @@ impl Jwm {
     }
 
     fn attach_back(&mut self, client_key: ClientKey) {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
-                if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
+                if let Some(client_list) = self.state.monitor_clients.get_mut(mon_key) {
                     client_list.push(client_key);
                 }
             }
@@ -1146,9 +1186,9 @@ impl Jwm {
     }
 
     fn detach(&mut self, client_key: ClientKey) {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
-                if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
+                if let Some(client_list) = self.state.monitor_clients.get_mut(mon_key) {
                     if let Some(pos) = client_list.iter().position(|&k| k == client_key) {
                         client_list.remove(pos);
                     }
@@ -1158,9 +1198,9 @@ impl Jwm {
     }
 
     fn attachstack(&mut self, client_key: ClientKey) {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
-                if let Some(stack_list) = self.monitor_stack.get_mut(mon_key) {
+                if let Some(stack_list) = self.state.monitor_stack.get_mut(mon_key) {
                     stack_list.insert(0, client_key);
                 }
             }
@@ -1168,33 +1208,33 @@ impl Jwm {
     }
 
     fn detach_from_monitor(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
-        if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
+        if let Some(client_list) = self.state.monitor_clients.get_mut(mon_key) {
             client_list.retain(|&k| k != client_key);
         }
-        if let Some(stack_list) = self.monitor_stack.get_mut(mon_key) {
+        if let Some(stack_list) = self.state.monitor_stack.get_mut(mon_key) {
             stack_list.retain(|&k| k != client_key);
         }
     }
 
     fn attach_to_monitor(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
-        if let Some(client_list) = self.monitor_clients.get_mut(mon_key) {
+        if let Some(client_list) = self.state.monitor_clients.get_mut(mon_key) {
             client_list.push(client_key);
         }
-        if let Some(stack_list) = self.monitor_stack.get_mut(mon_key) {
+        if let Some(stack_list) = self.state.monitor_stack.get_mut(mon_key) {
             stack_list.push(client_key);
         }
     }
 
     fn detachstack(&mut self, client_key: ClientKey) {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
-                if let Some(stack_list) = self.monitor_stack.get_mut(mon_key) {
+                if let Some(stack_list) = self.state.monitor_stack.get_mut(mon_key) {
                     if let Some(pos) = stack_list.iter().position(|&k| k == client_key) {
                         stack_list.remove(pos);
                     }
                 }
                 let next_visible_client = self.find_next_visible_client_by_mon(mon_key);
-                if let Some(monitor) = self.monitors.get_mut(mon_key) {
+                if let Some(monitor) = self.state.monitors.get_mut(mon_key) {
                     if monitor.sel == Some(client_key) {
                         monitor.sel = next_visible_client;
                     }
@@ -1204,9 +1244,9 @@ impl Jwm {
     }
 
     fn find_next_visible_client_by_mon(&self, mon_key: MonitorKey) -> Option<ClientKey> {
-        if let Some(stack_list) = self.monitor_stack.get(mon_key) {
+        if let Some(stack_list) = self.state.monitor_stack.get(mon_key) {
             for &client_key in stack_list {
-                if let Some(_) = self.clients.get(client_key) {
+                if let Some(_) = self.state.clients.get(client_key) {
                     if self.is_client_visible_on_monitor(client_key, mon_key) {
                         return Some(client_key);
                     }
@@ -1217,9 +1257,10 @@ impl Jwm {
     }
 
     fn is_client_visible_on_monitor(&self, client_key: ClientKey, mon_key: MonitorKey) -> bool {
-        if let (Some(client), Some(monitor)) =
-            (self.clients.get(client_key), self.monitors.get(mon_key))
-        {
+        if let (Some(client), Some(monitor)) = (
+            self.state.clients.get(client_key),
+            self.state.monitors.get(mon_key),
+        ) {
             (client.state.tags & monitor.tag_set[monitor.sel_tags]) > 0
         } else {
             false
@@ -1227,9 +1268,9 @@ impl Jwm {
     }
 
     fn is_client_visible_by_key(&self, client_key: ClientKey) -> bool {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
-                if let Some(monitor) = self.monitors.get(mon_key) {
+                if let Some(monitor) = self.state.monitors.get(mon_key) {
                     return (client.state.tags & monitor.tag_set[monitor.sel_tags]) > 0;
                 }
             }
@@ -1251,7 +1292,7 @@ impl Jwm {
         };
 
         for &client_key in &client_list[start_index..] {
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 if !client.state.is_floating
                     && self.is_client_visible_on_monitor(client_key, mon_key)
                 {
@@ -1263,7 +1304,7 @@ impl Jwm {
     }
 
     fn pop(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
-        let mon_key = if let Some(client) = self.clients.get(client_key) {
+        let mon_key = if let Some(client) = self.state.clients.get(client_key) {
             client.mon
         } else {
             return;
@@ -1284,7 +1325,8 @@ impl Jwm {
                 return self.status_bar_client;
             }
         }
-        self.clients
+        self.state
+            .clients
             .iter()
             .find(|(_, client)| client.win == win)
             .map(|(key, _)| key)
@@ -1328,7 +1370,7 @@ impl Jwm {
     }
 
     fn is_bar_visible_on_mon(&self, mon_key: MonitorKey) -> bool {
-        if let Some(m) = self.monitors.get(mon_key) {
+        if let Some(m) = self.state.monitors.get(mon_key) {
             if let Some(p) = m.pertag.as_ref() {
                 if let Some(&show) = p.show_bars.get(p.cur_tag) {
                     return show;
@@ -1347,7 +1389,7 @@ impl Jwm {
                 }
             }
             None => {
-                for (key, m) in self.monitors.iter() {
+                for (key, m) in self.state.monitors.iter() {
                     if self.is_bar_visible_on_mon(key) {
                         self.pending_bar_updates.insert(m.num);
                     }
@@ -1381,7 +1423,7 @@ impl Jwm {
     ) -> Result<bool, Box<dyn std::error::Error>> {
         *w = (*w).max(1);
         *h = (*h).max(1);
-        let original_geometry = if let Some(client) = self.clients.get(client_key) {
+        let original_geometry = if let Some(client) = self.state.clients.get(client_key) {
             (
                 client.geometry.x,
                 client.geometry.y,
@@ -1410,7 +1452,7 @@ impl Jwm {
         interact: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (client_total_width, client_total_height, mon_key) =
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 (
                     *w + 2 * client.geometry.border_w,
                     *h + 2 * client.geometry.border_w,
@@ -1424,7 +1466,7 @@ impl Jwm {
             self.constrain_to_screen(x, y, client_total_width, client_total_height);
         } else {
             if let Some(mon_key) = mon_key {
-                if let Some(monitor) = self.monitors.get(mon_key) {
+                if let Some(monitor) = self.state.monitors.get(mon_key) {
                     self.constrain_to_monitor(
                         x,
                         y,
@@ -1471,6 +1513,7 @@ impl Jwm {
         h: &mut i32,
     ) -> Result<bool, Box<dyn std::error::Error>> {
         let is_floating = self
+            .state
             .clients
             .get(client_key)
             .map(|client| client.state.is_floating)
@@ -1482,7 +1525,7 @@ impl Jwm {
 
         self.ensure_size_hints_valid(backend, client_key)?;
 
-        let hints = if let Some(client) = self.clients.get(client_key) {
+        let hints = if let Some(client) = self.state.clients.get(client_key) {
             client.size_hints.clone()
         } else {
             return Err("Client not found".into());
@@ -1502,6 +1545,7 @@ impl Jwm {
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let hints_valid = self
+            .state
             .clients
             .get(client_key)
             .map(|client| client.size_hints.hints_valid)
@@ -1565,6 +1609,7 @@ impl Jwm {
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let win = self
+            .state
             .clients
             .get(client_key)
             .map(|c| c.win)
@@ -1572,7 +1617,11 @@ impl Jwm {
 
         match backend.property_ops().fetch_normal_hints(win)? {
             Some(h) => {
-                let c = self.clients.get_mut(client_key).ok_or("Client not found")?;
+                let c = self
+                    .state
+                    .clients
+                    .get_mut(client_key)
+                    .ok_or("Client not found")?;
                 c.size_hints.base_w = h.base_w;
                 c.size_hints.base_h = h.base_h;
                 c.size_hints.inc_w = h.inc_w;
@@ -1588,7 +1637,7 @@ impl Jwm {
                 c.size_hints.hints_valid = true;
             }
             None => {
-                if let Some(c) = self.clients.get_mut(client_key) {
+                if let Some(c) = self.state.clients.get_mut(client_key) {
                     c.size_hints.hints_valid = false;
                 }
             }
@@ -1647,17 +1696,17 @@ impl Jwm {
         let restarting = self.is_restarting.load(Ordering::SeqCst);
 
         let mut clients_to_process = Vec::new();
-        for &mon_key in &self.monitor_order {
-            if let Some(stack) = self.monitor_stack.get(mon_key) {
+        for &mon_key in &self.state.monitor_order {
+            if let Some(stack) = self.state.monitor_stack.get(mon_key) {
                 for &ck in stack {
-                    if let Some(c) = self.clients.get(ck) {
+                    if let Some(c) = self.state.clients.get(ck) {
                         clients_to_process.push((c.win, c.geometry.old_border_w, ck));
                     }
                 }
             }
         }
         for (win, old_border_w, ck) in clients_to_process {
-            if let Some(_) = self.clients.get(ck) {
+            if let Some(_) = self.state.clients.get(ck) {
                 if restarting {
                     backend.window_ops().ungrab_all_buttons(win)?;
                     let mask = EventMaskBits::NONE.bits();
@@ -1814,7 +1863,7 @@ impl Jwm {
         backend: &mut dyn Backend,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[handle_screen_geometry_change]");
-        let monitors: Vec<_> = self.monitor_order.to_vec();
+        let monitors: Vec<_> = self.state.monitor_order.to_vec();
         for mon_key in monitors {
             self.update_fullscreen_clients_on_monitor(backend, mon_key)?;
         }
@@ -1828,7 +1877,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         mon_key: MonitorKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let monitor_geometry = if let Some(monitor) = self.monitors.get(mon_key) {
+        let monitor_geometry = if let Some(monitor) = self.state.monitors.get(mon_key) {
             (
                 monitor.geometry.m_x,
                 monitor.geometry.m_y,
@@ -1844,11 +1893,12 @@ impl Jwm {
         };
 
         let fullscreen_clients: Vec<ClientKey> =
-            if let Some(client_keys) = self.monitor_clients.get(mon_key) {
+            if let Some(client_keys) = self.state.monitor_clients.get(mon_key) {
                 client_keys
                     .iter()
                     .filter(|&&client_key| {
-                        self.clients
+                        self.state
+                            .clients
                             .get(client_key)
                             .map(|client| client.state.is_fullscreen)
                             .unwrap_or(false)
@@ -1878,7 +1928,7 @@ impl Jwm {
         client_key: ClientKey,
         is_focused: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let (win, border_w) = if let Some(client) = self.clients.get(client_key) {
+        let (win, border_w) = if let Some(client) = self.state.clients.get(client_key) {
             (client.win, client.geometry.border_w)
         } else {
             return Err("Client not found".into());
@@ -1915,13 +1965,14 @@ impl Jwm {
         client_key: ClientKey,
         fullscreen: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let win = if let Some(client) = self.clients.get(client_key) {
+        let win = if let Some(client) = self.state.clients.get(client_key) {
             client.win
         } else {
             return Err("Client not found".into());
         };
 
         let is_fullscreen = self
+            .state
             .clients
             .get(client_key)
             .map(|c| c.state.is_fullscreen)
@@ -1930,15 +1981,15 @@ impl Jwm {
         if fullscreen && !is_fullscreen {
             backend.property_ops().set_fullscreen_state(win, true)?;
 
-            if let Some(client) = self.clients.get_mut(client_key) {
+            if let Some(client) = self.state.clients.get_mut(client_key) {
                 client.state.is_fullscreen = true;
                 client.state.old_state = client.state.is_floating;
                 client.geometry.old_border_w = client.geometry.border_w;
                 client.geometry.border_w = 0;
                 client.state.is_floating = true;
             }
-            if let Some(mon_key) = self.clients.get(client_key).and_then(|c| c.mon) {
-                if let Some(monitor) = self.monitors.get(mon_key) {
+            if let Some(mon_key) = self.state.clients.get(client_key).and_then(|c| c.mon) {
+                if let Some(monitor) = self.state.monitors.get(mon_key) {
                     let (mx, my, mw, mh) = (
                         monitor.geometry.m_x,
                         monitor.geometry.m_y,
@@ -1956,7 +2007,7 @@ impl Jwm {
         } else if !fullscreen && is_fullscreen {
             backend.property_ops().set_fullscreen_state(win, false)?;
 
-            if let Some(client) = self.clients.get_mut(client_key) {
+            if let Some(client) = self.state.clients.get_mut(client_key) {
                 client.state.is_fullscreen = false;
                 client.state.is_floating = client.state.old_state;
                 client.geometry.border_w = client.geometry.old_border_w;
@@ -1965,7 +2016,7 @@ impl Jwm {
                 client.geometry.w = client.geometry.old_w;
                 client.geometry.h = client.geometry.old_h;
             }
-            let (x, y, w, h) = if let Some(client) = self.clients.get(client_key) {
+            let (x, y, w, h) = if let Some(client) = self.state.clients.get(client_key) {
                 (
                     client.geometry.x,
                     client.geometry.y,
@@ -1976,7 +2027,7 @@ impl Jwm {
                 return Ok(());
             };
             self.resizeclient(backend, client_key, x, y, w, h)?;
-            if let Some(mon_key) = self.clients.get(client_key).and_then(|c| c.mon) {
+            if let Some(mon_key) = self.state.clients.get(client_key).and_then(|c| c.mon) {
                 self.arrange(backend, Some(mon_key));
             }
         }
@@ -1989,13 +2040,14 @@ impl Jwm {
         client_key: ClientKey,
         urgent: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = self.clients.get_mut(client_key) {
+        if let Some(client) = self.state.clients.get_mut(client_key) {
             client.state.is_urgent = urgent;
         } else {
             return Err("Client not found".into());
         }
 
         let win = self
+            .state
             .clients
             .get(client_key)
             .map(|c| c.win)
@@ -2004,7 +2056,7 @@ impl Jwm {
     }
 
     fn showhide_monitor(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
-        if let Some(stack_clients) = self.monitor_stack.get(mon_key).cloned() {
+        if let Some(stack_clients) = self.state.monitor_stack.get(mon_key).cloned() {
             for client_key in stack_clients {
                 self.showhide_client(backend, client_key, mon_key);
             }
@@ -2028,7 +2080,7 @@ impl Jwm {
 
     fn show_client(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
         let (win, x, y, is_floating, is_fullscreen) =
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 (
                     client.win,
                     client.geometry.x,
@@ -2046,7 +2098,7 @@ impl Jwm {
         }
 
         if is_floating && !is_fullscreen {
-            let (w, h) = if let Some(client) = self.clients.get(client_key) {
+            let (w, h) = if let Some(client) = self.state.clients.get(client_key) {
                 (client.geometry.w, client.geometry.h)
             } else {
                 return;
@@ -2056,7 +2108,7 @@ impl Jwm {
     }
 
     fn hide_client(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
-        let (win, y, width) = if let Some(client) = self.clients.get(client_key) {
+        let (win, y, width) = if let Some(client) = self.state.clients.get(client_key) {
             (client.win, client.geometry.y, client.total_width())
         } else {
             warn!("[hide_client] Client {:?} not found", client_key);
@@ -2098,7 +2150,7 @@ impl Jwm {
         w: i32,
         h: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = self.clients.get_mut(client_key) {
+        if let Some(client) = self.state.clients.get_mut(client_key) {
             client.geometry.old_x = client.geometry.x;
             client.geometry.old_y = client.geometry.y;
             client.geometry.old_w = client.geometry.w;
@@ -2126,7 +2178,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             backend.window_ops().configure(
                 client.win,
                 client.geometry.x,
@@ -2208,10 +2260,10 @@ impl Jwm {
         if Some(event_window) == self.status_bar_window {
             if let Some(cur_bar_mon_id) = self.current_bar_monitor_id {
                 if let Some(target_monitor_key) = self.get_monitor_by_id(cur_bar_mon_id) {
-                    if Some(target_monitor_key) != self.sel_mon {
+                    if Some(target_monitor_key) != self.state.sel_mon {
                         let current_sel = self.get_selected_client_key();
                         self.unfocus_client_opt(backend, current_sel, true)?;
-                        self.sel_mon = Some(target_monitor_key);
+                        self.state.sel_mon = Some(target_monitor_key);
                         self.focus(backend, None)?;
                     }
                 }
@@ -2231,7 +2283,10 @@ impl Jwm {
         }
         let client_key_opt = self.wintoclient(event_window);
         let monitor_key_opt = if let Some(client_key) = client_key_opt {
-            self.clients.get(client_key).and_then(|client| client.mon)
+            self.state
+                .clients
+                .get(client_key)
+                .and_then(|client| client.mon)
         } else {
             self.wintomon(backend, Some(event_window))
         };
@@ -2239,7 +2294,7 @@ impl Jwm {
             Some(monitor_key) => monitor_key,
             None => return Ok(()),
         };
-        let is_on_selected_monitor = Some(current_event_monitor_key) == self.sel_mon;
+        let is_on_selected_monitor = Some(current_event_monitor_key) == self.state.sel_mon;
         if !is_on_selected_monitor {
             self.switch_to_monitor(backend, current_event_monitor_key)?;
         }
@@ -2264,7 +2319,7 @@ impl Jwm {
     fn arrangemon(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
         info!("[arrangemon]");
 
-        let (layout_type, layout_symbol) = if let Some(monitor) = self.monitors.get(mon_key) {
+        let (layout_type, layout_symbol) = if let Some(monitor) = self.state.monitors.get(mon_key) {
             let sel_lt = monitor.sel_lt;
             let layout = &monitor.lt[sel_lt];
             (layout.clone(), layout.symbol().to_string())
@@ -2273,7 +2328,7 @@ impl Jwm {
             return;
         };
 
-        if let Some(monitor) = self.monitors.get_mut(mon_key) {
+        if let Some(monitor) = self.state.monitors.get_mut(mon_key) {
             monitor.lt_symbol = layout_symbol;
             info!(
                 "sel_lt: {}, ltsymbol: {:?}",
@@ -2334,24 +2389,25 @@ impl Jwm {
     }
 
     fn dirtomon(&mut self, dir: &i32) -> Option<MonitorKey> {
-        let selected_monitor_key = self.sel_mon?;
-        if self.monitor_order.is_empty() {
+        let selected_monitor_key = self.state.sel_mon?;
+        if self.state.monitor_order.is_empty() {
             return None;
         }
         let current_index = self
+            .state
             .monitor_order
             .iter()
             .position(|&key| key == selected_monitor_key)?;
         if *dir > 0 {
-            let next_index = (current_index + 1) % self.monitor_order.len();
-            Some(self.monitor_order[next_index])
+            let next_index = (current_index + 1) % self.state.monitor_order.len();
+            Some(self.state.monitor_order[next_index])
         } else {
             let prev_index = if current_index == 0 {
-                self.monitor_order.len() - 1
+                self.state.monitor_order.len() - 1
             } else {
                 current_index - 1
             };
-            Some(self.monitor_order[prev_index])
+            Some(self.state.monitor_order[prev_index])
         }
     }
 
@@ -2409,7 +2465,11 @@ impl Jwm {
         info!("[restack]");
 
         let mon_key = mon_key_opt.ok_or("Monitor is required for restack operation")?;
-        let monitor = self.monitors.get(mon_key).ok_or("Monitor not found")?;
+        let monitor = self
+            .state
+            .monitors
+            .get(mon_key)
+            .ok_or("Monitor not found")?;
         let monitor_num = monitor.num;
 
         let stack = self.get_monitor_stack(mon_key);
@@ -2418,7 +2478,7 @@ impl Jwm {
         let mut floating_bottom_to_top: Vec<WindowId> = Vec::new();
 
         for &ck in stack.iter().rev() {
-            if let Some(c) = self.clients.get(ck) {
+            if let Some(c) = self.state.clients.get(ck) {
                 if !self.is_client_visible_on_monitor(ck, mon_key) {
                     continue;
                 }
@@ -2431,7 +2491,7 @@ impl Jwm {
         }
 
         if let Some(sel_ck) = monitor.sel {
-            if let Some(sel_c) = self.clients.get(sel_ck) {
+            if let Some(sel_c) = self.state.clients.get(sel_ck) {
                 if sel_c.state.is_floating {
                     if let Some(idx) = floating_bottom_to_top.iter().position(|&w| w == sel_c.win) {
                         let w = floating_bottom_to_top.remove(idx);
@@ -2462,7 +2522,7 @@ impl Jwm {
 
         if self.current_bar_monitor_id == Some(monitor_num) {
             if let Some(bar_key) = self.status_bar_client {
-                if let Some(bar_client) = self.clients.get(bar_key) {
+                if let Some(bar_client) = self.state.clients.get(bar_key) {
                     let show_bar = monitor
                         .pertag
                         .as_ref()
@@ -2495,8 +2555,9 @@ impl Jwm {
         let target_mon_id = self
             .current_bar_monitor_id
             .or_else(|| {
-                self.sel_mon
-                    .and_then(|k| self.monitors.get(k))
+                self.state
+                    .sel_mon
+                    .and_then(|k| self.state.monitors.get(k))
                     .map(|m| m.num)
             })
             .or_else(|| self.pending_bar_updates.iter().copied().next());
@@ -2567,7 +2628,7 @@ impl Jwm {
 
         let monitors_to_process: Vec<MonitorKey> = match m_target {
             Some(monitor_key) => vec![monitor_key],
-            None => self.monitor_order.clone(),
+            None => self.state.monitor_order.clone(),
         };
 
         for &mon_key in &monitors_to_process {
@@ -2591,13 +2652,13 @@ impl Jwm {
 
     fn recttomon(&mut self, backend: &mut dyn Backend, x: i32, y: i32) -> Option<MonitorKey> {
         if let Some(output_id) = backend.output_ops().output_at(x, y) {
-            for (mon_key, &oid) in &self.output_map {
+            for (mon_key, &oid) in &self.state.output_map {
                 if oid == output_id {
                     return Some(mon_key);
                 }
             }
         }
-        self.sel_mon
+        self.state.sel_mon
     }
 
     fn wintomon(&mut self, backend: &mut dyn Backend, w: Option<WindowId>) -> Option<MonitorKey> {
@@ -2605,15 +2666,15 @@ impl Jwm {
             if let Ok((x, y)) = self.getrootptr(backend) {
                 return self.recttomon(backend, x, y);
             }
-            return self.sel_mon;
+            return self.state.sel_mon;
         }
         let win_id = w.unwrap();
         if let Some(client_key) = self.wintoclient(win_id) {
-            if let Some(client) = self.clients.get(client_key) {
-                return client.mon.or(self.sel_mon);
+            if let Some(client) = self.state.clients.get(client_key) {
+                return client.mon.or(self.state.sel_mon);
             }
         }
-        self.sel_mon
+        self.state.sel_mon
     }
 
     pub fn spawn(
@@ -2749,7 +2810,7 @@ impl Jwm {
     }
 
     fn get_monitor_info(&self, mon_key: MonitorKey) -> (i32, i32, i32, i32, f32, u32, i32, i32) {
-        if let Some(monitor) = self.monitors.get(mon_key) {
+        if let Some(monitor) = self.state.monitors.get(mon_key) {
             let client_y_offset = self.get_client_y_offset(monitor);
             (
                 monitor.geometry.w_x,
@@ -2772,7 +2833,7 @@ impl Jwm {
         let mut current_client = self.nexttiled(mon_key, None);
 
         while let Some(client_key) = current_client {
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 let client_fact = client.state.client_fact;
                 let border_w = client.geometry.border_w;
 
@@ -2808,13 +2869,13 @@ impl Jwm {
         _arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[togglefloating]");
-        let Some(sel_mon_key) = self.sel_mon else {
+        let Some(sel_mon_key) = self.state.sel_mon else {
             return Ok(());
         };
-        let Some(sel_client_key) = self.monitors.get(sel_mon_key).and_then(|m| m.sel) else {
+        let Some(sel_client_key) = self.state.monitors.get(sel_mon_key).and_then(|m| m.sel) else {
             return Ok(());
         };
-        let geom = if let Some(client) = self.clients.get_mut(sel_client_key) {
+        let geom = if let Some(client) = self.state.clients.get_mut(sel_client_key) {
             client.state.is_floating = !client.state.is_floating;
             if client.state.is_floating {
                 Some((
@@ -2850,7 +2911,7 @@ impl Jwm {
         // info!("[focusin] Window {:?} got focus", event_window);
         let sel_client_key = self.get_selected_client_key();
         if let Some(client_key) = sel_client_key {
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 if event_window != client.win {
                     if self.wintoclient(event_window).is_some() {
                         self.setfocus(backend, client_key)?;
@@ -2870,13 +2931,13 @@ impl Jwm {
         backend: &mut dyn Backend,
         arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if self.monitor_order.len() <= 1 {
+        if self.state.monitor_order.len() <= 1 {
             return Ok(());
         }
 
         if let WMArgEnum::Int(i) = arg {
             if let Some(target_mon_key) = self.dirtomon(i) {
-                if Some(target_mon_key) == self.sel_mon {
+                if Some(target_mon_key) == self.state.sel_mon {
                     return Ok(());
                 }
                 self.switch_to_monitor(backend, target_mon_key)?;
@@ -2907,13 +2968,13 @@ impl Jwm {
 
             if let Some(client_key) = sel_client_key {
                 if target_tag > 0 {
-                    if let Some(client) = self.clients.get_mut(client_key) {
+                    if let Some(client) = self.state.clients.get_mut(client_key) {
                         client.state.tags = target_tag;
                     }
                     let _ = self.setclienttagprop(backend, client_key);
 
                     self.focus(backend, None)?;
-                    self.arrange(backend, self.sel_mon);
+                    self.arrange(backend, self.state.sel_mon);
                 }
             }
         }
@@ -2931,7 +2992,7 @@ impl Jwm {
         if sel_client_key.is_none() {
             return Ok(());
         }
-        if self.monitor_order.len() <= 1 {
+        if self.state.monitor_order.len() <= 1 {
             return Ok(());
         }
         if let WMArgEnum::Int(i) = *arg {
@@ -2961,7 +3022,7 @@ impl Jwm {
             None => return,
         };
 
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             if client.mon == Some(target_mon_key) {
                 return;
             }
@@ -2974,14 +3035,14 @@ impl Jwm {
         self.detach(client_key);
         self.detachstack(client_key);
 
-        if let Some(client) = self.clients.get_mut(client_key) {
+        if let Some(client) = self.state.clients.get_mut(client_key) {
             client.mon = Some(target_mon_key);
         }
 
-        if let Some(target_monitor) = self.monitors.get(target_mon_key) {
+        if let Some(target_monitor) = self.state.monitors.get(target_mon_key) {
             let target_tags = target_monitor.tag_set[target_monitor.sel_tags];
 
-            if let Some(client) = self.clients.get_mut(client_key) {
+            if let Some(client) = self.state.clients.get_mut(client_key) {
                 client.state.tags = target_tags;
             }
         }
@@ -3021,7 +3082,7 @@ impl Jwm {
 
         if let Some(client_key) = target_client {
             self.focus(backend, Some(client_key))?;
-            self.restack(backend, self.sel_mon)?;
+            self.restack(backend, self.state.sel_mon)?;
         }
         Ok(())
     }
@@ -3029,7 +3090,7 @@ impl Jwm {
     fn can_focus_switch(&self) -> Result<bool, Box<dyn std::error::Error>> {
         let sel_client_key = self.get_selected_client_key().ok_or("No selected client")?;
 
-        if let Some(client) = self.clients.get(sel_client_key) {
+        if let Some(client) = self.state.clients.get(sel_client_key) {
             let is_locked_fullscreen =
                 client.state.is_fullscreen && CONFIG.behavior().lock_fullscreen;
             Ok(!is_locked_fullscreen)
@@ -3039,10 +3100,10 @@ impl Jwm {
     }
 
     fn find_next_visible_client(&self) -> Result<Option<ClientKey>, Box<dyn std::error::Error>> {
-        let sel_mon_key = self.sel_mon.ok_or("No selected monitor")?;
+        let sel_mon_key = self.state.sel_mon.ok_or("No selected monitor")?;
         let current_sel = self.get_selected_client_key().ok_or("No selected client")?;
 
-        if let Some(client_list) = self.monitor_clients.get(sel_mon_key) {
+        if let Some(client_list) = self.state.monitor_clients.get(sel_mon_key) {
             if let Some(current_index) = client_list.iter().position(|&k| k == current_sel) {
                 for &client_key in &client_list[current_index + 1..] {
                     if self.is_client_visible_by_key(client_key) {
@@ -3064,10 +3125,10 @@ impl Jwm {
     fn find_previous_visible_client(
         &self,
     ) -> Result<Option<ClientKey>, Box<dyn std::error::Error>> {
-        let sel_mon_key = self.sel_mon.ok_or("No selected monitor")?;
+        let sel_mon_key = self.state.sel_mon.ok_or("No selected monitor")?;
         let current_sel = self.get_selected_client_key().ok_or("No selected client")?;
 
-        if let Some(client_list) = self.monitor_clients.get(sel_mon_key) {
+        if let Some(client_list) = self.state.monitor_clients.get(sel_mon_key) {
             if let Some(current_index) = client_list.iter().position(|&k| k == current_sel) {
                 for &client_key in client_list[..current_index].iter().rev() {
                     if self.is_client_visible_by_key(client_key) {
@@ -3093,14 +3154,14 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[togglebar]");
 
-        let sel_mon_key = match self.sel_mon {
+        let sel_mon_key = match self.state.sel_mon {
             Some(key) => key,
             None => return Ok(()),
         };
 
         let mut monitor_num_opt: Option<i32> = None;
         {
-            if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+            if let Some(monitor) = self.state.monitors.get_mut(sel_mon_key) {
                 if let Some(ref mut pertag) = monitor.pertag {
                     let cur_tag = pertag.cur_tag;
                     if let Some(show_bar) = pertag.show_bars.get_mut(cur_tag) {
@@ -3131,9 +3192,9 @@ impl Jwm {
         &mut self,
         backend: &mut dyn Backend,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let (sel_mon_key, mon_num) = match self.sel_mon {
+        let (sel_mon_key, mon_num) = match self.state.sel_mon {
             Some(k) => {
-                if let Some(m) = self.monitors.get(k) {
+                if let Some(m) = self.state.monitors.get(k) {
                     (k, m.num)
                 } else {
                     return Ok(());
@@ -3157,9 +3218,9 @@ impl Jwm {
         arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let WMArgEnum::Int(i) = *arg {
-            let sel_mon_key = self.sel_mon.ok_or("No monitor selected")?;
+            let sel_mon_key = self.state.sel_mon.ok_or("No monitor selected")?;
 
-            if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+            if let Some(monitor) = self.state.monitors.get_mut(sel_mon_key) {
                 let new_n = (monitor.layout.n_master as i32 + i).max(0) as u32;
                 monitor.layout.n_master = new_n;
                 // 关键：调用新方法同步状态
@@ -3185,7 +3246,7 @@ impl Jwm {
         let client_key = sel_client_key.unwrap();
 
         if let WMArgEnum::Float(f0) = *arg {
-            let current_fact = if let Some(client) = self.clients.get(client_key) {
+            let current_fact = if let Some(client) = self.state.clients.get(client_key) {
                 client.state.client_fact
             } else {
                 return Ok(());
@@ -3201,14 +3262,14 @@ impl Jwm {
                 return Ok(());
             }
 
-            if let Some(client) = self.clients.get_mut(client_key) {
+            if let Some(client) = self.state.clients.get_mut(client_key) {
                 client.state.client_fact = new_fact;
                 info!(
                     "[setcfact] Updated client_fact to {} for client '{}'",
                     new_fact, client.name
                 );
             }
-            self.arrange(backend, self.sel_mon);
+            self.arrange(backend, self.state.sel_mon);
         }
 
         Ok(())
@@ -3237,7 +3298,7 @@ impl Jwm {
             if selected_client_key != target_key {
                 self.swap_clients_in_monitor(selected_client_key, target_key)?;
 
-                self.arrange(backend, self.sel_mon);
+                self.arrange(backend, self.state.sel_mon);
 
                 self.suppress_mouse_focus_until =
                     Some(std::time::Instant::now() + std::time::Duration::from_millis(200));
@@ -3248,7 +3309,7 @@ impl Jwm {
     }
 
     fn is_tiled_and_visible(&self, client_key: ClientKey) -> bool {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             self.is_client_visible_by_key(client_key) && !client.state.is_floating
         } else {
             false
@@ -3259,8 +3320,9 @@ impl Jwm {
         &self,
         current_key: ClientKey,
     ) -> Result<Option<ClientKey>, Box<dyn std::error::Error>> {
-        let sel_mon_key = self.sel_mon.ok_or("No selected monitor")?;
+        let sel_mon_key = self.state.sel_mon.ok_or("No selected monitor")?;
         let client_list = self
+            .state
             .monitor_clients
             .get(sel_mon_key)
             .ok_or("Monitor client list not found")?;
@@ -3289,8 +3351,9 @@ impl Jwm {
         &self,
         current_key: ClientKey,
     ) -> Result<Option<ClientKey>, Box<dyn std::error::Error>> {
-        let sel_mon_key = self.sel_mon.ok_or("No selected monitor")?;
+        let sel_mon_key = self.state.sel_mon.ok_or("No selected monitor")?;
         let client_list = self
+            .state
             .monitor_clients
             .get(sel_mon_key)
             .ok_or("Monitor client list not found")?;
@@ -3320,9 +3383,9 @@ impl Jwm {
         client1_key: ClientKey,
         client2_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let sel_mon_key = self.sel_mon.ok_or("No selected monitor")?;
+        let sel_mon_key = self.state.sel_mon.ok_or("No selected monitor")?;
 
-        if let Some(client_list) = self.monitor_clients.get_mut(sel_mon_key) {
+        if let Some(client_list) = self.state.monitor_clients.get_mut(sel_mon_key) {
             let pos1 = client_list
                 .iter()
                 .position(|&k| k == client1_key)
@@ -3335,7 +3398,7 @@ impl Jwm {
             client_list.swap(pos1, pos2);
         }
 
-        if let Some(stack_list) = self.monitor_stack.get_mut(sel_mon_key) {
+        if let Some(stack_list) = self.state.monitor_stack.get_mut(sel_mon_key) {
             if let (Some(pos1), Some(pos2)) = (
                 stack_list.iter().position(|&k| k == client1_key),
                 stack_list.iter().position(|&k| k == client2_key),
@@ -3357,8 +3420,8 @@ impl Jwm {
         arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let WMArgEnum::Float(f) = arg {
-            let sel_mon_key = self.sel_mon.ok_or("No monitor selected")?;
-            if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+            let sel_mon_key = self.state.sel_mon.ok_or("No monitor selected")?;
+            if let Some(monitor) = self.state.monitors.get_mut(sel_mon_key) {
                 let new_mfact = if f < &1.0 {
                     f + monitor.layout.m_fact
                 } else {
@@ -3381,7 +3444,7 @@ impl Jwm {
         arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[setlayout]");
-        let sel_mon_key = self.sel_mon.ok_or("No selected monitor")?;
+        let sel_mon_key = self.state.sel_mon.ok_or("No selected monitor")?;
 
         self.update_layout_selection(sel_mon_key, arg)?;
 
@@ -3412,7 +3475,11 @@ impl Jwm {
         sel_mon_key: MonitorKey,
         layout: &Rc<LayoutEnum>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let monitor = self.monitors.get(sel_mon_key).ok_or("Monitor not found")?;
+        let monitor = self
+            .state
+            .monitors
+            .get(sel_mon_key)
+            .ok_or("Monitor not found")?;
 
         let current_layout = monitor.lt[monitor.sel_lt].clone();
         let cur_tag = monitor
@@ -3435,6 +3502,7 @@ impl Jwm {
         sel_mon_key: MonitorKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let cur_tag = self
+            .state
             .monitors
             .get(sel_mon_key)
             .and_then(|m| m.pertag.as_ref())
@@ -3446,7 +3514,7 @@ impl Jwm {
     }
 
     fn toggle_layout_selection_impl(&mut self, sel_mon_key: MonitorKey, cur_tag: usize) {
-        if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+        if let Some(monitor) = self.state.monitors.get_mut(sel_mon_key) {
             if let Some(ref mut pertag) = monitor.pertag {
                 pertag.sel_lts[cur_tag] ^= 1;
                 monitor.sel_lt = pertag.sel_lts[cur_tag];
@@ -3455,7 +3523,7 @@ impl Jwm {
     }
 
     fn set_new_layout(&mut self, sel_mon_key: MonitorKey, layout: &Rc<LayoutEnum>, cur_tag: usize) {
-        if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+        if let Some(monitor) = self.state.monitors.get_mut(sel_mon_key) {
             let sel_lt = monitor.sel_lt;
             if let Some(ref mut pertag) = monitor.pertag {
                 pertag.lt_idxs[cur_tag][sel_lt] = Some(layout.clone());
@@ -3465,7 +3533,7 @@ impl Jwm {
     }
 
     fn finalize_layout_update(&mut self, sel_mon_key: MonitorKey) -> (bool, Option<i32>) {
-        if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+        if let Some(monitor) = self.state.monitors.get_mut(sel_mon_key) {
             monitor.lt_symbol = monitor.lt[monitor.sel_lt].symbol().to_string();
 
             let has_selection = monitor.sel.is_some();
@@ -3484,12 +3552,12 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[zoom]");
 
-        let sel_mon_key = match self.sel_mon {
+        let sel_mon_key = match self.state.sel_mon {
             Some(key) => key,
             None => return Ok(()),
         };
 
-        let selected_client_key = if let Some(monitor) = self.monitors.get(sel_mon_key) {
+        let selected_client_key = if let Some(monitor) = self.state.monitors.get(sel_mon_key) {
             monitor.sel
         } else {
             return Ok(());
@@ -3500,7 +3568,7 @@ impl Jwm {
             None => return Ok(()), // 没有选中的客户端
         };
 
-        if let Some(client) = self.clients.get(selected_client_key) {
+        if let Some(client) = self.state.clients.get(selected_client_key) {
             if client.state.is_floating {
                 return Ok(()); // 浮动窗口不参与zoom
             }
@@ -3555,7 +3623,7 @@ impl Jwm {
         let sel_opt = self.apply_pertag_settings(cur_tag)?;
 
         self.focus(backend, sel_opt)?;
-        self.arrange(backend, self.sel_mon.clone());
+        self.arrange(backend, self.state.sel_mon.clone());
 
         self.refresh_bar_visibility_on_selected_monitor(backend)?;
 
@@ -3563,8 +3631,8 @@ impl Jwm {
     }
 
     fn calculate_next_tag(&self, direction: i32) -> u32 {
-        let current_tag = if let Some(sel_mon_key) = self.sel_mon {
-            if let Some(monitor) = self.monitors.get(sel_mon_key) {
+        let current_tag = if let Some(sel_mon_key) = self.state.sel_mon {
+            if let Some(monitor) = self.state.monitors.get(sel_mon_key) {
                 monitor.tag_set[monitor.sel_tags]
             } else {
                 warn!("[calculate_next_tag] Selected monitor not found");
@@ -3612,13 +3680,13 @@ impl Jwm {
         };
         let target_mask = ui & CONFIG.tagmask();
 
-        let sel_mon_key = match self.sel_mon {
+        let sel_mon_key = match self.state.sel_mon {
             Some(k) => k,
             None => return Ok(()),
         };
 
         // 1. 检查是否无需切换
-        if let Some(mon) = self.monitors.get(sel_mon_key) {
+        if let Some(mon) = self.state.monitors.get(sel_mon_key) {
             if crate::core::workspace::WorkspaceManager::is_same_tag(mon, target_mask) {
                 return Ok(());
             }
@@ -3626,7 +3694,7 @@ impl Jwm {
 
         // 2. 状态变更 (纯逻辑)
         let mut client_to_focus = None;
-        if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+        if let Some(monitor) = self.state.monitors.get_mut(sel_mon_key) {
             monitor.view_tag(target_mask, false); // false = not toggle, direct set
             // 获取该 Tag 上次选中的 Client
             client_to_focus = monitor.get_selected_client_for_current_tag();
@@ -3641,8 +3709,8 @@ impl Jwm {
     }
 
     fn is_same_tag(&self, target_tag: u32) -> bool {
-        if let Some(sel_mon_key) = self.sel_mon {
-            if let Some(monitor) = self.monitors.get(sel_mon_key) {
+        if let Some(sel_mon_key) = self.state.sel_mon {
+            if let Some(monitor) = self.state.monitors.get(sel_mon_key) {
                 return target_tag == monitor.tag_set[monitor.sel_tags];
             }
         }
@@ -3654,11 +3722,11 @@ impl Jwm {
         target_tag: u32,
         ui: u32,
     ) -> Result<usize, Box<dyn std::error::Error>> {
-        let sel_mon_key = match self.sel_mon {
+        let sel_mon_key = match self.state.sel_mon {
             Some(k) => k,
             None => return Ok(0),
         };
-        let sel_mon_mut = if let Some(sel_mon) = self.monitors.get_mut(sel_mon_key) {
+        let sel_mon_mut = if let Some(sel_mon) = self.state.monitors.get_mut(sel_mon_key) {
             sel_mon
         } else {
             return Ok(0);
@@ -3708,10 +3776,11 @@ impl Jwm {
         &mut self,
         cur_tag: usize,
     ) -> Result<Option<ClientKey>, Box<dyn std::error::Error>> {
-        let sel_mon_key = self.sel_mon.ok_or("No monitor selected")?;
+        let sel_mon_key = self.state.sel_mon.ok_or("No monitor selected")?;
 
         let (n_master, m_fact, sel_lt, layout_0, layout_1, sel_client_key) = {
             let monitor = self
+                .state
                 .monitors
                 .get(sel_mon_key)
                 .ok_or("Selected monitor not found")?;
@@ -3736,7 +3805,7 @@ impl Jwm {
             )
         };
 
-        if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+        if let Some(monitor) = self.state.monitors.get_mut(sel_mon_key) {
             monitor.layout.n_master = n_master;
             monitor.layout.m_fact = m_fact;
             monitor.sel_lt = sel_lt;
@@ -3747,7 +3816,7 @@ impl Jwm {
         }
 
         if let Some(client_key) = sel_client_key {
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 info!(
                     "[apply_pertag_settings] selected client: {} (key: {:?})",
                     client.name, client_key
@@ -3773,10 +3842,10 @@ impl Jwm {
             _ => return Ok(()),
         };
         let mask = ui & CONFIG.tagmask();
-        let sel_mon_key = self.sel_mon.ok_or("No monitor selected")?;
+        let sel_mon_key = self.state.sel_mon.ok_or("No monitor selected")?;
 
         // 1. 状态变更
-        if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+        if let Some(monitor) = self.state.monitors.get_mut(sel_mon_key) {
             monitor.view_tag(mask, true); // true = toggle
         }
 
@@ -3798,7 +3867,7 @@ impl Jwm {
         let client_key = self.get_selected_client_key();
 
         if let Some(key) = client_key {
-            if let Some(client) = self.clients.get(key) {
+            if let Some(client) = self.state.clients.get(key) {
                 let current_fullscreen = client.state.is_fullscreen;
                 let _ = self.setfullscreen(backend, key, !current_fullscreen);
             }
@@ -3814,8 +3883,8 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[toggletag]");
 
-        let sel_client_key = if let Some(sel_mon_key) = self.sel_mon {
-            if let Some(monitor) = self.monitors.get(sel_mon_key) {
+        let sel_client_key = if let Some(sel_mon_key) = self.state.sel_mon {
+            if let Some(monitor) = self.state.monitors.get(sel_mon_key) {
                 monitor.sel
             } else {
                 return Ok(());
@@ -3830,7 +3899,7 @@ impl Jwm {
         };
 
         if let WMArgEnum::UInt(ui) = *arg {
-            let current_tags = if let Some(client) = self.clients.get(sel_client_key) {
+            let current_tags = if let Some(client) = self.state.clients.get(sel_client_key) {
                 client.state.tags
             } else {
                 warn!("[toggletag] Selected client {:?} not found", sel_client_key);
@@ -3840,7 +3909,7 @@ impl Jwm {
             let newtags = current_tags ^ (ui & CONFIG.tagmask());
 
             if newtags > 0 {
-                if let Some(client) = self.clients.get_mut(sel_client_key) {
+                if let Some(client) = self.state.clients.get_mut(sel_client_key) {
                     client.state.tags = newtags;
                 } else {
                     return Ok(());
@@ -3849,7 +3918,7 @@ impl Jwm {
                 self.setclienttagprop(backend, sel_client_key)?;
 
                 self.focus(backend, None)?;
-                self.arrange(backend, self.sel_mon);
+                self.arrange(backend, self.state.sel_mon);
             }
         }
 
@@ -3913,7 +3982,7 @@ impl Jwm {
         self.setup_initial_windows(backend)?;
 
         self.arrange(backend, None);
-        let _ = self.restack(backend, self.sel_mon);
+        let _ = self.restack(backend, self.state.sel_mon);
         let _ = self.focus(backend, None);
 
         backend.window_ops().flush()?;
@@ -3931,7 +4000,7 @@ impl Jwm {
             None => return Ok(()),
         };
 
-        let client_win = if let Some(c) = self.clients.get(sel_client_key) {
+        let client_win = if let Some(c) = self.state.clients.get(sel_client_key) {
             c.win
         } else {
             return Ok(());
@@ -3954,17 +4023,18 @@ impl Jwm {
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         // info!("[handle_transient_for_change]");
-        let (is_floating, win, client_name) = if let Some(client) = self.clients.get(client_key) {
-            (client.state.is_floating, client.win, client.name.clone())
-        } else {
-            return Ok(());
-        };
+        let (is_floating, win, client_name) =
+            if let Some(client) = self.state.clients.get(client_key) {
+                (client.state.is_floating, client.win, client.name.clone())
+            } else {
+                return Ok(());
+            };
 
         if !is_floating {
             let transient_for = self.get_transient_for(backend, win);
             if let Some(parent_window) = transient_for {
                 if self.wintoclient(parent_window).is_some() {
-                    if let Some(client) = self.clients.get_mut(client_key) {
+                    if let Some(client) = self.state.clients.get_mut(client_key) {
                         client.state.is_floating = true;
                     }
 
@@ -3973,7 +4043,7 @@ impl Jwm {
                         client_name, parent_window
                     );
 
-                    let mon_key = self.clients.get(client_key).and_then(|c| c.mon);
+                    let mon_key = self.state.clients.get(client_key).and_then(|c| c.mon);
                     self.arrange(backend, mon_key);
                 }
             }
@@ -3985,7 +4055,7 @@ impl Jwm {
         &mut self,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = self.clients.get_mut(client_key) {
+        if let Some(client) = self.state.clients.get_mut(client_key) {
             client.size_hints.hints_valid = false;
         }
         Ok(())
@@ -3999,20 +4069,20 @@ impl Jwm {
         self.updatewmhints(backend, client_key);
         self.mark_bar_update_needed_if_visible(None);
 
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             debug!("WM hints updated for window {:?}", client.win);
         }
         Ok(())
     }
 
     fn updatetitle_by_key(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
-        let win = if let Some(client) = self.clients.get(client_key) {
+        let win = if let Some(client) = self.state.clients.get(client_key) {
             client.win
         } else {
             return;
         };
         let new_title = self.fetch_window_title(backend, win);
-        if let Some(client) = self.clients.get_mut(client_key) {
+        if let Some(client) = self.state.clients.get_mut(client_key) {
             client.name = new_title;
             debug!("Updated title for window {:?}: '{}'", win, client.name);
         }
@@ -4052,16 +4122,17 @@ impl Jwm {
 
         if should_update_bar {
             let monitor_id = self
+                .state
                 .clients
                 .get(client_key)
                 .and_then(|client| client.mon)
-                .and_then(|mon_key| self.monitors.get(mon_key))
+                .and_then(|mon_key| self.state.monitors.get(mon_key))
                 .map(|monitor| monitor.num);
 
             if let Some(id) = monitor_id {
                 self.mark_bar_update_needed_if_visible(Some(id));
 
-                if let Some(client) = self.clients.get(client_key) {
+                if let Some(client) = self.state.clients.get(client_key) {
                     debug!(
                         "Title updated for selected window {:?}, updating status bar",
                         client.win
@@ -4079,20 +4150,20 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.updatewindowtype(backend, client_key);
 
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             debug!("Window type updated for window {:?}", client.win);
         }
         Ok(())
     }
 
     fn should_move_client(&self, client_key: ClientKey) -> bool {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             if client.state.is_floating {
                 return true;
             }
 
             if let Some(mon_key) = client.mon {
-                if let Some(monitor) = self.monitors.get(mon_key) {
+                if let Some(monitor) = self.state.monitors.get(mon_key) {
                     return !monitor.lt[monitor.sel_lt].is_tile();
                 }
             }
@@ -4111,7 +4182,7 @@ impl Jwm {
         mon_wh: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (client_total_width, client_total_height) =
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 (client.total_width(), client.total_height())
             } else {
                 return Ok(());
@@ -4142,9 +4213,9 @@ impl Jwm {
         new_y: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (is_floating, current_x, current_y, current_layout_is_tile) =
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 let layout_is_tile = if let Some(mon_key) = client.mon {
-                    if let Some(monitor) = self.monitors.get(mon_key) {
+                    if let Some(monitor) = self.state.monitors.get(mon_key) {
                         monitor.lt[monitor.sel_lt].is_tile()
                     } else {
                         false
@@ -4181,7 +4252,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         backend.input_ops().ungrab_pointer()?;
         let (final_x, final_y, _final_w, _final_h) =
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 (
                     client.geometry.x,
                     client.geometry.y,
@@ -4195,9 +4266,9 @@ impl Jwm {
         let target_monitor_opt = self.recttomon(backend, final_x, final_y);
 
         if let Some(target_mon_key) = target_monitor_opt {
-            if Some(target_mon_key) != self.sel_mon {
+            if Some(target_mon_key) != self.state.sel_mon {
                 self.sendmon(backend, Some(client_key), Some(target_mon_key));
-                self.sel_mon = Some(target_mon_key);
+                self.state.sel_mon = Some(target_mon_key);
                 self.focus(backend, None)?;
             }
         }
@@ -4217,7 +4288,7 @@ impl Jwm {
         };
 
         // 1. 获取初始信息
-        let (start_geom, _) = if let Some(c) = self.clients.get(client_key) {
+        let (start_geom, _) = if let Some(c) = self.state.clients.get(client_key) {
             if c.state.is_fullscreen {
                 return Ok(());
             }
@@ -4235,7 +4306,7 @@ impl Jwm {
             return Ok(());
         };
 
-        self.restack(backend, self.sel_mon)?;
+        self.restack(backend, self.state.sel_mon)?;
 
         // 2. 获取当前鼠标位置
         let (ptr_x, ptr_y) = self.getrootptr(backend)?;
@@ -4280,7 +4351,7 @@ impl Jwm {
             None => return Ok(()),
         };
 
-        let (start_geom, win_id) = if let Some(c) = self.clients.get(client_key) {
+        let (start_geom, win_id) = if let Some(c) = self.state.clients.get(client_key) {
             if c.state.is_fullscreen {
                 return Ok(());
             }
@@ -4298,7 +4369,7 @@ impl Jwm {
             return Ok(());
         };
 
-        self.restack(backend, self.sel_mon)?;
+        self.restack(backend, self.state.sel_mon)?;
 
         // 2. Warp 指针到右下角 (仅 X11 需要，Wayland 通常不这样做，为了兼容可以保留 backend cap 检查)
         if backend.capabilities().can_warp_pointer {
@@ -4345,9 +4416,9 @@ impl Jwm {
         new_height: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (is_floating, current_w, current_h, is_tile_layout) =
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 let is_tile = if let Some(mon_key) = client.mon {
-                    if let Some(monitor) = self.monitors.get(mon_key) {
+                    if let Some(monitor) = self.state.monitors.get(mon_key) {
                         monitor.lt[monitor.sel_lt].is_tile()
                     } else {
                         false
@@ -4380,13 +4451,13 @@ impl Jwm {
     }
 
     fn should_resize_client(&self, client_key: ClientKey) -> bool {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             if client.state.is_floating {
                 return true;
             }
 
             if let Some(mon_key) = client.mon {
-                if let Some(monitor) = self.monitors.get(mon_key) {
+                if let Some(monitor) = self.state.monitors.get(mon_key) {
                     return !monitor.lt[monitor.sel_lt].is_tile();
                 }
             }
@@ -4404,7 +4475,7 @@ impl Jwm {
         };
 
         let (x, y, _w, _h) = {
-            let client = self.clients.get(client_key).unwrap();
+            let client = self.state.clients.get(client_key).unwrap();
             (
                 client.geometry.x,
                 client.geometry.y,
@@ -4416,10 +4487,10 @@ impl Jwm {
         let target_monitor = self.recttomon(backend, x, y);
 
         if let Some(target_mon_key) = target_monitor {
-            if Some(target_mon_key) != self.sel_mon {
+            if Some(target_mon_key) != self.state.sel_mon {
                 debug!("Moving client to different monitor after resize");
                 self.sendmon(backend, Some(client_key), Some(target_mon_key));
-                self.sel_mon = Some(target_mon_key);
+                self.state.sel_mon = Some(target_mon_key);
                 self.focus(backend, None)?;
             }
         }
@@ -4432,10 +4503,10 @@ impl Jwm {
         backend: &mut dyn Backend,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             let monitor_num = client
                 .mon
-                .and_then(|mk| self.monitors.get(mk))
+                .and_then(|mk| self.state.monitors.get(mk))
                 .map(|m| m.num as u32)
                 .unwrap_or(0);
 
@@ -4465,7 +4536,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let prev_sel = self.get_selected_client_key();
 
-        self.sel_mon = Some(target_monitor_key);
+        self.state.sel_mon = Some(target_monitor_key);
 
         self.focus(backend, None)?;
         if let Some(old_key) = prev_sel {
@@ -4473,7 +4544,7 @@ impl Jwm {
         }
 
         let old_id = self.current_bar_monitor_id;
-        let new_id = self.monitors.get(target_monitor_key).map(|m| m.num);
+        let new_id = self.state.monitors.get(target_monitor_key).map(|m| m.num);
         if old_id != new_id {
             if let Some(id) = new_id {
                 self.current_bar_monitor_id = Some(id);
@@ -4518,7 +4589,7 @@ impl Jwm {
         }
 
         if let Some(monitor_key) = self.wintomon(backend, Some(window)) {
-            if let Some(monitor) = self.monitors.get(monitor_key) {
+            if let Some(monitor) = self.state.monitors.get(monitor_key) {
                 self.mark_bar_update_needed_if_visible(Some(monitor.num));
             }
         }
@@ -4546,7 +4617,7 @@ impl Jwm {
         info!("[focus]");
 
         if let Some(client_key) = client_key_opt {
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 info!("[focus] {}", client);
                 if Some(client.win) == self.status_bar_window {
                     client_key_opt = None; // 忽略状态栏
@@ -4579,9 +4650,9 @@ impl Jwm {
     }
 
     fn find_visible_client(&self) -> Option<ClientKey> {
-        let sel_mon_key = self.sel_mon?;
+        let sel_mon_key = self.state.sel_mon?;
 
-        if let Some(stack_clients) = self.monitor_stack.get(sel_mon_key) {
+        if let Some(stack_clients) = self.state.monitor_stack.get(sel_mon_key) {
             for &client_key in stack_clients {
                 if self.is_client_visible_by_key(client_key) {
                     return Some(client_key);
@@ -4613,19 +4684,19 @@ impl Jwm {
         backend: &mut dyn Backend,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let client_monitor_key = if let Some(client) = self.clients.get(client_key) {
+        let client_monitor_key = if let Some(client) = self.state.clients.get(client_key) {
             client.mon
         } else {
             return Err("Client not found".into());
         };
 
         if let Some(client_mon_key) = client_monitor_key {
-            if Some(client_mon_key) != self.sel_mon {
-                self.sel_mon = Some(client_mon_key);
+            if Some(client_mon_key) != self.state.sel_mon {
+                self.state.sel_mon = Some(client_mon_key);
             }
         }
 
-        if let Some(client) = self.clients.get_mut(client_key) {
+        if let Some(client) = self.state.clients.get_mut(client_key) {
             if client.state.is_urgent {
                 client.state.is_urgent = false;
                 let _ = self.seturgent(backend, client_key, false);
@@ -4642,8 +4713,8 @@ impl Jwm {
     }
 
     fn update_monitor_selection_by_key(&mut self, client_key_opt: Option<ClientKey>) {
-        if let Some(sel_mon_key) = self.sel_mon {
-            if let Some(monitor) = self.monitors.get_mut(sel_mon_key) {
+        if let Some(sel_mon_key) = self.state.sel_mon {
+            if let Some(monitor) = self.state.monitors.get_mut(sel_mon_key) {
                 // 使用新方法
                 monitor.set_selected_client_for_current_tag(client_key_opt);
             }
@@ -4656,7 +4727,7 @@ impl Jwm {
         client_key: ClientKey,
         setfocus: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(_client) = self.clients.get(client_key) {
+        if let Some(_client) = self.state.clients.get(client_key) {
             self.update_client_decoration(backend, client_key, false)?;
             if setfocus {
                 backend.window_ops().set_input_focus_root()?;
@@ -4673,7 +4744,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             backend.window_ops().set_input_focus(client.win)?;
             if let Some(facade) = backend.ewmh_facade().as_ref() {
                 let _ = facade.set_active_window(client.win);
@@ -4697,18 +4768,18 @@ impl Jwm {
         &mut self,
         backend: &mut dyn Backend,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let mut ordered: Vec<WindowId> = Vec::with_capacity(self.client_order.len());
-        for &key in &self.client_order {
-            if let Some(client) = self.clients.get(key) {
+        let mut ordered: Vec<WindowId> = Vec::with_capacity(self.state.client_order.len());
+        for &key in &self.state.client_order {
+            if let Some(client) = self.state.clients.get(key) {
                 ordered.push(client.win);
             }
         }
 
         let mut stacking: Vec<WindowId> = Vec::new();
-        for &mon_key in &self.monitor_order {
-            if let Some(stack) = self.monitor_stack.get(mon_key) {
+        for &mon_key in &self.state.monitor_order {
+            if let Some(stack) = self.state.monitor_stack.get(mon_key) {
                 for &ck in stack.iter().rev() {
-                    if let Some(c) = self.clients.get(ck) {
+                    if let Some(c) = self.state.clients.get(ck) {
                         stacking.push(c.win);
                     }
                 }
@@ -4778,7 +4849,7 @@ impl Jwm {
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.is_popup_like(backend, client_key) {
-            if let Some(client) = self.clients.get_mut(client_key) {
+            if let Some(client) = self.state.clients.get_mut(client_key) {
                 client.geometry.border_w = 0;
             }
             self.update_client_decoration(backend, client_key, false)?;
@@ -4786,13 +4857,13 @@ impl Jwm {
             self.configure_client(backend, client_key)?;
             self.setclientstate(
                 backend,
-                self.clients.get(client_key).unwrap().win,
+                self.state.clients.get(client_key).unwrap().win,
                 NORMAL_STATE as i64,
             )?;
             return Ok(());
         }
 
-        let win = if let Some(client) = self.clients.get(client_key) {
+        let win = if let Some(client) = self.state.clients.get(client_key) {
             client.win
         } else {
             return Err("Client not found".into());
@@ -4800,7 +4871,7 @@ impl Jwm {
 
         info!("Setting up window {:?}", win);
 
-        if let Some(client) = self.clients.get_mut(client_key) {
+        if let Some(client) = self.state.clients.get_mut(client_key) {
             client.geometry.border_w = CONFIG.border_px() as i32;
         }
 
@@ -4808,7 +4879,7 @@ impl Jwm {
 
         self.configure_client(backend, client_key)?;
 
-        let (x, y, w, h) = if let Some(client) = self.clients.get(client_key) {
+        let (x, y, w, h) = if let Some(client) = self.state.clients.get(client_key) {
             let offscreen_x = client.geometry.x + 2 * self.s_w;
             (
                 offscreen_x,
@@ -4828,7 +4899,7 @@ impl Jwm {
         };
         backend.window_ops().apply_window_changes(win, changes)?;
 
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             self.setclientstate(backend, client.win, NORMAL_STATE as i64)?;
         }
 
@@ -4840,7 +4911,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         child_key: ClientKey,
     ) -> Option<ClientKey> {
-        let child_win = self.clients.get(child_key).map(|c| c.win)?;
+        let child_win = self.state.clients.get(child_key).map(|c| c.win)?;
         let parent_win = self.get_transient_for(backend, child_win)?;
         self.wintoclient(parent_win)
     }
@@ -4851,17 +4922,17 @@ impl Jwm {
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let (client_win, client_mon_key, is_never_focus) =
-            if let Some(c) = self.clients.get(client_key) {
+            if let Some(c) = self.state.clients.get(client_key) {
                 (c.win, c.mon, c.state.never_focus)
             } else {
                 return Err("Client not found".into());
             };
         let current_sel = self.get_selected_client_key();
-        let current_sel_mon = self.sel_mon;
+        let current_sel_mon = self.state.sel_mon;
         if self.is_popup_like(backend, client_key) {
             let parent_key_opt = self.parent_client_of(backend, client_key);
             let sibling = parent_key_opt
-                .and_then(|pk| self.clients.get(pk))
+                .and_then(|pk| self.state.clients.get(pk))
                 .map(|pc| pc.win);
             let changes = WindowChanges {
                 sibling: sibling,
@@ -4873,7 +4944,7 @@ impl Jwm {
                 .apply_window_changes(client_win, changes)?;
 
             // 判断是否应该给予该弹窗焦点
-            let should_focus_this = if let Some(c) = self.clients.get(client_key) {
+            let should_focus_this = if let Some(c) = self.state.clients.get(client_key) {
                 // 如果窗口声明自己不需要焦点，那就别给
                 if c.state.never_focus {
                     false
@@ -4910,7 +4981,7 @@ impl Jwm {
         let is_on_selected_monitor = client_mon_key.is_some() && client_mon_key == current_sel_mon;
         if is_on_selected_monitor {
             if let Some(mon_key) = client_mon_key {
-                if let Some(monitor) = self.monitors.get_mut(mon_key) {
+                if let Some(monitor) = self.state.monitors.get_mut(mon_key) {
                     monitor.sel = Some(client_key);
                 }
                 self.arrange(backend, Some(mon_key));
@@ -4934,7 +5005,7 @@ impl Jwm {
         }
 
         if let Some(target_mon_key) = client_mon_key {
-            if let Some(monitor) = self.monitors.get_mut(target_mon_key) {
+            if let Some(monitor) = self.state.monitors.get_mut(target_mon_key) {
                 monitor.sel = Some(client_key);
             }
             self.arrange(backend, Some(target_mon_key));
@@ -4957,7 +5028,7 @@ impl Jwm {
     }
 
     fn grabbuttons(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
-        let win = if let Some(c) = self.clients.get(client_key) {
+        let win = if let Some(c) = self.state.clients.get(client_key) {
             c.win
         } else {
             return;
@@ -5022,7 +5093,7 @@ impl Jwm {
         self.grabbuttons(backend, client_key);
 
         let already_mapped = {
-            let win = self.clients.get(client_key).unwrap().win;
+            let win = self.state.clients.get(client_key).unwrap().win;
             backend
                 .window_ops()
                 .get_window_attributes(win)
@@ -5048,7 +5119,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let win = if let Some(client) = self.clients.get(client_key) {
+        let win = if let Some(client) = self.state.clients.get(client_key) {
             client.win
         } else {
             return Err("Client not found".into());
@@ -5058,13 +5129,13 @@ impl Jwm {
             Some(transient_for_win) => {
                 if let Some(parent_client_key) = self.wintoclient(transient_for_win) {
                     let (parent_mon, parent_tags) =
-                        if let Some(parent) = self.clients.get(parent_client_key) {
+                        if let Some(parent) = self.state.clients.get(parent_client_key) {
                             (parent.mon, parent.state.tags)
                         } else {
                             return Err("Parent client not found".into());
                         };
 
-                    if let Some(client) = self.clients.get_mut(client_key) {
+                    if let Some(client) = self.state.clients.get_mut(client_key) {
                         client.mon = parent_mon;
                         client.state.tags = parent_tags;
                         client.state.is_floating = true;
@@ -5075,16 +5146,16 @@ impl Jwm {
                     }
                 } else {
                     info!("[handle_transient_for] parent client is None");
-                    if let Some(client) = self.clients.get_mut(client_key) {
-                        client.mon = self.sel_mon;
+                    if let Some(client) = self.state.clients.get_mut(client_key) {
+                        client.mon = self.state.sel_mon;
                     }
                     self.applyrules_by_key(backend, client_key);
                 }
             }
             None => {
                 info!("no WM_TRANSIENT_FOR property");
-                if let Some(client) = self.clients.get_mut(client_key) {
-                    client.mon = self.sel_mon;
+                if let Some(client) = self.state.clients.get_mut(client_key) {
+                    client.mon = self.state.sel_mon;
                 }
                 self.applyrules_by_key(backend, client_key);
             }
@@ -5110,7 +5181,7 @@ impl Jwm {
     }
 
     fn apply_single_rule(&mut self, client_key: ClientKey, rule: &WMRule) {
-        if let Some(client) = self.clients.get_mut(client_key) {
+        if let Some(client) = self.state.clients.get_mut(client_key) {
             info!("[apply_single_rule] Applying rule: {:?}", rule);
             client.state.is_floating = rule.is_floating;
             if rule.tags > 0 {
@@ -5118,10 +5189,11 @@ impl Jwm {
             }
             if rule.monitor >= 0 {
                 let target_monitor = self
+                    .state
                     .monitor_order
                     .iter()
                     .find(|&&mon_key| {
-                        if let Some(monitor) = self.monitors.get(mon_key) {
+                        if let Some(monitor) = self.state.monitors.get(mon_key) {
                             monitor.num == rule.monitor
                         } else {
                             false
@@ -5144,13 +5216,13 @@ impl Jwm {
     }
 
     fn set_default_tags(&mut self, client_key: ClientKey) {
-        if let Some(client) = self.clients.get_mut(client_key) {
+        if let Some(client) = self.state.clients.get_mut(client_key) {
             let current_tags = client.state.tags & CONFIG.tagmask();
             if current_tags > 0 {
                 client.state.tags = current_tags;
             } else {
                 if let Some(mon_key) = client.mon {
-                    if let Some(monitor) = self.monitors.get(mon_key) {
+                    if let Some(monitor) = self.state.monitors.get(mon_key) {
                         client.state.tags = monitor.tag_set[monitor.sel_tags];
                     }
                 } else {
@@ -5166,7 +5238,7 @@ impl Jwm {
 
     fn applyrules_by_key(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
         let (win, name, mut class, mut instance) =
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 (
                     client.win,
                     client.name.clone(),
@@ -5181,7 +5253,7 @@ impl Jwm {
                 instance = inst;
                 class = cls;
 
-                if let Some(client) = self.clients.get_mut(client_key) {
+                if let Some(client) = self.state.clients.get_mut(client_key) {
                     client.instance = instance.clone();
                     client.class = class.clone();
                 }
@@ -5191,11 +5263,11 @@ impl Jwm {
             "[applyrules_by_key] win: {:?}, name: '{}', instance: '{}', class: '{}'",
             win, name, instance, class
         );
-        if let Some(client) = self.clients.get_mut(client_key) {
+        if let Some(client) = self.state.clients.get_mut(client_key) {
             client.state.is_floating = false;
         }
         if name.is_empty() && class.is_empty() && instance.is_empty() {
-            if let Some(client) = self.clients.get_mut(client_key) {
+            if let Some(client) = self.state.clients.get_mut(client_key) {
                 client.state.is_floating = true;
             }
             info!("No window info available, setting as floating");
@@ -5212,7 +5284,7 @@ impl Jwm {
             info!("No matching rule found, using defaults");
         }
         self.set_default_tags(client_key);
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             info!(
                 "Final state - class: '{}', instance: '{}', name: '{}', tags: {}, floating: {}",
                 client.class,
@@ -5229,7 +5301,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let win = if let Some(client) = self.clients.get(client_key) {
+        let win = if let Some(client) = self.state.clients.get(client_key) {
             client.win
         } else {
             return Err("Client not found".into());
@@ -5253,7 +5325,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let win = if let Some(client) = self.clients.get(client_key) {
+        let win = if let Some(client) = self.state.clients.get(client_key) {
             client.win
         } else {
             return Err("Client not found".into());
@@ -5272,7 +5344,7 @@ impl Jwm {
         current_mon_id: i32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mon_key = self.get_monitor_by_id(current_mon_id);
-        if let Some(client) = self.clients.get_mut(client_key) {
+        if let Some(client) = self.state.clients.get_mut(client_key) {
             client.mon = mon_key;
             client.state.never_focus = true;
             client.state.is_floating = true;
@@ -5324,7 +5396,7 @@ impl Jwm {
             Some(k) => k,
             None => return Ok(()),
         };
-        let monitor = self.monitors.get(mon_key).unwrap();
+        let monitor = self.state.monitors.get(mon_key).unwrap();
 
         let show_bar = monitor
             .pertag
@@ -5333,40 +5405,41 @@ impl Jwm {
             .copied()
             .unwrap_or(true);
 
-        let (client_win, client_height) = if let Some(client) = self.clients.get_mut(client_key) {
-            if show_bar {
-                let pad = CONFIG.status_bar_padding();
-                let border_width = client.geometry.border_w;
-                client.geometry.x = monitor.geometry.m_x + pad;
-                client.geometry.y = monitor.geometry.m_y + pad;
-                client.geometry.w = monitor.geometry.m_w - 2 * pad - 2 * border_width;
-                client.geometry.h = CONFIG.status_bar_height();
+        let (client_win, client_height) =
+            if let Some(client) = self.state.clients.get_mut(client_key) {
+                if show_bar {
+                    let pad = CONFIG.status_bar_padding();
+                    let border_width = client.geometry.border_w;
+                    client.geometry.x = monitor.geometry.m_x + pad;
+                    client.geometry.y = monitor.geometry.m_y + pad;
+                    client.geometry.w = monitor.geometry.m_w - 2 * pad - 2 * border_width;
+                    client.geometry.h = CONFIG.status_bar_height();
 
-                let changes = WindowChanges {
-                    x: Some(client.geometry.x),
-                    y: Some(client.geometry.y),
-                    width: Some(client.geometry.w as u32),
-                    height: Some(client.geometry.h as u32),
-                    ..Default::default()
-                };
-                backend
-                    .window_ops()
-                    .apply_window_changes(client.win, changes)?;
-                (client.win, Some(client.geometry.h))
+                    let changes = WindowChanges {
+                        x: Some(client.geometry.x),
+                        y: Some(client.geometry.y),
+                        width: Some(client.geometry.w as u32),
+                        height: Some(client.geometry.h as u32),
+                        ..Default::default()
+                    };
+                    backend
+                        .window_ops()
+                        .apply_window_changes(client.win, changes)?;
+                    (client.win, Some(client.geometry.h))
+                } else {
+                    let changes = WindowChanges {
+                        x: Some(-1000),
+                        y: Some(-1000),
+                        ..Default::default()
+                    };
+                    backend
+                        .window_ops()
+                        .apply_window_changes(client.win, changes)?;
+                    (client.win, None)
+                }
             } else {
-                let changes = WindowChanges {
-                    x: Some(-1000),
-                    y: Some(-1000),
-                    ..Default::default()
-                };
-                backend
-                    .window_ops()
-                    .apply_window_changes(client.win, changes)?;
-                (client.win, None)
-            }
-        } else {
-            return Ok(());
-        };
+                return Ok(());
+            };
 
         if let Some(height) = client_height {
             self.set_bar_strut(backend, client_win, monitor, height)?;
@@ -5381,7 +5454,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let win = if let Some(client) = self.clients.get(client_key) {
+        let win = if let Some(client) = self.state.clients.get(client_key) {
             client.win
         } else {
             return Err("Client not found".into());
@@ -5405,7 +5478,8 @@ impl Jwm {
     }
 
     fn get_monitor_by_id(&self, monitor_id: i32) -> Option<MonitorKey> {
-        self.monitors
+        self.state
+            .monitors
             .iter()
             .find(|(_, monitor)| monitor.num == monitor_id)
             .map(|(key, _)| key)
@@ -5441,9 +5515,9 @@ impl Jwm {
         let (wx, wy, ww, wh, _, _, monitor_num, client_y_offset) = self.get_monitor_info(mon_key);
         let mut visible_count = 0u32;
         let mut layout_clients = Vec::new();
-        if let Some(client_keys) = self.monitor_clients.get(mon_key) {
+        if let Some(client_keys) = self.state.monitor_clients.get(mon_key) {
             for &client_key in client_keys {
-                if let Some(client) = self.clients.get(client_key) {
+                if let Some(client) = self.state.clients.get(client_key) {
                     let is_visible = self.is_client_visible_on_monitor(client_key, mon_key);
 
                     if is_visible {
@@ -5461,7 +5535,7 @@ impl Jwm {
         }
         if visible_count > 0 {
             let formatted_string = format!("[{}]", visible_count);
-            if let Some(monitor) = self.monitors.get_mut(mon_key) {
+            if let Some(monitor) = self.state.monitors.get_mut(mon_key) {
                 monitor.lt_symbol = formatted_string.clone();
             }
             info!(
@@ -5497,12 +5571,12 @@ impl Jwm {
             self.unfocus_client(backend, sel_key, true)?;
         }
 
-        self.sel_mon = new_monitor_key;
+        self.state.sel_mon = new_monitor_key;
 
         self.focus(backend, None)?;
 
         if let Some(monitor_key) = new_monitor_key {
-            if let Some(monitor) = self.monitors.get(monitor_key) {
+            if let Some(monitor) = self.state.monitors.get(monitor_key) {
                 debug!("Switched to monitor {} via mouse motion", monitor.num);
             }
         }
@@ -5522,7 +5596,7 @@ impl Jwm {
             None => return Ok(()),
         };
 
-        let win = if let Some(client) = self.clients.get(client_key) {
+        let win = if let Some(client) = self.state.clients.get(client_key) {
             client.win
         } else {
             warn!("[unmanage] Client {:?} not found", client_key);
@@ -5549,7 +5623,7 @@ impl Jwm {
     }
 
     fn is_popup_like(&self, backend: &mut dyn Backend, client_key: ClientKey) -> bool {
-        let client = if let Some(client) = self.clients.get(client_key) {
+        let client = if let Some(client) = self.state.clients.get(client_key) {
             client
         } else {
             return false;
@@ -5582,7 +5656,7 @@ impl Jwm {
             return;
         }
         let (client_total_width, client_mon_key_opt, win) =
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 (client.total_width(), client.mon, client.win)
             } else {
                 error!("Client {:?} not found", client_key);
@@ -5595,7 +5669,7 @@ impl Jwm {
             return;
         };
         let (mon_wx, mon_wy, mon_ww, mon_wh) =
-            if let Some(monitor) = self.monitors.get(client_mon_key) {
+            if let Some(monitor) = self.state.monitors.get(client_mon_key) {
                 (
                     monitor.geometry.w_x,
                     monitor.geometry.w_y,
@@ -5608,7 +5682,7 @@ impl Jwm {
             };
         info!("{:?}", win);
         let (mut client_x, mut client_y, _client_w, _client_h) =
-            if let Some(client) = self.clients.get(client_key) {
+            if let Some(client) = self.state.clients.get(client_key) {
                 (
                     client.geometry.x,
                     client.geometry.y,
@@ -5622,7 +5696,7 @@ impl Jwm {
             client_x = mon_wx + mon_ww - client_total_width;
             info!("Adjusted X to prevent overflow: {}", client_x);
         }
-        let client_total_height = if let Some(client) = self.clients.get(client_key) {
+        let client_total_height = if let Some(client) = self.state.clients.get(client_key) {
             client.total_height()
         } else {
             return;
@@ -5639,7 +5713,7 @@ impl Jwm {
             client_y = mon_wy;
             info!("Adjusted Y to workarea top: {}", client_y);
         }
-        let client_y_offset = if let Some(monitor) = self.monitors.get(client_mon_key) {
+        let client_y_offset = if let Some(monitor) = self.state.monitors.get(client_mon_key) {
             self.get_client_y_offset(monitor)
         } else {
             0
@@ -5648,7 +5722,7 @@ impl Jwm {
             client_y = client_y_offset;
             info!("Adjusted Y to avoid status bar: {}", client_y);
         }
-        if let Some(client) = self.clients.get_mut(client_key) {
+        if let Some(client) = self.state.clients.get_mut(client_key) {
             client.geometry.x = client_x;
             client.geometry.y = client_y;
             info!(
@@ -5664,10 +5738,14 @@ impl Jwm {
         client_key: ClientKey,
         destroyed: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             info!("[unmanage_regular_client] Removing client {}", client);
         }
-        let mon_key = self.clients.get(client_key).and_then(|client| client.mon);
+        let mon_key = self
+            .state
+            .clients
+            .get(client_key)
+            .and_then(|client| client.mon);
         if let Some(mon_key) = mon_key {
             self.clear_pertag_references(client_key, mon_key);
         }
@@ -5676,9 +5754,9 @@ impl Jwm {
         if !destroyed {
             self.cleanup_window_state(backend, client_key)?;
         }
-        self.clients.remove(client_key);
-        self.client_order.retain(|&k| k != client_key);
-        self.client_stack_order.retain(|&k| k != client_key);
+        self.state.clients.remove(client_key);
+        self.state.client_order.retain(|&k| k != client_key);
+        self.state.client_stack_order.retain(|&k| k != client_key);
         self.focus(backend, None)?;
         self.update_net_client_list(backend)?;
         if let Some(mon_key) = mon_key {
@@ -5689,7 +5767,7 @@ impl Jwm {
     }
 
     fn clear_pertag_references(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
-        if let Some(monitor) = self.monitors.get_mut(mon_key) {
+        if let Some(monitor) = self.state.monitors.get_mut(mon_key) {
             if let Some(ref mut pertag) = monitor.pertag {
                 for i in 0..=CONFIG.tags_length() {
                     if pertag.sel[i] == Some(client_key) {
@@ -5705,7 +5783,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let client = if let Some(client) = self.clients.get(client_key) {
+        let client = if let Some(client) = self.state.clients.get(client_key) {
             client
         } else {
             return Err("Client not found".into());
@@ -5752,7 +5830,7 @@ impl Jwm {
         if let Some(client_key) = self.wintoclient(window) {
             if from_configure {
                 debug!("Unmap from configure for window {:?}", window);
-                let client = if let Some(client) = self.clients.get(client_key) {
+                let client = if let Some(client) = self.state.clients.get(client_key) {
                     client
                 } else {
                     return Ok(());
@@ -5784,9 +5862,9 @@ impl Jwm {
 
         if dirty {
             let root_window = backend.root_window();
-            self.sel_mon = self.wintomon(backend, root_window);
-            if self.sel_mon.is_none() && !self.monitor_order.is_empty() {
-                self.sel_mon = self.monitor_order.first().copied();
+            self.state.sel_mon = self.wintomon(backend, root_window);
+            if self.state.sel_mon.is_none() && !self.state.monitor_order.is_empty() {
+                self.state.sel_mon = self.state.monitor_order.first().copied();
             }
         }
         dirty
@@ -5795,15 +5873,15 @@ impl Jwm {
     fn setup_single_monitor(&mut self) -> bool {
         let mut dirty = false;
 
-        if self.monitor_order.is_empty() {
+        if self.state.monitor_order.is_empty() {
             let new_monitor = self.createmon(CONFIG.show_bar());
             let mon_key = self.insert_monitor(new_monitor);
-            self.sel_mon = Some(mon_key);
+            self.state.sel_mon = Some(mon_key);
             dirty = true;
         }
 
-        if let Some(&mon_key) = self.monitor_order.first() {
-            if let Some(monitor) = self.monitors.get_mut(mon_key) {
+        if let Some(&mon_key) = self.state.monitor_order.first() {
+            if let Some(monitor) = self.state.monitors.get_mut(mon_key) {
                 if monitor.geometry.m_w != self.s_w || monitor.geometry.m_h != self.s_h {
                     dirty = true;
                     monitor.num = 0;
@@ -5825,7 +5903,7 @@ impl Jwm {
     fn setup_multiple_monitors(&mut self, monitors: Vec<(i32, i32, i32, i32)>) -> bool {
         let mut dirty = false;
         let num_detected_monitors = monitors.len();
-        let current_num_monitors = self.monitor_order.len();
+        let current_num_monitors = self.state.monitor_order.len();
 
         if num_detected_monitors > current_num_monitors {
             dirty = true;
@@ -5840,8 +5918,8 @@ impl Jwm {
         }
 
         for (i, &(x, y, w, h)) in monitors.iter().enumerate() {
-            if let Some(&mon_key) = self.monitor_order.get(i) {
-                if let Some(monitor) = self.monitors.get_mut(mon_key) {
+            if let Some(&mon_key) = self.state.monitor_order.get(i) {
+                if let Some(monitor) = self.state.monitors.get_mut(mon_key) {
                     if monitor.geometry.m_x != x
                         || monitor.geometry.m_y != y
                         || monitor.geometry.m_w != w
@@ -5871,17 +5949,17 @@ impl Jwm {
     }
 
     fn remove_excess_monitors(&mut self, target_count: usize) {
-        while self.monitor_order.len() > target_count {
-            if let Some(mon_key_to_remove) = self.monitor_order.pop() {
+        while self.state.monitor_order.len() > target_count {
+            if let Some(mon_key_to_remove) = self.state.monitor_order.pop() {
                 self.move_clients_to_first_monitor(mon_key_to_remove);
 
-                if self.sel_mon == Some(mon_key_to_remove) {
-                    self.sel_mon = self.monitor_order.first().copied();
+                if self.state.sel_mon == Some(mon_key_to_remove) {
+                    self.state.sel_mon = self.state.monitor_order.first().copied();
                 }
 
-                self.monitors.remove(mon_key_to_remove);
-                self.monitor_clients.remove(mon_key_to_remove);
-                self.monitor_stack.remove(mon_key_to_remove);
+                self.state.monitors.remove(mon_key_to_remove);
+                self.state.monitor_clients.remove(mon_key_to_remove);
+                self.state.monitor_stack.remove(mon_key_to_remove);
 
                 info!(
                     "[remove_excess_monitors] Removed monitor {:?}",
@@ -5892,7 +5970,7 @@ impl Jwm {
     }
 
     fn move_clients_to_first_monitor(&mut self, from_monitor_key: MonitorKey) {
-        let target_monitor_key = if let Some(&first_mon_key) = self.monitor_order.first() {
+        let target_monitor_key = if let Some(&first_mon_key) = self.state.monitor_order.first() {
             first_mon_key
         } else {
             warn!("[move_clients_to_first_monitor] No target monitor available");
@@ -5900,19 +5978,21 @@ impl Jwm {
         };
 
         let clients_to_move: Vec<ClientKey> = self
+            .state
             .monitor_clients
             .get(from_monitor_key)
             .cloned()
             .unwrap_or_default();
 
-        let target_tags = if let Some(target_monitor) = self.monitors.get(target_monitor_key) {
+        let target_tags = if let Some(target_monitor) = self.state.monitors.get(target_monitor_key)
+        {
             target_monitor.tag_set[target_monitor.sel_tags]
         } else {
             1
         };
 
         for client_key in clients_to_move {
-            if let Some(client) = self.clients.get_mut(client_key) {
+            if let Some(client) = self.state.clients.get_mut(client_key) {
                 client.mon = Some(target_monitor_key);
                 client.state.tags = target_tags;
             }
@@ -5929,12 +6009,12 @@ impl Jwm {
     }
 
     fn updatewindowtype(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
-        if let Some(client) = self.clients.get(client_key) {
+        if let Some(client) = self.state.clients.get(client_key) {
             if backend.property_ops().is_fullscreen(client.win) {
                 let _ = self.setfullscreen(backend, client_key, true);
             }
             if self.is_popup_like(backend, client_key) {
-                if let Some(c) = self.clients.get_mut(client_key) {
+                if let Some(c) = self.state.clients.get_mut(client_key) {
                     c.state.is_floating = true;
                 }
             }
@@ -5942,7 +6022,7 @@ impl Jwm {
     }
 
     fn updatewmhints(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
-        let win = match self.clients.get(client_key) {
+        let win = match self.state.clients.get(client_key) {
             Some(c) => c.win,
             None => return,
         };
@@ -5952,21 +6032,21 @@ impl Jwm {
                 if is_focused {
                     let _ = backend.property_ops().set_urgent_hint(win, false);
                 } else {
-                    if let Some(c) = self.clients.get_mut(client_key) {
+                    if let Some(c) = self.state.clients.get_mut(client_key) {
                         c.state.is_urgent = true;
                     }
                 }
             } else {
-                if let Some(c) = self.clients.get_mut(client_key) {
+                if let Some(c) = self.state.clients.get_mut(client_key) {
                     c.state.is_urgent = false;
                 }
             }
             if let Some(input_ok) = hints.input {
-                if let Some(c) = self.clients.get_mut(client_key) {
+                if let Some(c) = self.state.clients.get_mut(client_key) {
                     c.state.never_focus = !input_ok;
                 }
             } else {
-                if let Some(c) = self.clients.get_mut(client_key) {
+                if let Some(c) = self.state.clients.get_mut(client_key) {
                     c.state.never_focus = false;
                 }
             }
@@ -5984,7 +6064,7 @@ impl Jwm {
             }
         };
 
-        let monitor = if let Some(monitor) = self.monitors.get(mon_key) {
+        let monitor = if let Some(monitor) = self.state.monitors.get(mon_key) {
             monitor
         } else {
             error!("Monitor {:?} not found", mon_key);
@@ -6008,7 +6088,7 @@ impl Jwm {
 
             let is_filled_tag = self.is_filled_tag(mon_key, tag_bit);
 
-            let monitor = self.monitors.get(mon_key).unwrap();
+            let monitor = self.state.monitors.get(mon_key).unwrap();
             let active_tagset = monitor.tag_set[monitor.sel_tags];
             let is_selected_tag = (active_tagset & tag_bit) != 0;
             let is_urgent_tag = (urgent_tags_mask & tag_bit) != 0;
@@ -6029,9 +6109,9 @@ impl Jwm {
     fn calculate_tag_masks(&self, mon_key: MonitorKey) -> (u32, u32) {
         let mut occupied_tags_mask = 0u32;
         let mut urgent_tags_mask = 0u32;
-        if let Some(client_keys) = self.monitor_clients.get(mon_key) {
+        if let Some(client_keys) = self.state.monitor_clients.get(mon_key) {
             for &client_key in client_keys {
-                if let Some(client) = self.clients.get(client_key) {
+                if let Some(client) = self.state.clients.get(client_key) {
                     occupied_tags_mask |= client.state.tags;
                     if client.state.is_urgent {
                         urgent_tags_mask |= client.state.tags;
@@ -6043,12 +6123,12 @@ impl Jwm {
     }
 
     fn is_filled_tag(&self, mon_key: MonitorKey, tag_bit: u32) -> bool {
-        if self.sel_mon != Some(mon_key) {
+        if self.state.sel_mon != Some(mon_key) {
             return false;
         }
-        if let Some(monitor) = self.monitors.get(mon_key) {
+        if let Some(monitor) = self.state.monitors.get(mon_key) {
             if let Some(sel_client_key) = monitor.sel {
-                if let Some(client) = self.clients.get(sel_client_key) {
+                if let Some(client) = self.state.clients.get(sel_client_key) {
                     return (client.state.tags & tag_bit) != 0;
                 }
             }
@@ -6057,9 +6137,9 @@ impl Jwm {
     }
 
     fn get_selected_client_name(&self, mon_key: MonitorKey) -> String {
-        if let Some(monitor) = self.monitors.get(mon_key) {
+        if let Some(monitor) = self.state.monitors.get(mon_key) {
             if let Some(sel_client_key) = monitor.sel {
-                if let Some(client) = self.clients.get(sel_client_key) {
+                if let Some(client) = self.state.clients.get(sel_client_key) {
                     return client.name.clone();
                 }
             }
