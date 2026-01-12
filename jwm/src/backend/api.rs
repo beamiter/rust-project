@@ -554,14 +554,14 @@ pub trait Backend: Send {
 
     fn on_focused_client_changed(
         &mut self,
-        win: Option<WindowId>,
+        _win: Option<WindowId>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
     fn on_client_list_changed(
         &mut self,
-        clients: &[WindowId],
-        stack: &[WindowId],
+        _clients: &[WindowId],
+        _stack: &[WindowId],
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
@@ -569,17 +569,34 @@ pub trait Backend: Send {
     /// 开始交互式移动窗口
     /// X11: 后端记录状态，自行抓取指针
     /// Wayland: 触发 xdg_toplevel_move
-    fn begin_move(&mut self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn begin_move(&mut self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
 
     /// 开始交互式调整窗口大小
     fn begin_resize(
         &mut self,
-        win: WindowId,
-        edge: ResizeEdge,
+        _win: WindowId,
+        _edge: ResizeEdge,
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
+    }
+
+    // 处理鼠标移动 (用于后端内部的交互逻辑)
+    // 返回 true 表示后端已处理该事件，Jwm 不应继续处理
+    fn handle_motion(
+        &mut self,
+        _x: f64,
+        _y: f64,
+        _time: u32,
+    ) -> Result<bool, Box<dyn std::error::Error>> {
+        Ok(false)
+    }
+
+    // 处理鼠标释放 (结束交互)
+    // 返回 true 表示后端已处理该事件
+    fn handle_button_release(&mut self, _time: u32) -> Result<bool, Box<dyn std::error::Error>> {
+        Ok(false)
     }
 
     fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), Box<dyn std::error::Error>>;

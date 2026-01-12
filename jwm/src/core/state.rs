@@ -1,5 +1,5 @@
 // src/core/state.rs
-use crate::backend::common_define::{OutputId, WindowId};
+use crate::backend::common_define::OutputId;
 use crate::core::models::{ClientKey, MonitorKey, WMClient, WMMonitor};
 use slotmap::{SecondaryMap, SlotMap};
 

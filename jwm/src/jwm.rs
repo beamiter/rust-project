@@ -11,12 +11,13 @@ use nix::sys::wait::waitpid;
 use nix::unistd::Pid;
 
 use crate::backend::api::EventHandler;
+use crate::backend::api::ResizeEdge;
 use crate::backend::common_define::OutputId;
 use crate::backend::common_define::WindowId;
 use crate::core::controller::WMController;
 use crate::core::models::MonitorGeometry;
 use crate::core::state::WMState;
-use slotmap::{SecondaryMap, SlotMap};
+use slotmap::SecondaryMap;
 use std::collections::HashSet;
 use std::env;
 use std::process::Stdio;
@@ -29,7 +30,6 @@ use std::usize;
 use crate::backend::api::AllowMode;
 use crate::backend::api::Backend;
 use crate::backend::api::BackendEvent;
-use crate::backend::api::EwmhFeature;
 use crate::backend::api::Geometry;
 use crate::backend::api::NetWmAction;
 use crate::backend::api::NetWmState;
@@ -169,7 +169,7 @@ pub type MonitorIndex = i32;
 #[derive(Debug, Clone, Copy)]
 pub enum InteractionAction {
     Move,
-    Resize,
+    Resize(ResizeEdge),
 }
 
 #[derive(Debug, Clone)]
@@ -207,53 +207,308 @@ pub struct Jwm {
     pub last_stacking: SecondaryMap<MonitorKey, Vec<WindowId>>,
 
     key_bindings: Vec<WMKey>,
-    pub interaction: Option<InteractionState>,
 }
 
-// impl WMController for Jwm {
-//     fn on_map_request(&mut self, backend: &mut dyn Backend, win: WindowId) {
-//         self.maprequest(backend, win);
-//     }
-//     fn on_unmap_notify(&mut self, backend: &mut dyn Backend, win: WindowId) {
-//         self.unmapnotify(backend, win, false);
-//     }
-//     fn on_destroy_notify(&mut self, backend: &mut dyn Backend, win: WindowId) {
-//         self.destroynotify(backend, win);
-//     }
-//     fn on_configure_notify(&mut self, backend: &mut dyn Backend, win: WindowId, geom: Geometry) {
-//         self.configurenotify(backend, window, x, y, width, height);
-//     }
-//
-//     fn on_key_press(&mut self, backend: &mut dyn Backend, mods: Mods, key: KeySym) {
-//         self.on_key_press(backend, keycode, state);
-//     }
-//     fn on_enter_notify(&mut self, backend: &mut dyn Backend, win: WindowId) {
-//         if mode != crate::backend::api::NotifyMode::Normal {
-//             return Ok(());
-//         }
-//         let dx = (root_x - self.last_mouse_root.0).abs();
-//         let dy = (root_y - self.last_mouse_root.1).abs();
-//         if dx < 1.0 && dy < 1.0 {
-//             // debug!("Ignored fake EnterNotify caused by popup");
-//             return Ok(());
-//         }
-//         // 更新缓存位置
-//         self.last_mouse_root = (root_x, root_y);
-//         self.enter_notify(backend, window);
-//     }
-//     fn on_focus_in(&mut self, backend: &mut dyn Backend, win: WindowId) {
-//         self.focusin(backend, window);
-//     }
-//
-//     fn on_screen_layout_change(&mut self, backend: &mut dyn Backend) {
-//         log::info!(
-//             "[handle_event] Screen Layout Changed (Hotplug detected), refreshing geometry..."
-//         );
-//         if self.updategeom(backend) {
-//             self.handle_screen_geometry_change(backend)?;
-//         }
-//     }
-// }
+// =================================================================================
+// 1. 实现 WMController
+// =================================================================================
+impl WMController for Jwm {
+    // === 硬件与输出 ===
+    fn on_output_added(
+        &mut self,
+        backend: &mut dyn Backend,
+        info: crate::backend::api::OutputInfo,
+    ) {
+        if let Err(e) = self.handle_output_added(backend, info) {
+            error!("Error handling OutputAdded: {:?}", e);
+        }
+    }
+
+    fn on_output_removed(&mut self, backend: &mut dyn Backend, id: OutputId) {
+        if let Err(e) = self.handle_output_removed(backend, id) {
+            error!("Error handling OutputRemoved: {:?}", e);
+        }
+    }
+
+    fn on_output_changed(
+        &mut self,
+        backend: &mut dyn Backend,
+        info: crate::backend::api::OutputInfo,
+    ) {
+        if let Err(e) = self.handle_output_changed(backend, info) {
+            error!("Error handling OutputChanged: {:?}", e);
+        }
+    }
+
+    fn on_screen_layout_changed(&mut self, backend: &mut dyn Backend) {
+        info!("[WMController] Screen Layout Changed (Hotplug detected), refreshing geometry...");
+        if self.updategeom(backend) {
+            if let Err(e) = self.handle_screen_geometry_change(backend) {
+                error!("Error handling ScreenLayoutChanged: {:?}", e);
+            }
+        }
+    }
+
+    fn on_child_process_exited(&mut self, _backend: &mut dyn Backend) {
+        debug!("Received SIGCHLD, reaping zombies...");
+        self.reap_zombies();
+    }
+
+    // === 窗口生命周期 ===
+    fn on_map_request(&mut self, backend: &mut dyn Backend, win: WindowId) {
+        if let Err(e) = self.maprequest(backend, win) {
+            error!("Error handling MapRequest for {:?}: {:?}", win, e);
+        }
+    }
+
+    fn on_unmap_notify(&mut self, backend: &mut dyn Backend, win: WindowId, from_configure: bool) {
+        if let Err(e) = self.unmapnotify(backend, win, from_configure) {
+            error!("Error handling UnmapNotify for {:?}: {:?}", win, e);
+        }
+    }
+
+    fn on_destroy_notify(&mut self, backend: &mut dyn Backend, win: WindowId) {
+        if let Err(e) = self.destroynotify(backend, win) {
+            error!("Error handling DestroyNotify for {:?}: {:?}", win, e);
+        }
+    }
+
+    fn on_window_configured(
+        &mut self,
+        backend: &mut dyn Backend,
+        win: WindowId,
+        x: i32,
+        y: i32,
+        width: u32,
+        height: u32,
+    ) {
+        if let Err(e) = self.configurenotify(backend, win, x, y, width, height) {
+            error!("Error handling ConfigureNotify: {:?}", e);
+        }
+    }
+
+    fn on_mapping_notify(&mut self, backend: &mut dyn Backend) {
+        backend.key_ops_mut().clear_cache();
+        if let Err(e) = self.grabkeys(backend) {
+            error!("Error refreshing keys on MappingNotify: {:?}", e);
+        }
+    }
+
+    // === 输入事件 ===
+    fn on_key_press(&mut self, backend: &mut dyn Backend, keycode: u8, mods: u16, _time: u32) {
+        if let Err(e) = self.on_key_press_internal(backend, keycode, mods) {
+            error!("Error handling KeyPress: {:?}", e);
+        }
+    }
+
+    fn on_button_press(
+        &mut self,
+        backend: &mut dyn Backend,
+        win: Option<WindowId>,
+        state: u16,
+        detail: u8,
+        time: u32,
+    ) {
+        if let Err(e) = self.on_button_press_internal(backend, win, state, detail, time) {
+            error!("Error handling ButtonPress: {:?}", e);
+        }
+    }
+
+    fn on_button_release(&mut self, backend: &mut dyn Backend, _time: u32) {
+        match backend.handle_button_release(0) {
+            Ok(handled) => {
+                if handled {
+                    if let Err(e) = self.check_monitor_consistency(backend) {
+                        error!(
+                            "Error checking monitor consistency after button release: {:?}",
+                            e
+                        );
+                    }
+                }
+            }
+            Err(e) => error!("Error in backend handle_button_release: {:?}", e),
+        }
+    }
+
+    fn on_motion_notify(
+        &mut self,
+        backend: &mut dyn Backend,
+        win: Option<WindowId>,
+        root_x: f64,
+        root_y: f64,
+        time: u32,
+    ) {
+        // 先让后端处理交互式移动/调整大小
+        match backend.handle_motion(root_x, root_y, time) {
+            Ok(true) => {
+                self.last_mouse_root = (root_x, root_y);
+                return;
+            }
+            Ok(false) => {}
+            Err(e) => {
+                error!("Error in backend handle_motion: {:?}", e);
+                return;
+            }
+        }
+
+        self.last_mouse_root = (root_x, root_y);
+        // Jwm 的 Motion 处理逻辑
+        if let Err(e) =
+            self.on_motion_notify_internal(backend, win, root_x as i16, root_y as i16, time)
+        {
+            error!("Error handling MotionNotify: {:?}", e);
+        }
+    }
+
+    fn on_enter_notify(
+        &mut self,
+        backend: &mut dyn Backend,
+        win: WindowId,
+        root_x: f64,
+        root_y: f64,
+        mode: crate::backend::api::NotifyMode,
+    ) {
+        if mode != crate::backend::api::NotifyMode::Normal {
+            return;
+        }
+        let dx = (root_x - self.last_mouse_root.0).abs();
+        let dy = (root_y - self.last_mouse_root.1).abs();
+        if dx < 1.0 && dy < 1.0 {
+            // debug!("Ignored fake EnterNotify caused by popup");
+            return;
+        }
+        self.last_mouse_root = (root_x, root_y);
+
+        if let Err(e) = self.enter_notify(backend, win) {
+            error!("Error handling EnterNotify: {:?}", e);
+        }
+    }
+
+    fn on_leave_notify(&mut self, _backend: &mut dyn Backend, _win: WindowId) {
+        // Jwm 目前对 LeaveNotify 没做特殊处理，预留接口
+    }
+
+    fn on_focus_in(&mut self, backend: &mut dyn Backend, win: WindowId) {
+        if let Err(e) = self.focusin(backend, win) {
+            error!("Error handling FocusIn: {:?}", e);
+        }
+    }
+
+    fn on_focus_out(&mut self, _backend: &mut dyn Backend, _win: WindowId) {
+        // Jwm 目前主要处理 FocusIn
+    }
+
+    fn on_expose(&mut self, backend: &mut dyn Backend, win: WindowId) {
+        if let Err(e) = self.expose(backend, win, 0) {
+            error!("Error handling Expose: {:?}", e);
+        }
+    }
+
+    // === 客户端请求 / 协议 ===
+    fn on_configure_request(
+        &mut self,
+        backend: &mut dyn Backend,
+        win: WindowId,
+        mask_bits: u16,
+        changes: WindowChanges,
+    ) {
+        let x = changes.x.unwrap_or(0) as i16;
+        let y = changes.y.unwrap_or(0) as i16;
+        let w = changes.width.unwrap_or(0) as u16;
+        let h = changes.height.unwrap_or(0) as u16;
+        let border = changes.border_width.unwrap_or(0) as u16;
+        let sibling = changes.sibling.and_then(|s| s.as_x11());
+        let stack_mode = match changes.stack_mode {
+            Some(StackMode::Above) => 0, // X11 StackMode::Above
+            Some(StackMode::Below) => 1,
+            _ => 0,
+        };
+
+        if let Err(e) = self.on_configure_request_internal(
+            backend, win, mask_bits, x, y, w, h, border, sibling, stack_mode,
+        ) {
+            error!("Error handling ConfigureRequest: {:?}", e);
+        }
+    }
+
+    fn on_property_changed(
+        &mut self,
+        backend: &mut dyn Backend,
+        win: WindowId,
+        kind: PropertyKind,
+    ) {
+        if let Some(client_key) = self.wintoclient(win) {
+            let res = match kind {
+                PropertyKind::TransientFor => self.handle_transient_for_change(backend, client_key),
+                PropertyKind::SizeHints => self.handle_normal_hints_change(client_key),
+                PropertyKind::Urgency => self.handle_wm_hints_change(backend, client_key),
+                PropertyKind::Title => self.handle_title_change(backend, client_key),
+                PropertyKind::WindowType => self.handle_window_type_change(backend, client_key),
+                _ => Ok(()),
+            };
+            if let Err(e) = res {
+                error!("Error handling PropertyChanged {:?}: {:?}", kind, e);
+            }
+        }
+    }
+
+    fn on_client_message(&mut self, backend: &mut dyn Backend, win: WindowId) {
+        // 对应 ActiveWindowMessage
+        if let Some(ck) = self.wintoclient(win) {
+            let is_urgent = self
+                .state
+                .clients
+                .get(ck)
+                .map(|c| c.state.is_urgent)
+                .unwrap_or(false);
+            if !self.is_client_selected(ck) && !is_urgent {
+                if let Err(e) = self.seturgent(backend, ck, true) {
+                    error!("Error setting urgent on client message: {:?}", e);
+                }
+            }
+        }
+    }
+
+    fn on_window_state_request(
+        &mut self,
+        backend: &mut dyn Backend,
+        win: WindowId,
+        action: NetWmAction,
+        state: NetWmState,
+    ) {
+        if matches!(state, NetWmState::Fullscreen) {
+            if let Some(ck) = self.wintoclient(win) {
+                let is_fullscreen = self
+                    .state
+                    .clients
+                    .get(ck)
+                    .map(|c| c.state.is_fullscreen)
+                    .unwrap_or(false);
+                let fullscreen = match action {
+                    NetWmAction::Add => true,
+                    NetWmAction::Remove => false,
+                    NetWmAction::Toggle => !is_fullscreen,
+                };
+                if let Err(e) = self.setfullscreen(backend, ck, fullscreen) {
+                    error!("Error handling WindowStateRequest: {:?}", e);
+                }
+            }
+        }
+    }
+
+    fn on_wm_keyboard_shortcut(&mut self, backend: &mut dyn Backend, keysym: KeySym, mods: Mods) {
+        for key_config in self.key_bindings.to_vec().iter() {
+            if keysym == key_config.key_sym && mods == key_config.mask {
+                if let Some(func) = key_config.func_opt {
+                    if let Err(e) = func(self, backend, &key_config.arg) {
+                        error!("Error executing keyboard shortcut: {:?}", e);
+                    }
+                }
+                break;
+            }
+        }
+    }
+}
 
 impl EventHandler for Jwm {
     fn handle_event(
@@ -261,29 +516,89 @@ impl EventHandler for Jwm {
         backend: &mut dyn Backend,
         event: BackendEvent,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 统一处理事件
         match event {
-            // 处理热插拔
-            BackendEvent::OutputAdded(info) => self.handle_output_added(backend, info),
-            BackendEvent::OutputRemoved(id) => self.handle_output_removed(backend, id),
-            BackendEvent::OutputChanged(info) => self.handle_output_changed(backend, info),
-            // --- 处理热插拔触发的全局刷新 ---
-            BackendEvent::ScreenLayoutChanged => {
-                log::info!(
-                    "[handle_event] Screen Layout Changed (Hotplug detected), refreshing geometry..."
-                );
-                if self.updategeom(backend) {
-                    self.handle_screen_geometry_change(backend)?;
-                }
-                Ok(())
+            // === 硬件与输出 ===
+            BackendEvent::OutputAdded(info) => self.on_output_added(backend, info),
+            BackendEvent::OutputRemoved(id) => self.on_output_removed(backend, id),
+            BackendEvent::OutputChanged(info) => self.on_output_changed(backend, info),
+            BackendEvent::ScreenLayoutChanged => self.on_screen_layout_changed(backend),
+            BackendEvent::ChildProcessExited => self.on_child_process_exited(backend),
+
+            // === 窗口生命周期 ===
+            BackendEvent::WindowCreated(win) => self.on_map_request(backend, win),
+            BackendEvent::WindowDestroyed(win) => self.on_destroy_notify(backend, win),
+            BackendEvent::WindowMapped(_) => { /* Usually handled by MapRequest or internal logic, optionally add hook */
             }
-            BackendEvent::ChildProcessExited => {
-                debug!("Received SIGCHLD, reaping zombies...");
-                self.reap_zombies();
-                Ok(())
+            BackendEvent::WindowUnmapped(win) => self.on_unmap_notify(backend, win, false),
+            BackendEvent::WindowConfigured {
+                window,
+                x,
+                y,
+                width,
+                height,
+            } => self.on_window_configured(backend, window, x, y, width, height),
+            BackendEvent::MappingNotify => self.on_mapping_notify(backend),
+
+            // === 输入事件 ===
+            BackendEvent::ButtonPress {
+                window,
+                state,
+                detail,
+                time,
+                root_x: _,
+                root_y: _,
+            } => self.on_button_press(backend, window, state, detail, time),
+            BackendEvent::ButtonRelease { window: _, time } => {
+                self.on_button_release(backend, time)
             }
-            _ => self.handle_backend_event(backend, event),
+            BackendEvent::MotionNotify {
+                window,
+                root_x,
+                root_y,
+                time,
+            } => self.on_motion_notify(backend, window, root_x, root_y, time),
+            BackendEvent::KeyPress {
+                keycode,
+                state,
+                time,
+            } => self.on_key_press(backend, keycode, state, time),
+            BackendEvent::EnterNotify {
+                window,
+                subwindow: _,
+                mode,
+                root_x,
+                root_y,
+            } => self.on_enter_notify(backend, window, root_x, root_y, mode),
+            BackendEvent::LeaveNotify { window, mode: _ } => self.on_leave_notify(backend, window),
+            BackendEvent::FocusIn { window } => self.on_focus_in(backend, window),
+            BackendEvent::FocusOut { window } => self.on_focus_out(backend, window),
+            BackendEvent::Expose { window } => self.on_expose(backend, window),
+
+            // === 协议与属性 ===
+            BackendEvent::ConfigureRequest {
+                window,
+                mask_bits,
+                changes,
+            } => self.on_configure_request(backend, window, mask_bits, changes),
+            BackendEvent::PropertyChanged { window, kind } => {
+                self.on_property_changed(backend, window, kind)
+            }
+            BackendEvent::WmKeyboardShortcut { keysym, mods } => {
+                self.on_wm_keyboard_shortcut(backend, keysym, mods)
+            }
+            BackendEvent::WindowStateRequest {
+                window,
+                action,
+                state,
+            } => self.on_window_state_request(backend, window, action, state),
+            BackendEvent::ActiveWindowMessage { window } => self.on_client_message(backend, window),
+
+            // 忽略或不需要显式处理的事件
+            BackendEvent::ClientMessage { .. } => { /* ClientMessage Generic */ }
         }
+
+        backend.request_render();
+        Ok(())
     }
 
     fn update(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
@@ -363,7 +678,6 @@ impl Jwm {
 
             last_stacking: SecondaryMap::new(),
             key_bindings: CONFIG.get_keys(),
-            interaction: None,
             last_mouse_root: (0.0, 0.0),
         };
         if let Ok((x, y)) = backend.input_ops().get_pointer_position() {
@@ -510,7 +824,7 @@ impl Jwm {
                 | Mods::MOD5)
     }
 
-    fn on_key_press(
+    fn on_key_press_internal(
         &mut self,
         backend: &mut dyn Backend,
         keycode: u8,
@@ -537,7 +851,7 @@ impl Jwm {
         Ok(())
     }
 
-    fn on_button_press(
+    fn on_button_press_internal(
         &mut self,
         backend: &mut dyn Backend,
         window: Option<WindowId>,
@@ -610,7 +924,7 @@ impl Jwm {
         Ok(())
     }
 
-    fn on_motion_notify(
+    fn on_motion_notify_internal(
         &mut self,
         backend: &mut dyn Backend,
         window: Option<WindowId>,
@@ -618,79 +932,6 @@ impl Jwm {
         root_y: i16,
         _time: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(state) = self.interaction.clone() {
-            if state.last_update_time.elapsed().as_millis() < 10 {
-                return Ok(());
-            }
-            if let Some(ref mut s) = self.interaction {
-                s.last_update_time = std::time::Instant::now();
-            }
-            match state.action {
-                InteractionAction::Move => {
-                    let dx = root_x as i32 - state.start_mouse_x;
-                    let dy = root_y as i32 - state.start_mouse_y;
-                    let mut new_x = state.start_win_geom.x as i32 + dx;
-                    let mut new_y = state.start_win_geom.y as i32 + dy;
-                    if let Some(sel_mon_key) = self.state.sel_mon {
-                        if let Some(m) = self.state.monitors.get(sel_mon_key) {
-                            self.apply_edge_snapping(
-                                state.client_key,
-                                &mut new_x,
-                                &mut new_y,
-                                m.geometry.w_x,
-                                m.geometry.w_y,
-                                m.geometry.w_w,
-                                m.geometry.w_h,
-                            )?;
-                        }
-                    }
-
-                    self.check_and_toggle_floating_for_move(
-                        backend,
-                        state.client_key,
-                        new_x,
-                        new_y,
-                    )?;
-
-                    if self.should_move_client(state.client_key) {
-                        // 保持大小不变，只改位置
-                        let w = state.start_win_geom.w as i32;
-                        let h = state.start_win_geom.h as i32;
-                        self.resize_client(backend, state.client_key, new_x, new_y, w, h, true);
-                    }
-                }
-                InteractionAction::Resize => {
-                    // 计算新的宽高
-                    let dx = root_x as i32 - state.start_mouse_x;
-                    let dy = root_y as i32 - state.start_mouse_y;
-
-                    // 确保最小尺寸
-                    let new_w = (state.start_win_geom.w as i32 + dx).max(1);
-                    let new_h = (state.start_win_geom.h as i32 + dy).max(1);
-
-                    self.check_and_toggle_floating_for_resize(
-                        backend,
-                        state.client_key,
-                        new_w,
-                        new_h,
-                    )?;
-
-                    if self.should_resize_client(state.client_key) {
-                        self.resize_client(
-                            backend,
-                            state.client_key,
-                            state.start_win_geom.x as i32,
-                            state.start_win_geom.y as i32,
-                            new_w,
-                            new_h,
-                            true,
-                        );
-                    }
-                }
-            }
-            backend.request_render();
-            return Ok(());
-        }
         let is_root = window.is_none() || window == backend.root_window();
         if !is_root {
             return Ok(());
@@ -706,7 +947,7 @@ impl Jwm {
         Ok(())
     }
 
-    fn on_configure_request(
+    fn on_configure_request_internal(
         &mut self,
         backend: &mut dyn Backend,
         window: WindowId,
@@ -937,179 +1178,6 @@ impl Jwm {
         backend.window_ops().apply_window_changes(window, changes)?;
 
         Ok(())
-    }
-
-    fn handle_backend_event(
-        &mut self,
-        backend: &mut dyn Backend,
-        ev: BackendEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        match ev {
-            BackendEvent::WmKeyboardShortcut { keysym, mods } => {
-                for key_config in self.key_bindings.to_vec().iter() {
-                    if keysym == key_config.key_sym && mods == key_config.mask {
-                        if let Some(func) = key_config.func_opt {
-                            let _ = func(self, backend, &key_config.arg);
-                        }
-                        break;
-                    }
-                }
-                Ok(())
-            }
-            BackendEvent::ButtonPress {
-                window,
-                state,
-                detail,
-                time,
-                root_x: _, // f64
-                root_y: _, // f64
-            } => self.on_button_press(backend, window, state, detail, time),
-            BackendEvent::MotionNotify {
-                window,
-                root_x,
-                root_y,
-                time,
-            } => {
-                self.last_mouse_root = (root_x, root_y);
-                self.on_motion_notify(backend, window, root_x as i16, root_y as i16, time)
-            }
-            BackendEvent::ConfigureRequest {
-                window,
-                mask_bits,
-                changes,
-            } => {
-                let x = changes.x.unwrap_or(0) as i16;
-                let y = changes.y.unwrap_or(0) as i16;
-                let w = changes.width.unwrap_or(0) as u16;
-                let h = changes.height.unwrap_or(0) as u16;
-                let border = changes.border_width.unwrap_or(0) as u16;
-                let sibling = changes.sibling.and_then(|s| s.as_x11());
-                let stack_mode = match changes.stack_mode {
-                    Some(StackMode::Above) => 0, // X11 StackMode::Above
-                    Some(StackMode::Below) => 1,
-                    _ => 0,
-                };
-                self.on_configure_request(
-                    backend, window, mask_bits, x, y, w, h, border, sibling, stack_mode,
-                )
-            }
-            BackendEvent::KeyPress {
-                keycode,
-                state,
-                time: _,
-            } => self.on_key_press(backend, keycode, state),
-            BackendEvent::WindowConfigured {
-                window,
-                x,
-                y,
-                width,
-                height,
-            } => self.configurenotify(backend, window, x, y, width, height),
-            BackendEvent::WindowDestroyed(window) => self.destroynotify(backend, window),
-            BackendEvent::EnterNotify {
-                window,
-                subwindow: _,
-                mode,
-                root_x,
-                root_y,
-            } => {
-                if mode != crate::backend::api::NotifyMode::Normal {
-                    return Ok(());
-                }
-                let dx = (root_x - self.last_mouse_root.0).abs();
-                let dy = (root_y - self.last_mouse_root.1).abs();
-                if dx < 1.0 && dy < 1.0 {
-                    // debug!("Ignored fake EnterNotify caused by popup");
-                    return Ok(());
-                }
-                // 更新缓存位置
-                self.last_mouse_root = (root_x, root_y);
-                self.enter_notify(backend, window)
-            }
-            BackendEvent::Expose { window } => self.expose(backend, window, 0),
-            BackendEvent::FocusIn { window } => self.focusin(backend, window),
-            BackendEvent::WindowCreated(window) => self.maprequest(backend, window),
-            BackendEvent::WindowUnmapped(window) => self.unmapnotify(backend, window, false),
-            BackendEvent::MappingNotify => {
-                backend.key_ops_mut().clear_cache();
-                self.grabkeys(backend)
-            }
-            BackendEvent::PropertyChanged { window, kind } => {
-                if let Some(client_key) = self.wintoclient(window) {
-                    match kind {
-                        PropertyKind::TransientFor => {
-                            self.handle_transient_for_change(backend, client_key)?
-                        }
-                        PropertyKind::SizeHints => self.handle_normal_hints_change(client_key)?,
-                        PropertyKind::Urgency => {
-                            self.handle_wm_hints_change(backend, client_key)?
-                        }
-                        PropertyKind::Title => self.handle_title_change(backend, client_key)?,
-                        PropertyKind::WindowType => {
-                            self.handle_window_type_change(backend, client_key)?
-                        }
-                        _ => {}
-                    }
-                }
-                return Ok(());
-            }
-            BackendEvent::WindowStateRequest {
-                window,
-                action,
-                state,
-            } => {
-                if matches!(state, NetWmState::Fullscreen) {
-                    if let Some(ck) = self.wintoclient(window) {
-                        let is_fullscreen = self
-                            .state
-                            .clients
-                            .get(ck)
-                            .map(|c| c.state.is_fullscreen)
-                            .unwrap_or(false);
-                        let fullscreen = match action {
-                            NetWmAction::Add => true,
-                            NetWmAction::Remove => false,
-                            NetWmAction::Toggle => !is_fullscreen,
-                        };
-                        self.setfullscreen(backend, ck, fullscreen)?;
-                    }
-                }
-                return Ok(());
-            }
-            BackendEvent::ActiveWindowMessage { window } => {
-                if let Some(ck) = self.wintoclient(window) {
-                    let is_urgent = self
-                        .state
-                        .clients
-                        .get(ck)
-                        .map(|c| c.state.is_urgent)
-                        .unwrap_or(false);
-                    if !self.is_client_selected(ck) && !is_urgent {
-                        self.seturgent(backend, ck, true)?;
-                    }
-                }
-                return Ok(());
-            }
-            BackendEvent::ButtonRelease { window: _, time: _ } => {
-                if let Some(state) = self.interaction.take() {
-                    info!("[Interaction] Finished {:?}", state.action);
-                    backend.input_ops().ungrab_pointer()?;
-                    backend.input_ops().set_cursor(StdCursorKind::LeftPtr)?;
-                    match state.action {
-                        InteractionAction::Move => {
-                            self.cleanup_move(backend, state.client_key)?;
-                        }
-                        InteractionAction::Resize => {
-                            self.check_monitor_change_after_resize(backend)?;
-                        }
-                    }
-                }
-                Ok(())
-            }
-            _ => Ok(()),
-        }?;
-        backend.request_render();
-        return Ok(());
     }
 
     fn insert_client(&mut self, client: WMClient) -> ClientKey {
@@ -4120,345 +4188,94 @@ impl Jwm {
         Ok(())
     }
 
-    fn should_move_client(&self, client_key: ClientKey) -> bool {
-        if let Some(client) = self.state.clients.get(client_key) {
-            if client.state.is_floating {
-                return true;
-            }
-
-            if let Some(mon_key) = client.mon {
-                if let Some(monitor) = self.state.monitors.get(mon_key) {
-                    return !monitor.lt[monitor.sel_lt].is_tile();
-                }
-            }
-        }
-        false
-    }
-
-    fn apply_edge_snapping(
-        &self,
-        client_key: ClientKey,
-        new_x: &mut i32,
-        new_y: &mut i32,
-        mon_wx: i32,
-        mon_wy: i32,
-        mon_ww: i32,
-        mon_wh: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let (client_total_width, client_total_height) =
-            if let Some(client) = self.state.clients.get(client_key) {
-                (client.total_width(), client.total_height())
-            } else {
-                return Ok(());
-            };
-
-        let snap_distance = CONFIG.snap() as i32;
-
-        if (mon_wx - *new_x).abs() < snap_distance {
-            *new_x = mon_wx;
-        } else if ((mon_wx + mon_ww) - (*new_x + client_total_width)).abs() < snap_distance {
-            *new_x = mon_wx + mon_ww - client_total_width;
-        }
-
-        if (mon_wy - *new_y).abs() < snap_distance {
-            *new_y = mon_wy;
-        } else if ((mon_wy + mon_wh) - (*new_y + client_total_height)).abs() < snap_distance {
-            *new_y = mon_wy + mon_wh - client_total_height;
-        }
-
-        Ok(())
-    }
-
-    fn check_and_toggle_floating_for_move(
-        &mut self,
-        backend: &mut dyn Backend,
-        client_key: ClientKey,
-        new_x: i32,
-        new_y: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let (is_floating, current_x, current_y, current_layout_is_tile) =
-            if let Some(client) = self.state.clients.get(client_key) {
-                let layout_is_tile = if let Some(mon_key) = client.mon {
-                    if let Some(monitor) = self.state.monitors.get(mon_key) {
-                        monitor.lt[monitor.sel_lt].is_tile()
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                (
-                    client.state.is_floating,
-                    client.geometry.x,
-                    client.geometry.y,
-                    layout_is_tile,
-                )
-            } else {
-                return Ok(());
-            };
-
-        if !is_floating
-            && current_layout_is_tile
-            && ((new_x - current_x).abs() > CONFIG.snap() as i32
-                || (new_y - current_y).abs() > CONFIG.snap() as i32)
-        {
-            self.togglefloating(backend, &WMArgEnum::Int(0))?;
-        }
-
-        Ok(())
-    }
-
-    fn cleanup_move(
-        &mut self,
-        backend: &mut dyn Backend,
-        client_key: ClientKey,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        backend.input_ops().ungrab_pointer()?;
-        let (final_x, final_y, _final_w, _final_h) =
-            if let Some(client) = self.state.clients.get(client_key) {
-                (
-                    client.geometry.x,
-                    client.geometry.y,
-                    client.geometry.w,
-                    client.geometry.h,
-                )
-            } else {
-                return Ok(());
-            };
-
-        let target_monitor_opt = self.recttomon(backend, final_x, final_y);
-
-        if let Some(target_mon_key) = target_monitor_opt {
-            if Some(target_mon_key) != self.state.sel_mon {
-                self.sendmon(backend, Some(client_key), Some(target_mon_key));
-                self.state.sel_mon = Some(target_mon_key);
-                self.focus(backend, None)?;
-            }
-        }
-
-        Ok(())
-    }
-
     pub fn movemouse(
         &mut self,
         backend: &mut dyn Backend,
         _arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        debug!("[movemouse]");
-        let client_key = match self.get_selected_client_key() {
-            Some(k) => k,
-            None => return Ok(()),
-        };
+        let client_key = self.get_selected_client_key().ok_or("No client selected")?;
 
-        // 1. 获取初始信息
-        let (start_geom, _) = if let Some(c) = self.state.clients.get(client_key) {
-            if c.state.is_fullscreen {
+        // 获取只读引用进行检查
+        let (is_fullscreen, is_floating, win_id) =
+            if let Some(c) = self.state.clients.get(client_key) {
+                (c.state.is_fullscreen, c.state.is_floating, c.win)
+            } else {
                 return Ok(());
-            }
-            (
-                Geometry {
-                    x: c.geometry.x,
-                    y: c.geometry.y,
-                    w: c.geometry.w as u32,
-                    h: c.geometry.h as u32,
-                    border: c.geometry.border_w as u32,
-                },
-                c.win,
-            )
-        } else {
+            };
+
+        if is_fullscreen {
             return Ok(());
-        };
-
-        self.restack(backend, self.state.sel_mon)?;
-
-        // 2. 获取当前鼠标位置
-        let (ptr_x, ptr_y) = self.getrootptr(backend)?;
-
-        // 3. 设置光标
-        let cursor_handle = backend.cursor_provider().get(StdCursorKind::Hand)?.0;
-        backend.input_ops().set_cursor(StdCursorKind::Hand)?;
-
-        // 4. 抓取指针 (Wayland 中这一步通常意味着开始隐式抓取)
-        // 这里的 mask 对应 MOUSEMASK
-        let success = backend.input_ops().grab_pointer(
-            (EventMaskBits::BUTTON_RELEASE | EventMaskBits::POINTER_MOTION).bits(),
-            Some(cursor_handle),
-        )?;
-
-        if success {
-            // 5. 进入交互状态
-            self.interaction = Some(InteractionState {
-                client_key,
-                action: InteractionAction::Move,
-                start_win_geom: start_geom,
-                start_mouse_x: ptr_x,
-                start_mouse_y: ptr_y,
-                last_update_time: std::time::Instant::now(),
-            });
-            info!("[movemouse] Started interactive move");
-        } else {
-            backend.input_ops().set_cursor(StdCursorKind::LeftPtr)?;
         }
 
+        // 浮动检查：如果是平铺窗口，自动切换为浮动
+        if !is_floating {
+            self.togglefloating(backend, &WMArgEnum::Int(0))?;
+        }
+
+        // [修改] 提升窗口堆叠顺序
+        self.restack(backend, self.state.sel_mon)?;
+
+        // [修改] 将控制权移交 Backend
+        backend.begin_move(win_id)?;
+
+        // Jwm 不再维护 InteractionState
         Ok(())
     }
 
+    // [重构] resizemouse
     pub fn resizemouse(
         &mut self,
         backend: &mut dyn Backend,
         _arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("resizemouse");
+        let client_key = self.get_selected_client_key().ok_or("No client selected")?;
+
+        let (is_fullscreen, is_floating, win_id) =
+            if let Some(c) = self.state.clients.get(client_key) {
+                (c.state.is_fullscreen, c.state.is_floating, c.win)
+            } else {
+                return Ok(());
+            };
+
+        if is_fullscreen {
+            return Ok(());
+        }
+
+        if !is_floating {
+            self.togglefloating(backend, &WMArgEnum::Int(0))?;
+        }
+
+        self.restack(backend, self.state.sel_mon)?;
+
+        // [修改] 将控制权移交 Backend (默认右下角调整)
+        backend.begin_resize(win_id, crate::backend::api::ResizeEdge::BottomRight)?;
+
+        Ok(())
+    }
+
+    fn check_monitor_consistency(
+        &mut self,
+        backend: &mut dyn Backend,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // 类似于之前的 check_monitor_change_after_resize
         let client_key = match self.get_selected_client_key() {
             Some(k) => k,
             None => return Ok(()),
         };
 
-        let (start_geom, win_id) = if let Some(c) = self.state.clients.get(client_key) {
-            if c.state.is_fullscreen {
-                return Ok(());
-            }
-            (
-                Geometry {
-                    x: c.geometry.x,
-                    y: c.geometry.y,
-                    w: c.geometry.w as u32,
-                    h: c.geometry.h as u32,
-                    border: c.geometry.border_w as u32,
-                },
-                c.win,
-            )
-        } else {
-            return Ok(());
-        };
-
-        self.restack(backend, self.state.sel_mon)?;
-
-        // 2. Warp 指针到右下角 (仅 X11 需要，Wayland 通常不这样做，为了兼容可以保留 backend cap 检查)
-        if backend.capabilities().can_warp_pointer {
-            let _ = backend.input_ops().warp_pointer_to_window(
-                win_id,
-                (start_geom.w as i32 + start_geom.border as i32 - 1) as i16,
-                (start_geom.h as i32 + start_geom.border as i32 - 1) as i16,
-            );
-        }
-
-        // 获取 warp 后的位置作为起始点
-        let (ptr_x, ptr_y) = self.getrootptr(backend)?;
-
-        let cursor_handle = backend.cursor_provider().get(StdCursorKind::Fleur)?.0;
-        backend.input_ops().set_cursor(StdCursorKind::Fleur)?;
-
-        let success = backend.input_ops().grab_pointer(
-            (EventMaskBits::BUTTON_RELEASE | EventMaskBits::POINTER_MOTION).bits(),
-            Some(cursor_handle),
-        )?;
-
-        if success {
-            self.interaction = Some(InteractionState {
-                client_key,
-                action: InteractionAction::Resize,
-                start_win_geom: start_geom,
-                start_mouse_x: ptr_x,
-                start_mouse_y: ptr_y,
-                last_update_time: std::time::Instant::now(),
-            });
-            info!("[resizemouse] Started interactive resize");
-        } else {
-            backend.input_ops().set_cursor(StdCursorKind::LeftPtr)?;
-        }
-
-        Ok(())
-    }
-
-    fn check_and_toggle_floating_for_resize(
-        &mut self,
-        backend: &mut dyn Backend,
-        client_key: ClientKey,
-        new_width: i32,
-        new_height: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let (is_floating, current_w, current_h, is_tile_layout) =
-            if let Some(client) = self.state.clients.get(client_key) {
-                let is_tile = if let Some(mon_key) = client.mon {
-                    if let Some(monitor) = self.state.monitors.get(mon_key) {
-                        monitor.lt[monitor.sel_lt].is_tile()
-                    } else {
-                        false
-                    }
-                } else {
-                    false
-                };
-
-                (
-                    client.state.is_floating,
-                    client.geometry.w,
-                    client.geometry.h,
-                    is_tile,
-                )
-            } else {
-                return Err("Client not found".into());
-            };
-
-        if !is_floating && is_tile_layout {
-            let snap_threshold = CONFIG.snap() as i32;
-            if (new_width - current_w).abs() > snap_threshold
-                || (new_height - current_h).abs() > snap_threshold
-            {
-                debug!("Toggling to floating mode due to size change");
-                let _ = self.togglefloating(backend, &WMArgEnum::UInt(0));
-            }
-        }
-
-        Ok(())
-    }
-
-    fn should_resize_client(&self, client_key: ClientKey) -> bool {
-        if let Some(client) = self.state.clients.get(client_key) {
-            if client.state.is_floating {
-                return true;
-            }
-
-            if let Some(mon_key) = client.mon {
-                if let Some(monitor) = self.state.monitors.get(mon_key) {
-                    return !monitor.lt[monitor.sel_lt].is_tile();
-                }
-            }
-        }
-        false
-    }
-
-    fn check_monitor_change_after_resize(
-        &mut self,
-        backend: &mut dyn Backend,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let client_key = match self.get_selected_client_key() {
-            Some(key) => key,
-            None => return Ok(()),
-        };
-
-        let (x, y, _w, _h) = {
+        let (x, y) = {
             let client = self.state.clients.get(client_key).unwrap();
-            (
-                client.geometry.x,
-                client.geometry.y,
-                client.geometry.w,
-                client.geometry.h,
-            )
+            (client.geometry.x, client.geometry.y)
         };
 
         let target_monitor = self.recttomon(backend, x, y);
-
         if let Some(target_mon_key) = target_monitor {
             if Some(target_mon_key) != self.state.sel_mon {
-                debug!("Moving client to different monitor after resize");
                 self.sendmon(backend, Some(client_key), Some(target_mon_key));
                 self.state.sel_mon = Some(target_mon_key);
                 self.focus(backend, None)?;
             }
         }
-
         Ok(())
     }
 
