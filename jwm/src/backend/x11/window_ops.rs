@@ -28,6 +28,35 @@ impl<C: Connection> X11WindowOps<C> {
             root,
         }
     }
+
+    fn send_configure_notify_internal(
+        &self,
+        win: WindowId,
+        x: i16,
+        y: i16,
+        width: u16,
+        height: u16,
+        border: u16,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let w = win.to_x11_id()?;
+        let event = ConfigureNotifyEvent {
+            response_type: CONFIGURE_NOTIFY_EVENT,
+            sequence: 0,
+            event: w,
+            window: w,
+            x,
+            y,
+            width,
+            height,
+            border_width: border,
+            above_sibling: 0,
+            override_redirect: false,
+        };
+        self.conn
+            .send_event(false, w, EventMask::STRUCTURE_NOTIFY, event)?;
+        self.conn.flush()?;
+        Ok(())
+    }
 }
 
 impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
@@ -64,8 +93,14 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         self.conn.configure_window(wid, &aux)?;
 
         // 2. 发送 ConfigureNotify (ICCCM 要求)
-        // 这告诉客户端："你现在的真实大小是这个，请据此重绘"
-        self.send_configure_notify(win, x as i16, y as i16, w as u16, h as u16, border as u16)?;
+        self.send_configure_notify_internal(
+            win,
+            x as i16,
+            y as i16,
+            w as u16,
+            h as u16,
+            border as u16,
+        )?;
 
         Ok(())
     }
@@ -204,35 +239,6 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         Ok(())
     }
 
-    fn send_configure_notify(
-        &self,
-        win: WindowId,
-        x: i16,
-        y: i16,
-        width: u16,
-        height: u16,
-        border: u16,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let w = win.to_x11_id()?;
-        let event = ConfigureNotifyEvent {
-            response_type: CONFIGURE_NOTIFY_EVENT,
-            sequence: 0,
-            event: w,
-            window: w,
-            x,
-            y,
-            width,
-            height,
-            border_width: border,
-            above_sibling: 0,
-            override_redirect: false,
-        };
-        self.conn
-            .send_event(false, w, EventMask::STRUCTURE_NOTIFY, event)?;
-        self.conn.flush()?;
-        Ok(())
-    }
-
     fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         let w = win.to_x11_id()?;
         self.conn.map_window(w)?;
@@ -310,20 +316,6 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         })
     }
 
-    fn send_client_message(
-        &self,
-        win: WindowId,
-        type_atom: u32,
-        data: [u32; 5],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let w = win.to_x11_id()?;
-        let event = ClientMessageEvent::new(32, w, type_atom, data);
-        use x11rb::x11_utils::Serialize;
-        let buf = event.serialize();
-        self.conn.send_event(false, w, EventMask::NO_EVENT, buf)?;
-        Ok(())
-    }
-
     fn flush(&self) -> Result<(), Box<dyn std::error::Error>> {
         self.conn.flush()?;
         Ok(())
@@ -332,16 +324,6 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     fn kill_client(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
         let w = win.to_x11_id()?;
         self.conn.kill_client(w)?;
-        Ok(())
-    }
-
-    fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn.grab_server()?;
-        Ok(())
-    }
-
-    fn ungrab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
-        self.conn.ungrab_server()?;
         Ok(())
     }
 

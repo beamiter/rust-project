@@ -44,7 +44,18 @@ pub struct Capabilities {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NetWmState {
     Fullscreen,
-    // MaximizeVert, MaximizeHorz, etc...
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ResizeEdge {
+    Top,
+    Bottom,
+    Left,
+    Right,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -244,15 +255,8 @@ pub enum BackendEvent {
 }
 
 pub trait WindowOps: Send {
-    /// 强制设置窗口位置 (服务端视角)
-    /// Wayland: 仅修改 Compositor 内部状态，不发送事件给客户端
-    /// X11: XMoveWindow
     fn set_position(&self, win: WindowId, x: i32, y: i32)
     -> Result<(), Box<dyn std::error::Error>>;
-
-    /// 请求/协商窗口几何属性 (位置 + 大小)
-    /// Wayland: 发送 xdg_toplevel.configure (位置由合成器决定，大小协商)
-    /// X11: 发送 ConfigureWindow
     fn configure(
         &self,
         win: WindowId,
@@ -262,59 +266,28 @@ pub trait WindowOps: Send {
         h: u32,
         border: u32,
     ) -> Result<(), Box<dyn std::error::Error>>;
-
-    /// 设置窗口装饰 (边框)
-    /// Wayland: 标记是否需要 SSD (Server Side Decorations) 绘制
-    /// X11: XChangeWindowAttributes (BorderPixel) + ConfigureWindow (BorderWidth)
     fn set_decoration_style(
         &self,
         win: WindowId,
         border_width: u32,
         border_color: Pixel,
     ) -> Result<(), Box<dyn std::error::Error>>;
-
-    /// 控制窗口堆叠顺序
     fn raise_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-
-    /// 映射窗口 (显示)
     fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-
-    /// 取消映射窗口 (隐藏)
     fn unmap_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-
-    /// 关闭窗口
     fn close_window(&self, win: WindowId) -> Result<CloseResult, Box<dyn std::error::Error>>;
-
-    /// 设置输入焦点
     fn set_input_focus(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-
-    /// 将焦点设置到根窗口/背景 (取消所有窗口焦点)
     fn set_input_focus_root(&self) -> Result<(), Box<dyn std::error::Error>>;
-
-    /// 获取窗口属性 (OverrideRedirect 等)
     fn get_window_attributes(
         &self,
         win: WindowId,
     ) -> Result<WindowAttributes, Box<dyn std::error::Error>>;
-
-    /// 获取窗口当前几何信息
     fn get_geometry(&self, win: WindowId) -> Result<Geometry, Box<dyn std::error::Error>>;
-
-    /// 初始扫描 (X11 only). Wayland 返回空 Vec 即可
     fn scan_windows(&self) -> Result<Vec<WindowId>, Box<dyn std::error::Error>>;
 
-    /// 刷新命令队列 (X11 Flush)
     fn flush(&self) -> Result<(), Box<dyn std::error::Error>>;
 
-    /// 强制杀死客户端连接
     fn kill_client(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-
-    fn grab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-    fn ungrab_server(&self) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
 
     fn apply_window_changes(
         &self,
@@ -342,27 +315,6 @@ pub trait WindowOps: Send {
         Ok(())
     }
 
-    fn send_configure_notify(
-        &self,
-        _win: WindowId,
-        _x: i16,
-        _y: i16,
-        _w: u16,
-        _h: u16,
-        _border: u16,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-
-    fn send_client_message(
-        &self,
-        _win: WindowId,
-        _type_: u32,
-        _data: [u32; 5],
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        Ok(())
-    }
-
     fn change_event_mask(
         &self,
         _win: WindowId,
@@ -370,7 +322,6 @@ pub trait WindowOps: Send {
     ) -> Result<(), Box<dyn std::error::Error>> {
         Ok(())
     }
-
     fn get_tree_child(&self, _win: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>> {
         Ok(vec![])
     }
@@ -580,7 +531,6 @@ pub trait Backend: Send {
     fn capabilities(&self) -> Capabilities;
     fn root_window(&self) -> Option<WindowId>;
     fn as_any(&self) -> &dyn Any;
-
     fn check_existing_wm(&self) -> Result<(), Box<dyn std::error::Error>>;
 
     // Ops Getters
@@ -589,14 +539,48 @@ pub trait Backend: Send {
     fn property_ops(&self) -> &dyn PropertyOps;
     fn output_ops(&self) -> &dyn OutputOps;
     fn key_ops(&self) -> &dyn KeyOps;
-
-    // Mutable Getters (some ops have caches)
     fn key_ops_mut(&mut self) -> &mut dyn KeyOps;
     fn cursor_provider(&mut self) -> &mut dyn CursorProvider;
     fn color_allocator(&mut self) -> &mut dyn ColorAllocator;
 
-    // Optional Facades
-    fn ewmh_facade(&self) -> Option<&dyn EwmhFacade>;
+    fn register_wm(&self, _name: &str) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    // 通用清理接口
+    fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    fn on_focused_client_changed(
+        &mut self,
+        win: Option<WindowId>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+    fn on_client_list_changed(
+        &mut self,
+        clients: &[WindowId],
+        stack: &[WindowId],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    /// 开始交互式移动窗口
+    /// X11: 后端记录状态，自行抓取指针
+    /// Wayland: 触发 xdg_toplevel_move
+    fn begin_move(&mut self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
+
+    /// 开始交互式调整窗口大小
+    fn begin_resize(
+        &mut self,
+        win: WindowId,
+        edge: ResizeEdge,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
+    }
 
     fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), Box<dyn std::error::Error>>;
 

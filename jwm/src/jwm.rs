@@ -1667,7 +1667,7 @@ impl Jwm {
 
         self.reset_input_focus(backend)?;
 
-        self.cleanup_ewmh_properties(backend)?;
+        backend.cleanup()?;
 
         if let Err(e) = backend.cursor_provider().cleanup() {
             log::warn!("cursor cleanup failed: {:?}", e);
@@ -1709,14 +1709,8 @@ impl Jwm {
             if let Some(_) = self.state.clients.get(ck) {
                 if restarting {
                     backend.window_ops().ungrab_all_buttons(win)?;
-                    let mask = EventMaskBits::NONE.bits();
-                    backend.window_ops().change_event_mask(win, mask)?;
                 } else {
-                    backend.window_ops().grab_server()?;
-
                     let _ = self.restore_client_x11_state(backend, win, old_border_w);
-
-                    let _ = backend.window_ops().ungrab_server();
                 }
             }
         }
@@ -1824,16 +1818,6 @@ impl Jwm {
         backend: &mut dyn Backend,
     ) -> Result<(), Box<dyn std::error::Error>> {
         backend.window_ops().set_input_focus_root()?;
-        Ok(())
-    }
-
-    fn cleanup_ewmh_properties(
-        &mut self,
-        backend: &mut dyn Backend,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(facade) = backend.ewmh_facade().as_ref() {
-            let _ = facade.reset_root_properties();
-        }
         Ok(())
     }
 
@@ -3935,30 +3919,10 @@ impl Jwm {
         Ok(())
     }
 
-    fn setup_ewmh(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
-        if let Some(facade) = backend.ewmh_facade().as_ref() {
-            let _support_win = facade.setup_supporting_wm_check("jwm")?;
-            let supported = [
-                EwmhFeature::ActiveWindow,
-                EwmhFeature::Supported,
-                EwmhFeature::WmName,
-                EwmhFeature::WmState,
-                EwmhFeature::SupportingWmCheck,
-                EwmhFeature::WmStateFullscreen,
-                EwmhFeature::ClientList,
-                EwmhFeature::ClientInfo,
-                EwmhFeature::WmWindowType,
-                EwmhFeature::WmWindowTypeDialog,
-            ];
-            facade.declare_supported(&supported)?;
-        }
-        Ok(())
-    }
-
     pub fn setup(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
         info!("[setup]");
         let _ = self.updategeom(backend);
-        self.setup_ewmh(backend)?;
+        backend.register_wm("jwm")?;
 
         let mask = (EventMaskBits::SUBSTRUCTURE_REDIRECT
             | EventMaskBits::STRUCTURE_NOTIFY
@@ -4730,10 +4694,7 @@ impl Jwm {
         if let Some(_client) = self.state.clients.get(client_key) {
             self.update_client_decoration(backend, client_key, false)?;
             if setfocus {
-                backend.window_ops().set_input_focus_root()?;
-                if let Some(facade) = backend.ewmh_facade().as_ref() {
-                    let _ = facade.clear_active_window();
-                }
+                backend.on_focused_client_changed(None)?;
             }
         }
         Ok(())
@@ -4745,10 +4706,7 @@ impl Jwm {
         client_key: ClientKey,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.state.clients.get(client_key) {
-            backend.window_ops().set_input_focus(client.win)?;
-            if let Some(facade) = backend.ewmh_facade().as_ref() {
-                let _ = facade.set_active_window(client.win);
-            }
+            backend.on_focused_client_changed(Some(client.win))?;
         }
         Ok(())
     }
@@ -4758,10 +4716,7 @@ impl Jwm {
         backend: &mut dyn Backend,
     ) -> Result<(), Box<dyn std::error::Error>> {
         backend.window_ops().set_input_focus_root()?;
-        if let Some(facade) = backend.ewmh_facade().as_ref() {
-            let _ = facade.clear_active_window();
-        }
-        Ok(())
+        backend.on_focused_client_changed(None)
     }
 
     fn update_net_client_list(
@@ -4786,10 +4741,7 @@ impl Jwm {
             }
         }
 
-        if let Some(facade) = backend.ewmh_facade().as_ref() {
-            facade.set_client_list(&ordered)?;
-            facade.set_client_list_stacking(&stacking)?;
-        }
+        backend.on_client_list_changed(&ordered, &stacking)?;
         Ok(())
     }
 

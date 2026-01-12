@@ -1,5 +1,7 @@
 // src/backend/x11/backend.rs
 use crate::backend::api::EventHandler;
+use crate::backend::api::EwmhFeature;
+use crate::backend::api::ResizeEdge;
 use crate::backend::common_define::EventMaskBits;
 use crate::backend::common_define::WindowId;
 use calloop::signals::{Signal, Signals};
@@ -182,8 +184,78 @@ impl Backend for X11Backend {
     fn key_ops_mut(&mut self) -> &mut dyn KeyOps {
         &mut *self.key_ops
     }
-    fn ewmh_facade(&self) -> Option<&dyn EwmhFacade> {
-        self.ewmh_facade.as_deref()
+    fn register_wm(&self, wm_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(facade) = self.ewmh_facade.as_ref() {
+            let _support_win = facade.setup_supporting_wm_check(wm_name)?;
+            let supported = [
+                EwmhFeature::ActiveWindow,
+                EwmhFeature::Supported,
+                EwmhFeature::WmName,
+                EwmhFeature::WmState,
+                EwmhFeature::SupportingWmCheck,
+                EwmhFeature::WmStateFullscreen,
+                EwmhFeature::ClientList,
+                EwmhFeature::ClientInfo,
+                EwmhFeature::WmWindowType,
+                EwmhFeature::WmWindowTypeDialog,
+            ];
+            facade.declare_supported(&supported)?;
+        }
+        Ok(())
+    }
+
+    fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(facade) = self.ewmh_facade.as_ref() {
+            let _ = facade.reset_root_properties();
+        }
+        Ok(())
+    }
+
+    fn on_focused_client_changed(
+        &mut self,
+        win: Option<WindowId>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(w) = win {
+            // 1. 设置 X11 输入焦点
+            self.window_ops.set_input_focus(w)?;
+
+            // 2. 更新 EWMH 属性
+            if let Some(facade) = self.ewmh_facade.as_ref() {
+                facade.set_active_window(w)?;
+            }
+        } else {
+            // 清除焦点到 Root
+            self.window_ops.set_input_focus_root()?;
+            if let Some(facade) = self.ewmh_facade.as_ref() {
+                facade.clear_active_window()?;
+            }
+        }
+        Ok(())
+    }
+
+    fn on_client_list_changed(
+        &mut self,
+        clients: &[WindowId],
+        stack: &[WindowId],
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        if let Some(facade) = self.ewmh_facade.as_ref() {
+            facade.set_client_list(clients)?;
+            facade.set_client_list_stacking(stack)?;
+        }
+        Ok(())
+    }
+    // 暂时保留空实现或简单的指针抓取（阶段三再完善交互逻辑）
+    fn begin_move(&mut self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+        // 在阶段三中，我们将把 jwm.rs 里的 grab_pointer 逻辑移到这里
+        Ok(())
+    }
+
+    fn begin_resize(
+        &mut self,
+        _win: WindowId,
+        _edge: ResizeEdge,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        Ok(())
     }
     fn cursor_provider(&mut self) -> &mut dyn CursorProvider {
         &mut *self.cursor_provider
