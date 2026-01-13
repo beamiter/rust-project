@@ -1,7 +1,9 @@
+use crate::backend::api::BackendEvent;
 // src/backend/x11/backend.rs
 use crate::backend::api::EventHandler;
 use crate::backend::api::EwmhFeature;
 use crate::backend::api::Geometry;
+use crate::backend::api::HitTarget;
 use crate::backend::api::ResizeEdge;
 use crate::backend::common_define::EventMaskBits;
 use crate::backend::common_define::StdCursorKind;
@@ -73,6 +75,42 @@ struct X11Interaction {
 }
 
 impl X11Backend {
+    fn enrich_event_with_output(&self, mut ev: BackendEvent) -> BackendEvent {
+        let fill_output = |x: f64, y: f64| self.output_ops.output_at(x as i32, y as i32);
+
+        match &mut ev {
+            BackendEvent::ButtonPress {
+                target,
+                root_x,
+                root_y,
+                ..
+            } => {
+                if matches!(target, HitTarget::Background { .. }) {
+                    *target = HitTarget::Background {
+                        output: fill_output(*root_x, *root_y),
+                    };
+                }
+            }
+            BackendEvent::MotionNotify {
+                target,
+                root_x,
+                root_y,
+                ..
+            } => {
+                if matches!(target, HitTarget::Background { .. }) {
+                    *target = HitTarget::Background {
+                        output: fill_output(*root_x, *root_y),
+                    };
+                }
+            }
+            BackendEvent::ButtonRelease { target, .. } => {
+                if matches!(target, HitTarget::Background { .. }) {}
+            }
+            _ => {}
+        }
+
+        ev
+    }
     pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
         let (raw_conn, screen_num) = x11rb::rust_connection::RustConnection::connect(None)?;
         let conn = Arc::new(raw_conn);
@@ -122,7 +160,7 @@ impl X11Backend {
             screen.default_colormap,
         ));
 
-        let event_source = X11EventSource::new(conn.clone(), atoms.clone());
+        let event_source = X11EventSource::new(conn.clone(), atoms.clone(), screen.root);
 
         let caps = Capabilities {
             can_warp_pointer: true,
@@ -384,10 +422,11 @@ impl Backend for X11Backend {
         let x11_source = if let Some(src) = self._init_event_source.take() {
             src
         } else {
-            X11EventSource::new(self.conn.clone(), self.atoms.clone())
+            X11EventSource::new(self.conn.clone(), self.atoms.clone(), self.screen.root)
         };
         handle
             .insert_source(x11_source, |event, _, data| {
+                let event = data.backend.enrich_event_with_output(event);
                 if let Err(e) = data.handler.handle_event(data.backend, event) {
                     log::error!("Error handling X11 event: {:?}", e);
                 }

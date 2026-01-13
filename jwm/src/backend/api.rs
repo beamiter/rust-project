@@ -7,6 +7,14 @@ use crate::backend::common_define::{
 use std::any::Any;
 use std::fmt::Debug;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitTarget {
+    /// 命中某个 surface/window
+    Surface(WindowId),
+    /// 命中背景/空白区域（可携带 output 信息；X11 下可先为 None）
+    Background { output: Option<OutputId> },
+}
+
 /// 屏幕/输出信息
 #[derive(Clone, Debug)]
 pub struct OutputInfo {
@@ -176,24 +184,22 @@ pub enum BackendEvent {
     },
 
     ButtonPress {
-        window: Option<WindowId>,
+        target: HitTarget,
         state: u16,
         detail: u8,
         time: u32,
         root_x: f64,
         root_y: f64,
-        // monitor_id: Option<OutputId>,
     },
     ButtonRelease {
-        window: Option<WindowId>,
+        target: HitTarget,
         time: u32,
     },
     MotionNotify {
-        window: Option<WindowId>,
+        target: HitTarget,
         root_x: f64,
         root_y: f64,
         time: u32,
-        // monitor_id: Option<OutputId>,
     },
     KeyPress {
         keycode: u8,

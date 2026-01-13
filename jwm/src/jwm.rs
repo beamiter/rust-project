@@ -11,6 +11,7 @@ use nix::sys::wait::waitpid;
 use nix::unistd::Pid;
 
 use crate::backend::api::EventHandler;
+use crate::backend::api::HitTarget;
 use crate::backend::api::ResizeEdge;
 use crate::backend::common_define::OutputId;
 use crate::backend::common_define::WindowId;
@@ -304,17 +305,17 @@ impl WMController for Jwm {
     fn on_button_press(
         &mut self,
         backend: &mut dyn Backend,
-        win: Option<WindowId>,
+        target: crate::backend::api::HitTarget,
         state: u16,
         detail: u8,
         time: u32,
     ) {
-        if let Err(e) = self.on_button_press_internal(backend, win, state, detail, time) {
+        if let Err(e) = self.on_button_press_internal(backend, target, state, detail, time) {
             error!("Error handling ButtonPress: {:?}", e);
         }
     }
 
-    fn on_button_release(&mut self, backend: &mut dyn Backend, _time: u32) {
+    fn on_button_release(&mut self, backend: &mut dyn Backend, _target: HitTarget, _time: u32) {
         match backend.handle_button_release(0) {
             Ok(handled) => {
                 if handled {
@@ -333,11 +334,15 @@ impl WMController for Jwm {
     fn on_motion_notify(
         &mut self,
         backend: &mut dyn Backend,
-        win: Option<WindowId>,
+        target: HitTarget,
         root_x: f64,
         root_y: f64,
         time: u32,
     ) {
+        let win_opt = match target {
+            HitTarget::Surface(w) => Some(w),
+            HitTarget::Background { .. } => None,
+        };
         // 先让后端处理交互式移动/调整大小
         match backend.handle_motion(root_x, root_y, time) {
             Ok(true) => {
@@ -352,9 +357,8 @@ impl WMController for Jwm {
         }
 
         self.last_mouse_root = (root_x, root_y);
-        // Jwm 的 Motion 处理逻辑
         if let Err(e) =
-            self.on_motion_notify_internal(backend, win, root_x as i16, root_y as i16, time)
+            self.on_motion_notify_internal(backend, win_opt, root_x as i16, root_y as i16, time)
         {
             error!("Error handling MotionNotify: {:?}", e);
         }
@@ -541,22 +545,21 @@ impl EventHandler for Jwm {
 
             // === 输入事件 ===
             BackendEvent::ButtonPress {
-                window,
+                target,
                 state,
                 detail,
                 time,
-                root_x: _,
-                root_y: _,
-            } => self.on_button_press(backend, window, state, detail, time),
-            BackendEvent::ButtonRelease { window: _, time } => {
-                self.on_button_release(backend, time)
+                ..
+            } => self.on_button_press(backend, target, state, detail, time),
+            BackendEvent::ButtonRelease { target, time } => {
+                self.on_button_release(backend, target, time)
             }
             BackendEvent::MotionNotify {
-                window,
+                target,
                 root_x,
                 root_y,
                 time,
-            } => self.on_motion_notify(backend, window, root_x, root_y, time),
+            } => self.on_motion_notify(backend, target, root_x, root_y, time),
             BackendEvent::KeyPress {
                 keycode,
                 state,
@@ -854,26 +857,30 @@ impl Jwm {
     fn on_button_press_internal(
         &mut self,
         backend: &mut dyn Backend,
-        window: Option<WindowId>,
+        target: crate::backend::api::HitTarget,
         state_bits: u16,
         detail_btn: u8,
         time: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let mut click_type = WMClickType::ClickRootWin;
-        // 1. 确定目标显示器
-        if let Some(target_mon_key) = self.wintomon(backend, window) {
-            if Some(target_mon_key) != self.state.sel_mon {
-                if let Some(cur) = self.get_selected_client_key() {
-                    self.unfocus_client(backend, cur, true)?;
-                }
-                self.state.sel_mon = Some(target_mon_key);
-                self.focus(backend, None)?;
+        let clicked_win: Option<crate::backend::common_define::WindowId> = match target {
+            HitTarget::Surface(wid) => Some(wid),
+            HitTarget::Background { .. } => None,
+        };
+        let target_mon_key = self.target_to_monitor(
+            backend,
+            target,
+            (self.last_mouse_root.0 as i32, self.last_mouse_root.1 as i32),
+        );
+        if target_mon_key != self.state.sel_mon {
+            if let Some(cur) = self.get_selected_client_key() {
+                self.unfocus_client(backend, cur, true)?;
             }
+            self.state.sel_mon = target_mon_key;
+            self.focus(backend, None)?;
         }
-        // 2. 检查是否点击了 Client
         let mut is_client_click = false;
-        // 只有当 window 有值且不是 root 时才查找 client
-        if let Some(wid) = window {
+        if let Some(wid) = clicked_win {
             if Some(wid) != backend.root_window() {
                 if let Some(client_key) = self.wintoclient(wid) {
                     is_client_click = true;
@@ -932,8 +939,8 @@ impl Jwm {
         root_y: i16,
         _time: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let is_root = window.is_none() || window == backend.root_window();
-        if !is_root {
+        let is_background = window.is_none();
+        if !is_background {
             return Ok(());
         }
         if self.mouse_focus_blocked() {
@@ -1133,6 +1140,40 @@ impl Jwm {
         }
 
         Ok(())
+    }
+
+    fn target_to_monitor(
+        &mut self,
+        backend: &mut dyn Backend,
+        target: crate::backend::api::HitTarget,
+        fallback_pos: (i32, i32),
+    ) -> Option<MonitorKey> {
+        use crate::backend::api::HitTarget;
+
+        match target {
+            HitTarget::Background { output: Some(oid) } => {
+                // 直接用 output_map 找 monitor
+                for (mon_key, &mapped_oid) in &self.state.output_map {
+                    if mapped_oid == oid {
+                        return Some(mon_key);
+                    }
+                }
+                self.state.sel_mon
+            }
+            HitTarget::Background { output: None } => {
+                // fallback：用坐标查
+                self.recttomon(backend, fallback_pos.0, fallback_pos.1)
+            }
+            HitTarget::Surface(win) => {
+                // 还是按原逻辑：先看 client.mon，否则用 pointer 落点
+                if let Some(ck) = self.wintoclient(win) {
+                    if let Some(c) = self.state.clients.get(ck) {
+                        return c.mon.or(self.state.sel_mon);
+                    }
+                }
+                self.recttomon(backend, fallback_pos.0, fallback_pos.1)
+            }
+        }
     }
 
     fn handle_unmanaged_configure_request_params(

@@ -17,11 +17,21 @@ use calloop::{EventSource, Interest, Mode, Poll, PostAction, Readiness, Token, T
 pub struct X11EventSource {
     conn: Arc<RustConnection>,
     atoms: Atoms,
+    root: u32,
 }
 
 impl X11EventSource {
-    pub fn new(conn: Arc<RustConnection>, atoms: Atoms) -> Self {
-        Self { conn, atoms }
+    pub fn new(conn: Arc<RustConnection>, atoms: Atoms, root: u32) -> Self {
+        Self { conn, atoms, root }
+    }
+
+    fn hit_target_from_event_window(&self, event_window: u32) -> crate::backend::api::HitTarget {
+        use crate::backend::api::HitTarget;
+        if event_window == self.root {
+            HitTarget::Background { output: None }
+        } else {
+            HitTarget::Surface(WindowId::X11(event_window as u64))
+        }
     }
 
     fn map_property_kind(&self, atom: u32) -> PropertyKind {
@@ -55,26 +65,26 @@ impl X11EventSource {
 
     fn map_event(&self, ev: XEvent) -> Option<BackendEvent> {
         match ev {
-            XEvent::ButtonRelease(e) => Some(BackendEvent::ButtonRelease {
-                window: Some(WindowId::X11(e.event as u64)),
-                time: e.time,
-            }),
             XEvent::ButtonPress(e) => Some(BackendEvent::ButtonPress {
-                window: Some(WindowId::X11(e.event as u64)),
+                target: self.hit_target_from_event_window(e.event),
                 state: e.state.bits(),
                 detail: e.detail,
                 time: e.time,
                 root_x: e.root_x as f64,
                 root_y: e.root_y as f64,
             }),
-            XEvent::RandrScreenChangeNotify(_) => Some(BackendEvent::ScreenLayoutChanged),
-            XEvent::RandrNotify(_) => Some(BackendEvent::ScreenLayoutChanged),
             XEvent::MotionNotify(e) => Some(BackendEvent::MotionNotify {
-                window: Some(WindowId::X11(e.event as u64)),
+                target: self.hit_target_from_event_window(e.event),
                 root_x: e.root_x as f64,
                 root_y: e.root_y as f64,
                 time: e.time,
             }),
+            XEvent::ButtonRelease(e) => Some(BackendEvent::ButtonRelease {
+                target: self.hit_target_from_event_window(e.event),
+                time: e.time,
+            }),
+            XEvent::RandrScreenChangeNotify(_) => Some(BackendEvent::ScreenLayoutChanged),
+            XEvent::RandrNotify(_) => Some(BackendEvent::ScreenLayoutChanged),
             XEvent::KeyPress(e) => Some(BackendEvent::KeyPress {
                 keycode: e.detail,
                 state: e.state.bits(),

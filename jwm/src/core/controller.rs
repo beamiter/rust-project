@@ -1,14 +1,11 @@
 // src/core/controller.rs
+use crate::backend::api::HitTarget;
 
 use crate::backend::api::{
     Backend, NetWmAction, NetWmState, OutputInfo, PropertyKind, WindowChanges,
 };
 use crate::backend::common_define::{KeySym, Mods, WindowId};
 
-/// 核心窗口管理器控制器接口
-///
-/// 这个 Trait 定义了窗口管理器对各种后端事件的高层响应逻辑。
-/// Jwm 结构体实现此接口，EventHandler 负责将底层 BackendEvent 转换为对此接口方法的调用。
 pub trait WMController {
     // === 硬件与输出 ===
     fn on_output_added(&mut self, backend: &mut dyn Backend, info: OutputInfo);
@@ -37,24 +34,25 @@ pub trait WMController {
     fn on_mapping_notify(&mut self, backend: &mut dyn Backend);
 
     // === 输入事件 ===
-    fn on_key_press(&mut self, backend: &mut dyn Backend, keycode: u8, mods: u16, time: u32);
+
     fn on_button_press(
         &mut self,
         backend: &mut dyn Backend,
-        win: Option<WindowId>,
+        target: HitTarget,
         state: u16,
         detail: u8,
         time: u32,
     );
-    fn on_button_release(&mut self, backend: &mut dyn Backend, time: u32);
     fn on_motion_notify(
         &mut self,
         backend: &mut dyn Backend,
-        win: Option<WindowId>,
+        target: HitTarget,
         root_x: f64,
         root_y: f64,
         time: u32,
     );
+    fn on_button_release(&mut self, backend: &mut dyn Backend, target: HitTarget, time: u32);
+    fn on_key_press(&mut self, backend: &mut dyn Backend, keycode: u8, mods: u16, time: u32);
     fn on_enter_notify(
         &mut self,
         backend: &mut dyn Backend,
