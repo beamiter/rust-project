@@ -343,7 +343,6 @@ impl WMController for Jwm {
             HitTarget::Surface(w) => Some(w),
             HitTarget::Background { .. } => None,
         };
-        // 先让后端处理交互式移动/调整大小
         match backend.handle_motion(root_x, root_y, time) {
             Ok(true) => {
                 self.last_mouse_root = (root_x, root_y);
@@ -373,12 +372,6 @@ impl WMController for Jwm {
         mode: crate::backend::api::NotifyMode,
     ) {
         if mode != crate::backend::api::NotifyMode::Normal {
-            return;
-        }
-        let dx = (root_x - self.last_mouse_root.0).abs();
-        let dy = (root_y - self.last_mouse_root.1).abs();
-        if dx < 1.0 && dy < 1.0 {
-            // debug!("Ignored fake EnterNotify caused by popup");
             return;
         }
         self.last_mouse_root = (root_x, root_y);
