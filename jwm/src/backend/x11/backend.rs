@@ -210,7 +210,12 @@ impl Backend for X11Backend {
         let mask_bits = EventMaskBits::SUBSTRUCTURE_REDIRECT.bits();
         self.window_ops
             .change_event_mask(self.root, mask_bits)
-            .map_err(|e| format!("Another window manager is already running: {:?}", e).into())
+            .map_err(|e| {
+                BackendError::Message(format!(
+                    "Another window manager is already running: {:?}",
+                    e
+                ))
+            })
     }
 
     fn request_render(&mut self) {
@@ -404,14 +409,15 @@ impl Backend for X11Backend {
     fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), BackendError> {
         let mut event_loop: EventLoop<X11LoopData> = EventLoop::try_new()?;
         let handle = event_loop.handle();
-        // =========================================================
-        // 1. 注册 X11 事件源 (这是主要的事件来源)
-        // =========================================================
+
+        // 1. 注册 X11 事件源
         let x11_source = if let Some(src) = self._init_event_source.take() {
             src
         } else {
             X11EventSource::new(self.conn.clone(), self.atoms.clone(), self.screen.root)
         };
+
+        // InsertError<X11EventSource> 可能是 Send 的，但也可能不是，安全起见统一转字符串
         handle
             .insert_source(x11_source, |event, _, data| {
                 let event = data.backend.enrich_event_with_output(event);
@@ -419,11 +425,10 @@ impl Backend for X11Backend {
                     log::error!("Error handling X11 event: {:?}", e);
                 }
             })
-            .map_err(|e| Box::new(e) as BackendError)?;
-        // =========================================================
-        // 2. [新增] 注册 Signals 事件源 (专门处理僵尸进程)
-        // =========================================================
-        let signals = Signals::new(&[Signal::SIGCHLD]).map_err(|e| Box::new(e) as BackendError)?;
+            .map_err(|e| BackendError::Message(format!("Failed to insert X11 source: {}", e)))?;
+
+        // 2. 注册 Signals
+        let signals = Signals::new(&[Signal::SIGCHLD])?; // 这里 ? 会自动用 From<std::io::Error>
         handle
             .insert_source(signals, |event, _, data| {
                 if event.signal() == Signal::SIGCHLD {
@@ -435,10 +440,10 @@ impl Backend for X11Backend {
                     }
                 }
             })
-            .map_err(|e| Box::new(e) as BackendError)?;
-        // =========================================================
-        // 3. 注册 Update 定时器
-        // =========================================================
+            .map_err(|e| BackendError::Message(format!("Failed to insert Signal source: {}", e)))?;
+
+        // 3. 注册 Timer
+        // Timer 绝对不是 Send/Sync 的，必须转 String
         let update_interval = Duration::from_millis(20);
         let timer = Timer::from_duration(update_interval);
         handle
@@ -451,10 +456,9 @@ impl Backend for X11Backend {
                 }
                 TimeoutAction::ToDuration(update_interval)
             })
-            .map_err(|e| Box::new(e) as BackendError)?;
-        // =========================================================
+            .map_err(|e| BackendError::Message(format!("Failed to insert Timer source: {}", e)))?;
+
         // 4. 运行事件循环
-        // =========================================================
         let mut loop_data = X11LoopData {
             backend: self,
             handler,
@@ -463,7 +467,7 @@ impl Backend for X11Backend {
         loop {
             event_loop
                 .dispatch(None, &mut loop_data)
-                .map_err(|e| Box::new(e) as BackendError)?;
+                .map_err(|e| BackendError::Other(Box::new(e)))?; // calloop::Error 是 Send+Sync 的，可以用 Box
             if loop_data.should_exit {
                 break;
             }

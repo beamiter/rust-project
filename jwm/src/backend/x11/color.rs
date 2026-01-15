@@ -1,11 +1,11 @@
 // src/backend/x11/color.rs
 use crate::backend::api::ColorAllocator;
 use crate::backend::common_define::{ArgbColor, ColorScheme, Pixel, SchemeType};
+use crate::backend::error::BackendError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::Colormap;
-use crate::backend::error::BackendError;
 
 pub struct X11ColorAllocator<C: Connection> {
     conn: Arc<C>,
@@ -65,7 +65,11 @@ impl<C: Connection + Send + Sync + 'static> ColorAllocator for X11ColorAllocator
     }
 
     fn get_border_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, BackendError> {
-        let s = self.schemes.get(&t).ok_or("scheme not found")?.clone();
+        let s = self
+            .schemes
+            .get(&t)
+            .ok_or(BackendError::NotFound("scheme not found"))?
+            .clone();
         self.ensure_pixel(s.border)
     }
 

@@ -59,6 +59,6 @@ pub trait WindowHandleExt {
 impl WindowHandleExt for WindowHandle {
     fn to_x11_id(&self) -> Result<u32, BackendError> {
         self.as_x11()
-            .ok_or_else(|| "Invalid WindowHandle: Not an X11 handle".into())
+            .ok_or_else(|| BackendError::Unsupported("Invalid WindowHandle: Not an X11 handle"))
     }
 }

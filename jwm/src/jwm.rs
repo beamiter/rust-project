@@ -15,6 +15,7 @@ use crate::backend::api::HitTarget;
 use crate::backend::api::ResizeEdge;
 use crate::backend::common_define::OutputId;
 use crate::backend::common_define::WindowId;
+use crate::backend::error::BackendError;
 use crate::core::controller::WMController;
 use crate::core::models::MonitorGeometry;
 use crate::core::state::WMState;
@@ -512,7 +513,7 @@ impl EventHandler for Jwm {
         &mut self,
         backend: &mut dyn Backend,
         event: BackendEvent,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         match event {
             // === 硬件与输出 ===
             BackendEvent::OutputAdded(info) => self.on_output_added(backend, info),
@@ -597,7 +598,7 @@ impl EventHandler for Jwm {
         Ok(())
     }
 
-    fn update(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
+    fn update(&mut self, backend: &mut dyn Backend) -> Result<(), BackendError> {
         if self.status_bar_shmem.is_none() {
             let ring_buffer = SharedRingBuffer::create_aux(SHARED_PATH, None, None)
                 .expect("Create bar shmem failed");
@@ -2138,7 +2139,7 @@ impl Jwm {
             .get(client_key)
             .map(|c| c.win)
             .ok_or("Client not found")?;
-        backend.property_ops().set_urgent_hint(win, urgent)
+        Ok(backend.property_ops().set_urgent_hint(win, urgent)?)
     }
 
     fn showhide_monitor(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
@@ -2664,7 +2665,7 @@ impl Jwm {
 
     pub fn run(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
         info!("[run] Handing over control to backend");
-        backend.run(self)
+        Ok(backend.run(self)?)
     }
 
     fn process_commands_from_status_bar(&mut self, backend: &mut dyn Backend) {
@@ -4567,7 +4568,7 @@ impl Jwm {
         backend: &mut dyn Backend,
     ) -> Result<(), Box<dyn std::error::Error>> {
         backend.window_ops().set_input_focus_root()?;
-        backend.on_focused_client_changed(None)
+        Ok(backend.on_focused_client_changed(None)?)
     }
 
     fn update_net_client_list(
@@ -4602,7 +4603,7 @@ impl Jwm {
         win: WindowId,
         state: i64,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        backend.property_ops().set_wm_state(win, state)
+        Ok(backend.property_ops().set_wm_state(win, state)?)
     }
 
     fn manage(
@@ -5173,9 +5174,12 @@ impl Jwm {
         let top_amount = bar_height.max(0) as u32;
         let top_start_x = mon.geometry.m_x.max(0) as u32;
         let top_end_x = (mon.geometry.m_x + mon.geometry.m_w - 1).max(0) as u32;
-        backend
-            .property_ops()
-            .set_window_strut_top(bar_win, top_amount, top_start_x, top_end_x)
+        Ok(backend.property_ops().set_window_strut_top(
+            bar_win,
+            top_amount,
+            top_start_x,
+            top_end_x,
+        )?)
     }
 
     fn remove_bar_strut(
@@ -5183,7 +5187,7 @@ impl Jwm {
         backend: &mut dyn Backend,
         bar_win: WindowId,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        backend.property_ops().clear_window_strut(bar_win)
+        Ok(backend.property_ops().clear_window_strut(bar_win)?)
     }
 
     fn position_statusbar_on_monitor(
