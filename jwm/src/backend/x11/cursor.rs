@@ -1,6 +1,7 @@
 // src/backend/x11/cursor.rs
 use crate::backend::api::CursorProvider;
 use crate::backend::common_define::{CursorHandle, StdCursorKind};
+use crate::backend::error::BackendError;
 use std::collections::HashMap;
 use std::sync::Arc;
 use x11rb::connection::Connection;
@@ -88,11 +89,7 @@ pub enum X11StdCursor {
 }
 
 impl X11StdCursor {
-    pub fn create(
-        &self,
-        conn: &impl Connection,
-        font: Font,
-    ) -> Result<Cursor, Box<dyn std::error::Error>> {
+    pub fn create(&self, conn: &impl Connection, font: Font) -> Result<Cursor, BackendError> {
         let cursor_id = conn.generate_id()?;
         let glyph = *self as u16;
         conn.create_glyph_cursor(
@@ -121,7 +118,7 @@ impl X11StdCursor {
         bg_r: u16,
         bg_g: u16,
         bg_b: u16,
-    ) -> Result<Cursor, Box<dyn std::error::Error>> {
+    ) -> Result<Cursor, BackendError> {
         let cursor_id = conn.generate_id()?;
         let glyph = *self as u16;
         conn.create_glyph_cursor(
@@ -330,7 +327,7 @@ pub struct X11CursorProvider<C: Connection> {
 }
 
 impl<C: Connection> X11CursorProvider<C> {
-    pub fn new(conn: Arc<C>) -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new(conn: Arc<C>) -> Result<Self, BackendError> {
         use x11rb::protocol::xproto::ConnectionExt;
         let font = conn.generate_id()?;
         conn.open_font(font, b"cursor")?;
@@ -361,7 +358,7 @@ impl<C: Connection> X11CursorProvider<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> CursorProvider for X11CursorProvider<C> {
-    fn preload_common(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn preload_common(&mut self) -> Result<(), BackendError> {
         for kind in [
             StdCursorKind::LeftPtr,
             StdCursorKind::Hand,
@@ -382,7 +379,7 @@ impl<C: Connection + Send + Sync + 'static> CursorProvider for X11CursorProvider
         Ok(())
     }
 
-    fn get(&mut self, kind: StdCursorKind) -> Result<CursorHandle, Box<dyn std::error::Error>> {
+    fn get(&mut self, kind: StdCursorKind) -> Result<CursorHandle, BackendError> {
         if let Some(&c) = self.cache.get(&kind) {
             return Ok(CursorHandle(c as u64));
         }
@@ -392,11 +389,7 @@ impl<C: Connection + Send + Sync + 'static> CursorProvider for X11CursorProvider
         Ok(CursorHandle(cursor as u64))
     }
 
-    fn apply(
-        &mut self,
-        window_id: u64,
-        kind: StdCursorKind,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn apply(&mut self, window_id: u64, kind: StdCursorKind) -> Result<(), BackendError> {
         use x11rb::protocol::xproto::ConnectionExt;
         let c = match self.get(kind) {
             Ok(h) => h.0 as u32,
@@ -409,7 +402,7 @@ impl<C: Connection + Send + Sync + 'static> CursorProvider for X11CursorProvider
         Ok(())
     }
 
-    fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn cleanup(&mut self) -> Result<(), BackendError> {
         use x11rb::protocol::xproto::ConnectionExt;
         for &cursor in self.cache.values() {
             let _ = (*self.conn).free_cursor(cursor);

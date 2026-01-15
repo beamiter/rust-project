@@ -9,6 +9,7 @@ pub mod key_ops;
 pub mod output_ops;
 pub mod property_ops;
 pub mod window_ops;
+use crate::backend::error::BackendError;
 
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
@@ -52,11 +53,11 @@ x11rb::atom_manager! {
 use crate::backend::common_define::WindowHandle;
 
 pub trait WindowHandleExt {
-    fn to_x11_id(&self) -> Result<u32, Box<dyn std::error::Error>>;
+    fn to_x11_id(&self) -> Result<u32, BackendError>;
 }
 
 impl WindowHandleExt for WindowHandle {
-    fn to_x11_id(&self) -> Result<u32, Box<dyn std::error::Error>> {
+    fn to_x11_id(&self) -> Result<u32, BackendError> {
         self.as_x11()
             .ok_or_else(|| "Invalid WindowHandle: Not an X11 handle".into())
     }

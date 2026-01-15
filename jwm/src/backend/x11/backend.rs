@@ -8,6 +8,7 @@ use crate::backend::api::ResizeEdge;
 use crate::backend::common_define::EventMaskBits;
 use crate::backend::common_define::StdCursorKind;
 use crate::backend::common_define::WindowId;
+use crate::backend::error::BackendError;
 use crate::jwm::InteractionAction;
 use calloop::signals::{Signal, Signals};
 use std::any::Any;
@@ -111,7 +112,7 @@ impl X11Backend {
 
         ev
     }
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new() -> Result<Self, BackendError> {
         let (raw_conn, screen_num) = x11rb::rust_connection::RustConnection::connect(None)?;
         let conn = Arc::new(raw_conn);
         use x11rb::connection::Connection;
@@ -205,7 +206,7 @@ impl Backend for X11Backend {
         Some(self.root)
     }
 
-    fn check_existing_wm(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn check_existing_wm(&self) -> Result<(), BackendError> {
         let mask_bits = EventMaskBits::SUBSTRUCTURE_REDIRECT.bits();
         self.window_ops
             .change_event_mask(self.root, mask_bits)
@@ -236,7 +237,7 @@ impl Backend for X11Backend {
     fn key_ops_mut(&mut self) -> &mut dyn KeyOps {
         &mut *self.key_ops
     }
-    fn register_wm(&self, wm_name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fn register_wm(&self, wm_name: &str) -> Result<(), BackendError> {
         if let Some(facade) = self.ewmh_facade.as_ref() {
             let _support_win = facade.setup_supporting_wm_check(wm_name)?;
             let supported = [
@@ -256,17 +257,14 @@ impl Backend for X11Backend {
         Ok(())
     }
 
-    fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn cleanup(&mut self) -> Result<(), BackendError> {
         if let Some(facade) = self.ewmh_facade.as_ref() {
             let _ = facade.reset_root_properties();
         }
         Ok(())
     }
 
-    fn on_focused_client_changed(
-        &mut self,
-        win: Option<WindowId>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_focused_client_changed(&mut self, win: Option<WindowId>) -> Result<(), BackendError> {
         if let Some(w) = win {
             // 1. 设置 X11 输入焦点
             self.window_ops.set_input_focus(w)?;
@@ -289,7 +287,7 @@ impl Backend for X11Backend {
         &mut self,
         clients: &[WindowId],
         stack: &[WindowId],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         if let Some(facade) = self.ewmh_facade.as_ref() {
             facade.set_client_list(clients)?;
             facade.set_client_list_stacking(stack)?;
@@ -297,7 +295,7 @@ impl Backend for X11Backend {
         Ok(())
     }
     // [实现] 开始移动
-    fn begin_move(&mut self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn begin_move(&mut self, win: WindowId) -> Result<(), BackendError> {
         let geom = self.window_ops.get_geometry(win)?;
         let (rx, ry) = self.input_ops.get_pointer_position()?;
 
@@ -323,11 +321,7 @@ impl Backend for X11Backend {
     }
 
     // [实现] 开始调整大小
-    fn begin_resize(
-        &mut self,
-        win: WindowId,
-        edge: ResizeEdge,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn begin_resize(&mut self, win: WindowId, edge: ResizeEdge) -> Result<(), BackendError> {
         let geom = self.window_ops.get_geometry(win)?;
         let (_rx, _ry) = self.input_ops.get_pointer_position()?;
 
@@ -359,12 +353,7 @@ impl Backend for X11Backend {
     }
 
     // [实现] 处理 Motion
-    fn handle_motion(
-        &mut self,
-        x: f64,
-        y: f64,
-        _time: u32,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
+    fn handle_motion(&mut self, x: f64, y: f64, _time: u32) -> Result<bool, BackendError> {
         if let Some(ref state) = self.interaction {
             let dx = (x - state.start_root_x) as i32;
             let dy = (y - state.start_root_y) as i32;
@@ -396,7 +385,7 @@ impl Backend for X11Backend {
     }
 
     // [实现] 处理 ButtonRelease
-    fn handle_button_release(&mut self, _time: u32) -> Result<bool, Box<dyn std::error::Error>> {
+    fn handle_button_release(&mut self, _time: u32) -> Result<bool, BackendError> {
         if self.interaction.is_some() {
             self.input_ops.ungrab_pointer()?;
             self.input_ops.set_cursor(StdCursorKind::LeftPtr)?;
@@ -412,9 +401,8 @@ impl Backend for X11Backend {
         &mut *self.color_allocator
     }
 
-    fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), Box<dyn std::error::Error>> {
-        let mut event_loop: EventLoop<X11LoopData> =
-            EventLoop::try_new().map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+    fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), BackendError> {
+        let mut event_loop: EventLoop<X11LoopData> = EventLoop::try_new()?;
         let handle = event_loop.handle();
         // =========================================================
         // 1. 注册 X11 事件源 (这是主要的事件来源)
@@ -431,12 +419,11 @@ impl Backend for X11Backend {
                     log::error!("Error handling X11 event: {:?}", e);
                 }
             })
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            .map_err(|e| Box::new(e) as BackendError)?;
         // =========================================================
         // 2. [新增] 注册 Signals 事件源 (专门处理僵尸进程)
         // =========================================================
-        let signals = Signals::new(&[Signal::SIGCHLD])
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+        let signals = Signals::new(&[Signal::SIGCHLD]).map_err(|e| Box::new(e) as BackendError)?;
         handle
             .insert_source(signals, |event, _, data| {
                 if event.signal() == Signal::SIGCHLD {
@@ -448,7 +435,7 @@ impl Backend for X11Backend {
                     }
                 }
             })
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            .map_err(|e| Box::new(e) as BackendError)?;
         // =========================================================
         // 3. 注册 Update 定时器
         // =========================================================
@@ -464,7 +451,7 @@ impl Backend for X11Backend {
                 }
                 TimeoutAction::ToDuration(update_interval)
             })
-            .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+            .map_err(|e| Box::new(e) as BackendError)?;
         // =========================================================
         // 4. 运行事件循环
         // =========================================================
@@ -476,7 +463,7 @@ impl Backend for X11Backend {
         loop {
             event_loop
                 .dispatch(None, &mut loop_data)
-                .map_err(|e| Box::new(e) as Box<dyn std::error::Error>)?;
+                .map_err(|e| Box::new(e) as BackendError)?;
             if loop_data.should_exit {
                 break;
             }

@@ -9,6 +9,7 @@ use x11rb::protocol::xproto::*;
 use crate::backend::api::KeyOps;
 use crate::backend::common_define::WindowId;
 use crate::backend::common_define::{KeySym, Mods};
+use crate::backend::error::BackendError;
 use crate::backend::x11::WindowHandleExt;
 use crate::backend::x11::adapter::mods_to_x11;
 
@@ -29,7 +30,7 @@ impl<C: Connection> X11KeyOps<C> {
         ops
     }
 
-    fn detect_and_store_numlock(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn detect_and_store_numlock(&mut self) -> Result<(), BackendError> {
         let numkc = self.find_numlock_keycode()?;
         let mask = if numkc == 0 {
             0
@@ -41,7 +42,7 @@ impl<C: Connection> X11KeyOps<C> {
         Ok(())
     }
 
-    fn find_numlock_keycode(&self) -> Result<u8, Box<dyn std::error::Error>> {
+    fn find_numlock_keycode(&self) -> Result<u8, BackendError> {
         const XK_NUM_LOCK: u32 = 0xFF7F;
         let setup = self.conn.setup();
         let min = setup.min_keycode;
@@ -65,7 +66,7 @@ impl<C: Connection> X11KeyOps<C> {
         Ok(0)
     }
 
-    fn find_modifier_mask(&self, target_keycode: u8) -> Result<u8, Box<dyn std::error::Error>> {
+    fn find_modifier_mask(&self, target_keycode: u8) -> Result<u8, BackendError> {
         let mm = self.conn.get_modifier_mapping()?.reply()?;
         let per = mm.keycodes_per_modifier() as usize;
         for mod_index in 0..8 {
@@ -91,17 +92,13 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
         crate::backend::x11::adapter::mods_from_x11(raw_mask, numlock_mask)
     }
 
-    fn clear_key_grabs(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn clear_key_grabs(&self, root: WindowId) -> Result<(), BackendError> {
         let r = root.to_x11_id()?;
         self.conn.ungrab_key(Grab::ANY, r, ModMask::ANY.into())?;
         Ok(())
     }
 
-    fn grab_keys(
-        &self,
-        root: WindowId,
-        bindings: &[(Mods, KeySym)],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn grab_keys(&self, root: WindowId, bindings: &[(Mods, KeySym)]) -> Result<(), BackendError> {
         let numlock_local = *self.numlock_mask.lock().unwrap();
         let r = root.to_x11_id()?;
 
@@ -148,7 +145,7 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
         Ok(())
     }
 
-    fn keysym_from_keycode(&mut self, keycode: u8) -> Result<KeySym, Box<dyn std::error::Error>> {
+    fn keysym_from_keycode(&mut self, keycode: u8) -> Result<KeySym, BackendError> {
         if let Some(&ks) = self.cache.get(&keycode) {
             return Ok(ks);
         }

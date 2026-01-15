@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::Colormap;
+use crate::backend::error::BackendError;
 
 pub struct X11ColorAllocator<C: Connection> {
     conn: Arc<C>,
@@ -24,7 +25,7 @@ impl<C: Connection> X11ColorAllocator<C> {
         }
     }
 
-    fn ensure_pixel(&mut self, color: ArgbColor) -> Result<Pixel, Box<dyn std::error::Error>> {
+    fn ensure_pixel(&mut self, color: ArgbColor) -> Result<Pixel, BackendError> {
         if let Some(p) = self.pixel_cache.get(&color.value).copied() {
             return Ok(p);
         }
@@ -34,7 +35,7 @@ impl<C: Connection> X11ColorAllocator<C> {
         Ok(pix)
     }
 
-    fn alloc_rgb(&mut self, r: u8, g: u8, b: u8) -> Result<Pixel, Box<dyn std::error::Error>> {
+    fn alloc_rgb(&mut self, r: u8, g: u8, b: u8) -> Result<Pixel, BackendError> {
         use x11rb::protocol::xproto::ConnectionExt;
         let reply = (*self.conn)
             .alloc_color(
@@ -47,7 +48,7 @@ impl<C: Connection> X11ColorAllocator<C> {
         Ok(Pixel(reply.pixel))
     }
 
-    fn free_pixels(&mut self, pixels: &[Pixel]) -> Result<(), Box<dyn std::error::Error>> {
+    fn free_pixels(&mut self, pixels: &[Pixel]) -> Result<(), BackendError> {
         if pixels.is_empty() {
             return Ok(());
         }
@@ -63,12 +64,12 @@ impl<C: Connection + Send + Sync + 'static> ColorAllocator for X11ColorAllocator
         self.schemes.insert(t, s);
     }
 
-    fn get_border_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, Box<dyn std::error::Error>> {
+    fn get_border_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, BackendError> {
         let s = self.schemes.get(&t).ok_or("scheme not found")?.clone();
         self.ensure_pixel(s.border)
     }
 
-    fn allocate_schemes_pixels(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn allocate_schemes_pixels(&mut self) -> Result<(), BackendError> {
         let mut colors: Vec<ArgbColor> = Vec::new();
         for s in self.schemes.values() {
             colors.push(s.fg);
@@ -83,7 +84,7 @@ impl<C: Connection + Send + Sync + 'static> ColorAllocator for X11ColorAllocator
         Ok(())
     }
 
-    fn free_all_theme_pixels(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn free_all_theme_pixels(&mut self) -> Result<(), BackendError> {
         if self.pixel_cache.is_empty() {
             return Ok(());
         }

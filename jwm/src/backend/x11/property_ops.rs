@@ -3,6 +3,7 @@ use crate::backend::api::NormalHints;
 use crate::backend::api::WmHints;
 use crate::backend::api::{PropertyOps as PropertyOpsTrait, WindowType};
 use crate::backend::common_define::WindowId;
+use crate::backend::error::BackendError;
 use crate::backend::x11::Atoms;
 use crate::backend::x11::WindowHandleExt;
 use std::sync::Arc;
@@ -53,10 +54,7 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
         value.iter().map(|&b| b as char).collect()
     }
 
-    fn get_net_wm_state_atoms(
-        &self,
-        win: WindowId,
-    ) -> Result<Vec<u32>, Box<dyn std::error::Error>> {
+    fn get_net_wm_state_atoms(&self, win: WindowId) -> Result<Vec<u32>, BackendError> {
         let w = win.to_x11_id()?;
         let reply = self
             .conn
@@ -75,11 +73,7 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
         Ok(reply.value32().into_iter().flatten().collect())
     }
 
-    fn set_net_wm_state_atoms(
-        &self,
-        win: WindowId,
-        atoms: &[u32],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_net_wm_state_atoms(&self, win: WindowId, atoms: &[u32]) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         self.conn.change_property32(
             PropMode::REPLACE,
@@ -91,11 +85,7 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
         Ok(())
     }
 
-    fn add_net_wm_state_atom(
-        &self,
-        win: WindowId,
-        atom: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn add_net_wm_state_atom(&self, win: WindowId, atom: u32) -> Result<(), BackendError> {
         let mut states = self.get_net_wm_state_atoms(win)?;
         if !states.iter().any(|&a| a == atom) {
             states.push(atom);
@@ -104,11 +94,7 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
         Ok(())
     }
 
-    fn remove_net_wm_state_atom(
-        &self,
-        win: WindowId,
-        atom: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn remove_net_wm_state_atom(&self, win: WindowId, atom: u32) -> Result<(), BackendError> {
         let mut states = self.get_net_wm_state_atoms(win)?;
         let len_before = states.len();
         states.retain(|&a| a != atom);
@@ -232,11 +218,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
             .any(|&a| a == self.atoms._NET_WM_STATE_FULLSCREEN)
     }
 
-    fn set_fullscreen_state(
-        &self,
-        win: WindowId,
-        on: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_fullscreen_state(&self, win: WindowId, on: bool) -> Result<(), BackendError> {
         if on {
             self.add_net_wm_state_atom(win, self.atoms._NET_WM_STATE_FULLSCREEN)
         } else {
@@ -267,11 +249,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         Some(WmHints { urgent, input })
     }
 
-    fn set_urgent_hint(
-        &self,
-        win: WindowId,
-        urgent: bool,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_urgent_hint(&self, win: WindowId, urgent: bool) -> Result<(), BackendError> {
         const X_URGENCY_HINT: u32 = 1 << 8;
         let w = win.to_x11_id()?;
         let cookie =
@@ -328,10 +306,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         None
     }
 
-    fn fetch_normal_hints(
-        &self,
-        win: WindowId,
-    ) -> Result<Option<NormalHints>, Box<dyn std::error::Error>> {
+    fn fetch_normal_hints(&self, win: WindowId) -> Result<Option<NormalHints>, BackendError> {
         let w = win.to_x11_id()?;
         let reply_opt = WmSizeHints::get_normal_hints(&self.conn, w)?.reply()?;
         if let Some(r) = reply_opt {
@@ -384,7 +359,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         top: u32,
         start_x: u32,
         end_x: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         let strut = [0, 0, top, 0];
         self.conn.change_property32(
@@ -405,7 +380,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         Ok(())
     }
 
-    fn clear_window_strut(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn clear_window_strut(&self, win: WindowId) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         let _ = self.conn.delete_property(w, self.atoms._NET_WM_STRUT);
         let _ = self
@@ -419,7 +394,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         win: WindowId,
         tags: u32,
         monitor_num: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         let data = [tags, monitor_num];
         self.conn.change_property32(
@@ -432,7 +407,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         Ok(())
     }
 
-    fn get_wm_state(&self, win: WindowId) -> Result<i64, Box<dyn std::error::Error>> {
+    fn get_wm_state(&self, win: WindowId) -> Result<i64, BackendError> {
         let w = win.to_x11_id()?;
         let reply = self
             .conn
@@ -450,7 +425,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
             .unwrap_or(-1))
     }
 
-    fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         let data: [u32; 2] = [state as u32, 0];
         self.conn.change_property32(

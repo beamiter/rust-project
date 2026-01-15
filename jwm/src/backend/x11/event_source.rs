@@ -10,6 +10,7 @@ use crate::backend::api::{
     BackendEvent, NetWmAction, NetWmState, PropertyKind, StackMode, WindowChanges,
 };
 use crate::backend::common_define::WindowId;
+use crate::backend::error::BackendError;
 use crate::backend::x11::Atoms;
 
 use calloop::{EventSource, Interest, Mode, Poll, PostAction, Readiness, Token, TokenFactory};
@@ -259,7 +260,7 @@ impl EventSource for X11EventSource {
     type Event = BackendEvent;
     type Metadata = ();
     type Ret = ();
-    type Error = Box<dyn std::error::Error + Send + Sync>;
+    type Error = BackendError;
 
     fn process_events<F>(
         &mut self,
@@ -280,7 +281,10 @@ impl EventSource for X11EventSource {
                     log::error!("X11 poll error: {:?}", e);
                     // 转换错误类型以满足 Send + Sync 约束
                     let err_msg = format!("X11 poll error: {}", e);
-                    return Err(err_msg.into());
+                    return Err(BackendError::from(std::io::Error::new(
+                        std::io::ErrorKind::Other,
+                        err_msg,
+                    )));
                 }
             }
         }

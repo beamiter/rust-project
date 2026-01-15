@@ -2,6 +2,7 @@
 use crate::backend::api::{CloseResult, Geometry, WindowAttributes, WindowOps};
 use crate::backend::api::{StackMode, WindowChanges};
 use crate::backend::common_define::{Mods, Pixel, WindowId};
+use crate::backend::error::BackendError;
 use crate::backend::x11::Atoms;
 use crate::backend::x11::WindowHandleExt;
 use crate::backend::x11::adapter::{event_mask_from_generic, mods_to_x11};
@@ -37,7 +38,7 @@ impl<C: Connection> X11WindowOps<C> {
         width: u16,
         height: u16,
         border: u16,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         let event = ConfigureNotifyEvent {
             response_type: CONFIGURE_NOTIFY_EVENT,
@@ -60,12 +61,7 @@ impl<C: Connection> X11WindowOps<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
-    fn set_position(
-        &self,
-        win: WindowId,
-        x: i32,
-        y: i32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_position(&self, win: WindowId, x: i32, y: i32) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         let aux = ConfigureWindowAux::new().x(x).y(y);
         self.conn.configure_window(w, &aux)?;
@@ -80,7 +76,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         w: u32,
         h: u32,
         border: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         let wid = win.to_x11_id()?;
 
         // 1. 物理调整窗口
@@ -110,7 +106,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         win: WindowId,
         border_width: u32,
         border_color: Pixel,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         // 设置边框颜色
         let aux_attr = ChangeWindowAttributesAux::new().border_pixel(border_color.0);
@@ -121,14 +117,14 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         Ok(())
     }
 
-    fn raise_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn raise_window(&self, win: WindowId) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         let aux = ConfigureWindowAux::new().stack_mode(x11rb::protocol::xproto::StackMode::ABOVE);
         self.conn.configure_window(w, &aux)?;
         Ok(())
     }
 
-    fn close_window(&self, win: WindowId) -> Result<CloseResult, Box<dyn std::error::Error>> {
+    fn close_window(&self, win: WindowId) -> Result<CloseResult, BackendError> {
         let w = win.to_x11_id()?;
         let supports_delete = {
             let reply = self
@@ -165,7 +161,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
     }
 
     // 扫描窗口 (X11 必须实现，Wayland 可以返回空 Vec)
-    fn scan_windows(&self) -> Result<Vec<WindowId>, Box<dyn std::error::Error>> {
+    fn scan_windows(&self) -> Result<Vec<WindowId>, BackendError> {
         let tree = self
             .conn
             .query_tree(self.conn.setup().roots[0].root)?
@@ -177,11 +173,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
             .collect())
     }
 
-    fn change_event_mask(
-        &self,
-        win: WindowId,
-        mask: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn change_event_mask(&self, win: WindowId, mask: u32) -> Result<(), BackendError> {
         debug!("[change_event_mask]");
         let w = win.to_x11_id()?;
         let x_mask = event_mask_from_generic(mask);
@@ -194,7 +186,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         &self,
         win: WindowId,
         event_mask_bits: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         let x_mask = event_mask_from_generic(event_mask_bits);
         let w = win.to_x11_id()?;
         self.conn.grab_button(
@@ -217,7 +209,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         button: u8,
         event_mask_bits: u32,
         mods: Mods,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         let x_mask = event_mask_from_generic(event_mask_bits);
         let bi = ButtonIndex::from(button);
         let numlock_val = *self.numlock_mask.lock().unwrap();
@@ -239,7 +231,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         Ok(())
     }
 
-    fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn map_window(&self, win: WindowId) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         self.conn.map_window(w)?;
         Ok(())
@@ -249,7 +241,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         &self,
         win: WindowId,
         changes: WindowChanges,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         let mut aux = ConfigureWindowAux::new();
         if let Some(x) = changes.x {
             aux = aux.x(x);
@@ -285,26 +277,26 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         Ok(())
     }
 
-    fn set_input_focus_root(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_input_focus_root(&self) -> Result<(), BackendError> {
         self.conn
             .set_input_focus(InputFocus::POINTER_ROOT, self.root, x11rb::CURRENT_TIME)?;
         Ok(())
     }
 
-    fn unmap_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn unmap_window(&self, win: WindowId) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         self.conn.unmap_window(w)?;
         Ok(())
     }
 
-    fn set_input_focus(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_input_focus(&self, win: WindowId) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         self.conn
             .set_input_focus(InputFocus::PARENT, w, x11rb::CURRENT_TIME)?;
         Ok(())
     }
 
-    fn get_geometry(&self, win: WindowId) -> Result<Geometry, Box<dyn std::error::Error>> {
+    fn get_geometry(&self, win: WindowId) -> Result<Geometry, BackendError> {
         let w = win.to_x11_id()?;
         let reply = self.conn.get_geometry(w)?.reply()?;
         Ok(Geometry {
@@ -316,21 +308,18 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         })
     }
 
-    fn flush(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn flush(&self) -> Result<(), BackendError> {
         self.conn.flush()?;
         Ok(())
     }
 
-    fn kill_client(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn kill_client(&self, win: WindowId) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         self.conn.kill_client(w)?;
         Ok(())
     }
 
-    fn get_window_attributes(
-        &self,
-        win: WindowId,
-    ) -> Result<WindowAttributes, Box<dyn std::error::Error>> {
+    fn get_window_attributes(&self, win: WindowId) -> Result<WindowAttributes, BackendError> {
         let w = win.to_x11_id()?;
         let r = self.conn.get_window_attributes(w)?.reply()?;
         Ok(WindowAttributes {
@@ -339,7 +328,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         })
     }
 
-    fn get_tree_child(&self, win: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>> {
+    fn get_tree_child(&self, win: WindowId) -> Result<Vec<WindowId>, BackendError> {
         let w = win.to_x11_id()?;
         let tree_reply = self.conn.query_tree(w)?.reply()?;
         Ok(tree_reply
@@ -349,7 +338,7 @@ impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
             .collect())
     }
 
-    fn ungrab_all_buttons(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn ungrab_all_buttons(&self, win: WindowId) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         self.conn
             .ungrab_button(ButtonIndex::ANY, w, ModMask::ANY.into())?;

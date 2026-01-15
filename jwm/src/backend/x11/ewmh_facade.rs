@@ -1,6 +1,7 @@
 // src/backend/x11/ewmh_facade.rs
 use crate::backend::api::{EwmhFacade, EwmhFeature};
 use crate::backend::common_define::WindowId;
+use crate::backend::error::BackendError;
 use crate::backend::x11::Atoms;
 use crate::backend::x11::WindowHandleExt;
 use std::sync::Arc;
@@ -38,10 +39,7 @@ impl<C: Connection + Send + Sync + 'static> X11EwmhFacade<C> {
 }
 
 impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
-    fn declare_supported(
-        &self,
-        features: &[EwmhFeature],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn declare_supported(&self, features: &[EwmhFeature]) -> Result<(), BackendError> {
         let atoms: Vec<u32> = features.iter().map(|f| self.feature_to_atom(*f)).collect();
         let r = self.root.to_x11_id()?;
         self.conn.change_property32(
@@ -54,7 +52,7 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         Ok(())
     }
 
-    fn reset_root_properties(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn reset_root_properties(&self) -> Result<(), BackendError> {
         for &prop in [
             self.atoms._NET_ACTIVE_WINDOW,
             self.atoms._NET_CLIENT_LIST,
@@ -69,10 +67,7 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         }
         Ok(())
     }
-    fn setup_supporting_wm_check(
-        &self,
-        wm_name: &str,
-    ) -> Result<WindowId, Box<dyn std::error::Error>> {
+    fn setup_supporting_wm_check(&self, wm_name: &str) -> Result<WindowId, BackendError> {
         let frame_win = self.conn.generate_id()?;
         let aux = CreateWindowAux::new()
             .event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS)
@@ -117,7 +112,7 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         Ok(WindowId::X11(frame_win as u64))
     }
 
-    fn set_active_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_active_window(&self, win: WindowId) -> Result<(), BackendError> {
         let w = win.to_x11_id()?;
         let r = self.root.to_x11_id()?;
         self.conn.change_property32(
@@ -130,7 +125,7 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         Ok(())
     }
 
-    fn clear_active_window(&self) -> Result<(), Box<dyn std::error::Error>> {
+    fn clear_active_window(&self) -> Result<(), BackendError> {
         use x11rb::protocol::xproto::ConnectionExt as RawExt;
         let r = self.root.to_x11_id()?;
         self.conn
@@ -138,7 +133,7 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         Ok(())
     }
 
-    fn set_client_list(&self, list: &[WindowId]) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_client_list(&self, list: &[WindowId]) -> Result<(), BackendError> {
         let r = self.root.to_x11_id()?;
         let raw: Vec<u32> = list.iter().map(|w| w.to_x11_id().unwrap()).collect();
         self.conn.change_property32(
@@ -151,10 +146,7 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         Ok(())
     }
 
-    fn set_client_list_stacking(
-        &self,
-        list: &[WindowId],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn set_client_list_stacking(&self, list: &[WindowId]) -> Result<(), BackendError> {
         let r = self.root.to_x11_id()?;
         let raw: Vec<u32> = list.iter().map(|w| w.to_x11_id().unwrap()).collect();
         self.conn.change_property32(

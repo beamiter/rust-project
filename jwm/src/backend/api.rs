@@ -4,6 +4,7 @@ use crate::backend::common_define::OutputId;
 use crate::backend::common_define::{
     ColorScheme, CursorHandle, KeySym, Mods, Pixel, SchemeType, StdCursorKind, WindowId,
 };
+use crate::backend::error::BackendError;
 use std::any::Any;
 use std::fmt::Debug;
 
@@ -261,8 +262,7 @@ pub enum BackendEvent {
 }
 
 pub trait WindowOps: Send {
-    fn set_position(&self, win: WindowId, x: i32, y: i32)
-    -> Result<(), Box<dyn std::error::Error>>;
+    fn set_position(&self, win: WindowId, x: i32, y: i32) -> Result<(), BackendError>;
     fn configure(
         &self,
         win: WindowId,
@@ -271,44 +271,37 @@ pub trait WindowOps: Send {
         w: u32,
         h: u32,
         border: u32,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), BackendError>;
     fn set_decoration_style(
         &self,
         win: WindowId,
         border_width: u32,
         border_color: Pixel,
-    ) -> Result<(), Box<dyn std::error::Error>>;
-    fn raise_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-    fn map_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-    fn unmap_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-    fn close_window(&self, win: WindowId) -> Result<CloseResult, Box<dyn std::error::Error>>;
-    fn set_input_focus(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-    fn set_input_focus_root(&self) -> Result<(), Box<dyn std::error::Error>>;
-    fn get_window_attributes(
-        &self,
-        win: WindowId,
-    ) -> Result<WindowAttributes, Box<dyn std::error::Error>>;
-    fn get_geometry(&self, win: WindowId) -> Result<Geometry, Box<dyn std::error::Error>>;
-    fn scan_windows(&self) -> Result<Vec<WindowId>, Box<dyn std::error::Error>>;
+    ) -> Result<(), BackendError>;
+    fn raise_window(&self, win: WindowId) -> Result<(), BackendError>;
+    fn map_window(&self, win: WindowId) -> Result<(), BackendError>;
+    fn unmap_window(&self, win: WindowId) -> Result<(), BackendError>;
+    fn close_window(&self, win: WindowId) -> Result<CloseResult, BackendError>;
+    fn set_input_focus(&self, win: WindowId) -> Result<(), BackendError>;
+    fn set_input_focus_root(&self) -> Result<(), BackendError>;
+    fn get_window_attributes(&self, win: WindowId) -> Result<WindowAttributes, BackendError>;
+    fn get_geometry(&self, win: WindowId) -> Result<Geometry, BackendError>;
+    fn scan_windows(&self) -> Result<Vec<WindowId>, BackendError>;
 
-    fn flush(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn flush(&self) -> Result<(), BackendError>;
 
-    fn kill_client(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+    fn kill_client(&self, win: WindowId) -> Result<(), BackendError>;
 
     fn apply_window_changes(
         &self,
         win: WindowId,
         changes: WindowChanges,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), BackendError>;
 
-    fn ungrab_all_buttons(&self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn ungrab_all_buttons(&self, _win: WindowId) -> Result<(), BackendError> {
         Ok(())
     }
-    fn grab_button_any_anymod(
-        &self,
-        _win: WindowId,
-        _mask: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn grab_button_any_anymod(&self, _win: WindowId, _mask: u32) -> Result<(), BackendError> {
         Ok(())
     }
     fn grab_button(
@@ -317,18 +310,14 @@ pub trait WindowOps: Send {
         _btn: u8,
         _mask: u32,
         _mods: Mods,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         Ok(())
     }
 
-    fn change_event_mask(
-        &self,
-        _win: WindowId,
-        _mask: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn change_event_mask(&self, _win: WindowId, _mask: u32) -> Result<(), BackendError> {
         Ok(())
     }
-    fn get_tree_child(&self, _win: WindowId) -> Result<Vec<WindowId>, Box<dyn std::error::Error>> {
+    fn get_tree_child(&self, _win: WindowId) -> Result<Vec<WindowId>, BackendError> {
         Ok(vec![])
     }
 }
@@ -336,43 +325,34 @@ pub trait WindowOps: Send {
 /// 输入设备操作接口
 pub trait InputOps: Send {
     /// 设置当前光标形状
-    fn set_cursor(&self, kind: StdCursorKind) -> Result<(), Box<dyn std::error::Error>>;
+    fn set_cursor(&self, kind: StdCursorKind) -> Result<(), BackendError>;
 
     /// 获取当前指针绝对坐标
-    fn get_pointer_position(&self) -> Result<(f64, f64), Box<dyn std::error::Error>>;
+    fn get_pointer_position(&self) -> Result<(f64, f64), BackendError>;
 
     /// 显式抓取指针 (用于 Interactive Move/Resize)
     /// X11: XGrabPointer
     /// Wayland: 开启内部抓取状态，将后续事件独占发送给 Handler
-    fn grab_pointer(
-        &self,
-        mask: u32,
-        cursor: Option<u64>,
-    ) -> Result<bool, Box<dyn std::error::Error>>;
+    fn grab_pointer(&self, mask: u32, cursor: Option<u64>) -> Result<bool, BackendError>;
 
     /// 释放指针抓取
-    fn ungrab_pointer(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn ungrab_pointer(&self) -> Result<(), BackendError>;
 
     /// 强制移动指针 (X11 only, Wayland 返回 Ok 但不做任何事)
-    fn warp_pointer(&self, _x: f64, _y: f64) -> Result<(), Box<dyn std::error::Error>> {
+    fn warp_pointer(&self, _x: f64, _y: f64) -> Result<(), BackendError> {
         Ok(())
     }
 
     // 兼容旧接口
-    fn query_pointer_root(&self) -> Result<(i32, i32, u16, u16), Box<dyn std::error::Error>>;
-    fn warp_pointer_to_window(
-        &self,
-        _win: WindowId,
-        _x: i16,
-        _y: i16,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn query_pointer_root(&self) -> Result<(i32, i32, u16, u16), BackendError>;
+    fn warp_pointer_to_window(&self, _win: WindowId, _x: i16, _y: i16) -> Result<(), BackendError> {
         Ok(())
     }
     fn allow_events(
         &self,
         _mode: crate::backend::api::AllowMode,
         _time: u32,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         Ok(())
     }
 }
@@ -384,25 +364,17 @@ pub trait PropertyOps: Send {
     fn get_window_types(&self, win: WindowId) -> Vec<WindowType>;
 
     fn is_fullscreen(&self, win: WindowId) -> bool;
-    fn set_fullscreen_state(
-        &self,
-        win: WindowId,
-        on: bool,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    fn set_fullscreen_state(&self, win: WindowId, on: bool) -> Result<(), BackendError>;
 
     fn transient_for(&self, win: WindowId) -> Option<WindowId>;
 
     // Hints
     fn get_wm_hints(&self, win: WindowId) -> Option<crate::backend::api::WmHints>;
-    fn set_urgent_hint(
-        &self,
-        win: WindowId,
-        urgent: bool,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    fn set_urgent_hint(&self, win: WindowId, urgent: bool) -> Result<(), BackendError>;
     fn fetch_normal_hints(
         &self,
         win: WindowId,
-    ) -> Result<Option<crate::backend::api::NormalHints>, Box<dyn std::error::Error>>;
+    ) -> Result<Option<crate::backend::api::NormalHints>, BackendError>;
 
     // Legacy / EWMH Struts (Wayland 使用 Layer Shell)
     fn set_window_strut_top(
@@ -411,12 +383,12 @@ pub trait PropertyOps: Send {
         top: u32,
         start_x: u32,
         end_x: u32,
-    ) -> Result<(), Box<dyn std::error::Error>>;
-    fn clear_window_strut(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), BackendError>;
+    fn clear_window_strut(&self, win: WindowId) -> Result<(), BackendError>;
 
     // EWMH State (X11 Only)
-    fn get_wm_state(&self, win: WindowId) -> Result<i64, Box<dyn std::error::Error>>;
-    fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), Box<dyn std::error::Error>>;
+    fn get_wm_state(&self, win: WindowId) -> Result<i64, BackendError>;
+    fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), BackendError>;
 
     // Client Info (X11 Only)
     fn set_client_info_props(
@@ -424,7 +396,7 @@ pub trait PropertyOps: Send {
         win: WindowId,
         tags: u32,
         monitor_num: u32,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), BackendError>;
 }
 
 pub struct WmHints {
@@ -457,33 +429,24 @@ pub trait OutputOps: Send {
 
 pub trait KeyOps: Send {
     // 注册全局快捷键
-    fn grab_keys(
-        &self,
-        root: WindowId,
-        bindings: &[(Mods, KeySym)],
-    ) -> Result<(), Box<dyn std::error::Error>>;
-    fn clear_key_grabs(&self, root: WindowId) -> Result<(), Box<dyn std::error::Error>>;
+    fn grab_keys(&self, root: WindowId, bindings: &[(Mods, KeySym)]) -> Result<(), BackendError>;
+    fn clear_key_grabs(&self, root: WindowId) -> Result<(), BackendError>;
 
     // 辅助转换
     fn clean_mods(&self, raw_state: u16) -> Mods;
-    fn keysym_from_keycode(&mut self, keycode: u8) -> Result<KeySym, Box<dyn std::error::Error>>;
+    fn keysym_from_keycode(&mut self, keycode: u8) -> Result<KeySym, BackendError>;
     fn clear_cache(&mut self);
 }
 
 // X11 EWMH 兼容层 (Wayland 下通常为空实现或通过 Xwayland 桥接)
 pub trait EwmhFacade: Send {
-    fn set_active_window(&self, win: WindowId) -> Result<(), Box<dyn std::error::Error>>;
-    fn clear_active_window(&self) -> Result<(), Box<dyn std::error::Error>>;
-    fn set_client_list(&self, list: &[WindowId]) -> Result<(), Box<dyn std::error::Error>>;
-    fn set_client_list_stacking(&self, list: &[WindowId])
-    -> Result<(), Box<dyn std::error::Error>>;
-    fn setup_supporting_wm_check(
-        &self,
-        wm_name: &str,
-    ) -> Result<WindowId, Box<dyn std::error::Error>>;
-    fn declare_supported(&self, features: &[EwmhFeature])
-    -> Result<(), Box<dyn std::error::Error>>;
-    fn reset_root_properties(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn set_active_window(&self, win: WindowId) -> Result<(), BackendError>;
+    fn clear_active_window(&self) -> Result<(), BackendError>;
+    fn set_client_list(&self, list: &[WindowId]) -> Result<(), BackendError>;
+    fn set_client_list_stacking(&self, list: &[WindowId]) -> Result<(), BackendError>;
+    fn setup_supporting_wm_check(&self, wm_name: &str) -> Result<WindowId, BackendError>;
+    fn declare_supported(&self, features: &[EwmhFeature]) -> Result<(), BackendError>;
+    fn reset_root_properties(&self) -> Result<(), BackendError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -502,20 +465,16 @@ pub enum EwmhFeature {
 
 pub trait ColorAllocator: Send {
     fn set_scheme(&mut self, t: SchemeType, s: ColorScheme);
-    fn allocate_schemes_pixels(&mut self) -> Result<(), Box<dyn std::error::Error>>;
-    fn get_border_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, Box<dyn std::error::Error>>;
-    fn free_all_theme_pixels(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+    fn allocate_schemes_pixels(&mut self) -> Result<(), BackendError>;
+    fn get_border_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, BackendError>;
+    fn free_all_theme_pixels(&mut self) -> Result<(), BackendError>;
 }
 
 pub trait CursorProvider: Send {
-    fn preload_common(&mut self) -> Result<(), Box<dyn std::error::Error>>;
-    fn get(&mut self, kind: StdCursorKind) -> Result<CursorHandle, Box<dyn std::error::Error>>;
-    fn apply(
-        &mut self,
-        window_id: u64,
-        kind: StdCursorKind,
-    ) -> Result<(), Box<dyn std::error::Error>>;
-    fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>>;
+    fn preload_common(&mut self) -> Result<(), BackendError>;
+    fn get(&mut self, kind: StdCursorKind) -> Result<CursorHandle, BackendError>;
+    fn apply(&mut self, window_id: u64, kind: StdCursorKind) -> Result<(), BackendError>;
+    fn cleanup(&mut self) -> Result<(), BackendError>;
 }
 
 pub trait EventHandler {
@@ -524,10 +483,10 @@ pub trait EventHandler {
         &mut self,
         backend: &mut dyn Backend,
         event: BackendEvent,
-    ) -> Result<(), Box<dyn std::error::Error>>;
+    ) -> Result<(), BackendError>;
 
     /// 每一轮循环的更新回调 (用于处理定时任务、动画帧等)
-    fn update(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>>;
+    fn update(&mut self, backend: &mut dyn Backend) -> Result<(), BackendError>;
 
     /// 询问 Handler 是否应该退出主循环
     fn should_exit(&self) -> bool;
@@ -537,7 +496,7 @@ pub trait Backend: Send {
     fn capabilities(&self) -> Capabilities;
     fn root_window(&self) -> Option<WindowId>;
     fn as_any(&self) -> &dyn Any;
-    fn check_existing_wm(&self) -> Result<(), Box<dyn std::error::Error>>;
+    fn check_existing_wm(&self) -> Result<(), BackendError>;
 
     // Ops Getters
     fn window_ops(&self) -> &dyn WindowOps;
@@ -549,63 +508,51 @@ pub trait Backend: Send {
     fn cursor_provider(&mut self) -> &mut dyn CursorProvider;
     fn color_allocator(&mut self) -> &mut dyn ColorAllocator;
 
-    fn register_wm(&self, _name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    fn register_wm(&self, _name: &str) -> Result<(), BackendError> {
         Ok(())
     }
 
     // 通用清理接口
-    fn cleanup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    fn cleanup(&mut self) -> Result<(), BackendError> {
         Ok(())
     }
 
-    fn on_focused_client_changed(
-        &mut self,
-        _win: Option<WindowId>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn on_focused_client_changed(&mut self, _win: Option<WindowId>) -> Result<(), BackendError> {
         Ok(())
     }
     fn on_client_list_changed(
         &mut self,
         _clients: &[WindowId],
         _stack: &[WindowId],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), BackendError> {
         Ok(())
     }
 
     /// 开始交互式移动窗口
     /// X11: 后端记录状态，自行抓取指针
     /// Wayland: 触发 xdg_toplevel_move
-    fn begin_move(&mut self, _win: WindowId) -> Result<(), Box<dyn std::error::Error>> {
+    fn begin_move(&mut self, _win: WindowId) -> Result<(), BackendError> {
         Ok(())
     }
 
     /// 开始交互式调整窗口大小
-    fn begin_resize(
-        &mut self,
-        _win: WindowId,
-        _edge: ResizeEdge,
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    fn begin_resize(&mut self, _win: WindowId, _edge: ResizeEdge) -> Result<(), BackendError> {
         Ok(())
     }
 
     // 处理鼠标移动 (用于后端内部的交互逻辑)
     // 返回 true 表示后端已处理该事件，Jwm 不应继续处理
-    fn handle_motion(
-        &mut self,
-        _x: f64,
-        _y: f64,
-        _time: u32,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
+    fn handle_motion(&mut self, _x: f64, _y: f64, _time: u32) -> Result<bool, BackendError> {
         Ok(false)
     }
 
     // 处理鼠标释放 (结束交互)
     // 返回 true 表示后端已处理该事件
-    fn handle_button_release(&mut self, _time: u32) -> Result<bool, Box<dyn std::error::Error>> {
+    fn handle_button_release(&mut self, _time: u32) -> Result<bool, BackendError> {
         Ok(false)
     }
 
-    fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), Box<dyn std::error::Error>>;
+    fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), BackendError>;
 
     fn request_render(&mut self) {}
 }
