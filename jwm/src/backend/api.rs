@@ -473,7 +473,7 @@ pub trait ColorAllocator: Send {
 pub trait CursorProvider: Send {
     fn preload_common(&mut self) -> Result<(), BackendError>;
     fn get(&mut self, kind: StdCursorKind) -> Result<CursorHandle, BackendError>;
-    fn apply(&mut self, window_id: u64, kind: StdCursorKind) -> Result<(), BackendError>;
+    fn apply(&mut self, window_id: WindowId, kind: StdCursorKind) -> Result<(), BackendError>;
     fn cleanup(&mut self) -> Result<(), BackendError>;
 }
 

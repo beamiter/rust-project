@@ -1,5 +1,6 @@
 use crate::backend::api::BackendEvent;
 // src/backend/x11/backend.rs
+use super::ids::X11IdRegistry;
 use crate::backend::api::EventHandler;
 use crate::backend::api::EwmhFeature;
 use crate::backend::api::Geometry;
@@ -48,6 +49,8 @@ pub struct X11Backend {
     conn: Arc<RustConnection>,
     screen: Screen,
     root: WindowId,
+    root_x11: u32,
+    ids: X11IdRegistry,
     atoms: Atoms,
 
     caps: Capabilities,
@@ -117,7 +120,9 @@ impl X11Backend {
         let conn = Arc::new(raw_conn);
         use x11rb::connection::Connection;
         let screen = conn.setup().roots[screen_num].clone();
-        let root = WindowId::X11(screen.root as u64);
+        let ids = X11IdRegistry::new(1);
+        let root_x11 = screen.root;
+        let root = ids.intern(root_x11);
 
         if conn
             .extension_information(x11rb::protocol::randr::X11_EXTENSION_NAME)?
@@ -136,32 +141,42 @@ impl X11Backend {
             atoms.clone(),
             numlock_mask.clone(),
             screen.root,
+            ids.clone(),
         ));
 
-        let x11_input_ops = X11InputOps::new(conn.clone(), screen.root);
+        let x11_input_ops = X11InputOps::new(conn.clone(), screen.root, ids.clone());
         let input_ops: Box<dyn InputOps> = Box::new(x11_input_ops.clone());
-        let property_ops: Box<dyn PropertyOps> =
-            Box::new(X11PropertyOps::new(conn.clone(), atoms.clone()));
+        let property_ops: Box<dyn PropertyOps> = Box::new(X11PropertyOps::new(
+            conn.clone(),
+            atoms.clone(),
+            ids.clone(),
+        ));
         let output_ops: Box<dyn OutputOps> = Box::new(X11OutputOps::new(
             conn.clone(),
             screen.root,
             screen.width_in_pixels as i32,
             screen.height_in_pixels as i32,
         ));
-        let key_ops: Box<dyn KeyOps> = Box::new(X11KeyOps::new(conn.clone(), numlock_mask.clone()));
+        let key_ops: Box<dyn KeyOps> = Box::new(X11KeyOps::new(
+            conn.clone(),
+            numlock_mask.clone(),
+            ids.clone(),
+        ));
         let ewmh_facade: Option<Box<dyn EwmhFacade>> = Some(Box::new(X11EwmhFacade::new(
             conn.clone(),
             root,
             atoms.clone(),
+            ids.clone(),
         )));
         let cursor_provider: Box<dyn CursorProvider> =
-            Box::new(X11CursorProvider::new(conn.clone())?);
+            Box::new(X11CursorProvider::new(conn.clone(), ids.clone())?);
         let color_allocator: Box<dyn ColorAllocator> = Box::new(X11ColorAllocator::new(
             conn.clone(),
             screen.default_colormap,
         ));
 
-        let event_source = X11EventSource::new(conn.clone(), atoms.clone(), screen.root);
+        let event_source =
+            X11EventSource::new(conn.clone(), atoms.clone(), screen.root, ids.clone());
 
         let caps = Capabilities {
             can_warp_pointer: true,
@@ -173,6 +188,8 @@ impl X11Backend {
             conn,
             screen,
             root,
+            root_x11,
+            ids,
             atoms,
             caps,
             window_ops,
@@ -414,10 +431,14 @@ impl Backend for X11Backend {
         let x11_source = if let Some(src) = self._init_event_source.take() {
             src
         } else {
-            X11EventSource::new(self.conn.clone(), self.atoms.clone(), self.screen.root)
+            X11EventSource::new(
+                self.conn.clone(),
+                self.atoms.clone(),
+                self.screen.root,
+                self.ids.clone(),
+            )
         };
 
-        // InsertError<X11EventSource> 可能是 Send 的，但也可能不是，安全起见统一转字符串
         handle
             .insert_source(x11_source, |event, _, data| {
                 let event = data.backend.enrich_event_with_output(event);
@@ -428,7 +449,7 @@ impl Backend for X11Backend {
             .map_err(|e| BackendError::Message(format!("Failed to insert X11 source: {}", e)))?;
 
         // 2. 注册 Signals
-        let signals = Signals::new(&[Signal::SIGCHLD])?; // 这里 ? 会自动用 From<std::io::Error>
+        let signals = Signals::new(&[Signal::SIGCHLD])?;
         handle
             .insert_source(signals, |event, _, data| {
                 if event.signal() == Signal::SIGCHLD {

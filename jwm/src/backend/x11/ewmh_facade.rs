@@ -3,7 +3,7 @@ use crate::backend::api::{EwmhFacade, EwmhFeature};
 use crate::backend::common_define::WindowId;
 use crate::backend::error::BackendError;
 use crate::backend::x11::Atoms;
-use crate::backend::x11::WindowHandleExt;
+use crate::backend::x11::ids::X11IdRegistry;
 use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::protocol::xproto::ConnectionExt as _;
@@ -16,11 +16,17 @@ pub struct X11EwmhFacade<C: Connection> {
     conn: Arc<C>,
     root: WindowId,
     atoms: Atoms,
+    ids: X11IdRegistry,
 }
 
 impl<C: Connection + Send + Sync + 'static> X11EwmhFacade<C> {
-    pub fn new(conn: Arc<C>, root: WindowId, atoms: Atoms) -> Self {
-        Self { conn, root, atoms }
+    pub fn new(conn: Arc<C>, root: WindowId, atoms: Atoms, ids: X11IdRegistry) -> Self {
+        Self {
+            conn,
+            root,
+            atoms,
+            ids,
+        }
     }
     fn feature_to_atom(&self, f: EwmhFeature) -> u32 {
         match f {
@@ -41,7 +47,7 @@ impl<C: Connection + Send + Sync + 'static> X11EwmhFacade<C> {
 impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
     fn declare_supported(&self, features: &[EwmhFeature]) -> Result<(), BackendError> {
         let atoms: Vec<u32> = features.iter().map(|f| self.feature_to_atom(*f)).collect();
-        let r = self.root.to_x11_id()?;
+        let r = self.ids.x11(self.root)?;
         self.conn.change_property32(
             PropMode::REPLACE,
             r,
@@ -62,7 +68,7 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         ]
         .iter()
         {
-            let r = self.root.to_x11_id()?;
+            let r = self.ids.x11(self.root)?;
             let _ = self.conn.delete_property(r, prop);
         }
         Ok(())
@@ -72,7 +78,7 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
         let aux = CreateWindowAux::new()
             .event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS)
             .override_redirect(1);
-        let r = self.root.to_x11_id()?;
+        let r = self.ids.x11(self.root)?;
         self.conn.create_window(
             x11rb::COPY_DEPTH_FROM_PARENT,
             frame_win,
@@ -109,12 +115,12 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
             AtomEnum::STRING,
             wm_name.as_bytes(),
         )?;
-        Ok(WindowId::X11(frame_win as u64))
+        Ok(self.ids.intern(frame_win))
     }
 
     fn set_active_window(&self, win: WindowId) -> Result<(), BackendError> {
-        let w = win.to_x11_id()?;
-        let r = self.root.to_x11_id()?;
+        let w = self.ids.x11(win)?;
+        let r = self.ids.x11(self.root)?;
         self.conn.change_property32(
             PropMode::REPLACE,
             r,
@@ -127,15 +133,15 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
 
     fn clear_active_window(&self) -> Result<(), BackendError> {
         use x11rb::protocol::xproto::ConnectionExt as RawExt;
-        let r = self.root.to_x11_id()?;
+        let r = self.ids.x11(self.root)?;
         self.conn
             .delete_property(r, self.atoms._NET_ACTIVE_WINDOW)?;
         Ok(())
     }
 
     fn set_client_list(&self, list: &[WindowId]) -> Result<(), BackendError> {
-        let r = self.root.to_x11_id()?;
-        let raw: Vec<u32> = list.iter().map(|w| w.to_x11_id().unwrap()).collect();
+        let r = self.ids.x11(self.root)?;
+        let raw: Vec<u32> = list.iter().map(|&w| self.ids.x11(w).unwrap()).collect();
         self.conn.change_property32(
             PropMode::REPLACE,
             r,
@@ -147,8 +153,8 @@ impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
     }
 
     fn set_client_list_stacking(&self, list: &[WindowId]) -> Result<(), BackendError> {
-        let r = self.root.to_x11_id()?;
-        let raw: Vec<u32> = list.iter().map(|w| w.to_x11_id().unwrap()).collect();
+        let r = self.ids.x11(self.root)?;
+        let raw: Vec<u32> = list.iter().map(|&w| self.ids.x11(w).unwrap()).collect();
         self.conn.change_property32(
             PropMode::REPLACE,
             r,

@@ -5,7 +5,7 @@ use crate::backend::api::{PropertyOps as PropertyOpsTrait, WindowType};
 use crate::backend::common_define::WindowId;
 use crate::backend::error::BackendError;
 use crate::backend::x11::Atoms;
-use crate::backend::x11::WindowHandleExt;
+use crate::backend::x11::ids::X11IdRegistry;
 use std::sync::Arc;
 use x11rb::connection::Connection;
 use x11rb::properties::WmSizeHints;
@@ -15,17 +15,18 @@ use x11rb::wrapper::ConnectionExt as _;
 pub struct X11PropertyOps<C: Connection> {
     conn: Arc<C>,
     atoms: Atoms,
+    ids: X11IdRegistry,
 }
 
 impl<C: Connection> X11PropertyOps<C> {
-    pub fn new(conn: Arc<C>, atoms: Atoms) -> Self {
-        Self { conn, atoms }
+    pub fn new(conn: Arc<C>, atoms: Atoms, ids: X11IdRegistry) -> Self {
+        Self { conn, atoms, ids }
     }
 }
 
 impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
     fn get_text_property(&self, win: WindowId, atom: Atom) -> Option<String> {
-        let w = win.to_x11_id().ok()?;
+        let w = self.ids.x11(win).ok()?;
         let reply = self
             .conn
             .get_property(false, w, atom, AtomEnum::ANY, 0, u32::MAX)
@@ -55,7 +56,7 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
     }
 
     fn get_net_wm_state_atoms(&self, win: WindowId) -> Result<Vec<u32>, BackendError> {
-        let w = win.to_x11_id()?;
+        let w = self.ids.x11(win)?;
         let reply = self
             .conn
             .get_property(
@@ -74,7 +75,7 @@ impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
     }
 
     fn set_net_wm_state_atoms(&self, win: WindowId, atoms: &[u32]) -> Result<(), BackendError> {
-        let w = win.to_x11_id()?;
+        let w = self.ids.x11(win)?;
         self.conn.change_property32(
             PropMode::REPLACE,
             w,
@@ -149,7 +150,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn get_class(&self, win: WindowId) -> (String, String) {
-        let w = win.to_x11_id().unwrap();
+        let w = self.ids.x11(win).unwrap();
         let reply =
             match self
                 .conn
@@ -180,7 +181,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn get_window_types(&self, win: WindowId) -> Vec<WindowType> {
-        let w = win.to_x11_id().unwrap();
+        let w = self.ids.x11(win).unwrap();
         let mut result = Vec::new();
         if let Ok(reply) = self.conn.get_property(
             false,
@@ -227,7 +228,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn get_wm_hints(&self, win: WindowId) -> Option<WmHints> {
-        let w = win.to_x11_id().ok()?;
+        let w = self.ids.x11(win).ok()?;
         let prop = self
             .conn
             .get_property(false, w, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 20)
@@ -251,7 +252,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
 
     fn set_urgent_hint(&self, win: WindowId, urgent: bool) -> Result<(), BackendError> {
         const X_URGENCY_HINT: u32 = 1 << 8;
-        let w = win.to_x11_id()?;
+        let w = self.ids.x11(win)?;
         let cookie =
             self.conn
                 .get_property(false, w, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 20)?;
@@ -281,7 +282,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn transient_for(&self, win: WindowId) -> Option<WindowId> {
-        let w = win.to_x11_id().ok()?;
+        let w = self.ids.x11(win).ok()?;
         let r = self
             .conn
             .get_property(
@@ -299,7 +300,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         if r.format == 32 {
             if let Some(t) = r.value32()?.next() {
                 if t != 0 && t != w {
-                    return Some(WindowId::X11(t as u64));
+                    return Some(self.ids.intern(t));
                 }
             }
         }
@@ -307,7 +308,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn fetch_normal_hints(&self, win: WindowId) -> Result<Option<NormalHints>, BackendError> {
-        let w = win.to_x11_id()?;
+        let w = self.ids.x11(win)?;
         let reply_opt = WmSizeHints::get_normal_hints(&self.conn, w)?.reply()?;
         if let Some(r) = reply_opt {
             let (mut base_w, mut base_h) = (0, 0);
@@ -360,7 +361,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         start_x: u32,
         end_x: u32,
     ) -> Result<(), BackendError> {
-        let w = win.to_x11_id()?;
+        let w = self.ids.x11(win)?;
         let strut = [0, 0, top, 0];
         self.conn.change_property32(
             PropMode::REPLACE,
@@ -381,7 +382,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn clear_window_strut(&self, win: WindowId) -> Result<(), BackendError> {
-        let w = win.to_x11_id()?;
+        let w = self.ids.x11(win)?;
         let _ = self.conn.delete_property(w, self.atoms._NET_WM_STRUT);
         let _ = self
             .conn
@@ -395,7 +396,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
         tags: u32,
         monitor_num: u32,
     ) -> Result<(), BackendError> {
-        let w = win.to_x11_id()?;
+        let w = self.ids.x11(win)?;
         let data = [tags, monitor_num];
         self.conn.change_property32(
             PropMode::REPLACE,
@@ -408,7 +409,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn get_wm_state(&self, win: WindowId) -> Result<i64, BackendError> {
-        let w = win.to_x11_id()?;
+        let w = self.ids.x11(win)?;
         let reply = self
             .conn
             .get_property(false, w, self.atoms.WM_STATE, self.atoms.WM_STATE, 0, 2)?
@@ -426,7 +427,7 @@ impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<
     }
 
     fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), BackendError> {
-        let w = win.to_x11_id()?;
+        let w = self.ids.x11(win)?;
         let data: [u32; 2] = [state as u32, 0];
         self.conn.change_property32(
             PropMode::REPLACE,

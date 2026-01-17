@@ -4,12 +4,12 @@ pub mod color;
 pub mod cursor;
 pub mod event_source;
 pub mod ewmh_facade;
+pub mod ids;
 pub mod input_ops;
 pub mod key_ops;
 pub mod output_ops;
 pub mod property_ops;
 pub mod window_ops;
-use crate::backend::error::BackendError;
 
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
@@ -47,18 +47,5 @@ x11rb::atom_manager! {
 
         UTF8_STRING,
         COMPOUND_TEXT,
-    }
-}
-
-use crate::backend::common_define::WindowHandle;
-
-pub trait WindowHandleExt {
-    fn to_x11_id(&self) -> Result<u32, BackendError>;
-}
-
-impl WindowHandleExt for WindowHandle {
-    fn to_x11_id(&self) -> Result<u32, BackendError> {
-        self.as_x11()
-            .ok_or_else(|| BackendError::Unsupported("Invalid WindowHandle: Not an X11 handle"))
     }
 }

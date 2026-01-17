@@ -8,25 +8,31 @@ use crate::backend::api::AllowMode;
 use crate::backend::api::InputOps as InputOpsTrait;
 use crate::backend::common_define::StdCursorKind;
 use crate::backend::common_define::WindowId;
-use crate::backend::x11::WindowHandleExt;
+use crate::backend::x11::ids::X11IdRegistry;
 
 pub struct X11InputOps<C: Connection> {
     conn: Arc<C>,
-    root: Window,
+    root_x11: u32,
+    ids: X11IdRegistry,
 }
 
 impl<C: Connection> Clone for X11InputOps<C> {
     fn clone(&self) -> Self {
         Self {
             conn: self.conn.clone(),
-            root: self.root,
+            root_x11: self.root_x11,
+            ids: self.ids.clone(),
         }
     }
 }
 
 impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
-    pub fn new(conn: Arc<C>, root: Window) -> Self {
-        Self { conn, root }
+    pub fn new(conn: Arc<C>, root_x11: u32, ids: X11IdRegistry) -> Self {
+        Self {
+            conn,
+            root_x11,
+            ids,
+        }
     }
 
     fn map_allow_mode(mode: AllowMode) -> Allow {
@@ -48,7 +54,7 @@ impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
     }
 
     pub fn query_pointer(&self) -> Result<QueryPointerReply, BackendError> {
-        Ok(self.conn.query_pointer(self.root)?.reply()?)
+        Ok(self.conn.query_pointer(self.root_x11)?.reply()?)
     }
 
     pub fn flush(&self) -> Result<(), BackendError> {
@@ -73,7 +79,7 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
             .conn
             .grab_pointer(
                 false,
-                self.root,
+                self.root_x11,
                 mask,
                 GrabMode::ASYNC,
                 GrabMode::ASYNC,
@@ -111,7 +117,7 @@ impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
     }
 
     fn warp_pointer_to_window(&self, win: WindowId, x: i16, y: i16) -> Result<(), BackendError> {
-        let w = win.to_x11_id()?;
+        let w = self.ids.x11(win)?;
         self.conn.warp_pointer(0u32, w, 0, 0, 0, 0, x, y)?;
         Ok(())
     }

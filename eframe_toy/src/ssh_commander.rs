@@ -731,7 +731,38 @@ impl eframe::App for SSHCommander {
                 }
             }
 
-            ui.separator();
+            ui.add_space(8.0);
+
+            // --- Command Preview Section (NEW) ---
+            // Construct command live based on current input
+            let preview_cmd = self.build_command();
+            ui.group(|ui| {
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new("Command Preview").strong());
+                    if ui
+                        .button("📋 Copy")
+                        .on_hover_text("Copy command to clipboard")
+                        .clicked()
+                    {
+                        ui.output_mut(|o| o.copied_text = preview_cmd.clone());
+                    }
+                });
+
+                ui.add_space(2.0);
+
+                egui::ScrollArea::vertical()
+                    .id_salt("cmd_preview_scroll")
+                    .max_height(60.0)
+                    .show(ui, |ui| {
+                        ui.add(
+                            egui::TextEdit::multiline(&mut preview_cmd.clone())
+                                .font(egui::TextStyle::Monospace)
+                                .desired_width(ui.available_width()),
+                        );
+                    });
+            });
+
+            ui.add_space(8.0);
 
             // --- Control Bar ---
             ui.horizontal(|ui| {

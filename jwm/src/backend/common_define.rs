@@ -3,56 +3,30 @@ use bitflags::bitflags;
 use std::fmt;
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
-pub enum WindowHandle {
-    X11(u64),
-    Wayland(u64),
-    Mock(u64),
-}
-
-pub type WindowId = WindowHandle;
-
-impl WindowHandle {
-    // 辅助方法：仅在 X11 后端内部使用
-    pub fn as_x11(&self) -> Option<u32> {
-        match self {
-            WindowHandle::X11(id) => Some(*id as u32),
-            _ => None,
-        }
+pub struct WindowId(u64);
+impl WindowId {
+    pub(crate) fn from_raw(id: u64) -> Self {
+        Self(id)
     }
-    pub fn as_wayland(&self) -> Option<u64> {
-        match self {
-            WindowHandle::Wayland(id) => Some(*id),
-            _ => None,
-        }
+    pub fn raw(self) -> u64 {
+        self.0
     }
 }
 
-impl fmt::Debug for WindowHandle {
+impl fmt::Debug for WindowId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::X11(id) => write!(f, "X11({:#x})", id),
-            Self::Wayland(id) => write!(f, "WL({:#x})", id),
-            Self::Mock(id) => write!(f, "Mock({})", id),
-        }
+        write!(f, "Win({:#x})", self.0)
     }
 }
 
-impl Default for WindowHandle {
-    fn default() -> Self {
-        WindowHandle::X11(0)
-    }
-}
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct OutputId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct Pixel(pub u32);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct CursorHandle(pub u64);
-
-/// 输出设备（显示器）的唯一标识符
-/// 在 X11 下可能是索引或 RROutput ID，在 Wayland 下是 Smithay Output 的唯一 ID
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct OutputId(pub u64);
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum StdCursorKind {

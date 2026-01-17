@@ -10,21 +10,23 @@ use crate::backend::api::KeyOps;
 use crate::backend::common_define::WindowId;
 use crate::backend::common_define::{KeySym, Mods};
 use crate::backend::error::BackendError;
-use crate::backend::x11::WindowHandleExt;
 use crate::backend::x11::adapter::mods_to_x11;
+use crate::backend::x11::ids::X11IdRegistry;
 
 pub struct X11KeyOps<C: Connection> {
     conn: Arc<C>,
     cache: HashMap<u8, u32>,
     numlock_mask: Arc<Mutex<u16>>,
+    ids: X11IdRegistry,
 }
 
 impl<C: Connection> X11KeyOps<C> {
-    pub fn new(conn: Arc<C>, numlock_mask: Arc<Mutex<u16>>) -> Self {
+    pub fn new(conn: Arc<C>, numlock_mask: Arc<Mutex<u16>>, ids: X11IdRegistry) -> Self {
         let mut ops = Self {
             conn: conn.clone(),
             cache: HashMap::new(),
             numlock_mask,
+            ids,
         };
         let _ = ops.detect_and_store_numlock();
         ops
@@ -93,14 +95,14 @@ impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
     }
 
     fn clear_key_grabs(&self, root: WindowId) -> Result<(), BackendError> {
-        let r = root.to_x11_id()?;
+        let r = self.ids.x11(root)?;
         self.conn.ungrab_key(Grab::ANY, r, ModMask::ANY.into())?;
         Ok(())
     }
 
     fn grab_keys(&self, root: WindowId, bindings: &[(Mods, KeySym)]) -> Result<(), BackendError> {
         let numlock_local = *self.numlock_mask.lock().unwrap();
-        let r = root.to_x11_id()?;
+        let r = self.ids.x11(root)?;
 
         let setup = self.conn.setup();
         let min = setup.min_keycode;

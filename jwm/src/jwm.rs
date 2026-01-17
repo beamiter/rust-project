@@ -45,7 +45,6 @@ use crate::backend::common_define::ConfigWindowBits;
 use crate::backend::common_define::EventMaskBits;
 use crate::backend::common_define::SchemeType;
 use crate::backend::common_define::{KeySym, Mods, MouseButton, StdCursorKind};
-use crate::backend::x11::WindowHandleExt;
 use crate::config::CONFIG;
 use crate::core::layout::LayoutEnum;
 use crate::core::models::{ClientKey, MonitorKey, Pertag, SizeHints, WMClient, WMMonitor};
@@ -410,21 +409,7 @@ impl WMController for Jwm {
         mask_bits: u16,
         changes: WindowChanges,
     ) {
-        let x = changes.x.unwrap_or(0) as i16;
-        let y = changes.y.unwrap_or(0) as i16;
-        let w = changes.width.unwrap_or(0) as u16;
-        let h = changes.height.unwrap_or(0) as u16;
-        let border = changes.border_width.unwrap_or(0) as u16;
-        let sibling = changes.sibling.and_then(|s| s.as_x11());
-        let stack_mode = match changes.stack_mode {
-            Some(StackMode::Above) => 0, // X11 StackMode::Above
-            Some(StackMode::Below) => 1,
-            _ => 0,
-        };
-
-        if let Err(e) = self.on_configure_request_internal(
-            backend, win, mask_bits, x, y, w, h, border, sibling, stack_mode,
-        ) {
+        if let Err(e) = self.on_configure_request_internal(backend, win, mask_bits, changes) {
             error!("Error handling ConfigureRequest: {:?}", e);
         }
     }
@@ -953,30 +938,19 @@ impl Jwm {
         backend: &mut dyn Backend,
         window: WindowId,
         mask_bits: u16,
-        x: i16,
-        y: i16,
-        w: u16,
-        h: u16,
-        border: u16,
-        sibling: Option<u32>,
-        stack_mode: u8,
+        changes: WindowChanges,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if Some(window) == self.status_bar_window {
-            return self.handle_statusbar_configure_request_params(
-                backend, window, mask_bits, x, y, w, h, border, sibling, stack_mode,
-            );
+            return self
+                .handle_statusbar_configure_request_params(backend, window, mask_bits, changes);
         }
 
-        let client_key_opt = self.wintoclient(window);
-        if let Some(client_key) = client_key_opt {
-            return self.handle_regular_configure_request_params(
-                backend, client_key, mask_bits, x, y, w, h, border, sibling, stack_mode,
-            );
-        } else {
-            return self.handle_unmanaged_configure_request_params(
-                backend, window, mask_bits, x, y, w, h, border, sibling, stack_mode,
-            );
+        if let Some(client_key) = self.wintoclient(window) {
+            return self
+                .handle_regular_configure_request_params(backend, client_key, mask_bits, changes);
         }
+
+        self.handle_unmanaged_configure_request_params(backend, window, mask_bits, changes)
     }
 
     fn handle_statusbar_configure_request_params(
@@ -984,43 +958,43 @@ impl Jwm {
         backend: &mut dyn Backend,
         window: WindowId,
         mask_bits: u16,
-        x: i16,
-        y: i16,
-        _w: u16,
-        h: u16,
-        _border: u16,
-        _sibling: Option<u32>,
-        _stack_mode: u8,
+        req: WindowChanges,
     ) -> Result<(), Box<dyn std::error::Error>> {
         if self.status_bar_client.is_none() {
             error!("[handle_statusbar_configure_request] StatusBar not found");
-            return self.handle_unmanaged_configure_request_params(
-                backend, window, mask_bits, x, y, 0, h, 0, None, 0,
-            );
+            return self.handle_unmanaged_configure_request_params(backend, window, mask_bits, req);
         }
+
         let mut changes = WindowChanges::default();
         let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
-        {
-            let bar_key = self.status_bar_client.unwrap();
-            let statusbar_mut = self.state.clients.get_mut(bar_key).unwrap();
 
-            if mask.contains(ConfigWindowBits::X) {
-                statusbar_mut.geometry.x = x as i32;
-                changes.x = Some(x as i32);
+        let bar_key = self.status_bar_client.unwrap();
+        let statusbar_mut = self.state.clients.get_mut(bar_key).unwrap();
+
+        if mask.contains(ConfigWindowBits::X) {
+            if let Some(x) = req.x {
+                statusbar_mut.geometry.x = x;
+                changes.x = Some(x);
             }
-            if mask.contains(ConfigWindowBits::Y) {
-                statusbar_mut.geometry.y = y as i32;
-                changes.y = Some(y as i32);
+        }
+        if mask.contains(ConfigWindowBits::Y) {
+            if let Some(y) = req.y {
+                statusbar_mut.geometry.y = y;
+                changes.y = Some(y);
             }
-            if mask.contains(ConfigWindowBits::HEIGHT) {
-                let new_h = (h.max(CONFIG.status_bar_height() as u16)) as i32;
+        }
+        if mask.contains(ConfigWindowBits::HEIGHT) {
+            if let Some(h) = req.height {
+                let new_h = (h as i32).max(CONFIG.status_bar_height());
                 statusbar_mut.geometry.h = new_h;
                 changes.height = Some(new_h as u32);
             }
-            changes.width = Some(statusbar_mut.geometry.w as u32);
-
-            backend.window_ops().apply_window_changes(window, changes)?;
         }
+
+        changes.width = Some(statusbar_mut.geometry.w as u32);
+
+        backend.window_ops().apply_window_changes(window, changes)?;
+
         let monitor_key = self.get_monitor_by_id(self.current_bar_monitor_id.unwrap());
         self.arrange(backend, monitor_key);
         if let Some(client_key) = self.wintoclient(window) {
@@ -1034,20 +1008,16 @@ impl Jwm {
         backend: &mut dyn Backend,
         client_key: ClientKey,
         mask_bits: u16,
-        x: i16,
-        y: i16,
-        w: u16,
-        h: u16,
-        border: u16,
-        _sibling: Option<u32>,
-        _stack_mode: u8,
+        req: WindowChanges,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let is_popup = self.is_popup_like(backend, client_key);
-
         let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
+
         if mask.contains(ConfigWindowBits::BORDER_WIDTH) {
-            if let Some(client) = self.state.clients.get_mut(client_key) {
-                client.geometry.border_w = border as i32;
+            if let Some(border) = req.border_width {
+                if let Some(client) = self.state.clients.get_mut(client_key) {
+                    client.geometry.border_w = border as i32;
+                }
             }
         }
 
@@ -1059,43 +1029,54 @@ impl Jwm {
 
         if is_floating {
             let (mx, my, mw, mh) = if let Some(mon_key) = mon_key_opt {
-                if let Some(monitor) = self.state.monitors.get(mon_key) {
-                    (
-                        monitor.geometry.m_x,
-                        monitor.geometry.m_y,
-                        monitor.geometry.m_w,
-                        monitor.geometry.m_h,
-                    )
-                } else {
-                    return Err("Monitor not found".into());
-                }
+                let monitor = self
+                    .state
+                    .monitors
+                    .get(mon_key)
+                    .ok_or("Monitor not found")?;
+                (
+                    monitor.geometry.m_x,
+                    monitor.geometry.m_y,
+                    monitor.geometry.m_w,
+                    monitor.geometry.m_h,
+                )
             } else {
                 return Err("Client has no monitor assigned".into());
             };
 
             if let Some(client) = self.state.clients.get_mut(client_key) {
                 if mask.contains(ConfigWindowBits::X) {
-                    client.geometry.old_x = client.geometry.x;
-                    client.geometry.x = mx + x as i32;
+                    if let Some(x) = req.x {
+                        client.geometry.old_x = client.geometry.x;
+                        client.geometry.x = mx + x;
+                    }
                 }
                 if mask.contains(ConfigWindowBits::Y) {
-                    client.geometry.old_y = client.geometry.y;
-                    client.geometry.y = my + y as i32;
+                    if let Some(y) = req.y {
+                        client.geometry.old_y = client.geometry.y;
+                        client.geometry.y = my + y;
+                    }
                 }
                 if mask.contains(ConfigWindowBits::WIDTH) {
-                    client.geometry.old_w = client.geometry.w;
-                    client.geometry.w = w as i32;
+                    if let Some(w) = req.width {
+                        client.geometry.old_w = client.geometry.w;
+                        client.geometry.w = w as i32;
+                    }
                 }
                 if mask.contains(ConfigWindowBits::HEIGHT) {
-                    client.geometry.old_h = client.geometry.h;
-                    client.geometry.h = h as i32;
+                    if let Some(h) = req.height {
+                        client.geometry.old_h = client.geometry.h;
+                        client.geometry.h = h as i32;
+                    }
                 }
+
                 if (client.geometry.x + client.geometry.w) > mx + mw && client.state.is_floating {
                     client.geometry.x = mx + (mw / 2 - client.total_width() / 2);
                 }
                 if (client.geometry.y + client.geometry.h) > my + mh && client.state.is_floating {
                     client.geometry.y = my + (mh / 2 - client.total_height() / 2);
                 }
+
                 if is_popup {
                     let changes = WindowChanges {
                         x: Some(client.geometry.x),
@@ -1110,11 +1091,13 @@ impl Jwm {
                     return Ok(());
                 }
             }
+
             if mask.contains(ConfigWindowBits::X | ConfigWindowBits::Y)
                 && !mask.contains(ConfigWindowBits::WIDTH | ConfigWindowBits::HEIGHT)
             {
                 self.configure_client(backend, client_key)?;
             }
+
             if self.is_client_visible_by_key(client_key) {
                 if let Some(client) = self.state.clients.get(client_key) {
                     let changes = WindowChanges {
@@ -1133,6 +1116,47 @@ impl Jwm {
             self.configure_client(backend, client_key)?;
         }
 
+        Ok(())
+    }
+
+    fn handle_unmanaged_configure_request_params(
+        &mut self,
+        backend: &mut dyn Backend,
+        window: WindowId,
+        mask_bits: u16,
+        req: WindowChanges,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        info!(
+            "[handle_unmanaged_configure_request] unmanaged window={:?}",
+            window
+        );
+
+        let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
+        let mut changes = WindowChanges::default();
+
+        if mask.contains(ConfigWindowBits::X) {
+            changes.x = req.x;
+        }
+        if mask.contains(ConfigWindowBits::Y) {
+            changes.y = req.y;
+        }
+        if mask.contains(ConfigWindowBits::WIDTH) {
+            changes.width = req.width;
+        }
+        if mask.contains(ConfigWindowBits::HEIGHT) {
+            changes.height = req.height;
+        }
+        if mask.contains(ConfigWindowBits::BORDER_WIDTH) {
+            changes.border_width = req.border_width;
+        }
+        if mask.contains(ConfigWindowBits::SIBLING) {
+            changes.sibling = req.sibling;
+        }
+        if mask.contains(ConfigWindowBits::STACK_MODE) {
+            changes.stack_mode = req.stack_mode;
+        }
+
+        backend.window_ops().apply_window_changes(window, changes)?;
         Ok(())
     }
 
@@ -1168,51 +1192,6 @@ impl Jwm {
                 self.recttomon(backend, fallback_pos.0, fallback_pos.1)
             }
         }
-    }
-
-    fn handle_unmanaged_configure_request_params(
-        &mut self,
-        backend: &mut dyn Backend,
-        window: WindowId,
-        mask_bits: u16,
-        x: i16,
-        y: i16,
-        w: u16,
-        h: u16,
-        border: u16,
-        sibling: Option<u32>,
-        _stack_mode: u8,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        info!(
-            "[handle_unmanaged_configure_request] unmanaged window={:?}",
-            window
-        );
-        let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
-        let mut changes = WindowChanges::default();
-        if mask.contains(ConfigWindowBits::X) {
-            changes.x = Some(x as i32);
-        }
-        if mask.contains(ConfigWindowBits::Y) {
-            changes.y = Some(y as i32);
-        }
-        if mask.contains(ConfigWindowBits::WIDTH) {
-            changes.width = Some(w as u32);
-        }
-        if mask.contains(ConfigWindowBits::HEIGHT) {
-            changes.height = Some(h as u32);
-        }
-        if mask.contains(ConfigWindowBits::BORDER_WIDTH) {
-            changes.border_width = Some(border as u32);
-        }
-        if mask.contains(ConfigWindowBits::SIBLING) {
-            changes.sibling = sibling.map(|s| WindowId::X11(s.into()));
-        }
-        if mask.contains(ConfigWindowBits::STACK_MODE) {
-            changes.stack_mode = Some(StackMode::Above);
-        }
-        backend.window_ops().apply_window_changes(window, changes)?;
-
-        Ok(())
     }
 
     fn insert_client(&mut self, client: WMClient) -> ClientKey {
@@ -4039,7 +4018,7 @@ impl Jwm {
         let root = backend.root_window().expect("no root window");
         backend
             .cursor_provider()
-            .apply(root.to_x11_id().unwrap() as u64, StdCursorKind::LeftPtr)?;
+            .apply(root, StdCursorKind::LeftPtr)?;
         backend
             .window_ops()
             .change_event_mask(backend.root_window().expect("no root window"), mask)?;

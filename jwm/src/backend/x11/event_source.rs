@@ -5,33 +5,38 @@ use x11rb::connection::Connection;
 use x11rb::protocol::{Event as XEvent, xproto};
 use x11rb::rust_connection::RustConnection;
 
-use crate::backend::api::NotifyMode;
 use crate::backend::api::{
     BackendEvent, NetWmAction, NetWmState, PropertyKind, StackMode, WindowChanges,
 };
-use crate::backend::common_define::WindowId;
+use crate::backend::api::{HitTarget, NotifyMode};
 use crate::backend::error::BackendError;
 use crate::backend::x11::Atoms;
+use crate::backend::x11::ids::X11IdRegistry;
 
 use calloop::{EventSource, Interest, Mode, Poll, PostAction, Readiness, Token, TokenFactory};
 
 pub struct X11EventSource {
     conn: Arc<RustConnection>,
     atoms: Atoms,
-    root: u32,
+    root_x11: u32,
+    ids: X11IdRegistry,
 }
 
 impl X11EventSource {
-    pub fn new(conn: Arc<RustConnection>, atoms: Atoms, root: u32) -> Self {
-        Self { conn, atoms, root }
+    pub fn new(conn: Arc<RustConnection>, atoms: Atoms, root_x11: u32, ids: X11IdRegistry) -> Self {
+        Self {
+            conn,
+            atoms,
+            root_x11,
+            ids,
+        }
     }
 
-    fn hit_target_from_event_window(&self, event_window: u32) -> crate::backend::api::HitTarget {
-        use crate::backend::api::HitTarget;
-        if event_window == self.root {
+    fn hit_target_from_event_window(&self, event_window: u32) -> HitTarget {
+        if event_window == self.root_x11 {
             HitTarget::Background { output: None }
         } else {
-            HitTarget::Surface(WindowId::X11(event_window as u64))
+            HitTarget::Surface(self.ids.intern(event_window))
         }
     }
 
@@ -91,20 +96,16 @@ impl X11EventSource {
                 state: e.state.bits(),
                 time: e.time,
             }),
-            XEvent::MapRequest(e) => {
-                Some(BackendEvent::WindowCreated(WindowId::X11(e.window as u64)))
+            XEvent::MapRequest(e) => Some(BackendEvent::WindowCreated(self.ids.intern(e.window))),
+            XEvent::MapNotify(e) => Some(BackendEvent::WindowMapped(self.ids.intern(e.window))),
+            XEvent::UnmapNotify(e) => Some(BackendEvent::WindowUnmapped(self.ids.intern(e.window))),
+            XEvent::DestroyNotify(e) => {
+                let id = self.ids.intern(e.window);
+                self.ids.remove_x11(e.window);
+                Some(BackendEvent::WindowDestroyed(id))
             }
-            XEvent::MapNotify(e) => {
-                Some(BackendEvent::WindowMapped(WindowId::X11(e.window as u64)))
-            }
-            XEvent::UnmapNotify(e) => {
-                Some(BackendEvent::WindowUnmapped(WindowId::X11(e.window as u64)))
-            }
-            XEvent::DestroyNotify(e) => Some(BackendEvent::WindowDestroyed(WindowId::X11(
-                e.window as u64,
-            ))),
             XEvent::ConfigureNotify(e) => Some(BackendEvent::WindowConfigured {
-                window: WindowId::X11(e.window as u64),
+                window: self.ids.intern(e.window),
                 x: e.x as i32,
                 y: e.y as i32,
                 width: e.width as u32,
@@ -118,9 +119,9 @@ impl X11EventSource {
                     _ => NotifyMode::Grab,
                 };
                 Some(BackendEvent::EnterNotify {
-                    window: WindowId::X11(e.event as u64),
+                    window: self.ids.intern(e.event),
                     subwindow: if e.child != 0 {
-                        Some(WindowId::X11(e.child as u64))
+                        Some(self.ids.intern(e.child))
                     } else {
                         None
                     },
@@ -137,15 +138,15 @@ impl X11EventSource {
                     _ => NotifyMode::Grab,
                 };
                 Some(BackendEvent::LeaveNotify {
-                    window: WindowId::X11(e.event as u64),
+                    window: self.ids.intern(e.event),
                     mode,
                 })
             }
             XEvent::FocusIn(e) => Some(BackendEvent::FocusIn {
-                window: WindowId::X11(e.event as u64),
+                window: self.ids.intern(e.event),
             }),
             XEvent::FocusOut(e) => Some(BackendEvent::FocusOut {
-                window: WindowId::X11(e.event as u64),
+                window: self.ids.intern(e.event),
             }),
             XEvent::ConfigureRequest(e) => {
                 let changes = WindowChanges {
@@ -175,7 +176,7 @@ impl X11EventSource {
                         None
                     },
                     sibling: if e.value_mask.contains(xproto::ConfigWindow::SIBLING) {
-                        Some(WindowId::X11(e.sibling as u64))
+                        Some(self.ids.intern(e.sibling))
                     } else {
                         None
                     },
@@ -193,7 +194,7 @@ impl X11EventSource {
                     },
                 };
                 Some(BackendEvent::ConfigureRequest {
-                    window: WindowId::X11(e.window as u64),
+                    window: self.ids.intern(e.window),
                     mask_bits: e.value_mask.bits(),
                     changes,
                 })
@@ -204,14 +205,14 @@ impl X11EventSource {
                 }
                 let kind = self.map_property_kind(e.atom);
                 Some(BackendEvent::PropertyChanged {
-                    window: WindowId::X11(e.window as u64),
+                    window: self.ids.intern(e.window),
                     kind,
                 })
             }
             XEvent::ClientMessage(e) => {
                 let data32 = e.data.as_data32();
                 if e.type_ == self.atoms._NET_WM_STATE && e.format == 32 && data32.len() >= 2 {
-                    let window = WindowId::X11(e.window as u64);
+                    let window = self.ids.intern(e.window);
                     if let Some(action) = Self::map_net_wm_action(data32[0]) {
                         for &atom in &[data32[1], data32[2]] {
                             if atom == self.atoms._NET_WM_STATE_FULLSCREEN {
@@ -226,11 +227,11 @@ impl X11EventSource {
                 }
                 if e.type_ == self.atoms._NET_ACTIVE_WINDOW {
                     return Some(BackendEvent::ActiveWindowMessage {
-                        window: WindowId::X11(e.window as u64),
+                        window: self.ids.intern(e.window),
                     });
                 }
                 Some(BackendEvent::ClientMessage {
-                    window: WindowId::X11(e.window as u64),
+                    window: self.ids.intern(e.window),
                     type_: e.type_,
                     data: [
                         data32.get(0).copied().unwrap_or(0),
@@ -244,7 +245,7 @@ impl X11EventSource {
             }
             XEvent::MappingNotify(_) => Some(BackendEvent::MappingNotify),
             XEvent::Expose(e) => Some(BackendEvent::Expose {
-                window: WindowId::X11(e.window as u64),
+                window: self.ids.intern(e.window),
             }),
             _ => None,
         }

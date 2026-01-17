@@ -1,7 +1,8 @@
 // src/backend/x11/cursor.rs
 use crate::backend::api::CursorProvider;
-use crate::backend::common_define::{CursorHandle, StdCursorKind};
+use crate::backend::common_define::{CursorHandle, StdCursorKind, WindowId};
 use crate::backend::error::BackendError;
+use crate::backend::x11::ids::X11IdRegistry;
 use std::collections::HashMap;
 use std::sync::Arc;
 use x11rb::connection::Connection;
@@ -324,10 +325,11 @@ pub struct X11CursorProvider<C: Connection> {
     conn: Arc<C>,
     cursor_font: Font,
     cache: HashMap<StdCursorKind, Cursor>,
+    ids: X11IdRegistry,
 }
 
 impl<C: Connection> X11CursorProvider<C> {
-    pub fn new(conn: Arc<C>) -> Result<Self, BackendError> {
+    pub fn new(conn: Arc<C>, ids: X11IdRegistry) -> Result<Self, BackendError> {
         use x11rb::protocol::xproto::ConnectionExt;
         let font = conn.generate_id()?;
         conn.open_font(font, b"cursor")?;
@@ -335,6 +337,7 @@ impl<C: Connection> X11CursorProvider<C> {
             conn,
             cursor_font: font,
             cache: HashMap::new(),
+            ids,
         })
     }
 
@@ -389,14 +392,14 @@ impl<C: Connection + Send + Sync + 'static> CursorProvider for X11CursorProvider
         Ok(CursorHandle(cursor as u64))
     }
 
-    fn apply(&mut self, window_id: u64, kind: StdCursorKind) -> Result<(), BackendError> {
+    fn apply(&mut self, window: WindowId, kind: StdCursorKind) -> Result<(), BackendError> {
         use x11rb::protocol::xproto::ConnectionExt;
         let c = match self.get(kind) {
             Ok(h) => h.0 as u32,
             Err(e) => return Err(e),
         };
         (*self.conn).change_window_attributes(
-            window_id as u32,
+            self.ids.x11(window)?,
             &ChangeWindowAttributesAux::new().cursor(c),
         )?;
         Ok(())
