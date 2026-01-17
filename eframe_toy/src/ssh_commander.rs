@@ -744,7 +744,8 @@ impl eframe::App for SSHCommander {
                         .on_hover_text("Copy command to clipboard")
                         .clicked()
                     {
-                        ui.output_mut(|o| o.copied_text = preview_cmd.clone());
+                        // FIX: Use ui.ctx().copy_text() instead of ui.output_mut(...)
+                        ui.ctx().copy_text(preview_cmd.clone());
                     }
                 });
 
