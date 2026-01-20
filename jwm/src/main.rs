@@ -31,8 +31,6 @@ fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
 
     #[cfg(feature = "backend-udev")]
     {
-        // 简单逻辑：如果开启了 udev feature，就使用 udev 后端
-        // 你可以加入环境变量判断，例如 if env::var("JWM_BACKEND") == Ok("udev".into())
         info!("Initializing Udev Backend (Smithay)");
         backend = Box::new(UdevBackend::new()?);
     }
