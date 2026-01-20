@@ -4,8 +4,12 @@ use log::{error, info, warn};
 use std::{env, process::Command, sync::atomic::Ordering};
 use xbar_core::initialize_logging;
 
+// 导入后端
 #[cfg(feature = "backend-x11")]
 use jwm::backend::x11::backend::X11Backend;
+
+#[cfg(feature = "backend-udev")]
+use jwm::backend::udev::backend::UdevBackend;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_locale();
@@ -21,7 +25,29 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
     info!("[main] Starting JWM instance");
-    let mut backend: Box<dyn jwm::backend::api::Backend> = Box::new(X11Backend::new()?);
+
+    // 动态选择 Backend
+    let mut backend: Box<dyn jwm::backend::api::Backend>;
+
+    #[cfg(feature = "backend-udev")]
+    {
+        // 简单逻辑：如果开启了 udev feature，就使用 udev 后端
+        // 你可以加入环境变量判断，例如 if env::var("JWM_BACKEND") == Ok("udev".into())
+        info!("Initializing Udev Backend (Smithay)");
+        backend = Box::new(UdevBackend::new()?);
+    }
+
+    #[cfg(all(not(feature = "backend-udev"), feature = "backend-x11"))]
+    {
+        info!("Initializing X11 Backend");
+        backend = Box::new(X11Backend::new()?);
+    }
+
+    #[cfg(all(not(feature = "backend-udev"), not(feature = "backend-x11")))]
+    {
+        panic!("No backend enabled!");
+    }
+
     backend.check_existing_wm()?;
 
     let mut jwm = Jwm::new(&mut *backend)?;

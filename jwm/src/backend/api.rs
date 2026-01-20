@@ -10,32 +10,22 @@ use std::fmt::Debug;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HitTarget {
-    /// 命中某个 surface/window
     Surface(WindowId),
-    /// 命中背景/空白区域（可携带 output 信息；X11 下可先为 None）
     Background { output: Option<OutputId> },
 }
 
-/// 屏幕/输出信息
 #[derive(Clone, Debug)]
 pub struct OutputInfo {
     pub id: OutputId,
     pub name: String,
-    /// 全局坐标系中的 X 位置
     pub x: i32,
-    /// 全局坐标系中的 Y 位置
     pub y: i32,
-    /// 物理像素宽度
     pub width: i32,
-    /// 物理像素高度
     pub height: i32,
-    /// 缩放因子 (X11 通常为 1.0, Wayland HiDPI 可能为 1.5, 2.0 等)
     pub scale: f32,
-    /// 刷新率 (mHz)
     pub refresh_rate: u32,
 }
 
-/// 简单的屏幕概览 (通常指整个桌面的边界)
 #[derive(Clone, Copy, Debug)]
 pub struct ScreenInfo {
     pub width: i32,
@@ -44,9 +34,7 @@ pub struct ScreenInfo {
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Capabilities {
-    /// 后端是否支持强制移动鼠标指针 (Wayland 通常不支持)
     pub can_warp_pointer: bool,
-    /// 后端是否支持查询所有客户端列表 (X11 支持，Wayland 不支持需自维护)
     pub supports_client_list: bool,
 }
 
@@ -83,7 +71,6 @@ pub enum StackMode {
     Opposite,
 }
 
-/// 客户端发起的配置请求参数
 #[derive(Debug, Clone, Default)]
 pub struct WindowChanges {
     pub x: Option<i32>,
@@ -135,19 +122,13 @@ pub enum NotifyMode {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CloseResult {
-    /// 优雅关闭 (发送 WM_DELETE_WINDOW 或 xdg_toplevel.close)
     Graceful,
-    /// 强制销毁 (Kill Client / Destroy Resource)
     Forced,
 }
 
 #[derive(Debug, Clone)]
 pub struct WindowAttributes {
-    /// 是否绕过窗口管理器 (Tooltip, Menu, DND 等)
-    /// X11: override_redirect=true
-    /// Wayland: 非 xdg_toplevel (如 popup) 或特殊的 layer shell surface
     pub override_redirect: bool,
-    /// 窗口是否可见
     pub map_state_viewable: bool,
 }
 
@@ -322,28 +303,19 @@ pub trait WindowOps: Send {
     }
 }
 
-/// 输入设备操作接口
 pub trait InputOps: Send {
-    /// 设置当前光标形状
     fn set_cursor(&self, kind: StdCursorKind) -> Result<(), BackendError>;
 
-    /// 获取当前指针绝对坐标
     fn get_pointer_position(&self) -> Result<(f64, f64), BackendError>;
 
-    /// 显式抓取指针 (用于 Interactive Move/Resize)
-    /// X11: XGrabPointer
-    /// Wayland: 开启内部抓取状态，将后续事件独占发送给 Handler
     fn grab_pointer(&self, mask: u32, cursor: Option<u64>) -> Result<bool, BackendError>;
 
-    /// 释放指针抓取
     fn ungrab_pointer(&self) -> Result<(), BackendError>;
 
-    /// 强制移动指针 (X11 only, Wayland 返回 Ok 但不做任何事)
     fn warp_pointer(&self, _x: f64, _y: f64) -> Result<(), BackendError> {
         Ok(())
     }
 
-    // 兼容旧接口
     fn query_pointer_root(&self) -> Result<(i32, i32, u16, u16), BackendError>;
     fn warp_pointer_to_window(&self, _win: WindowId, _x: i16, _y: i16) -> Result<(), BackendError> {
         Ok(())
@@ -357,7 +329,6 @@ pub trait InputOps: Send {
     }
 }
 
-/// 窗口属性读取接口
 pub trait PropertyOps: Send {
     fn get_title(&self, win: WindowId) -> String;
     fn get_class(&self, win: WindowId) -> (String, String); // (instance, class)
@@ -376,7 +347,6 @@ pub trait PropertyOps: Send {
         win: WindowId,
     ) -> Result<Option<crate::backend::api::NormalHints>, BackendError>;
 
-    // Legacy / EWMH Struts (Wayland 使用 Layer Shell)
     fn set_window_strut_top(
         &self,
         win: WindowId,
@@ -386,11 +356,9 @@ pub trait PropertyOps: Send {
     ) -> Result<(), BackendError>;
     fn clear_window_strut(&self, win: WindowId) -> Result<(), BackendError>;
 
-    // EWMH State (X11 Only)
     fn get_wm_state(&self, win: WindowId) -> Result<i64, BackendError>;
     fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), BackendError>;
 
-    // Client Info (X11 Only)
     fn set_client_info_props(
         &self,
         win: WindowId,
@@ -438,7 +406,6 @@ pub trait KeyOps: Send {
     fn clear_cache(&mut self);
 }
 
-// X11 EWMH 兼容层 (Wayland 下通常为空实现或通过 Xwayland 桥接)
 pub trait EwmhFacade: Send {
     fn set_active_window(&self, win: WindowId) -> Result<(), BackendError>;
     fn clear_active_window(&self) -> Result<(), BackendError>;
@@ -478,17 +445,14 @@ pub trait CursorProvider: Send {
 }
 
 pub trait EventHandler {
-    /// 处理具体的后端事件
     fn handle_event(
         &mut self,
         backend: &mut dyn Backend,
         event: BackendEvent,
     ) -> Result<(), BackendError>;
 
-    /// 每一轮循环的更新回调 (用于处理定时任务、动画帧等)
     fn update(&mut self, backend: &mut dyn Backend) -> Result<(), BackendError>;
 
-    /// 询问 Handler 是否应该退出主循环
     fn should_exit(&self) -> bool;
 }
 
@@ -528,26 +492,18 @@ pub trait Backend: Send {
         Ok(())
     }
 
-    /// 开始交互式移动窗口
-    /// X11: 后端记录状态，自行抓取指针
-    /// Wayland: 触发 xdg_toplevel_move
     fn begin_move(&mut self, _win: WindowId) -> Result<(), BackendError> {
         Ok(())
     }
 
-    /// 开始交互式调整窗口大小
     fn begin_resize(&mut self, _win: WindowId, _edge: ResizeEdge) -> Result<(), BackendError> {
         Ok(())
     }
 
-    // 处理鼠标移动 (用于后端内部的交互逻辑)
-    // 返回 true 表示后端已处理该事件，Jwm 不应继续处理
     fn handle_motion(&mut self, _x: f64, _y: f64, _time: u32) -> Result<bool, BackendError> {
         Ok(false)
     }
 
-    // 处理鼠标释放 (结束交互)
-    // 返回 true 表示后端已处理该事件
     fn handle_button_release(&mut self, _time: u32) -> Result<bool, BackendError> {
         Ok(false)
     }

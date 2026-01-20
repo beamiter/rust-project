@@ -22,9 +22,8 @@ tao_wgpu_bar = []
 nixgl = []
 cairo = []
 backend-x11 = []
-backend-wayland = []
+backend-udev = []
 default = ["backend-x11"]
-# default = ["backend-wayland"]
 
 [[bin]]
 name = "jwm-tool"
@@ -69,6 +68,10 @@ crossbeam-channel = "0.5.15"
 downcast-rs = "2.0.2"
 xcursor = "0.3.10"
 tracing = "0.1.41"
+drm = "0.14.1"
+libseat = "0.2.4"
+gbm = "0.18.0"
+egl = "0.2.7"
 
 
 [build-dependencies]
