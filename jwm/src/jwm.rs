@@ -910,8 +910,6 @@ impl Jwm {
         Ok(())
     }
 
-    // jwm/src/jwm.rs
-
     fn on_motion_notify_internal(
         &mut self,
         backend: &mut dyn Backend,
@@ -920,21 +918,26 @@ impl Jwm {
         root_y: i16,
         _time: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // 1. 如果鼠标聚焦被暂时阻塞（例如正在进行键盘操作），则忽略
+        // 1. 如果因为键盘操作等原因暂时阻塞了鼠标聚焦，直接返回
         if self.mouse_focus_blocked() {
             return Ok(());
         }
-        // 情况 A: 鼠标在某个具体的客户端窗口上
+        // 2. 尝试聚焦客户端
         if let Some(win) = window {
-            if let Some(client_key) = self.wintoclient(win) {
-                if !self.is_client_selected(client_key) {
-                    self.focus(backend, Some(client_key))?;
+            let is_already_focused = self
+                .get_selected_client_key()
+                .and_then(|key| self.state.clients.get(key))
+                .map(|c| c.win == win)
+                .unwrap_or(false);
+            if !is_already_focused {
+                if let Some(client_key) = self.wintoclient(win) {
+                    if !self.is_client_selected(client_key) {
+                        self.focus(backend, Some(client_key))?;
+                    }
                 }
             }
-            return Ok(());
         }
-
-        // 情况 B: 鼠标在背景(Root)上
+        // 3. 更新当前鼠标所在的显示器状态
         let new_monitor_key = self.recttomon(backend, root_x as i32, root_y as i32);
         if new_monitor_key != self.state.motion_mon {
             self.handle_monitor_switch_by_key(backend, new_monitor_key)?;
