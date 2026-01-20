@@ -910,6 +910,8 @@ impl Jwm {
         Ok(())
     }
 
+    // jwm/src/jwm.rs
+
     fn on_motion_notify_internal(
         &mut self,
         backend: &mut dyn Backend,
@@ -918,18 +920,27 @@ impl Jwm {
         root_y: i16,
         _time: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let is_background = window.is_none();
-        if !is_background {
-            return Ok(());
-        }
+        // 1. 如果鼠标聚焦被暂时阻塞（例如正在进行键盘操作），则忽略
         if self.mouse_focus_blocked() {
             return Ok(());
         }
+        // 情况 A: 鼠标在某个具体的客户端窗口上
+        if let Some(win) = window {
+            if let Some(client_key) = self.wintoclient(win) {
+                if !self.is_client_selected(client_key) {
+                    self.focus(backend, Some(client_key))?;
+                }
+            }
+            return Ok(());
+        }
+
+        // 情况 B: 鼠标在背景(Root)上
         let new_monitor_key = self.recttomon(backend, root_x as i32, root_y as i32);
         if new_monitor_key != self.state.motion_mon {
             self.handle_monitor_switch_by_key(backend, new_monitor_key)?;
         }
         self.state.motion_mon = new_monitor_key;
+
         Ok(())
     }
 
@@ -4497,12 +4508,10 @@ impl Jwm {
                 let _ = self.seturgent(backend, client_key, false);
             }
         }
-
         self.detachstack(client_key);
         self.attachstack(client_key);
-
         self.update_client_decoration(backend, client_key, true)?;
-
+        self.grabbuttons(backend, client_key, true);
         self.setfocus(backend, client_key)?;
         Ok(())
     }
@@ -4524,6 +4533,7 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(_client) = self.state.clients.get(client_key) {
             self.update_client_decoration(backend, client_key, false)?;
+            self.grabbuttons(backend, client_key, false);
             if setfocus {
                 backend.on_focused_client_changed(None)?;
             }
@@ -4805,47 +4815,48 @@ impl Jwm {
         Ok(())
     }
 
-    fn grabbuttons(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
+    fn grabbuttons(&mut self, backend: &mut dyn Backend, client_key: ClientKey, focused: bool) {
         let win = if let Some(c) = self.state.clients.get(client_key) {
             c.win
         } else {
             return;
         };
-        // 1. 先清除该窗口上所有的按钮抓取
         let _ = backend.window_ops().ungrab_all_buttons(win);
-        // 2. 获取配置中的鼠标绑定
-        let buttons = CONFIG.get_buttons();
-        // 3. 定义需要处理的修饰键组合 (忽略 CapsLock 和 NumLock 的影响)
-        // 这样无论 CapsLock 是否开启，快捷键都能生效
-        let modifiers_combinations = [
-            Mods::NONE,
-            Mods::CAPS,
-            Mods::NUMLOCK,
-            Mods::CAPS | Mods::NUMLOCK,
-        ];
-        for btn_conf in buttons {
-            // 只处理针对客户端窗口的点击
-            if btn_conf.click_type == WMClickType::ClickClientWin {
-                // 过滤掉无关的修饰位，只保留 Shift, Ctrl, Alt, Super 等
-                let clean_conf_mask = btn_conf.mask
-                    & (Mods::SHIFT
-                        | Mods::CONTROL
-                        | Mods::ALT
-                        | Mods::SUPER
-                        | Mods::MOD2
-                        | Mods::MOD3
-                        | Mods::MOD5);
-                // 为每种锁键状态组合进行抓取
-                for &lock_state in &modifiers_combinations {
-                    let final_mask = clean_conf_mask | lock_state;
-                    let _ = backend.window_ops().grab_button(
-                        win,
-                        btn_conf.button.to_u8(),
-                        (EventMaskBits::BUTTON_PRESS | EventMaskBits::BUTTON_RELEASE).bits(),
-                        final_mask,
-                    );
+
+        if focused {
+            let buttons = crate::config::CONFIG.get_buttons();
+            let modifiers_combinations = [
+                Mods::NONE,
+                Mods::CAPS,
+                Mods::NUMLOCK,
+                Mods::CAPS | Mods::NUMLOCK,
+            ];
+            for btn_conf in buttons {
+                if btn_conf.click_type == WMClickType::ClickClientWin {
+                    let clean_conf_mask = btn_conf.mask
+                        & (Mods::SHIFT
+                            | Mods::CONTROL
+                            | Mods::ALT
+                            | Mods::SUPER
+                            | Mods::MOD2
+                            | Mods::MOD3
+                            | Mods::MOD5);
+                    for &lock_state in &modifiers_combinations {
+                        let final_mask = clean_conf_mask | lock_state;
+                        let _ = backend.window_ops().grab_button(
+                            win,
+                            btn_conf.button.to_u8(),
+                            (EventMaskBits::BUTTON_PRESS | EventMaskBits::BUTTON_RELEASE).bits(),
+                            final_mask,
+                        );
+                    }
                 }
             }
+        } else {
+            let _ = backend.window_ops().grab_button_any_anymod(
+                win,
+                (EventMaskBits::BUTTON_PRESS | EventMaskBits::BUTTON_RELEASE).bits(),
+            );
         }
     }
 
@@ -4868,7 +4879,7 @@ impl Jwm {
         self.attachstack(client_key);
 
         self.register_client_events(backend, client_key)?;
-        self.grabbuttons(backend, client_key);
+        self.grabbuttons(backend, client_key, false);
 
         let already_mapped = {
             let win = self.state.clients.get(client_key).unwrap().win;
@@ -5088,7 +5099,8 @@ impl Jwm {
         let mask = (EventMaskBits::ENTER_WINDOW
             | EventMaskBits::FOCUS_CHANGE
             | EventMaskBits::PROPERTY_CHANGE
-            | EventMaskBits::STRUCTURE_NOTIFY)
+            | EventMaskBits::STRUCTURE_NOTIFY
+            | EventMaskBits::POINTER_MOTION)
             .bits();
         backend.window_ops().change_event_mask(win, mask)?;
         info!(
