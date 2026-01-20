@@ -4726,30 +4726,25 @@ impl Jwm {
                 .window_ops()
                 .apply_window_changes(client_win, changes)?;
 
-            // 判断是否应该给予该弹窗焦点
             let should_focus_this = if let Some(c) = self.state.clients.get(client_key) {
-                // 如果窗口声明自己不需要焦点，那就别给
                 if c.state.never_focus {
                     false
                 } else {
-                    // 获取具体类型
                     let types = backend.property_ops().get_window_types(c.win);
-                    // Tooltip 绝对不能拿焦点，否则会导致主窗口闪烁
-                    let is_tooltip = types.contains(&WindowType::Tooltip);
 
-                    // 其他类型（Dialog, Menu, Combo, Notification等）
-                    // 如果它们是受管窗口且接受输入，通常意味着它们是交互式的菜单
-                    !is_tooltip
+                    let is_no_auto_focus = types.contains(&WindowType::Tooltip)
+                        || types.contains(&WindowType::Notification)
+                        || types.contains(&WindowType::Dnd)
+                        || types.contains(&WindowType::Combo);
+                    !is_no_auto_focus
                 }
             } else {
                 false
             };
 
             if should_focus_this {
-                // 如果是交互式弹窗，给予焦点，这样应用就不会自动关闭它了
                 self.focus(backend, Some(client_key))?;
             } else {
-                // 如果是被动弹窗（如 Tooltip），保持原样，聚焦父窗口
                 if let Some(pk) = parent_key_opt {
                     let _ = self.set_client_focus_by_key(backend, pk);
                 } else if let Some(prev_sel) = current_sel {
@@ -5802,6 +5797,17 @@ impl Jwm {
             if self.is_popup_like(backend, client_key) {
                 if let Some(c) = self.state.clients.get_mut(client_key) {
                     c.state.is_floating = true;
+
+                    // 针对 Notification (通知/控制条) 的特殊处理：
+                    // 既然是通知或全局控制条，它应该在所有 Tag 下都可见 (Sticky)
+                    let types = backend.property_ops().get_window_types(c.win);
+                    if types.contains(&WindowType::Notification)
+                        || types.contains(&WindowType::Tooltip)
+                        || types.contains(&WindowType::Dock)
+                    {
+                        c.state.tags = crate::config::CONFIG.tagmask();
+                        info!("Make Notification/Tooltip/Dock window visible on all tags (Sticky)");
+                    }
                 }
             }
         }
