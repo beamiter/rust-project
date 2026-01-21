@@ -5805,24 +5805,37 @@ impl Jwm {
     }
 
     fn updatewindowtype(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
-        if let Some(client) = self.state.clients.get(client_key) {
-            if backend.property_ops().is_fullscreen(client.win) {
-                let _ = self.setfullscreen(backend, client_key, true);
-            }
-            if self.is_popup_like(backend, client_key) {
-                if let Some(c) = self.state.clients.get_mut(client_key) {
-                    c.state.is_floating = true;
+        // 先获取必要信息，避免借用冲突
+        let (win, is_popup_like) = if let Some(client) = self.state.clients.get(client_key) {
+            (client.win, self.is_popup_like(backend, client_key))
+        } else {
+            return;
+        };
 
-                    // 针对 Notification (通知/控制条) 的特殊处理：
-                    // 既然是通知或全局控制条，它应该在所有 Tag 下都可见 (Sticky)
-                    let types = backend.property_ops().get_window_types(c.win);
-                    if types.contains(&WindowType::Notification)
-                        || types.contains(&WindowType::Tooltip)
-                        || types.contains(&WindowType::Dock)
-                    {
-                        c.state.tags = crate::config::CONFIG.tagmask();
-                        info!("Make Notification/Tooltip/Dock window visible on all tags (Sticky)");
-                    }
+        // 处理全屏
+        if backend.property_ops().is_fullscreen(win) {
+            let _ = self.setfullscreen(backend, client_key, true);
+        }
+
+        // 获取窗口类型
+        let types = backend.property_ops().get_window_types(win);
+        let is_desktop = types.contains(&WindowType::Desktop);
+
+        // 获取可变引用进行修改
+        if let Some(c) = self.state.clients.get_mut(client_key) {
+
+            // 1. 如果是 Popup / Dock / Notification / Desktop
+            if is_popup_like || is_desktop {
+                c.state.is_floating = true;
+
+                // 如果是 通知、Dock、桌面，则设置为所有标签可见
+                if types.contains(&WindowType::Notification)
+                    || types.contains(&WindowType::Tooltip)
+                    || types.contains(&WindowType::Dock)
+                    || types.contains(&WindowType::Desktop)
+                {
+                    c.state.tags = crate::config::CONFIG.tagmask();
+                    c.state.never_focus = true; // 这些窗口通常不接受焦点
                 }
             }
         }
@@ -5916,26 +5929,65 @@ impl Jwm {
     fn calculate_tag_masks(&self, mon_key: MonitorKey) -> (u32, u32) {
         let mut occupied_tags_mask = 0u32;
         let mut urgent_tags_mask = 0u32;
+
+        let config_mask = crate::config::CONFIG.tagmask();
+
         if let Some(client_keys) = self.state.monitor_clients.get(mon_key) {
             for &client_key in client_keys {
                 if let Some(client) = self.state.clients.get(client_key) {
-                    occupied_tags_mask |= client.state.tags;
+                    if Some(client_key) == self.status_bar_client {
+                        continue;
+                    }
+
+                    let effective_tags = client.state.tags & config_mask;
+
+                    if effective_tags == config_mask {
+                        continue;
+                    }
+
+                    occupied_tags_mask |= effective_tags;
+
                     if client.state.is_urgent {
-                        urgent_tags_mask |= client.state.tags;
+                        urgent_tags_mask |= effective_tags;
                     }
                 }
             }
         }
-        (occupied_tags_mask, urgent_tags_mask)
+
+        let final_occupied = occupied_tags_mask & config_mask;
+        let final_urgent = urgent_tags_mask & config_mask;
+
+        log::info!(
+            "[MaskDebug] Occupied: {:b}, Urgent: {:b}",
+            final_occupied,
+            final_urgent
+        );
+
+        (final_occupied, final_urgent)
     }
 
     fn is_filled_tag(&self, mon_key: MonitorKey, tag_bit: u32) -> bool {
+        // 如果不是当前选中的显示器，不用高亮 Focus 状态
         if self.state.sel_mon != Some(mon_key) {
             return false;
         }
+
         if let Some(monitor) = self.state.monitors.get(mon_key) {
             if let Some(sel_client_key) = monitor.sel {
                 if let Some(client) = self.state.clients.get(sel_client_key) {
+                    let mask = crate::config::CONFIG.tagmask();
+
+                    if (client.state.tags & mask) == mask {
+                        // 策略 A: 直接返回 false。
+                        // 视觉效果: 状态栏显示当前 Tag 为 "Selected" (通常是亮色)，
+                        // 其他 Tag 恢复为 "Occupied" 或 "Empty"。
+                        // 这是最符合直觉的，因为 Sticky 窗口是浮在所有 Tag 之上的。
+                        return false;
+
+                        // 策略 B (备选): 只高亮当前 Monitor 正在查看的 Tag
+                        // return (monitor.tag_set[monitor.sel_tags] & tag_bit) != 0;
+                    }
+
                     return (client.state.tags & tag_bit) != 0;
                 }
             }
