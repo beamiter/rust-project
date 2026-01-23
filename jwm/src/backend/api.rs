@@ -329,6 +329,19 @@ pub trait InputOps: Send {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct LayerSurfaceInfo {
+    /// wlr-layer-shell exclusive zone semantics.
+    /// - `0`: does not reserve space
+    /// - `-1`: reserve the full surface dimension along the anchored edge
+    /// - `>0`: reserve that many logical pixels
+    pub exclusive_zone: i32,
+    pub anchor_top: bool,
+    pub anchor_bottom: bool,
+    pub anchor_left: bool,
+    pub anchor_right: bool,
+}
+
 pub trait PropertyOps: Send {
     fn get_title(&self, win: WindowId) -> String;
     fn get_class(&self, win: WindowId) -> (String, String); // (instance, class)
@@ -365,6 +378,10 @@ pub trait PropertyOps: Send {
         tags: u32,
         monitor_num: u32,
     ) -> Result<(), BackendError>;
+
+    fn get_layer_surface_info(&self, _win: WindowId) -> Option<LayerSurfaceInfo> {
+        None
+    }
 }
 
 pub struct WmHints {

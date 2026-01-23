@@ -426,11 +426,37 @@ impl WMController for Jwm {
                 PropertyKind::SizeHints => self.handle_normal_hints_change(client_key),
                 PropertyKind::Urgency => self.handle_wm_hints_change(backend, client_key),
                 PropertyKind::Title => self.handle_title_change(backend, client_key),
+                PropertyKind::Class => self.handle_class_change(backend, client_key),
                 PropertyKind::WindowType => self.handle_window_type_change(backend, client_key),
                 _ => Ok(()),
             };
             if let Err(e) = res {
                 error!("Error handling PropertyChanged {:?}: {:?}", kind, e);
+            }
+
+            // Wayland clients (including gtk_bar) may only become identifiable after they
+            // set title/app_id. Promote to status bar as soon as it matches.
+            if self.status_bar_client.is_none() {
+                let is_bar = self
+                    .state
+                    .clients
+                    .get(client_key)
+                    .map(|c| c.is_status_bar(CONFIG.status_bar_name()))
+                    .unwrap_or(false);
+
+                if is_bar {
+                    info!("Detected status bar via property update, promoting client");
+                    self.status_bar_client = Some(client_key);
+                    self.status_bar_window = Some(win);
+
+                    let current_mon_id = self.get_sel_mon().map(|m| m.num).unwrap_or(0);
+                    self.current_bar_monitor_id = Some(current_mon_id);
+
+                    if let Err(e) = self.manage_statusbar(backend, client_key, win, current_mon_id)
+                    {
+                        error!("Error promoting status bar: {e}");
+                    }
+                }
             }
         }
     }
@@ -1921,17 +1947,69 @@ impl Jwm {
         &mut self,
         backend: &mut dyn Backend,
         window: WindowId,
-        _x: i32,
-        _y: i32,
+        x: i32,
+        y: i32,
         w: u32,
         h: u32,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // If the backend reports the status bar moved/resized, track it and re-arrange.
+        // This is required for Wayland layer-shell bars, where JWM does not control
+        // the final geometry.
+        if Some(window) == self.status_bar_window {
+            if let Some(bar_key) = self.status_bar_client {
+                if let Some(bar) = self.state.clients.get_mut(bar_key) {
+                    bar.geometry.x = x;
+                    bar.geometry.y = y;
+                    bar.geometry.w = w as i32;
+                    bar.geometry.h = h as i32;
+                }
+
+                if let Some(mon_key) = self.state.clients.get(bar_key).and_then(|c| c.mon) {
+                    self.arrange(backend, Some(mon_key));
+                } else {
+                    self.arrange(backend, None);
+                }
+            }
+            return Ok(());
+        }
+
         if window == backend.root_window().expect("no root window") {
             let dirty = self.s_w != w as i32 || self.s_h != h as i32;
             self.s_w = w as i32;
             self.s_h = h as i32;
             if self.updategeom(backend) || dirty {
                 self.handle_screen_geometry_change(backend)?;
+            }
+        }
+
+        // For Wayland layer-shell (and other backend-driven docks), the compositor controls
+        // the final geometry. Reflect it in our model and re-arrange so workareas update.
+        if let Some(client_key) = self.wintoclient(window) {
+            let layer_info = backend.property_ops().get_layer_surface_info(window);
+            let is_likely_dock = self
+                .state
+                .clients
+                .get(client_key)
+                .map(|c| c.state.is_dock)
+                .unwrap_or(false)
+                || layer_info.is_some();
+
+            if is_likely_dock {
+                if let Some(c) = self.state.clients.get_mut(client_key) {
+                    c.geometry.x = x;
+                    c.geometry.y = y;
+                    c.geometry.w = w as i32;
+                    c.geometry.h = h as i32;
+                }
+
+                // Refresh type/layer metadata so exclusive_zone changes are honored.
+                self.updatewindowtype(backend, client_key);
+
+                if let Some(mon_key) = self.state.clients.get(client_key).and_then(|c| c.mon) {
+                    self.arrange(backend, Some(mon_key));
+                } else {
+                    self.arrange(backend, None);
+                }
             }
         }
 
@@ -2428,11 +2506,13 @@ impl Jwm {
         info!("[fibonacci] via pure layout engine");
 
         // 1. 获取显示器信息和配置
-        let (wx, wy, ww, wh, mfact, nmaster, _monitor_num, client_y_offset) =
+        let (wx, wy, ww, wh, mfact, nmaster, _monitor_num, _client_y_offset) =
             self.get_monitor_info(mon_key);
 
-        // 计算可用区域 (减去 bar 的高度)
-        let screen_area = Rect::new(wx, wy + client_y_offset, ww, wh - client_y_offset);
+        // 计算可用区域 (优先使用 statusbar 的真实几何)
+        let screen_area = self
+            .monitor_work_area(mon_key)
+            .unwrap_or(Rect::new(wx, wy, ww, wh));
 
         // 2. 收集需要参与布局的客户端 (使用现有的辅助函数)
         let raw_clients = self.collect_tileable_clients(mon_key);
@@ -2851,11 +2931,13 @@ impl Jwm {
         info!("[tile] via pure layout engine");
 
         // 1. 准备数据
-        let (wx, wy, ww, wh, mfact, nmaster, _monitor_num, client_y_offset) =
+        let (wx, wy, ww, wh, mfact, nmaster, _monitor_num, _client_y_offset) =
             self.get_monitor_info(mon_key);
 
-        // 计算可用区域 (减去 bar 的高度)
-        let screen_area = Rect::new(wx, wy + client_y_offset, ww, wh - client_y_offset);
+        // 计算可用区域 (优先使用 statusbar 的真实几何)
+        let screen_area = self
+            .monitor_work_area(mon_key)
+            .unwrap_or(Rect::new(wx, wy, ww, wh));
 
         // 获取需要布局的客户端
         let raw_clients = self.collect_tileable_clients(mon_key);
@@ -2937,10 +3019,202 @@ impl Jwm {
             .unwrap_or(true);
 
         if show_bar {
-            CONFIG.status_bar_height() + CONFIG.status_bar_padding() * 2
+            // Prefer the actual status bar geometry if we have it.
+            // This is important for Wayland, where the bar may be a layer-shell surface
+            // and its real size/position comes from the compositor arrangement.
+            let fallback = CONFIG.status_bar_height() + CONFIG.status_bar_padding() * 2;
+            let pad = CONFIG.status_bar_padding().max(0);
+
+            if self.current_bar_monitor_id == Some(monitor.num) {
+                if let Some(bar_key) = self.status_bar_client {
+                    if let Some(bar) = self.state.clients.get(bar_key) {
+                        let gap_from_top = (bar.geometry.y - monitor.geometry.w_y).max(0);
+                        let dynamic = gap_from_top + bar.geometry.h + pad;
+                        return dynamic.max(fallback);
+                    }
+                }
+            }
+
+            fallback
         } else {
             0
         }
+    }
+
+    fn monitor_work_area(&self, mon_key: MonitorKey) -> Option<Rect> {
+        let monitor = self.state.monitors.get(mon_key)?;
+
+        let wx = monitor.geometry.w_x;
+        let wy = monitor.geometry.w_y;
+        let ww = monitor.geometry.w_w;
+        let wh = monitor.geometry.w_h;
+
+        let show_bar = monitor
+            .pertag
+            .as_ref()
+            .and_then(|p| p.show_bars.get(p.cur_tag))
+            .copied()
+            .unwrap_or(true);
+        if !show_bar {
+            return Some(Rect::new(wx, wy, ww, wh));
+        }
+
+        // Subtract all visible dock-like clients (includes Wayland layer-shell panels).
+        let mut top = 0i32;
+        let mut bottom = 0i32;
+        let mut left = 0i32;
+        let mut right = 0i32;
+
+        let pad = CONFIG.status_bar_padding().max(0);
+        let threshold = pad.max(8);
+
+        if let Some(client_keys) = self.state.monitor_clients.get(mon_key) {
+            for &client_key in client_keys {
+                if Some(client_key) == self.status_bar_client {
+                    // status bar is included via is_dock anyway; keep behavior consistent.
+                }
+
+                let client = match self.state.clients.get(client_key) {
+                    Some(c) => c,
+                    None => continue,
+                };
+
+                if !client.state.is_dock {
+                    continue;
+                }
+                if !self.is_client_visible_on_monitor(client_key, mon_key) {
+                    continue;
+                }
+
+                // Hidden bars use negative coordinates.
+                if client.geometry.x <= -900 || client.geometry.y <= -900 {
+                    continue;
+                }
+
+                // Compute dock rect in monitor coordinates.
+                let dx = client.geometry.x;
+                let dy = client.geometry.y;
+                let dw = client.geometry.w.max(0);
+                let dh = client.geometry.h.max(0);
+
+                // Skip degenerate geometry.
+                if dw == 0 || dh == 0 {
+                    continue;
+                }
+
+                // Distances to edges (clamped).
+                let dist_top = (dy - wy).abs();
+                let dist_bottom = ((wy + wh) - (dy + dh)).abs();
+                let dist_left = (dx - wx).abs();
+                let dist_right = ((wx + ww) - (dx + dw)).abs();
+
+                // Heuristic classification: prefer horizontal vs vertical panels.
+                let is_horizontal = dw >= (ww * 2 / 3) && dh <= (wh / 2).max(1);
+                let is_vertical = dh >= (wh * 2 / 3) && dw <= (ww / 2).max(1);
+
+                let edge = if is_horizontal {
+                    if dist_top <= dist_bottom { "top" } else { "bottom" }
+                } else if is_vertical {
+                    if dist_left <= dist_right { "left" } else { "right" }
+                } else {
+                    // Pick the closest edge.
+                    let min = dist_top.min(dist_bottom).min(dist_left).min(dist_right);
+                    if min == dist_top {
+                        "top"
+                    } else if min == dist_bottom {
+                        "bottom"
+                    } else if min == dist_left {
+                        "left"
+                    } else {
+                        "right"
+                    }
+                };
+
+                let exclusive_zone = client
+                    .state
+                    .dock_layer_info
+                    .as_ref()
+                    .map(|i| i.exclusive_zone)
+                    .unwrap_or(0);
+
+                let anchor_ok = client.state.dock_layer_info.as_ref().map(|i| {
+                    let any = i.anchor_top || i.anchor_bottom || i.anchor_left || i.anchor_right;
+                    if !any {
+                        return true;
+                    }
+                    match edge {
+                        "top" => i.anchor_top,
+                        "bottom" => i.anchor_bottom,
+                        "left" => i.anchor_left,
+                        "right" => i.anchor_right,
+                        _ => true,
+                    }
+                }).unwrap_or(true);
+
+                let zone_px = if exclusive_zone == -1 {
+                    match edge {
+                        "top" | "bottom" => dh,
+                        "left" | "right" => dw,
+                        _ => 0,
+                    }
+                } else if exclusive_zone > 0 {
+                    exclusive_zone
+                } else {
+                    0
+                };
+
+                match edge {
+                    "top" => {
+                        if dist_top <= threshold {
+                            if zone_px > 0 && anchor_ok {
+                                top = top.max(zone_px + pad);
+                            } else {
+                                top = top.max((dy + dh - wy) + pad);
+                            }
+                        }
+                    }
+                    "bottom" => {
+                        if dist_bottom <= threshold {
+                            if zone_px > 0 && anchor_ok {
+                                bottom = bottom.max(zone_px + pad);
+                            } else {
+                                bottom = bottom.max(((wy + wh) - dy) + pad);
+                            }
+                        }
+                    }
+                    "left" => {
+                        if dist_left <= threshold {
+                            if zone_px > 0 && anchor_ok {
+                                left = left.max(zone_px + pad);
+                            } else {
+                                left = left.max((dx + dw - wx) + pad);
+                            }
+                        }
+                    }
+                    "right" => {
+                        if dist_right <= threshold {
+                            if zone_px > 0 && anchor_ok {
+                                right = right.max(zone_px + pad);
+                            } else {
+                                right = right.max(((wx + ww) - dx) + pad);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+
+        // If we didn't observe any dock window yet, keep the historical top offset.
+        if top == 0 && bottom == 0 && left == 0 && right == 0 {
+            top = self.get_client_y_offset(monitor);
+        }
+
+        let x = wx + left;
+        let y = wy + top;
+        let w = (ww - left - right).max(0);
+        let h = (wh - top - bottom).max(0);
+        Some(Rect::new(x, y, w, h))
     }
 
     pub fn togglefloating(
@@ -4216,6 +4490,30 @@ impl Jwm {
         Ok(())
     }
 
+    fn handle_class_change(
+        &mut self,
+        backend: &mut dyn Backend,
+        client_key: ClientKey,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let win = self
+            .state
+            .clients
+            .get(client_key)
+            .map(|c| c.win)
+            .ok_or("Client not found")?;
+
+        let (inst, cls) = backend.property_ops().get_class(win);
+        if let Some(client) = self.state.clients.get_mut(client_key) {
+            if !inst.is_empty() {
+                client.instance = inst;
+            }
+            if !cls.is_empty() {
+                client.class = cls;
+            }
+        }
+        Ok(())
+    }
+
     pub fn movemouse(
         &mut self,
         backend: &mut dyn Backend,
@@ -5141,6 +5439,7 @@ impl Jwm {
             client.mon = mon_key;
             client.state.never_focus = true;
             client.state.is_floating = true;
+            client.state.is_dock = true;
             client.state.tags = CONFIG.tagmask();
             client.geometry.border_w = 0;
         }
@@ -5308,7 +5607,7 @@ impl Jwm {
 
     fn monocle(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
         info!("[monocle] via pure layout engine");
-        let (wx, wy, ww, wh, _, _, monitor_num, client_y_offset) = self.get_monitor_info(mon_key);
+        let (wx, wy, ww, wh, _, _, monitor_num, _client_y_offset) = self.get_monitor_info(mon_key);
         let mut visible_count = 0u32;
         let mut layout_clients = Vec::new();
         if let Some(client_keys) = self.state.monitor_clients.get(mon_key) {
@@ -5342,9 +5641,12 @@ impl Jwm {
         if layout_clients.is_empty() {
             return;
         }
+        let screen_area = self
+            .monitor_work_area(mon_key)
+            .unwrap_or(Rect::new(wx, wy, ww, wh));
         // 纯计算
         let params = LayoutParams {
-            screen_area: Rect::new(wx, wy + client_y_offset, ww, wh - client_y_offset),
+            screen_area,
             n_master: 0, // 不相关
             m_fact: 0.0, // 不相关
         };
@@ -5509,14 +5811,28 @@ impl Jwm {
             client_y = mon_wy;
             info!("Adjusted Y to workarea top: {}", client_y);
         }
-        let client_y_offset = if let Some(monitor) = self.state.monitors.get(client_mon_key) {
-            self.get_client_y_offset(monitor)
-        } else {
-            0
-        };
-        if client_y < client_y_offset {
-            client_y = client_y_offset;
-            info!("Adjusted Y to avoid status bar: {}", client_y);
+        if let Some(work) = self.monitor_work_area(client_mon_key) {
+            if client_x < work.x {
+                client_x = work.x;
+                info!("Adjusted X to workarea left: {}", client_x);
+            }
+            if client_y < work.y {
+                client_y = work.y;
+                info!("Adjusted Y to workarea top: {}", client_y);
+            }
+
+            if client_x + client_total_width > work.x + work.w {
+                client_x = work.x + work.w - client_total_width;
+                info!("Adjusted X to workarea right: {}", client_x);
+            }
+            if client_y + client_total_height > work.y + work.h {
+                client_y = work.y + work.h - client_total_height;
+                info!("Adjusted Y to workarea bottom: {}", client_y);
+            }
+
+            // Keep within the monitor bounds as a final guard.
+            client_x = client_x.clamp(mon_wx, mon_wx + mon_ww - client_total_width);
+            client_y = client_y.clamp(mon_wy, mon_wy + mon_wh - client_total_height);
         }
         if let Some(client) = self.state.clients.get_mut(client_key) {
             client.geometry.x = client_x;
@@ -5820,9 +6136,15 @@ impl Jwm {
         // 获取窗口类型
         let types = backend.property_ops().get_window_types(win);
         let is_desktop = types.contains(&WindowType::Desktop);
+        let is_dock = types.contains(&WindowType::Dock);
+
+        let layer_info = backend.property_ops().get_layer_surface_info(win);
 
         // 获取可变引用进行修改
         if let Some(c) = self.state.clients.get_mut(client_key) {
+            c.state.is_dock = is_dock;
+            c.state.dock_layer_info = if is_dock { layer_info } else { None };
+
             // 1. 如果是 Popup / Dock / Notification / Desktop
             if is_popup_like || is_desktop {
                 c.state.is_floating = true;

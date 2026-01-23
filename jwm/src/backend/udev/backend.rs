@@ -17,6 +17,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use drm::control::{connector, Device as ControlDevice, ModeTypeFlags};
@@ -30,13 +31,19 @@ use smithay::backend::session::libseat::LibSeatSession;
 use smithay::backend::session::Event as SessionEvent;
 use smithay::backend::session::Session;
 use smithay::backend::udev::{UdevBackend as SmithayUdevBackend, UdevEvent};
-use smithay::reexports::calloop::EventLoop;
+use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction};
+use smithay::reexports::calloop::channel::{self, Sender};
+use smithay::reexports::calloop::generic::Generic;
+use smithay::reexports::calloop::timer::{Timer, TimeoutAction};
 use smithay::reexports::input::{DeviceCapability, Libinput};
-use smithay::reexports::wayland_server::Display;
+use smithay::reexports::wayland_server::{Display, DisplayHandle};
+use smithay::reexports::wayland_server::Resource;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER as SCOUNTER};
 use smithay::input::keyboard::{FilterResult, ModifiersState};
 use smithay::input::pointer::{ButtonEvent, MotionEvent};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
+use smithay::desktop::layer_map_for_output;
+use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer};
 
 struct SendWrapper<T>(T);
 
@@ -69,6 +76,8 @@ struct SharedState {
     output_key_to_id: HashMap<u64, OutputId>,
     next_output_raw: u64,
     device_paths: HashMap<u64, PathBuf>,
+
+    kms_needs_reinit: bool,
 }
 
 impl Default for SharedState {
@@ -84,6 +93,8 @@ impl Default for SharedState {
             output_key_to_id: HashMap::new(),
             next_output_raw: 0,
             device_paths: HashMap::new(),
+
+            kms_needs_reinit: false,
         }
     }
 }
@@ -159,6 +170,9 @@ impl InputOps for UdevInputOps {
 
 struct WaylandWindowOps {
     state: SendWrapper<*mut JwmWaylandState>,
+
+    flush_tx: Sender<()>,
+    flush_pending: Arc<AtomicBool>,
 }
 
 unsafe impl Send for WaylandWindowOps {}
@@ -167,6 +181,12 @@ impl WaylandWindowOps {
     unsafe fn with_state_mut<R>(&self, f: impl FnOnce(&mut JwmWaylandState) -> R) -> R {
         // Safety: We only ever call this from the compositor thread.
         unsafe { f(&mut *self.state.0) }
+    }
+
+    fn request_flush(&self) {
+        if !self.flush_pending.swap(true, Ordering::SeqCst) {
+            let _ = self.flush_tx.send(());
+        }
     }
 }
 
@@ -181,6 +201,7 @@ impl WindowOps for WaylandWindowOps {
                 state.needs_redraw = true;
             });
         }
+        self.request_flush();
         Ok(())
     }
 
@@ -195,6 +216,7 @@ impl WindowOps for WaylandWindowOps {
     ) -> Result<(), BackendError> {
         unsafe {
             self.with_state_mut(|state| {
+                state.pending_initial_configure.remove(&win);
                 state.window_geometry.insert(
                     win,
                     crate::backend::api::Geometry {
@@ -211,9 +233,11 @@ impl WindowOps for WaylandWindowOps {
                     });
                     toplevel.send_configure();
                 }
+                state.reconstrain_popups_for_toplevel(win);
                 state.needs_redraw = true;
             });
         }
+        self.request_flush();
         Ok(())
     }
 
@@ -236,6 +260,7 @@ impl WindowOps for WaylandWindowOps {
                 state.needs_redraw = true;
             });
         }
+        self.request_flush();
         Ok(())
     }
     fn map_window(&self, _win: WindowId) -> Result<(), BackendError> {
@@ -252,6 +277,7 @@ impl WindowOps for WaylandWindowOps {
                 }
             });
         }
+        self.request_flush();
         Ok(crate::backend::api::CloseResult::Graceful)
     }
     fn set_input_focus(&self, _win: WindowId) -> Result<(), BackendError> {
@@ -265,6 +291,7 @@ impl WindowOps for WaylandWindowOps {
                 }
             });
         }
+        self.request_flush();
         Ok(())
     }
     fn set_input_focus_root(&self) -> Result<(), BackendError> {
@@ -276,6 +303,7 @@ impl WindowOps for WaylandWindowOps {
                 }
             });
         }
+        self.request_flush();
         Ok(())
     }
     fn get_window_attributes(&self, _win: WindowId) -> Result<crate::backend::api::WindowAttributes, BackendError> {
@@ -294,6 +322,7 @@ impl WindowOps for WaylandWindowOps {
         Ok(wins)
     }
     fn flush(&self) -> Result<(), BackendError> {
+        self.request_flush();
         Ok(())
     }
     fn kill_client(&self, _win: WindowId) -> Result<(), BackendError> {
@@ -316,6 +345,9 @@ impl WindowOps for WaylandWindowOps {
 
 struct WaylandPropertyOps {
     state: SendWrapper<*mut JwmWaylandState>,
+
+    flush_tx: Sender<()>,
+    flush_pending: Arc<AtomicBool>,
 }
 
 unsafe impl Send for WaylandPropertyOps {}
@@ -323,6 +355,12 @@ unsafe impl Send for WaylandPropertyOps {}
 impl WaylandPropertyOps {
     unsafe fn with_state_mut<R>(&self, f: impl FnOnce(&mut JwmWaylandState) -> R) -> R {
         unsafe { f(&mut *self.state.0) }
+    }
+
+    fn request_flush(&self) {
+        if !self.flush_pending.swap(true, Ordering::SeqCst) {
+            let _ = self.flush_tx.send(());
+        }
     }
 }
 
@@ -338,8 +376,35 @@ impl PropertyOps for WaylandPropertyOps {
         (app_id.clone(), app_id)
     }
 
-    fn get_window_types(&self, _win: WindowId) -> Vec<WindowType> {
+    fn get_window_types(&self, win: WindowId) -> Vec<WindowType> {
+        // Best-effort classification so JWM can treat status bars/docks correctly.
+        // For layer-shell surfaces, exclusive_zone is the canonical hint.
+        let (title, app_id, layer_info) = unsafe {
+            self.with_state_mut(|state| {
+                (
+                    state.window_title.get(&win).cloned().unwrap_or_default(),
+                    state.window_app_id.get(&win).cloned().unwrap_or_default(),
+                    state.window_layer_info.get(&win).copied(),
+                )
+            })
+        };
+
+        if let Some(info) = layer_info {
+            if info.exclusive_zone != 0 {
+                return vec![WindowType::Dock];
+            }
+        }
+
+        let bar_name = crate::config::CONFIG.status_bar_name();
+        if !bar_name.is_empty() && (app_id == bar_name || title == bar_name) {
+            return vec![WindowType::Dock];
+        }
+
         vec![WindowType::Normal]
+    }
+
+    fn get_layer_surface_info(&self, win: WindowId) -> Option<crate::backend::api::LayerSurfaceInfo> {
+        unsafe { self.with_state_mut(|state| state.window_layer_info.get(&win).copied()) }
     }
 
     fn is_fullscreen(&self, win: WindowId) -> bool {
@@ -364,11 +429,18 @@ impl PropertyOps for WaylandPropertyOps {
                 }
             });
         }
+        self.request_flush();
         Ok(())
     }
 
     fn transient_for(&self, _win: WindowId) -> Option<WindowId> {
-        None
+        unsafe {
+            self.with_state_mut(|state| {
+                let toplevel = state.toplevels.get(&_win)?;
+                let parent_surface = toplevel.parent()?;
+                state.surface_to_window.get(&parent_surface.id()).copied()
+            })
+        }
     }
 
     fn get_wm_hints(&self, _win: WindowId) -> Option<crate::backend::api::WmHints> {
@@ -419,12 +491,18 @@ impl PropertyOps for WaylandPropertyOps {
 }
 
 pub struct UdevBackend {
-    display: Display<JwmWaylandState>,
+    display_handle: DisplayHandle,
     event_loop: SendWrapper<EventLoop<'static, JwmWaylandState>>,
     state: Box<JwmWaylandState>,
     #[allow(dead_code)]
     socket_name: Option<String>,
     pending_events: Arc<Mutex<VecDeque<BackendEvent>>>,
+
+    flush_tx: Sender<()>,
+    flush_pending: Arc<AtomicBool>,
+
+    shared: Arc<Mutex<SharedState>>,
+    session: LibSeatSession,
 
     kms: Option<Rc<RefCell<super::kms::KmsState>>>,
 
@@ -443,10 +521,169 @@ pub struct UdevBackend {
 unsafe impl Send for UdevBackend {}
 
 impl UdevBackend {
+    fn request_flush(&self) {
+        if !self.flush_pending.swap(true, Ordering::SeqCst) {
+            let _ = self.flush_tx.send(());
+        }
+    }
+
+    fn maybe_reinit_kms(&mut self) {
+        let should = {
+            let mut s = self.shared.lock().unwrap();
+            if s.kms_needs_reinit {
+                s.kms_needs_reinit = false;
+                true
+            } else {
+                false
+            }
+        };
+        if !should {
+            return;
+        }
+
+        let selected = {
+            let s = self.shared.lock().unwrap();
+            s.device_paths
+                .iter()
+                .min_by_key(|(id, _)| *id)
+                .map(|(id, p)| (*id, p.clone()))
+        };
+
+        let Some((dev_id, dev_path)) = selected else {
+            // No DRM devices; drop KMS if any.
+            if let Some(old) = self.kms.take() {
+                if let Some(token) = old.borrow_mut().registration_token.take() {
+                    let _ = self.event_loop.handle().remove(token);
+                }
+            }
+            return;
+        };
+
+        let output_layout: std::collections::HashMap<u64, (i32, i32)> = {
+            let s = self.shared.lock().unwrap();
+            let mut id_to_key: HashMap<OutputId, u64> = HashMap::new();
+            for (key, id) in &s.output_key_to_id {
+                id_to_key.insert(*id, *key);
+            }
+            let mut layout = std::collections::HashMap::new();
+            for o in &s.outputs {
+                if let Some(key) = id_to_key.get(&o.id) {
+                    layout.insert(*key, (o.x, o.y));
+                }
+            }
+            layout
+        };
+
+        let display_handle = self.display_handle.clone();
+        match super::kms::KmsState::new(
+            &mut self.session,
+            &dev_path,
+            dev_id,
+            &output_layout,
+            &display_handle,
+            self.flush_tx.clone(),
+            self.flush_pending.clone(),
+            self.event_loop.handle(),
+        ) {
+            Ok(new_kms) => {
+                // Remove old notifier after new one is registered.
+                if let Some(old) = self.kms.take() {
+                    if let Some(token) = old.borrow_mut().registration_token.take() {
+                        let _ = self.event_loop.handle().remove(token);
+                    }
+                }
+                self.kms = Some(new_kms);
+                self.state.needs_redraw = true;
+                self.state.outputs = self
+                    .kms
+                    .as_ref()
+                    .map(|k| k.borrow().outputs())
+                    .unwrap_or_default();
+                    self.request_flush();
+            }
+            Err(err) => {
+                log::warn!("KMS re-init failed (keeping previous state): {err}");
+            }
+        }
+    }
+
     pub fn new() -> Result<Self, BackendError> {
-        let event_loop = EventLoop::try_new().map_err(|e| BackendError::Other(Box::new(e)))?;
-        let display = Display::new().map_err(|e| BackendError::Other(Box::new(e)))?;
-        let display_handle = display.handle();
+        let event_loop: EventLoop<'static, JwmWaylandState> =
+            EventLoop::try_new().map_err(|e| BackendError::Other(Box::new(e)))?;
+        let display = Rc::new(RefCell::new(
+            Display::new().map_err(|e| BackendError::Other(Box::new(e)))?,
+        ));
+        let display_handle = display.borrow().handle();
+
+        // Flush outgoing Wayland messages on demand (e.g. vblank-driven frame callbacks).
+        // Coalesce requests to avoid piling up flush messages under heavy input/vblank.
+        let (flush_tx, flush_rx) = channel::channel::<()>();
+        let flush_pending = Arc::new(AtomicBool::new(false));
+        {
+            let display = display.clone();
+            let flush_pending = flush_pending.clone();
+            event_loop
+                .handle()
+                .insert_source(flush_rx, move |_, _, _state| {
+                    if let Err(err) = display.borrow_mut().flush_clients() {
+                        log::debug!("wayland flush_clients failed: {err:?}");
+                    }
+                    flush_pending.store(false, Ordering::SeqCst);
+                })
+                .map_err(|e| {
+                    BackendError::Message(format!(
+                        "calloop insert_source(wayland flush) failed: {e}"
+                    ))
+                })?;
+        }
+
+        // Wake the event loop on Wayland client requests, and dispatch them immediately.
+        // We duplicate the display poll fd so the event source doesn't need to own `Display`.
+        let wayland_poll_fd = {
+            use std::os::fd::AsFd as _;
+            smithay::reexports::rustix::io::dup(display.borrow().as_fd())
+                .map_err(|e| BackendError::Other(Box::new(e)))?
+        };
+        {
+            let display = display.clone();
+            let flush_tx = flush_tx.clone();
+            let flush_pending = flush_pending.clone();
+            event_loop
+                .handle()
+                .insert_source(
+                    Generic::new(wayland_poll_fd, Interest::READ, Mode::Level),
+                    move |_, _, state| {
+                        if let Err(err) = display.borrow_mut().dispatch_clients(state) {
+                            log::warn!("wayland dispatch_clients failed: {err:?}");
+                        }
+                        if !flush_pending.swap(true, Ordering::SeqCst) {
+                            let _ = flush_tx.send(());
+                        }
+                        Ok(PostAction::Continue)
+                    },
+                )
+                .map_err(|e| BackendError::Message(format!("calloop insert_source(wayland display) failed: {e}")))?;
+        }
+
+        // Safety net: if the WM doesn't configure a new toplevel quickly enough, clients can stall
+        // forever waiting for the initial xdg_toplevel configure. Keep a small timeout-based
+        // fallback to ensure we eventually send one.
+        {
+            let initial_configure_timeout = Duration::from_millis(250);
+            let tick = Duration::from_millis(50);
+            let timer = Timer::from_duration(tick);
+            event_loop
+                .handle()
+                .insert_source(timer, move |_, _, state| {
+                    state.ensure_initial_configure_timeout(initial_configure_timeout);
+                    TimeoutAction::ToDuration(tick)
+                })
+                .map_err(|e| {
+                    BackendError::Message(format!(
+                        "calloop insert_source(initial configure timer) failed: {e}"
+                    ))
+                })?;
+        }
 
         let shared = Arc::new(Mutex::new(SharedState::default()));
         let pending_events = Arc::new(Mutex::new(VecDeque::<BackendEvent>::new()));
@@ -472,7 +709,8 @@ impl UdevBackend {
             s.key_bindings = key_bindings;
         }
 
-        let (mut session, notifier) = LibSeatSession::new().map_err(|e| BackendError::Other(Box::new(e)))?;
+        let (mut session, notifier) =
+            LibSeatSession::new().map_err(|e| BackendError::Other(Box::new(e)))?;
         let seat_name = session.seat();
 
         let (wayland_state, socket_name) = JwmWaylandState::init(
@@ -513,32 +751,74 @@ impl UdevBackend {
         }
         rebuild_outputs(&shared, &pending_events)?;
 
+        // Keep a copy of output geometries in the Wayland state for popup constraining.
+        {
+            let s = shared.lock().unwrap();
+            state.output_rects = s
+                .outputs
+                .iter()
+                .map(|o| smithay::utils::Rectangle::new((o.x, o.y).into(), (o.width, o.height).into()))
+                .collect();
+        }
+
         // Minimal visible output: initialize KMS and render a solid background.
         // If this fails (e.g. missing permissions / no DRM device), keep running headless.
         let kms = {
-            let path = {
+            let selected = {
                 let s = shared.lock().unwrap();
                 s.device_paths
                     .iter()
                     .min_by_key(|(id, _)| *id)
-                    .map(|(_, p)| p.clone())
+                    .map(|(id, p)| (*id, p.clone()))
             };
 
-            match path {
-                Some(p) => match KmsState::new(&mut session, &p, &display_handle, event_loop.handle()) {
-                    Ok(kms) => Some(kms),
-                    Err(err) => {
-                        log::warn!("KMS init failed (running headless): {err}");
-                        None
+            match selected {
+                Some((dev_id, p)) => {
+                    let output_layout: std::collections::HashMap<u64, (i32, i32)> = {
+                        let s = shared.lock().unwrap();
+                        let mut id_to_key: HashMap<OutputId, u64> = HashMap::new();
+                        for (key, id) in &s.output_key_to_id {
+                            id_to_key.insert(*id, *key);
+                        }
+                        let mut layout = std::collections::HashMap::new();
+                        for o in &s.outputs {
+                            if let Some(key) = id_to_key.get(&o.id) {
+                                layout.insert(*key, (o.x, o.y));
+                            }
+                        }
+                        layout
+                    };
+
+                    match KmsState::new(
+                        &mut session,
+                        &p,
+                        dev_id,
+                        &output_layout,
+                        &display_handle,
+                        flush_tx.clone(),
+                        flush_pending.clone(),
+                        event_loop.handle(),
+                    ) {
+                        Ok(kms) => Some(kms),
+                        Err(err) => {
+                            log::warn!("KMS init failed (running headless): {err}");
+                            None
+                        }
                     }
-                },
+                }
                 None => None,
             }
         };
 
+        if let Some(kms) = &kms {
+            state.outputs = kms.borrow().outputs();
+        }
+
         {
             let pending_events = pending_events.clone();
             let shared = shared.clone();
+            let flush_tx = flush_tx.clone();
+            let flush_pending = flush_pending.clone();
             event_loop
                 .handle()
                 .insert_source(libinput_backend, move |mut event, _, state| {
@@ -569,8 +849,27 @@ impl UdevBackend {
                             let location: Point<f64, Logical> = (x, y).into();
                             state.pointer_location = location;
                             state.needs_redraw = true;
-                            let under = state.hit_test(location);
-                            let hit = under.as_ref().map(|(win, _, _)| HitTarget::Surface(*win));
+
+                            // If a popup grab is active, leaving the grab area dismisses the popups.
+                            if let Some(grab_win) = state.popup_grab_toplevel {
+                                if let Some(area) = state.popup_grab_area(grab_win) {
+                                    let px = location.x.round() as i32;
+                                    let py = location.y.round() as i32;
+                                    let inside = px >= area.loc.x
+                                        && py >= area.loc.y
+                                        && px < area.loc.x + area.size.w
+                                        && py < area.loc.y + area.size.h;
+                                    if !inside {
+                                        state.dismiss_popups_for_toplevel(grab_win);
+                                        state.needs_redraw = true;
+                                    }
+                                }
+                            }
+
+                            let under = state.surface_under(location);
+                            let hit = under
+                                .as_ref()
+                                .and_then(|(win, _, _)| win.map(HitTarget::Surface));
                             let focus = under.map(|(_win, surface, origin)| (surface, origin));
 
                             if let Some(pointer) = state.seat.get_pointer() {
@@ -611,8 +910,27 @@ impl UdevBackend {
                             let location: Point<f64, Logical> = (x, y).into();
                             state.pointer_location = location;
                             state.needs_redraw = true;
-                            let under = state.hit_test(location);
-                            let hit = under.as_ref().map(|(win, _, _)| HitTarget::Surface(*win));
+
+                            // If a popup grab is active, leaving the grab area dismisses the popups.
+                            if let Some(grab_win) = state.popup_grab_toplevel {
+                                if let Some(area) = state.popup_grab_area(grab_win) {
+                                    let px = location.x.round() as i32;
+                                    let py = location.y.round() as i32;
+                                    let inside = px >= area.loc.x
+                                        && py >= area.loc.y
+                                        && px < area.loc.x + area.size.w
+                                        && py < area.loc.y + area.size.h;
+                                    if !inside {
+                                        state.dismiss_popups_for_toplevel(grab_win);
+                                        state.needs_redraw = true;
+                                    }
+                                }
+                            }
+
+                            let under = state.surface_under(location);
+                            let hit = under
+                                .as_ref()
+                                .and_then(|(win, _, _)| win.map(HitTarget::Surface));
                             let focus = under.map(|(_win, surface, origin)| (surface, origin));
 
                             if let Some(pointer) = state.seat.get_pointer() {
@@ -653,8 +971,36 @@ impl UdevBackend {
                             };
 
                             let location: Point<f64, Logical> = (x, y).into();
-                            let under = state.hit_test(location);
-                            let hit = under.as_ref().map(|(win, _, _)| HitTarget::Surface(*win));
+
+                            // Minimal xdg_popup grab behavior: if a popup grab is active for a
+                            // toplevel, a click outside all of its popups dismisses them.
+                            if pressed {
+                                if let Some(grab_win) = state.popup_grab_toplevel {
+                                    let in_any_popup = state
+                                        .popup_rects_for_toplevel(grab_win)
+                                        .iter()
+                                        .any(|(_surf, rect)| {
+                                            let x0 = rect.loc.x as f64;
+                                            let y0 = rect.loc.y as f64;
+                                            let x1 = x0 + rect.size.w as f64;
+                                            let y1 = y0 + rect.size.h as f64;
+                                            location.x >= x0
+                                                && location.y >= y0
+                                                && location.x < x1
+                                                && location.y < y1
+                                        });
+
+                                    if !in_any_popup {
+                                        state.dismiss_popups_for_toplevel(grab_win);
+                                        state.needs_redraw = true;
+                                    }
+                                }
+                            }
+
+                            let under = state.surface_under(location);
+                            let hit = under
+                                .as_ref()
+                                .and_then(|(win, _, _)| win.map(HitTarget::Surface));
                             let focus = under.map(|(_win, surface, origin)| (surface, origin));
 
                             if let Some(pointer) = state.seat.get_pointer() {
@@ -685,6 +1031,34 @@ impl UdevBackend {
                                 pointer.frame(state);
                             }
 
+                            // Focus follows click: if the user clicks a normal surface, it should
+                            // receive keyboard focus. For layer-shell surfaces, only focus if it
+                            // requested keyboard interactivity (OnDemand/Exclusive), otherwise keep
+                            // the current focus (e.g. clicking a non-interactive panel shouldn't
+                            // steal focus from the active app).
+                            if pressed {
+                                if let Some(kbd) = state.seat.get_keyboard() {
+                                    if let Some((_win, surface, _origin)) = state.surface_under(location) {
+                                        let layer_interactivity = state
+                                            .layer_shell_state
+                                            .layer_surfaces()
+                                            .find(|l| l.wl_surface().id() == surface.id())
+                                            .map(|l| l.with_cached_state(|d| d.keyboard_interactivity));
+
+                                        let should_focus = match layer_interactivity {
+                                            Some(KeyboardInteractivity::None) => false,
+                                            Some(KeyboardInteractivity::OnDemand) => true,
+                                            Some(KeyboardInteractivity::Exclusive) => true,
+                                            None => true,
+                                        };
+
+                                        if should_focus {
+                                            kbd.set_focus(state, Some(surface), SCOUNTER.next_serial());
+                                        }
+                                    }
+                                }
+                            }
+
                             if pressed {
                                 let mods_state = shared.lock().unwrap().mods_state;
                                 pending_events.lock().unwrap().push_back(BackendEvent::ButtonPress {
@@ -709,15 +1083,71 @@ impl UdevBackend {
                             let serial = SCOUNTER.next_serial();
                             let pressed = matches!(state_key, smithay::backend::input::KeyState::Pressed);
 
+                            // Layer-shell surfaces can request exclusive keyboard interactivity
+                            // (e.g. lock screens / OSD). If such a surface exists on Top/Overlay,
+                            // route keyboard events directly to it and do not emit WM shortcuts.
+                            let mut handled_by_exclusive_layer = false;
+
                             // If nothing is focused, focus the surface under the pointer (best-effort).
                             if let Some(kbd) = state.seat.get_keyboard() {
+                                // Check exclusive layer-shell first.
+                                let exclusive_surface = state
+                                    .layer_shell_state
+                                    .layer_surfaces()
+                                    .rev()
+                                    .find_map(|layer| {
+                                        let exclusive = layer.with_cached_state(|data| {
+                                            data.keyboard_interactivity == KeyboardInteractivity::Exclusive
+                                                && (data.layer == WlrLayer::Top
+                                                    || data.layer == WlrLayer::Overlay)
+                                        });
+                                        if !exclusive {
+                                            return None;
+                                        }
+
+                                        // Only focus if the layer surface is actually mapped.
+                                        let mapped = state.outputs.iter().any(|o| {
+                                            let map = layer_map_for_output(o);
+                                            map.layers().any(|l| l.layer_surface() == &layer)
+                                        });
+                                        if mapped {
+                                            Some(layer.wl_surface().clone())
+                                        } else {
+                                            None
+                                        }
+                                    });
+
+                                if let Some(surface) = exclusive_surface {
+                                    handled_by_exclusive_layer = true;
+                                    kbd.set_focus(state, Some(surface), serial);
+
+                                    let _ = kbd.input::<(), _>(
+                                        state,
+                                        keycode,
+                                        state_key,
+                                        serial,
+                                        time,
+                                        |_, modifiers, _handle| {
+                                            let mods_bits = mods_from_smithay(modifiers).bits();
+                                            if let Some(mut s) = shared.lock().ok() {
+                                                s.mods_state = mods_bits;
+                                            }
+                                            // Do not intercept any keys while an exclusive layer is active.
+                                            FilterResult::Forward
+                                        },
+                                    );
+                                }
+
+                                if handled_by_exclusive_layer {
+                                    // Skip best-effort focus selection and WM shortcut emission.
+                                } else {
                                 if kbd.current_focus().is_none() {
                                     let (px, py) = {
                                         let s = shared.lock().unwrap();
                                         (s.pointer_x, s.pointer_y)
                                     };
                                     let location: Point<f64, Logical> = (px, py).into();
-                                    if let Some((_win, surface, _origin)) = state.hit_test(location) {
+                                    if let Some((_win, surface, _origin)) = state.surface_under(location) {
                                         kbd.set_focus(state, Some(surface), serial);
                                     }
                                 }
@@ -780,10 +1210,13 @@ impl UdevBackend {
                                         }
                                     },
                                 );
+                                }
                             }
 
                             // JWM only uses press for shortcuts for now.
-                            if matches!(state_key, smithay::backend::input::KeyState::Pressed) {
+                            if !handled_by_exclusive_layer
+                                && matches!(state_key, smithay::backend::input::KeyState::Pressed)
+                            {
                                 // Smithay keyboard events use Linux evdev keycodes (KEY_*).
                                 // xkbcommon expects "xkb keycodes" which are evdev + 8.
                                 let keycode_u32 = u32::from(keycode).saturating_add(8);
@@ -797,6 +1230,11 @@ impl UdevBackend {
                             }
                         }
                         _ => {}
+                    }
+
+                    // Input events can enqueue Wayland protocol messages; flush them promptly.
+                    if !flush_pending.swap(true, Ordering::SeqCst) {
+                        let _ = flush_tx.send(());
                     }
                 })
                 .map_err(|e| BackendError::Message(format!("calloop insert_source(libinput) failed: {e}")))?;
@@ -817,6 +1255,21 @@ impl UdevBackend {
                             let _ = libinput_context.resume();
                             pending_events.lock().unwrap().push_back(BackendEvent::ScreenLayoutChanged);
                             let _ = rebuild_outputs(&shared, &pending_events);
+                            {
+                                let s = shared.lock().unwrap();
+                                _state.output_rects = s
+                                    .outputs
+                                    .iter()
+                                    .map(|o| smithay::utils::Rectangle::new(
+                                        (o.x, o.y).into(),
+                                        (o.width, o.height).into(),
+                                    ))
+                                    .collect();
+                            }
+                            if let Some(grab_win) = _state.popup_grab_toplevel {
+                                _state.reconstrain_popups_for_toplevel(grab_win);
+                            }
+                            shared.lock().unwrap().kms_needs_reinit = true;
                         }
                     }
                 })
@@ -845,6 +1298,21 @@ impl UdevBackend {
                         }
                     }
                     let _ = rebuild_outputs(&shared, &pending_events);
+                    {
+                        let s = shared.lock().unwrap();
+                        _state.output_rects = s
+                            .outputs
+                            .iter()
+                            .map(|o| smithay::utils::Rectangle::new(
+                                (o.x, o.y).into(),
+                                (o.width, o.height).into(),
+                            ))
+                            .collect();
+                    }
+                    if let Some(grab_win) = _state.popup_grab_toplevel {
+                        _state.reconstrain_popups_for_toplevel(grab_win);
+                    }
+                    shared.lock().unwrap().kms_needs_reinit = true;
                     pending_events.lock().unwrap().push_back(BackendEvent::ScreenLayoutChanged);
                 })
                 .map_err(|e| BackendError::Message(format!("calloop insert_source(udev) failed: {e}")))?;
@@ -872,19 +1340,29 @@ impl UdevBackend {
         }
 
         Ok(Self {
-            display,
+            display_handle,
             event_loop: SendWrapper(event_loop),
             state,
             socket_name,
             pending_events,
 
+            flush_tx: flush_tx.clone(),
+            flush_pending: flush_pending.clone(),
+
+            shared,
+            session,
+
             kms,
             window_ops: Box::new(WaylandWindowOps {
                 state: SendWrapper(state_ptr),
+                flush_tx: flush_tx.clone(),
+                flush_pending: flush_pending.clone(),
             }),
             input_ops,
             property_ops: Box::new(WaylandPropertyOps {
                 state: SendWrapper(state_ptr),
+                flush_tx: flush_tx.clone(),
+                flush_pending: flush_pending.clone(),
             }),
             output_ops,
             key_ops: Box::new(key_ops_impl),
@@ -967,40 +1445,51 @@ impl Backend for UdevBackend {
 
     fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), BackendError> {
         loop {
-            self.event_loop
-                .dispatch(Some(Duration::from_millis(16)), &mut *self.state)
-                .map_err(|e| BackendError::Other(Box::new(e)))?;
-
-            // Drive Wayland client requests.
-            self.display
-                .dispatch_clients(&mut *self.state)
-                .map_err(|e| BackendError::Other(Box::new(e)))?;
-
+            let mut handled_any = false;
             loop {
                 let next = { self.pending_events.lock().unwrap().pop_front() };
                 match next {
-                    Some(ev) => handler.handle_event(self, ev)?,
+                    Some(ev) => {
+                        handled_any = true;
+                        handler.handle_event(self, ev)?;
+                    }
                     None => break,
                 }
             }
 
-            handler.update(self)?;
+            if handled_any {
+                handler.update(self)?;
+            }
 
+            self.maybe_reinit_kms();
+
+            let mut had_redraw = false;
             if let Some(kms) = &self.kms {
                 if self.state.needs_redraw {
+                    had_redraw = true;
                     kms.borrow_mut().request_render();
                     self.state.needs_redraw = false;
                 }
                 kms.borrow_mut().render_if_needed(&*self.state);
             }
-            self.display
-                .flush_clients()
-                .map_err(|e| BackendError::Other(Box::new(e)))?;
 
             if handler.should_exit() {
                 break;
             }
+
+            // Block only when there's no pending work; otherwise, poll once to
+            // allow queued calloop sources (notably Wayland flush) to run.
+            let has_pending_events = !self.pending_events.lock().unwrap().is_empty();
+            let timeout = if has_pending_events || handled_any || had_redraw {
+                Some(std::time::Duration::ZERO)
+            } else {
+                None
+            };
+            self.event_loop
+                .dispatch(timeout, &mut *self.state)
+                .map_err(|e| BackendError::Other(Box::new(e)))?;
         }
+
         Ok(())
     }
 }

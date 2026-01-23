@@ -1,6 +1,7 @@
 // src/core/models.rs
 
 use crate::backend::common_define::WindowId;
+use crate::backend::api::LayerSurfaceInfo;
 use crate::core::layout::LayoutEnum;
 use slotmap::DefaultKey;
 use std::fmt;
@@ -76,6 +77,9 @@ pub struct ClientState {
     pub never_focus: bool,
     pub old_state: bool,
     pub is_fullscreen: bool,
+    pub is_dock: bool,
+
+    pub dock_layer_info: Option<LayerSurfaceInfo>,
 }
 
 impl WMClient {
@@ -103,6 +107,8 @@ impl WMClient {
 
     pub fn is_status_bar(&self, status_bar_name: &str) -> bool {
         self.name == status_bar_name
+            || self.class == status_bar_name
+            || self.instance == status_bar_name
     }
 
     pub fn rect(&self) -> (i32, i32, i32, i32) {
