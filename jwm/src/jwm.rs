@@ -5823,7 +5823,6 @@ impl Jwm {
 
         // 获取可变引用进行修改
         if let Some(c) = self.state.clients.get_mut(client_key) {
-
             // 1. 如果是 Popup / Dock / Notification / Desktop
             if is_popup_like || is_desktop {
                 c.state.is_floating = true;
