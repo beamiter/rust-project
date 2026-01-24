@@ -28,14 +28,34 @@ impl UdevKeyOps {
     pub fn new() -> Result<Self, BackendError> {
         let context = xkb::Context::new(xkb::CONTEXT_NO_FLAGS);
 
-        // Use the system default keymap (rules/model/layout/variant/options).
+        // Build a keymap from the conventional environment variables used by wlroots/sway/etc.
+        // This makes keyboard mapping work reliably on TTY + udev.
+        //
+        // If the user doesn't provide anything, fall back to common defaults.
+        fn env_nonempty(key: &str) -> Option<String> {
+            std::env::var(key).ok().and_then(|v| {
+                let v = v.trim().to_string();
+                if v.is_empty() { None } else { Some(v) }
+            })
+        }
+
+        let rules = env_nonempty("XKB_DEFAULT_RULES").unwrap_or_else(|| "evdev".to_string());
+        let model = env_nonempty("XKB_DEFAULT_MODEL").unwrap_or_else(|| "pc105".to_string());
+        let layout = env_nonempty("XKB_DEFAULT_LAYOUT").unwrap_or_else(|| "us".to_string());
+        let variant = env_nonempty("XKB_DEFAULT_VARIANT").unwrap_or_default();
+        let options = env_nonempty("XKB_DEFAULT_OPTIONS");
+
+        log::info!(
+            "xkb keymap: rules={rules:?} model={model:?} layout={layout:?} variant={variant:?} options={options:?}"
+        );
+
         let keymap = xkb::Keymap::new_from_names(
             &context,
-            "",
-            "",
-            "",
-            "",
-            None,
+            &rules,
+            &model,
+            &layout,
+            &variant,
+            options.as_deref(),
             xkb::KEYMAP_COMPILE_NO_FLAGS,
         )
         .ok_or_else(|| BackendError::Message("xkb keymap creation failed".into()))?;

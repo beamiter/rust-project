@@ -1332,10 +1332,21 @@ impl UdevBackend {
         let mut key_ops_impl = UdevKeyOps::new()?;
         {
             let mut s = shared.lock().unwrap();
+            let mut non_zero = 0usize;
             for kc in 0u16..=255u16 {
                 let u8_kc = kc as u8;
                 let sym = key_ops_impl.keysym_from_keycode(u8_kc)?;
                 s.keysym_table[u8_kc as usize] = sym;
+                if sym != 0 {
+                    non_zero += 1;
+                }
+            }
+
+            // If almost everything is NoSymbol, shortcuts will never match.
+            if non_zero < 32 {
+                log::warn!(
+                    "xkb keysym table looks mostly empty (non_zero={non_zero}/256); keyboard shortcuts likely won't work"
+                );
             }
         }
 
