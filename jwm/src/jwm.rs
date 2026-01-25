@@ -201,6 +201,10 @@ pub struct Jwm {
     pub status_bar_window: Option<WindowId>,
     pub current_bar_monitor_id: Option<i32>,
 
+    pub status_bar_last_spawn: Option<std::time::Instant>,
+    pub status_bar_backoff_until: Option<std::time::Instant>,
+    pub status_bar_restart_failures: u32,
+
     pub pending_bar_updates: HashSet<MonitorIndex>,
 
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
@@ -208,6 +212,8 @@ pub struct Jwm {
     pub last_stacking: SecondaryMap<MonitorKey, Vec<WindowId>>,
 
     key_bindings: Vec<WMKey>,
+
+    autostart_terminal_done: bool,
 }
 
 // =================================================================================
@@ -297,6 +303,24 @@ impl WMController for Jwm {
 
     // === 输入事件 ===
     fn on_key_press(&mut self, backend: &mut dyn Backend, keycode: u8, mods: u16, _time: u32) {
+        let debug_keys = std::env::var("JWM_DEBUG_KEYS")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        if debug_keys {
+            let keysym = backend
+                .key_ops_mut()
+                .keysym_from_keycode(keycode)
+                .unwrap_or(0);
+            let mods_clean = backend.key_ops().clean_mods(mods);
+            info!(
+                "[key] keycode={} keysym=0x{:x} mods_raw=0x{:x} mods_clean=0x{:x}",
+                keycode,
+                keysym,
+                mods,
+                mods_clean.bits()
+            );
+        }
         if let Err(e) = self.on_key_press_internal(backend, keycode, mods) {
             error!("Error handling KeyPress: {:?}", e);
         }
@@ -618,6 +642,9 @@ impl EventHandler for Jwm {
             return Ok(());
         }
         self.ensure_bar_is_running(SHARED_PATH);
+
+        self.maybe_autostart_terminal(backend);
+
         self.process_commands_from_status_bar(backend);
         self.flush_pending_bar_updates();
         backend.window_ops().flush()?;
@@ -680,6 +707,10 @@ impl Jwm {
             status_bar_client: None,
             status_bar_window: None,
             current_bar_monitor_id: None,
+
+            status_bar_last_spawn: None,
+            status_bar_backoff_until: None,
+            status_bar_restart_failures: 0,
             pending_bar_updates: HashSet::new(),
 
             suppress_mouse_focus_until: None,
@@ -687,6 +718,8 @@ impl Jwm {
             last_stacking: SecondaryMap::new(),
             key_bindings: CONFIG.get_keys(),
             last_mouse_root: (0.0, 0.0),
+
+            autostart_terminal_done: false,
         };
         if let Ok((x, y)) = backend.input_ops().get_pointer_position() {
             jwm.last_mouse_root = (x, y);
@@ -698,6 +731,97 @@ impl Jwm {
             jwm.state.sel_mon = Some(jwm.state.monitor_order[0]);
         }
         Ok(jwm)
+    }
+
+    fn env_truthy(key: &str) -> bool {
+        match env::var(key) {
+            Ok(val) => {
+                let v = val.trim();
+                v == "1"
+                    || v.eq_ignore_ascii_case("true")
+                    || v.eq_ignore_ascii_case("yes")
+                    || v.eq_ignore_ascii_case("on")
+            }
+            Err(_) => false,
+        }
+    }
+
+    fn is_udev_backend(backend: &dyn Backend) -> bool {
+        #[cfg(feature = "backend-udev")]
+        {
+            backend
+                .as_any()
+                .is::<crate::backend::udev::backend::UdevBackend>()
+        }
+        #[cfg(not(feature = "backend-udev"))]
+        {
+            let _ = backend;
+            false
+        }
+    }
+
+    fn maybe_autostart_terminal(&mut self, backend: &mut dyn Backend) {
+        if self.autostart_terminal_done {
+            return;
+        }
+        if !Self::env_truthy("JWM_AUTOSTART_TERMINAL") {
+            return;
+        }
+        if !Self::is_udev_backend(backend) {
+            return;
+        }
+
+        self.autostart_terminal_done = true;
+
+        let arg = match env::var("JWM_AUTOSTART_TERMINAL_CMD") {
+            Ok(cmd) if !cmd.trim().is_empty() => {
+                info!("[autostart] Spawning terminal via shell: {}", cmd);
+                WMArgEnum::StringVec(vec!["sh".to_string(), "-lc".to_string(), cmd])
+            }
+            _ => {
+                // In TTY+udev (Wayland) sessions, the "best" terminal command is often
+                // different from what's installed on the system. Some terminals are X11-only
+                // and will silently fail if DISPLAY isn't set.
+                //
+                // This fallback prints key env vars and execs the first available terminal.
+                let script = r#"
+set -eu
+echo "[autostart] env WAYLAND_DISPLAY=${WAYLAND_DISPLAY-} DISPLAY=${DISPLAY-} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR-}" >&2
+
+for c in \
+  foot \
+  wezterm \
+  alacritty \
+  kitty \
+  weston-terminal \
+  gnome-terminal \
+  konsole \
+  warp-terminal \
+  xterm \
+  x-terminal-emulator
+do
+  if command -v "$c" >/dev/null 2>&1; then
+    echo "[autostart] trying $c" >&2
+    exec "$c"
+  fi
+done
+
+echo "[autostart] no terminal found in PATH" >&2
+exit 127
+"#;
+
+                info!("[autostart] Spawning terminal via fallback list");
+                WMArgEnum::StringVec(vec![
+                    "sh".to_string(),
+                    "-lc".to_string(),
+                    script.to_string(),
+                ])
+            }
+        };
+
+        if let Err(e) = Self::spawn(self, backend, &arg) {
+            error!("[autostart] Failed to spawn terminal: {:?}", e);
+        }
     }
 
     // --- 热插拔处理逻辑 ---
@@ -838,8 +962,14 @@ impl Jwm {
         keycode: u8,
         state_bits: u16,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let debug_keys = std::env::var("JWM_DEBUG_KEYS")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
         let keysym = backend.key_ops_mut().keysym_from_keycode(keycode)?;
         let clean_state = self.clean_mask(backend, state_bits);
+
+        let mut matched = false;
         for key_config in self.key_bindings.to_vec().iter() {
             let kc_mask = key_config.mask
                 & (Mods::SHIFT
@@ -850,11 +980,29 @@ impl Jwm {
                     | Mods::MOD3
                     | Mods::MOD5);
             if keysym == key_config.key_sym && kc_mask == clean_state {
+                matched = true;
+                if debug_keys {
+                    info!(
+                        "[key] matched keysym=0x{:x} mods=0x{:x}",
+                        keysym,
+                        clean_state.bits()
+                    );
+                }
                 if let Some(func) = key_config.func_opt {
-                    let _ = func(self, backend, &key_config.arg);
+                    if let Err(e) = func(self, backend, &key_config.arg) {
+                        error!("Error executing keyboard shortcut: {:?}", e);
+                    }
                 }
                 break;
             }
+        }
+
+        if debug_keys && !matched {
+            info!(
+                "[key] no match keysym=0x{:x} mods=0x{:x}",
+                keysym,
+                clean_state.bits()
+            );
         }
         Ok(())
     }
@@ -2572,11 +2720,37 @@ impl Jwm {
     }
 
     fn ensure_bar_is_running(&mut self, shared_path: &str) {
+        let now = std::time::Instant::now();
+
+        if let Some(until) = self.status_bar_backoff_until {
+            if now < until {
+                return;
+            }
+        }
+
         // 1. 检查现有进程状态
         if let Some(child) = self.status_bar_child.as_mut() {
             match child.try_wait() {
                 Ok(Some(status)) => {
-                    info!("Status bar process exited with: {status}, preparing to respawn.");
+                    info!("Status bar process exited with: {status}");
+
+                    // Mark as stopped so we can respawn later.
+                    self.status_bar_child = None;
+
+                    if status.success() {
+                        self.status_bar_restart_failures = 0;
+                    } else {
+                        self.status_bar_restart_failures = self.status_bar_restart_failures.saturating_add(1);
+                    }
+
+                    // Backoff to avoid a tight respawn loop starving input/rendering.
+                    let pow = self.status_bar_restart_failures.min(6);
+                    let base_ms = 200u64;
+                    let backoff_ms = base_ms.saturating_mul(1u64 << pow).min(10_000);
+                    self.status_bar_backoff_until = Some(now + std::time::Duration::from_millis(backoff_ms));
+
+                    // Don't respawn in the same tick.
+                    return;
                 }
                 Ok(None) => {
                     return;
@@ -2585,7 +2759,22 @@ impl Jwm {
                     info!(
                         "Error attempting to wait on status bar child: {e}, will try to respawn."
                     );
+
+                    self.status_bar_child = None;
+                    self.status_bar_restart_failures = self.status_bar_restart_failures.saturating_add(1);
+
+                    let pow = self.status_bar_restart_failures.min(6);
+                    let base_ms = 200u64;
+                    let backoff_ms = base_ms.saturating_mul(1u64 << pow).min(10_000);
+                    self.status_bar_backoff_until = Some(now + std::time::Duration::from_millis(backoff_ms));
+                    return;
                 }
+            }
+        }
+
+        if let Some(until) = self.status_bar_backoff_until {
+            if now < until {
+                return;
             }
         }
 
@@ -2600,6 +2789,14 @@ impl Jwm {
             cmd
         };
 
+        // Make sure the bar inherits the Wayland env we set up.
+        if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
+            command.env("WAYLAND_DISPLAY", v);
+        }
+        if let Ok(v) = std::env::var("XDG_RUNTIME_DIR") {
+            command.env("XDG_RUNTIME_DIR", v);
+        }
+
         // 4. 执行启动并更新时间戳
         match command
             .stdin(Stdio::null())
@@ -2610,9 +2807,17 @@ impl Jwm {
             Ok(child) => {
                 info!("Spawning status bar (PID: {})", child.id());
                 self.status_bar_child = Some(child);
+                self.status_bar_last_spawn = Some(now);
+                self.status_bar_backoff_until = None;
             }
             Err(e) => {
                 error!("Failed to spawn status bar: {}", e);
+
+                self.status_bar_restart_failures = self.status_bar_restart_failures.saturating_add(1);
+                let pow = self.status_bar_restart_failures.min(6);
+                let base_ms = 200u64;
+                let backoff_ms = base_ms.saturating_mul(1u64 << pow).min(10_000);
+                self.status_bar_backoff_until = Some(now + std::time::Duration::from_millis(backoff_ms));
             }
         }
     }

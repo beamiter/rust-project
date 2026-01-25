@@ -55,7 +55,7 @@ impl UdevKeyOps {
             &model,
             &layout,
             &variant,
-            options.as_deref(),
+            options,
             xkb::KEYMAP_COMPILE_NO_FLAGS,
         )
         .ok_or_else(|| BackendError::Message("xkb keymap creation failed".into()))?;

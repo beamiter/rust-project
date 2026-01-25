@@ -592,6 +592,7 @@ impl UdevBackend {
                         let _ = self.event_loop.handle().remove(token);
                     }
                 }
+
                 self.kms = Some(new_kms);
                 self.state.needs_redraw = true;
                 self.state.outputs = self
@@ -599,7 +600,7 @@ impl UdevBackend {
                     .as_ref()
                     .map(|k| k.borrow().outputs())
                     .unwrap_or_default();
-                    self.request_flush();
+                self.request_flush();
             }
             Err(err) => {
                 log::warn!("KMS re-init failed (keeping previous state): {err}");
@@ -1083,6 +1084,10 @@ impl UdevBackend {
                             let serial = SCOUNTER.next_serial();
                             let pressed = matches!(state_key, smithay::backend::input::KeyState::Pressed);
 
+                            let debug_keys = std::env::var("JWM_DEBUG_KEYS")
+                                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                                .unwrap_or(false);
+
                             // Layer-shell surfaces can request exclusive keyboard interactivity
                             // (e.g. lock screens / OSD). If such a surface exists on Top/Overlay,
                             // route keyboard events directly to it and do not emit WM shortcuts.
@@ -1090,16 +1095,58 @@ impl UdevBackend {
 
                             // If nothing is focused, focus the surface under the pointer (best-effort).
                             if let Some(kbd) = state.seat.get_keyboard() {
+                                if debug_keys && pressed {
+                                    let xkb_keycode_u8 = u8::try_from(u32::from(keycode).saturating_add(8))
+                                        .unwrap_or(0);
+                                    log::info!(
+                                        "[udev:key] evdev_keycode={} xkb_keycode={} focus_before={} time={}",
+                                        u32::from(keycode),
+                                        xkb_keycode_u8,
+                                        kbd.current_focus().is_some(),
+                                        time
+                                    );
+                                }
+
                                 // Check exclusive layer-shell first.
+                                let bar_name = crate::config::CONFIG.status_bar_name();
+
                                 let exclusive_surface = state
                                     .layer_shell_state
                                     .layer_surfaces()
                                     .rev()
                                     .find_map(|layer| {
+                                        // Do not let the status bar block WM shortcuts.
+                                        // Some bars mistakenly request `Exclusive` keyboard interactivity.
+                                        if !bar_name.is_empty() {
+                                            if let Some(win) = state
+                                                .surface_to_window
+                                                .get(&layer.wl_surface().id())
+                                                .copied()
+                                            {
+                                                let title = state
+                                                    .window_title
+                                                    .get(&win)
+                                                    .map(|s| s.as_str())
+                                                    .unwrap_or("");
+                                                let app_id = state
+                                                    .window_app_id
+                                                    .get(&win)
+                                                    .map(|s| s.as_str())
+                                                    .unwrap_or("");
+                                                if title == bar_name || app_id == bar_name {
+                                                    return None;
+                                                }
+                                            }
+                                        }
+
                                         let exclusive = layer.with_cached_state(|data| {
+                                            let exclusive_zone: i32 = data.exclusive_zone.into();
                                             data.keyboard_interactivity == KeyboardInteractivity::Exclusive
                                                 && (data.layer == WlrLayer::Top
                                                     || data.layer == WlrLayer::Overlay)
+                                                // Bars/docks often set a non-zero exclusive zone to reserve space.
+                                                // Treat those as non-blocking for WM shortcuts.
+                                                && exclusive_zone == 0
                                         });
                                         if !exclusive {
                                             return None;
@@ -1119,6 +1166,10 @@ impl UdevBackend {
 
                                 if let Some(surface) = exclusive_surface {
                                     handled_by_exclusive_layer = true;
+
+                                    if debug_keys && pressed {
+                                        log::info!("[udev:key] handled_by_exclusive_layer=true");
+                                    }
                                     kbd.set_focus(state, Some(surface), serial);
 
                                     let _ = kbd.input::<(), _>(
@@ -1136,6 +1187,13 @@ impl UdevBackend {
                                             FilterResult::Forward
                                         },
                                     );
+
+                                    // Keep modifier state correct even if Smithay decides not to call
+                                    // the filter closure (e.g. when no focus exists).
+                                    let mods_bits = mods_from_smithay(&kbd.modifier_state()).bits();
+                                    if let Some(mut s) = shared.lock().ok() {
+                                        s.mods_state = mods_bits;
+                                    }
                                 }
 
                                 if handled_by_exclusive_layer {
@@ -1210,7 +1268,16 @@ impl UdevBackend {
                                         }
                                     },
                                 );
+
+                                // Keep modifier state correct even if Smithay decides not to call
+                                // the filter closure (e.g. when no focus exists).
+                                let mods_bits = mods_from_smithay(&kbd.modifier_state()).bits();
+                                if let Some(mut s) = shared.lock().ok() {
+                                    s.mods_state = mods_bits;
                                 }
+                                }
+                            } else if debug_keys && pressed {
+                                log::warn!("[udev:key] seat.get_keyboard() returned None (no keyboard configured?)");
                             }
 
                             // JWM only uses press for shortcuts for now.
@@ -1227,6 +1294,15 @@ impl UdevBackend {
                                     state: mods_state,
                                     time,
                                 });
+
+                                if debug_keys {
+                                    log::info!(
+                                        "[udev:key->wm] keycode={} mods_state=0x{:x} time={}",
+                                        keycode_u8,
+                                        mods_state,
+                                        time
+                                    );
+                                }
                             }
                         }
                         _ => {}
