@@ -616,6 +616,12 @@ impl Config {
     }
 
     pub fn get_termcmd() -> Vec<String> {
+        if let Ok(cmd) = std::env::var("JWM_TERMINAL") {
+            let cmd = cmd.trim();
+            if !cmd.is_empty() {
+                return vec![cmd.to_string()];
+            }
+        }
         ADVANCED_TERMINAL_PROBER
             .get_available_terminal()
             .map(|config| vec![config.command.clone()])

@@ -2,6 +2,7 @@ use once_cell::sync::Lazy;
 use std::collections::HashMap;
 use std::process::Command;
 use std::sync::RwLock;
+use std::env;
 
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -22,6 +23,62 @@ pub struct AdvancedTerminalProber {
 impl AdvancedTerminalProber {
     fn new() -> Self {
         let mut configs = HashMap::new();
+
+        // Wayland-first terminals (often needed for DRM/udev compositors)
+        configs.insert(
+            "foot".to_string(),
+            TerminalConfig {
+                command: "foot".to_string(),
+                execute_flag: "-e".to_string(),
+                title_flag: Some("-T".to_string()),
+                geometry_flag: None,
+                working_dir_flag: Some("-D".to_string()),
+            },
+        );
+
+        configs.insert(
+            "wezterm".to_string(),
+            TerminalConfig {
+                command: "wezterm".to_string(),
+                execute_flag: "start".to_string(),
+                title_flag: Some("--class".to_string()),
+                geometry_flag: None,
+                working_dir_flag: Some("--cwd".to_string()),
+            },
+        );
+
+        configs.insert(
+            "alacritty".to_string(),
+            TerminalConfig {
+                command: "alacritty".to_string(),
+                execute_flag: "-e".to_string(),
+                title_flag: Some("--title".to_string()),
+                geometry_flag: None,
+                working_dir_flag: Some("--working-directory".to_string()),
+            },
+        );
+
+        configs.insert(
+            "kitty".to_string(),
+            TerminalConfig {
+                command: "kitty".to_string(),
+                execute_flag: "--".to_string(),
+                title_flag: Some("--title".to_string()),
+                geometry_flag: Some("--geometry".to_string()),
+                working_dir_flag: Some("--directory".to_string()),
+            },
+        );
+
+        configs.insert(
+            "weston-terminal".to_string(),
+            TerminalConfig {
+                command: "weston-terminal".to_string(),
+                execute_flag: "--".to_string(),
+                title_flag: None,
+                geometry_flag: None,
+                working_dir_flag: None,
+            },
+        );
 
         // Warp Terminal
         configs.insert(
@@ -71,12 +128,41 @@ impl AdvancedTerminalProber {
             },
         );
 
-        let priority_order = vec![
-            "warp-terminal".to_string(),
-            "terminator".to_string(),
-            "gnome-terminal".to_string(),
-            "jterm4".to_string(),
-        ];
+        // Choose priority based on session hints.
+        // - In udev/DRM (Wayland compositor) sessions, X11 terminals often won't show.
+        // - In X11 sessions, Warp/Terminator/Gnome-terminal are usually fine.
+        let is_wayland = env::var("WAYLAND_DISPLAY").is_ok()
+            || env::var("XDG_SESSION_TYPE")
+                .map(|v| v.eq_ignore_ascii_case("wayland"))
+                .unwrap_or(false);
+        let has_display = env::var("DISPLAY").is_ok();
+
+        let priority_order = if is_wayland && !has_display {
+            vec![
+                "foot".to_string(),
+                "wezterm".to_string(),
+                "alacritty".to_string(),
+                "kitty".to_string(),
+                "weston-terminal".to_string(),
+                // Keep Warp last: it may depend on X11/desktop services.
+                "warp-terminal".to_string(),
+                "terminator".to_string(),
+                "gnome-terminal".to_string(),
+                "jterm4".to_string(),
+            ]
+        } else {
+            vec![
+                "warp-terminal".to_string(),
+                "terminator".to_string(),
+                "gnome-terminal".to_string(),
+                "alacritty".to_string(),
+                "kitty".to_string(),
+                "wezterm".to_string(),
+                "foot".to_string(),
+                "weston-terminal".to_string(),
+                "jterm4".to_string(),
+            ]
+        };
 
         Self {
             configs,
