@@ -6,6 +6,7 @@ use xbar_core::initialize_logging;
 
 // 导入后端
 #[cfg(feature = "backend-x11")]
+use jwm::backend::x11::backend::X11Backend;
 
 #[cfg(feature = "backend-udev")]
 use jwm::backend::udev::backend::UdevBackend;
