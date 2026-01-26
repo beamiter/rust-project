@@ -205,6 +205,8 @@ pub struct Jwm {
     pub status_bar_backoff_until: Option<std::time::Instant>,
     pub status_bar_restart_failures: u32,
 
+    pub last_key_grab_refresh_at: Option<std::time::Instant>,
+
     pub pending_bar_updates: HashSet<MonitorIndex>,
 
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
@@ -643,6 +645,21 @@ impl EventHandler for Jwm {
         }
         self.ensure_bar_is_running(SHARED_PATH);
 
+        // Some status bar implementations may grab keys after starting.
+        // Re-assert our grabs once per (re)spawn to keep WM shortcuts working.
+        if let Some(spawned_at) = self.status_bar_last_spawn {
+            let need_refresh = self
+                .last_key_grab_refresh_at
+                .map(|t| t < spawned_at)
+                .unwrap_or(true);
+            if need_refresh {
+                if let Err(e) = self.grabkeys(backend) {
+                    warn!("Failed to refresh key grabs after bar spawn: {e}");
+                }
+                self.last_key_grab_refresh_at = Some(spawned_at);
+            }
+        }
+
         self.maybe_autostart_terminal(backend);
 
         self.process_commands_from_status_bar(backend);
@@ -711,6 +728,8 @@ impl Jwm {
             status_bar_last_spawn: None,
             status_bar_backoff_until: None,
             status_bar_restart_failures: 0,
+
+            last_key_grab_refresh_at: None,
             pending_bar_updates: HashSet::new(),
 
             suppress_mouse_focus_until: None,

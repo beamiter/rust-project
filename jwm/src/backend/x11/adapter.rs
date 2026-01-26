@@ -17,16 +17,23 @@ pub fn mods_from_x11(mask: KeyButMask, numlock_mask: KeyButMask) -> Mods {
         m |= Mods::ALT;
     }
     if raw & KeyButMask::MOD2.bits() != 0 {
-        m |= Mods::MOD2;
+        // If NumLock is mapped to Mod2, don't treat it as a regular modifier.
+        if !numlock_mask.contains(KeyButMask::MOD2) {
+            m |= Mods::MOD2;
+        }
     }
     if raw & KeyButMask::MOD3.bits() != 0 {
-        m |= Mods::MOD3;
+        if !numlock_mask.contains(KeyButMask::MOD3) {
+            m |= Mods::MOD3;
+        }
     }
     if raw & KeyButMask::MOD4.bits() != 0 {
         m |= Mods::SUPER;
     }
     if raw & KeyButMask::MOD5.bits() != 0 {
-        m |= Mods::MOD5;
+        if !numlock_mask.contains(KeyButMask::MOD5) {
+            m |= Mods::MOD5;
+        }
     }
     if raw & KeyButMask::LOCK.bits() != 0 {
         m |= Mods::CAPS;
