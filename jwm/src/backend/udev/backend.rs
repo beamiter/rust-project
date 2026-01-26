@@ -1123,12 +1123,14 @@ impl UdevBackend {
                             // If nothing is focused, focus the surface under the pointer (best-effort).
                             if let Some(kbd) = state.seat.get_keyboard() {
                                 if debug_keys && pressed {
-                                    let xkb_keycode_u8 = u8::try_from(u32::from(keycode).saturating_add(8))
-                                        .unwrap_or(0);
+                                    // Smithay exposes keycodes in the XKB/Wayland domain (evdev + 8).
+                                    // Keep them as-is; adding +8 again will shift keys (e.g. Enter -> j).
+                                    let xkb_keycode_u8 = u8::try_from(u32::from(keycode)).unwrap_or(0);
+                                    let evdev_keycode = u32::from(keycode).saturating_sub(8);
                                     log::info!(
-                                        "[udev:key] evdev_keycode={} xkb_keycode={} focus_before={} time={}",
-                                        u32::from(keycode),
+                                        "[udev:key] xkb_keycode={} evdev_keycode={} focus_before={} time={}",
                                         xkb_keycode_u8,
+                                        evdev_keycode,
                                         kbd.current_focus().is_some(),
                                         time
                                     );
@@ -1246,10 +1248,9 @@ impl UdevBackend {
                                     |_, modifiers, _handle| {
                                         let mods_bits = mods_from_smithay(modifiers).bits();
 
-                                        // Smithay keyboard events use Linux evdev keycodes (KEY_*).
-                                        // xkbcommon expects xkb keycodes which are evdev + 8.
-                                        let xkb_keycode_u8 =
-                                            u8::try_from(u32::from(keycode).saturating_add(8)).unwrap_or(0);
+                                        // Smithay provides XKB/Wayland keycodes already (evdev + 8).
+                                        // Use them directly for xkbcommon lookups.
+                                        let xkb_keycode_u8 = u8::try_from(u32::from(keycode)).unwrap_or(0);
 
                                         let Some(mut s) = shared.lock().ok() else {
                                             return FilterResult::Forward;
@@ -1311,9 +1312,8 @@ impl UdevBackend {
                             if !handled_by_exclusive_layer
                                 && matches!(state_key, smithay::backend::input::KeyState::Pressed)
                             {
-                                // Smithay keyboard events use Linux evdev keycodes (KEY_*).
-                                // xkbcommon expects "xkb keycodes" which are evdev + 8.
-                                let keycode_u32 = u32::from(keycode).saturating_add(8);
+                                // Smithay provides XKB/Wayland keycodes already (evdev + 8).
+                                let keycode_u32 = u32::from(keycode);
                                 let keycode_u8 = u8::try_from(keycode_u32).unwrap_or(0);
                                 let mods_state = shared.lock().unwrap().mods_state;
                                 pending_events.lock().unwrap().push_back(BackendEvent::KeyPress {

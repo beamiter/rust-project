@@ -675,6 +675,66 @@ impl EventHandler for Jwm {
 }
 
 impl Jwm {
+    fn func_name(func: WMFuncType) -> &'static str {
+        macro_rules! eq {
+            ($f:path) => {
+                std::ptr::fn_addr_eq(func, $f as WMFuncType)
+            };
+        }
+
+        if eq!(Jwm::spawn) {
+            "spawn"
+        } else if eq!(Jwm::focusstack) {
+            "focusstack"
+        } else if eq!(Jwm::focusmon) {
+            "focusmon"
+        } else if eq!(Jwm::take_screenshot) {
+            "take_screenshot"
+        } else if eq!(Jwm::quit) {
+            "quit"
+        } else if eq!(Jwm::restart) {
+            "restart"
+        } else if eq!(Jwm::killclient) {
+            "killclient"
+        } else if eq!(Jwm::zoom) {
+            "zoom"
+        } else if eq!(Jwm::setlayout) {
+            "setlayout"
+        } else if eq!(Jwm::togglefloating) {
+            "togglefloating"
+        } else if eq!(Jwm::togglefullscr) {
+            "togglefullscr"
+        } else if eq!(Jwm::togglebar) {
+            "togglebar"
+        } else if eq!(Jwm::setmfact) {
+            "setmfact"
+        } else if eq!(Jwm::setcfact) {
+            "setcfact"
+        } else if eq!(Jwm::incnmaster) {
+            "incnmaster"
+        } else if eq!(Jwm::movestack) {
+            "movestack"
+        } else if eq!(Jwm::view) {
+            "view"
+        } else if eq!(Jwm::tag) {
+            "tag"
+        } else if eq!(Jwm::toggleview) {
+            "toggleview"
+        } else if eq!(Jwm::toggletag) {
+            "toggletag"
+        } else if eq!(Jwm::tagmon) {
+            "tagmon"
+        } else if eq!(Jwm::loopview) {
+            "loopview"
+        } else if eq!(Jwm::movemouse) {
+            "movemouse"
+        } else if eq!(Jwm::resizemouse) {
+            "resizemouse"
+        } else {
+            "<unknown>"
+        }
+    }
+
     pub fn new(backend: &mut dyn Backend) -> Result<Self, Box<dyn std::error::Error>> {
         info!("[new] Starting JWM initialization");
         Self::log_x11_environment();
@@ -1001,10 +1061,16 @@ exit 127
             if keysym == key_config.key_sym && kc_mask == clean_state {
                 matched = true;
                 if debug_keys {
+                    let func_name = key_config
+                        .func_opt
+                        .map(Self::func_name)
+                        .unwrap_or("<none>");
                     info!(
-                        "[key] matched keysym=0x{:x} mods=0x{:x}",
+                        "[key] matched keysym=0x{:x} mods=0x{:x} func={} arg={:?}",
                         keysym,
-                        clean_state.bits()
+                        clean_state.bits(),
+                        func_name,
+                        key_config.arg
                     );
                 }
                 if let Some(func) = key_config.func_opt {

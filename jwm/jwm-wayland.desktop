@@ -1,0 +1,10 @@
+[Desktop Entry]
+Name=JWM (Wayland/Udev)
+Comment=JWM compositor using udev (DRM/KMS)
+Exec=/usr/local/bin/jwm
+TryExec=/usr/local/bin/jwm
+Type=Application
+
+# 这些字段不是必须，但建议给
+DesktopNames=JWM
+X-GDM-SessionRegisters=true
