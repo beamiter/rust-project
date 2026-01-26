@@ -3377,6 +3377,10 @@ exit 127
     fn monitor_work_area(&self, mon_key: MonitorKey) -> Option<Rect> {
         let monitor = self.state.monitors.get(mon_key)?;
 
+        let debug_workarea = std::env::var("JWM_DEBUG_WORKAREA")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
         let wx = monitor.geometry.w_x;
         let wy = monitor.geometry.w_y;
         let ww = monitor.geometry.w_w;
@@ -3432,6 +3436,25 @@ exit 127
 
                 // Skip degenerate geometry.
                 if dw == 0 || dh == 0 {
+                    continue;
+                }
+
+                // Ignore wallpaper / background-like surfaces that cover (almost) the entire
+                // monitor. Some layer-shell backgrounds may appear as "dock" due to
+                // exclusive_zone semantics, but they must not shrink the tiling area.
+                if dw >= (ww * 9 / 10) && dh >= (wh * 9 / 10) {
+                    if debug_workarea {
+                        info!(
+                            "[workarea] skip fullscreen dock win={:?} geom=({},{} {}x{}) ww={} wh={}",
+                            client.win,
+                            dx,
+                            dy,
+                            dw,
+                            dh,
+                            ww,
+                            wh
+                        );
+                    }
                     continue;
                 }
 
@@ -3496,6 +3519,24 @@ exit 127
                     0
                 };
 
+                if debug_workarea {
+                    info!(
+                        "[workarea] dock win={:?} edge={} geom=({},{} {}x{}) exclusive_zone={} zone_px={} dist(top/bot/left/right)=({}/{}/{}/{})",
+                        client.win,
+                        edge,
+                        dx,
+                        dy,
+                        dw,
+                        dh,
+                        exclusive_zone,
+                        zone_px,
+                        dist_top,
+                        dist_bottom,
+                        dist_left,
+                        dist_right
+                    );
+                }
+
                 match edge {
                     "top" => {
                         if dist_top <= threshold {
@@ -3547,6 +3588,25 @@ exit 127
         let y = wy + top;
         let w = (ww - left - right).max(0);
         let h = (wh - top - bottom).max(0);
+
+        if debug_workarea {
+            info!(
+                "[workarea] result mon={} wx/wy/ww/wh=({},{},{},{}) offsets(top/bot/left/right)=({},{},{},{}) -> ({},{},{},{})",
+                monitor.num,
+                wx,
+                wy,
+                ww,
+                wh,
+                top,
+                bottom,
+                left,
+                right,
+                x,
+                y,
+                w,
+                h
+            );
+        }
         Some(Rect::new(x, y, w, h))
     }
 

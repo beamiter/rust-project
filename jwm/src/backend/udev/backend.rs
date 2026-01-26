@@ -1066,7 +1066,13 @@ impl UdevBackend {
                                         };
 
                                         if should_focus {
-                                            kbd.set_focus(state, Some(surface), SCOUNTER.next_serial());
+                                            let win = state.surface_to_window.get(&surface.id()).copied();
+                                            kbd.set_focus(
+                                                state,
+                                                Some(surface.clone()),
+                                                SCOUNTER.next_serial(),
+                                            );
+                                            state.set_active_toplevel(win);
                                         }
                                     }
                                 }
@@ -1529,6 +1535,18 @@ impl Backend for UdevBackend {
 
     fn as_any(&self) -> &dyn Any {
         self
+    }
+
+    fn on_focused_client_changed(&mut self, win: Option<WindowId>) -> Result<(), BackendError> {
+        match win {
+            Some(w) => self.window_ops.set_input_focus(w)?,
+            None => self.window_ops.set_input_focus_root()?,
+        }
+
+        self.state.set_active_toplevel(win);
+        self.state.needs_redraw = true;
+        self.request_flush();
+        Ok(())
     }
 
     fn window_ops(&self) -> &dyn WindowOps {

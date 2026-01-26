@@ -29,6 +29,7 @@ use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::shell::wlr_layer::{Anchor, Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState};
 use smithay::wayland::shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState};
 use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
+use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::socket::ListeningSocketSource;
 use smithay::wayland::output::OutputHandler;
@@ -72,9 +73,9 @@ pub struct JwmWaylandState {
     pub popups: HashMap<ObjectId, PopupSurface>,
     pub popup_order: Vec<ObjectId>,
 
+    pub active_toplevel: Option<WindowId>,
     pub popup_grab_toplevel: Option<WindowId>,
     pub popup_grab_prev_kbd_focus: Option<WlSurface>,
-
     pub output_rects: Vec<Rectangle<i32, Logical>>,
 
     pub window_geometry: HashMap<WindowId, Geometry>,
@@ -101,6 +102,40 @@ delegate_layer_shell!(JwmWaylandState);
 delegate_output!(JwmWaylandState);
 
 impl JwmWaylandState {
+    pub fn set_active_toplevel(&mut self, win: Option<WindowId>) {
+        if self.active_toplevel == win {
+            return;
+        }
+
+        let debug_focus = std::env::var("JWM_DEBUG_FOCUS")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        let prev = self.active_toplevel.take();
+        if debug_focus {
+            info!("[udev/focus] active_toplevel {:?} -> {:?}", prev, win);
+        }
+
+        if let Some(prev_win) = prev {
+            if let Some(toplevel) = self.toplevels.get(&prev_win).cloned() {
+                toplevel.with_pending_state(|s| {
+                    s.states.unset(xdg_toplevel::State::Activated);
+                });
+                toplevel.send_configure();
+            }
+        }
+
+        self.active_toplevel = win;
+        if let Some(new_win) = win {
+            if let Some(toplevel) = self.toplevels.get(&new_win).cloned() {
+                toplevel.with_pending_state(|s| {
+                    s.states.set(xdg_toplevel::State::Activated);
+                });
+                toplevel.send_configure();
+            }
+        }
+    }
+
     pub fn init(
         dh: &DisplayHandle,
         handle: smithay::reexports::calloop::LoopHandle<'static, JwmWaylandState>,
@@ -162,6 +197,7 @@ impl JwmWaylandState {
                 xdg_shell_state,
 
                 layer_shell_state,
+                active_toplevel: None,
 
                 outputs: Vec::new(),
                 next_window_raw: 1,
