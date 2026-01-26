@@ -958,6 +958,18 @@ impl UdevBackend {
                             let time = event.time_msec();
                             let button_code = event.button_code();
                             let pressed = matches!(event.state(), smithay::backend::input::ButtonState::Pressed);
+
+                            // libinput / evdev button codes are Linux input codes (e.g. BTN_LEFT=272),
+                            // while JWM expects X11-like button numbers (1=left, 2=middle, 3=right).
+                            // Map the common codes explicitly.
+                            let detail_btn: u8 = match button_code {
+                                272 => 1, // BTN_LEFT
+                                273 => 3, // BTN_RIGHT
+                                274 => 2, // BTN_MIDDLE
+                                275 => 8, // BTN_SIDE
+                                276 => 9, // BTN_EXTRA
+                                _ => (button_code & 0xFF) as u8,
+                            };
                             let (x, y, output) = {
                                 let s = shared.lock().unwrap();
                                 let x = s.pointer_x;
@@ -1062,10 +1074,25 @@ impl UdevBackend {
 
                             if pressed {
                                 let mods_state = shared.lock().unwrap().mods_state;
+
+                                let debug_buttons = std::env::var("JWM_DEBUG_BUTTONS")
+                                    .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                                    .unwrap_or(false);
+                                if debug_buttons {
+                                    log::info!(
+                                        "[udev:btn->wm] button_code={} detail={} mods_state=0x{:x} x={:.1} y={:.1} target={:?}",
+                                        button_code,
+                                        detail_btn,
+                                        mods_state,
+                                        x,
+                                        y,
+                                        hit.unwrap_or(HitTarget::Background { output })
+                                    );
+                                }
                                 pending_events.lock().unwrap().push_back(BackendEvent::ButtonPress {
                                     target: hit.unwrap_or(HitTarget::Background { output }),
                                     state: mods_state,
-                                    detail: (button_code & 0xFF) as u8,
+                                    detail: detail_btn,
                                     time,
                                     root_x: x,
                                     root_y: y,

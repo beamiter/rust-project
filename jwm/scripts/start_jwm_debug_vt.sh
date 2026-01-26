@@ -12,6 +12,10 @@ set -euo pipefail
 VT="${1:-8}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+# Prefer running JWM as the original user (not root). Running the compositor/bar
+# as root can break logind/DRM master handling and some toolkits refuse to run.
+RUN_AS_USER="${SUDO_USER:-${USER:-}}"
+
 if ! command -v openvt >/dev/null 2>&1; then
   echo "[start_jwm_debug_vt] openvt not found (install kbd util / util-linux)" >&2
   exit 1
@@ -24,6 +28,12 @@ echo "[start_jwm_debug_vt] VT=$VT" >&2
 echo "[start_jwm_debug_vt] cmd: ${CMD[*]}" >&2
 
 action=(openvt -c "$VT" -s -f -- "${CMD[@]}")
+
+# If we have to use sudo to allocate/switch VTs, still run JWM as the invoking user.
+if [[ -n "$RUN_AS_USER" ]]; then
+  # runuser is provided by util-linux on most distros.
+  action=(openvt -c "$VT" -s -f -- runuser -u "$RUN_AS_USER" --preserve-environment -- "${CMD[@]}")
+fi
 
 # openvt often requires root to allocate/switch VTs.
 if [[ ${EUID:-$(id -u)} -ne 0 ]]; then
