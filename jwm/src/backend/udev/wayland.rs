@@ -5,6 +5,8 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
+use log::{info, warn};
+
 use smithay::delegate_compositor;
 use smithay::delegate_layer_shell;
 use smithay::delegate_output;
@@ -110,9 +112,17 @@ impl JwmWaylandState {
             let source = ListeningSocketSource::new_auto()?;
             let socket_name = source.socket_name().to_string_lossy().into_owned();
             handle.insert_source(source, |client_stream, _, data| {
-                let _ = data
+                match data
                     .display_handle
-                    .insert_client(client_stream, Arc::new(JwmClientState::default()));
+                    .insert_client(client_stream, Arc::new(JwmClientState::default()))
+                {
+                    Ok(client_id) => {
+                        info!("[udev/wayland] client connected: {client_id:?}");
+                    }
+                    Err(e) => {
+                        warn!("[udev/wayland] insert_client failed: {e:?}");
+                    }
+                }
             })?;
             Some(socket_name)
         } else {
@@ -556,12 +566,14 @@ impl CompositorHandler for JwmWaylandState {
             match assignment {
                 Some(BufferAssignment::NewBuffer(_)) => {
                     if self.mapped_windows.insert(win) {
+                        info!("[udev/wayland] window mapped win={win:?}");
                         self.push_event(BackendEvent::WindowMapped(win));
                     }
                     self.needs_redraw = true;
                 }
                 Some(BufferAssignment::Removed) => {
                     if self.mapped_windows.remove(&win) {
+                        info!("[udev/wayland] window unmapped win={win:?}");
                         self.push_event(BackendEvent::WindowUnmapped(win));
                     }
                     self.needs_redraw = true;
@@ -719,6 +731,8 @@ impl XdgShellHandler for JwmWaylandState {
         let win = self.alloc_window_id();
         let obj_id = surface.wl_surface().id();
 
+        info!("[udev/wayland] new_toplevel win={win:?} surface_id={obj_id:?}");
+
         self.surface_to_window.insert(obj_id, win);
         self.toplevels.insert(win, surface);
 
@@ -799,6 +813,7 @@ impl XdgShellHandler for JwmWaylandState {
 
     fn toplevel_destroyed(&mut self, surface: ToplevelSurface) {
         if let Some(win) = self.surface_to_window.remove(&surface.wl_surface().id()) {
+            info!("[udev/wayland] toplevel_destroyed win={win:?}");
             self.toplevels.remove(&win);
             self.pending_initial_configure.remove(&win);
             self.window_geometry.remove(&win);
@@ -860,6 +875,8 @@ impl XdgShellHandler for JwmWaylandState {
                 .unwrap_or_default()
         });
 
+        info!("[udev/wayland] app_id_changed win={win:?} app_id={}", app_id);
+
         self.window_app_id.insert(win, app_id);
         self.push_event(BackendEvent::PropertyChanged {
             window: win,
@@ -887,6 +904,8 @@ impl XdgShellHandler for JwmWaylandState {
                 .clone()
                 .unwrap_or_default()
         });
+
+        info!("[udev/wayland] title_changed win={win:?} title={}", title);
 
         self.window_title.insert(win, title);
         self.push_event(BackendEvent::PropertyChanged {

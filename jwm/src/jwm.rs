@@ -1771,8 +1771,29 @@ exit 127
     }
 
     fn constrain_to_screen(&self, x: &mut i32, y: &mut i32, total_width: i32, total_height: i32) {
-        *x = (*x).clamp(-(total_width - 1), self.s_w - 1);
-        *y = (*y).clamp(-(total_height - 1), self.s_h - 1);
+        let min_x = -(total_width - 1);
+        let max_x = self.s_w - 1;
+        if min_x <= max_x {
+            *x = (*x).clamp(min_x, max_x);
+        } else {
+            warn!(
+                "Skip screen X clamp because max_x({}) < min_x({}); total_width={}, s_w={}",
+                max_x, min_x, total_width, self.s_w
+            );
+            *x = min_x;
+        }
+
+        let min_y = -(total_height - 1);
+        let max_y = self.s_h - 1;
+        if min_y <= max_y {
+            *y = (*y).clamp(min_y, max_y);
+        } else {
+            warn!(
+                "Skip screen Y clamp because max_y({}) < min_y({}); total_height={}, s_h={}",
+                max_y, min_y, total_height, self.s_h
+            );
+            *y = min_y;
+        }
     }
 
     fn constrain_to_monitor(
@@ -1790,8 +1811,30 @@ exit 127
             w_h: wh,
             ..
         } = *monitor_geometry;
-        *x = (*x).clamp(wx - total_width + 1, wx + ww - 1);
-        *y = (*y).clamp(wy - total_height + 1, wy + wh - 1);
+
+        let min_x = wx - total_width + 1;
+        let max_x = wx + ww - 1;
+        if min_x <= max_x {
+            *x = (*x).clamp(min_x, max_x);
+        } else {
+            warn!(
+                "Skip monitor X clamp because max_x({}) < min_x({}); total_width={}, monitor_ww={}",
+                max_x, min_x, total_width, ww
+            );
+            *x = min_x;
+        }
+
+        let min_y = wy - total_height + 1;
+        let max_y = wy + wh - 1;
+        if min_y <= max_y {
+            *y = (*y).clamp(min_y, max_y);
+        } else {
+            warn!(
+                "Skip monitor Y clamp because max_y({}) < min_y({}); total_height={}, monitor_wh={}",
+                max_y, min_y, total_height, wh
+            );
+            *y = min_y;
+        }
     }
 
     fn apply_size_hints_constraints(
@@ -6055,8 +6098,31 @@ exit 127
             }
 
             // Keep within the monitor bounds as a final guard.
-            client_x = client_x.clamp(mon_wx, mon_wx + mon_ww - client_total_width);
-            client_y = client_y.clamp(mon_wy, mon_wy + mon_wh - client_total_height);
+            let min_x = mon_wx;
+            let max_x = mon_wx + mon_ww - client_total_width;
+            if min_x <= max_x {
+                client_x = client_x.clamp(min_x, max_x);
+            } else {
+                // Window wider than available area; avoid panic in clamp and pin to left.
+                client_x = min_x;
+                warn!(
+                    "Skip X clamp because max_x({}) < min_x({}); client_total_width={}, mon_ww={}",
+                    max_x, min_x, client_total_width, mon_ww
+                );
+            }
+
+            let min_y = mon_wy;
+            let max_y = mon_wy + mon_wh - client_total_height;
+            if min_y <= max_y {
+                client_y = client_y.clamp(min_y, max_y);
+            } else {
+                // Window taller than available area; avoid panic in clamp and pin to top.
+                client_y = min_y;
+                warn!(
+                    "Skip Y clamp because max_y({}) < min_y({}); client_total_height={}, mon_wh={}",
+                    max_y, min_y, client_total_height, mon_wh
+                );
+            }
         }
         if let Some(client) = self.state.clients.get_mut(client_key) {
             client.geometry.x = client_x;
