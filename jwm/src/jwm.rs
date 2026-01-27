@@ -937,8 +937,53 @@ exit 127
         info: crate::backend::api::OutputInfo,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.add_monitor(info);
+
+        // Wayland clients can appear before outputs are fully initialized (early autostart).
+        // Those clients end up with `mon=None`, meaning JWM will treat them as invisible:
+        // - click-to-focus won't stick (focus() falls back to visible clients)
+        // - arrange() won't resize them
+        // The udev backend still renders them, so they look "stuck" at their initial size.
+        self.attach_unassigned_clients_to_selected_monitor();
+
         self.arrange(backend, None);
         Ok(())
+    }
+
+    fn attach_unassigned_clients_to_selected_monitor(&mut self) {
+        let target_mon_key = self
+            .state
+            .sel_mon
+            .or_else(|| self.state.monitor_order.first().copied());
+
+        let Some(mon_key) = target_mon_key else {
+            return;
+        };
+
+        let target_tags = self
+            .state
+            .monitors
+            .get(mon_key)
+            .map(|m| m.tag_set[m.sel_tags])
+            .unwrap_or(1);
+
+        let unassigned: Vec<ClientKey> = self
+            .state
+            .clients
+            .iter()
+            .filter_map(|(k, c)| if c.mon.is_none() { Some(k) } else { None })
+            .collect();
+
+        for client_key in unassigned {
+            if let Some(client) = self.state.clients.get_mut(client_key) {
+                client.mon = Some(mon_key);
+                if client.state.tags == 0 {
+                    client.state.tags = target_tags;
+                }
+            }
+
+            // Ensure this client participates in layout/focus stacks.
+            self.attach_to_monitor(client_key, mon_key);
+        }
     }
 
     fn handle_output_removed(
