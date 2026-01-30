@@ -5,38 +5,38 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+use smithay::backend::allocator::Fourcc;
 use smithay::backend::allocator::format::FormatSet;
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
-use smithay::backend::allocator::Fourcc;
 use smithay::backend::drm::compositor::FrameFlags;
 use smithay::backend::drm::exporter::gbm::GbmFramebufferExporter;
+use smithay::backend::drm::exporter::gbm::NodeFilter;
 use smithay::backend::drm::output::{DrmOutput, DrmOutputManager, DrmOutputRenderElements};
 use smithay::backend::drm::{DrmDevice, DrmDeviceFd, DrmEvent, DrmEventMetadata};
 use smithay::backend::egl::context::ContextPriority;
 use smithay::backend::egl::{EGLContext, EGLDisplay};
-use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::solid::SolidColorRenderElement;
+use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::{AsRenderElements, Id, Kind};
-use smithay::backend::renderer::{ImportAll, ImportMem};
-use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
 use smithay::backend::renderer::gles::GlesRenderer;
-use smithay::backend::session::libseat::LibSeatSession;
+use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
+use smithay::backend::renderer::{ImportAll, ImportMem};
 use smithay::backend::session::Session;
-use smithay::desktop::utils::send_frames_surface_tree;
-use smithay::desktop::space::SurfaceTree;
+use smithay::backend::session::libseat::LibSeatSession;
 use smithay::desktop::layer_map_for_output;
+use smithay::desktop::space::SurfaceTree;
+use smithay::desktop::utils::send_frames_surface_tree;
 use smithay::output::{Mode as WlMode, Output, PhysicalProperties, Subpixel};
 use smithay::reexports::calloop::channel::Sender;
 use smithay::reexports::calloop::{LoopHandle, RegistrationToken};
-use smithay::reexports::drm::control::{connector, crtc, Device as ControlDevice, ModeTypeFlags};
-use smithay::backend::drm::exporter::gbm::NodeFilter;
+use smithay::reexports::drm::control::{Device as ControlDevice, ModeTypeFlags, connector, crtc};
 use smithay::reexports::rustix::fs::OFlags;
 use smithay::reexports::wayland_server;
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{DeviceFd, Physical, Point, Rectangle, Scale};
+use smithay::wayland::compositor::{TraversalAction, with_surface_tree_downward};
 use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
-use smithay::wayland::compositor::{with_surface_tree_downward, TraversalAction};
 
 smithay::backend::renderer::element::render_elements! {
     pub KmsRenderElement<R> where R: ImportAll + ImportMem;
@@ -52,12 +52,8 @@ struct KmsOutputState {
     origin: (i32, i32),
 
     output: Output,
-    drm_output: DrmOutput<
-        GbmAllocator<DrmDeviceFd>,
-        GbmFramebufferExporter<DrmDeviceFd>,
-        (),
-        DrmDeviceFd,
-    >,
+    drm_output:
+        DrmOutput<GbmAllocator<DrmDeviceFd>, GbmFramebufferExporter<DrmDeviceFd>, (), DrmDeviceFd>,
 
     frame_pending: bool,
 
@@ -146,11 +142,12 @@ impl KmsState {
         flush_pending: Arc<AtomicBool>,
         event_loop_handle: LoopHandle<'static, crate::backend::udev::wayland::JwmWaylandState>,
     ) -> Result<KmsHandle, KmsInitError> {
-        let fd = session.open(
-            dev_path,
-            OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
-        )
-        .map_err(KmsInitError::DeviceOpen)?;
+        let fd = session
+            .open(
+                dev_path,
+                OFlags::RDWR | OFlags::CLOEXEC | OFlags::NOCTTY | OFlags::NONBLOCK,
+            )
+            .map_err(KmsInitError::DeviceOpen)?;
         let fd = DrmDeviceFd::new(DeviceFd::from(fd));
 
         let (drm, notifier) = DrmDevice::new(fd.clone(), true).map_err(KmsInitError::DrmInit)?;
@@ -200,19 +197,17 @@ impl KmsState {
         // Create outputs for all connected connectors with a usable (distinct) CRTC.
         let pending: Vec<PendingOutputInit> = {
             let drm_device = drm_output_manager.device();
-            let res = drm_device
-                .resource_handles()
-                .map_err(|e| KmsInitError::InitializeOutput(format!("resource_handles failed: {e:?}")))?;
+            let res = drm_device.resource_handles().map_err(|e| {
+                KmsInitError::InitializeOutput(format!("resource_handles failed: {e:?}"))
+            })?;
 
             let mut used_crtcs: HashSet<crtc::Handle> = HashSet::new();
             let mut pending = Vec::new();
 
             for conn_handle in res.connectors() {
-                let conn = drm_device
-                    .get_connector(*conn_handle, true)
-                    .map_err(|e| {
-                        KmsInitError::InitializeOutput(format!("get_connector failed: {e:?}"))
-                    })?;
+                let conn = drm_device.get_connector(*conn_handle, true).map_err(|e| {
+                    KmsInitError::InitializeOutput(format!("get_connector failed: {e:?}"))
+                })?;
 
                 if conn.state() != connector::State::Connected || conn.modes().is_empty() {
                     continue;
@@ -337,14 +332,12 @@ impl KmsState {
 
         let handle_clone = handle.clone();
         let token = event_loop_handle
-            .insert_source(notifier, move |event, metadata, _state| {
-                match event {
-                    DrmEvent::VBlank(crtc) => {
-                        handle_clone.borrow_mut().on_vblank(crtc, metadata);
-                    }
-                    DrmEvent::Error(err) => {
-                        tracing::warn!("drm event error: {err:?}");
-                    }
+            .insert_source(notifier, move |event, metadata, _state| match event {
+                DrmEvent::VBlank(crtc) => {
+                    handle_clone.borrow_mut().on_vblank(crtc, metadata);
+                }
+                DrmEvent::Error(err) => {
+                    log::warn!("drm event error: {err:?}");
                 }
             })
             .expect("failed to register drm notifier");
@@ -373,13 +366,17 @@ impl KmsState {
             );
 
             // DrmOutput::render_frame expects elements in front-to-back order.
-            // So: top-most windows first, background last.
+            // So: cursor/top-most surfaces first, solid background last.
             let mut elements: Vec<KmsRenderElement<GlesRenderer>> = Vec::new();
 
-            // Cursor (only when it's on this output).
+            // Cursor will be pushed FIRST (front-most).
             let cursor_x = state.pointer_location.x.round() as i32;
             let cursor_y = state.pointer_location.y.round() as i32;
-            if cursor_x >= ox && cursor_y >= oy && cursor_x < (ox + out_w) && cursor_y < (oy + out_h) {
+            if cursor_x >= ox
+                && cursor_y >= oy
+                && cursor_x < (ox + out_w)
+                && cursor_y < (oy + out_h)
+            {
                 let cursor_geo: Rectangle<i32, Physical> = Rectangle::new(
                     (cursor_x - ox, cursor_y - oy).into(),
                     (self.cursor_size, self.cursor_size).into(),
@@ -421,7 +418,8 @@ impl KmsState {
                             (),
                             |_, _, _| TraversalAction::DoChildren(()),
                             |child_surface, child_states, _| {
-                                let data = child_states.data_map.get::<RendererSurfaceStateUserData>();
+                                let data =
+                                    child_states.data_map.get::<RendererSurfaceStateUserData>();
                                 let Some(data) = data else {
                                     return;
                                 };
@@ -564,7 +562,8 @@ impl KmsState {
                             (),
                             |_, _, _| TraversalAction::DoChildren(()),
                             |child_surface, child_states, _| {
-                                let data = child_states.data_map.get::<RendererSurfaceStateUserData>();
+                                let data =
+                                    child_states.data_map.get::<RendererSurfaceStateUserData>();
                                 let Some(data) = data else {
                                     return;
                                 };
@@ -598,7 +597,8 @@ impl KmsState {
             }
             out.surfaces_on_output = visible_surfaces.clone();
 
-            // Background.
+            // Solid background LAST (back-most). Keep it opaque so we don't leak the previous
+            // framebuffer contents on tty (which can look like a solid blue screen).
             let bg_geo = Rectangle::<i32, Physical>::from_size((out_w, out_h).into());
             let bg = SolidColorRenderElement::new(
                 self.background_id.clone(),
@@ -624,7 +624,20 @@ impl KmsState {
                     }
 
                     if let Err(err) = out.drm_output.queue_frame(()) {
-                        tracing::warn!("drm queue_frame failed: {err:?}");
+                        log::warn!("drm queue_frame failed: {err:?}");
+
+                        // If we started while not being DRM master (e.g. GNOME was active),
+                        // switching VTs later can make us eligible to become master. Try to
+                        // (re-)activate the DRM backend so subsequent frames can be queued.
+                        match self.drm_output_manager.activate(false) {
+                            Ok(_) => {
+                                log::info!("drm backend activated after queue_frame failure; will retry rendering");
+                                self.needs_render = true;
+                            }
+                            Err(act_err) => {
+                                log::warn!("drm backend activate failed after queue_frame failure: {act_err:?}");
+                            }
+                        }
                     } else {
                         out.frame_pending = true;
                         out.send_frame_callbacks = true;
@@ -633,7 +646,17 @@ impl KmsState {
                     }
                 }
                 Err(err) => {
-                    tracing::warn!("drm render_frame failed: {err:?}");
+                    log::warn!("drm render_frame failed: {err:?}");
+
+                    match self.drm_output_manager.activate(false) {
+                        Ok(_) => {
+                            log::info!("drm backend activated after render_frame failure; will retry rendering");
+                            self.needs_render = true;
+                        }
+                        Err(act_err) => {
+                            log::warn!("drm backend activate failed after render_frame failure: {act_err:?}");
+                        }
+                    }
                 }
             }
         }
@@ -652,7 +675,7 @@ impl KmsState {
         };
 
         if let Err(err) = out.drm_output.frame_submitted() {
-            tracing::debug!("drm frame_submitted error: {err:?}");
+            log::debug!("drm frame_submitted error: {err:?}");
         }
         out.frame_pending = false;
 

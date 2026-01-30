@@ -3237,6 +3237,24 @@ exit 127
             let mut command = Command::new(&v[0]);
             command.args(&v[1..]);
 
+            // When running the udev backend from a TTY while GNOME is still running,
+            // `DISPLAY` often points to GNOME's Xwayland (e.g. :0). Some apps (notably
+            // Electron-based) may then choose X11 and show up back in GNOME instead of
+            // connecting to this compositor.
+            #[cfg(feature = "backend-udev")]
+            if _backend
+                .as_any()
+                .is::<crate::backend::udev::backend::UdevBackend>()
+            {
+                command.env_remove("DISPLAY");
+                if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
+                    command.env("WAYLAND_DISPLAY", v);
+                }
+                if let Ok(v) = std::env::var("XDG_RUNTIME_DIR") {
+                    command.env("XDG_RUNTIME_DIR", v);
+                }
+            }
+
             command
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::inherit())
