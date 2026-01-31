@@ -11,6 +11,9 @@ use jwm::backend::x11::backend::X11Backend;
 #[cfg(feature = "backend-udev")]
 use jwm::backend::udev::backend::UdevBackend;
 
+#[cfg(feature = "backend-wayland-x11")]
+use jwm::backend::wayland_x11::backend::WaylandX11Backend;
+
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     setup_locale();
     jwm::miscellaneous::init_auto_command();
@@ -46,50 +49,65 @@ fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum BackendChoice {
-    Auto,
     X11,
     Udev,
+    WaylandX11,
 }
 
 fn select_backend() -> Result<Box<dyn jwm::backend::api::Backend>, Box<dyn std::error::Error>> {
-    let choice = env::var("JWM_BACKEND")
-        .unwrap_or_else(|_| "auto".to_string())
-        .to_lowercase();
+    // Selection rule:
+    // - If JWM_BACKEND is set, honor it.
+    // - Otherwise, pick the only backend feature that is enabled.
+    // - If 0 or >1 backend features are enabled, error out to avoid confusion.
+    let enabled_x11 = cfg!(feature = "backend-x11");
+    let enabled_udev = cfg!(feature = "backend-udev");
+    let enabled_wayland_x11 = cfg!(feature = "backend-wayland-x11");
+    let enabled_count = enabled_x11 as u8 + enabled_udev as u8 + enabled_wayland_x11 as u8;
 
-    let choice = match choice.as_str() {
-        "auto" | "" => BackendChoice::Auto,
-        "x11" => BackendChoice::X11,
-        "udev" | "wayland" => BackendChoice::Udev,
-        other => {
-            warn!(
-                "Unknown JWM_BACKEND={other:?}; expected 'auto'|'x11'|'udev'. Falling back to auto."
-            );
-            BackendChoice::Auto
-        }
-    };
-
-    // Heuristic: if we're clearly inside an X11 session, prefer X11 backend.
-    // Using udev/KMS in an X11 session commonly fails to acquire DRM (device busy)
-    // and may also steal input devices via libseat/libinput.
-    let session_type = env::var("XDG_SESSION_TYPE").ok();
-    let in_x11_session = session_type.as_deref() == Some("x11") || env::var("DISPLAY").is_ok();
-
-    let resolved = match choice {
-        BackendChoice::Auto => {
-            if in_x11_session {
-                BackendChoice::X11
-            } else {
-                BackendChoice::Udev
+    let resolved = if let Ok(val) = env::var("JWM_BACKEND") {
+        let val = val.to_lowercase();
+        match val.as_str() {
+            "x11" => BackendChoice::X11,
+            "udev" | "wayland" => BackendChoice::Udev,
+            "wayland-x11" | "x11-wayland" | "windowed" => BackendChoice::WaylandX11,
+            other => {
+                return Err(format!(
+                    "Unknown JWM_BACKEND={other:?}; expected 'x11'|'udev'|'wayland-x11'"
+                )
+                .into());
             }
         }
-        other => other,
+    } else {
+        match enabled_count {
+            0 => {
+                return Err(
+                    "No backend features enabled. Build with one of: backend-x11 | backend-udev | backend-wayland-x11"
+                        .into(),
+                );
+            }
+            1 => {
+                if enabled_x11 {
+                    BackendChoice::X11
+                } else if enabled_wayland_x11 {
+                    BackendChoice::WaylandX11
+                } else {
+                    BackendChoice::Udev
+                }
+            }
+            _ => {
+                return Err(
+                    "Multiple backends are enabled; set JWM_BACKEND explicitly to one of: x11 | udev | wayland-x11"
+                        .into(),
+                );
+            }
+        }
     };
 
     match resolved {
         BackendChoice::X11 => {
             #[cfg(feature = "backend-x11")]
             {
-                info!("Initializing X11 Backend (selected via JWM_BACKEND / session type)");
+                info!("Initializing X11 Backend");
                 return Ok(Box::new(X11Backend::new()?));
             }
             #[cfg(not(feature = "backend-x11"))]
@@ -100,11 +118,6 @@ fn select_backend() -> Result<Box<dyn jwm::backend::api::Backend>, Box<dyn std::
         BackendChoice::Udev => {
             #[cfg(feature = "backend-udev")]
             {
-                if in_x11_session {
-                    warn!(
-                        "Starting udev/KMS backend inside an X11 session. If you see 'KMS init failed (running headless)', run JWM from a TTY or a Wayland session instead, or set JWM_BACKEND=x11."
-                    );
-                }
                 info!("Initializing Udev Backend (Smithay)");
                 return Ok(Box::new(UdevBackend::new()?));
             }
@@ -113,7 +126,20 @@ fn select_backend() -> Result<Box<dyn jwm::backend::api::Backend>, Box<dyn std::
                 return Err("udev backend requested but 'backend-udev' feature is not enabled".into());
             }
         }
-        BackendChoice::Auto => unreachable!("Auto backend must be resolved"),
+        BackendChoice::WaylandX11 => {
+            #[cfg(feature = "backend-wayland-x11")]
+            {
+                info!("Initializing Wayland-on-X11 Backend (Smithay windowed)");
+                return Ok(Box::new(WaylandX11Backend::new()?));
+            }
+            #[cfg(not(feature = "backend-wayland-x11"))]
+            {
+                return Err(
+                    "wayland-x11 backend requested but 'backend-wayland-x11' feature is not enabled"
+                        .into(),
+                );
+            }
+        }
     }
 }
 
