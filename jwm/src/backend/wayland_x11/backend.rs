@@ -1101,6 +1101,10 @@ impl WaylandX11Backend {
                 .insert_source(x11_backend, move |event, _, state| {
                     match event {
                         X11Event::Focus { focused, .. } => {
+                            let debug_keys = std::env::var("JWM_DEBUG_KEYS")
+                                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                                .unwrap_or(false);
+
                             // When the nested X11 window loses focus, we can miss key release
                             // events from the host X server. That can leave modifiers (e.g. Alt)
                             // stuck in the Smithay keyboard state, causing unintended WM
@@ -1108,6 +1112,18 @@ impl WaylandX11Backend {
                             if !focused {
                                 let serial = SCOUNTER.next_serial();
                                 if let Some(kbd) = state.seat.get_keyboard() {
+                                    if debug_keys {
+                                        let pressed = kbd.pressed_keys();
+                                        let mods = kbd.modifier_state();
+                                        let cached_mods = shared.lock().ok().map(|s| s.mods_state);
+                                        log::info!(
+                                            "[x11] focus_lost: pressed_keys={} smithay_mods={:?} cached_mods=0x{:x}",
+                                            pressed.len(),
+                                            mods,
+                                            cached_mods.unwrap_or(0)
+                                        );
+                                    }
+
                                     // Drop focus so nothing receives synthetic releases.
                                     kbd.set_focus(state, None, serial);
 
@@ -1131,6 +1147,25 @@ impl WaylandX11Backend {
                                 if let Ok(mut s) = shared.lock() {
                                     s.mods_state = 0;
                                     s.suppressed_keycodes.clear();
+                                }
+                            } else {
+                                // On focus regain, clear any leftover suppression bookkeeping.
+                                // (We avoid touching modifier state here to not interfere with
+                                // keys that might be physically held while refocusing.)
+                                if let Ok(mut s) = shared.lock() {
+                                    s.suppressed_keycodes.clear();
+                                }
+
+                                if debug_keys {
+                                    if let Some(kbd) = state.seat.get_keyboard() {
+                                        let mods = kbd.modifier_state();
+                                        let cached_mods = shared.lock().ok().map(|s| s.mods_state);
+                                        log::info!(
+                                            "[x11] focus_gained: smithay_mods={:?} cached_mods=0x{:x}",
+                                            mods,
+                                            cached_mods.unwrap_or(0)
+                                        );
+                                    }
                                 }
                             }
                         }
