@@ -8,8 +8,10 @@ use std::time::{Duration, Instant};
 use log::{info, warn};
 
 use smithay::delegate_compositor;
+use smithay::delegate_data_device;
 use smithay::delegate_layer_shell;
 use smithay::delegate_output;
+use smithay::delegate_primary_selection;
 use smithay::delegate_seat;
 use smithay::delegate_shm;
 use smithay::delegate_xdg_shell;
@@ -33,6 +35,9 @@ use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::socket::ListeningSocketSource;
 use smithay::wayland::output::OutputHandler;
+use smithay::wayland::selection::SelectionHandler;
+use smithay::wayland::selection::data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler};
+use smithay::wayland::selection::primary_selection::{PrimarySelectionHandler, PrimarySelectionState};
 
 #[derive(Debug, Default)]
 pub struct JwmClientState {
@@ -55,6 +60,8 @@ pub struct JwmWaylandState {
 
     pub compositor_state: CompositorState,
     pub shm_state: ShmState,
+    pub data_device_state: DataDeviceState,
+    pub primary_selection_state: PrimarySelectionState,
     pub seat_state: SeatState<JwmWaylandState>,
     pub seat: Seat<JwmWaylandState>,
     pub xdg_shell_state: XdgShellState,
@@ -100,6 +107,10 @@ delegate_xdg_shell!(JwmWaylandState);
 delegate_layer_shell!(JwmWaylandState);
 
 delegate_output!(JwmWaylandState);
+
+delegate_data_device!(JwmWaylandState);
+
+delegate_primary_selection!(JwmWaylandState);
 
 impl JwmWaylandState {
     pub fn set_active_toplevel(&mut self, win: Option<WindowId>) {
@@ -169,6 +180,11 @@ impl JwmWaylandState {
             dh,
             vec![wl_shm::Format::Argb8888, wl_shm::Format::Xrgb8888],
         );
+
+        // Toolkits like GTK expect wl_data_device_manager (clipboard/DnD) and often primary
+        // selection to be available.
+        let data_device_state = DataDeviceState::new::<JwmWaylandState>(dh);
+        let primary_selection_state = PrimarySelectionState::new::<JwmWaylandState>(dh);
         let xdg_shell_state = XdgShellState::new::<JwmWaylandState>(dh);
 
         let layer_shell_state = WlrLayerShellState::new::<JwmWaylandState>(dh);
@@ -192,6 +208,8 @@ impl JwmWaylandState {
                 output_manager_state,
                 compositor_state,
                 shm_state,
+                data_device_state,
+                primary_selection_state,
                 seat_state,
                 seat,
                 xdg_shell_state,
@@ -227,7 +245,6 @@ impl JwmWaylandState {
             socket_name,
         ))
     }
-
     pub fn ensure_initial_configure_timeout(&mut self, timeout: Duration) {
         if self.pending_initial_configure.is_empty() {
             return;
@@ -755,6 +772,26 @@ impl SeatHandler for JwmWaylandState {
 
     fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.seat_state
+    }
+}
+
+impl SelectionHandler for JwmWaylandState {
+    type SelectionUserData = ();
+}
+
+impl DataDeviceHandler for JwmWaylandState {
+    fn data_device_state(&mut self) -> &mut DataDeviceState {
+        &mut self.data_device_state
+    }
+}
+
+impl ClientDndGrabHandler for JwmWaylandState {}
+
+impl ServerDndGrabHandler for JwmWaylandState {}
+
+impl PrimarySelectionHandler for JwmWaylandState {
+    fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
+        &mut self.primary_selection_state
     }
 }
 
