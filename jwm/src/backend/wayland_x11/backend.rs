@@ -43,6 +43,7 @@ use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction};
 use smithay::reexports::gbm;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::reexports::wayland_server::{self, Display, DisplayHandle, Resource};
+use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::utils::{DeviceFd, Logical, Physical, Point, Rectangle, Scale, SERIAL_COUNTER as SCOUNTER};
 use smithay::wayland::compositor::{with_surface_tree_downward, TraversalAction};
 use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer};
@@ -358,6 +359,156 @@ impl WindowOps for WaylandWindowOps {
         let h = changes.height.unwrap_or(geo.h);
         let border = changes.border_width.unwrap_or(geo.border);
         self.configure(win, x, y, w, h, border)
+    }
+}
+
+struct WaylandPropertyOps {
+    state: SendWrapper<*mut JwmWaylandState>,
+    flush_tx: Sender<()>,
+    flush_pending: Arc<AtomicBool>,
+}
+
+unsafe impl Send for WaylandPropertyOps {}
+
+impl WaylandPropertyOps {
+    unsafe fn with_state_mut<R>(&self, f: impl FnOnce(&mut JwmWaylandState) -> R) -> R {
+        unsafe { f(&mut *self.state.0) }
+    }
+
+    fn request_flush(&self) {
+        if !self.flush_pending.swap(true, Ordering::SeqCst) {
+            let _ = self.flush_tx.send(());
+        }
+    }
+}
+
+impl PropertyOps for WaylandPropertyOps {
+    fn get_title(&self, win: WindowId) -> String {
+        unsafe {
+            self.with_state_mut(|state| {
+                let title = state.window_title.get(&win).cloned().unwrap_or_default();
+                if !title.is_empty() {
+                    return title;
+                }
+                let app_id = state.window_app_id.get(&win).cloned().unwrap_or_default();
+                if !app_id.is_empty() {
+                    return app_id;
+                }
+                "Wayland Window".to_string()
+            })
+        }
+    }
+
+    fn get_class(&self, win: WindowId) -> (String, String) {
+        let app_id = unsafe {
+            self.with_state_mut(|state| state.window_app_id.get(&win).cloned().unwrap_or_default())
+        };
+        let value = if app_id.is_empty() { "app".to_string() } else { app_id };
+        (value.clone(), value)
+    }
+
+    fn get_window_types(&self, win: WindowId) -> Vec<crate::backend::api::WindowType> {
+        // Best-effort classification so JWM can treat status bars/docks correctly.
+        let (title, app_id, layer_info) = unsafe {
+            self.with_state_mut(|state| {
+                (
+                    state.window_title.get(&win).cloned().unwrap_or_default(),
+                    state.window_app_id.get(&win).cloned().unwrap_or_default(),
+                    state.window_layer_info.get(&win).copied(),
+                )
+            })
+        };
+
+        if let Some(info) = layer_info {
+            if info.exclusive_zone != 0 {
+                return vec![crate::backend::api::WindowType::Dock];
+            }
+        }
+
+        let bar_name = crate::config::CONFIG.status_bar_name();
+        if !bar_name.is_empty() && (title == bar_name || app_id == bar_name) {
+            return vec![crate::backend::api::WindowType::Dock];
+        }
+
+        vec![crate::backend::api::WindowType::Normal]
+    }
+
+    fn get_layer_surface_info(&self, win: WindowId) -> Option<crate::backend::api::LayerSurfaceInfo> {
+        unsafe { self.with_state_mut(|state| state.window_layer_info.get(&win).copied()) }
+    }
+
+    fn is_fullscreen(&self, win: WindowId) -> bool {
+        unsafe { self.with_state_mut(|state| state.window_is_fullscreen.get(&win).copied()) }
+            .unwrap_or(false)
+    }
+
+    fn set_fullscreen_state(&self, win: WindowId, on: bool) -> Result<(), BackendError> {
+        unsafe {
+            self.with_state_mut(|state| {
+                state.window_is_fullscreen.insert(win, on);
+                if let Some(toplevel) = state.try_lookup_toplevel(win) {
+                    toplevel.with_pending_state(|s| {
+                        if on {
+                            s.states.set(xdg_toplevel::State::Fullscreen);
+                        } else {
+                            s.states.unset(xdg_toplevel::State::Fullscreen);
+                            s.fullscreen_output = None;
+                        }
+                    });
+                    toplevel.send_configure();
+                }
+            });
+        }
+        self.request_flush();
+        Ok(())
+    }
+
+    fn transient_for(&self, win: WindowId) -> Option<WindowId> {
+        unsafe {
+            self.with_state_mut(|state| {
+                let toplevel = state.toplevels.get(&win)?;
+                let parent_surface = toplevel.parent()?;
+                state.surface_to_window.get(&parent_surface.id()).copied()
+            })
+        }
+    }
+
+    fn get_wm_hints(&self, _win: WindowId) -> Option<crate::backend::api::WmHints> {
+        None
+    }
+
+    fn set_urgent_hint(&self, _win: WindowId, _urgent: bool) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    fn fetch_normal_hints(&self, _win: WindowId) -> Result<Option<crate::backend::api::NormalHints>, BackendError> {
+        Ok(None)
+    }
+
+    fn set_window_strut_top(
+        &self,
+        _win: WindowId,
+        _top: u32,
+        _start_x: u32,
+        _end_x: u32,
+    ) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    fn clear_window_strut(&self, _win: WindowId) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    fn get_wm_state(&self, _win: WindowId) -> Result<i64, BackendError> {
+        Ok(1)
+    }
+
+    fn set_wm_state(&self, _win: WindowId, _state: i64) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    fn set_client_info_props(&self, _win: WindowId, _tags: u32, _monitor_num: u32) -> Result<(), BackendError> {
+        Ok(())
     }
 }
 
@@ -1062,6 +1213,12 @@ impl WaylandX11Backend {
 
         let state_ptr: *mut JwmWaylandState = &mut *backend.state;
         backend.window_ops = Box::new(WaylandWindowOps {
+            state: SendWrapper(state_ptr),
+            flush_tx: backend.flush_tx.clone(),
+            flush_pending: backend.flush_pending.clone(),
+        });
+
+        backend.property_ops = Box::new(WaylandPropertyOps {
             state: SendWrapper(state_ptr),
             flush_tx: backend.flush_tx.clone(),
             flush_pending: backend.flush_pending.clone(),

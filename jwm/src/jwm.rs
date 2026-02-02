@@ -3237,6 +3237,48 @@ exit 127
             let mut command = Command::new(&v[0]);
             command.args(&v[1..]);
 
+            // For Smithay-backed backends we want child processes to prefer connecting to this
+            // compositor's Wayland socket, even if we're running nested inside an existing X11
+            // desktop session.
+            #[cfg(any(feature = "backend-udev", feature = "backend-wayland-x11"))]
+            {
+                let is_smithay_backend = {
+                    #[cfg(feature = "backend-udev")]
+                    let is_udev = _backend
+                        .as_any()
+                        .is::<crate::backend::udev::backend::UdevBackend>();
+                    #[cfg(not(feature = "backend-udev"))]
+                    let is_udev = false;
+
+                    #[cfg(feature = "backend-wayland-x11")]
+                    let is_wayland_x11 = _backend
+                        .as_any()
+                        .is::<crate::backend::wayland_x11::backend::WaylandX11Backend>();
+                    #[cfg(not(feature = "backend-wayland-x11"))]
+                    let is_wayland_x11 = false;
+
+                    is_udev || is_wayland_x11
+                };
+
+                if is_smithay_backend {
+                    if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
+                        command.env("WAYLAND_DISPLAY", v);
+                    }
+                    if let Ok(v) = std::env::var("XDG_RUNTIME_DIR") {
+                        command.env("XDG_RUNTIME_DIR", v);
+                    }
+
+                    // Help toolkits (especially winit) pick Wayland in a nested X11 session.
+                    // Only set defaults if the user hasn't overridden them.
+                    if std::env::var_os("XDG_SESSION_TYPE").is_none() {
+                        command.env("XDG_SESSION_TYPE", "wayland");
+                    }
+                    if std::env::var_os("WINIT_UNIX_BACKEND").is_none() {
+                        command.env("WINIT_UNIX_BACKEND", "wayland");
+                    }
+                }
+            }
+
             // When running the udev backend from a TTY while GNOME is still running,
             // `DISPLAY` often points to GNOME's Xwayland (e.g. :0). Some apps (notably
             // Electron-based) may then choose X11 and show up back in GNOME instead of
@@ -3247,12 +3289,6 @@ exit 127
                 .is::<crate::backend::udev::backend::UdevBackend>()
             {
                 command.env_remove("DISPLAY");
-                if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
-                    command.env("WAYLAND_DISPLAY", v);
-                }
-                if let Ok(v) = std::env::var("XDG_RUNTIME_DIR") {
-                    command.env("XDG_RUNTIME_DIR", v);
-                }
             }
 
             command

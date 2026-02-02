@@ -25,6 +25,7 @@ use smithay::reexports::wayland_server::{Client, DisplayHandle, Resource};
 use smithay::utils::{Logical, Point, Rectangle, Serial, SERIAL_COUNTER as SCOUNTER};
 use smithay::desktop::{find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output, LayerSurface as DesktopLayerSurface, PopupKind, WindowSurfaceType};
 use smithay::output::Output;
+use smithay::backend::renderer::utils::on_commit_buffer_handler;
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{with_states, BufferAssignment, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes};
 use smithay::wayland::output::OutputManagerState;
@@ -602,6 +603,11 @@ impl CompositorHandler for JwmWaylandState {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
+        // Keep renderer surface state in sync with wl_surface buffer commits.
+        // Without this, WaylandSurfaceRenderElement will often have no view/texture and nothing
+        // will be drawn even though windows are managed and receive input.
+        on_commit_buffer_handler::<JwmWaylandState>(surface);
+
         let win = self.surface_to_window.get(&surface.id()).copied();
 
         // Decide whether this commit impacts rendering.
