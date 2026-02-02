@@ -1100,6 +1100,40 @@ impl WaylandX11Backend {
                 .handle()
                 .insert_source(x11_backend, move |event, _, state| {
                     match event {
+                        X11Event::Focus { focused, .. } => {
+                            // When the nested X11 window loses focus, we can miss key release
+                            // events from the host X server. That can leave modifiers (e.g. Alt)
+                            // stuck in the Smithay keyboard state, causing unintended WM
+                            // shortcuts like Mod1+s while typing.
+                            if !focused {
+                                let serial = SCOUNTER.next_serial();
+                                if let Some(kbd) = state.seat.get_keyboard() {
+                                    // Drop focus so nothing receives synthetic releases.
+                                    kbd.set_focus(state, None, serial);
+
+                                    // Release any keys Smithay still considers pressed.
+                                    let pressed = kbd.pressed_keys();
+                                    for key in pressed {
+                                        kbd.input(
+                                            state,
+                                            key,
+                                            smithay::backend::input::KeyState::Released,
+                                            serial,
+                                            0,
+                                            |_, _, _| FilterResult::<()>::Forward,
+                                        );
+                                    }
+
+                                    // And explicitly reset modifiers.
+                                    let _ = kbd.set_modifier_state(ModifiersState::default());
+                                }
+
+                                if let Ok(mut s) = shared.lock() {
+                                    s.mods_state = 0;
+                                    s.suppressed_keycodes.clear();
+                                }
+                            }
+                        }
                         X11Event::CloseRequested { .. } => {
                             exit_requested.store(true, Ordering::SeqCst);
                         }
@@ -1165,7 +1199,6 @@ impl WaylandX11Backend {
                                 let _ = flush_tx.send(());
                             }
                         }
-                        _ => {}
                     }
                     ()
                 })
