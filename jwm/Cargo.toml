@@ -29,6 +29,12 @@ backend-wayland-x11 = [
 	"smithay/renderer_gl",
 	"smithay/desktop",
 ]
+backend-wayland-winit = [
+	"smithay/backend_winit",
+	"smithay/backend_egl",
+	"smithay/renderer_gl",
+	"smithay/desktop",
+]
 backend-udev = [
 	"smithay/backend_udev",
 	"smithay/backend_libinput",

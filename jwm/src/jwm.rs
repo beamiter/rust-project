@@ -3240,7 +3240,11 @@ exit 127
             // For Smithay-backed backends we want child processes to prefer connecting to this
             // compositor's Wayland socket, even if we're running nested inside an existing X11
             // desktop session.
-            #[cfg(any(feature = "backend-udev", feature = "backend-wayland-x11"))]
+            #[cfg(any(
+				feature = "backend-udev",
+				feature = "backend-wayland-x11",
+				feature = "backend-wayland-winit"
+			))]
             {
                 let is_smithay_backend = {
                     #[cfg(feature = "backend-udev")]
@@ -3257,7 +3261,14 @@ exit 127
                     #[cfg(not(feature = "backend-wayland-x11"))]
                     let is_wayland_x11 = false;
 
-                    is_udev || is_wayland_x11
+                    #[cfg(feature = "backend-wayland-winit")]
+                    let is_wayland_winit = _backend
+                        .as_any()
+                        .is::<crate::backend::wayland_winit::backend::WaylandWinitBackend>();
+                    #[cfg(not(feature = "backend-wayland-winit"))]
+                    let is_wayland_winit = false;
+
+                    is_udev || is_wayland_x11 || is_wayland_winit
                 };
 
                 if is_smithay_backend {
