@@ -1244,9 +1244,9 @@ fn process_input_event_windowed<B: InputBackend>(
             let (x, y, output) = {
                 let mut s = shared.lock().unwrap();
                 s.pointer_x += delta.x;
-                // Winit's coordinate space is Y-up (origin bottom-left) for motion deltas.
-                // JWM/Smithay compositor coordinates are Y-down (origin top-left).
-                s.pointer_y -= delta.y;
+                // Keep compositor pointer coordinates Y-down (top-left origin).
+                // With the output set to Transform::Flipped180, we should *not* invert input here.
+                s.pointer_y += delta.y;
                 let x = s.pointer_x;
                 let y = s.pointer_y;
                 let output = s
@@ -1328,8 +1328,7 @@ fn process_input_event_windowed<B: InputBackend>(
                 };
                 let pos = event.position_transformed(smithay::utils::Size::from((w, h)));
                 s.pointer_x = origin_x as f64 + pos.x;
-                // Convert from Y-up to compositor's Y-down coordinates.
-                s.pointer_y = origin_y as f64 + (h as f64 - pos.y);
+                s.pointer_y = origin_y as f64 + pos.y;
                 (s.pointer_x, s.pointer_y, output)
             };
 
