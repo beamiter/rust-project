@@ -9,7 +9,7 @@ use xbar_core::initialize_logging;
 use jwm::backend::x11::backend::X11Backend;
 
 #[cfg(feature = "backend-udev")]
-use jwm::backend::udev::backend::UdevBackend;
+use jwm::backend::wayland_udev::backend::UdevBackend;
 
 #[cfg(feature = "backend-wayland-x11")]
 use jwm::backend::wayland_x11::backend::WaylandX11Backend;
@@ -68,11 +68,11 @@ fn select_backend() -> Result<Box<dyn jwm::backend::api::Backend>, Box<dyn std::
         let val = val.to_lowercase();
         match val.as_str() {
             "x11" => BackendChoice::X11,
-            "udev" | "wayland" => BackendChoice::Udev,
+            "wayland-udev" | "udev" | "wayland" => BackendChoice::Udev,
             "wayland-x11" | "x11-wayland" | "windowed" => BackendChoice::WaylandX11,
             other => {
                 return Err(format!(
-                    "Unknown JWM_BACKEND={other:?}; expected 'x11'|'udev'|'wayland-x11'"
+                    "Unknown JWM_BACKEND={other:?}; expected 'x11'|'wayland-udev'|'wayland-x11'"
                 )
                 .into());
             }
@@ -96,7 +96,7 @@ fn select_backend() -> Result<Box<dyn jwm::backend::api::Backend>, Box<dyn std::
             }
             _ => {
                 return Err(
-                    "Multiple backends are enabled; set JWM_BACKEND explicitly to one of: x11 | udev | wayland-x11"
+                    "Multiple backends are enabled; set JWM_BACKEND explicitly to one of: x11 | wayland-udev | wayland-x11"
                         .into(),
                 );
             }
@@ -118,12 +118,12 @@ fn select_backend() -> Result<Box<dyn jwm::backend::api::Backend>, Box<dyn std::
         BackendChoice::Udev => {
             #[cfg(feature = "backend-udev")]
             {
-                info!("Initializing Udev Backend (Smithay)");
+                info!("Initializing Wayland/Udev Backend (wayland-udev)");
                 return Ok(Box::new(UdevBackend::new()?));
             }
             #[cfg(not(feature = "backend-udev"))]
             {
-                return Err("udev backend requested but 'backend-udev' feature is not enabled".into());
+                return Err("wayland-udev backend requested but 'backend-udev' feature is not enabled".into());
             }
         }
         BackendChoice::WaylandX11 => {

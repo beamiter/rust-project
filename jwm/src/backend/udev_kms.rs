@@ -44,7 +44,7 @@ smithay::backend::renderer::element::render_elements! {
     Solid=SolidColorRenderElement,
 }
 
-pub type KmsHandle = Rc<RefCell<KmsState>>;
+pub(super) type KmsHandle = Rc<RefCell<KmsState>>;
 
 struct KmsOutputState {
     crtc: crtc::Handle,
@@ -65,7 +65,7 @@ struct KmsOutputState {
     surfaces_on_output: HashSet<wayland_server::Weak<WlSurface>>,
 }
 
-pub struct KmsState {
+pub(super) struct KmsState {
     #[allow(dead_code)]
     dev_path: std::path::PathBuf,
 
@@ -95,7 +95,7 @@ pub struct KmsState {
 }
 
 #[derive(Debug)]
-pub enum KmsInitError {
+pub(super) enum KmsInitError {
     DeviceOpen(smithay::backend::session::libseat::Error),
     DrmInit(smithay::backend::drm::DrmError),
     GbmInit(std::io::Error),
@@ -124,15 +124,15 @@ impl std::fmt::Display for KmsInitError {
 impl std::error::Error for KmsInitError {}
 
 impl KmsState {
-    pub fn request_render(&mut self) {
+    pub(super) fn request_render(&mut self) {
         self.needs_render = true;
     }
 
-    pub fn outputs(&self) -> Vec<Output> {
+    pub(super) fn outputs(&self) -> Vec<Output> {
         self.outputs.iter().map(|o| o.output.clone()).collect()
     }
 
-    pub fn new(
+    pub(super) fn new(
         session: &mut LibSeatSession,
         dev_path: &Path,
         dev_id: u64,
@@ -140,7 +140,7 @@ impl KmsState {
         display_handle: &smithay::reexports::wayland_server::DisplayHandle,
         flush_tx: Sender<()>,
         flush_pending: Arc<AtomicBool>,
-        event_loop_handle: LoopHandle<'static, crate::backend::udev::wayland::JwmWaylandState>,
+        event_loop_handle: LoopHandle<'static, crate::backend::wayland::state::JwmWaylandState>,
     ) -> Result<KmsHandle, KmsInitError> {
         let fd = session
             .open(
@@ -279,7 +279,7 @@ impl KmsState {
         for p in pending {
             let _wl_output_global = p
                 .output
-                .create_global::<crate::backend::udev::wayland::JwmWaylandState>(display_handle);
+                .create_global::<crate::backend::wayland::state::JwmWaylandState>(display_handle);
 
             let drm_output = drm_output_manager
                 .lock()
@@ -347,7 +347,10 @@ impl KmsState {
         Ok(handle)
     }
 
-    pub fn render_if_needed(&mut self, state: &crate::backend::udev::wayland::JwmWaylandState) {
+    pub(super) fn render_if_needed(
+        &mut self,
+        state: &crate::backend::wayland::state::JwmWaylandState,
+    ) {
         if !self.needs_render {
             return;
         }
@@ -629,7 +632,7 @@ impl KmsState {
                         // If we started while not being DRM master (e.g. GNOME was active),
                         // switching VTs later can make us eligible to become master. Try to
                         // (re-)activate the DRM backend so subsequent frames can be queued.
-                        match self.drm_output_manager.activate(false) {
+                        match self.drm_output_manager.lock().activate(false) {
                             Ok(_) => {
                                 log::info!("drm backend activated after queue_frame failure; will retry rendering");
                                 self.needs_render = true;
@@ -648,7 +651,7 @@ impl KmsState {
                 Err(err) => {
                     log::warn!("drm render_frame failed: {err:?}");
 
-                    match self.drm_output_manager.activate(false) {
+                    match self.drm_output_manager.lock().activate(false) {
                         Ok(_) => {
                             log::info!("drm backend activated after render_frame failure; will retry rendering");
                             self.needs_render = true;
@@ -669,7 +672,11 @@ impl KmsState {
         }
     }
 
-    pub fn on_vblank(&mut self, crtc: crtc::Handle, _metadata: &mut Option<DrmEventMetadata>) {
+    pub(super) fn on_vblank(
+        &mut self,
+        crtc: crtc::Handle,
+        _metadata: &mut Option<DrmEventMetadata>,
+    ) {
         let Some(out) = self.outputs.iter_mut().find(|o| o.crtc == crtc) else {
             return;
         };

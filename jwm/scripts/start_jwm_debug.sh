@@ -23,6 +23,7 @@ fi
 : "${JWM_DEBUG_KEYS:=1}"
 : "${JWM_DEBUG_BUTTONS:=1}"
 : "${RUST_LOG:=jwm=info,jwm::backend::udev=debug,smithay::backend::libinput=debug,smithay::input::keyboard=debug}"
+: "${JWM_BACKEND:=wayland-udev}"
 
 # Optional: write logs to a file under ./logs
 LOG_DIR="$ROOT_DIR/logs"
@@ -81,11 +82,13 @@ fi
 export RUST_LOG
 export JWM_DEBUG_KEYS
 export JWM_DEBUG_BUTTONS
+export JWM_BACKEND
 
 echo "[start_jwm_debug] ROOT_DIR=$ROOT_DIR" >&2
 echo "[start_jwm_debug] RUST_LOG=$RUST_LOG" >&2
 echo "[start_jwm_debug] JWM_DEBUG_KEYS=$JWM_DEBUG_KEYS" >&2
 echo "[start_jwm_debug] JWM_DEBUG_BUTTONS=$JWM_DEBUG_BUTTONS" >&2
+echo "[start_jwm_debug] JWM_BACKEND=$JWM_BACKEND" >&2
 echo "[start_jwm_debug] LOG_FILE=$LOG_FILE" >&2
 echo "[start_jwm_debug] exec: ${cmd[*]}" >&2
 

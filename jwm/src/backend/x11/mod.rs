@@ -1,15 +1,4 @@
-pub mod adapter;
 pub mod backend;
-pub mod color;
-pub mod cursor;
-pub mod event_source;
-pub mod ewmh_facade;
-pub mod ids;
-pub mod input_ops;
-pub mod key_ops;
-pub mod output_ops;
-pub mod property_ops;
-pub mod window_ops;
 
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {

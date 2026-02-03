@@ -1,7 +1,10 @@
-use super::dummy_ops::*;
-use super::kms::KmsState;
-use super::key_ops::UdevKeyOps;
-use super::wayland::JwmWaylandState;
+use crate::backend::wayland_dummy_ops::*;
+use crate::backend::wayland_key_ops::UdevKeyOps;
+use crate::backend::wayland::state::JwmWaylandState;
+
+#[path = "../udev_kms.rs"]
+mod kms;
+use self::kms::KmsState;
 use crate::backend::api::{
     Backend, BackendEvent, Capabilities, ColorAllocator, CursorProvider, EventHandler, HitTarget,
     InputOps, KeyOps, OutputInfo, OutputOps, PropertyOps, ScreenInfo, WindowOps, WindowType,
@@ -35,7 +38,7 @@ use smithay::reexports::calloop::{EventLoop, Interest, Mode, PostAction};
 use smithay::reexports::calloop::channel::{self, Sender};
 use smithay::reexports::calloop::generic::Generic;
 use smithay::reexports::calloop::timer::{Timer, TimeoutAction};
-use smithay::reexports::input::{DeviceCapability, Libinput};
+use smithay::reexports::input::Libinput;
 use smithay::reexports::wayland_server::{Display, DisplayHandle};
 use smithay::reexports::wayland_server::Resource;
 use smithay::utils::{Logical, Point, SERIAL_COUNTER as SCOUNTER};
@@ -504,7 +507,7 @@ pub struct UdevBackend {
     shared: Arc<Mutex<SharedState>>,
     session: LibSeatSession,
 
-    kms: Option<Rc<RefCell<super::kms::KmsState>>>,
+    kms: Option<Rc<RefCell<KmsState>>>,
 
     window_ops: Box<dyn WindowOps>,
     input_ops: Box<dyn InputOps>,
@@ -575,7 +578,7 @@ impl UdevBackend {
         };
 
         let display_handle = self.display_handle.clone();
-        match super::kms::KmsState::new(
+        match KmsState::new(
             &mut self.session,
             &dev_path,
             dev_id,
@@ -822,13 +825,7 @@ impl UdevBackend {
             let flush_pending = flush_pending.clone();
             event_loop
                 .handle()
-                .insert_source(libinput_backend, move |mut event, _, state| {
-                    if let InputEvent::DeviceAdded { device } = &mut event {
-                        if device.has_capability(DeviceCapability::Keyboard) {
-                            // LED state sync is optional; skip for now.
-                        }
-                    }
-
+                .insert_source(libinput_backend, move |event, _, state| {
                     match event {
                         InputEvent::PointerMotion { event, .. } => {
                             let delta = event.delta();

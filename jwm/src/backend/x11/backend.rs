@@ -1,6 +1,6 @@
 use crate::backend::api::BackendEvent;
 // src/backend/x11/backend.rs
-use super::ids::X11IdRegistry;
+use self::ids::X11IdRegistry;
 use crate::backend::api::EventHandler;
 use crate::backend::api::EwmhFeature;
 use crate::backend::api::Geometry;
@@ -32,10 +32,17 @@ use crate::backend::api::{
     PropertyOps, WindowOps,
 };
 
-use super::{
-    Atoms, color::X11ColorAllocator, cursor::X11CursorProvider, event_source::X11EventSource,
-    ewmh_facade::X11EwmhFacade, input_ops::X11InputOps, key_ops::X11KeyOps,
-    output_ops::X11OutputOps, property_ops::X11PropertyOps, window_ops::X11WindowOps,
+use super::Atoms;
+use self::{
+    color::X11ColorAllocator,
+    cursor::X11CursorProvider,
+    event_source::X11EventSource,
+    ewmh_facade::X11EwmhFacade,
+    input_ops::X11InputOps,
+    key_ops::X11KeyOps,
+    output_ops::X11OutputOps,
+    property_ops::X11PropertyOps,
+    window_ops::X11WindowOps,
 };
 
 pub struct X11LoopData<'a> {
@@ -497,3 +504,2408 @@ impl Backend for X11Backend {
         Ok(())
     }
 }
+
+mod ids {
+    use crate::backend::common_define::WindowId;
+    use crate::backend::error::BackendError;
+    use std::collections::HashMap;
+    use std::sync::{
+        Arc, RwLock,
+        atomic::{AtomicU64, Ordering},
+    };
+
+    #[derive(Clone, Default)]
+    pub struct X11IdRegistry {
+        next: Arc<AtomicU64>,
+        x11_to_wid: Arc<RwLock<HashMap<u32, WindowId>>>,
+        wid_to_x11: Arc<RwLock<HashMap<WindowId, u32>>>,
+    }
+
+    impl X11IdRegistry {
+        pub fn new(start: u64) -> Self {
+            Self {
+                next: Arc::new(AtomicU64::new(start)),
+                x11_to_wid: Arc::new(RwLock::new(HashMap::new())),
+                wid_to_x11: Arc::new(RwLock::new(HashMap::new())),
+            }
+        }
+
+        /// X11 window(u32) intern  WindowId
+        pub fn intern(&self, x11: u32) -> WindowId {
+            if let Some(id) = self.x11_to_wid.read().unwrap().get(&x11).copied() {
+                return id;
+            }
+            // 
+            let mut w = self.x11_to_wid.write().unwrap();
+            if let Some(id) = w.get(&x11).copied() {
+                return id;
+            }
+
+            let id = WindowId::from_raw(self.next.fetch_add(1, Ordering::Relaxed));
+            w.insert(x11, id);
+            self.wid_to_x11.write().unwrap().insert(id, x11);
+            id
+        }
+
+        pub fn x11(&self, id: WindowId) -> Result<u32, BackendError> {
+            self.wid_to_x11
+                .read()
+                .unwrap()
+                .get(&id)
+                .copied()
+                .ok_or(BackendError::NotFound("WindowId not mapped to X11 window"))
+        }
+
+        pub fn remove_x11(&self, x11: u32) {
+            if let Some(id) = self.x11_to_wid.write().unwrap().remove(&x11) {
+                self.wid_to_x11.write().unwrap().remove(&id);
+            }
+        }
+    }
+}
+
+mod adapter {
+    use crate::backend::common_define::MouseButton;
+    use crate::backend::common_define::{EventMaskBits, Mods};
+    use x11rb::protocol::xproto::{ButtonIndex, EventMask, KeyButMask};
+
+    pub fn mods_from_x11(mask: KeyButMask, numlock_mask: KeyButMask) -> Mods {
+        let mut m = Mods::empty();
+        let raw = mask.bits();
+
+        if raw & KeyButMask::SHIFT.bits() != 0 {
+            m |= Mods::SHIFT;
+        }
+        if raw & KeyButMask::CONTROL.bits() != 0 {
+            m |= Mods::CONTROL;
+        }
+        if raw & KeyButMask::MOD1.bits() != 0 {
+            m |= Mods::ALT;
+        }
+        if raw & KeyButMask::MOD2.bits() != 0 {
+            // If NumLock is mapped to Mod2, don't treat it as a regular modifier.
+            if !numlock_mask.contains(KeyButMask::MOD2) {
+                m |= Mods::MOD2;
+            }
+        }
+        if raw & KeyButMask::MOD3.bits() != 0 {
+            if !numlock_mask.contains(KeyButMask::MOD3) {
+                m |= Mods::MOD3;
+            }
+        }
+        if raw & KeyButMask::MOD4.bits() != 0 {
+            m |= Mods::SUPER;
+        }
+        if raw & KeyButMask::MOD5.bits() != 0 {
+            if !numlock_mask.contains(KeyButMask::MOD5) {
+                m |= Mods::MOD5;
+            }
+        }
+        if raw & KeyButMask::LOCK.bits() != 0 {
+            m |= Mods::CAPS;
+        }
+        if raw & numlock_mask.bits() != 0 {
+            m |= Mods::NUMLOCK;
+        }
+        m
+    }
+
+    pub fn mods_to_x11(mods: Mods, numlock_mask: KeyButMask) -> KeyButMask {
+        let mut m = KeyButMask::default();
+        if mods.contains(Mods::SHIFT) {
+            m |= KeyButMask::SHIFT;
+        }
+        if mods.contains(Mods::CONTROL) {
+            m |= KeyButMask::CONTROL;
+        }
+        if mods.contains(Mods::ALT) {
+            m |= KeyButMask::MOD1;
+        }
+        if mods.contains(Mods::MOD2) {
+            m |= KeyButMask::MOD2;
+        }
+        if mods.contains(Mods::MOD3) {
+            m |= KeyButMask::MOD3;
+        }
+        if mods.contains(Mods::SUPER) {
+            m |= KeyButMask::MOD4;
+        }
+        if mods.contains(Mods::MOD5) {
+            m |= KeyButMask::MOD5;
+        }
+        if mods.contains(Mods::CAPS) {
+            m |= KeyButMask::LOCK;
+        }
+        if mods.contains(Mods::NUMLOCK) {
+            m |= numlock_mask;
+        }
+        m
+    }
+
+    pub fn button_from_x11(detail: u8) -> MouseButton {
+        MouseButton::from_u8(detail)
+    }
+    pub fn button_to_x11(btn: MouseButton) -> ButtonIndex {
+        ButtonIndex::from(btn.to_u8())
+    }
+
+    pub fn event_mask_from_generic(bits: u32) -> EventMask {
+        let mut m = EventMask::default();
+        if (bits & EventMaskBits::BUTTON_PRESS.bits()) != 0 {
+            m |= EventMask::BUTTON_PRESS;
+        }
+        if (bits & EventMaskBits::BUTTON_RELEASE.bits()) != 0 {
+            m |= EventMask::BUTTON_RELEASE;
+        }
+        if (bits & EventMaskBits::POINTER_MOTION.bits()) != 0 {
+            m |= EventMask::POINTER_MOTION;
+        }
+        if (bits & EventMaskBits::ENTER_WINDOW.bits()) != 0 {
+            m |= EventMask::ENTER_WINDOW;
+        }
+        if (bits & EventMaskBits::LEAVE_WINDOW.bits()) != 0 {
+            m |= EventMask::LEAVE_WINDOW;
+        }
+        if (bits & EventMaskBits::PROPERTY_CHANGE.bits()) != 0 {
+            m |= EventMask::PROPERTY_CHANGE;
+        }
+        if (bits & EventMaskBits::STRUCTURE_NOTIFY.bits()) != 0 {
+            m |= EventMask::STRUCTURE_NOTIFY;
+        }
+        if (bits & EventMaskBits::SUBSTRUCTURE_REDIRECT.bits()) != 0 {
+            m |= EventMask::SUBSTRUCTURE_REDIRECT;
+        }
+        if (bits & EventMaskBits::FOCUS_CHANGE.bits()) != 0 {
+            m |= EventMask::FOCUS_CHANGE;
+        }
+        m
+    }
+}
+
+mod color {
+    use crate::backend::api::ColorAllocator;
+    use crate::backend::common_define::{ArgbColor, ColorScheme, Pixel, SchemeType};
+    use crate::backend::error::BackendError;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::Colormap;
+
+    pub struct X11ColorAllocator<C: Connection> {
+        conn: Arc<C>,
+        colormap: Colormap,
+
+        pixel_cache: HashMap<u32, Pixel>,
+        schemes: HashMap<SchemeType, ColorScheme>,
+    }
+
+    impl<C: Connection> X11ColorAllocator<C> {
+        pub fn new(conn: Arc<C>, colormap: Colormap) -> Self {
+            Self {
+                conn,
+                colormap,
+                pixel_cache: HashMap::new(),
+                schemes: HashMap::new(),
+            }
+        }
+
+        fn ensure_pixel(&mut self, color: ArgbColor) -> Result<Pixel, BackendError> {
+            if let Some(p) = self.pixel_cache.get(&color.value).copied() {
+                return Ok(p);
+            }
+            let (_, r, g, b) = color.components();
+            let pix = self.alloc_rgb(r, g, b)?;
+            self.pixel_cache.insert(color.value, pix);
+            Ok(pix)
+        }
+
+        fn alloc_rgb(&mut self, r: u8, g: u8, b: u8) -> Result<Pixel, BackendError> {
+            use x11rb::protocol::xproto::ConnectionExt;
+            let reply = (*self.conn)
+                .alloc_color(
+                    self.colormap,
+                    (r as u16) << 8,
+                    (g as u16) << 8,
+                    (b as u16) << 8,
+                )?
+                .reply()?;
+            Ok(Pixel(reply.pixel))
+        }
+
+        fn free_pixels(&mut self, pixels: &[Pixel]) -> Result<(), BackendError> {
+            if pixels.is_empty() {
+                return Ok(());
+            }
+            use x11rb::protocol::xproto::ConnectionExt;
+            let raw: Vec<u32> = pixels.iter().map(|p| p.0).collect();
+            (*self.conn).free_colors(self.colormap, 0, &raw)?;
+            Ok(())
+        }
+    }
+
+    impl<C: Connection + Send + Sync + 'static> ColorAllocator for X11ColorAllocator<C> {
+        fn set_scheme(&mut self, t: SchemeType, s: ColorScheme) {
+            self.schemes.insert(t, s);
+        }
+
+        fn get_border_pixel_of(&mut self, t: SchemeType) -> Result<Pixel, BackendError> {
+            let s = self
+                .schemes
+                .get(&t)
+                .ok_or(BackendError::NotFound("scheme not found"))?
+                .clone();
+            self.ensure_pixel(s.border)
+        }
+
+        fn allocate_schemes_pixels(&mut self) -> Result<(), BackendError> {
+            let mut colors: Vec<ArgbColor> = Vec::new();
+            for s in self.schemes.values() {
+                colors.push(s.fg);
+                colors.push(s.bg);
+                colors.push(s.border);
+            }
+            colors.sort_by_key(|c| c.value);
+            colors.dedup();
+            for c in colors {
+                let _ = self.ensure_pixel(c)?;
+            }
+            Ok(())
+        }
+
+        fn free_all_theme_pixels(&mut self) -> Result<(), BackendError> {
+            if self.pixel_cache.is_empty() {
+                return Ok(());
+            }
+            let pixels: Vec<Pixel> = self.pixel_cache.values().copied().collect();
+            self.free_pixels(&pixels)?;
+            self.pixel_cache.clear();
+            Ok(())
+        }
+    }
+}
+
+mod cursor {
+    use crate::backend::api::CursorProvider;
+    use crate::backend::common_define::{CursorHandle, StdCursorKind, WindowId};
+    use crate::backend::error::BackendError;
+    use super::ids::X11IdRegistry;
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::*;
+
+    #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+    pub enum X11StdCursor {
+        XCursor = 0,
+        Arrow = 2,
+        BasedArrowDown = 4,
+        BasedArrowUp = 6,
+        Boat = 8,
+        Bogosity = 10,
+        BottomLeftCorner = 12,
+        BottomRightCorner = 14,
+        BottomSide = 16,
+        BottomTee = 18,
+        BoxSpiral = 20,
+        CenterPtr = 22,
+        Circle = 24,
+        Clock = 26,
+        CoffeeMug = 28,
+        Cross = 30,
+        CrossReverse = 32,
+        Crosshair = 34,
+        DiamondCross = 36,
+        Dot = 38,
+        Dotbox = 40,
+        DoubleArrow = 42,
+        DraftLarge = 44,
+        DraftSmall = 46,
+        DrapedBox = 48,
+        Exchange = 50,
+        Fleur = 52,
+        Gobbler = 54,
+        Gumby = 56,
+        Hand1 = 58,
+        Hand2 = 60,
+        Heart = 62,
+        Icon = 64,
+        IronCross = 66,
+        LeftPtr = 68,
+        LeftSide = 70,
+        LeftTee = 72,
+        Leftbutton = 74,
+        LlAngle = 76,
+        LrAngle = 78,
+        Man = 80,
+        Middlebutton = 82,
+        Mouse = 84,
+        Pencil = 86,
+        Pirate = 88,
+        Plus = 90,
+        QuestionArrow = 92,
+        RightPtr = 94,
+        RightSide = 96,
+        RightTee = 98,
+        Rightbutton = 100,
+        RtlLogo = 102,
+        Sailboat = 104,
+        SbDownArrow = 106,
+        SbHDoubleArrow = 108,
+        SbLeftArrow = 110,
+        SbRightArrow = 112,
+        SbUpArrow = 114,
+        SbVDoubleArrow = 116,
+        Shuttle = 118,
+        Sizing = 120,
+        Spider = 122,
+        Spraycan = 124,
+        Star = 126,
+        Target = 128,
+        Tcross = 130,
+        TopLeftArrow = 132,
+        TopLeftCorner = 134,
+        TopRightCorner = 136,
+        TopSide = 138,
+        TopTee = 140,
+        Trek = 142,
+        UlAngle = 144,
+        Umbrella = 146,
+        UrAngle = 148,
+        Watch = 150,
+        Xterm = 152,
+    }
+
+    impl X11StdCursor {
+        pub fn create(&self, conn: &impl Connection, font: Font) -> Result<Cursor, BackendError> {
+            let cursor_id = conn.generate_id()?;
+            let glyph = *self as u16;
+            conn.create_glyph_cursor(
+                cursor_id,
+                font,
+                font,
+                glyph,
+                glyph + 1,
+                0,
+                0,
+                0, // 
+                65535,
+                65535,
+                65535, // 
+            )?;
+            Ok(cursor_id)
+        }
+
+        pub fn create_colored(
+            &self,
+            conn: &impl Connection,
+            font: Font,
+            fg_r: u16,
+            fg_g: u16,
+            fg_b: u16,
+            bg_r: u16,
+            bg_g: u16,
+            bg_b: u16,
+        ) -> Result<Cursor, BackendError> {
+            let cursor_id = conn.generate_id()?;
+            let glyph = *self as u16;
+            conn.create_glyph_cursor(
+                cursor_id,
+                font,
+                font,
+                glyph,
+                glyph + 1,
+                fg_r,
+                fg_g,
+                fg_b,
+                bg_r,
+                bg_g,
+                bg_b,
+            )?;
+            Ok(cursor_id)
+        }
+
+        pub fn description(&self) -> &'static str {
+            match self {
+                Self::XCursor => "Default X cursor",
+                Self::Arrow => "Standard arrow",
+                Self::BasedArrowDown => "Down arrow",
+                Self::BasedArrowUp => "Up arrow",
+                Self::Boat => "Boat shape",
+                Self::Bogosity => "Error/invalid indicator",
+                Self::BottomLeftCorner => "Bottom-left corner resize",
+                Self::BottomRightCorner => "Bottom-right corner resize",
+                Self::BottomSide => "Bottom side resize",
+                Self::BottomTee => "Bottom T shape",
+                Self::BoxSpiral => "Box spiral",
+                Self::CenterPtr => "Center pointer",
+                Self::Circle => "Circle",
+                Self::Clock => "Clock/waiting",
+                Self::CoffeeMug => "Coffee mug",
+                Self::Cross => "Cross",
+                Self::CrossReverse => "Reverse cross",
+                Self::Crosshair => "Crosshair",
+                Self::DiamondCross => "Diamond cross",
+                Self::Dot => "Dot",
+                Self::Dotbox => "Dotted box",
+                Self::DoubleArrow => "Double arrow",
+                Self::DraftLarge => "Large draft",
+                Self::DraftSmall => "Small draft",
+                Self::DrapedBox => "Draped box",
+                Self::Exchange => "Exchange",
+                Self::Fleur => "Four-way move",
+                Self::Gobbler => "Pac-man",
+                Self::Gumby => "Gumby character",
+                Self::Hand1 => "Hand pointer 1",
+                Self::Hand2 => "Hand pointer 2",
+                Self::Heart => "Heart shape",
+                Self::Icon => "Icon",
+                Self::IronCross => "Iron cross",
+                Self::LeftPtr => "Left pointer (standard)",
+                Self::LeftSide => "Left side resize",
+                Self::LeftTee => "Left T shape",
+                Self::Leftbutton => "Left button",
+                Self::LlAngle => "Lower-left angle",
+                Self::LrAngle => "Lower-right angle",
+                Self::Man => "Man figure",
+                Self::Middlebutton => "Middle button",
+                Self::Mouse => "Mouse",
+                Self::Pencil => "Pencil",
+                Self::Pirate => "Pirate",
+                Self::Plus => "Plus sign",
+                Self::QuestionArrow => "Question arrow",
+                Self::RightPtr => "Right pointer",
+                Self::RightSide => "Right side resize",
+                Self::RightTee => "Right T shape",
+                Self::Rightbutton => "Right button",
+                Self::RtlLogo => "RTL logo",
+                Self::Sailboat => "Sailboat",
+                Self::SbDownArrow => "Scrollbar down arrow",
+                Self::SbHDoubleArrow => "Horizontal double arrow",
+                Self::SbLeftArrow => "Scrollbar left arrow",
+                Self::SbRightArrow => "Scrollbar right arrow",
+                Self::SbUpArrow => "Scrollbar up arrow",
+                Self::SbVDoubleArrow => "Vertical double arrow",
+                Self::Shuttle => "Shuttle",
+                Self::Sizing => "Sizing",
+                Self::Spider => "Spider",
+                Self::Spraycan => "Spray can",
+                Self::Star => "Star",
+                Self::Target => "Target",
+                Self::Tcross => "T cross",
+                Self::TopLeftArrow => "Top-left arrow",
+                Self::TopLeftCorner => "Top-left corner resize",
+                Self::TopRightCorner => "Top-right corner resize",
+                Self::TopSide => "Top side resize",
+                Self::TopTee => "Top T shape",
+                Self::Trek => "Star Trek",
+                Self::UlAngle => "Upper-left angle",
+                Self::Umbrella => "Umbrella",
+                Self::UrAngle => "Upper-right angle",
+                Self::Watch => "Watch/waiting",
+                Self::Xterm => "Text cursor",
+            }
+        }
+
+        pub fn common_cursors() -> &'static [X11StdCursor] {
+            &[
+                Self::LeftPtr,           // 
+                Self::Hand1,             // 
+                Self::Xterm,             // 
+                Self::Watch,             // 
+                Self::Crosshair,         // 
+                Self::Fleur,             // 
+                Self::SbHDoubleArrow,    // 
+                Self::SbVDoubleArrow,    // 
+                Self::TopLeftCorner,     // 
+                Self::TopRightCorner,    // 
+                Self::BottomLeftCorner,  // 
+                Self::BottomRightCorner, // 
+                Self::Sizing,            // 
+            ]
+        }
+
+        pub fn all_cursors() -> &'static [X11StdCursor] {
+            &[
+                Self::XCursor,
+                Self::Arrow,
+                Self::BasedArrowDown,
+                Self::BasedArrowUp,
+                Self::Boat,
+                Self::Bogosity,
+                Self::BottomLeftCorner,
+                Self::BottomRightCorner,
+                Self::BottomSide,
+                Self::BottomTee,
+                Self::BoxSpiral,
+                Self::CenterPtr,
+                Self::Circle,
+                Self::Clock,
+                Self::CoffeeMug,
+                Self::Cross,
+                Self::CrossReverse,
+                Self::Crosshair,
+                Self::DiamondCross,
+                Self::Dot,
+                Self::Dotbox,
+                Self::DoubleArrow,
+                Self::DraftLarge,
+                Self::DraftSmall,
+                Self::DrapedBox,
+                Self::Exchange,
+                Self::Fleur,
+                Self::Gobbler,
+                Self::Gumby,
+                Self::Hand1,
+                Self::Hand2,
+                Self::Heart,
+                Self::Icon,
+                Self::IronCross,
+                Self::LeftPtr,
+                Self::LeftSide,
+                Self::LeftTee,
+                Self::Leftbutton,
+                Self::LlAngle,
+                Self::LrAngle,
+                Self::Man,
+                Self::Middlebutton,
+                Self::Mouse,
+                Self::Pencil,
+                Self::Pirate,
+                Self::Plus,
+                Self::QuestionArrow,
+                Self::RightPtr,
+                Self::RightSide,
+                Self::RightTee,
+                Self::Rightbutton,
+                Self::RtlLogo,
+                Self::Sailboat,
+                Self::SbDownArrow,
+                Self::SbHDoubleArrow,
+                Self::SbLeftArrow,
+                Self::SbRightArrow,
+                Self::SbUpArrow,
+                Self::SbVDoubleArrow,
+                Self::Shuttle,
+                Self::Sizing,
+                Self::Spider,
+                Self::Spraycan,
+                Self::Star,
+                Self::Target,
+                Self::Tcross,
+                Self::TopLeftArrow,
+                Self::TopLeftCorner,
+                Self::TopRightCorner,
+                Self::TopSide,
+                Self::TopTee,
+                Self::Trek,
+                Self::UlAngle,
+                Self::Umbrella,
+                Self::UrAngle,
+                Self::Watch,
+                Self::Xterm,
+            ]
+        }
+    }
+
+    pub struct X11CursorProvider<C: Connection> {
+        conn: Arc<C>,
+        cursor_font: Font,
+        cache: HashMap<StdCursorKind, Cursor>,
+        ids: X11IdRegistry,
+    }
+
+    impl<C: Connection> X11CursorProvider<C> {
+        pub fn new(conn: Arc<C>, ids: X11IdRegistry) -> Result<Self, BackendError> {
+            use x11rb::protocol::xproto::ConnectionExt;
+            let font = conn.generate_id()?;
+            conn.open_font(font, b"cursor")?;
+            Ok(Self {
+                conn,
+                cursor_font: font,
+                cache: HashMap::new(),
+                ids,
+            })
+        }
+
+        fn map_kind(kind: StdCursorKind) -> X11StdCursor {
+            match kind {
+                StdCursorKind::LeftPtr => X11StdCursor::LeftPtr,
+                StdCursorKind::Hand => X11StdCursor::Hand1,
+                StdCursorKind::XTerm => X11StdCursor::Xterm,
+                StdCursorKind::Watch => X11StdCursor::Watch,
+                StdCursorKind::Crosshair => X11StdCursor::Crosshair,
+                StdCursorKind::Fleur => X11StdCursor::Fleur,
+                StdCursorKind::HDoubleArrow => X11StdCursor::SbHDoubleArrow,
+                StdCursorKind::VDoubleArrow => X11StdCursor::SbVDoubleArrow,
+                StdCursorKind::TopLeftCorner => X11StdCursor::TopLeftCorner,
+                StdCursorKind::TopRightCorner => X11StdCursor::TopRightCorner,
+                StdCursorKind::BottomLeftCorner => X11StdCursor::BottomLeftCorner,
+                StdCursorKind::BottomRightCorner => X11StdCursor::BottomRightCorner,
+                StdCursorKind::Sizing => X11StdCursor::Sizing,
+            }
+        }
+    }
+
+    impl<C: Connection + Send + Sync + 'static> CursorProvider for X11CursorProvider<C> {
+        fn preload_common(&mut self) -> Result<(), BackendError> {
+            for kind in [
+                StdCursorKind::LeftPtr,
+                StdCursorKind::Hand,
+                StdCursorKind::XTerm,
+                StdCursorKind::Watch,
+                StdCursorKind::Crosshair,
+                StdCursorKind::Fleur,
+                StdCursorKind::HDoubleArrow,
+                StdCursorKind::VDoubleArrow,
+                StdCursorKind::TopLeftCorner,
+                StdCursorKind::TopRightCorner,
+                StdCursorKind::BottomLeftCorner,
+                StdCursorKind::BottomRightCorner,
+                StdCursorKind::Sizing,
+            ] {
+                let _ = self.get(kind)?;
+            }
+            Ok(())
+        }
+
+        fn get(&mut self, kind: StdCursorKind) -> Result<CursorHandle, BackendError> {
+            if let Some(&c) = self.cache.get(&kind) {
+                return Ok(CursorHandle(c as u64));
+            }
+            let x11_cursor = Self::map_kind(kind);
+            let cursor = x11_cursor.create(&*self.conn, self.cursor_font)?;
+            self.cache.insert(kind, cursor);
+            Ok(CursorHandle(cursor as u64))
+        }
+
+        fn apply(&mut self, window: WindowId, kind: StdCursorKind) -> Result<(), BackendError> {
+            use x11rb::protocol::xproto::ConnectionExt;
+            let c = match self.get(kind) {
+                Ok(h) => h.0 as u32,
+                Err(e) => return Err(e),
+            };
+            (*self.conn).change_window_attributes(
+                self.ids.x11(window)?,
+                &ChangeWindowAttributesAux::new().cursor(c),
+            )?;
+            Ok(())
+        }
+
+        fn cleanup(&mut self) -> Result<(), BackendError> {
+            use x11rb::protocol::xproto::ConnectionExt;
+            for &cursor in self.cache.values() {
+                let _ = (*self.conn).free_cursor(cursor);
+            }
+            let _ = (*self.conn).close_font(self.cursor_font);
+            Ok(())
+        }
+    }
+}
+
+mod event_source {
+    use std::os::unix::io::{AsRawFd, BorrowedFd};
+    use std::sync::Arc;
+    use x11rb::connection::Connection;
+    use x11rb::protocol::{Event as XEvent, xproto};
+    use x11rb::rust_connection::RustConnection;
+
+    use crate::backend::api::{
+        BackendEvent, NetWmAction, NetWmState, PropertyKind, StackMode, WindowChanges,
+    };
+    use crate::backend::api::{HitTarget, NotifyMode};
+    use crate::backend::error::BackendError;
+    use crate::backend::x11::Atoms;
+    use super::ids::X11IdRegistry;
+
+    use calloop::{EventSource, Interest, Mode, Poll, PostAction, Readiness, Token, TokenFactory};
+
+    pub struct X11EventSource {
+        conn: Arc<RustConnection>,
+        atoms: Atoms,
+        root_x11: u32,
+        ids: X11IdRegistry,
+    }
+
+    impl X11EventSource {
+        pub fn new(conn: Arc<RustConnection>, atoms: Atoms, root_x11: u32, ids: X11IdRegistry) -> Self {
+            Self {
+                conn,
+                atoms,
+                root_x11,
+                ids,
+            }
+        }
+
+        fn hit_target_from_event_window(&self, event_window: u32) -> HitTarget {
+            if event_window == self.root_x11 {
+                HitTarget::Background { output: None }
+            } else {
+                HitTarget::Surface(self.ids.intern(event_window))
+            }
+        }
+
+        fn map_property_kind(&self, atom: u32) -> PropertyKind {
+            if atom == self.atoms.WM_TRANSIENT_FOR {
+                PropertyKind::TransientFor
+            } else if atom == u32::from(xproto::AtomEnum::WM_NORMAL_HINTS) {
+                PropertyKind::SizeHints
+            } else if atom == u32::from(xproto::AtomEnum::WM_HINTS) {
+                PropertyKind::Urgency
+            } else if atom == u32::from(xproto::AtomEnum::WM_NAME) || atom == self.atoms._NET_WM_NAME {
+                PropertyKind::Title
+            } else if atom == u32::from(xproto::AtomEnum::WM_CLASS) {
+                PropertyKind::Class
+            } else if atom == self.atoms._NET_WM_WINDOW_TYPE {
+                PropertyKind::WindowType
+            } else if atom == self.atoms.WM_PROTOCOLS {
+                PropertyKind::Protocols
+            } else {
+                PropertyKind::Other
+            }
+        }
+
+        fn map_net_wm_action(action: u32) -> Option<NetWmAction> {
+            match action {
+                0 => Some(NetWmAction::Remove),
+                1 => Some(NetWmAction::Add),
+                2 => Some(NetWmAction::Toggle),
+                _ => None,
+            }
+        }
+
+        fn map_event(&self, ev: XEvent) -> Option<BackendEvent> {
+            match ev {
+                XEvent::ButtonPress(e) => Some(BackendEvent::ButtonPress {
+                    target: self.hit_target_from_event_window(e.event),
+                    state: e.state.bits(),
+                    detail: e.detail,
+                    time: e.time,
+                    root_x: e.root_x as f64,
+                    root_y: e.root_y as f64,
+                }),
+                XEvent::MotionNotify(e) => Some(BackendEvent::MotionNotify {
+                    target: self.hit_target_from_event_window(e.event),
+                    root_x: e.root_x as f64,
+                    root_y: e.root_y as f64,
+                    time: e.time,
+                }),
+                XEvent::ButtonRelease(e) => Some(BackendEvent::ButtonRelease {
+                    target: self.hit_target_from_event_window(e.event),
+                    time: e.time,
+                }),
+                XEvent::RandrScreenChangeNotify(_) => Some(BackendEvent::ScreenLayoutChanged),
+                XEvent::RandrNotify(_) => Some(BackendEvent::ScreenLayoutChanged),
+                XEvent::KeyPress(e) => Some(BackendEvent::KeyPress {
+                    keycode: e.detail,
+                    state: e.state.bits(),
+                    time: e.time,
+                }),
+                XEvent::MapRequest(e) => Some(BackendEvent::WindowCreated(self.ids.intern(e.window))),
+                XEvent::MapNotify(e) => Some(BackendEvent::WindowMapped(self.ids.intern(e.window))),
+                XEvent::UnmapNotify(e) => Some(BackendEvent::WindowUnmapped(self.ids.intern(e.window))),
+                XEvent::DestroyNotify(e) => {
+                    let id = self.ids.intern(e.window);
+                    self.ids.remove_x11(e.window);
+                    Some(BackendEvent::WindowDestroyed(id))
+                }
+                XEvent::ConfigureNotify(e) => Some(BackendEvent::WindowConfigured {
+                    window: self.ids.intern(e.window),
+                    x: e.x as i32,
+                    y: e.y as i32,
+                    width: e.width as u32,
+                    height: e.height as u32,
+                }),
+                XEvent::EnterNotify(e) => {
+                    let mode = match e.mode {
+                        xproto::NotifyMode::NORMAL => NotifyMode::Normal,
+                        xproto::NotifyMode::GRAB => NotifyMode::Grab,
+                        xproto::NotifyMode::UNGRAB => NotifyMode::Ungrab,
+                        _ => NotifyMode::Grab,
+                    };
+                    Some(BackendEvent::EnterNotify {
+                        window: self.ids.intern(e.event),
+                        subwindow: if e.child != 0 {
+                            Some(self.ids.intern(e.child))
+                        } else {
+                            None
+                        },
+                        mode,
+                        root_x: e.root_x as f64,
+                        root_y: e.root_y as f64,
+                    })
+                }
+                XEvent::LeaveNotify(e) => {
+                    let mode = match e.mode {
+                        xproto::NotifyMode::NORMAL => NotifyMode::Normal,
+                        xproto::NotifyMode::GRAB => NotifyMode::Grab,
+                        xproto::NotifyMode::UNGRAB => NotifyMode::Ungrab,
+                        _ => NotifyMode::Grab,
+                    };
+                    Some(BackendEvent::LeaveNotify {
+                        window: self.ids.intern(e.event),
+                        mode,
+                    })
+                }
+                XEvent::FocusIn(e) => Some(BackendEvent::FocusIn {
+                    window: self.ids.intern(e.event),
+                }),
+                XEvent::FocusOut(e) => Some(BackendEvent::FocusOut {
+                    window: self.ids.intern(e.event),
+                }),
+                XEvent::ConfigureRequest(e) => {
+                    let changes = WindowChanges {
+                        x: if e.value_mask.contains(xproto::ConfigWindow::X) {
+                            Some(e.x as i32)
+                        } else {
+                            None
+                        },
+                        y: if e.value_mask.contains(xproto::ConfigWindow::Y) {
+                            Some(e.y as i32)
+                        } else {
+                            None
+                        },
+                        width: if e.value_mask.contains(xproto::ConfigWindow::WIDTH) {
+                            Some(e.width as u32)
+                        } else {
+                            None
+                        },
+                        height: if e.value_mask.contains(xproto::ConfigWindow::HEIGHT) {
+                            Some(e.height as u32)
+                        } else {
+                            None
+                        },
+                        border_width: if e.value_mask.contains(xproto::ConfigWindow::BORDER_WIDTH) {
+                            Some(e.border_width as u32)
+                        } else {
+                            None
+                        },
+                        sibling: if e.value_mask.contains(xproto::ConfigWindow::SIBLING) {
+                            Some(self.ids.intern(e.sibling))
+                        } else {
+                            None
+                        },
+                        stack_mode: if e.value_mask.contains(xproto::ConfigWindow::STACK_MODE) {
+                            match e.stack_mode {
+                                xproto::StackMode::ABOVE => Some(StackMode::Above),
+                                xproto::StackMode::BELOW => Some(StackMode::Below),
+                                xproto::StackMode::TOP_IF => Some(StackMode::TopIf),
+                                xproto::StackMode::BOTTOM_IF => Some(StackMode::BottomIf),
+                                xproto::StackMode::OPPOSITE => Some(StackMode::Opposite),
+                                _ => None,
+                            }
+                        } else {
+                            None
+                        },
+                    };
+                    Some(BackendEvent::ConfigureRequest {
+                        window: self.ids.intern(e.window),
+                        mask_bits: e.value_mask.bits(),
+                        changes,
+                    })
+                }
+                XEvent::PropertyNotify(e) => {
+                    if e.state == xproto::Property::DELETE.into() {
+                        return None;
+                    }
+                    let kind = self.map_property_kind(e.atom);
+                    Some(BackendEvent::PropertyChanged {
+                        window: self.ids.intern(e.window),
+                        kind,
+                    })
+                }
+                XEvent::ClientMessage(e) => {
+                    let data32 = e.data.as_data32();
+                    if e.type_ == self.atoms._NET_WM_STATE && e.format == 32 && data32.len() >= 2 {
+                        let window = self.ids.intern(e.window);
+                        if let Some(action) = Self::map_net_wm_action(data32[0]) {
+                            for &atom in &[data32[1], data32[2]] {
+                                if atom == self.atoms._NET_WM_STATE_FULLSCREEN {
+                                    return Some(BackendEvent::WindowStateRequest {
+                                        window,
+                                        action,
+                                        state: NetWmState::Fullscreen,
+                                    });
+                                }
+                            }
+                        }
+                    }
+                    if e.type_ == self.atoms._NET_ACTIVE_WINDOW {
+                        return Some(BackendEvent::ActiveWindowMessage {
+                            window: self.ids.intern(e.window),
+                        });
+                    }
+                    Some(BackendEvent::ClientMessage {
+                        window: self.ids.intern(e.window),
+                        type_: e.type_,
+                        data: [
+                            data32.get(0).copied().unwrap_or(0),
+                            data32.get(1).copied().unwrap_or(0),
+                            data32.get(2).copied().unwrap_or(0),
+                            data32.get(3).copied().unwrap_or(0),
+                            data32.get(4).copied().unwrap_or(0),
+                        ],
+                        format: e.format,
+                    })
+                }
+                XEvent::MappingNotify(_) => Some(BackendEvent::MappingNotify),
+                XEvent::Expose(e) => Some(BackendEvent::Expose {
+                    window: self.ids.intern(e.window),
+                }),
+                _ => None,
+            }
+        }
+
+        pub fn poll_event(&mut self) -> Result<Option<BackendEvent>, Box<dyn std::error::Error>> {
+            let ev = self.conn.poll_for_event()?;
+            Ok(ev.and_then(|e| self.map_event(e)))
+        }
+    }
+
+    impl EventSource for X11EventSource {
+        type Event = BackendEvent;
+        type Metadata = ();
+        type Ret = ();
+        type Error = BackendError;
+
+        fn process_events<F>(
+            &mut self,
+            _readiness: Readiness,
+            _token: Token,
+            mut callback: F,
+        ) -> Result<PostAction, Self::Error>
+        where
+            F: FnMut(Self::Event, &mut Self::Metadata) -> Self::Ret,
+        {
+            loop {
+                match self.poll_event() {
+                    Ok(Some(event)) => {
+                        callback(event, &mut ());
+                    }
+                    Ok(None) => break,
+                    Err(e) => {
+                        log::error!("X11 poll error: {:?}", e);
+                        //  Send + Sync 
+                        let err_msg = format!("X11 poll error: {}", e);
+                        return Err(BackendError::from(std::io::Error::new(
+                            std::io::ErrorKind::Other,
+                            err_msg,
+                        )));
+                    }
+                }
+            }
+            Ok(PostAction::Continue)
+        }
+
+        fn register(
+            &mut self,
+            poll: &mut Poll,
+            token_factory: &mut TokenFactory,
+        ) -> calloop::Result<()> {
+            let raw_fd = self.conn.stream().as_raw_fd();
+            unsafe {
+                let fd = BorrowedFd::borrow_raw(raw_fd);
+                poll.register(fd, Interest::READ, Mode::Level, token_factory.token())
+            }
+        }
+
+        fn reregister(
+            &mut self,
+            poll: &mut Poll,
+            token_factory: &mut TokenFactory,
+        ) -> calloop::Result<()> {
+            let raw_fd = self.conn.stream().as_raw_fd();
+            let fd = unsafe { BorrowedFd::borrow_raw(raw_fd) };
+            poll.reregister(fd, Interest::READ, Mode::Level, token_factory.token())
+        }
+
+        fn unregister(&mut self, poll: &mut Poll) -> calloop::Result<()> {
+            let raw_fd = self.conn.stream().as_raw_fd();
+            let fd = unsafe { BorrowedFd::borrow_raw(raw_fd) };
+            poll.unregister(fd)
+        }
+    }
+}
+
+mod ewmh_facade {
+    use crate::backend::api::{EwmhFacade, EwmhFeature};
+    use crate::backend::common_define::WindowId;
+    use crate::backend::error::BackendError;
+    use crate::backend::x11::Atoms;
+    use super::ids::X11IdRegistry;
+    use std::sync::Arc;
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::ConnectionExt as _;
+    use x11rb::protocol::xproto::CreateWindowAux;
+    use x11rb::protocol::xproto::*;
+    use x11rb::protocol::xproto::{AtomEnum, PropMode};
+    use x11rb::wrapper::ConnectionExt as _;
+
+    pub struct X11EwmhFacade<C: Connection> {
+        conn: Arc<C>,
+        root: WindowId,
+        atoms: Atoms,
+        ids: X11IdRegistry,
+    }
+
+    impl<C: Connection + Send + Sync + 'static> X11EwmhFacade<C> {
+        pub fn new(conn: Arc<C>, root: WindowId, atoms: Atoms, ids: X11IdRegistry) -> Self {
+            Self {
+                conn,
+                root,
+                atoms,
+                ids,
+            }
+        }
+        fn feature_to_atom(&self, f: EwmhFeature) -> u32 {
+            match f {
+                EwmhFeature::ActiveWindow => self.atoms._NET_ACTIVE_WINDOW,
+                EwmhFeature::Supported => self.atoms._NET_SUPPORTED,
+                EwmhFeature::WmName => self.atoms._NET_WM_NAME,
+                EwmhFeature::WmState => self.atoms._NET_WM_STATE,
+                EwmhFeature::SupportingWmCheck => self.atoms._NET_SUPPORTING_WM_CHECK,
+                EwmhFeature::WmStateFullscreen => self.atoms._NET_WM_STATE_FULLSCREEN,
+                EwmhFeature::ClientList => self.atoms._NET_CLIENT_LIST,
+                EwmhFeature::ClientInfo => self.atoms._NET_CLIENT_INFO,
+                EwmhFeature::WmWindowType => self.atoms._NET_WM_WINDOW_TYPE,
+                EwmhFeature::WmWindowTypeDialog => self.atoms._NET_WM_WINDOW_TYPE_DIALOG,
+            }
+        }
+    }
+
+    impl<C: Connection + Send + Sync + 'static> EwmhFacade for X11EwmhFacade<C> {
+        fn declare_supported(&self, features: &[EwmhFeature]) -> Result<(), BackendError> {
+            let atoms: Vec<u32> = features.iter().map(|f| self.feature_to_atom(*f)).collect();
+            let r = self.ids.x11(self.root)?;
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                r,
+                self.atoms._NET_SUPPORTED,
+                AtomEnum::ATOM,
+                &atoms,
+            )?;
+            Ok(())
+        }
+
+        fn reset_root_properties(&self) -> Result<(), BackendError> {
+            for &prop in [
+                self.atoms._NET_ACTIVE_WINDOW,
+                self.atoms._NET_CLIENT_LIST,
+                self.atoms._NET_SUPPORTED,
+                self.atoms._NET_CLIENT_LIST_STACKING,
+                self.atoms._NET_SUPPORTING_WM_CHECK,
+            ]
+            .iter()
+            {
+                let r = self.ids.x11(self.root)?;
+                let _ = self.conn.delete_property(r, prop);
+            }
+            Ok(())
+        }
+        fn setup_supporting_wm_check(&self, wm_name: &str) -> Result<WindowId, BackendError> {
+            let frame_win = self.conn.generate_id()?;
+            let aux = CreateWindowAux::new()
+                .event_mask(EventMask::EXPOSURE | EventMask::KEY_PRESS)
+                .override_redirect(1);
+            let r = self.ids.x11(self.root)?;
+            self.conn.create_window(
+                x11rb::COPY_DEPTH_FROM_PARENT,
+                frame_win,
+                r,
+                0,
+                0,
+                1,
+                1,
+                0,
+                WindowClass::INPUT_OUTPUT,
+                0,
+                &aux,
+            )?;
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                r,
+                self.atoms._NET_SUPPORTING_WM_CHECK,
+                AtomEnum::WINDOW,
+                &[frame_win],
+            )?;
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                frame_win,
+                self.atoms._NET_SUPPORTING_WM_CHECK,
+                AtomEnum::WINDOW,
+                &[frame_win],
+            )?;
+            // WM_NAME (STRING)
+            x11rb::wrapper::ConnectionExt::change_property8(
+                &*self.conn,
+                PropMode::REPLACE,
+                frame_win,
+                AtomEnum::WM_NAME,
+                AtomEnum::STRING,
+                wm_name.as_bytes(),
+            )?;
+            Ok(self.ids.intern(frame_win))
+        }
+
+        fn set_active_window(&self, win: WindowId) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            let r = self.ids.x11(self.root)?;
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                r,
+                self.atoms._NET_ACTIVE_WINDOW,
+                AtomEnum::WINDOW,
+                &[w],
+            )?;
+            Ok(())
+        }
+
+        fn clear_active_window(&self) -> Result<(), BackendError> {
+            use x11rb::protocol::xproto::ConnectionExt as RawExt;
+            let r = self.ids.x11(self.root)?;
+            self.conn
+                .delete_property(r, self.atoms._NET_ACTIVE_WINDOW)?;
+            Ok(())
+        }
+
+        fn set_client_list(&self, list: &[WindowId]) -> Result<(), BackendError> {
+            let r = self.ids.x11(self.root)?;
+            let raw: Vec<u32> = list.iter().map(|&w| self.ids.x11(w).unwrap()).collect();
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                r,
+                self.atoms._NET_CLIENT_LIST,
+                AtomEnum::WINDOW,
+                &raw,
+            )?;
+            Ok(())
+        }
+
+        fn set_client_list_stacking(&self, list: &[WindowId]) -> Result<(), BackendError> {
+            let r = self.ids.x11(self.root)?;
+            let raw: Vec<u32> = list.iter().map(|&w| self.ids.x11(w).unwrap()).collect();
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                r,
+                self.atoms._NET_CLIENT_LIST_STACKING,
+                AtomEnum::WINDOW,
+                &raw,
+            )?;
+            Ok(())
+        }
+    }
+}
+
+mod input_ops {
+    use crate::backend::error::BackendError;
+    use std::sync::Arc;
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::*;
+
+    use crate::backend::api::AllowMode;
+    use crate::backend::api::InputOps as InputOpsTrait;
+    use crate::backend::common_define::StdCursorKind;
+    use crate::backend::common_define::WindowId;
+    use super::ids::X11IdRegistry;
+
+    pub struct X11InputOps<C: Connection> {
+        conn: Arc<C>,
+        root_x11: u32,
+        ids: X11IdRegistry,
+    }
+
+    impl<C: Connection> Clone for X11InputOps<C> {
+        fn clone(&self) -> Self {
+            Self {
+                conn: self.conn.clone(),
+                root_x11: self.root_x11,
+                ids: self.ids.clone(),
+            }
+        }
+    }
+
+    impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
+        pub fn new(conn: Arc<C>, root_x11: u32, ids: X11IdRegistry) -> Self {
+            Self {
+                conn,
+                root_x11,
+                ids,
+            }
+        }
+
+        fn map_allow_mode(mode: AllowMode) -> Allow {
+            match mode {
+                AllowMode::AsyncPointer => Allow::ASYNC_POINTER,
+                AllowMode::ReplayPointer => Allow::REPLAY_POINTER,
+                AllowMode::SyncPointer => Allow::SYNC_POINTER,
+                AllowMode::AsyncKeyboard => Allow::ASYNC_KEYBOARD,
+                AllowMode::SyncKeyboard => Allow::SYNC_KEYBOARD,
+                AllowMode::ReplayKeyboard => Allow::REPLAY_KEYBOARD,
+                AllowMode::AsyncBoth => Allow::ASYNC_BOTH,
+                AllowMode::SyncBoth => Allow::SYNC_BOTH,
+            }
+        }
+
+        pub fn allow_events_raw(&self, mode: Allow, time: u32) -> Result<(), BackendError> {
+            self.conn.allow_events(mode, time)?;
+            Ok(())
+        }
+
+        pub fn query_pointer(&self) -> Result<QueryPointerReply, BackendError> {
+            Ok(self.conn.query_pointer(self.root_x11)?.reply()?)
+        }
+
+        pub fn flush(&self) -> Result<(), BackendError> {
+            self.conn.flush()?;
+            Ok(())
+        }
+    }
+
+    impl<C: Connection + Send + Sync + 'static> InputOpsTrait for X11InputOps<C> {
+        fn get_pointer_position(&self) -> Result<(f64, f64), BackendError> {
+            let reply = self.query_pointer()?;
+            // X11  f64
+            Ok((reply.root_x as f64, reply.root_y as f64))
+        }
+
+        fn grab_pointer(&self, _mask: u32, cursor: Option<u64>) -> Result<bool, BackendError> {
+            let cursor_id = cursor.map(|c| c as u32).unwrap_or(0);
+            //  Grab Pointer  ButtonRelease  Motion
+            let mask = EventMask::BUTTON_RELEASE | EventMask::POINTER_MOTION;
+
+            let reply = self
+                .conn
+                .grab_pointer(
+                    false,
+                    self.root_x11,
+                    mask,
+                    GrabMode::ASYNC,
+                    GrabMode::ASYNC,
+                    0u32, // None confine_to
+                    cursor_id,
+                    0u32, // Current time
+                )?
+                .reply()?;
+
+            Ok(reply.status == GrabStatus::SUCCESS)
+        }
+
+        fn set_cursor(&self, _kind: StdCursorKind) -> Result<(), BackendError> {
+            Ok(())
+        }
+
+        fn ungrab_pointer(&self) -> Result<(), BackendError> {
+            self.conn.ungrab_pointer(0u32)?;
+            Ok(())
+        }
+
+        fn allow_events(&self, mode: AllowMode, time: u32) -> Result<(), BackendError> {
+            let allow = Self::map_allow_mode(mode);
+            self.allow_events_raw(allow, time)
+        }
+
+        fn query_pointer_root(&self) -> Result<(i32, i32, u16, u16), BackendError> {
+            let reply = self.query_pointer()?;
+            Ok((
+                reply.root_x as i32,
+                reply.root_y as i32,
+                reply.mask.bits() as u16,
+                0,
+            ))
+        }
+
+        fn warp_pointer_to_window(&self, win: WindowId, x: i16, y: i16) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            self.conn.warp_pointer(0u32, w, 0, 0, 0, 0, x, y)?;
+            Ok(())
+        }
+    }
+}
+
+mod key_ops {
+    use std::collections::HashMap;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+
+    use log::warn;
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::*;
+
+    use crate::backend::api::KeyOps;
+    use crate::backend::common_define::WindowId;
+    use crate::backend::common_define::{KeySym, Mods};
+    use crate::backend::error::BackendError;
+    use super::adapter::mods_to_x11;
+    use super::ids::X11IdRegistry;
+
+    pub struct X11KeyOps<C: Connection> {
+        conn: Arc<C>,
+        cache: HashMap<u8, u32>,
+        numlock_mask: Arc<Mutex<u16>>,
+        ids: X11IdRegistry,
+    }
+
+    impl<C: Connection> X11KeyOps<C> {
+        pub fn new(conn: Arc<C>, numlock_mask: Arc<Mutex<u16>>, ids: X11IdRegistry) -> Self {
+            let mut ops = Self {
+                conn: conn.clone(),
+                cache: HashMap::new(),
+                numlock_mask,
+                ids,
+            };
+            let _ = ops.detect_and_store_numlock();
+            ops
+        }
+
+        fn detect_and_store_numlock(&mut self) -> Result<(), BackendError> {
+            let numkc = self.find_numlock_keycode()?;
+            let mask = if numkc == 0 {
+                0
+            } else {
+                self.find_modifier_mask(numkc)? as u16
+            };
+
+            *self.numlock_mask.lock().unwrap() = mask;
+            Ok(())
+        }
+
+        fn find_numlock_keycode(&self) -> Result<u8, BackendError> {
+            const XK_NUM_LOCK: u32 = 0xFF7F;
+            let setup = self.conn.setup();
+            let min = setup.min_keycode;
+            let max = setup.max_keycode;
+            let mapping = self
+                .conn
+                .get_keyboard_mapping(min, (max - min) + 1)?
+                .reply()?;
+            let per = mapping.keysyms_per_keycode as usize;
+
+            for kc in min..=max {
+                let idx = (kc - min) as usize * per;
+                if idx < mapping.keysyms.len() {
+                    for i in 0..per {
+                        if mapping.keysyms[idx + i] == XK_NUM_LOCK {
+                            return Ok(kc);
+                        }
+                    }
+                }
+            }
+            Ok(0)
+        }
+
+        fn find_modifier_mask(&self, target_keycode: u8) -> Result<u8, BackendError> {
+            let mm = self.conn.get_modifier_mapping()?.reply()?;
+            let per = mm.keycodes_per_modifier() as usize;
+            for mod_index in 0..8 {
+                let start = mod_index * per;
+                let end = start + per;
+                if end <= mm.keycodes.len() {
+                    for &kc in &mm.keycodes[start..end] {
+                        if kc == target_keycode && kc != 0 {
+                            return Ok(1 << mod_index);
+                        }
+                    }
+                }
+            }
+            Ok(0)
+        }
+    }
+
+    impl<C: Connection + Send + Sync + 'static> KeyOps for X11KeyOps<C> {
+        fn clean_mods(&self, raw: u16) -> Mods {
+            let numlock = *self.numlock_mask.lock().unwrap();
+            let raw_mask = x11rb::protocol::xproto::KeyButMask::from(raw);
+            let numlock_mask = x11rb::protocol::xproto::KeyButMask::from(numlock);
+            super::adapter::mods_from_x11(raw_mask, numlock_mask)
+        }
+
+        fn clear_key_grabs(&self, root: WindowId) -> Result<(), BackendError> {
+            let r = self.ids.x11(root)?;
+            self.conn.ungrab_key(Grab::ANY, r, ModMask::ANY.into())?;
+            Ok(())
+        }
+
+        fn grab_keys(&self, root: WindowId, bindings: &[(Mods, KeySym)]) -> Result<(), BackendError> {
+            let numlock_local = *self.numlock_mask.lock().unwrap();
+            let r = self.ids.x11(root)?;
+
+            let setup = self.conn.setup();
+            let min = setup.min_keycode;
+            let max = setup.max_keycode;
+            let mapping = self
+                .conn
+                .get_keyboard_mapping(min, (max - min) + 1)?
+                .reply()?;
+            let per = mapping.keysyms_per_keycode as usize;
+
+            use x11rb::protocol::xproto::{KeyButMask as KBM, ModMask};
+            let numlock_mask_obj = KBM::from(numlock_local);
+
+            for (mods, keysym) in bindings {
+                for (offset, keysyms_for_keycode) in mapping.keysyms.chunks(per).enumerate() {
+                    let keycode = min + offset as u8;
+                    if let Some(&ks) = keysyms_for_keycode.first() {
+                        if u32::from(ks) == *keysym {
+                            let base = mods_to_x11(*mods, numlock_mask_obj);
+                            let combos = [
+                                base,
+                                base | KBM::LOCK,
+                                base | numlock_mask_obj,
+                                base | KBM::LOCK | numlock_mask_obj,
+                            ];
+                            for mm in combos {
+                                let cookie = self.conn.grab_key(
+                                    false,
+                                    r,
+                                    ModMask::from(mm.bits()),
+                                    keycode,
+                                    GrabMode::ASYNC,
+                                    GrabMode::ASYNC,
+                                )?;
+                                if let Err(e) = cookie.check() {
+                                    // If another client grabbed the same key, X11 will typically
+                                    // report BadAccess asynchronously. Surface it for debugging.
+                                    warn!(
+                                        "X11 grab_key failed (keysym=0x{:x}, keycode={}, mods=0x{:x}): {:?}",
+                                        *keysym,
+                                        keycode,
+                                        mm.bits(),
+                                        e
+                                    );
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            self.conn.flush()?;
+            Ok(())
+        }
+
+        fn keysym_from_keycode(&mut self, keycode: u8) -> Result<KeySym, BackendError> {
+            if let Some(&ks) = self.cache.get(&keycode) {
+                return Ok(ks);
+            }
+            let mapping = self.conn.get_keyboard_mapping(keycode, 1)?.reply()?;
+            let ks = mapping.keysyms.get(0).copied().unwrap_or(0);
+            self.cache.insert(keycode, ks);
+            Ok(ks)
+        }
+
+        fn clear_cache(&mut self) {
+            self.cache.clear();
+        }
+    }
+}
+
+mod output_ops {
+    use crate::backend::api::{OutputInfo, OutputOps, ScreenInfo};
+    use crate::backend::common_define::OutputId;
+    use std::sync::Arc;
+    use x11rb::connection::Connection;
+    use x11rb::protocol::randr::ConnectionExt as RandrExt;
+
+    pub struct X11OutputOps<C: Connection> {
+        conn: Arc<C>,
+        root: u32,
+        sw: i32,
+        sh: i32,
+    }
+
+    impl<C: Connection> X11OutputOps<C> {
+        pub fn new(conn: Arc<C>, root: u32, sw: i32, sh: i32) -> Self {
+            Self { conn, root, sw, sh }
+        }
+    }
+
+    impl<C: Connection + Send + Sync + 'static> OutputOps for X11OutputOps<C> {
+        fn screen_info(&self) -> ScreenInfo {
+            ScreenInfo {
+                width: self.sw,
+                height: self.sh,
+            }
+        }
+
+        fn output_at(&self, x: i32, y: i32) -> Option<OutputId> {
+            let outputs = self.enumerate_outputs();
+            for output in outputs {
+                if x >= output.x
+                    && x < output.x + output.width
+                    && y >= output.y
+                    && y < output.y + output.height
+                {
+                    return Some(output.id);
+                }
+            }
+            None
+        }
+
+        fn enumerate_outputs(&self) -> Vec<OutputInfo> {
+            if let Ok(ver) = self.conn.randr_query_version(1, 5) {
+                if let Ok(v) = ver.reply() {
+                    if (v.major_version > 1) || (v.major_version == 1 && v.minor_version >= 5) {
+                        if let Ok(reply) = self
+                            .conn
+                            .randr_get_monitors(self.root, true)
+                            .and_then(|c| Ok(c.reply()))
+                        {
+                            let mut out = Vec::new();
+                            for (i, m) in reply.unwrap().monitors.into_iter().enumerate() {
+                                if m.width > 0 && m.height > 0 {
+                                    out.push(OutputInfo {
+                                        id: OutputId(i as u64),
+                                        name: format!("Monitor-{}", i),
+                                        x: m.x as i32,
+                                        y: m.y as i32,
+                                        width: m.width as i32,
+                                        height: m.height as i32,
+                                        scale: 1.0,
+                                        refresh_rate: 60000, // 60Hz
+                                    });
+                                }
+                            }
+                            if !out.is_empty() {
+                                return out;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if let Ok(resources) = self
+                .conn
+                .randr_get_screen_resources(self.root)
+                .and_then(|c| Ok(c.reply()))
+            {
+                let mut out = Vec::new();
+                for (i, crtc) in resources.unwrap().crtcs.into_iter().enumerate() {
+                    if let Ok(ci) = self
+                        .conn
+                        .randr_get_crtc_info(crtc, 0)
+                        .and_then(|c| Ok(c.reply()))
+                    {
+                        let ci = ci.unwrap();
+                        if ci.width > 0 && ci.height > 0 {
+                            out.push(OutputInfo {
+                                id: OutputId(i as u64),
+                                name: format!("CRTC-{}", i),
+                                x: ci.x as i32,
+                                y: ci.y as i32,
+                                width: ci.width as i32,
+                                height: ci.height as i32,
+                                scale: 1.0,
+                                refresh_rate: 60000,
+                            });
+                        }
+                    }
+                }
+                return out;
+            }
+            vec![OutputInfo {
+                id: OutputId(0),
+                name: "Default".to_string(),
+                x: 0,
+                y: 0,
+                width: self.sw,
+                height: self.sh,
+                scale: 1.0,
+                refresh_rate: 60000,
+            }]
+        }
+    }
+}
+
+mod property_ops {
+    use crate::backend::api::NormalHints;
+    use crate::backend::api::WmHints;
+    use crate::backend::api::{PropertyOps as PropertyOpsTrait, WindowType};
+    use crate::backend::common_define::WindowId;
+    use crate::backend::error::BackendError;
+    use crate::backend::x11::Atoms;
+    use super::ids::X11IdRegistry;
+    use std::sync::Arc;
+    use x11rb::connection::Connection;
+    use x11rb::properties::WmSizeHints;
+    use x11rb::protocol::xproto::*;
+    use x11rb::wrapper::ConnectionExt as _;
+
+    pub struct X11PropertyOps<C: Connection> {
+        conn: Arc<C>,
+        atoms: Atoms,
+        ids: X11IdRegistry,
+    }
+
+    impl<C: Connection> X11PropertyOps<C> {
+        pub fn new(conn: Arc<C>, atoms: Atoms, ids: X11IdRegistry) -> Self {
+            Self { conn, atoms, ids }
+        }
+    }
+
+    impl<C: Connection + Send + Sync + 'static> X11PropertyOps<C> {
+        fn get_text_property(&self, win: WindowId, atom: Atom) -> Option<String> {
+            let w = self.ids.x11(win).ok()?;
+            let reply = self
+                .conn
+                .get_property(false, w, atom, AtomEnum::ANY, 0, u32::MAX)
+                .ok()?
+                .reply()
+                .ok()?;
+
+            if reply.value.is_empty() || reply.format != 8 {
+                return None;
+            }
+
+            let value = reply.value;
+            if reply.type_ == self.atoms.UTF8_STRING {
+                Self::parse_utf8(&value)
+            } else if reply.type_ == u32::from(AtomEnum::STRING) {
+                Some(Self::parse_latin1(&value))
+            } else {
+                Self::parse_utf8(&value).or_else(|| Some(Self::parse_latin1(&value)))
+            }
+        }
+
+        fn parse_utf8(value: &[u8]) -> Option<String> {
+            String::from_utf8(value.to_vec()).ok()
+        }
+        fn parse_latin1(value: &[u8]) -> String {
+            value.iter().map(|&b| b as char).collect()
+        }
+
+        fn get_net_wm_state_atoms(&self, win: WindowId) -> Result<Vec<u32>, BackendError> {
+            let w = self.ids.x11(win)?;
+            let reply = self
+                .conn
+                .get_property(
+                    false,
+                    w,
+                    self.atoms._NET_WM_STATE,
+                    AtomEnum::ATOM,
+                    0,
+                    u32::MAX,
+                )?
+                .reply()?;
+            if reply.format != 32 {
+                return Ok(Vec::new());
+            }
+            Ok(reply.value32().into_iter().flatten().collect())
+        }
+
+        fn set_net_wm_state_atoms(&self, win: WindowId, atoms: &[u32]) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                w,
+                self.atoms._NET_WM_STATE,
+                AtomEnum::ATOM,
+                atoms,
+            )?;
+            Ok(())
+        }
+
+        fn add_net_wm_state_atom(&self, win: WindowId, atom: u32) -> Result<(), BackendError> {
+            let mut states = self.get_net_wm_state_atoms(win)?;
+            if !states.iter().any(|&a| a == atom) {
+                states.push(atom);
+                self.set_net_wm_state_atoms(win, &states)?;
+            }
+            Ok(())
+        }
+
+        fn remove_net_wm_state_atom(&self, win: WindowId, atom: u32) -> Result<(), BackendError> {
+            let mut states = self.get_net_wm_state_atoms(win)?;
+            let len_before = states.len();
+            states.retain(|&a| a != atom);
+            if states.len() != len_before {
+                self.set_net_wm_state_atoms(win, &states)?;
+            }
+            Ok(())
+        }
+
+        fn atom_to_window_type(&self, atom: u32) -> WindowType {
+            if atom == self.atoms._NET_WM_WINDOW_TYPE_DESKTOP {
+                WindowType::Desktop
+            } else if atom == self.atoms._NET_WM_WINDOW_TYPE_DOCK {
+                WindowType::Dock
+            } else if atom == self.atoms._NET_WM_WINDOW_TYPE_TOOLBAR {
+                WindowType::Toolbar
+            } else if atom == self.atoms._NET_WM_WINDOW_TYPE_MENU {
+                WindowType::Menu
+            } else if atom == self.atoms._NET_WM_WINDOW_TYPE_UTILITY {
+                WindowType::Utility
+            } else if atom == self.atoms._NET_WM_WINDOW_TYPE_SPLASH {
+                WindowType::Splash
+            } else if atom == self.atoms._NET_WM_WINDOW_TYPE_DIALOG {
+                WindowType::Dialog
+            } else if atom == self.atoms._NET_WM_WINDOW_TYPE_DROPDOWN_MENU {
+                WindowType::DropdownMenu
+            } else if atom == self.atoms._NET_WM_WINDOW_TYPE_POPUP_MENU {
+                WindowType::PopupMenu
+            } else if atom == self.atoms._NET_WM_WINDOW_TYPE_TOOLTIP {
+                WindowType::Tooltip
+            } else if atom == self.atoms._NET_WM_WINDOW_TYPE_NOTIFICATION {
+                WindowType::Notification
+            } else if atom == self.atoms._NET_WM_WINDOW_TYPE_COMBO {
+                WindowType::Combo
+            }
+            // else if atom == self.atoms._NET_WM_WINDOW_TYPE_DND { WindowType::Dnd }
+            else {
+                WindowType::Unknown
+            }
+        }
+    }
+
+    impl<C: Connection + Send + Sync + 'static> PropertyOpsTrait for X11PropertyOps<C> {
+        fn get_title(&self, win: WindowId) -> String {
+            if let Some(title) = self.get_text_property(win, self.atoms._NET_WM_NAME) {
+                return title;
+            }
+            if let Some(title) = self.get_text_property(win, AtomEnum::WM_NAME.into()) {
+                return title;
+            }
+            "".to_string()
+        }
+
+        fn get_class(&self, win: WindowId) -> (String, String) {
+            let w = self.ids.x11(win).unwrap();
+            let reply = match self
+                .conn
+                .get_property(false, w, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)
+            {
+                Ok(cookie) => cookie.reply().ok(),
+                Err(_) => None,
+            };
+
+            if let Some(reply) = reply {
+                if reply.type_ == u32::from(AtomEnum::STRING) && reply.format == 8 {
+                    let value = reply.value;
+                    if !value.is_empty() {
+                        let mut parts = value.split(|&b| b == 0u8).filter(|s| !s.is_empty());
+                        let instance = parts
+                            .next()
+                            .and_then(|s| String::from_utf8(s.to_vec()).ok())
+                            .unwrap_or_default();
+                        let class = parts
+                            .next()
+                            .and_then(|s| String::from_utf8(s.to_vec()).ok())
+                            .unwrap_or_default();
+                        return (instance.to_lowercase(), class.to_lowercase());
+                    }
+                }
+            }
+            (String::new(), String::new())
+        }
+
+        fn get_window_types(&self, win: WindowId) -> Vec<WindowType> {
+            let w = self.ids.x11(win).unwrap();
+            let mut result = Vec::new();
+            if let Ok(reply) = self.conn.get_property(
+                false,
+                w,
+                self.atoms._NET_WM_WINDOW_TYPE,
+                AtomEnum::ATOM,
+                0,
+                u32::MAX,
+            ) {
+                if let Ok(rep) = reply.reply() {
+                    if rep.format == 32 {
+                        for atom in rep.value32().into_iter().flatten() {
+                            let wt = self.atom_to_window_type(atom);
+                            if wt != WindowType::Unknown {
+                                result.push(wt);
+                            }
+                        }
+                    }
+                }
+            }
+            if result.is_empty() {
+                if self.transient_for(win).is_some() {
+                    result.push(WindowType::Dnd);
+                } else {
+                    result.push(WindowType::Normal);
+                }
+            }
+            result
+        }
+
+        fn is_fullscreen(&self, win: WindowId) -> bool {
+            let states = self.get_net_wm_state_atoms(win).unwrap_or_default();
+            states
+                .iter()
+                .any(|&a| a == self.atoms._NET_WM_STATE_FULLSCREEN)
+        }
+
+        fn set_fullscreen_state(&self, win: WindowId, on: bool) -> Result<(), BackendError> {
+            if on {
+                self.add_net_wm_state_atom(win, self.atoms._NET_WM_STATE_FULLSCREEN)
+            } else {
+                self.remove_net_wm_state_atom(win, self.atoms._NET_WM_STATE_FULLSCREEN)
+            }
+        }
+
+        fn get_wm_hints(&self, win: WindowId) -> Option<WmHints> {
+            let w = self.ids.x11(win).ok()?;
+            let prop = self
+                .conn
+                .get_property(false, w, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 20)
+                .ok()?
+                .reply()
+                .ok()?;
+
+            let mut it = prop.value32()?.into_iter();
+            let flags = it.next()?;
+            const X_URGENCY_HINT: u32 = 1 << 8;
+            const INPUT_HINT: u32 = 1 << 0;
+
+            let urgent = (flags & X_URGENCY_HINT) != 0;
+            let input = if (flags & INPUT_HINT) != 0 {
+                it.next().map(|v| v != 0)
+            } else {
+                None
+            };
+            Some(WmHints { urgent, input })
+        }
+
+        fn set_urgent_hint(&self, win: WindowId, urgent: bool) -> Result<(), BackendError> {
+            const X_URGENCY_HINT: u32 = 1 << 8;
+            let w = self.ids.x11(win)?;
+            let cookie =
+                self.conn
+                    .get_property(false, w, AtomEnum::WM_HINTS, AtomEnum::WM_HINTS, 0, 20)?;
+
+            let mut data = Vec::new();
+            if let Ok(reply) = cookie.reply() {
+                data = reply.value32().into_iter().flatten().collect();
+            }
+            if data.is_empty() {
+                data.push(0);
+            }
+
+            if urgent {
+                data[0] |= X_URGENCY_HINT;
+            } else {
+                data[0] &= !X_URGENCY_HINT;
+            }
+
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                w,
+                AtomEnum::WM_HINTS,
+                AtomEnum::WM_HINTS,
+                &data,
+            )?;
+            Ok(())
+        }
+
+        fn transient_for(&self, win: WindowId) -> Option<WindowId> {
+            let w = self.ids.x11(win).ok()?;
+            let r = self
+                .conn
+                .get_property(
+                    false,
+                    w,
+                    self.atoms.WM_TRANSIENT_FOR,
+                    AtomEnum::WINDOW,
+                    0,
+                    1,
+                )
+                .ok()?
+                .reply()
+                .ok()?;
+
+            if r.format == 32 {
+                if let Some(t) = r.value32()?.next() {
+                    if t != 0 && t != w {
+                        return Some(self.ids.intern(t));
+                    }
+                }
+            }
+            None
+        }
+
+        fn fetch_normal_hints(&self, win: WindowId) -> Result<Option<NormalHints>, BackendError> {
+            let w = self.ids.x11(win)?;
+            let reply_opt = WmSizeHints::get_normal_hints(&self.conn, w)?.reply()?;
+            if let Some(r) = reply_opt {
+                let (mut base_w, mut base_h) = (0, 0);
+                let (mut inc_w, mut inc_h) = (0, 0);
+                let (mut max_w, mut max_h) = (0, 0);
+                let (mut min_w, mut min_h) = (0, 0);
+                let (mut min_aspect, mut max_aspect) = (0.0, 0.0);
+
+                if let Some((w, h)) = r.base_size {
+                    base_w = w;
+                    base_h = h;
+                }
+                if let Some((w, h)) = r.size_increment {
+                    inc_w = w;
+                    inc_h = h;
+                }
+                if let Some((w, h)) = r.max_size {
+                    max_w = w;
+                    max_h = h;
+                }
+                if let Some((w, h)) = r.min_size {
+                    min_w = w;
+                    min_h = h;
+                }
+                if let Some((min, max)) = r.aspect {
+                    min_aspect = min.numerator as f32 / min.denominator as f32;
+                    max_aspect = max.numerator as f32 / max.denominator as f32;
+                }
+                Ok(Some(NormalHints {
+                    base_w,
+                    base_h,
+                    inc_w,
+                    inc_h,
+                    max_w,
+                    max_h,
+                    min_w,
+                    min_h,
+                    min_aspect,
+                    max_aspect,
+                }))
+            } else {
+                Ok(None)
+            }
+        }
+
+        fn set_window_strut_top(
+            &self,
+            win: WindowId,
+            top: u32,
+            start_x: u32,
+            end_x: u32,
+        ) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            let strut = [0, 0, top, 0];
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                w,
+                self.atoms._NET_WM_STRUT,
+                AtomEnum::CARDINAL,
+                &strut,
+            )?;
+            let partial = [0, 0, top, 0, 0, 0, 0, 0, start_x, end_x, 0, 0];
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                w,
+                self.atoms._NET_WM_STRUT_PARTIAL,
+                AtomEnum::CARDINAL,
+                &partial,
+            )?;
+            Ok(())
+        }
+
+        fn clear_window_strut(&self, win: WindowId) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            let _ = self.conn.delete_property(w, self.atoms._NET_WM_STRUT);
+            let _ = self
+                .conn
+                .delete_property(w, self.atoms._NET_WM_STRUT_PARTIAL);
+            Ok(())
+        }
+
+        fn set_client_info_props(
+            &self,
+            win: WindowId,
+            tags: u32,
+            monitor_num: u32,
+        ) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            let data = [tags, monitor_num];
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                w,
+                self.atoms._NET_CLIENT_INFO,
+                AtomEnum::CARDINAL,
+                &data,
+            )?;
+            Ok(())
+        }
+
+        fn get_wm_state(&self, win: WindowId) -> Result<i64, BackendError> {
+            let w = self.ids.x11(win)?;
+            let reply = self
+                .conn
+                .get_property(false, w, self.atoms.WM_STATE, self.atoms.WM_STATE, 0, 2)?
+                .reply()?;
+            if reply.format != 32 {
+                return Ok(-1);
+            }
+            Ok(reply
+                .value32()
+                .into_iter()
+                .flatten()
+                .next()
+                .map(|v| v as i64)
+                .unwrap_or(-1))
+        }
+
+        fn set_wm_state(&self, win: WindowId, state: i64) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            let data: [u32; 2] = [state as u32, 0];
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                w,
+                self.atoms.WM_STATE,
+                self.atoms.WM_STATE,
+                &data,
+            )?;
+            Ok(())
+        }
+    }
+}
+
+mod window_ops {
+    use crate::backend::api::{CloseResult, Geometry, WindowAttributes, WindowOps};
+    use crate::backend::api::{StackMode, WindowChanges};
+    use crate::backend::common_define::{Mods, Pixel, WindowId};
+    use crate::backend::error::BackendError;
+    use crate::backend::x11::Atoms;
+    use super::adapter::{event_mask_from_generic, mods_to_x11};
+    use super::ids::X11IdRegistry;
+    use log::debug;
+    use std::sync::Arc;
+    use std::sync::Mutex;
+    use x11rb::connection::Connection;
+    use x11rb::protocol::xproto::*;
+    use x11rb::x11_utils::Serialize;
+
+    pub struct X11WindowOps<C: Connection> {
+        conn: Arc<C>,
+        atoms: Atoms,
+        numlock_mask: Arc<Mutex<u16>>,
+        root_x11: u32,
+        ids: X11IdRegistry,
+    }
+
+    impl<C: Connection> X11WindowOps<C> {
+        pub fn new(
+            conn: Arc<C>,
+            atoms: Atoms,
+            numlock_mask: Arc<Mutex<u16>>,
+            root_x11: u32,
+            ids: X11IdRegistry,
+        ) -> Self {
+            Self {
+                conn,
+                atoms,
+                numlock_mask,
+                root_x11,
+                ids,
+            }
+        }
+
+        fn send_configure_notify_internal(
+            &self,
+            win: WindowId,
+            x: i16,
+            y: i16,
+            width: u16,
+            height: u16,
+            border: u16,
+        ) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            let event = ConfigureNotifyEvent {
+                response_type: CONFIGURE_NOTIFY_EVENT,
+                sequence: 0,
+                event: w,
+                window: w,
+                x,
+                y,
+                width,
+                height,
+                border_width: border,
+                above_sibling: 0,
+                override_redirect: false,
+            };
+            self.conn
+                .send_event(false, w, EventMask::STRUCTURE_NOTIFY, event)?;
+            self.conn.flush()?;
+            Ok(())
+        }
+    }
+
+    impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
+        fn set_position(&self, win: WindowId, x: i32, y: i32) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            let aux = ConfigureWindowAux::new().x(x).y(y);
+            self.conn.configure_window(w, &aux)?;
+            Ok(())
+        }
+
+        fn configure(
+            &self,
+            win: WindowId,
+            x: i32,
+            y: i32,
+            w: u32,
+            h: u32,
+            border: u32,
+        ) -> Result<(), BackendError> {
+            let wid = self.ids.x11(win)?;
+
+            // 1. 
+            let aux = ConfigureWindowAux::new()
+                .x(x)
+                .y(y)
+                .width(w)
+                .height(h)
+                .border_width(border);
+            self.conn.configure_window(wid, &aux)?;
+
+            // 2.  ConfigureNotify (ICCCM )
+            self.send_configure_notify_internal(
+                win,
+                x as i16,
+                y as i16,
+                w as u16,
+                h as u16,
+                border as u16,
+            )?;
+
+            Ok(())
+        }
+
+        fn set_decoration_style(
+            &self,
+            win: WindowId,
+            border_width: u32,
+            border_color: Pixel,
+        ) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            // 
+            let aux_attr = ChangeWindowAttributesAux::new().border_pixel(border_color.0);
+            self.conn.change_window_attributes(w, &aux_attr)?;
+            // 
+            let aux_conf = ConfigureWindowAux::new().border_width(border_width);
+            self.conn.configure_window(w, &aux_conf)?;
+            Ok(())
+        }
+
+        fn raise_window(&self, win: WindowId) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            let aux = ConfigureWindowAux::new().stack_mode(x11rb::protocol::xproto::StackMode::ABOVE);
+            self.conn.configure_window(w, &aux)?;
+            Ok(())
+        }
+
+        fn close_window(&self, win: WindowId) -> Result<CloseResult, BackendError> {
+            let w = self.ids.x11(win)?;
+            let supports_delete = {
+                let reply = self
+                    .conn
+                    .get_property(false, w, self.atoms.WM_PROTOCOLS, AtomEnum::ATOM, 0, 1024)?
+                    .reply()?;
+                reply
+                    .value32()
+                    .into_iter()
+                    .flatten()
+                    .any(|a| a == self.atoms.WM_DELETE_WINDOW)
+            };
+
+            if supports_delete {
+                let event = ClientMessageEvent::new(
+                    32,
+                    w,
+                    self.atoms.WM_PROTOCOLS,
+                    [self.atoms.WM_DELETE_WINDOW, 0, 0, 0, 0],
+                );
+                self.conn.send_event(
+                    false,
+                    w,
+                    EventMask::NO_EVENT,
+                    event.serialize(), // 
+                )?;
+                // 
+                self.conn.flush()?;
+                return Ok(CloseResult::Graceful);
+            }
+
+            self.conn.kill_client(w)?;
+            Ok(CloseResult::Forced)
+        }
+
+        fn scan_windows(&self) -> Result<Vec<WindowId>, BackendError> {
+            let tree = self
+                .conn
+                .query_tree(self.conn.setup().roots[0].root)?
+                .reply()?;
+            Ok(tree.children.iter().map(|&w| self.ids.intern(w)).collect())
+        }
+
+        fn change_event_mask(&self, win: WindowId, mask: u32) -> Result<(), BackendError> {
+            debug!("[change_event_mask]");
+            let w = self.ids.x11(win)?;
+            let x_mask = event_mask_from_generic(mask);
+            let aux = ChangeWindowAttributesAux::new().event_mask(x_mask);
+            self.conn.change_window_attributes(w, &aux)?;
+            Ok(())
+        }
+
+        fn grab_button_any_anymod(
+            &self,
+            win: WindowId,
+            event_mask_bits: u32,
+        ) -> Result<(), BackendError> {
+            let x_mask = event_mask_from_generic(event_mask_bits);
+            let w = self.ids.x11(win)?;
+            self.conn.grab_button(
+                false,
+                w,
+                x_mask,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+                0u32,
+                0u32,
+                ButtonIndex::ANY,
+                ModMask::ANY.into(),
+            )?;
+            Ok(())
+        }
+
+        fn grab_button(
+            &self,
+            win: WindowId,
+            button: u8,
+            event_mask_bits: u32,
+            mods: Mods,
+        ) -> Result<(), BackendError> {
+            let x_mask = event_mask_from_generic(event_mask_bits);
+            let bi = ButtonIndex::from(button);
+            let numlock_val = *self.numlock_mask.lock().unwrap();
+            let numlock_obj = KeyButMask::from(numlock_val);
+            let x_mods = mods_to_x11(mods, numlock_obj);
+            let mods_bits = ModMask::from(x_mods.bits());
+            let w = self.ids.x11(win)?;
+            self.conn.grab_button(
+                false,
+                w,
+                x_mask,
+                GrabMode::ASYNC,
+                GrabMode::ASYNC,
+                0u32,
+                0u32,
+                bi,
+                mods_bits,
+            )?;
+            Ok(())
+        }
+
+        fn map_window(&self, win: WindowId) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            self.conn.map_window(w)?;
+            Ok(())
+        }
+
+        fn apply_window_changes(
+            &self,
+            win: WindowId,
+            changes: WindowChanges,
+        ) -> Result<(), BackendError> {
+            let mut aux = ConfigureWindowAux::new();
+            if let Some(x) = changes.x {
+                aux = aux.x(x);
+            }
+            if let Some(y) = changes.y {
+                aux = aux.y(y);
+            }
+            if let Some(w) = changes.width {
+                aux = aux.width(w);
+            }
+            if let Some(h) = changes.height {
+                aux = aux.height(h);
+            }
+            if let Some(b) = changes.border_width {
+                aux = aux.border_width(b);
+            }
+            if let Some(sibling) = changes.sibling {
+                aux = aux.sibling(self.ids.x11(sibling)?);
+            }
+            if let Some(mode) = changes.stack_mode {
+                let x_mode = match mode {
+                    StackMode::Above => x11rb::protocol::xproto::StackMode::ABOVE,
+                    StackMode::Below => x11rb::protocol::xproto::StackMode::BELOW,
+                    StackMode::TopIf => x11rb::protocol::xproto::StackMode::TOP_IF,
+                    StackMode::BottomIf => x11rb::protocol::xproto::StackMode::BOTTOM_IF,
+                    StackMode::Opposite => x11rb::protocol::xproto::StackMode::OPPOSITE,
+                };
+                aux = aux.stack_mode(x_mode);
+            }
+
+            let w = self.ids.x11(win)?;
+            self.conn.configure_window(w, &aux)?;
+            Ok(())
+        }
+
+        fn set_input_focus_root(&self) -> Result<(), BackendError> {
+            self.conn
+                .set_input_focus(InputFocus::POINTER_ROOT, self.root_x11, x11rb::CURRENT_TIME)?;
+            Ok(())
+        }
+
+        fn unmap_window(&self, win: WindowId) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            self.conn.unmap_window(w)?;
+            Ok(())
+        }
+
+        fn set_input_focus(&self, win: WindowId) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            self.conn
+                .set_input_focus(InputFocus::PARENT, w, x11rb::CURRENT_TIME)?;
+            Ok(())
+        }
+
+        fn get_geometry(&self, win: WindowId) -> Result<Geometry, BackendError> {
+            let w = self.ids.x11(win)?;
+            let reply = self.conn.get_geometry(w)?.reply()?;
+            Ok(Geometry {
+                x: reply.x as i32,
+                y: reply.y as i32,
+                w: reply.width as u32,
+                h: reply.height as u32,
+                border: reply.border_width as u32,
+            })
+        }
+
+        fn flush(&self) -> Result<(), BackendError> {
+            self.conn.flush()?;
+            Ok(())
+        }
+
+        fn kill_client(&self, win: WindowId) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            self.conn.kill_client(w)?;
+            Ok(())
+        }
+
+        fn get_window_attributes(&self, win: WindowId) -> Result<WindowAttributes, BackendError> {
+            let w = self.ids.x11(win)?;
+            let r = self.conn.get_window_attributes(w)?.reply()?;
+            Ok(WindowAttributes {
+                override_redirect: r.override_redirect,
+                map_state_viewable: r.map_state == MapState::VIEWABLE,
+            })
+        }
+
+        fn get_tree_child(&self, win: WindowId) -> Result<Vec<WindowId>, BackendError> {
+            let w = self.ids.x11(win)?;
+            let tree_reply = self.conn.query_tree(w)?.reply()?;
+            Ok(tree_reply
+                .children
+                .iter()
+                .map(|&c| self.ids.intern(c))
+                .collect())
+        }
+
+        fn ungrab_all_buttons(&self, win: WindowId) -> Result<(), BackendError> {
+            let w = self.ids.x11(win)?;
+            self.conn
+                .ungrab_button(ButtonIndex::ANY, w, ModMask::ANY.into())?;
+            Ok(())
+        }
+    }
+}
+

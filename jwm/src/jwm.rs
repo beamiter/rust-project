@@ -830,7 +830,7 @@ impl Jwm {
         {
             backend
                 .as_any()
-                .is::<crate::backend::udev::backend::UdevBackend>()
+                .is::<crate::backend::wayland_udev::backend::UdevBackend>()
         }
         #[cfg(not(feature = "backend-udev"))]
         {
@@ -3246,7 +3246,7 @@ exit 127
                     #[cfg(feature = "backend-udev")]
                     let is_udev = _backend
                         .as_any()
-                        .is::<crate::backend::udev::backend::UdevBackend>();
+                        .is::<crate::backend::wayland_udev::backend::UdevBackend>();
                     #[cfg(not(feature = "backend-udev"))]
                     let is_udev = false;
 
@@ -3286,7 +3286,7 @@ exit 127
             #[cfg(feature = "backend-udev")]
             if _backend
                 .as_any()
-                .is::<crate::backend::udev::backend::UdevBackend>()
+                .is::<crate::backend::wayland_udev::backend::UdevBackend>()
             {
                 command.env_remove("DISPLAY");
             }
