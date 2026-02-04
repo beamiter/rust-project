@@ -3,7 +3,7 @@
 // 依赖：anyhow, cairo-rs(xcb), pango, pangocairo, flexi_logger, log, libc, chrono, shared_structures
 
 use anyhow::Result;
-use cairo::Context;
+use cairo::{Context, LinearGradient};
 use chrono::Local;
 use libc;
 use log::{debug, error, info, warn};
@@ -58,6 +58,15 @@ impl Color {
             r: (self.r * (1.0 - a)).clamp(0.0, 1.0),
             g: (self.g * (1.0 - a)).clamp(0.0, 1.0),
             b: (self.b * (1.0 - a)).clamp(0.0, 1.0),
+        }
+    }
+
+    pub fn mix(&self, other: Color, t: f64) -> Self {
+        let t = t.clamp(0.0, 1.0);
+        Self {
+            r: (self.r * (1.0 - t) + other.r * t).clamp(0.0, 1.0),
+            g: (self.g * (1.0 - t) + other.g * t).clamp(0.0, 1.0),
+            b: (self.b * (1.0 - t) + other.b * t).clamp(0.0, 1.0),
         }
     }
 }
@@ -540,6 +549,99 @@ fn fill_round(cr: &Context, x: f64, y: f64, w: f64, h: f64, r: f64, color: Color
         .map_err(|e| anyhow::anyhow!("cairo fill failed: {:?}", e))
 }
 
+fn clip_shape(cr: &Context, style: ShapeStyle, x: f64, y: f64, w: f64, h: f64, k: f64) {
+    match style {
+        ShapeStyle::Chamfer => cairo_path_chamfer(cr, x, y, w, h, k),
+        ShapeStyle::Pill => {
+            let r = k.min(h / 2.0).floor();
+            cairo_path_round_rect(cr, x, y, w, h, r);
+        }
+    }
+    cr.clip();
+}
+
+fn overlay_top_highlight(
+    cr: &Context,
+    style: ShapeStyle,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    k: f64,
+    base: Color,
+) -> Result<()> {
+    // 顶部高光：模拟“玻璃/轻拟物”质感。
+    // 注意：这里不使用 alpha，而用更亮的颜色覆盖来实现高光。
+    let top = base.lighten(0.20);
+    let mid = base.lighten(0.08);
+    let bottom = base.darken(0.04);
+
+    cr.save()?;
+    clip_shape(cr, style, x, y, w, h, k);
+
+    let grad = LinearGradient::new(0.0, y, 0.0, y + h);
+    grad.add_color_stop_rgb(0.0, top.r, top.g, top.b);
+    grad.add_color_stop_rgb(0.45, mid.r, mid.g, mid.b);
+    grad.add_color_stop_rgb(1.0, bottom.r, bottom.g, bottom.b);
+
+    cr.set_source(&grad)?;
+    cr.rectangle(x, y, w, h);
+    cr.fill()?;
+
+    // 额外的“高光带”（上半部分更亮一些）
+    let band_h = (h * 0.35).max(6.0);
+    let b_top = base.lighten(0.26);
+    let b_mid = base.lighten(0.10);
+    let grad2 = LinearGradient::new(0.0, y, 0.0, y + band_h);
+    grad2.add_color_stop_rgb(0.0, b_top.r, b_top.g, b_top.b);
+    grad2.add_color_stop_rgb(1.0, b_mid.r, b_mid.g, b_mid.b);
+    cr.set_source(&grad2)?;
+    cr.rectangle(x, y, w, band_h);
+    cr.fill()?;
+
+    cr.restore()?;
+    Ok(())
+}
+
+fn pill_border_color(fill: Color, is_light_theme: bool) -> Color {
+    if is_light_theme {
+        fill.darken(0.18)
+    } else {
+        fill.darken(0.35)
+    }
+}
+
+fn draw_soft_shadow(
+    cr: &Context,
+    style: ShapeStyle,
+    x: f64,
+    y: f64,
+    w: f64,
+    h: f64,
+    k: f64,
+    bg: Color,
+    is_light_theme: bool,
+) -> Result<()> {
+    // 软阴影：用背景色加深后的纯色 + 轻微位移模拟。
+    // 这里不使用 alpha，确保在所有后端一致。
+    let shadow = if is_light_theme {
+        bg.darken(0.08)
+    } else {
+        bg.darken(0.55)
+    };
+    let dx = 0.8;
+    let dy = 1.2;
+
+    match style {
+        ShapeStyle::Chamfer => fill_chamfer(cr, x + dx, y + dy, w, h, k, shadow)?,
+        ShapeStyle::Pill => {
+            let r = k.min(h / 2.0).floor();
+            fill_round(cr, x + dx, y + dy, w, h, r, shadow)?
+        }
+    }
+    Ok(())
+}
+
 fn stroke_round_with_fill(
     cr: &Context,
     x: f64,
@@ -568,6 +670,7 @@ fn stroke_round_with_fill(
         if w2 > 0.0 && h2 > 0.0 {
             let r2 = (r - border_w).max(0.0);
             fill_round(cr, x2, y2, w2, h2, r2, fill)?;
+            let _ = overlay_top_highlight(cr, ShapeStyle::Pill, x2, y2, w2, h2, r2, fill);
         }
     }
     Ok(())
@@ -620,8 +723,48 @@ fn stroke_chamfer_with_fill(
         if w2 > 0.0 && h2 > 0.0 {
             let k2 = (k - border_w).max(0.0);
             fill_chamfer(cr, x2, y2, w2, h2, k2, fill)?;
+            let _ = overlay_top_highlight(cr, ShapeStyle::Chamfer, x2, y2, w2, h2, k2, fill);
         }
     }
+    Ok(())
+}
+
+fn paint_bar_background(
+    cr: &Context,
+    width: u16,
+    height: u16,
+    bg: Color,
+    is_light: bool,
+) -> Result<()> {
+    let w = width as f64;
+    let h = height as f64;
+    let top = if is_light { bg.darken(0.03) } else { bg.lighten(0.06) };
+    let bottom = if is_light { bg.lighten(0.02) } else { bg.darken(0.05) };
+
+    let grad = LinearGradient::new(0.0, 0.0, 0.0, h);
+    grad.add_color_stop_rgb(0.0, top.r, top.g, top.b);
+    grad.add_color_stop_rgb(1.0, bottom.r, bottom.g, bottom.b);
+    cr.set_source(&grad)?;
+    cr.rectangle(0.0, 0.0, w, h);
+    cr.fill()?;
+
+    // 顶部高光线 + 底部阴影线（waybar/macOS 观感）
+    let top_line = if is_light { bg.lighten(0.20) } else { bg.lighten(0.10) };
+    let bottom_line = if is_light { bg.darken(0.10) } else { bg.darken(0.25) };
+    cr.set_source_rgb(top_line.r, top_line.g, top_line.b);
+    cr.rectangle(0.0, 0.0, w, 1.0);
+    cr.fill()?;
+    cr.set_source_rgb(bottom_line.r, bottom_line.g, bottom_line.b);
+    cr.rectangle(0.0, h - 1.0, w, 1.0);
+    cr.fill()?;
+
+    // 外框（极轻微，增强面板边界）
+    let frame = if is_light { bg.darken(0.08) } else { bg.darken(0.18) };
+    cr.set_source_rgb(frame.r, frame.g, frame.b);
+    cr.set_line_width(1.0);
+    cr.rectangle(0.5, 0.5, (w - 1.0).max(0.0), (h - 1.0).max(0.0));
+    let _ = cr.stroke();
+
     Ok(())
 }
 
@@ -702,9 +845,8 @@ pub fn draw_bar(
     font: &FontDescription,
     cfg: &BarConfig,
 ) -> Result<()> {
-    // 背景
-    cr.set_source_rgb(colors.bg.r, colors.bg.g, colors.bg.b);
-    cr.paint()?;
+    let is_light_theme = colors.bg.r > 0.7 && colors.bg.g > 0.7 && colors.bg.b > 0.7;
+    paint_bar_background(cr, width, height, colors.bg, is_light_theme)?;
 
     let pill_h = (height as f64) - 2.0 * cfg.padding_y;
 
@@ -718,14 +860,28 @@ pub fn draw_bar(
         let (mut bg, mut bw, mut bc, txt_color, draw_bg) =
             tag_visuals(colors, state.monitor_info.as_ref(), i);
 
+        // 统一边框风格：轻拟物边框略深
+        bc = pill_border_color(bc, is_light_theme);
+
         // Hover 样式：提亮 + 边框加粗
         if HoverTarget::Tag(i) == state.hover_target {
             bg = bg.lighten(0.10);
-            bc = bc.lighten(0.12);
+            bc = bc.lighten(0.10);
             bw = (bw + 1.0).min(3.0);
         }
 
         if draw_bg {
+            let _ = draw_soft_shadow(
+                cr,
+                state.shape_style,
+                x,
+                cfg.padding_y,
+                w,
+                pill_h,
+                cfg.pill_radius,
+                colors.bg,
+                is_light_theme,
+            );
             stroke_shape_with_fill(
                 cr,
                 state.shape_style,
@@ -755,13 +911,24 @@ pub fn draw_bar(
     let lw_total = lw as f64 + 2.0 * cfg.pill_hpadding;
 
     let mut layout_fill = colors.green;
-    let mut layout_border = colors.green;
+    let mut layout_border = pill_border_color(layout_fill, is_light_theme);
     let mut layout_bw = 1.0;
     if state.hover_target == HoverTarget::LayoutButton {
         layout_fill = layout_fill.lighten(0.08);
-        layout_border = layout_border.lighten(0.12);
+        layout_border = pill_border_color(layout_fill, is_light_theme).lighten(0.06);
         layout_bw = 2.0;
     }
+    let _ = draw_soft_shadow(
+        cr,
+        state.shape_style,
+        x,
+        cfg.padding_y,
+        lw_total,
+        pill_h,
+        cfg.pill_radius,
+        colors.bg,
+        is_light_theme,
+    );
     stroke_shape_with_fill(
         cr,
         state.shape_style,
@@ -804,13 +971,24 @@ pub fn draw_bar(
             let w = ((tw as f64) + 2.0 * (cfg.pill_hpadding - 2.0)).max(32.0);
 
             let mut fill = *base_color;
-            let mut border = *base_color;
+            let mut border = pill_border_color(fill, is_light_theme);
             let mut bw = 1.0;
             if HoverTarget::LayoutOption(i) == state.hover_target {
                 fill = fill.lighten(0.08);
-                border = border.lighten(0.12);
+                border = pill_border_color(fill, is_light_theme).lighten(0.06);
                 bw = 2.0;
             }
+            let _ = draw_soft_shadow(
+                cr,
+                state.shape_style,
+                opt_x,
+                cfg.padding_y,
+                w,
+                pill_h,
+                cfg.pill_radius,
+                colors.bg,
+                is_light_theme,
+            );
             stroke_shape_with_fill(
                 cr,
                 state.shape_style,
@@ -849,13 +1027,24 @@ pub fn draw_bar(
         let w = (tw as f64 + 2.0 * (cfg.pill_hpadding - 2.0)).max(54.0);
         right_x -= w + cfg.tag_spacing;
         let mut fill = colors.gray;
-        let mut border = colors.gray;
+        let mut border = pill_border_color(fill, is_light_theme);
         let mut bw = 1.0;
         if HoverTarget::Theme == state.hover_target {
             fill = fill.lighten(0.08);
-            border = border.lighten(0.12);
+            border = pill_border_color(fill, is_light_theme).lighten(0.06);
             bw = 2.0;
         }
+        let _ = draw_soft_shadow(
+            cr,
+            state.shape_style,
+            right_x,
+            cfg.padding_y,
+            w,
+            pill_h,
+            cfg.pill_radius,
+            colors.bg,
+            is_light_theme,
+        );
         stroke_shape_with_fill(
             cr,
             state.shape_style,
@@ -893,13 +1082,24 @@ pub fn draw_bar(
     let mon_total = mon_w as f64 + 2.0 * cfg.pill_hpadding;
     right_x -= mon_total + cfg.tag_spacing;
     let mut mon_fill = colors.purple;
-    let mut mon_border = colors.purple;
+    let mut mon_border = pill_border_color(mon_fill, is_light_theme);
     let mut mon_bw = 1.0;
     if HoverTarget::Monitor == state.hover_target {
         mon_fill = mon_fill.lighten(0.08);
-        mon_border = mon_border.lighten(0.12);
+        mon_border = pill_border_color(mon_fill, is_light_theme).lighten(0.06);
         mon_bw = 2.0;
     }
+    let _ = draw_soft_shadow(
+        cr,
+        state.shape_style,
+        right_x,
+        cfg.padding_y,
+        mon_total,
+        pill_h,
+        cfg.pill_radius,
+        colors.bg,
+        is_light_theme,
+    );
     stroke_shape_with_fill(
         cr,
         state.shape_style,
@@ -935,13 +1135,24 @@ pub fn draw_bar(
     let time_total = time_w as f64 + 2.0 * cfg.pill_hpadding;
     right_x -= time_total + cfg.tag_spacing;
     let mut time_fill = colors.time;
-    let mut time_border = colors.time;
+    let mut time_border = pill_border_color(time_fill, is_light_theme);
     let mut time_bw = 1.0;
     if HoverTarget::Time == state.hover_target {
         time_fill = time_fill.lighten(0.08);
-        time_border = time_border.lighten(0.12);
+        time_border = pill_border_color(time_fill, is_light_theme).lighten(0.06);
         time_bw = 2.0;
     }
+    let _ = draw_soft_shadow(
+        cr,
+        state.shape_style,
+        right_x,
+        cfg.padding_y,
+        time_total,
+        pill_h,
+        cfg.pill_radius,
+        colors.bg,
+        is_light_theme,
+    );
     stroke_shape_with_fill(
         cr,
         state.shape_style,
@@ -976,13 +1187,24 @@ pub fn draw_bar(
     let ss_total = ss_w as f64 + 2.0 * cfg.pill_hpadding;
     right_x -= ss_total + cfg.tag_spacing;
     let mut ss_fill = colors.teal;
-    let mut ss_border = colors.teal;
+    let mut ss_border = pill_border_color(ss_fill, is_light_theme);
     let mut ss_bw = 1.0;
     if HoverTarget::Screenshot == state.hover_target {
         ss_fill = ss_fill.lighten(0.08);
-        ss_border = ss_border.lighten(0.12);
+        ss_border = pill_border_color(ss_fill, is_light_theme).lighten(0.06);
         ss_bw = 2.0;
     }
+    let _ = draw_soft_shadow(
+        cr,
+        state.shape_style,
+        right_x,
+        cfg.padding_y,
+        ss_total,
+        pill_h,
+        cfg.pill_radius,
+        colors.bg,
+        is_light_theme,
+    );
     stroke_shape_with_fill(
         cr,
         state.shape_style,
@@ -1029,13 +1251,24 @@ pub fn draw_bar(
 
         let base = if muted { colors.gray } else { colors.blue };
         let mut fill = base;
-        let mut border = base;
+        let mut border = pill_border_color(fill, is_light_theme);
         let mut bw = 1.0;
         if HoverTarget::Audio == state.hover_target {
             fill = fill.lighten(0.08);
-            border = border.lighten(0.12);
+            border = pill_border_color(fill, is_light_theme).lighten(0.06);
             bw = 2.0;
         }
+        let _ = draw_soft_shadow(
+            cr,
+            state.shape_style,
+            right_x,
+            cfg.padding_y,
+            a_total,
+            pill_h,
+            cfg.pill_radius,
+            colors.bg,
+            is_light_theme,
+        );
         stroke_shape_with_fill(
             cr,
             state.shape_style,
@@ -1049,14 +1282,12 @@ pub fn draw_bar(
             Some(fill),
         )?;
         let ty = cfg.padding_y + (pill_h - ah as f64) / 2.0 - 1.0;
-        pango_draw_text_left(
-            cr,
-            font,
-            colors.white,
-            right_x + cfg.pill_hpadding,
-            ty,
-            &label,
-        );
+        let audio_text = if is_light_theme && muted {
+            colors.text
+        } else {
+            colors.white
+        };
+        pango_draw_text_left(cr, font, audio_text, right_x + cfg.pill_hpadding, ty, &label);
         state.audio_rect = Rect {
             x: right_x as i16,
             y: cfg.padding_y as i16,
@@ -1090,13 +1321,24 @@ pub fn draw_bar(
     let base_mem_bg = usage_bg_color(colors, mem_usage);
     let base_mem_fg = usage_text_color(colors, mem_usage);
     let mut mem_bg = base_mem_bg;
-    let mut mem_border = base_mem_bg;
+    let mut mem_border = pill_border_color(base_mem_bg, is_light_theme);
     let mut mem_bw = 1.0;
     if HoverTarget::Mem == state.hover_target {
         mem_bg = mem_bg.lighten(0.08);
-        mem_border = mem_border.lighten(0.12);
+        mem_border = pill_border_color(mem_bg, is_light_theme).lighten(0.06);
         mem_bw = 2.0;
     }
+    let _ = draw_soft_shadow(
+        cr,
+        state.shape_style,
+        right_x,
+        cfg.padding_y,
+        mem_total,
+        pill_h,
+        cfg.pill_radius,
+        colors.bg,
+        is_light_theme,
+    );
     stroke_shape_with_fill(
         cr,
         state.shape_style,
@@ -1132,13 +1374,24 @@ pub fn draw_bar(
     let base_cpu_bg = usage_bg_color(colors, cpu_avg);
     let base_cpu_fg = usage_text_color(colors, cpu_avg);
     let mut cpu_bg = base_cpu_bg;
-    let mut cpu_border = base_cpu_bg;
+    let mut cpu_border = pill_border_color(base_cpu_bg, is_light_theme);
     let mut cpu_bw = 1.0;
     if HoverTarget::Cpu == state.hover_target {
         cpu_bg = cpu_bg.lighten(0.08);
-        cpu_border = cpu_border.lighten(0.12);
+        cpu_border = pill_border_color(cpu_bg, is_light_theme).lighten(0.06);
         cpu_bw = 2.0;
     }
+    let _ = draw_soft_shadow(
+        cr,
+        state.shape_style,
+        right_x,
+        cfg.padding_y,
+        cpu_total,
+        pill_h,
+        cfg.pill_radius,
+        colors.bg,
+        is_light_theme,
+    );
     stroke_shape_with_fill(
         cr,
         state.shape_style,

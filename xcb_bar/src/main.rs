@@ -11,8 +11,8 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use xbar_core::{
-    AppState, BarConfig, ShapeStyle, ThemeMode, arm_second_timer, colors_for_theme, draw_bar,
-    initialize_logging, spawn_shared_eventfd_notifier,
+    AppState, BarConfig, Color, ShapeStyle, ThemeMode, arm_second_timer, colors_for_theme,
+    draw_bar, initialize_logging, spawn_shared_eventfd_notifier,
 };
 
 use libc;
@@ -309,6 +309,26 @@ fn redraw(
     Ok(())
 }
 
+fn tuned_colors_for_theme(mode: ThemeMode) -> xbar_core::Colors {
+    let mut c = colors_for_theme(mode);
+    match mode {
+        ThemeMode::Dark => {
+            // 更柔和的深色背景 + 更高对比文字
+            c.bg = Color::rgb(13, 16, 23);
+            c.text = Color::rgb(235, 238, 245);
+            c.gray = Color::rgb(90, 96, 110);
+            c.time = Color::rgb(86, 156, 214);
+        }
+        ThemeMode::Light => {
+            c.bg = Color::rgb(246, 247, 250);
+            c.text = Color::rgb(22, 24, 28);
+            c.gray = Color::rgb(120, 128, 145);
+            c.time = Color::rgb(60, 120, 210);
+        }
+    }
+    c
+}
+
 // ---------------- 事件处理 ----------------
 fn handle_x_event(
     event: xcb::Event,
@@ -417,7 +437,7 @@ fn handle_x_event(
             let before_theme = state.theme_mode;
             if state.handle_buttons(px, py, button) {
                 if state.theme_mode != before_theme {
-                    *colors = colors_for_theme(state.theme_mode);
+                    *colors = tuned_colors_for_theme(state.theme_mode);
                 }
                 redraw(
                     cairo_xcb,
@@ -500,12 +520,12 @@ fn main() -> Result<()> {
 
     // 界面配置
     let cfg = BarConfig {
-        bar_height: 40,
-        padding_x: 8.0,
-        padding_y: 4.0,
-        tag_spacing: 6.0,
-        pill_hpadding: 10.0,
-        pill_radius: 8.0, // 与原 xcb_bar 一致
+        bar_height: 38,
+        padding_x: 10.0,
+        padding_y: 6.0,
+        tag_spacing: 8.0,
+        pill_hpadding: 12.0,
+        pill_radius: 10.0,
         shape_style: ShapeStyle::Pill,
         time_icon: "TIME",
         screenshot_label: "SHOT",
@@ -578,7 +598,7 @@ fn main() -> Result<()> {
     state.theme_mode = ThemeMode::Dark;
 
     // 配色（跟随主题）
-    let mut colors = colors_for_theme(state.theme_mode);
+    let mut colors = tuned_colors_for_theme(state.theme_mode);
 
     // 首次绘制
     redraw(
