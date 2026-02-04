@@ -136,12 +136,7 @@ window.theme-dark .tab-button.occupied {
   border: 2px solid #dc3545 !important;
   color: white !important;
   font-weight: bold !important;
-  animation: urgent-blink 1s ease-in-out infinite alternate;
   box-shadow: 0 2px 8px rgba(220, 53, 69, 0.5) !important;
-}
-@keyframes urgent-blink {
-  0% { background-color: rgba(220, 53, 69, 0.8); box-shadow: 0 1px 3px rgba(220, 53, 69, 0.5); }
-  100% { background-color: rgba(220, 53, 69, 1); box-shadow: 0 2px 8px rgba(220, 53, 69, 0.8); transform: scale(1.04); }
 }
 
 /* ==================== Metric 胶囊标签 ==================== */
