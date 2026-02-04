@@ -17,8 +17,8 @@ use winit::{
 };
 
 use xbar_core::{
-    AppState, BarConfig, ShapeStyle, default_colors, draw_bar, initialize_logging,
-    spawn_shared_eventfd_notifier,
+    AppState, BarConfig, ShapeStyle, ThemeMode, draw_bar, initialize_logging,
+    spawn_shared_eventfd_notifier, tuned_colors_for_theme,
 };
 
 // ===== 新增：wgpu 封装 =====
@@ -479,24 +479,30 @@ impl App {
         logical_size: LogicalSize<f64>,
         scale: f64,
     ) -> Self {
-        let colors = default_colors();
         let cfg = BarConfig {
-            bar_height: 40,
-            padding_x: 8.0,
-            padding_y: 4.0,
-            tag_spacing: 6.0,
-            pill_hpadding: 10.0,
-            pill_radius: 8.0,
+            bar_height: 38,
+            padding_x: 10.0,
+            padding_y: 6.0,
+            tag_spacing: 8.0,
+            pill_hpadding: 12.0,
+            pill_radius: 10.0,
             shape_style: ShapeStyle::Pill,
-            time_icon: "",
-            screenshot_label: " Screenshot",
+            // Avoid Nerd Font dependency; use ASCII labels like other bars.
+            time_icon: "TIME",
+            screenshot_label: "SHOT",
 
-            show_audio: false,
-            show_theme_toggle: false,
+            show_audio: true,
+            show_theme_toggle: true,
             volume_step: 5,
         };
-        let font = FontDescription::from_string("JetBrainsMono Nerd Font 11");
-        let state = AppState::new(shared_buffer);
+
+        // Font: configurable via env; default to a widely available monospace.
+        let font_str = env::var("XBAR_FONT").unwrap_or_else(|_| "monospace 11".to_string());
+        let font = FontDescription::from_string(&font_str);
+
+        let mut state = AppState::new(shared_buffer);
+        state.theme_mode = ThemeMode::Dark;
+        let colors = tuned_colors_for_theme(state.theme_mode);
 
         Self {
             window_id: None,
@@ -587,10 +593,14 @@ impl App {
 
     fn handle_button(&mut self, px: i32, py: i32, button_id: u8) {
         let prev_show_seconds = self.state.show_seconds;
+        let prev_theme = self.state.theme_mode;
 
         if self.state.handle_buttons(px as i16, py as i16, button_id) {
             if self.state.show_seconds != prev_show_seconds {
                 self.last_time_bucket = self.current_time_bucket();
+            }
+            if self.state.theme_mode != prev_theme {
+                self.colors = tuned_colors_for_theme(self.state.theme_mode);
             }
             self.request_redraw();
         }
@@ -765,6 +775,12 @@ impl ApplicationHandler<UserEvent> for App {
                     self.state.ss_rect
                 );
             }
+            WindowEvent::CursorLeft { .. } => {
+                self.last_cursor_pos_px = None;
+                if self.state.update_hover(-1, -1) {
+                    self.request_redraw();
+                }
+            }
             WindowEvent::MouseInput { state, button, .. } => {
                 use winit::event::{ElementState, MouseButton};
                 if state == ElementState::Pressed {
@@ -777,6 +793,27 @@ impl ApplicationHandler<UserEvent> for App {
                             MouseButton::Forward => 9,
                             MouseButton::Other(n) => n as u8,
                         };
+                        self.handle_button(px, py, button_id);
+                    }
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                use winit::event::MouseScrollDelta;
+                if let Some((px, py)) = self.last_cursor_pos_px {
+                    let y = match delta {
+                        MouseScrollDelta::LineDelta(_, y) => y as f64,
+                        MouseScrollDelta::PixelDelta(pos) => pos.y,
+                    };
+
+                    let button_id = if y > 0.0 {
+                        4 // scroll up
+                    } else if y < 0.0 {
+                        5 // scroll down
+                    } else {
+                        0
+                    };
+
+                    if button_id != 0 {
                         self.handle_button(px, py, button_id);
                     }
                 }
