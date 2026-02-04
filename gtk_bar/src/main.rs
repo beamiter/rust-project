@@ -24,6 +24,16 @@ use gtk4::glib::ControlFlow;
 
 static STYLES_APPLIED: OnceLock<()> = OnceLock::new();
 
+const DEFAULT_BAR_WINDOW_HEIGHT: i32 = 42;
+
+fn desired_bar_window_height() -> i32 {
+    env::var("GTK_BAR_HEIGHT")
+        .ok()
+        .and_then(|v| v.parse::<i32>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(DEFAULT_BAR_WINDOW_HEIGHT)
+}
+
 fn apply_styles_once() {
     STYLES_APPLIED.get_or_init(|| {
         let provider = gtk4::CssProvider::new();
@@ -222,6 +232,11 @@ impl TabBarApp {
             .expect("Failed to get main_window from builder");
         window.set_application(Some(app));
 
+        // 让窗口从第一帧起就稳定到目标高度，避免首帧按默认主题/字体度量分配更大尺寸，
+        // 随后被自定义 CSS/内容更新收缩引发 WM resize 抖动。
+        let desired_height = desired_bar_window_height();
+        window.set_default_size(-1, desired_height);
+
         // 可选：减少动画/过渡以降低 CPU 占用（默认不启用）
         // 用法：GTK_BAR_REDUCE_MOTION=1 nix develop -c cargo run -p gtk_bar -- <shared_path>
         let reduce_motion = env::var("GTK_BAR_REDUCE_MOTION")
@@ -229,6 +244,35 @@ impl TabBarApp {
             .unwrap_or(false);
         if reduce_motion {
             window.add_css_class("reduce-motion");
+        }
+
+        // 可选：调试窗口高度变化（例如启动 46 -> 42 的情况）
+        let debug_size = env::var("GTK_BAR_DEBUG_SIZE")
+            .map(|v| v != "0")
+            .unwrap_or(false);
+        if debug_size {
+            let desired_height_dbg = desired_height;
+            window.connect_realize(move |w| {
+                info!(
+                    "[size] realized: default=({},{}), desired_height={}",
+                    w.default_width(),
+                    w.default_height(),
+                    desired_height_dbg
+                );
+            });
+
+            let win_weak = window.downgrade();
+            glib::timeout_add_local(Duration::from_millis(200), move || {
+                let Some(w) = win_weak.upgrade() else {
+                    return ControlFlow::Break;
+                };
+                info!(
+                    "[size] allocated: {}x{}",
+                    w.allocated_width(),
+                    w.allocated_height()
+                );
+                ControlFlow::Continue
+            });
         }
 
         // 标签按钮
