@@ -44,6 +44,20 @@ const CLS_FILLED: u8 = 1 << 2;
 const CLS_URGENT: u8 = 1 << 3;
 const CLS_EMPTY: u8 = 1 << 4;
 
+// 默认 tag 图标：尽量选单码位/常见字体可用的符号，显示更统一。
+// 你可以用 GTK_BAR_TAG_LABELS 覆盖成自己的 9 个图标/字符。
+const DEFAULT_TAG_LABELS: [&str; 9] = [
+    "🖥", // 1: terminal / system
+    "🌐", // 2: web
+    "💻", // 3: code
+    "💬", // 4: chat
+    "📝", // 5: notes
+    "🎵", // 6: music
+    "🎮", // 7: game
+    "⚙", // 8: settings
+    "📁", // 9: files
+];
+
 // ========= 状态 =========
 #[allow(dead_code)]
 struct AppState {
@@ -196,6 +210,10 @@ impl TabBarApp {
                 .unwrap_or_else(|| panic!("Failed to get {} from builder", button_id));
             tab_buttons.push(button);
         }
+
+        // Tag icon/label：默认用一组语义化 icon；可用 GTK_BAR_TAG_LABELS 自定义（逗号分隔）
+        // 例：GTK_BAR_TAG_LABELS='🖥,🌐,💻,💬,📝,🎵,🎮,⚙,📁'
+        Self::apply_tag_labels(&tab_buttons);
 
         // 其他组件
         let time_button: Button = builder
@@ -383,6 +401,27 @@ impl TabBarApp {
                 &provider,
                 gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
             );
+        }
+    }
+
+    fn apply_tag_labels(tab_buttons: &[Button]) {
+        let custom = env::var("GTK_BAR_TAG_LABELS")
+            .ok()
+            .map(|s| {
+                s.split(',')
+                    .map(|x| x.trim())
+                    .filter(|x| !x.is_empty())
+                    .map(str::to_string)
+                    .collect::<Vec<_>>()
+            })
+            .filter(|v| !v.is_empty());
+
+        for (idx, b) in tab_buttons.iter().enumerate() {
+            if let Some(v) = custom.as_ref().and_then(|v| v.get(idx)) {
+                b.set_label(v);
+            } else {
+                b.set_label(DEFAULT_TAG_LABELS.get(idx).copied().unwrap_or("?"));
+            }
         }
     }
 

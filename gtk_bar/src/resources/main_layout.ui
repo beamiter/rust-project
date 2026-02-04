@@ -27,7 +27,7 @@
             <child>
               <object class="GtkButton" id="tab_button_0">
                 <property name="height-request">32</property>
-                <property name="label">🍜</property>
+                <property name="label">🖥</property>
                 <property name="width-request">40</property>
                 <style><class name="tab-button"/></style>
               </object>
@@ -35,7 +35,7 @@
             <child>
               <object class="GtkButton" id="tab_button_1">
                 <property name="height-request">32</property>
-                <property name="label">🎨</property>
+                <property name="label">🌐</property>
                 <property name="width-request">40</property>
                 <style><class name="tab-button"/></style>
               </object>
@@ -43,7 +43,7 @@
             <child>
               <object class="GtkButton" id="tab_button_2">
                 <property name="height-request">32</property>
-                <property name="label">🍀</property>
+                <property name="label">💻</property>
                 <property name="width-request">40</property>
                 <style><class name="tab-button"/></style>
               </object>
@@ -51,7 +51,7 @@
             <child>
               <object class="GtkButton" id="tab_button_3">
                 <property name="height-request">32</property>
-                <property name="label">🧿</property>
+                <property name="label">💬</property>
                 <property name="width-request">40</property>
                 <style><class name="tab-button"/></style>
               </object>
@@ -59,7 +59,7 @@
             <child>
               <object class="GtkButton" id="tab_button_4">
                 <property name="height-request">32</property>
-                <property name="label">🌟</property>
+                <property name="label">📝</property>
                 <property name="width-request">40</property>
                 <style><class name="tab-button"/></style>
               </object>
@@ -67,7 +67,7 @@
             <child>
               <object class="GtkButton" id="tab_button_5">
                 <property name="height-request">32</property>
-                <property name="label">🐐</property>
+                <property name="label">🎵</property>
                 <property name="width-request">40</property>
                 <style><class name="tab-button"/></style>
               </object>
@@ -75,7 +75,7 @@
             <child>
               <object class="GtkButton" id="tab_button_6">
                 <property name="height-request">32</property>
-                <property name="label">🏆</property>
+                <property name="label">🎮</property>
                 <property name="width-request">40</property>
                 <style><class name="tab-button"/></style>
               </object>
@@ -83,7 +83,7 @@
             <child>
               <object class="GtkButton" id="tab_button_7">
                 <property name="height-request">32</property>
-                <property name="label">🕊️</property>
+                <property name="label">⚙</property>
                 <property name="width-request">40</property>
                 <style><class name="tab-button"/></style>
               </object>
@@ -91,7 +91,7 @@
             <child>
               <object class="GtkButton" id="tab_button_8">
                 <property name="height-request">32</property>
-                <property name="label">🏡</property>
+                <property name="label">📁</property>
                 <property name="width-request">40</property>
                 <style><class name="tab-button"/></style>
               </object>
