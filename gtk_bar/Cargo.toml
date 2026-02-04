@@ -4,8 +4,7 @@ version = "0.1.0"
 edition = "2024"
 
 [features]
-default = []
-x11 = ["dep:gdk4-x11"]
+x11 = []
 
 [dependencies]
 log = { workspace = true }
@@ -17,6 +16,5 @@ xbar_core = { workspace = true }
 chrono = { workspace = true }
 
 async-channel = "2.5.0"
-gtk4 = "0.10.3"
-gdk4 = "0.10.3"
-gdk4-x11 = { version = "0.10.3", optional = true, features = ["xlib"] }
+gtk4 = "0.10.1"
+gdk4 = "0.10.1"

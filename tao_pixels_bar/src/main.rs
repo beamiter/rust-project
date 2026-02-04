@@ -17,8 +17,8 @@ use tao::{
     window::{WindowBuilder, WindowId},
 };
 use xbar_core::{
-    AppState, BarConfig, ShapeStyle, default_colors, draw_bar, initialize_logging,
-    spawn_shared_eventfd_notifier,
+    AppState, BarConfig, ShapeStyle, ThemeMode, draw_bar, initialize_logging,
+    spawn_shared_eventfd_notifier, tuned_colors_for_theme,
 };
 
 #[derive(Debug, Clone, Copy)]
@@ -164,24 +164,29 @@ impl App {
         scale: f64,
         signals: EventCoalescer,
     ) -> Self {
-        let colors = default_colors();
         let cfg = BarConfig {
-            bar_height: 40,
-            padding_x: 8.0,
-            padding_y: 4.0,
-            tag_spacing: 6.0,
-            pill_hpadding: 10.0,
-            pill_radius: 8.0,
+            bar_height: 38,
+            padding_x: 10.0,
+            padding_y: 6.0,
+            tag_spacing: 8.0,
+            pill_hpadding: 12.0,
+            pill_radius: 10.0,
             shape_style: ShapeStyle::Pill,
-            time_icon: "",
-            screenshot_label: " Screenshot",
+            time_icon: "TIME",
+            screenshot_label: "SHOT",
 
-            show_audio: false,
-            show_theme_toggle: false,
+            show_audio: true,
+            show_theme_toggle: true,
             volume_step: 5,
         };
-        let font = FontDescription::from_string("JetBrainsMono Nerd Font 11");
-        let state = AppState::new(shared_buffer);
+
+        // 字体（尽量不依赖 Nerd Font；可用 XBAR_FONT 覆盖）
+        let font_str = env::var("XBAR_FONT").unwrap_or_else(|_| "monospace 11".to_string());
+        let font = FontDescription::from_string(&font_str);
+
+        let mut state = AppState::new(shared_buffer);
+        state.theme_mode = ThemeMode::Dark;
+        let colors = tuned_colors_for_theme(state.theme_mode);
 
         Self {
             window_id: None,
@@ -351,8 +356,12 @@ impl App {
     fn handle_button(&mut self, px: i32, py: i32, button_id: u8) {
         // 记录 show_seconds 切换前的值
         let prev_show_seconds = self.state.show_seconds;
+        let prev_theme = self.state.theme_mode;
 
         if self.state.handle_buttons(px as i16, py as i16, button_id) {
+            if self.state.theme_mode != prev_theme {
+                self.colors = tuned_colors_for_theme(self.state.theme_mode);
+            }
             // 若 show_seconds 改变，立即更新时间 bucket，避免下次 tick 再二次重绘
             if self.state.show_seconds != prev_show_seconds {
                 self.last_time_bucket = self.current_time_bucket();
@@ -508,6 +517,26 @@ impl App {
                 self.state.clear_hover();
                 if let Err(e) = self.redraw() {
                     warn!("redraw error (CursorLeft): {}", e);
+                }
+            }
+            WindowEvent::MouseWheel { delta, .. } => {
+                use tao::event::MouseScrollDelta;
+                if let Some((px, py)) = self.last_cursor_pos_px {
+                    let dy = match delta {
+                        MouseScrollDelta::LineDelta(_x, y) => y as f64,
+                        MouseScrollDelta::PixelDelta(pos) => pos.y,
+                        _ => 0.0,
+                    };
+                    let button_id = if dy > 0.0 {
+                        4
+                    } else if dy < 0.0 {
+                        5
+                    } else {
+                        0
+                    };
+                    if button_id != 0 {
+                        self.handle_button(px, py, button_id);
+                    }
                 }
             }
             WindowEvent::MouseInput { state, button, .. } => {

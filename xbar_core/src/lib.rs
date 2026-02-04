@@ -144,6 +144,27 @@ pub fn colors_for_theme(mode: ThemeMode) -> Colors {
     }
 }
 
+/// A slightly refined palette used by the bar frontends for a more
+/// "desktop-polished" look (softer bg, higher-contrast text).
+pub fn tuned_colors_for_theme(mode: ThemeMode) -> Colors {
+    let mut c = colors_for_theme(mode);
+    match mode {
+        ThemeMode::Dark => {
+            c.bg = Color::rgb(13, 16, 23);
+            c.text = Color::rgb(235, 238, 245);
+            c.gray = Color::rgb(90, 96, 110);
+            c.time = Color::rgb(86, 156, 214);
+        }
+        ThemeMode::Light => {
+            c.bg = Color::rgb(246, 247, 250);
+            c.text = Color::rgb(22, 24, 28);
+            c.gray = Color::rgb(120, 128, 145);
+            c.time = Color::rgb(60, 120, 210);
+        }
+    }
+    c
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Rect {
     pub x: i16,

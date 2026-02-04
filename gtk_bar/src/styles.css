@@ -1,234 +1,81 @@
 window {
-  background-color: rgba(248, 249, 251, 0.92);
-}
-
-/* ==================== Theme (opt-in) ==================== */
-/* 在代码里通过 GTK_BAR_THEME=dark 添加 theme-dark class */
-window.theme-dark {
-  background-color: rgba(17, 24, 39, 0.92);
-}
-
-window.theme-dark .bar {
-  border: 1px solid rgba(255, 255, 255, 0.10);
-  background-color: rgba(31, 41, 55, 0.72);
-  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
-}
-
-window.theme-dark .metric-label {
-  background-color: rgba(31, 41, 55, 0.80);
-  color: rgba(255, 255, 255, 0.92);
-  border-color: rgba(255, 255, 255, 0.12);
-}
-
-/* 暗色主题下：metric level 颜色也要暗色友好（否则 level-* 会覆盖回浅色底） */
-window.theme-dark .metric-label.level-ok {
-  background-color: rgba(24, 121, 78, 0.28);
-  color: rgba(209, 250, 229, 0.95);
-  border-color: rgba(24, 121, 78, 0.45);
-}
-window.theme-dark .metric-label.level-warn {
-  background-color: rgba(138, 93, 0, 0.28);
-  color: rgba(255, 237, 213, 0.95);
-  border-color: rgba(138, 93, 0, 0.45);
-}
-window.theme-dark .metric-label.level-high {
-  background-color: rgba(159, 58, 13, 0.28);
-  color: rgba(255, 228, 230, 0.92);
-  border-color: rgba(159, 58, 13, 0.45);
-}
-window.theme-dark .metric-label.level-crit {
-  background-color: rgba(168, 7, 26, 0.30);
-  color: rgba(255, 228, 230, 0.95);
-  border-color: rgba(168, 7, 26, 0.55);
-  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
-}
-
-/* 暗色主题下：tab 的空态/占用态对比度提升 */
-window.theme-dark .tab-button {
-  border-color: rgba(255, 255, 255, 0.10);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
-}
-window.theme-dark .tab-button.empty {
-  background-color: rgba(31, 41, 55, 0.70) !important;
-  border-color: rgba(255, 255, 255, 0.12) !important;
-  color: rgba(255, 255, 255, 0.92) !important;
-}
-window.theme-dark .tab-button.empty:hover {
-  background-color: rgba(55, 65, 81, 0.78) !important;
-  border-color: rgba(255, 255, 255, 0.16) !important;
-}
-window.theme-dark .tab-button.occupied {
-  /* occupied 多数是半透明色块，默认 #333 在暗底上偏灰；用浅色更清晰 */
-  color: rgba(255, 255, 255, 0.92) !important;
-}
-
-/* 暗色主题下：右侧 pill 更融入背景 */
-window.theme-dark .time-button {
-  background-color: rgba(31, 41, 55, 0.72);
-  color: rgba(255, 255, 255, 0.92);
-}
-window.theme-dark .monitor-badge {
-  background-color: rgba(31, 41, 55, 0.60);
-}
-
-window.theme-dark .time-button,
-window.theme-dark .volume-button,
-window.theme-dark .screenshot-button,
-window.theme-dark .layout-toggle,
-window.theme-dark .layout-option,
-window.theme-dark .monitor-badge {
-  border-color: rgba(255, 255, 255, 0.14);
-}
-
-/* ==================== Bar 容器 ==================== */
-.bar {
-  /* 目标：让窗口高度从第一帧就稳定，不随后续 class/文本更新发生 2~4px 的收缩 */
-  min-height: 36px;
-  padding: 2px 4px;
-  border-radius: 12px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  background-color: rgba(255, 255, 255, 0.72);
-  box-shadow: 0 6px 18px rgba(17, 24, 39, 0.10);
-}
-
-.tab-box {
-  /* 让左侧区域更“成组”一些 */
-}
-
-.right-box {
-  /* 预留：右侧区域可单独调优 */
-}
-
-/* ==================== Reduced Motion（可选） ==================== */
-/* 通过给 window 添加 reduce-motion class 来禁用过渡/变换，以降低 UI 带来的 CPU 占用。
- * 启用方式：GTK_BAR_REDUCE_MOTION=1
- */
-window.reduce-motion .tab-button,
-window.reduce-motion .metric-label,
-window.reduce-motion .time-button,
-window.reduce-motion .volume-button,
-window.reduce-motion .screenshot-button,
-window.reduce-motion .layout-toggle,
-window.reduce-motion .layout-option {
-  transition: none;
-}
-window.reduce-motion .tab-button:hover {
-  transform: none;
+  background-color: rgba(255, 255, 255, 0.9);
 }
 
 /* ==================== 标签按钮基础样式（保留你的风格） ==================== */
 .tab-button {
   margin: 0px 2px;
   padding: 0px;
-  border-radius: 8px;
+  border-radius: 6px;
   font-size: 20px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
+  border: 1px solid transparent;
   background-image: none;
   color: #333;
-  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.08);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
 }
 
 .tab-button:hover {
-  /* 避免 hover 缩放带来的重绘/抖动：改成边框和阴影的轻微变化 */
-  transform: none;
-  box-shadow: 0 2px 6px rgba(17, 24, 39, 0.12);
+  transform: scale(1.02);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
 }
 
 .tab-button,
 .tab-button:hover {
-  transition: box-shadow 0.18s ease;
-}
-
-/* ==================== 通用 pill 观感（按钮） ==================== */
-.time-button,
-.volume-button,
-.screenshot-button,
-.theme-toggle,
-.layout-toggle,
-.layout-option {
-  border-radius: 999px;
-  border: 1px solid rgba(17, 24, 39, 0.10);
-  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.08);
-}
-
-.time-button:hover,
-.volume-button:hover,
-.screenshot-button:hover,
-.theme-toggle:hover,
-.layout-toggle:hover,
-.layout-option:hover {
-  box-shadow: 0 2px 6px rgba(17, 24, 39, 0.12);
-}
-
-/* Theme toggle */
-.theme-toggle {
-  margin: 0 2px;
-  padding: 2px 10px;
-  font-weight: 700;
-  font-size: 12px;
-  background-image: none;
-  background-color: rgba(255, 255, 255, 0.80);
-  color: #111827;
-  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
-}
-
-window.theme-dark .theme-toggle {
-  background-color: rgba(31, 41, 55, 0.72);
-  color: rgba(255, 255, 255, 0.92);
+  transition: transform 0.2s ease, box-shadow 0.2s ease;
 }
 
 /* ==================== 各索引的配色（保持原有定义） ==================== */
 .tab-button:nth-child(1).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(1).empty:hover { border-color: #ff6b6b; box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.80), 0 0 6px rgba(255, 107, 107, 0.4); background-color: rgba(255, 107, 107, 0.1); }
+.tab-button:nth-child(1).empty:hover { border-color: #ff6b6b; border-width: 2px; box-shadow: 0 0 6px rgba(255, 107, 107, 0.4); background-color: rgba(255, 107, 107, 0.1); }
 .tab-button:nth-child(1).occupied { background-color: rgba(255, 107, 107, 0.3); border-color: rgba(255, 107, 107, 0.6); color: #333; }
 .tab-button:nth-child(1).selected { background-color: rgba(255, 107, 107, 0.7); border-color: rgba(255, 107, 107, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(1).filled { background-color: rgba(255, 107, 107, 1); border-color: rgba(255, 107, 107, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(255, 107, 107, 0.4); }
 
 /* ... 2 ~ 9 的样式同你原有，略（已保持） ... */
 .tab-button:nth-child(2).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(2).empty:hover { border-color: #4ecdc4; box-shadow: 0 0 0 1px rgba(78, 205, 196, 0.80), 0 0 6px rgba(78, 205, 196, 0.4); background-color: rgba(78, 205, 196, 0.1); }
+.tab-button:nth-child(2).empty:hover { border-color: #4ecdc4; border-width: 2px; box-shadow: 0 0 6px rgba(78, 205, 196, 0.4); background-color: rgba(78, 205, 196, 0.1); }
 .tab-button:nth-child(2).occupied { background-color: rgba(78, 205, 196, 0.3); border-color: rgba(78, 205, 196, 0.6); color: #333; }
 .tab-button:nth-child(2).selected { background-color: rgba(78, 205, 196, 0.7); border-color: rgba(78, 205, 196, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(2).filled { background-color: rgba(78, 205, 196, 1); border-color: rgba(78, 205, 196, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(78, 205, 196, 0.4); }
 
 .tab-button:nth-child(3).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(3).empty:hover { border-color: #45b7d1; box-shadow: 0 0 0 1px rgba(69, 183, 209, 0.80), 0 0 6px rgba(69, 183, 209, 0.4); background-color: rgba(69, 183, 209, 0.1); }
+.tab-button:nth-child(3).empty:hover { border-color: #45b7d1; border-width: 2px; box-shadow: 0 0 6px rgba(69, 183, 209, 0.4); background-color: rgba(69, 183, 209, 0.1); }
 .tab-button:nth-child(3).occupied { background-color: rgba(69, 183, 209, 0.3); border-color: rgba(69, 183, 209, 0.6); color: #333; }
 .tab-button:nth-child(3).selected { background-color: rgba(69, 183, 209, 0.7); border-color: rgba(69, 183, 209, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(3).filled { background-color: rgba(69, 183, 209, 1); border-color: rgba(69, 183, 209, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(69, 183, 209, 0.4); }
 
 .tab-button:nth-child(4).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(4).empty:hover { border-color: #96ceb4; box-shadow: 0 0 0 1px rgba(150, 206, 180, 0.80), 0 0 6px rgba(150, 206, 180, 0.4); background-color: rgba(150, 206, 180, 0.1); }
+.tab-button:nth-child(4).empty:hover { border-color: #96ceb4; border-width: 2px; box-shadow: 0 0 6px rgba(150, 206, 180, 0.4); background-color: rgba(150, 206, 180, 0.1); }
 .tab-button:nth-child(4).occupied { background-color: rgba(150, 206, 180, 0.3); border-color: rgba(150, 206, 180, 0.6); color: #333; }
 .tab-button:nth-child(4).selected { background-color: rgba(150, 206, 180, 0.7); border-color: rgba(150, 206, 180, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(4).filled { background-color: rgba(150, 206, 180, 1); border-color: rgba(150, 206, 180, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(150, 206, 180, 0.4); }
 
 .tab-button:nth-child(5).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(5).empty:hover { border-color: #feca57; box-shadow: 0 0 0 1px rgba(254, 202, 87, 0.80), 0 0 6px rgba(254, 202, 87, 0.4); background-color: rgba(254, 202, 87, 0.1); }
+.tab-button:nth-child(5).empty:hover { border-color: #feca57; border-width: 2px; box-shadow: 0 0 6px rgba(254, 202, 87, 0.4); background-color: rgba(254, 202, 87, 0.1); }
 .tab-button:nth-child(5).occupied { background-color: rgba(254, 202, 87, 0.3); border-color: rgba(254, 202, 87, 0.6); color: #333; }
 .tab-button:nth-child(5).selected { background-color: rgba(254, 202, 87, 0.7); border-color: rgba(254, 202, 87, 0.9); color: #333; font-weight: bold; }
 .tab-button:nth-child(5).filled { background-color: rgba(254, 202, 87, 1); border-color: rgba(254, 202, 87, 1); color: #333; font-weight: bold; box-shadow: 0 2px 8px rgba(254, 202, 87, 0.4); }
 
 .tab-button:nth-child(6).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(6).empty:hover { border-color: #ff9ff3; box-shadow: 0 0 0 1px rgba(255, 159, 243, 0.80), 0 0 6px rgba(255, 159, 243, 0.4); background-color: rgba(255, 159, 243, 0.1); }
+.tab-button:nth-child(6).empty:hover { border-color: #ff9ff3; border-width: 2px; box-shadow: 0 0 6px rgba(255, 159, 243, 0.4); background-color: rgba(255, 159, 243, 0.1); }
 .tab-button:nth-child(6).occupied { background-color: rgba(255, 159, 243, 0.3); border-color: rgba(255, 159, 243, 0.6); color: #333; }
 .tab-button:nth-child(6).selected { background-color: rgba(255, 159, 243, 0.7); border-color: rgba(255, 159, 243, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(6).filled { background-color: rgba(255, 159, 243, 1); border-color: rgba(255, 159, 243, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(255, 159, 243, 0.4); }
 
 .tab-button:nth-child(7).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(7).empty:hover { border-color: #54a0ff; box-shadow: 0 0 0 1px rgba(84, 160, 255, 0.80), 0 0 6px rgba(84, 160, 255, 0.4); background-color: rgba(84, 160, 255, 0.1); }
+.tab-button:nth-child(7).empty:hover { border-color: #54a0ff; border-width: 2px; box-shadow: 0 0 6px rgba(84, 160, 255, 0.4); background-color: rgba(84, 160, 255, 0.1); }
 .tab-button:nth-child(7).occupied { background-color: rgba(84, 160, 255, 0.3); border-color: rgba(84, 160, 255, 0.6); color: #333; }
 .tab-button:nth-child(7).selected { background-color: rgba(84, 160, 255, 0.7); border-color: rgba(84, 160, 255, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(7).filled { background-color: rgba(84, 160, 255, 1); border-color: rgba(84, 160, 255, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(84, 160, 255, 0.4); }
 
 .tab-button:nth-child(8).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(8).empty:hover { border-color: #5f27cd; box-shadow: 0 0 0 1px rgba(95, 39, 205, 0.80), 0 0 6px rgba(95, 39, 205, 0.4); background-color: rgba(95, 39, 205, 0.1); }
+.tab-button:nth-child(8).empty:hover { border-color: #5f27cd; border-width: 2px; box-shadow: 0 0 6px rgba(95, 39, 205, 0.4); background-color: rgba(95, 39, 205, 0.1); }
 .tab-button:nth-child(8).occupied { background-color: rgba(95, 39, 205, 0.3); border-color: rgba(95, 39, 205, 0.6); color: #333; }
 .tab-button:nth-child(8).selected { background-color: rgba(95, 39, 205, 0.7); border-color: rgba(95, 39, 205, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(8).filled { background-color: rgba(95, 39, 205, 1); border-color: rgba(95, 39, 205, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(95, 39, 205, 0.4); }
 
 .tab-button:nth-child(9).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(9).empty:hover { border-color: #00d2d3; box-shadow: 0 0 0 1px rgba(0, 210, 211, 0.80), 0 0 6px rgba(0, 210, 211, 0.4); background-color: rgba(0, 210, 211, 0.1); }
+.tab-button:nth-child(9).empty:hover { border-color: #00d2d3; border-width: 2px; box-shadow: 0 0 6px rgba(0, 210, 211, 0.4); background-color: rgba(0, 210, 211, 0.1); }
 .tab-button:nth-child(9).occupied { background-color: rgba(0, 210, 211, 0.3); border-color: rgba(0, 210, 211, 0.6); color: #333; }
 .tab-button:nth-child(9).selected { background-color: rgba(0, 210, 211, 0.7); border-color: rgba(0, 210, 211, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(9).filled { background-color: rgba(0, 210, 211, 1); border-color: rgba(0, 210, 211, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(0, 210, 211, 0.4); }
@@ -236,20 +83,15 @@ window.theme-dark .theme-toggle {
 /* ==================== Urgent 状态 ==================== */
 .tab-button.urgent {
   background-color: rgba(220, 53, 69, 0.8) !important;
-  border: 1px solid #dc3545 !important;
+  border: 2px solid #dc3545 !important;
   color: white !important;
   font-weight: bold !important;
-  /* 用 ring shadow 代替加粗边框，避免改变控件几何尺寸导致窗口高度抖动 */
-  box-shadow: 0 0 0 1px rgba(220, 53, 69, 0.95), 0 2px 8px rgba(220, 53, 69, 0.5) !important;
-  /* 避免持续重绘：urgent 不使用动画/变换 */
-  animation: none;
-  transition: none;
-  transform: none;
+  animation: urgent-blink 1s ease-in-out infinite alternate;
+  box-shadow: 0 2px 8px rgba(220, 53, 69, 0.5) !important;
 }
-
-.tab-button.urgent:hover {
-  /* 覆盖基础 hover 的 scale，保持 urgent 稳定 */
-  transform: none;
+@keyframes urgent-blink {
+  0% { background-color: rgba(220, 53, 69, 0.8); box-shadow: 0 1px 3px rgba(220, 53, 69, 0.5); }
+  100% { background-color: rgba(220, 53, 69, 1); box-shadow: 0 2px 8px rgba(220, 53, 69, 0.8); transform: scale(1.04); }
 }
 
 /* ==================== Metric 胶囊标签 ==================== */
@@ -259,7 +101,7 @@ window.theme-dark .theme-toggle {
   font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.2px;
-  border: 1px solid rgba(17, 24, 39, 0.08);
+  border: 1px solid rgba(0,0,0,0.06);
   background-color: #f5f7fa;
   color: #333;
   transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
@@ -269,25 +111,16 @@ window.theme-dark .theme-toggle {
 .metric-label.level-warn { background-color: #fff8e6; color: #8a5d00; border-color: #ffeab8; }
 .metric-label.level-high { background-color: #fff2e8; color: #9f3a0d; border-color: #ffd3bf; }
 .metric-label.level-crit { background-color: #ffeaea; color: #a8071a; border-color: #ffc1c1; box-shadow: 0 1px 6px rgba(168, 7, 26, 0.12); }
-.metric-label:hover { box-shadow: 0 2px 6px rgba(17, 24, 39, 0.12); }
-
-/* ==================== 监视器徽章 ==================== */
-.monitor-badge {
-  padding: 2px 8px;
-  border-radius: 999px;
-  background-color: rgba(255, 255, 255, 0.70);
-  border: 1px solid rgba(17, 24, 39, 0.10);
-  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.08);
-}
+.metric-label:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.30); }
 
 /* Time 胶囊样式 */
 .time-button {
   margin: 0 2px;
   padding: 2px 12px;
   border-radius: 999px;
-  border: 1px solid rgba(17, 24, 39, 0.10);
-  background-color: rgba(255, 255, 255, 0.80);
-  color: #111827;
+  border: 1px solid #e5e7eb;
+  background-color: #BABC7F;
+  color: #374151;
   font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.2px;
@@ -295,47 +128,9 @@ window.theme-dark .theme-toggle {
   transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
-.time-button:hover { background-color: rgba(243, 244, 246, 0.95); border-color: rgba(17, 24, 39, 0.12); box-shadow: 0 2px 6px rgba(17, 24, 39, 0.12); color: #111827; }
-.time-button:active { background-color: rgba(229, 231, 235, 0.95); border-color: rgba(17, 24, 39, 0.14); box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.14); }
+.time-button:hover { background-color: #f3f4f6; border-color: #d1d5db; box-shadow: 0 2px 6px rgba(0,0,0,0.08); color: #111827; }
+.time-button:active { background-color: #e5e7eb; border-color: #cfd3da; box-shadow: inset 0 1px 2px rgba(0,0,0,0.12); }
 .time-button:focus-visible { outline: none; border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(59,130,246,0.25); }
-
-/* Volume 胶囊样式 */
-.volume-button {
-  margin: 0 2px;
-  padding: 2px 10px;
-  border-radius: 999px;
-  border: 1px solid rgba(17, 24, 39, 0.10);
-  background-color: rgba(255, 255, 255, 0.80);
-  color: #111827;
-  font-weight: 600;
-  font-size: 12px;
-  letter-spacing: 0.2px;
-  background-image: none;
-  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
-  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
-}
-.volume-button:hover { background-color: rgba(243, 244, 246, 0.95); border-color: rgba(17, 24, 39, 0.12); box-shadow: 0 2px 6px rgba(17, 24, 39, 0.12); color: #111827; }
-.volume-button:active { background-color: rgba(229, 231, 235, 0.95); border-color: rgba(17, 24, 39, 0.14); box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.14); }
-.volume-button:focus-visible { outline: none; border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(59,130,246,0.25); }
-
-.volume-button.muted {
-  background-color: rgba(254, 226, 226, 0.90);
-  border-color: rgba(248, 113, 113, 0.55);
-  color: #991b1b;
-}
-
-window.theme-dark .volume-button {
-  background-color: rgba(31, 41, 55, 0.72);
-  color: rgba(255, 255, 255, 0.92);
-}
-window.theme-dark .volume-button:hover {
-  background-color: rgba(55, 65, 81, 0.80);
-}
-window.theme-dark .volume-button.muted {
-  background-color: rgba(168, 7, 26, 0.30);
-  border-color: rgba(168, 7, 26, 0.55);
-  color: rgba(255, 228, 230, 0.95);
-}
 
 /* Screenshot 胶囊样式 */
 .screenshot-button {
@@ -371,19 +166,7 @@ window.theme-dark .volume-button.muted {
 .layout-toggle.closed { background-color: rgba(211,84,0,0.90);  border-color: #d35400; } /* 橙色 */
 .layout-toggle:hover { filter: brightness(1.05); box-shadow: 0 2px 6px rgba(0,0,0,0.10); }
 
-.layout-selector {
-  padding: 2px 4px;
-  border-radius: 999px;
-  background-color: rgba(255, 255, 255, 0.55);
-  border: 1px solid rgba(17, 24, 39, 0.08);
-  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
-}
-
-window.theme-dark .layout-selector {
-  background-color: rgba(31, 41, 55, 0.60);
-  border-color: rgba(255, 255, 255, 0.10);
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.30);
-}
+.layout-selector { /* 可选容器样式 */ }
 
 .layout-option {
   padding: 1px 8px;

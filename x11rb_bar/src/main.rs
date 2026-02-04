@@ -11,7 +11,7 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 use xbar_core::{
-    AppState, BarConfig, ShapeStyle, arm_second_timer, default_colors, draw_bar,
+    AppState, BarConfig, ShapeStyle, ThemeMode, arm_second_timer, draw_bar, tuned_colors_for_theme,
     initialize_logging, spawn_shared_eventfd_notifier,
 };
 
@@ -268,7 +268,7 @@ fn handle_x_event(
     gc: Gcontext,
     current_width: &mut u16,
     current_height: &mut u16,
-    colors: &xbar_core::Colors,
+    colors: &mut xbar_core::Colors,
     state: &mut AppState,
     font: &FontDescription,
     cfg: &BarConfig,
@@ -361,7 +361,11 @@ fn handle_x_event(
         x11rb::protocol::Event::ButtonPress(e) => {
             let px = e.event_x;
             let py = e.event_y;
+            let prev_theme = state.theme_mode;
             if state.handle_buttons(px, py, e.detail) {
+                if state.theme_mode != prev_theme {
+                    *colors = tuned_colors_for_theme(state.theme_mode);
+                }
                 redraw(
                     cairo_xcb,
                     conn,
@@ -390,7 +394,7 @@ fn drain_x_events(
     gc: Gcontext,
     current_width: &mut u16,
     current_height: &mut u16,
-    colors: &xbar_core::Colors,
+    colors: &mut xbar_core::Colors,
     state: &mut AppState,
     font: &FontDescription,
     cfg: &BarConfig,
@@ -437,21 +441,21 @@ fn main() -> Result<()> {
     // Cairo XCB 桥接对象
     let cairo_xcb = build_cairo_xcb_by_ffi(&conn, screen)?;
 
-    // 配色与界面配置
-    let colors = default_colors();
+    // 界面配置
     let cfg = BarConfig {
-        bar_height: 40,
-        padding_x: 8.0,
-        padding_y: 4.0,
-        tag_spacing: 6.0,
-        pill_hpadding: 10.0,
-        pill_radius: 5.0, // 与原 x11rb_bar 一致
+        bar_height: 38,
+        padding_x: 10.0,
+        padding_y: 6.0,
+        tag_spacing: 8.0,
+        pill_hpadding: 12.0,
+        pill_radius: 10.0,
         shape_style: ShapeStyle::Pill,
-        time_icon: "",
-        screenshot_label: " Screenshot",
-            show_audio: false,
-            show_theme_toggle: false,
-            volume_step: 5,
+        time_icon: "TIME",
+        screenshot_label: "SHOT",
+
+        show_audio: true,
+        show_theme_toggle: true,
+        volume_step: 5,
     };
 
     // 窗口 + GC
@@ -495,14 +499,19 @@ fn main() -> Result<()> {
         &ChangeWindowAttributesAux::new().background_pixmap(x11rb::NONE),
     )?;
 
-    // 字体
-    let font = FontDescription::from_string("JetBrainsMono Nerd Font 11");
+    // 字体（尽量不依赖 Nerd Font；可用 XBAR_FONT 覆盖）
+    let font_str = env::var("XBAR_FONT").unwrap_or_else(|_| "monospace 11".to_string());
+    let font = FontDescription::from_string(&font_str);
 
     // 后备缓冲
     let mut back = BackBuffer::new(&conn, screen, win, current_width, current_height)?;
 
     // 状态
     let mut state = AppState::new(shared_buffer);
+    state.theme_mode = ThemeMode::Dark;
+
+    // 配色（跟随主题）
+    let mut colors = tuned_colors_for_theme(state.theme_mode);
 
     // 首次绘制
     redraw(
@@ -644,7 +653,7 @@ fn main() -> Result<()> {
                         gc,
                         &mut current_width,
                         &mut current_height,
-                        &colors,
+                        &mut colors,
                         &mut state,
                         &font,
                         &cfg,
