@@ -83,7 +83,7 @@ once_cell.workspace = true
 rand.workspace = true
 xkbcommon = "0.9.0"
 bitflags = "2.9.4"
-smithay = { git = "https://github.com/Smithay/smithay.git", branch = "master", default-features = false, features = ["use_system_lib", "wayland-backend", "wayland_frontend"] }
+smithay = { git = "https://github.com/Smithay/smithay.git", rev = "b252c0fa644222be1234904542ff1773cbfefc14", default-features = false, features = ["use_system_lib", "wayland-backend", "wayland_frontend"] }
 calloop = { version = "0.14.3", features = ["signals"] }
 winit = "0.30.12"
 crossbeam-channel = "0.5.15"
