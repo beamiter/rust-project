@@ -13,6 +13,12 @@ async fn main() -> eframe::Result<()> {
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
+    // Optional: enable transparent window (requires compositor)
+    // Set EGUI_BAR_TRANSPARENT=1
+    let transparent = env::var("EGUI_BAR_TRANSPARENT")
+        .ok()
+        .is_some_and(|v| v == "1" || v.eq_ignore_ascii_case("true"));
+
     // Initialize logging
     if let Err(e) = initialize_logging("egui_bar", &shared_path) {
         eprintln!("Failed to initialize logging: {}", e);
@@ -28,7 +34,7 @@ async fn main() -> eframe::Result<()> {
             .with_min_inner_size([480.0, 40.])
             .with_decorations(false)
             .with_resizable(true)
-            .with_transparent(false),
+            .with_transparent(transparent),
         vsync: true,
         ..Default::default()
     };

@@ -7,6 +7,7 @@ use egui_plot::{Line, Plot, PlotPoints};
 use log::{debug, error, info, warn};
 use shared_structures::{CommandType, SharedCommand, SharedMessage, SharedRingBuffer};
 use std::collections::BTreeMap;
+use std::env;
 use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -31,6 +32,16 @@ pub mod ui {
 #[allow(dead_code)]
 pub mod colors {
     use super::Color32;
+
+    // Core UI palette (dark)
+    pub const BG: Color32 = Color32::from_rgb(0x0F, 0x13, 0x1A);
+    pub const BG_ELEVATED: Color32 = Color32::from_rgb(0x14, 0x1A, 0x24);
+    pub const BG_HOVER: Color32 = Color32::from_rgb(0x1C, 0x24, 0x31);
+    pub const BG_ACTIVE: Color32 = Color32::from_rgb(0x23, 0x2D, 0x3D);
+
+    pub const STROKE_SUBTLE: Color32 = Color32::from_rgb(0x2A, 0x34, 0x45);
+    pub const TEXT: Color32 = Color32::from_rgb(0xE9, 0xEE, 0xF5);
+    pub const TEXT_SUBTLE: Color32 = Color32::from_rgb(0xA8, 0xB3, 0xC3);
 
     // Primary colors
     pub const RED: Color32 = Color32::from_rgb(255, 99, 71);
@@ -340,9 +351,77 @@ pub struct EguiBarApp {
 }
 
 impl EguiBarApp {
+    fn apply_theme(ctx: &egui::Context) {
+        // Default to dark theme for a bar-style UI; allow override via env.
+        // Values: EGUI_BAR_THEME=dark|light
+        let theme = env::var("EGUI_BAR_THEME").unwrap_or_else(|_| "dark".to_string());
+
+        let mut style = (*ctx.style()).clone();
+        let mut visuals = if theme.eq_ignore_ascii_case("light") {
+            egui::Visuals::light()
+        } else {
+            egui::Visuals::dark()
+        };
+
+        // Make the UI feel more "app-like".
+        visuals.window_corner_radius = egui::CornerRadius::same(10);
+        visuals.menu_corner_radius = egui::CornerRadius::same(10);
+        visuals.widgets.inactive.corner_radius = egui::CornerRadius::same(8);
+        visuals.widgets.hovered.corner_radius = egui::CornerRadius::same(8);
+        visuals.widgets.active.corner_radius = egui::CornerRadius::same(8);
+        visuals.widgets.open.corner_radius = egui::CornerRadius::same(8);
+
+        // Dark bar-friendly palette.
+        if !theme.eq_ignore_ascii_case("light") {
+            visuals.panel_fill = colors::BG;
+            visuals.window_fill = colors::BG_ELEVATED;
+            visuals.override_text_color = Some(colors::TEXT);
+
+            visuals.widgets.noninteractive.bg_fill = colors::BG;
+            visuals.widgets.noninteractive.fg_stroke.color = colors::TEXT;
+
+            visuals.widgets.inactive.bg_fill = colors::BG_ELEVATED;
+            visuals.widgets.inactive.bg_stroke.color = colors::STROKE_SUBTLE;
+            visuals.widgets.inactive.fg_stroke.color = colors::TEXT;
+
+            visuals.widgets.hovered.bg_fill = colors::BG_HOVER;
+            visuals.widgets.hovered.bg_stroke.color = colors::STROKE_SUBTLE;
+            visuals.widgets.hovered.fg_stroke.color = colors::TEXT;
+
+            visuals.widgets.active.bg_fill = colors::BG_ACTIVE;
+            visuals.widgets.active.bg_stroke.color = colors::STROKE_SUBTLE;
+            visuals.widgets.active.fg_stroke.color = colors::TEXT;
+
+            visuals.widgets.open.bg_fill = colors::BG_ELEVATED;
+            visuals.widgets.open.bg_stroke.color = colors::STROKE_SUBTLE;
+            visuals.widgets.open.fg_stroke.color = colors::TEXT;
+
+            visuals.selection.bg_fill = colors::ACCENT_PRIMARY.gamma_multiply(0.35);
+            visuals.selection.stroke.color = colors::ACCENT_PRIMARY;
+        }
+
+        style.visuals = visuals;
+
+        // Spacing/padding for a cleaner layout.
+        // The bar runs in a very short viewport (~40px), so keep vertical metrics tight.
+        style.spacing.item_spacing = egui::vec2(10.0, 0.0);
+        style.spacing.button_padding = egui::vec2(10.0, 3.0);
+        style.spacing.interact_size = egui::vec2(34.0, 26.0);
+        style.spacing.menu_margin = Margin::symmetric(10, 8);
+        style.spacing.window_margin = Margin::symmetric(12, 10);
+        style.interaction.tooltip_delay = 0.25;
+
+        ctx.set_style(style);
+    }
+
+    fn with_alpha(color: Color32, alpha: u8) -> Color32 {
+        Color32::from_rgba_unmultiplied(color.r(), color.g(), color.b(), alpha)
+    }
+
     /// Create new application instance
     pub fn new(cc: &eframe::CreationContext<'_>, shared_path: String) -> Result<Self> {
-        cc.egui_ctx.set_theme(egui::Theme::Light);
+        // Styling: apply first so later text style overrides inherit it.
+        Self::apply_theme(&cc.egui_ctx);
         let state = AppState::new();
         let shared_state = Arc::new(Mutex::new(SharedAppState::new()));
 
@@ -597,8 +676,8 @@ impl EguiBarApp {
             .into();
 
             style.text_styles = text_styles;
-            style.spacing.window_margin = Margin::ZERO;
-            style.spacing.button_padding = Vec2::new(2.0, 1.0);
+            // Window/popup margins are now handled by theme; keep only bar-specific tightness
+            // by configuring the main panel frame.
         });
     }
 
@@ -691,37 +770,22 @@ impl EguiBarApp {
                 if tag_status.is_urg {
                     tooltip.push_str(" (urgent)");
                     is_urg = true;
-                    button_bg_color = Color32::RED;
+                    button_bg_color = Self::with_alpha(colors::RED, 90);
                 } else if tag_status.is_filled {
                     is_filled = true;
                     tooltip.push_str(" (has windows)");
-                    button_bg_color = Color32::from_rgba_premultiplied(
-                        tag_color.r(),
-                        tag_color.g(),
-                        tag_color.b(),
-                        255,
-                    );
+                    button_bg_color = Self::with_alpha(tag_color, 55);
                 } else if tag_status.is_selected {
                     tooltip.push_str(" (current)");
                     is_selected = true;
-                    button_bg_color = Color32::from_rgba_premultiplied(
-                        tag_color.r(),
-                        tag_color.g(),
-                        tag_color.b(),
-                        210,
-                    );
+                    button_bg_color = Self::with_alpha(tag_color, 85);
                 } else if tag_status.is_occ {
-                    button_bg_color = Color32::from_rgba_premultiplied(
-                        tag_color.r(),
-                        tag_color.g(),
-                        tag_color.b(),
-                        180,
-                    );
+                    button_bg_color = Self::with_alpha(tag_color, 40);
                 }
             }
 
             let button = Button::new(rich_text)
-                .min_size(Vec2::new(36.0, 24.0))
+                .min_size(Vec2::new(34.0, 26.0))
                 .fill(button_bg_color);
 
             let label_response = ui.add(button);
@@ -756,6 +820,7 @@ impl EguiBarApp {
             self.handle_tag_interactions(&label_response, tag_bit, index);
 
             // Hover effects and tooltips
+            let label_response = label_response.on_hover_text(tooltip);
             if label_response.hovered() {
                 ui.painter().rect_stroke(
                     rect.expand(1.0),
@@ -763,7 +828,6 @@ impl EguiBarApp {
                     Stroke::new(bold_thickness, tag_color),
                     StrokeKind::Inside,
                 );
-                label_response.on_hover_text(tooltip);
             }
         }
 
@@ -1493,8 +1557,9 @@ impl eframe::App for EguiBarApp {
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::default()
-                    .fill(Color32::WHITE)
-                    .inner_margin(egui::Margin::symmetric(8, 4)),
+                    .fill(colors::BG)
+                    .stroke(Stroke::new(1.0, colors::STROKE_SUBTLE))
+                    .inner_margin(egui::Margin::symmetric(10, 2)),
             )
             .show(ctx, |ui| {
                 self.draw_main_ui(ui);
