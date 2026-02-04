@@ -1,27 +1,174 @@
 window {
-  background-color: rgba(255, 255, 255, 0.9);
+  background-color: rgba(248, 249, 251, 0.92);
+}
+
+/* ==================== Theme (opt-in) ==================== */
+/* 在代码里通过 GTK_BAR_THEME=dark 添加 theme-dark class */
+window.theme-dark {
+  background-color: rgba(17, 24, 39, 0.92);
+}
+
+window.theme-dark .bar {
+  border: 1px solid rgba(255, 255, 255, 0.10);
+  background-color: rgba(31, 41, 55, 0.72);
+  box-shadow: 0 8px 22px rgba(0, 0, 0, 0.35);
+}
+
+window.theme-dark .metric-label {
+  background-color: rgba(31, 41, 55, 0.80);
+  color: rgba(255, 255, 255, 0.92);
+  border-color: rgba(255, 255, 255, 0.12);
+}
+
+/* 暗色主题下：metric level 颜色也要暗色友好（否则 level-* 会覆盖回浅色底） */
+window.theme-dark .metric-label.level-ok {
+  background-color: rgba(24, 121, 78, 0.28);
+  color: rgba(209, 250, 229, 0.95);
+  border-color: rgba(24, 121, 78, 0.45);
+}
+window.theme-dark .metric-label.level-warn {
+  background-color: rgba(138, 93, 0, 0.28);
+  color: rgba(255, 237, 213, 0.95);
+  border-color: rgba(138, 93, 0, 0.45);
+}
+window.theme-dark .metric-label.level-high {
+  background-color: rgba(159, 58, 13, 0.28);
+  color: rgba(255, 228, 230, 0.92);
+  border-color: rgba(159, 58, 13, 0.45);
+}
+window.theme-dark .metric-label.level-crit {
+  background-color: rgba(168, 7, 26, 0.30);
+  color: rgba(255, 228, 230, 0.95);
+  border-color: rgba(168, 7, 26, 0.55);
+  box-shadow: 0 1px 8px rgba(0, 0, 0, 0.35);
+}
+
+/* 暗色主题下：tab 的空态/占用态对比度提升 */
+window.theme-dark .tab-button {
+  border-color: rgba(255, 255, 255, 0.10);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.35);
+}
+window.theme-dark .tab-button.empty {
+  background-color: rgba(31, 41, 55, 0.70) !important;
+  border-color: rgba(255, 255, 255, 0.12) !important;
+  color: rgba(255, 255, 255, 0.92) !important;
+}
+window.theme-dark .tab-button.empty:hover {
+  background-color: rgba(55, 65, 81, 0.78) !important;
+  border-color: rgba(255, 255, 255, 0.16) !important;
+}
+window.theme-dark .tab-button.occupied {
+  /* occupied 多数是半透明色块，默认 #333 在暗底上偏灰；用浅色更清晰 */
+  color: rgba(255, 255, 255, 0.92) !important;
+}
+
+/* 暗色主题下：右侧 pill 更融入背景 */
+window.theme-dark .time-button {
+  background-color: rgba(31, 41, 55, 0.72);
+  color: rgba(255, 255, 255, 0.92);
+}
+window.theme-dark .monitor-badge {
+  background-color: rgba(31, 41, 55, 0.60);
+}
+
+window.theme-dark .time-button,
+window.theme-dark .screenshot-button,
+window.theme-dark .layout-toggle,
+window.theme-dark .layout-option,
+window.theme-dark .monitor-badge {
+  border-color: rgba(255, 255, 255, 0.14);
+}
+
+/* ==================== Bar 容器 ==================== */
+.bar {
+  padding: 2px 4px;
+  border-radius: 12px;
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  background-color: rgba(255, 255, 255, 0.72);
+  box-shadow: 0 6px 18px rgba(17, 24, 39, 0.10);
+}
+
+.tab-box {
+  /* 让左侧区域更“成组”一些 */
+}
+
+.right-box {
+  /* 预留：右侧区域可单独调优 */
+}
+
+/* ==================== Reduced Motion（可选） ==================== */
+/* 通过给 window 添加 reduce-motion class 来禁用过渡/变换，以降低 UI 带来的 CPU 占用。
+ * 启用方式：GTK_BAR_REDUCE_MOTION=1
+ */
+window.reduce-motion .tab-button,
+window.reduce-motion .metric-label,
+window.reduce-motion .time-button,
+window.reduce-motion .screenshot-button,
+window.reduce-motion .layout-toggle,
+window.reduce-motion .layout-option {
+  transition: none;
+}
+window.reduce-motion .tab-button:hover {
+  transform: none;
 }
 
 /* ==================== 标签按钮基础样式（保留你的风格） ==================== */
 .tab-button {
   margin: 0px 2px;
   padding: 0px;
-  border-radius: 6px;
+  border-radius: 8px;
   font-size: 20px;
-  border: 1px solid transparent;
+  border: 1px solid rgba(17, 24, 39, 0.08);
   background-image: none;
   color: #333;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.08);
 }
 
 .tab-button:hover {
-  transform: scale(1.02);
-  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+  /* 避免 hover 缩放带来的重绘/抖动：改成边框和阴影的轻微变化 */
+  transform: none;
+  box-shadow: 0 2px 6px rgba(17, 24, 39, 0.12);
 }
 
 .tab-button,
 .tab-button:hover {
-  transition: transform 0.2s ease, box-shadow 0.2s ease;
+  transition: box-shadow 0.18s ease;
+}
+
+/* ==================== 通用 pill 观感（按钮） ==================== */
+.time-button,
+.screenshot-button,
+.theme-toggle,
+.layout-toggle,
+.layout-option {
+  border-radius: 999px;
+  border: 1px solid rgba(17, 24, 39, 0.10);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.08);
+}
+
+.time-button:hover,
+.screenshot-button:hover,
+.theme-toggle:hover,
+.layout-toggle:hover,
+.layout-option:hover {
+  box-shadow: 0 2px 6px rgba(17, 24, 39, 0.12);
+}
+
+/* Theme toggle */
+.theme-toggle {
+  margin: 0 2px;
+  padding: 2px 10px;
+  font-weight: 700;
+  font-size: 12px;
+  background-image: none;
+  background-color: rgba(255, 255, 255, 0.80);
+  color: #111827;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+window.theme-dark .theme-toggle {
+  background-color: rgba(31, 41, 55, 0.72);
+  color: rgba(255, 255, 255, 0.92);
 }
 
 /* ==================== 各索引的配色（保持原有定义） ==================== */
@@ -86,12 +233,16 @@ window {
   border: 2px solid #dc3545 !important;
   color: white !important;
   font-weight: bold !important;
-  animation: urgent-blink 1s ease-in-out infinite alternate;
   box-shadow: 0 2px 8px rgba(220, 53, 69, 0.5) !important;
+  /* 避免持续重绘：urgent 不使用动画/变换 */
+  animation: none;
+  transition: none;
+  transform: none;
 }
-@keyframes urgent-blink {
-  0% { background-color: rgba(220, 53, 69, 0.8); box-shadow: 0 1px 3px rgba(220, 53, 69, 0.5); }
-  100% { background-color: rgba(220, 53, 69, 1); box-shadow: 0 2px 8px rgba(220, 53, 69, 0.8); transform: scale(1.04); }
+
+.tab-button.urgent:hover {
+  /* 覆盖基础 hover 的 scale，保持 urgent 稳定 */
+  transform: none;
 }
 
 /* ==================== Metric 胶囊标签 ==================== */
@@ -101,7 +252,7 @@ window {
   font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.2px;
-  border: 1px solid rgba(0,0,0,0.06);
+  border: 1px solid rgba(17, 24, 39, 0.08);
   background-color: #f5f7fa;
   color: #333;
   transition: background-color 180ms ease, color 180ms ease, box-shadow 180ms ease;
@@ -111,16 +262,25 @@ window {
 .metric-label.level-warn { background-color: #fff8e6; color: #8a5d00; border-color: #ffeab8; }
 .metric-label.level-high { background-color: #fff2e8; color: #9f3a0d; border-color: #ffd3bf; }
 .metric-label.level-crit { background-color: #ffeaea; color: #a8071a; border-color: #ffc1c1; box-shadow: 0 1px 6px rgba(168, 7, 26, 0.12); }
-.metric-label:hover { box-shadow: 0 2px 6px rgba(0,0,0,0.30); }
+.metric-label:hover { box-shadow: 0 2px 6px rgba(17, 24, 39, 0.12); }
+
+/* ==================== 监视器徽章 ==================== */
+.monitor-badge {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.70);
+  border: 1px solid rgba(17, 24, 39, 0.10);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.08);
+}
 
 /* Time 胶囊样式 */
 .time-button {
   margin: 0 2px;
   padding: 2px 12px;
   border-radius: 999px;
-  border: 1px solid #e5e7eb;
-  background-color: #BABC7F;
-  color: #374151;
+  border: 1px solid rgba(17, 24, 39, 0.10);
+  background-color: rgba(255, 255, 255, 0.80);
+  color: #111827;
   font-weight: 600;
   font-size: 12px;
   letter-spacing: 0.2px;
@@ -128,8 +288,8 @@ window {
   transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
   box-shadow: 0 1px 2px rgba(0,0,0,0.05);
 }
-.time-button:hover { background-color: #f3f4f6; border-color: #d1d5db; box-shadow: 0 2px 6px rgba(0,0,0,0.08); color: #111827; }
-.time-button:active { background-color: #e5e7eb; border-color: #cfd3da; box-shadow: inset 0 1px 2px rgba(0,0,0,0.12); }
+.time-button:hover { background-color: rgba(243, 244, 246, 0.95); border-color: rgba(17, 24, 39, 0.12); box-shadow: 0 2px 6px rgba(17, 24, 39, 0.12); color: #111827; }
+.time-button:active { background-color: rgba(229, 231, 235, 0.95); border-color: rgba(17, 24, 39, 0.14); box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.14); }
 .time-button:focus-visible { outline: none; border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(59,130,246,0.25); }
 
 /* Screenshot 胶囊样式 */
@@ -166,7 +326,19 @@ window {
 .layout-toggle.closed { background-color: rgba(211,84,0,0.90);  border-color: #d35400; } /* 橙色 */
 .layout-toggle:hover { filter: brightness(1.05); box-shadow: 0 2px 6px rgba(0,0,0,0.10); }
 
-.layout-selector { /* 可选容器样式 */ }
+.layout-selector {
+  padding: 2px 4px;
+  border-radius: 999px;
+  background-color: rgba(255, 255, 255, 0.55);
+  border: 1px solid rgba(17, 24, 39, 0.08);
+  box-shadow: 0 1px 2px rgba(17, 24, 39, 0.06);
+}
+
+window.theme-dark .layout-selector {
+  background-color: rgba(31, 41, 55, 0.60);
+  border-color: rgba(255, 255, 255, 0.10);
+  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.30);
+}
 
 .layout-option {
   padding: 1px 8px;

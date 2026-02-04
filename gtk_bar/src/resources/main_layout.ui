@@ -16,10 +16,12 @@
         <property name="margin-top">3</property>
         <property name="orientation">horizontal</property>
         <property name="spacing">3</property>
+        <style><class name="bar"/></style>
         <child>
           <object class="GtkBox" id="tab_box">
             <property name="orientation">horizontal</property>
             <property name="spacing">3</property>
+            <style><class name="tab-box"/></style>
 
             <!-- 9 个工作区按钮 -->
             <child>
@@ -164,6 +166,7 @@
             <property name="halign">end</property>
             <property name="orientation">horizontal</property>
             <property name="spacing">3</property>
+            <style><class name="right-box"/></style>
 
             <child>
               <object class="GtkLabel" id="cpu_label">
@@ -178,6 +181,17 @@
                 <property name="width-request">60</property>
               </object>
             </child>
+
+            <!-- Theme 切换（默认深色） -->
+            <child>
+              <object class="GtkButton" id="theme_toggle">
+                <property name="height-request">32</property>
+                <property name="label">🌙</property>
+                <property name="width-request">44</property>
+                <style><class name="theme-toggle"/></style>
+              </object>
+            </child>
+
             <child>
               <object class="GtkButton" id="screenshot_button">
                 <property name="height-request">32</property>
@@ -200,6 +214,7 @@
                 <property name="height-request">32</property>
                 <property name="label">🥇</property>
                 <property name="width-request">30</property>
+                <style><class name="monitor-badge"/></style>
               </object>
             </child>
           </object>

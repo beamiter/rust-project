@@ -30,6 +30,8 @@ enum AppEvent {
 const CPU_REDRAW_THRESHOLD: f64 = 0.01; // 1%
 const MEM_REDRAW_THRESHOLD: f64 = 0.005; // 0.5%
 
+const METRIC_LEVEL_CLASSES: [&str; 4] = ["level-ok", "level-warn", "level-high", "level-crit"];
+
 // 胶囊颜色阈值（占用比例）
 const LEVEL_WARN: f64 = 0.50; // 50%
 const LEVEL_HIGH: f64 = 0.75; // 75%
@@ -61,15 +63,22 @@ struct AppState {
     last_cpu_usage: f64,
     last_mem_fraction: f64,
 
+    // 上一帧胶囊的等级（0..=3），255 表示未初始化
+    last_cpu_level: u8,
+    last_mem_level: u8,
+
     // 上一帧每个 tab 的 class 掩码，用于差量更新
     last_class_masks: Vec<u8>,
 
     // 最近消息时间戳
     last_message_ts: u128,
+
+    // 主题：true=dark, false=light
+    theme_dark: bool,
 }
 
 impl AppState {
-    fn new() -> Self {
+    fn new(theme_dark: bool) -> Self {
         Self {
             active_tab: 0,
             layout_symbol: " ? ".to_string(),
@@ -81,8 +90,11 @@ impl AppState {
             system_monitor: SystemMonitor::new(10),
             last_cpu_usage: 0.0,
             last_mem_fraction: 0.0,
+            last_cpu_level: 255,
+            last_mem_level: 255,
             last_class_masks: Vec::new(),
             last_message_ts: 0,
+            theme_dark,
         }
     }
 }
@@ -90,27 +102,38 @@ impl AppState {
 type SharedAppState = Rc<RefCell<AppState>>;
 
 // ========= Metric 工具 =========
-fn usage_to_level_class(ratio: f64) -> &'static str {
+fn usage_to_level_idx(ratio: f64) -> u8 {
     if ratio >= LEVEL_CRIT {
-        "level-crit"
+        3
     } else if ratio >= LEVEL_HIGH {
-        "level-high"
+        2
     } else if ratio >= LEVEL_WARN {
-        "level-warn"
+        1
     } else {
-        "level-ok"
+        0
     }
 }
 
 // 统一更新“胶囊”标签：文本 + 颜色 class
-fn set_metric_capsule(label: &Label, title: &str, ratio: f64) {
+fn set_metric_capsule(label: &Label, title: &str, ratio: f64, prev_level: u8) -> u8 {
     let percent = (ratio * 100.0).round().clamp(0.0, 100.0) as i32;
     label.set_text(&format!("{} {}%", title, percent));
 
-    for cls in ["level-ok", "level-warn", "level-high", "level-crit"] {
-        label.remove_css_class(cls);
+    let new_level = usage_to_level_idx(ratio);
+    if prev_level == new_level {
+        return new_level;
     }
-    label.add_css_class(usage_to_level_class(ratio));
+
+    if prev_level < 4 {
+        label.remove_css_class(METRIC_LEVEL_CLASSES[prev_level as usize]);
+    } else {
+        // 未初始化或脏状态：兜底清理一次
+        for cls in METRIC_LEVEL_CLASSES {
+            label.remove_css_class(cls);
+        }
+    }
+    label.add_css_class(METRIC_LEVEL_CLASSES[new_level as usize]);
+    new_level
 }
 
 // ========= 主体应用 =========
@@ -123,6 +146,8 @@ struct TabBarApp {
     monitor_label: Label,
     memory_label: Label,
     cpu_label: Label,
+
+    theme_toggle: Button,
 
     // 新增：布局开关 + 展开选项
     layout_toggle: Button,
@@ -153,6 +178,15 @@ impl TabBarApp {
             .expect("Failed to get main_window from builder");
         window.set_application(Some(app));
 
+        // 可选：减少动画/过渡以降低 CPU 占用（默认不启用）
+        // 用法：GTK_BAR_REDUCE_MOTION=1 nix develop -c cargo run -p gtk_bar -- <shared_path>
+        let reduce_motion = env::var("GTK_BAR_REDUCE_MOTION")
+            .map(|v| v != "0")
+            .unwrap_or(false);
+        if reduce_motion {
+            window.add_css_class("reduce-motion");
+        }
+
         // 标签按钮
         let mut tab_buttons = Vec::new();
         for i in 0..9 {
@@ -177,6 +211,10 @@ impl TabBarApp {
             .object("cpu_label")
             .expect("Failed to get cpu_label from builder");
 
+        let theme_toggle: Button = builder
+            .object("theme_toggle")
+            .expect("Failed to get theme_toggle from builder");
+
         // 布局开关 + 选项
         let layout_toggle: Button = builder
             .object("layout_toggle")
@@ -184,6 +222,23 @@ impl TabBarApp {
         let layout_revealer: Revealer = builder
             .object("layout_revealer")
             .expect("Failed to get layout_revealer");
+
+        // reduce-motion 时关掉 Revealer 的 slide 动画（避免额外重绘/合成）
+        if reduce_motion {
+            layout_revealer.set_transition_duration(0);
+            layout_revealer.set_transition_type(gtk4::RevealerTransitionType::None);
+        }
+
+        // 主题：默认 dark，可用 GTK_BAR_THEME=light|dark 覆盖
+        let theme_dark = match env::var("GTK_BAR_THEME").as_deref() {
+            Ok("light") => false,
+            Ok("dark") => true,
+            _ => true,
+        };
+        window.remove_css_class("theme-dark");
+        window.remove_css_class("theme-light");
+        window.add_css_class(if theme_dark { "theme-dark" } else { "theme-light" });
+        theme_toggle.set_label(if theme_dark { "🌙" } else { "☀" });
         let layout_btn_tiled: Button = builder
             .object("layout_option_tiled")
             .expect("Failed to get layout_option_tiled");
@@ -195,7 +250,7 @@ impl TabBarApp {
             .expect("Failed to get layout_option_monocle");
 
         // 状态
-        let state: SharedAppState = Rc::new(RefCell::new(AppState::new()));
+        let state: SharedAppState = Rc::new(RefCell::new(AppState::new(theme_dark)));
 
         // 样式
         Self::apply_styles();
@@ -219,6 +274,7 @@ impl TabBarApp {
             monitor_label,
             memory_label,
             cpu_label,
+            theme_toggle,
             layout_toggle,
             layout_revealer,
             layout_btn_tiled,
@@ -265,35 +321,45 @@ impl TabBarApp {
             glib::timeout_add_seconds_local(2, move || {
                 if let Ok(mut st) = app_clone.state.try_borrow_mut() {
                     st.system_monitor.update_if_needed();
-                    if let Some(snapshot_ref) = st.system_monitor.get_snapshot() {
-                        let snapshot = snapshot_ref.clone();
-                        let total = snapshot.memory_available + snapshot.memory_used;
-                        if total > 0 {
-                            // 内存占用比例
-                            let mem_ratio =
-                                (snapshot.memory_used as f64 / total as f64).clamp(0.0, 1.0);
-                            let prev_mem = st.last_mem_fraction;
-                            let mem_level_changed =
-                                usage_to_level_class(mem_ratio) != usage_to_level_class(prev_mem);
-                            if (mem_ratio - prev_mem).abs() > MEM_REDRAW_THRESHOLD
-                                || mem_level_changed
-                            {
-                                st.last_mem_fraction = mem_ratio;
-                                set_metric_capsule(&app_clone.memory_label, "MEM", mem_ratio);
-                            }
+                    let Some((memory_available, memory_used, cpu_average)) = st
+                        .system_monitor
+                        .get_snapshot()
+                        .map(|s| (s.memory_available, s.memory_used, s.cpu_average))
+                    else {
+                        return ControlFlow::Continue;
+                    };
 
-                            // CPU 占用比例（0~1）
-                            let cpu_ratio = (snapshot.cpu_average as f64 / 100.0).clamp(0.0, 1.0);
-                            let prev_cpu = st.last_cpu_usage;
-                            let cpu_level_changed =
-                                usage_to_level_class(cpu_ratio) != usage_to_level_class(prev_cpu);
-                            if (cpu_ratio - prev_cpu).abs() > CPU_REDRAW_THRESHOLD
-                                || cpu_level_changed
-                            {
-                                st.last_cpu_usage = cpu_ratio;
-                                set_metric_capsule(&app_clone.cpu_label, "CPU", cpu_ratio);
-                            }
-                        }
+                    let total = memory_available + memory_used;
+                    if total == 0 {
+                        return ControlFlow::Continue;
+                    }
+
+                    // 内存占用比例
+                    let mem_ratio = (memory_used as f64 / total as f64).clamp(0.0, 1.0);
+                    let prev_mem = st.last_mem_fraction;
+                    let mem_level_changed = usage_to_level_idx(mem_ratio) != st.last_mem_level;
+                    if (mem_ratio - prev_mem).abs() > MEM_REDRAW_THRESHOLD || mem_level_changed {
+                        st.last_mem_fraction = mem_ratio;
+                        st.last_mem_level = set_metric_capsule(
+                            &app_clone.memory_label,
+                            "MEM",
+                            mem_ratio,
+                            st.last_mem_level,
+                        );
+                    }
+
+                    // CPU 占用比例（0~1）
+                    let cpu_ratio = (cpu_average as f64 / 100.0).clamp(0.0, 1.0);
+                    let prev_cpu = st.last_cpu_usage;
+                    let cpu_level_changed = usage_to_level_idx(cpu_ratio) != st.last_cpu_level;
+                    if (cpu_ratio - prev_cpu).abs() > CPU_REDRAW_THRESHOLD || cpu_level_changed {
+                        st.last_cpu_usage = cpu_ratio;
+                        st.last_cpu_level = set_metric_capsule(
+                            &app_clone.cpu_label,
+                            "CPU",
+                            cpu_ratio,
+                            st.last_cpu_level,
+                        );
                     }
                 }
                 ControlFlow::Continue
@@ -367,6 +433,21 @@ impl TabBarApp {
             let app = app.clone();
             move |_| {
                 Self::handle_toggle_seconds(app.clone());
+            }
+        });
+
+        // 主题切换
+        app.theme_toggle.connect_clicked({
+            let app = app.clone();
+            move |_| {
+                if let Ok(mut st) = app.state.try_borrow_mut() {
+                    st.theme_dark = !st.theme_dark;
+                    app.window.remove_css_class("theme-dark");
+                    app.window.remove_css_class("theme-light");
+                    app.window
+                        .add_css_class(if st.theme_dark { "theme-dark" } else { "theme-light" });
+                    app.theme_toggle.set_label(if st.theme_dark { "🌙" } else { "☀" });
+                }
             }
         });
 
@@ -472,6 +553,14 @@ impl TabBarApp {
                 st.last_class_masks = vec![0u8; self.tab_buttons.len()];
             }
 
+            const CLASS_BITS: &[(u8, &str)] = &[
+                (CLS_SELECTED, "selected"),
+                (CLS_OCCUPIED, "occupied"),
+                (CLS_FILLED, "filled"),
+                (CLS_URGENT, "urgent"),
+                (CLS_EMPTY, "empty"),
+            ];
+
             for (i, button) in self.tab_buttons.iter().enumerate() {
                 let tag_opt = st.tag_status_vec.get(i);
                 let desired_mask = Self::classes_mask_for(tag_opt, i == st.active_tab);
@@ -481,25 +570,16 @@ impl TabBarApp {
                     continue;
                 }
 
-                // 移除所有相关 class
-                for c in &["selected", "occupied", "filled", "urgent", "empty"] {
-                    button.remove_css_class(c);
-                }
-                // 添加必要 class
-                if desired_mask & CLS_URGENT != 0 {
-                    button.add_css_class("urgent");
-                }
-                if desired_mask & CLS_FILLED != 0 {
-                    button.add_css_class("filled");
-                }
-                if desired_mask & CLS_SELECTED != 0 {
-                    button.add_css_class("selected");
-                }
-                if desired_mask & CLS_OCCUPIED != 0 {
-                    button.add_css_class("occupied");
-                }
-                if desired_mask & CLS_EMPTY != 0 {
-                    button.add_css_class("empty");
+                let diff = desired_mask ^ prev_mask;
+                for (bit, class_name) in CLASS_BITS {
+                    if diff & *bit == 0 {
+                        continue;
+                    }
+                    if desired_mask & *bit != 0 {
+                        button.add_css_class(class_name);
+                    } else {
+                        button.remove_css_class(class_name);
+                    }
                 }
 
                 st.last_class_masks[i] = desired_mask;
@@ -662,7 +742,7 @@ fn worker_thread(
     if let Some(shared_buffer) = shared_buffer_rc {
         let mut prev_timestamp: u128 = 0;
         while !stop_flag.load(Ordering::Relaxed) {
-            match shared_buffer.wait_for_message(Some(Duration::from_millis(2000))) {
+            match shared_buffer.wait_for_message(Some(Duration::from_millis(500))) {
                 Ok(true) => {
                     if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
                         let ts: u128 = message.timestamp.into();
