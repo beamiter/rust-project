@@ -72,6 +72,7 @@ window.theme-dark .monitor-badge {
 }
 
 window.theme-dark .time-button,
+window.theme-dark .volume-button,
 window.theme-dark .screenshot-button,
 window.theme-dark .layout-toggle,
 window.theme-dark .layout-option,
@@ -103,6 +104,7 @@ window.theme-dark .monitor-badge {
 window.reduce-motion .tab-button,
 window.reduce-motion .metric-label,
 window.reduce-motion .time-button,
+window.reduce-motion .volume-button,
 window.reduce-motion .screenshot-button,
 window.reduce-motion .layout-toggle,
 window.reduce-motion .layout-option {
@@ -137,6 +139,7 @@ window.reduce-motion .tab-button:hover {
 
 /* ==================== 通用 pill 观感（按钮） ==================== */
 .time-button,
+.volume-button,
 .screenshot-button,
 .theme-toggle,
 .layout-toggle,
@@ -147,6 +150,7 @@ window.reduce-motion .tab-button:hover {
 }
 
 .time-button:hover,
+.volume-button:hover,
 .screenshot-button:hover,
 .theme-toggle:hover,
 .layout-toggle:hover,
@@ -291,6 +295,44 @@ window.theme-dark .theme-toggle {
 .time-button:hover { background-color: rgba(243, 244, 246, 0.95); border-color: rgba(17, 24, 39, 0.12); box-shadow: 0 2px 6px rgba(17, 24, 39, 0.12); color: #111827; }
 .time-button:active { background-color: rgba(229, 231, 235, 0.95); border-color: rgba(17, 24, 39, 0.14); box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.14); }
 .time-button:focus-visible { outline: none; border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(59,130,246,0.25); }
+
+/* Volume 胶囊样式 */
+.volume-button {
+  margin: 0 2px;
+  padding: 2px 10px;
+  border-radius: 999px;
+  border: 1px solid rgba(17, 24, 39, 0.10);
+  background-color: rgba(255, 255, 255, 0.80);
+  color: #111827;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.2px;
+  background-image: none;
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+}
+.volume-button:hover { background-color: rgba(243, 244, 246, 0.95); border-color: rgba(17, 24, 39, 0.12); box-shadow: 0 2px 6px rgba(17, 24, 39, 0.12); color: #111827; }
+.volume-button:active { background-color: rgba(229, 231, 235, 0.95); border-color: rgba(17, 24, 39, 0.14); box-shadow: inset 0 1px 2px rgba(17, 24, 39, 0.14); }
+.volume-button:focus-visible { outline: none; border-color: #93c5fd; box-shadow: 0 0 0 3px rgba(59,130,246,0.25); }
+
+.volume-button.muted {
+  background-color: rgba(254, 226, 226, 0.90);
+  border-color: rgba(248, 113, 113, 0.55);
+  color: #991b1b;
+}
+
+window.theme-dark .volume-button {
+  background-color: rgba(31, 41, 55, 0.72);
+  color: rgba(255, 255, 255, 0.92);
+}
+window.theme-dark .volume-button:hover {
+  background-color: rgba(55, 65, 81, 0.80);
+}
+window.theme-dark .volume-button.muted {
+  background-color: rgba(168, 7, 26, 0.30);
+  border-color: rgba(168, 7, 26, 0.55);
+  color: rgba(255, 228, 230, 0.95);
+}
 
 /* Screenshot 胶囊样式 */
 .screenshot-button {

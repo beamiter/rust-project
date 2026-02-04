@@ -182,6 +182,16 @@
               </object>
             </child>
 
+            <!-- Volume 控制：滚轮调节音量，点击静音/取消静音 -->
+            <child>
+              <object class="GtkButton" id="volume_button">
+                <property name="height-request">32</property>
+                <property name="label">🔊 --%</property>
+                <property name="width-request">92</property>
+                <style><class name="volume-button"/></style>
+              </object>
+            </child>
+
             <!-- Theme 切换（默认深色） -->
             <child>
               <object class="GtkButton" id="theme_toggle">
