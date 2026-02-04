@@ -9,6 +9,7 @@ use log::{error, info, warn};
 use std::cell::{Cell, RefCell};
 use std::env;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
@@ -135,6 +136,8 @@ struct TabBarApp {
 
     shared_buffer_rc: Option<Arc<SharedRingBuffer>>,
 
+    stop_flag: Arc<AtomicBool>,
+
     // Cached UI-applied values for diff
     ui_last_monitor_num: Cell<u8>,
 }
@@ -156,7 +159,7 @@ impl TabBarApp {
             let button_id = format!("tab_button_{}", i);
             let button: Button = builder
                 .object(&button_id)
-                .expect(&format!("Failed to get {} from builder", button_id));
+                .unwrap_or_else(|| panic!("Failed to get {} from builder", button_id));
             tab_buttons.push(button);
         }
 
@@ -199,11 +202,13 @@ impl TabBarApp {
 
         // 异步事件通道（worker -> 主线程）
         let (ui_sender, ui_receiver) = async_channel::unbounded::<AppEvent>();
+        let stop_flag = Arc::new(AtomicBool::new(false));
         let shared_buffer_rc =
             SharedRingBuffer::create_shared_ring_buffer_aux(&shared_path).map(Arc::new);
         let shared_buffer_rc_clone = shared_buffer_rc.clone();
+        let stop_flag_clone = stop_flag.clone();
         thread::spawn(move || {
-            worker_thread(shared_buffer_rc_clone, ui_sender);
+            worker_thread(shared_buffer_rc_clone, ui_sender, stop_flag_clone);
         });
 
         let app_instance = Rc::new(Self {
@@ -221,6 +226,7 @@ impl TabBarApp {
             layout_btn_monocle,
             state,
             shared_buffer_rc,
+            stop_flag,
             ui_last_monitor_num: Cell::new(255),
         });
 
@@ -411,10 +417,10 @@ impl TabBarApp {
         info!("Tab selected: {}", index);
         if let Ok(mut st) = app.state.try_borrow_mut() {
             st.active_tab = index;
-            if let Some(command) = Self::build_tag_command(&st, true) {
-                if let Some(shared_buffer) = app.shared_buffer_rc.as_ref() {
-                    let _ = shared_buffer.send_command(command);
-                }
+            if let Some(command) = Self::build_tag_command(&st, true)
+                && let Some(shared_buffer) = app.shared_buffer_rc.as_ref()
+            {
+                let _ = shared_buffer.send_command(command);
             }
         }
         app.update_tab_styles();
@@ -580,12 +586,10 @@ impl TabBarApp {
             } else {
                 CLS_EMPTY
             }
+        } else if is_active_index {
+            CLS_SELECTED
         } else {
-            if is_active_index {
-                CLS_SELECTED
-            } else {
-                CLS_EMPTY
-            }
+            CLS_EMPTY
         }
     }
 
@@ -618,12 +622,13 @@ impl TabBarApp {
             unsafe {
                 if let Some(x11_display) = display.downcast_ref::<gdk4_x11::X11Display>() {
                     let xdisplay = x11_display.xdisplay();
-                    if let Some(surface) = self.window.surface() {
-                        if let Some(x11_surface) = surface.downcast_ref::<gdk4_x11::X11Surface>() {
-                            let xwindow = x11_surface.xid();
-                            XMoveWindow(xdisplay as *mut _, xwindow, expected_x, expected_y);
-                            XFlush(xdisplay as *mut _);
-                        }
+                    if let Some(surface) = self.window.surface()
+                        && let Some(x11_surface) =
+                            surface.downcast_ref::<gdk4_x11::X11Surface>()
+                    {
+                        let xwindow = x11_surface.xid();
+                        XMoveWindow(xdisplay as *mut _, xwindow, expected_x, expected_y);
+                        XFlush(xdisplay as *mut _);
                     }
                 }
             }
@@ -652,20 +657,21 @@ impl TabBarApp {
 fn worker_thread(
     shared_buffer_rc: Option<Arc<SharedRingBuffer>>,
     ui_sender: async_channel::Sender<AppEvent>,
+    stop_flag: Arc<AtomicBool>,
 ) {
     if let Some(shared_buffer) = shared_buffer_rc {
         let mut prev_timestamp: u128 = 0;
-        loop {
+        while !stop_flag.load(Ordering::Relaxed) {
             match shared_buffer.wait_for_message(Some(Duration::from_millis(2000))) {
                 Ok(true) => {
                     if let Ok(Some(message)) = shared_buffer.try_read_latest_message() {
                         let ts: u128 = message.timestamp.into();
                         if ts != prev_timestamp {
                             prev_timestamp = ts;
-                            if let Err(e) = ui_sender.try_send(AppEvent::SharedMessage(message)) {
-                                if !e.is_full() {
-                                    warn!("Failed to send SharedMessage to UI: {}", e);
-                                }
+                            if let Err(e) = ui_sender.try_send(AppEvent::SharedMessage(message))
+                                && !e.is_full()
+                            {
+                                warn!("Failed to send SharedMessage to UI: {}", e);
                             }
                         }
                     }
@@ -706,10 +712,21 @@ fn main() -> glib::ExitCode {
         let app_instance = TabBarApp::new(app, shared_path_clone.clone());
         app_instance.show();
 
-        let app_weak = Rc::downgrade(&app_instance);
-        app.connect_shutdown(move |_| {
-            let _ = app_weak.upgrade(); // Drop 即触发 worker 停止
-        });
+        // Ensure the worker thread exits quickly on close/shutdown.
+        {
+            let stop = app_instance.stop_flag.clone();
+            app_instance.window.connect_close_request(move |_| {
+                stop.store(true, Ordering::Relaxed);
+                glib::Propagation::Proceed
+            });
+        }
+
+        {
+            let stop = app_instance.stop_flag.clone();
+            app.connect_shutdown(move |_| {
+                stop.store(true, Ordering::Relaxed);
+            });
+        }
     });
 
     // 文件打开处理
