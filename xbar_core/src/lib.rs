@@ -22,6 +22,12 @@ pub use system_monitor::SystemMonitor;
 
 // ================= 公共类型 =================
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ThemeMode {
+    Dark,
+    Light,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Color {
     pub r: f64,
@@ -103,6 +109,32 @@ pub fn default_colors() -> Colors {
     }
 }
 
+pub fn light_colors() -> Colors {
+    Colors {
+        bg: Color::rgb(245, 245, 245),
+        text: Color::rgb(20, 20, 20),
+        white: Color::rgb(255, 255, 255),
+        black: Color::rgb(0, 0, 0),
+        tag_colors: default_colors().tag_colors,
+        gray: Color::rgb(130, 130, 130),
+        red: Color::rgb(220, 40, 40),
+        green: Color::rgb(30, 160, 100),
+        yellow: Color::rgb(240, 190, 40),
+        orange: Color::rgb(245, 135, 20),
+        blue: Color::rgb(40, 110, 220),
+        purple: Color::rgb(140, 90, 210),
+        teal: Color::rgb(0, 160, 160),
+        time: Color::rgb(50, 120, 210),
+    }
+}
+
+pub fn colors_for_theme(mode: ThemeMode) -> Colors {
+    match mode {
+        ThemeMode::Dark => default_colors(),
+        ThemeMode::Light => light_colors(),
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default)]
 pub struct Rect {
     pub x: i16,
@@ -136,6 +168,11 @@ pub struct BarConfig {
     pub shape_style: ShapeStyle,
     pub time_icon: &'static str,
     pub screenshot_label: &'static str,
+
+    // 可选组件
+    pub show_audio: bool,
+    pub show_theme_toggle: bool,
+    pub volume_step: i32,
 }
 impl Default for BarConfig {
     fn default() -> Self {
@@ -147,8 +184,12 @@ impl Default for BarConfig {
             pill_hpadding: 10.0,
             pill_radius: 6.0,
             shape_style: ShapeStyle::Pill,
-            time_icon: "",
-            screenshot_label: " Screenshot",
+            time_icon: "TIME",
+            screenshot_label: "SHOT",
+
+            show_audio: false,
+            show_theme_toggle: false,
+            volume_step: 5,
         }
     }
 }
@@ -172,6 +213,10 @@ pub struct AppState {
     pub time_rect: Rect,
     pub is_ss_hover: bool,
     pub show_seconds: bool,
+
+    pub audio_rect: Rect,
+    pub theme_rect: Rect,
+    pub theme_mode: ThemeMode,
 
     // Hover 状态
     pub hover_target: HoverTarget,
@@ -199,6 +244,8 @@ pub enum HoverTarget {
     LayoutButton,
     Screenshot,
     Time,
+    Audio,
+    Theme,
     Mem,
     Cpu,
     Monitor,
@@ -222,6 +269,10 @@ impl AppState {
             time_rect: Rect::default(),
             is_ss_hover: false,
             show_seconds: false,
+
+            audio_rect: Rect::default(),
+            theme_rect: Rect::default(),
+            theme_mode: ThemeMode::Dark,
 
             hover_target: HoverTarget::None,
 
@@ -322,6 +373,40 @@ impl AppState {
                 warn!("Failed to spawn flameshot: {e}");
             }
         }
+
+        // 主题切换
+        if self.theme_rect.w > 0 && self.theme_rect.contains(px, py) && button == 1 {
+            self.theme_mode = match self.theme_mode {
+                ThemeMode::Dark => ThemeMode::Light,
+                ThemeMode::Light => ThemeMode::Dark,
+            };
+            need_redraw = true;
+        }
+
+        // 音量：左键静音/取消静音；滚轮调节
+        if self.audio_rect.w > 0 && self.audio_rect.contains(px, py) {
+            if let Some(dev) = self.audio_manager.get_master_device().cloned() {
+                match button {
+                    1 => {
+                        let _ = self.audio_manager.toggle_mute(&dev.name);
+                        need_redraw = true;
+                    }
+                    4 => {
+                        let _ = self.audio_manager.adjust_volume(&dev.name, 5);
+                        need_redraw = true;
+                    }
+                    5 => {
+                        let _ = self.audio_manager.adjust_volume(&dev.name, -5);
+                        need_redraw = true;
+                    }
+                    3 => {
+                        // 右键尝试打开音量控制面板（可选）
+                        let _ = std::process::Command::new("pavucontrol").spawn();
+                    }
+                    _ => {}
+                }
+            }
+        }
         // 时间 pill 切换秒显示
         if self.time_rect.contains(px, py) && button == 1 {
             self.show_seconds = !self.show_seconds;
@@ -351,6 +436,12 @@ impl AppState {
         if self.ss_rect.contains(px, py) {
             return HoverTarget::Screenshot;
         }
+        if self.audio_rect.w > 0 && self.audio_rect.contains(px, py) {
+            return HoverTarget::Audio;
+        }
+        if self.theme_rect.w > 0 && self.theme_rect.contains(px, py) {
+            return HoverTarget::Theme;
+        }
         if self.mem_rect.contains(px, py) {
             return HoverTarget::Mem;
         }
@@ -371,8 +462,9 @@ impl AppState {
 
     // 鼠标移动：更新 hover 状态。返回是否需要重绘（排他式）
     pub fn update_hover(&mut self, px: i16, py: i16) -> bool {
+        let prev = self.hover_target;
         self.hover_target = self.hit_test(px, py);
-        return self.hover_target != HoverTarget::None;
+        prev != self.hover_target
     }
 
     // 鼠标离开：清空 hover 状态。返回是否需要重绘
@@ -747,6 +839,54 @@ pub fn draw_bar(
     // 右侧从右往左
     let mut right_x = width as f64 - cfg.padding_x;
 
+    // 主题切换 pill（可选）
+    if cfg.show_theme_toggle {
+        let label = match state.theme_mode {
+            ThemeMode::Dark => "DARK",
+            ThemeMode::Light => "LIGHT",
+        };
+        let (tw, th) = pango_text_size(cr, font, label);
+        let w = (tw as f64 + 2.0 * (cfg.pill_hpadding - 2.0)).max(54.0);
+        right_x -= w + cfg.tag_spacing;
+        let mut fill = colors.gray;
+        let mut border = colors.gray;
+        let mut bw = 1.0;
+        if HoverTarget::Theme == state.hover_target {
+            fill = fill.lighten(0.08);
+            border = border.lighten(0.12);
+            bw = 2.0;
+        }
+        stroke_shape_with_fill(
+            cr,
+            state.shape_style,
+            right_x,
+            cfg.padding_y,
+            w,
+            pill_h,
+            cfg.pill_radius,
+            bw,
+            border,
+            Some(fill),
+        )?;
+        let ty = cfg.padding_y + (pill_h - th as f64) / 2.0 - 1.0;
+        pango_draw_text_left(
+            cr,
+            font,
+            colors.text,
+            right_x + (w - tw as f64) / 2.0,
+            ty,
+            label,
+        );
+        state.theme_rect = Rect {
+            x: right_x as i16,
+            y: cfg.padding_y as i16,
+            w: w as u16,
+            h: pill_h as u16,
+        };
+    } else {
+        state.theme_rect = Rect::default();
+    }
+
     // 监视器 pill
     let mon_label = AppState::monitor_num_to_label(state.monitor_num);
     let (mon_w, mon_h) = pango_text_size(cr, font, &mon_label);
@@ -838,7 +978,7 @@ pub fn draw_bar(
     let mut ss_fill = colors.teal;
     let mut ss_border = colors.teal;
     let mut ss_bw = 1.0;
-    if state.is_ss_hover {
+    if HoverTarget::Screenshot == state.hover_target {
         ss_fill = ss_fill.lighten(0.08);
         ss_border = ss_border.lighten(0.12);
         ss_bw = 2.0;
@@ -870,6 +1010,62 @@ pub fn draw_bar(
         w: ss_total as u16,
         h: pill_h as u16,
     };
+
+    // 音量 pill（可选）
+    if cfg.show_audio {
+        let (label, muted) = if let Some(dev) = state.audio_manager.get_master_device() {
+            let tag = if dev.is_muted { "MUTE" } else { "VOL" };
+            (
+                format!("{} {}%", tag, dev.volume.clamp(0, 100)),
+                dev.is_muted,
+            )
+        } else {
+            ("VOL --".to_string(), true)
+        };
+
+        let (aw, ah) = pango_text_size(cr, font, &label);
+        let a_total = aw as f64 + 2.0 * cfg.pill_hpadding;
+        right_x -= a_total + cfg.tag_spacing;
+
+        let base = if muted { colors.gray } else { colors.blue };
+        let mut fill = base;
+        let mut border = base;
+        let mut bw = 1.0;
+        if HoverTarget::Audio == state.hover_target {
+            fill = fill.lighten(0.08);
+            border = border.lighten(0.12);
+            bw = 2.0;
+        }
+        stroke_shape_with_fill(
+            cr,
+            state.shape_style,
+            right_x,
+            cfg.padding_y,
+            a_total,
+            pill_h,
+            cfg.pill_radius,
+            bw,
+            border,
+            Some(fill),
+        )?;
+        let ty = cfg.padding_y + (pill_h - ah as f64) / 2.0 - 1.0;
+        pango_draw_text_left(
+            cr,
+            font,
+            colors.white,
+            right_x + cfg.pill_hpadding,
+            ty,
+            &label,
+        );
+        state.audio_rect = Rect {
+            x: right_x as i16,
+            y: cfg.padding_y as i16,
+            w: a_total as u16,
+            h: pill_h as u16,
+        };
+    } else {
+        state.audio_rect = Rect::default();
+    }
 
     // MEM/CPU
     let (mem_total_gb, mem_used_gb, cpu_avg) =

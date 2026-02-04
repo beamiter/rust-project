@@ -449,6 +449,9 @@ fn main() -> Result<()> {
         shape_style: ShapeStyle::Pill,
         time_icon: "",
         screenshot_label: " Screenshot",
+            show_audio: false,
+            show_theme_toggle: false,
+            volume_step: 5,
     };
 
     // 窗口 + GC
