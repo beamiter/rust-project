@@ -37,7 +37,7 @@ use smithay::wayland::shm::{ShmHandler, ShmState};
 use smithay::wayland::socket::ListeningSocketSource;
 use smithay::wayland::output::OutputHandler;
 use smithay::wayland::selection::SelectionHandler;
-use smithay::wayland::selection::data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler};
+use smithay::wayland::selection::data_device::{DataDeviceHandler, DataDeviceState, WaylandDndGrabHandler};
 use smithay::wayland::selection::primary_selection::{PrimarySelectionHandler, PrimarySelectionState};
 
 #[derive(Debug, Default)]
@@ -791,9 +791,7 @@ impl DataDeviceHandler for JwmWaylandState {
     }
 }
 
-impl ClientDndGrabHandler for JwmWaylandState {}
-
-impl ServerDndGrabHandler for JwmWaylandState {}
+impl WaylandDndGrabHandler for JwmWaylandState {}
 
 impl PrimarySelectionHandler for JwmWaylandState {
     fn primary_selection_state(&mut self) -> &mut PrimarySelectionState {
