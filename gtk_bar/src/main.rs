@@ -4,7 +4,7 @@ use gdk4::prelude::*;
 use gdk4_x11::x11::xlib::{XFlush, XMoveWindow};
 use gtk4::gio::{self};
 use gtk4::prelude::*;
-use gtk4::{Application, ApplicationWindow, Builder, Button, Label, Revealer, glib};
+use gtk4::{Application, ApplicationWindow, Builder, Button, EventControllerScroll, EventControllerScrollFlags, Label, Revealer, glib};
 use log::{error, info, warn};
 use std::cell::{Cell, RefCell};
 use std::env;
@@ -19,6 +19,7 @@ use xbar_core::initialize_logging;
 use xbar_core::system_monitor::SystemMonitor;
 
 use gtk4::glib::ControlFlow;
+use gtk4::glib::Propagation;
 
 // ========= 事件与命令 =========
 enum AppEvent {
@@ -56,6 +57,13 @@ struct AppState {
     audio_manager: AudioManager,
     system_monitor: SystemMonitor,
 
+    // Theme
+    is_dark: bool,
+
+    // Audio UI cache
+    last_volume: i32,
+    last_muted: bool,
+
     // Last values to control redraw
     last_cpu_usage: f64,
     last_mem_fraction: f64,
@@ -78,6 +86,9 @@ impl AppState {
             tag_status_vec: Vec::new(),
             audio_manager: AudioManager::new(),
             system_monitor: SystemMonitor::new(10),
+            is_dark: true,
+            last_volume: -1,
+            last_muted: false,
             last_cpu_usage: 0.0,
             last_mem_fraction: 0.0,
             last_class_masks: Vec::new(),
@@ -119,6 +130,8 @@ struct TabBarApp {
     window: ApplicationWindow,
     tab_buttons: Vec<Button>,
     time_button: Button,
+    volume_button: Button,
+    theme_button: Button,
     monitor_label: Label,
     memory_label: Label,
     cpu_label: Label,
@@ -164,6 +177,12 @@ impl TabBarApp {
         let time_button: Button = builder
             .object("time_label")
             .expect("Failed to get time_label from builder");
+        let volume_button: Button = builder
+            .object("volume_button")
+            .expect("Failed to get volume_button from builder");
+        let theme_button: Button = builder
+            .object("theme_button")
+            .expect("Failed to get theme_button from builder");
         let monitor_label: Label = builder
             .object("monitor_label")
             .expect("Failed to get monitor_label from builder");
@@ -211,6 +230,8 @@ impl TabBarApp {
             window,
             tab_buttons,
             time_button,
+            volume_button,
+            theme_button,
             monitor_label,
             memory_label,
             cpu_label,
@@ -223,6 +244,10 @@ impl TabBarApp {
             shared_buffer_rc,
             ui_last_monitor_num: Cell::new(255),
         });
+
+        // Default theme: dark
+        app_instance.window.add_css_class("theme-dark");
+        app_instance.window.remove_css_class("theme-light");
 
         // 为 CPU/内存标签添加基础胶囊样式
         app_instance.cpu_label.add_css_class("metric-label");
@@ -289,6 +314,18 @@ impl TabBarApp {
                             }
                         }
                     }
+
+                    // Audio refresh + diff update
+                    let _ = st.audio_manager.update_if_needed();
+                    if let Some(dev) = st.audio_manager.get_master_device() {
+                        let vol = dev.volume.clamp(0, 100);
+                        let muted = dev.is_muted;
+                        if vol != st.last_volume || muted != st.last_muted {
+                            st.last_volume = vol;
+                            st.last_muted = muted;
+                            app_clone.update_volume_display_inner(vol, muted);
+                        }
+                    }
                 }
                 ControlFlow::Continue
             });
@@ -298,6 +335,9 @@ impl TabBarApp {
         app_instance.update_time_display();
         // 首次布局 UI 同步（默认 closed）
         app_instance.update_layout_ui();
+        // 首次音量/主题 UI 同步
+        app_instance.update_volume_display();
+        app_instance.update_theme_display();
 
         app_instance
     }
@@ -373,6 +413,37 @@ impl TabBarApp {
                 }
             });
         }
+
+        // 主题切换按钮
+        app.theme_button.connect_clicked({
+            let app = app.clone();
+            move |_| {
+                Self::handle_toggle_theme(app.clone());
+            }
+        });
+
+        // 音量按钮：点击静音/取消静音；滚轮调节音量
+        app.volume_button.connect_clicked({
+            let app = app.clone();
+            move |_| {
+                Self::handle_toggle_mute(app.clone());
+            }
+        });
+        {
+            let app = app.clone();
+            let controller = EventControllerScroll::new(EventControllerScrollFlags::VERTICAL);
+            let app_for_scroll = app.clone();
+            controller.connect_scroll(move |_, _dx, dy| {
+                if dy == 0.0 {
+                    return Propagation::Proceed;
+                }
+
+                let step = if dy < 0.0 { 3 } else { -3 };
+                Self::handle_adjust_volume(app_for_scroll.clone(), step);
+                Propagation::Stop
+            });
+            app.volume_button.add_controller(controller);
+        }
     }
 
     // ========= Worker事件处理 =========
@@ -445,6 +516,57 @@ impl TabBarApp {
     fn handle_screenshot(_app: Rc<Self>) {
         info!("Taking screenshot");
         let _ = std::process::Command::new("flameshot").arg("gui").spawn();
+    }
+
+    fn handle_toggle_theme(app: Rc<Self>) {
+        if let Ok(mut st) = app.state.try_borrow_mut() {
+            st.is_dark = !st.is_dark;
+        }
+        app.update_theme_display();
+    }
+
+    fn handle_toggle_mute(app: Rc<Self>) {
+        if let Ok(mut st) = app.state.try_borrow_mut() {
+            let _ = st.audio_manager.update_if_needed();
+            let master = st.audio_manager.get_master_device().cloned();
+            if let Some(dev) = master {
+                let name = dev.name;
+                let prev_volume = dev.volume;
+                match st.audio_manager.toggle_mute(&name) {
+                    Ok(muted) => {
+                        st.last_muted = muted;
+                        st.last_volume = prev_volume.clamp(0, 100);
+                        app.update_volume_display_inner(st.last_volume, st.last_muted);
+                    }
+                    Err(e) => warn!("toggle_mute failed: {:?}", e),
+                }
+            }
+        }
+    }
+
+    fn handle_adjust_volume(app: Rc<Self>, step: i32) {
+        if let Ok(mut st) = app.state.try_borrow_mut() {
+            let _ = st.audio_manager.update_if_needed();
+            let master = st.audio_manager.get_master_device().cloned();
+            if let Some(dev) = master {
+                let name = dev.name;
+                let prev_muted = dev.is_muted;
+                match st.audio_manager.adjust_volume(&name, step) {
+                    Ok(new_vol) => {
+                        // keep mute state as-is
+                        let muted = st
+                            .audio_manager
+                            .find_device(&name)
+                            .map(|d| d.is_muted)
+                            .unwrap_or(prev_muted);
+                        st.last_volume = new_vol.clamp(0, 100);
+                        st.last_muted = muted;
+                        app.update_volume_display_inner(st.last_volume, st.last_muted);
+                    }
+                    Err(e) => warn!("adjust_volume failed: {:?}", e),
+                }
+            }
+        }
     }
 
     // ========= UI 更新 =========
@@ -553,6 +675,46 @@ impl TabBarApp {
         };
         let formatted_time = now.format(format_str).to_string();
         self.time_button.set_label(&formatted_time);
+    }
+
+    fn update_volume_display(&self) {
+        if let Ok(mut st) = self.state.try_borrow_mut() {
+            let _ = st.audio_manager.update_if_needed();
+            if let Some(dev) = st.audio_manager.get_master_device() {
+                let vol = dev.volume.clamp(0, 100);
+                let muted = dev.is_muted;
+                st.last_volume = vol;
+                st.last_muted = muted;
+                self.update_volume_display_inner(vol, muted);
+            } else {
+                self.volume_button.set_label(" 🔊 --% ");
+            }
+        }
+    }
+
+    fn update_volume_display_inner(&self, volume: i32, muted: bool) {
+        let label = if muted {
+            format!(" 🔇 {}% ", volume)
+        } else {
+            format!(" 🔊 {}% ", volume)
+        };
+        self.volume_button.set_label(&label);
+    }
+
+    fn update_theme_display(&self) {
+        let is_dark = if let Ok(st) = self.state.try_borrow() {
+            st.is_dark
+        } else {
+            true
+        };
+
+        self.window.remove_css_class("theme-dark");
+        self.window.remove_css_class("theme-light");
+        self.window
+            .add_css_class(if is_dark { "theme-dark" } else { "theme-light" });
+
+        self.theme_button
+            .set_label(if is_dark { " 🌙 " } else { " ☀️ " });
     }
 
     // ========= 工具 =========
