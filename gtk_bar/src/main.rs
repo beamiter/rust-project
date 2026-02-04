@@ -9,6 +9,7 @@ use log::{error, info, warn};
 use std::cell::{Cell, RefCell};
 use std::env;
 use std::rc::Rc;
+use std::sync::OnceLock;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::thread;
@@ -20,6 +21,22 @@ use xbar_core::initialize_logging;
 use xbar_core::system_monitor::SystemMonitor;
 
 use gtk4::glib::ControlFlow;
+
+static STYLES_APPLIED: OnceLock<()> = OnceLock::new();
+
+fn apply_styles_once() {
+    STYLES_APPLIED.get_or_init(|| {
+        let provider = gtk4::CssProvider::new();
+        provider.load_from_data(include_str!("styles.css"));
+        if let Some(display) = gtk4::gdk::Display::default() {
+            gtk4::style_context_add_provider_for_display(
+                &display,
+                &provider,
+                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
+            );
+        }
+    });
+}
 
 // ========= 事件与命令 =========
 enum AppEvent {
@@ -193,6 +210,9 @@ struct TabBarApp {
 
 impl TabBarApp {
     fn new(app: &Application, shared_path: String) -> Rc<Self> {
+        // 确保样式尽早应用（另外在 main 的 startup 里也会做一次）
+        apply_styles_once();
+
         // 加载 UI
         let builder = Builder::from_string(include_str!("resources/main_layout.ui"));
 
@@ -283,9 +303,6 @@ impl TabBarApp {
 
         // 状态
         let state: SharedAppState = Rc::new(RefCell::new(AppState::new(theme_dark)));
-
-        // 样式
-        Self::apply_styles();
 
         // 异步事件通道（worker -> 主线程）
         let (ui_sender, ui_receiver) = async_channel::unbounded::<AppEvent>();
@@ -415,20 +432,10 @@ impl TabBarApp {
         app_instance.update_time_display();
         // 首次布局 UI 同步（默认 closed）
         app_instance.update_layout_ui();
+        // 首次 tab 样式同步：让窗口一开始就按最终样式计算尺寸，避免第一次交互时出现高度抖动
+        app_instance.update_ui();
 
         app_instance
-    }
-
-    fn apply_styles() {
-        let provider = gtk4::CssProvider::new();
-        provider.load_from_data(include_str!("styles.css"));
-        if let Some(display) = gtk4::gdk::Display::default() {
-            gtk4::style_context_add_provider_for_display(
-                &display,
-                &provider,
-                gtk4::STYLE_PROVIDER_PRIORITY_APPLICATION,
-            );
-        }
     }
 
     fn apply_tag_labels(tab_buttons: &[Button]) {
@@ -956,6 +963,11 @@ fn main() -> glib::ExitCode {
         .application_id("dev.gtk.bar")
         .flags(gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::HANDLES_COMMAND_LINE)
         .build();
+
+    // 尽早注入 CSS provider，避免窗口先按默认主题分配尺寸，随后再被自定义 CSS 收缩/扩张。
+    app.connect_startup(|_| {
+        apply_styles_once();
+    });
 
     let shared_path_clone = shared_path.clone();
     app.connect_activate(move |app| {

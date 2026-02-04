@@ -4,12 +4,12 @@
   <requires lib="gtk" version="4.0"/>
   <object class="GtkApplicationWindow" id="main_window">
     <property name="decorated">false</property>
-    <property name="default-height">40</property>
     <property name="default-width">1000</property>
     <property name="resizable">true</property>
     <property name="title">gtk_bar</property>
     <child>
       <object class="GtkBox" id="top_hbox">
+        <property name="height-request">36</property>
         <property name="margin-bottom">3</property>
         <property name="margin-end">3</property>
         <property name="margin-start">3</property>

@@ -82,6 +82,8 @@ window.theme-dark .monitor-badge {
 
 /* ==================== Bar 容器 ==================== */
 .bar {
+  /* 目标：让窗口高度从第一帧就稳定，不随后续 class/文本更新发生 2~4px 的收缩 */
+  min-height: 36px;
   padding: 2px 4px;
   border-radius: 12px;
   border: 1px solid rgba(17, 24, 39, 0.08);
@@ -177,56 +179,56 @@ window.theme-dark .theme-toggle {
 
 /* ==================== 各索引的配色（保持原有定义） ==================== */
 .tab-button:nth-child(1).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(1).empty:hover { border-color: #ff6b6b; border-width: 2px; box-shadow: 0 0 6px rgba(255, 107, 107, 0.4); background-color: rgba(255, 107, 107, 0.1); }
+.tab-button:nth-child(1).empty:hover { border-color: #ff6b6b; box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.80), 0 0 6px rgba(255, 107, 107, 0.4); background-color: rgba(255, 107, 107, 0.1); }
 .tab-button:nth-child(1).occupied { background-color: rgba(255, 107, 107, 0.3); border-color: rgba(255, 107, 107, 0.6); color: #333; }
 .tab-button:nth-child(1).selected { background-color: rgba(255, 107, 107, 0.7); border-color: rgba(255, 107, 107, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(1).filled { background-color: rgba(255, 107, 107, 1); border-color: rgba(255, 107, 107, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(255, 107, 107, 0.4); }
 
 /* ... 2 ~ 9 的样式同你原有，略（已保持） ... */
 .tab-button:nth-child(2).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(2).empty:hover { border-color: #4ecdc4; border-width: 2px; box-shadow: 0 0 6px rgba(78, 205, 196, 0.4); background-color: rgba(78, 205, 196, 0.1); }
+.tab-button:nth-child(2).empty:hover { border-color: #4ecdc4; box-shadow: 0 0 0 1px rgba(78, 205, 196, 0.80), 0 0 6px rgba(78, 205, 196, 0.4); background-color: rgba(78, 205, 196, 0.1); }
 .tab-button:nth-child(2).occupied { background-color: rgba(78, 205, 196, 0.3); border-color: rgba(78, 205, 196, 0.6); color: #333; }
 .tab-button:nth-child(2).selected { background-color: rgba(78, 205, 196, 0.7); border-color: rgba(78, 205, 196, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(2).filled { background-color: rgba(78, 205, 196, 1); border-color: rgba(78, 205, 196, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(78, 205, 196, 0.4); }
 
 .tab-button:nth-child(3).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(3).empty:hover { border-color: #45b7d1; border-width: 2px; box-shadow: 0 0 6px rgba(69, 183, 209, 0.4); background-color: rgba(69, 183, 209, 0.1); }
+.tab-button:nth-child(3).empty:hover { border-color: #45b7d1; box-shadow: 0 0 0 1px rgba(69, 183, 209, 0.80), 0 0 6px rgba(69, 183, 209, 0.4); background-color: rgba(69, 183, 209, 0.1); }
 .tab-button:nth-child(3).occupied { background-color: rgba(69, 183, 209, 0.3); border-color: rgba(69, 183, 209, 0.6); color: #333; }
 .tab-button:nth-child(3).selected { background-color: rgba(69, 183, 209, 0.7); border-color: rgba(69, 183, 209, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(3).filled { background-color: rgba(69, 183, 209, 1); border-color: rgba(69, 183, 209, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(69, 183, 209, 0.4); }
 
 .tab-button:nth-child(4).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(4).empty:hover { border-color: #96ceb4; border-width: 2px; box-shadow: 0 0 6px rgba(150, 206, 180, 0.4); background-color: rgba(150, 206, 180, 0.1); }
+.tab-button:nth-child(4).empty:hover { border-color: #96ceb4; box-shadow: 0 0 0 1px rgba(150, 206, 180, 0.80), 0 0 6px rgba(150, 206, 180, 0.4); background-color: rgba(150, 206, 180, 0.1); }
 .tab-button:nth-child(4).occupied { background-color: rgba(150, 206, 180, 0.3); border-color: rgba(150, 206, 180, 0.6); color: #333; }
 .tab-button:nth-child(4).selected { background-color: rgba(150, 206, 180, 0.7); border-color: rgba(150, 206, 180, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(4).filled { background-color: rgba(150, 206, 180, 1); border-color: rgba(150, 206, 180, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(150, 206, 180, 0.4); }
 
 .tab-button:nth-child(5).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(5).empty:hover { border-color: #feca57; border-width: 2px; box-shadow: 0 0 6px rgba(254, 202, 87, 0.4); background-color: rgba(254, 202, 87, 0.1); }
+.tab-button:nth-child(5).empty:hover { border-color: #feca57; box-shadow: 0 0 0 1px rgba(254, 202, 87, 0.80), 0 0 6px rgba(254, 202, 87, 0.4); background-color: rgba(254, 202, 87, 0.1); }
 .tab-button:nth-child(5).occupied { background-color: rgba(254, 202, 87, 0.3); border-color: rgba(254, 202, 87, 0.6); color: #333; }
 .tab-button:nth-child(5).selected { background-color: rgba(254, 202, 87, 0.7); border-color: rgba(254, 202, 87, 0.9); color: #333; font-weight: bold; }
 .tab-button:nth-child(5).filled { background-color: rgba(254, 202, 87, 1); border-color: rgba(254, 202, 87, 1); color: #333; font-weight: bold; box-shadow: 0 2px 8px rgba(254, 202, 87, 0.4); }
 
 .tab-button:nth-child(6).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(6).empty:hover { border-color: #ff9ff3; border-width: 2px; box-shadow: 0 0 6px rgba(255, 159, 243, 0.4); background-color: rgba(255, 159, 243, 0.1); }
+.tab-button:nth-child(6).empty:hover { border-color: #ff9ff3; box-shadow: 0 0 0 1px rgba(255, 159, 243, 0.80), 0 0 6px rgba(255, 159, 243, 0.4); background-color: rgba(255, 159, 243, 0.1); }
 .tab-button:nth-child(6).occupied { background-color: rgba(255, 159, 243, 0.3); border-color: rgba(255, 159, 243, 0.6); color: #333; }
 .tab-button:nth-child(6).selected { background-color: rgba(255, 159, 243, 0.7); border-color: rgba(255, 159, 243, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(6).filled { background-color: rgba(255, 159, 243, 1); border-color: rgba(255, 159, 243, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(255, 159, 243, 0.4); }
 
 .tab-button:nth-child(7).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(7).empty:hover { border-color: #54a0ff; border-width: 2px; box-shadow: 0 0 6px rgba(84, 160, 255, 0.4); background-color: rgba(84, 160, 255, 0.1); }
+.tab-button:nth-child(7).empty:hover { border-color: #54a0ff; box-shadow: 0 0 0 1px rgba(84, 160, 255, 0.80), 0 0 6px rgba(84, 160, 255, 0.4); background-color: rgba(84, 160, 255, 0.1); }
 .tab-button:nth-child(7).occupied { background-color: rgba(84, 160, 255, 0.3); border-color: rgba(84, 160, 255, 0.6); color: #333; }
 .tab-button:nth-child(7).selected { background-color: rgba(84, 160, 255, 0.7); border-color: rgba(84, 160, 255, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(7).filled { background-color: rgba(84, 160, 255, 1); border-color: rgba(84, 160, 255, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(84, 160, 255, 0.4); }
 
 .tab-button:nth-child(8).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(8).empty:hover { border-color: #5f27cd; border-width: 2px; box-shadow: 0 0 6px rgba(95, 39, 205, 0.4); background-color: rgba(95, 39, 205, 0.1); }
+.tab-button:nth-child(8).empty:hover { border-color: #5f27cd; box-shadow: 0 0 0 1px rgba(95, 39, 205, 0.80), 0 0 6px rgba(95, 39, 205, 0.4); background-color: rgba(95, 39, 205, 0.1); }
 .tab-button:nth-child(8).occupied { background-color: rgba(95, 39, 205, 0.3); border-color: rgba(95, 39, 205, 0.6); color: #333; }
 .tab-button:nth-child(8).selected { background-color: rgba(95, 39, 205, 0.7); border-color: rgba(95, 39, 205, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(8).filled { background-color: rgba(95, 39, 205, 1); border-color: rgba(95, 39, 205, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(95, 39, 205, 0.4); }
 
 .tab-button:nth-child(9).empty { background-color: #ffffff; border-color: #dee2e6; color: #333; }
-.tab-button:nth-child(9).empty:hover { border-color: #00d2d3; border-width: 2px; box-shadow: 0 0 6px rgba(0, 210, 211, 0.4); background-color: rgba(0, 210, 211, 0.1); }
+.tab-button:nth-child(9).empty:hover { border-color: #00d2d3; box-shadow: 0 0 0 1px rgba(0, 210, 211, 0.80), 0 0 6px rgba(0, 210, 211, 0.4); background-color: rgba(0, 210, 211, 0.1); }
 .tab-button:nth-child(9).occupied { background-color: rgba(0, 210, 211, 0.3); border-color: rgba(0, 210, 211, 0.6); color: #333; }
 .tab-button:nth-child(9).selected { background-color: rgba(0, 210, 211, 0.7); border-color: rgba(0, 210, 211, 0.9); color: white; font-weight: bold; }
 .tab-button:nth-child(9).filled { background-color: rgba(0, 210, 211, 1); border-color: rgba(0, 210, 211, 1); color: white; font-weight: bold; box-shadow: 0 2px 8px rgba(0, 210, 211, 0.4); }
@@ -234,10 +236,11 @@ window.theme-dark .theme-toggle {
 /* ==================== Urgent 状态 ==================== */
 .tab-button.urgent {
   background-color: rgba(220, 53, 69, 0.8) !important;
-  border: 2px solid #dc3545 !important;
+  border: 1px solid #dc3545 !important;
   color: white !important;
   font-weight: bold !important;
-  box-shadow: 0 2px 8px rgba(220, 53, 69, 0.5) !important;
+  /* 用 ring shadow 代替加粗边框，避免改变控件几何尺寸导致窗口高度抖动 */
+  box-shadow: 0 0 0 1px rgba(220, 53, 69, 0.95), 0 2px 8px rgba(220, 53, 69, 0.5) !important;
   /* 避免持续重绘：urgent 不使用动画/变换 */
   animation: none;
   transition: none;
