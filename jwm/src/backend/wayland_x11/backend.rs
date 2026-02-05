@@ -513,9 +513,6 @@ impl PropertyOps for WaylandPropertyOps {
 }
 
 pub struct WaylandX11Backend {
-    display: Rc<RefCell<Display<JwmWaylandState>>>,
-    display_handle: DisplayHandle,
-
     event_loop: SendWrapper<EventLoop<'static, JwmWaylandState>>,
     state: Box<JwmWaylandState>,
     #[allow(dead_code)]
@@ -533,6 +530,13 @@ pub struct WaylandX11Backend {
     x11_surface: X11Surface,
     renderer: GlesRenderer,
     damage_tracker: OutputDamageTracker,
+
+    // NOTE: Field drop order matters.
+    // On some EGL stacks (notably NVIDIA + egl-wayland), the EGL display drop path may call
+    // `eglUnbindWaylandDisplayWL`, which expects the Wayland `wl_display` to still be alive.
+    // Keep `display`/`display_handle` *after* the EGL/GLES renderer so they outlive it.
+    display: Rc<RefCell<Display<JwmWaylandState>>>,
+    display_handle: DisplayHandle,
 
     surfaces_on_output: HashSet<wayland_server::Weak<WlSurface>>,
 
@@ -858,27 +862,51 @@ impl WaylandX11Backend {
         );
         elements.push(X11RenderElement::Solid(bg));
 
-        let (mut buffer, age) = self
+        let buffer_res = self
             .x11_surface
             .buffer()
-            .map_err(|e| BackendError::Other(Box::new(e)))?;
+            .map_err(|e| BackendError::Other(Box::new(e)));
+        let (mut buffer, age) = match buffer_res {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("[wayland-x11] failed to acquire X11 buffer: {e:?}");
+                self.x11_surface.reset_buffers();
+                self.needs_render = false;
+                self.state.needs_redraw = false;
+                return Ok(());
+            }
+        };
         let age = age as usize;
 
-        let mut fb = self
+        let fb_res = self
             .renderer
             .bind(&mut buffer)
-            .map_err(|e| BackendError::Other(Box::new(e)))?;
+            .map_err(|e| BackendError::Other(Box::new(e)));
+        let mut fb = match fb_res {
+            Ok(v) => v,
+            Err(e) => {
+                log::warn!("[wayland-x11] framebuffer bind failed: {e:?}");
+                self.x11_surface.reset_buffers();
+                self.needs_render = false;
+                self.state.needs_redraw = false;
+                return Ok(());
+            }
+        };
 
-        let _res = self
-            .damage_tracker
-            .render_output(
-                &mut self.renderer,
-                &mut fb,
-                age,
-                &elements,
-                Color32F::new(0.0, 0.0, 0.0, 1.0),
-            )
-            .map_err(|e| BackendError::Other(Box::new(e)))?;
+        if let Err(e) = self.damage_tracker.render_output(
+            &mut self.renderer,
+            &mut fb,
+            age,
+            &elements,
+            Color32F::new(0.0, 0.0, 0.0, 1.0),
+        ) {
+            log::warn!("[wayland-x11] render_output failed: {e:?}");
+            drop(fb);
+            self.x11_surface.reset_buffers();
+            self.needs_render = false;
+            self.state.needs_redraw = false;
+            return Ok(());
+        }
 
         drop(fb);
 
