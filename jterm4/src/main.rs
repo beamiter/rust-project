@@ -153,9 +153,15 @@ fn add_new_tab(
                 }
             }
         }
-        // If no more tabs, close window
+        // If no more tabs, close window; otherwise focus new current terminal
         if notebook_clone.n_pages() == 0 {
             window_clone.destroy();
+        } else if let Some(new_page) = notebook_clone.current_page() {
+            if let Some(widget) = notebook_clone.nth_page(Some(new_page)) {
+                if let Ok(term) = widget.downcast::<Terminal>() {
+                    term.grab_focus();
+                }
+            }
         }
     });
 
@@ -263,6 +269,15 @@ fn main() -> glib::ExitCode {
                             notebook_clone.remove_page(Some(page_num));
                             if notebook_clone.n_pages() == 0 {
                                 window_clone.destroy();
+                            } else {
+                                // Focus the new current terminal
+                                if let Some(new_page) = notebook_clone.current_page() {
+                                    if let Some(widget) = notebook_clone.nth_page(Some(new_page)) {
+                                        if let Ok(term) = widget.downcast::<Terminal>() {
+                                            term.grab_focus();
+                                        }
+                                    }
+                                }
                             }
                         }
                         return true.into();
