@@ -424,7 +424,7 @@ fn main() -> glib::ExitCode {
             font_scale.clone(),
             ctrl_clicked.clone(),
         );
-        terminals.borrow_mut().push(first_terminal);
+        terminals.borrow_mut().push(first_terminal.clone());
 
         // Setup key controller on window level with Capture phase
         // This allows us to intercept shortcuts before the terminal processes them
@@ -645,6 +645,9 @@ fn main() -> glib::ExitCode {
 
         window.set_child(Some(&notebook));
         window.show();
+
+        // Focus the terminal after window is shown
+        first_terminal.grab_focus();
     });
 
     app.run()
