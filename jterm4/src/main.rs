@@ -9,10 +9,175 @@ use gtk4::prelude::*;
 use gtk4::{glib, Application, ApplicationWindow, Label, Notebook};
 use gtk4::{EventControllerKey, GestureClick};
 use std::cell::{Cell, RefCell};
+use std::fs;
+use std::path::PathBuf;
+use std::process::Command;
 use std::rc::Rc;
 use vte4::Format;
 use vte4::{CursorBlinkMode, CursorShape, PtyFlags, Terminal};
 use vte4::{TerminalExt, TerminalExtManual};
+
+/// Bootstrap fish shell with bass plugin for bashrc compatibility
+fn bootstrap_fish() -> Result<(), String> {
+    // Check if fish is installed
+    let fish_path = Command::new("which")
+        .arg("fish")
+        .output()
+        .map_err(|e| format!("Failed to check fish: {}", e))?;
+
+    if !fish_path.status.success() {
+        println!("Fish shell not found. Please install fish first:");
+        println!("  Ubuntu/Debian: sudo apt install fish");
+        println!("  Arch: sudo pacman -S fish");
+        println!("  Fedora: sudo dnf install fish");
+        return Err("Fish not installed".to_string());
+    }
+
+    let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
+    let fish_config_dir = PathBuf::from(&home).join(".config/fish");
+    let fish_functions_dir = fish_config_dir.join("functions");
+    let fish_completions_dir = fish_config_dir.join("completions");
+    let config_fish = fish_config_dir.join("config.fish");
+    let bashrc_path = PathBuf::from(&home).join(".bashrc");
+
+    // Create directories if needed
+    fs::create_dir_all(&fish_functions_dir)
+        .map_err(|e| format!("Failed to create fish functions dir: {}", e))?;
+    fs::create_dir_all(&fish_completions_dir)
+        .map_err(|e| format!("Failed to create fish completions dir: {}", e))?;
+
+    // Check if fisher is installed
+    let fisher_path = fish_functions_dir.join("fisher.fish");
+    if !fisher_path.exists() {
+        println!("Installing fisher plugin manager...");
+        let output = Command::new("fish")
+            .arg("-c")
+            .arg("curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher")
+            .output()
+            .map_err(|e| format!("Failed to install fisher: {}", e))?;
+
+        if !output.status.success() {
+            return Err(format!(
+                "Fisher installation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        println!("Fisher installed successfully.");
+    }
+
+    // Check if bass is installed
+    let bass_path = fish_functions_dir.join("bass.fish");
+    if !bass_path.exists() {
+        println!("Installing bass plugin for bashrc compatibility...");
+        let output = Command::new("fish")
+            .arg("-c")
+            .arg("fisher install edc/bass")
+            .output()
+            .map_err(|e| format!("Failed to install bass: {}", e))?;
+
+        if !output.status.success() {
+            return Err(format!(
+                "Bass installation failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
+        println!("Bass installed successfully.");
+    }
+
+    // Extract aliases from .bashrc and convert to fish format
+    let fish_aliases = extract_bash_aliases(&bashrc_path)?;
+
+    // Configure config.fish to load bashrc env vars and aliases
+    let bashrc_loader = format!(
+        r#"# Load bashrc environment variables via bass (added by jterm4)
+if test -f ~/.bashrc
+    bass source ~/.bashrc
+end
+
+# Aliases converted from .bashrc (added by jterm4)
+{}
+"#,
+        fish_aliases
+    );
+
+    let needs_config = if config_fish.exists() {
+        let content =
+            fs::read_to_string(&config_fish).map_err(|e| format!("Failed to read config: {}", e))?;
+        !content.contains("# Aliases converted from .bashrc (added by jterm4)")
+    } else {
+        true
+    };
+
+    if needs_config {
+        println!("Configuring fish to load .bashrc...");
+        // Remove old bass-only config if present
+        let existing = fs::read_to_string(&config_fish).unwrap_or_default();
+        let existing = existing
+            .replace(
+                "# Load bashrc via bass (added by jterm4)\nif test -f ~/.bashrc\n    bass source ~/.bashrc\nend\n",
+                "",
+            );
+        let new_content = format!("{}\n{}", bashrc_loader, existing.trim());
+        fs::write(&config_fish, new_content)
+            .map_err(|e| format!("Failed to write config: {}", e))?;
+        println!("Fish configured with .bashrc aliases and environment variables.");
+    }
+
+    Ok(())
+}
+
+/// Extract aliases from .bashrc and convert to fish alias format
+fn extract_bash_aliases(bashrc_path: &PathBuf) -> Result<String, String> {
+    if !bashrc_path.exists() {
+        return Ok(String::new());
+    }
+
+    let content =
+        fs::read_to_string(bashrc_path).map_err(|e| format!("Failed to read .bashrc: {}", e))?;
+
+    let mut fish_aliases = Vec::new();
+
+    for line in content.lines() {
+        let line = line.trim();
+        // Match alias definitions: alias name="command" or alias name='command'
+        if line.starts_with("alias ") && !line.starts_with('#') {
+            if let Some(alias_def) = line.strip_prefix("alias ") {
+                // Parse alias_name="command" or alias_name='command'
+                if let Some(eq_pos) = alias_def.find('=') {
+                    let name = alias_def[..eq_pos].trim();
+                    let value = alias_def[eq_pos + 1..].trim();
+
+                    // Remove surrounding quotes if present
+                    let value = if (value.starts_with('"') && value.ends_with('"'))
+                        || (value.starts_with('\'') && value.ends_with('\''))
+                    {
+                        &value[1..value.len() - 1]
+                    } else {
+                        value
+                    };
+
+                    // Skip complex bash-specific aliases that can't be converted
+                    let has_bash_syntax = value.contains("$(")
+                        || value.contains("`")
+                        || value.contains("$?")
+                        || value.contains("&&")
+                        || value.contains("||")
+                        || value.contains(";")
+                        || value.contains("|");
+
+                    if has_bash_syntax {
+                        continue;
+                    }
+
+                    // Convert to fish alias format
+                    fish_aliases.push(format!("alias {} '{}'", name, value));
+                }
+            }
+        }
+    }
+
+    Ok(fish_aliases.join("\n"))
+}
 
 fn create_terminal(font_scale: f64) -> Terminal {
     let terminal = Terminal::builder()
@@ -78,7 +243,7 @@ fn create_terminal(font_scale: f64) -> Terminal {
 }
 
 fn spawn_shell(terminal: &Terminal) {
-    let argv = &["/bin/bash", "-/bin/bash"];
+    let argv = &["/usr/bin/fish", "-fish"];
     let envv: &[&str] = &[];
     let spawn_flags = SpawnFlags::SEARCH_PATH | SpawnFlags::FILE_AND_ARGV_ZERO;
     let cancellable: Option<&Cancellable> = None;
@@ -183,6 +348,12 @@ fn add_new_tab(
 }
 
 fn main() -> glib::ExitCode {
+    // Bootstrap fish shell environment
+    if let Err(e) = bootstrap_fish() {
+        eprintln!("Warning: Fish bootstrap failed: {}", e);
+        eprintln!("Falling back to default shell behavior.");
+    }
+
     let app = Application::builder().application_id("app.jterm4").build();
 
     app.connect_activate(|app| {
