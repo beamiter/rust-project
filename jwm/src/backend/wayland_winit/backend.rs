@@ -797,15 +797,20 @@ impl WaylandWinitBackend {
         );
         elements.push(WinitRenderElement::Solid(bg));
 
-        let age = self.winit_backend.buffer_age().unwrap_or(0);
+        // NOTE: `WinitGraphicsBackend::buffer_age()` is only meaningful *after* binding.
+        // Querying it before bind will call `eglQuerySurface` while no surface is current on
+        // some drivers (notably NVIDIA), which can spam `EGL_BAD_SURFACE` and break damage logic.
+        // Using `age = 0` forces a conservative full redraw.
+        let age = 0;
 
+        let submit_damage: Option<Vec<Rectangle<i32, Physical>>>;
         {
             let (renderer, mut fb) = self
                 .winit_backend
                 .bind()
                 .map_err(|e| BackendError::Other(Box::new(e)))?;
 
-            let _res = self
+            let res = self
                 .damage_tracker
                 .render_output(
                     renderer,
@@ -815,9 +820,11 @@ impl WaylandWinitBackend {
                     Color32F::new(0.0, 0.0, 0.0, 1.0),
                 )
                 .map_err(|e| BackendError::Other(Box::new(e)))?;
+
+            submit_damage = res.damage.cloned();
         }
 
-        if let Err(err) = self.winit_backend.submit(None) {
+        if let Err(err) = self.winit_backend.submit(submit_damage.as_deref()) {
             log::warn!("[wayland-winit] submit failed: {err:?}");
             self.needs_render = true;
             return Ok(());
