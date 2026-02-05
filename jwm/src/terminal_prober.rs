@@ -139,6 +139,7 @@ impl AdvancedTerminalProber {
 
         let priority_order = if is_wayland && !has_display {
             vec![
+                "jterm4".to_string(),
                 "foot".to_string(),
                 "wezterm".to_string(),
                 "alacritty".to_string(),
@@ -148,10 +149,10 @@ impl AdvancedTerminalProber {
                 "warp-terminal".to_string(),
                 "terminator".to_string(),
                 "gnome-terminal".to_string(),
-                "jterm4".to_string(),
             ]
         } else {
             vec![
+                "jterm4".to_string(),
                 "warp-terminal".to_string(),
                 "terminator".to_string(),
                 "gnome-terminal".to_string(),
@@ -160,7 +161,6 @@ impl AdvancedTerminalProber {
                 "wezterm".to_string(),
                 "foot".to_string(),
                 "weston-terminal".to_string(),
-                "jterm4".to_string(),
             ]
         };
 
