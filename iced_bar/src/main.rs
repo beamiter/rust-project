@@ -3,7 +3,7 @@ use iced::futures::channel::mpsc;
 use iced::futures::{SinkExt, Stream, StreamExt};
 use iced::time::{self, milliseconds};
 use iced::widget::container;
-use iced::widget::{Space, button, rich_text};
+use iced::widget::{Space, button, rich_text, slider};
 use iced::widget::{mouse_area, span};
 use iced::{Font, stream, theme};
 
@@ -88,6 +88,11 @@ enum Message {
     UpdateTime,
     SharedMemoryUpdated(SharedMessage),
     SharedMemoryError(String),
+
+    // Audio
+    AudioToggleMute,
+    AudioOpenMixer,
+    AudioVolumeChanged(f32),
 }
 
 struct IcedBar {
@@ -346,6 +351,28 @@ impl IcedBar {
 
             Message::RightClick => Task::none(),
 
+            Message::AudioToggleMute => {
+                if let Some(dev) = self.audio_manager.get_master_device().cloned() {
+                    let _ = self.audio_manager.toggle_mute(&dev.name);
+                }
+                Task::none()
+            }
+
+            Message::AudioVolumeChanged(v) => {
+                if let Some(dev) = self.audio_manager.get_master_device().cloned() {
+                    let volume = (v.round() as i32).clamp(0, 100);
+                    let _ = self.audio_manager.set_volume(&dev.name, volume, dev.is_muted);
+                }
+                Task::none()
+            }
+
+            Message::AudioOpenMixer => {
+                if let Err(e) = Command::new("pavucontrol").spawn() {
+                    warn!("Failed to spawn pavucontrol: {e}");
+                }
+                Task::none()
+            }
+
             Message::GetScaleFactor(scale_factor) => {
                 info!("scale_factor: {}", scale_factor);
                 self.scale_factor = scale_factor;
@@ -512,7 +539,7 @@ impl IcedBar {
 
             button::Style {
                 background: Some(Background::Color(background)),
-                text_color: Color::BLACK,
+                text_color: Color::WHITE,
                 border: Border {
                     color: border_c,
                     width: border_width,
@@ -522,6 +549,122 @@ impl IcedBar {
             }
         })
         .on_press(Message::TabSelected(index))
+    }
+
+    fn audio_controls_row(&self) -> Element<'_, Message> {
+        let master = self.audio_manager.get_master_device();
+
+        let (volume, muted) = if let Some(dev) = master {
+            (dev.volume.clamp(0, 100) as f32, dev.is_muted)
+        } else {
+            (0.0, true)
+        };
+
+        let label = if master.is_some() {
+            if muted {
+                format!("🔇 {}%", volume.round() as i32)
+            } else {
+                format!("🔊 {}%", volume.round() as i32)
+            }
+        } else {
+            "🔇 --".to_string()
+        };
+
+        let mute_btn = button(text(label).size(16))
+            .padding([1, 8])
+            .height(Self::TAB_HEIGHT)
+            .style(move |_theme: &Theme, status: button::Status| {
+                let base = if muted {
+                    Color::from_rgb(0.45, 0.45, 0.45)
+                } else {
+                    Color::from_rgb(0.20, 0.55, 0.95)
+                };
+                let mut bg = base.scale_alpha(0.90);
+                let mut bw = 1.0;
+                if matches!(status, button::Status::Hovered) {
+                    bg.a = 1.0;
+                    bw = 2.0;
+                }
+
+                button::Style {
+                    background: Some(Background::Color(bg)),
+                    text_color: Color::WHITE,
+                    border: Border {
+                        color: base,
+                        width: bw,
+                        radius: border::Radius::from(12.0),
+                    },
+                    ..Default::default()
+                }
+            })
+            .on_press(Message::AudioToggleMute);
+
+        let vol_slider = slider(0.0..=100.0, volume, Message::AudioVolumeChanged)
+            .width(120)
+            .style(|theme: &Theme, status: slider::Status| {
+                let palette = theme.palette();
+                let active = palette.primary;
+                let hovered = Color {
+                    a: (palette.primary.a + 0.15).min(1.0),
+                    ..palette.primary
+                };
+
+                let rail = match status {
+                    slider::Status::Hovered => hovered,
+                    _ => active,
+                };
+
+                slider::Style {
+                    rail: slider::Rail {
+                        backgrounds: (rail.into(), Color::from_rgba(1.0, 1.0, 1.0, 0.18).into()),
+                        width: 4.0,
+                        border: Border {
+                            radius: 12.0.into(),
+                            width: 0.0,
+                            color: Color::TRANSPARENT,
+                        },
+                    },
+                    handle: slider::Handle {
+                        shape: slider::HandleShape::Circle { radius: 7.0 },
+                        background: rail.into(),
+                        border_width: 0.0,
+                        border_color: Color::TRANSPARENT,
+                    },
+                }
+            });
+
+        let mixer_btn = button(text("🎚️").size(16))
+            .padding([1, 6])
+            .height(Self::TAB_HEIGHT)
+            .style(|_theme: &Theme, status: button::Status| {
+                let base = Color::from_rgb(0.10, 0.70, 0.55);
+                let mut bg = base.scale_alpha(0.90);
+                let mut bw = 1.0;
+                if matches!(status, button::Status::Hovered) {
+                    bg.a = 1.0;
+                    bw = 2.0;
+                }
+
+                button::Style {
+                    background: Some(Background::Color(bg)),
+                    text_color: Color::WHITE,
+                    border: Border {
+                        color: base,
+                        width: bw,
+                        radius: border::Radius::from(12.0),
+                    },
+                    ..Default::default()
+                }
+            })
+            .on_press(Message::AudioOpenMixer);
+
+        Row::new()
+            .spacing(6)
+            .align_y(iced::Alignment::Center)
+            .push(mute_btn)
+            .push(vol_slider)
+            .push(mixer_btn)
+            .into()
     }
 
     fn layout_toggle_button<'a>(&self) -> iced::widget::Button<'a, Message> {
@@ -687,6 +830,8 @@ impl IcedBar {
 
         let memory_pill = self.create_usage_pill("MEM", memory_usage);
 
+        let audio_controls = self.audio_controls_row();
+
         // Time pill with enhanced styling
         let time_pill = container(text(format!("🕐 {}", self.formated_now)).size(18).center())
             .padding([1, 8])
@@ -742,6 +887,8 @@ impl IcedBar {
             .push(cpu_pill)
             .push(Space::new().width(6).height(Length::Fill))
             .push(memory_pill)
+            .push(Space::new().width(6).height(Length::Fill))
+            .push(audio_controls)
             .push(Space::new().width(6).height(Length::Fill))
             .push(
                 mouse_area(screenshot_pill)
