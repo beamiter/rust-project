@@ -214,8 +214,10 @@ fn main() -> glib::ExitCode {
         );
         terminals.borrow_mut().push(first_terminal);
 
-        // Setup key controller on window level
+        // Setup key controller on window level with Capture phase
+        // so it receives events before the terminal widget
         let key_controller = EventControllerKey::new();
+        key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
         let font_step = 0.025;
         let opacity_step = 0.025;
 
