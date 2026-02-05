@@ -244,6 +244,8 @@ fn create_terminal(font_scale: f64) -> Terminal {
 
 fn spawn_shell(terminal: &Terminal) {
     let argv = &["/usr/bin/fish", "-fish"];
+    // Use empty envv to inherit all environment variables from parent process
+    // This ensures IME environment variables (GTK_IM_MODULE, XMODIFIERS, etc.) are passed through
     let envv: &[&str] = &[];
     let spawn_flags = SpawnFlags::SEARCH_PATH | SpawnFlags::FILE_AND_ARGV_ZERO;
     let cancellable: Option<&Cancellable> = None;
@@ -348,6 +350,39 @@ fn add_new_tab(
 }
 
 fn main() -> glib::ExitCode {
+    // CRITICAL: Set IME environment variables BEFORE GTK initialization
+    // This ensures GTK loads the correct IM module at startup
+    if std::env::var("GTK_IM_MODULE").is_err() {
+        println!("Warning: GTK_IM_MODULE not set, trying to detect IME...");
+        // Try to detect which IME is running
+        let output = std::process::Command::new("sh")
+            .arg("-c")
+            .arg("ps aux | grep -E 'fcitx|ibus' | grep -v grep | head -1")
+            .output();
+
+        if let Ok(out) = output {
+            let ps_output = String::from_utf8_lossy(&out.stdout);
+            if ps_output.contains("fcitx") {
+                println!("Detected fcitx, setting environment variables...");
+                std::env::set_var("GTK_IM_MODULE", "fcitx");
+                std::env::set_var("XMODIFIERS", "@im=fcitx");
+                std::env::set_var("QT_IM_MODULE", "fcitx");
+            } else if ps_output.contains("ibus") {
+                println!("Detected ibus, setting environment variables...");
+                std::env::set_var("GTK_IM_MODULE", "ibus");
+                std::env::set_var("XMODIFIERS", "@im=ibus");
+                std::env::set_var("QT_IM_MODULE", "ibus");
+            }
+        }
+    }
+
+    // Print IME configuration for debugging
+    println!("=== jterm4 IME Configuration ===");
+    println!("GTK_IM_MODULE: {}", std::env::var("GTK_IM_MODULE").unwrap_or_else(|_| "not set".to_string()));
+    println!("XMODIFIERS: {}", std::env::var("XMODIFIERS").unwrap_or_else(|_| "not set".to_string()));
+    println!("QT_IM_MODULE: {}", std::env::var("QT_IM_MODULE").unwrap_or_else(|_| "not set".to_string()));
+    println!("================================");
+
     // Bootstrap fish shell environment
     if let Err(e) = bootstrap_fish() {
         eprintln!("Warning: Fish bootstrap failed: {}", e);
@@ -392,7 +427,7 @@ fn main() -> glib::ExitCode {
         terminals.borrow_mut().push(first_terminal);
 
         // Setup key controller on window level with Capture phase
-        // so it receives events before the terminal widget
+        // This allows us to intercept shortcuts before the terminal processes them
         let key_controller = EventControllerKey::new();
         key_controller.set_propagation_phase(gtk4::PropagationPhase::Capture);
         let font_step = 0.025;
@@ -407,7 +442,8 @@ fn main() -> glib::ExitCode {
         let terminals_clone = terminals.clone();
 
         key_controller.connect_key_pressed(move |_controller, keyval, _keycode, state| {
-            println!("connect_key_pressed state:{:?}, keyval: {}", state, keyval);
+            // Only log for shortcut keys, not every keypress (to avoid IME interference)
+            // println!("connect_key_pressed state:{:?}, keyval: {}", state, keyval);
 
             // Get current terminal
             let current_page = notebook_clone.current_page();
@@ -417,10 +453,10 @@ fn main() -> glib::ExitCode {
                     .and_then(|widget| widget.downcast::<Terminal>().ok())
             });
 
-            if state == ModifierType::CONTROL_MASK | ModifierType::SHIFT_MASK {
-                println!("keyval: {}", keyval);
+            if state.contains(ModifierType::CONTROL_MASK | ModifierType::SHIFT_MASK) {
+                println!("Ctrl+Shift detected, keyval: {} ({})", keyval, keyval.name().unwrap_or_default());
                 match keyval {
-                    Key::T => {
+                    Key::T | Key::t => {
                         // New tab
                         println!("New tab: T");
                         let new_terminal = add_new_tab(
@@ -433,7 +469,7 @@ fn main() -> glib::ExitCode {
                         terminals_clone.borrow_mut().push(new_terminal);
                         return true.into();
                     }
-                    Key::W => {
+                    Key::W | Key::w => {
                         // Close current tab
                         println!("Close tab: W");
                         if let Some(page_num) = notebook_clone.current_page() {
@@ -453,14 +489,14 @@ fn main() -> glib::ExitCode {
                         }
                         return true.into();
                     }
-                    Key::C => {
+                    Key::C | Key::c => {
                         println!("Copy: C");
                         if let Some(ref term) = current_terminal {
                             term.copy_clipboard_format(Format::Text);
                         }
                         return true.into();
                     }
-                    Key::V => {
+                    Key::V | Key::v => {
                         println!("Paste: V");
                         if let Some(ref term) = current_terminal {
                             term.paste_clipboard();
@@ -475,7 +511,7 @@ fn main() -> glib::ExitCode {
                         }
                         return true.into();
                     }
-                    Key::I => {
+                    Key::I | Key::i => {
                         println!("Font decrease: I");
                         font_scale_clone.set((font_scale_clone.get() - font_step).max(0.1));
                         if let Some(ref term) = current_terminal {
@@ -483,7 +519,7 @@ fn main() -> glib::ExitCode {
                         }
                         return true.into();
                     }
-                    Key::O => {
+                    Key::O | Key::o => {
                         println!("Font increase: O");
                         font_scale_clone.set((font_scale_clone.get() + font_step).min(10.0));
                         if let Some(ref term) = current_terminal {
@@ -491,14 +527,14 @@ fn main() -> glib::ExitCode {
                         }
                         return true.into();
                     }
-                    Key::J => {
+                    Key::J | Key::j => {
                         println!("Opacity decrease: J");
                         window_opacity_clone
                             .set((window_opacity_clone.get() - opacity_step).clamp(0.01, 1.0));
                         window_clone.set_opacity(window_opacity_clone.get());
                         return true.into();
                     }
-                    Key::K => {
+                    Key::K | Key::k => {
                         println!("Opacity increase: K");
                         window_opacity_clone
                             .set((window_opacity_clone.get() + opacity_step).clamp(0.01, 1.0));
@@ -537,7 +573,7 @@ fn main() -> glib::ExitCode {
                 }
             }
 
-            if state == ModifierType::CONTROL_MASK {
+            if state.contains(ModifierType::CONTROL_MASK) && !state.contains(ModifierType::SHIFT_MASK) {
                 match keyval {
                     Key::minus => {
                         println!("Font decrease: minus");
@@ -577,19 +613,17 @@ fn main() -> glib::ExitCode {
                 }
             }
 
-            if state == ModifierType::NO_MODIFIER_MASK {
-                if keyval == Key::Control_L || keyval == Key::Control_R {
-                    ctrl_clicked_clone.set(true);
-                    println!("ctrl clicked");
-                }
+            if keyval == Key::Control_L || keyval == Key::Control_R {
+                ctrl_clicked_clone.set(true);
+                println!("ctrl clicked");
             }
 
             false.into()
         });
 
         let ctrl_clicked_clone2 = ctrl_clicked.clone();
-        key_controller.connect_key_released(move |_controller, _keyval, _keycode, state| {
-            if state == ModifierType::CONTROL_MASK {
+        key_controller.connect_key_released(move |_controller, keyval, _keycode, _state| {
+            if keyval == Key::Control_L || keyval == Key::Control_R {
                 println!("ctrl not clicked");
                 ctrl_clicked_clone2.set(false);
             }
