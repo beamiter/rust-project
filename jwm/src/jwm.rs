@@ -2970,6 +2970,16 @@ exit 127
             command.env("XDG_RUNTIME_DIR", v);
         }
 
+        // GTK4 bars may render via EGL buffers on some setups. When the compositor's renderer
+        // can't import those buffers (common with certain driver stacks), the bar can become
+        // invisible while still receiving input. Default to the cairo renderer unless the user
+        // explicitly chose another one.
+        if CONFIG.status_bar_name() == "gtk_bar" {
+            if std::env::var_os("GSK_RENDERER").is_none() {
+                command.env("GSK_RENDERER", "cairo");
+            }
+        }
+
         // 4. 执行启动并更新时间戳
         match command
             .stdin(Stdio::null())
