@@ -361,6 +361,32 @@ fn main() -> glib::ExitCode {
                         }
                         return true.into();
                     }
+                    Key::Page_Up => {
+                        // Previous tab (Ctrl+Page_Up)
+                        println!("Previous tab: Ctrl+Page_Up");
+                        if let Some(page_num) = notebook_clone.current_page() {
+                            if page_num > 0 {
+                                notebook_clone.set_current_page(Some(page_num - 1));
+                            } else {
+                                let last = notebook_clone.n_pages().saturating_sub(1);
+                                notebook_clone.set_current_page(Some(last));
+                            }
+                        }
+                        return true.into();
+                    }
+                    Key::Page_Down => {
+                        // Next tab (Ctrl+Page_Down)
+                        println!("Next tab: Ctrl+Page_Down");
+                        if let Some(page_num) = notebook_clone.current_page() {
+                            let n_pages = notebook_clone.n_pages();
+                            if page_num < n_pages - 1 {
+                                notebook_clone.set_current_page(Some(page_num + 1));
+                            } else {
+                                notebook_clone.set_current_page(Some(0));
+                            }
+                        }
+                        return true.into();
+                    }
                     _ => {}
                 }
             }
