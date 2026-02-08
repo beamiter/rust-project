@@ -2,19 +2,120 @@ use gtk4::gdk::ffi::GDK_BUTTON_PRIMARY;
 use gtk4::gdk::Key;
 use gtk4::gdk::ModifierType;
 use gtk4::gdk::RGBA;
-use gtk4::gio::Cancellable;
+use gtk4::gio::{self, Cancellable};
 use gtk4::glib::SpawnFlags;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
 use gtk4::{glib, Application, ApplicationWindow, Label, Notebook};
 use gtk4::{EventControllerKey, GestureClick};
-use std::cell::{Cell, RefCell};
+use log::{LevelFilter, Log, Metadata, Record};
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 use vte4::Format;
 use vte4::{CursorBlinkMode, CursorShape, PtyFlags, Terminal};
 use vte4::{TerminalExt, TerminalExtManual};
+
+struct SimpleStderrLogger {
+    level: LevelFilter,
+}
+
+impl Log for SimpleStderrLogger {
+    fn enabled(&self, metadata: &Metadata) -> bool {
+        metadata.level() <= self.level
+    }
+
+    fn log(&self, record: &Record) {
+        if self.enabled(record.metadata()) {
+            eprintln!("[{}] {}", record.level(), record.args());
+        }
+    }
+
+    fn flush(&self) {}
+}
+
+fn parse_level_filter(input: &str) -> LevelFilter {
+    match input.trim().to_ascii_lowercase().as_str() {
+        "off" => LevelFilter::Off,
+        "error" => LevelFilter::Error,
+        "warn" | "warning" => LevelFilter::Warn,
+        "info" => LevelFilter::Info,
+        "debug" => LevelFilter::Debug,
+        "trace" => LevelFilter::Trace,
+        _ => LevelFilter::Warn,
+    }
+}
+
+fn init_logging() {
+    let level = std::env::var("JTERM4_LOG")
+        .or_else(|_| std::env::var("RUST_LOG"))
+        .ok()
+        .as_deref()
+        .map(parse_level_filter)
+        .unwrap_or(LevelFilter::Warn);
+
+    let _ = log::set_boxed_logger(Box::new(SimpleStderrLogger { level }));
+    log::set_max_level(level);
+}
+
+#[derive(Clone)]
+struct Config {
+    window_opacity: f64,
+    terminal_scrollback_lines: u32,
+    font_desc: String,
+    default_font_scale: f64,
+    foreground: RGBA,
+    background: RGBA,
+    cursor: RGBA,
+    cursor_foreground: RGBA,
+}
+
+fn env_f64(name: &str) -> Option<f64> {
+    std::env::var(name).ok().and_then(|v| v.parse::<f64>().ok())
+}
+
+fn env_u32(name: &str) -> Option<u32> {
+    std::env::var(name).ok().and_then(|v| v.parse::<u32>().ok())
+}
+
+fn env_string(name: &str) -> Option<String> {
+    std::env::var(name).ok().filter(|s| !s.trim().is_empty())
+}
+
+fn env_rgba(name: &str) -> Option<RGBA> {
+    env_string(name).and_then(|v| RGBA::parse(&v).ok())
+}
+
+fn load_config() -> Config {
+    let default_font_desc = "SauceCodePro Nerd Font Regular 12".to_string();
+    let default_foreground = RGBA::parse("#f8f7e9").unwrap();
+    let default_background = RGBA::parse("#121616").unwrap();
+    let default_cursor = RGBA::parse("#7fb80e").unwrap();
+    let default_cursor_foreground = RGBA::parse("#1b315e").unwrap();
+
+    let window_opacity = env_f64("JTERM4_OPACITY").unwrap_or(0.95).clamp(0.01, 1.0);
+    let terminal_scrollback_lines = env_u32("JTERM4_SCROLLBACK").unwrap_or(5000);
+    let default_font_scale = env_f64("JTERM4_FONT_SCALE").unwrap_or(1.0).clamp(0.1, 10.0);
+
+    let font_desc = env_string("JTERM4_FONT").unwrap_or(default_font_desc);
+
+    let foreground = env_rgba("JTERM4_FG").unwrap_or(default_foreground);
+    let background = env_rgba("JTERM4_BG").unwrap_or(default_background);
+    let cursor = env_rgba("JTERM4_CURSOR").unwrap_or(default_cursor);
+    let cursor_foreground = env_rgba("JTERM4_CURSOR_FG").unwrap_or(default_cursor_foreground);
+
+    Config {
+        window_opacity,
+        terminal_scrollback_lines,
+        font_desc,
+        default_font_scale,
+        foreground,
+        background,
+        cursor,
+        cursor_foreground,
+    }
+}
 
 #[cfg(unix)]
 fn is_executable(path: &Path) -> bool {
@@ -84,7 +185,7 @@ fn choose_shell_argv() -> Vec<String> {
     vec!["sh".to_string()]
 }
 
-fn create_terminal(font_scale: f64) -> Terminal {
+fn create_terminal(config: &Config, font_scale: f64) -> Terminal {
     let terminal = Terminal::builder()
         .hexpand(true)
         .vexpand(true)
@@ -93,7 +194,7 @@ fn create_terminal(font_scale: f64) -> Terminal {
         .allow_hyperlink(true)
         .bold_is_bright(true)
         .input_enabled(true)
-        .scrollback_lines(5000)
+        .scrollback_lines(config.terminal_scrollback_lines)
         .cursor_blink_mode(CursorBlinkMode::Off)
         .cursor_shape(CursorShape::Block)
         .font_scale(font_scale)
@@ -104,8 +205,6 @@ fn create_terminal(font_scale: f64) -> Terminal {
     terminal.set_mouse_autohide(true);
 
     // Set colors
-    let foreground = RGBA::parse("#f8f7e9").unwrap();
-    let background = RGBA::parse("#121616").unwrap();
     let palette: [&RGBA; 16] = [
         &RGBA::parse("#130c0e").unwrap(),
         &RGBA::parse("#ed1941").unwrap(),
@@ -124,13 +223,13 @@ fn create_terminal(font_scale: f64) -> Terminal {
         &RGBA::parse("#33a3dc").unwrap(),
         &RGBA::parse("#f6f5ec").unwrap(),
     ];
-    terminal.set_colors(Some(&foreground), Some(&background), &palette);
+    terminal.set_colors(Some(&config.foreground), Some(&config.background), &palette);
     terminal.set_color_bold(None);
-    terminal.set_color_cursor(Some(&RGBA::parse("#7fb80e").unwrap()));
-    terminal.set_color_cursor_foreground(Some(&RGBA::parse("#1b315e").unwrap()));
+    terminal.set_color_cursor(Some(&config.cursor));
+    terminal.set_color_cursor_foreground(Some(&config.cursor_foreground));
 
     // Set font
-    let font_desc = FontDescription::from_string("SauceCodePro Nerd Font Regular 12");
+    let font_desc = FontDescription::from_string(&config.font_desc);
     terminal.set_font(Some(&font_desc));
 
     // Set regex for hyperlinks
@@ -141,14 +240,13 @@ fn create_terminal(font_scale: f64) -> Terminal {
     terminal.match_add_regex(&regex_pattern.unwrap(), 0);
 
     terminal.connect_bell(move |_| {
-        println!("Bell signal received");
+        log::debug!("Bell signal received");
     });
 
     terminal
 }
 
-fn spawn_shell(terminal: &Terminal) {
-    let argv_owned = choose_shell_argv();
+fn spawn_shell(terminal: &Terminal, argv_owned: &[String]) {
     let argv: Vec<&str> = argv_owned.iter().map(|s| s.as_str()).collect();
 
     // Use empty envv to inherit all environment variables from parent process
@@ -170,6 +268,12 @@ fn spawn_shell(terminal: &Terminal) {
     );
 }
 
+fn open_uri(uri: &str) {
+    if let Err(err) = gio::AppInfo::launch_default_for_uri(uri, None::<&gio::AppLaunchContext>) {
+        log::warn!("Failed to open URI {uri}: {err}");
+    }
+}
+
 fn setup_terminal_click_handler(terminal: &Terminal, ctrl_clicked: Rc<Cell<bool>>) {
     let click_controller = GestureClick::new();
     click_controller.set_button(0);
@@ -183,11 +287,7 @@ fn setup_terminal_click_handler(terminal: &Terminal, ctrl_clicked: Rc<Cell<bool>
                 let tmp = terminal_clone.check_match_at(x, y);
                 if let Some(hyper_link) = tmp.0 {
                     if ctrl_clicked_clone.get() {
-                        println!("hyper_link: {}", hyper_link);
-                        std::process::Command::new("xdg-open")
-                            .arg(hyper_link)
-                            .spawn()
-                            .expect("Failed to open URL");
+                        open_uri(&hyper_link);
                     }
                 }
             }
@@ -203,11 +303,13 @@ fn add_new_tab(
     window: &ApplicationWindow,
     font_scale: Rc<Cell<f64>>,
     ctrl_clicked: Rc<Cell<bool>>,
+    shell_argv: Rc<Vec<String>>,
+    config: Rc<Config>,
 ) -> Terminal {
     let tab_num = tab_counter.get();
     tab_counter.set(tab_num + 1);
 
-    let terminal = create_terminal(font_scale.get());
+    let terminal = create_terminal(&config, font_scale.get());
 
     // Setup click handler for hyperlinks
     setup_terminal_click_handler(&terminal, ctrl_clicked);
@@ -240,7 +342,7 @@ fn add_new_tab(
     });
 
     // Spawn shell
-    spawn_shell(&terminal);
+    spawn_shell(&terminal, shell_argv.as_ref());
 
     // Create tab label
     let label = Label::new(Some(&format!("Terminal {}", tab_num + 1)));
@@ -257,6 +359,8 @@ fn add_new_tab(
 }
 
 fn main() -> glib::ExitCode {
+    init_logging();
+
     // Shell selection is handled per-terminal spawn:
     // - prefer fish if available
     // - if bass works, import ~/.bashrc before showing the prompt
@@ -265,7 +369,12 @@ fn main() -> glib::ExitCode {
     let app = Application::builder().application_id("app.jterm4").build();
 
     app.connect_activate(|app| {
-        let window_opacity = Rc::new(Cell::new(0.95));
+        let config = Rc::new(load_config());
+
+        // Cache shell selection once to avoid extra process probes per new tab.
+        let shell_argv = Rc::new(choose_shell_argv());
+
+        let window_opacity = Rc::new(Cell::new(config.window_opacity));
         let window = ApplicationWindow::builder()
             .application(app)
             .default_width(800)
@@ -284,10 +393,9 @@ fn main() -> glib::ExitCode {
             .build();
 
         // Shared state
-        let font_scale = Rc::new(Cell::new(1.0));
+        let font_scale = Rc::new(Cell::new(config.default_font_scale));
         let tab_counter = Rc::new(Cell::new(0));
         let ctrl_clicked = Rc::new(Cell::new(false));
-        let terminals: Rc<RefCell<Vec<Terminal>>> = Rc::new(RefCell::new(Vec::new()));
 
         // Add first tab
         let first_terminal = add_new_tab(
@@ -296,8 +404,9 @@ fn main() -> glib::ExitCode {
             &window,
             font_scale.clone(),
             ctrl_clicked.clone(),
+            shell_argv.clone(),
+            config.clone(),
         );
-        terminals.borrow_mut().push(first_terminal.clone());
 
         // Setup key controller on window level with Capture phase
         // This allows us to intercept shortcuts before the terminal processes them
@@ -312,7 +421,8 @@ fn main() -> glib::ExitCode {
         let tab_counter_clone = tab_counter.clone();
         let ctrl_clicked_clone = ctrl_clicked.clone();
         let window_opacity_clone = window_opacity.clone();
-        let terminals_clone = terminals.clone();
+        let shell_argv_clone = shell_argv.clone();
+        let config_clone = config.clone();
 
         key_controller.connect_key_pressed(move |_controller, keyval, _keycode, state| {
             // Only log for shortcut keys, not every keypress (to avoid IME interference)
@@ -327,24 +437,29 @@ fn main() -> glib::ExitCode {
             });
 
             if state.contains(ModifierType::CONTROL_MASK | ModifierType::SHIFT_MASK) {
-                println!("Ctrl+Shift detected, keyval: {} ({})", keyval, keyval.name().unwrap_or_default());
+                log::debug!(
+                    "Ctrl+Shift shortcut: {} ({})",
+                    keyval,
+                    keyval.name().unwrap_or_default()
+                );
                 match keyval {
                     Key::T | Key::t => {
                         // New tab
-                        println!("New tab: T");
-                        let new_terminal = add_new_tab(
+                        log::info!("New tab");
+                        add_new_tab(
                             &notebook_clone,
                             tab_counter_clone.clone(),
                             &window_clone,
                             font_scale_clone.clone(),
                             ctrl_clicked_clone.clone(),
+                            shell_argv_clone.clone(),
+                            config_clone.clone(),
                         );
-                        terminals_clone.borrow_mut().push(new_terminal);
                         return true.into();
                     }
                     Key::W | Key::w => {
                         // Close current tab
-                        println!("Close tab: W");
+                        log::info!("Close tab");
                         if let Some(page_num) = notebook_clone.current_page() {
                             notebook_clone.remove_page(Some(page_num));
                             if notebook_clone.n_pages() == 0 {
@@ -363,21 +478,21 @@ fn main() -> glib::ExitCode {
                         return true.into();
                     }
                     Key::C | Key::c => {
-                        println!("Copy: C");
+                        log::debug!("Copy");
                         if let Some(ref term) = current_terminal {
                             term.copy_clipboard_format(Format::Text);
                         }
                         return true.into();
                     }
                     Key::V | Key::v => {
-                        println!("Paste: V");
+                        log::debug!("Paste");
                         if let Some(ref term) = current_terminal {
                             term.paste_clipboard();
                         }
                         return true.into();
                     }
                     Key::plus => {
-                        println!("Font increase: plus");
+                        log::debug!("Font increase");
                         font_scale_clone.set((font_scale_clone.get() + font_step).min(10.0));
                         if let Some(ref term) = current_terminal {
                             term.set_font_scale(font_scale_clone.get());
@@ -385,7 +500,7 @@ fn main() -> glib::ExitCode {
                         return true.into();
                     }
                     Key::I | Key::i => {
-                        println!("Font decrease: I");
+                        log::debug!("Font decrease");
                         font_scale_clone.set((font_scale_clone.get() - font_step).max(0.1));
                         if let Some(ref term) = current_terminal {
                             term.set_font_scale(font_scale_clone.get());
@@ -393,7 +508,7 @@ fn main() -> glib::ExitCode {
                         return true.into();
                     }
                     Key::O | Key::o => {
-                        println!("Font increase: O");
+                        log::debug!("Font increase");
                         font_scale_clone.set((font_scale_clone.get() + font_step).min(10.0));
                         if let Some(ref term) = current_terminal {
                             term.set_font_scale(font_scale_clone.get());
@@ -401,14 +516,14 @@ fn main() -> glib::ExitCode {
                         return true.into();
                     }
                     Key::J | Key::j => {
-                        println!("Opacity decrease: J");
+                        log::debug!("Opacity decrease");
                         window_opacity_clone
                             .set((window_opacity_clone.get() - opacity_step).clamp(0.01, 1.0));
                         window_clone.set_opacity(window_opacity_clone.get());
                         return true.into();
                     }
                     Key::K | Key::k => {
-                        println!("Opacity increase: K");
+                        log::debug!("Opacity increase");
                         window_opacity_clone
                             .set((window_opacity_clone.get() + opacity_step).clamp(0.01, 1.0));
                         window_clone.set_opacity(window_opacity_clone.get());
@@ -416,7 +531,7 @@ fn main() -> glib::ExitCode {
                     }
                     Key::Page_Up => {
                         // Previous tab
-                        println!("Previous tab: Page_Up");
+                        log::debug!("Previous tab");
                         if let Some(page_num) = notebook_clone.current_page() {
                             if page_num > 0 {
                                 notebook_clone.set_current_page(Some(page_num - 1));
@@ -430,7 +545,7 @@ fn main() -> glib::ExitCode {
                     }
                     Key::Page_Down => {
                         // Next tab
-                        println!("Next tab: Page_Down");
+                        log::debug!("Next tab");
                         if let Some(page_num) = notebook_clone.current_page() {
                             let n_pages = notebook_clone.n_pages();
                             if page_num < n_pages - 1 {
@@ -449,7 +564,7 @@ fn main() -> glib::ExitCode {
             if state.contains(ModifierType::CONTROL_MASK) && !state.contains(ModifierType::SHIFT_MASK) {
                 match keyval {
                     Key::minus => {
-                        println!("Font decrease: minus");
+                        log::debug!("Font decrease");
                         font_scale_clone.set((font_scale_clone.get() - font_step).max(0.1));
                         if let Some(ref term) = current_terminal {
                             term.set_font_scale(font_scale_clone.get());
@@ -458,7 +573,7 @@ fn main() -> glib::ExitCode {
                     }
                     Key::Page_Up => {
                         // Previous tab (Ctrl+Page_Up)
-                        println!("Previous tab: Ctrl+Page_Up");
+                        log::debug!("Previous tab");
                         if let Some(page_num) = notebook_clone.current_page() {
                             if page_num > 0 {
                                 notebook_clone.set_current_page(Some(page_num - 1));
@@ -471,7 +586,7 @@ fn main() -> glib::ExitCode {
                     }
                     Key::Page_Down => {
                         // Next tab (Ctrl+Page_Down)
-                        println!("Next tab: Ctrl+Page_Down");
+                        log::debug!("Next tab");
                         if let Some(page_num) = notebook_clone.current_page() {
                             let n_pages = notebook_clone.n_pages();
                             if page_num < n_pages - 1 {
@@ -488,7 +603,7 @@ fn main() -> glib::ExitCode {
 
             if keyval == Key::Control_L || keyval == Key::Control_R {
                 ctrl_clicked_clone.set(true);
-                println!("ctrl clicked");
+                log::trace!("ctrl pressed");
             }
 
             false.into()
@@ -497,7 +612,7 @@ fn main() -> glib::ExitCode {
         let ctrl_clicked_clone2 = ctrl_clicked.clone();
         key_controller.connect_key_released(move |_controller, keyval, _keycode, _state| {
             if keyval == Key::Control_L || keyval == Key::Control_R {
-                println!("ctrl not clicked");
+                log::trace!("ctrl released");
                 ctrl_clicked_clone2.set(false);
             }
         });
