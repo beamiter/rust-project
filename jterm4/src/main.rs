@@ -10,6 +10,7 @@ use gtk4::{glib, Application, ApplicationWindow, Label, Notebook};
 use gtk4::{EventControllerKey, GestureClick};
 use log::{LevelFilter, Log, Metadata, Record};
 use std::cell::Cell;
+use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
@@ -265,6 +266,75 @@ fn terminal_working_directory(terminal: &Terminal) -> Option<String> {
         .filter(|s| !s.is_empty())
 }
 
+fn tabs_state_file_path() -> PathBuf {
+    glib::user_config_dir()
+        .join("jterm4")
+        .join("tabs.state")
+}
+
+fn parse_tabs_state(contents: &str) -> (Option<u32>, Vec<String>) {
+    let mut current_page: Option<u32> = None;
+    let mut paths: Vec<String> = Vec::new();
+
+    for raw_line in contents.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if let Some(rest) = line.strip_prefix("current_page=") {
+            current_page = rest.trim().parse::<u32>().ok();
+            continue;
+        }
+        paths.push(line.to_string());
+    }
+
+    (current_page, paths)
+}
+
+fn load_tabs_state() -> (Option<u32>, Vec<String>) {
+    let path = tabs_state_file_path();
+    let Ok(contents) = fs::read_to_string(&path) else {
+        return (None, Vec::new());
+    };
+    parse_tabs_state(&contents)
+}
+
+fn save_tabs_state(notebook: &Notebook) {
+    let path = tabs_state_file_path();
+    if let Some(parent) = path.parent() {
+        if let Err(err) = fs::create_dir_all(parent) {
+            log::warn!("Failed to create state dir {}: {err}", parent.display());
+            return;
+        }
+    }
+
+    let home = std::env::var("HOME").ok();
+    let n_pages = notebook.n_pages();
+    let mut lines: Vec<String> = Vec::with_capacity((n_pages as usize) + 1);
+    if let Some(current) = notebook.current_page() {
+        lines.push(format!("current_page={current}"));
+    }
+
+    for i in 0..n_pages {
+        let Some(widget) = notebook.nth_page(Some(i)) else {
+            continue;
+        };
+        let Ok(terminal) = widget.downcast::<Terminal>() else {
+            continue;
+        };
+
+        let dir = terminal_working_directory(&terminal)
+            .or_else(|| home.clone())
+            .unwrap_or_else(|| "/".to_string());
+        lines.push(dir);
+    }
+
+    let payload = lines.join("\n") + "\n";
+    if let Err(err) = fs::write(&path, payload) {
+        log::warn!("Failed to write state file {}: {err}", path.display());
+    }
+}
+
 fn spawn_shell(terminal: &Terminal, argv_owned: &[String], working_directory: Option<&str>) {
     let argv: Vec<&str> = argv_owned.iter().map(|s| s.as_str()).collect();
 
@@ -283,7 +353,7 @@ fn spawn_shell(terminal: &Terminal, argv_owned: &[String], working_directory: Op
         || {},
         -1,
         cancellable,
-        |res| println!("{:?}", res),
+        |res| log::debug!("spawn_async: {res:?}"),
     );
 }
 
@@ -467,8 +537,23 @@ fn main() -> glib::ExitCode {
             config: config.clone(),
         });
 
-        // Add first tab
-        let first_terminal = ui.add_new_tab(None);
+        // Restore tabs from last session
+        let (saved_current, saved_paths) = load_tabs_state();
+        if saved_paths.is_empty() {
+            ui.add_new_tab(None);
+        } else {
+            for p in saved_paths {
+                let dir = if Path::new(&p).is_dir() { Some(p) } else { None };
+                ui.add_new_tab(dir);
+            }
+
+            if let Some(page) = saved_current {
+                let n_pages = notebook.n_pages();
+                if n_pages > 0 {
+                    notebook.set_current_page(Some(page.min(n_pages.saturating_sub(1))));
+                }
+            }
+        }
 
         // Setup key controller on window level with Capture phase
         // This allows us to intercept shortcuts before the terminal processes them
@@ -682,15 +767,23 @@ fn main() -> glib::ExitCode {
         window.add_controller(key_controller);
 
         let app_clone = app.clone();
+        let notebook_for_save = notebook.clone();
         window.connect_destroy(move |_| {
+            save_tabs_state(&notebook_for_save);
             app_clone.quit();
         });
 
         window.set_child(Some(&notebook));
         window.show();
 
-        // Focus the terminal after window is shown
-        first_terminal.grab_focus();
+        // Focus the active terminal after window is shown
+        if let Some(page_num) = notebook.current_page() {
+            if let Some(widget) = notebook.nth_page(Some(page_num)) {
+                if let Ok(terminal) = widget.downcast::<Terminal>() {
+                    terminal.grab_focus();
+                }
+            }
+        }
     });
 
     app.run()
