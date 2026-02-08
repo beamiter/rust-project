@@ -259,8 +259,8 @@ fn add_new_tab(
 fn main() -> glib::ExitCode {
     // Shell selection is handled per-terminal spawn:
     // - prefer fish if available
-    // - require bass to import ~/.bashrc when using fish
-    // - otherwise fallback to bash
+    // - if bass works, import ~/.bashrc before showing the prompt
+    // - otherwise fall back to plain fish, and if fish is missing then bash
 
     let app = Application::builder().application_id("app.jterm4").build();
 
