@@ -9,174 +9,79 @@ use gtk4::prelude::*;
 use gtk4::{glib, Application, ApplicationWindow, Label, Notebook};
 use gtk4::{EventControllerKey, GestureClick};
 use std::cell::{Cell, RefCell};
-use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::rc::Rc;
 use vte4::Format;
 use vte4::{CursorBlinkMode, CursorShape, PtyFlags, Terminal};
 use vte4::{TerminalExt, TerminalExtManual};
 
-/// Bootstrap fish shell with bass plugin for bashrc compatibility
-fn bootstrap_fish() -> Result<(), String> {
-    // Check if fish is installed
-    let fish_path = Command::new("which")
-        .arg("fish")
-        .output()
-        .map_err(|e| format!("Failed to check fish: {}", e))?;
-
-    if !fish_path.status.success() {
-        println!("Fish shell not found. Please install fish first:");
-        println!("  Ubuntu/Debian: sudo apt install fish");
-        println!("  Arch: sudo pacman -S fish");
-        println!("  Fedora: sudo dnf install fish");
-        return Err("Fish not installed".to_string());
-    }
-
-    let home = std::env::var("HOME").map_err(|_| "HOME not set")?;
-    let fish_config_dir = PathBuf::from(&home).join(".config/fish");
-    let fish_functions_dir = fish_config_dir.join("functions");
-    let fish_completions_dir = fish_config_dir.join("completions");
-    let config_fish = fish_config_dir.join("config.fish");
-    let bashrc_path = PathBuf::from(&home).join(".bashrc");
-
-    // Create directories if needed
-    fs::create_dir_all(&fish_functions_dir)
-        .map_err(|e| format!("Failed to create fish functions dir: {}", e))?;
-    fs::create_dir_all(&fish_completions_dir)
-        .map_err(|e| format!("Failed to create fish completions dir: {}", e))?;
-
-    // Check if fisher is installed
-    let fisher_path = fish_functions_dir.join("fisher.fish");
-    if !fisher_path.exists() {
-        println!("Installing fisher plugin manager...");
-        let output = Command::new("fish")
-            .arg("-c")
-            .arg("curl -sL https://raw.githubusercontent.com/jorgebucaran/fisher/main/functions/fisher.fish | source && fisher install jorgebucaran/fisher")
-            .output()
-            .map_err(|e| format!("Failed to install fisher: {}", e))?;
-
-        if !output.status.success() {
-            return Err(format!(
-                "Fisher installation failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        println!("Fisher installed successfully.");
-    }
-
-    // Check if bass is installed
-    let bass_path = fish_functions_dir.join("bass.fish");
-    if !bass_path.exists() {
-        println!("Installing bass plugin for bashrc compatibility...");
-        let output = Command::new("fish")
-            .arg("-c")
-            .arg("fisher install edc/bass")
-            .output()
-            .map_err(|e| format!("Failed to install bass: {}", e))?;
-
-        if !output.status.success() {
-            return Err(format!(
-                "Bass installation failed: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
-        println!("Bass installed successfully.");
-    }
-
-    // Extract aliases from .bashrc and convert to fish format
-    let fish_aliases = extract_bash_aliases(&bashrc_path)?;
-
-    // Configure config.fish to load bashrc env vars and aliases
-    let bashrc_loader = format!(
-        r#"# Load bashrc environment variables via bass (added by jterm4)
-if test -f ~/.bashrc
-    bass source ~/.bashrc
-end
-
-# Aliases converted from .bashrc (added by jterm4)
-{}
-"#,
-        fish_aliases
-    );
-
-    let needs_config = if config_fish.exists() {
-        let content =
-            fs::read_to_string(&config_fish).map_err(|e| format!("Failed to read config: {}", e))?;
-        !content.contains("# Aliases converted from .bashrc (added by jterm4)")
-    } else {
-        true
-    };
-
-    if needs_config {
-        println!("Configuring fish to load .bashrc...");
-        // Remove old bass-only config if present
-        let existing = fs::read_to_string(&config_fish).unwrap_or_default();
-        let existing = existing
-            .replace(
-                "# Load bashrc via bass (added by jterm4)\nif test -f ~/.bashrc\n    bass source ~/.bashrc\nend\n",
-                "",
-            );
-        let new_content = format!("{}\n{}", bashrc_loader, existing.trim());
-        fs::write(&config_fish, new_content)
-            .map_err(|e| format!("Failed to write config: {}", e))?;
-        println!("Fish configured with .bashrc aliases and environment variables.");
-    }
-
-    Ok(())
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .map(|m| m.is_file() && (m.permissions().mode() & 0o111 != 0))
+        .unwrap_or(false)
 }
 
-/// Extract aliases from .bashrc and convert to fish alias format
-fn extract_bash_aliases(bashrc_path: &PathBuf) -> Result<String, String> {
-    if !bashrc_path.exists() {
-        return Ok(String::new());
-    }
+#[cfg(not(unix))]
+fn is_executable(path: &Path) -> bool {
+    path.is_file()
+}
 
-    let content =
-        fs::read_to_string(bashrc_path).map_err(|e| format!("Failed to read .bashrc: {}", e))?;
+fn find_executable_in_path(exe_name: &str) -> Option<PathBuf> {
+    let path_var = std::env::var_os("PATH")?;
+    std::env::split_paths(&path_var)
+        .map(|dir| dir.join(exe_name))
+        .find(|candidate| is_executable(candidate))
+}
 
-    let mut fish_aliases = Vec::new();
+fn fish_has_working_bass(fish_path: &Path) -> bool {
+    // Spawn fish without user config to avoid startup-time side effects.
+    // We also *execute* bass once because some bass implementations try to
+    // translate bash aliases into fish aliases (which can fail for bash-only
+    // alias definitions). If bass can't run, we should not use it.
+    Command::new(fish_path)
+        .args([
+            "--no-config",
+            "-c",
+            // `type -q` checks autoloaded functions; `bass "true"` validates runtime.
+            "type -q bass; and bass \"true\"",
+        ])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+}
 
-    for line in content.lines() {
-        let line = line.trim();
-        // Match alias definitions: alias name="command" or alias name='command'
-        if line.starts_with("alias ") && !line.starts_with('#') {
-            if let Some(alias_def) = line.strip_prefix("alias ") {
-                // Parse alias_name="command" or alias_name='command'
-                if let Some(eq_pos) = alias_def.find('=') {
-                    let name = alias_def[..eq_pos].trim();
-                    let value = alias_def[eq_pos + 1..].trim();
-
-                    // Remove surrounding quotes if present
-                    let value = if (value.starts_with('"') && value.ends_with('"'))
-                        || (value.starts_with('\'') && value.ends_with('\''))
-                    {
-                        &value[1..value.len() - 1]
-                    } else {
-                        value
-                    };
-
-                    // Skip complex bash-specific aliases that can't be converted
-                    let has_bash_syntax = value.contains("$(")
-                        || value.contains("`")
-                        || value.contains("$?")
-                        || value.contains("&&")
-                        || value.contains("||")
-                        || value.contains(";")
-                        || value.contains("|");
-
-                    if has_bash_syntax {
-                        continue;
-                    }
-
-                    // Convert to fish alias format
-                    fish_aliases.push(format!("alias {} '{}'", name, value));
-                }
-            }
+fn choose_shell_argv() -> Vec<String> {
+    // Prefer fish.
+    if let Some(fish_path) = find_executable_in_path("fish") {
+        // If bass works, use it to import ~/.bashrc *before* the prompt.
+        if fish_has_working_bass(&fish_path) {
+            let init_cmd = "if test -f ~/.bashrc; bass source ~/.bashrc; end";
+            return vec![
+                fish_path.to_string_lossy().to_string(),
+                "-l".to_string(),
+                "-i".to_string(),
+                "-C".to_string(),
+                init_cmd.to_string(),
+            ];
         }
+
+        // bass missing/broken: still use fish (as requested), just without importing bashrc.
+        return vec![
+            fish_path.to_string_lossy().to_string(),
+            "-l".to_string(),
+            "-i".to_string(),
+        ];
     }
 
-    Ok(fish_aliases.join("\n"))
+    if let Some(bash_path) = find_executable_in_path("bash") {
+        return vec![bash_path.to_string_lossy().to_string(), "-l".to_string()];
+    }
+
+    // Last resort: POSIX sh
+    vec!["sh".to_string()]
 }
 
 fn create_terminal(font_scale: f64) -> Terminal {
@@ -243,17 +148,19 @@ fn create_terminal(font_scale: f64) -> Terminal {
 }
 
 fn spawn_shell(terminal: &Terminal) {
-    let argv = &["/usr/bin/fish", "-fish"];
+    let argv_owned = choose_shell_argv();
+    let argv: Vec<&str> = argv_owned.iter().map(|s| s.as_str()).collect();
+
     // Use empty envv to inherit all environment variables from parent process
-    // This ensures IME environment variables (GTK_IM_MODULE, XMODIFIERS, etc.) are passed through
     let envv: &[&str] = &[];
-    let spawn_flags = SpawnFlags::SEARCH_PATH | SpawnFlags::FILE_AND_ARGV_ZERO;
+    let spawn_flags = SpawnFlags::SEARCH_PATH;
     let cancellable: Option<&Cancellable> = None;
-    let working_directory = Some("~/");
+    let home = std::env::var("HOME").ok();
+    let working_directory = home.as_deref();
     terminal.spawn_async(
         PtyFlags::DEFAULT,
         working_directory,
-        argv,
+        &argv,
         envv,
         spawn_flags,
         || {},
@@ -350,44 +257,10 @@ fn add_new_tab(
 }
 
 fn main() -> glib::ExitCode {
-    // CRITICAL: Set IME environment variables BEFORE GTK initialization
-    // This ensures GTK loads the correct IM module at startup
-    if std::env::var("GTK_IM_MODULE").is_err() {
-        println!("Warning: GTK_IM_MODULE not set, trying to detect IME...");
-        // Try to detect which IME is running
-        let output = std::process::Command::new("sh")
-            .arg("-c")
-            .arg("ps aux | grep -E 'fcitx|ibus' | grep -v grep | head -1")
-            .output();
-
-        if let Ok(out) = output {
-            let ps_output = String::from_utf8_lossy(&out.stdout);
-            if ps_output.contains("fcitx") {
-                println!("Detected fcitx, setting environment variables...");
-                std::env::set_var("GTK_IM_MODULE", "fcitx");
-                std::env::set_var("XMODIFIERS", "@im=fcitx");
-                std::env::set_var("QT_IM_MODULE", "fcitx");
-            } else if ps_output.contains("ibus") {
-                println!("Detected ibus, setting environment variables...");
-                std::env::set_var("GTK_IM_MODULE", "ibus");
-                std::env::set_var("XMODIFIERS", "@im=ibus");
-                std::env::set_var("QT_IM_MODULE", "ibus");
-            }
-        }
-    }
-
-    // Print IME configuration for debugging
-    println!("=== jterm4 IME Configuration ===");
-    println!("GTK_IM_MODULE: {}", std::env::var("GTK_IM_MODULE").unwrap_or_else(|_| "not set".to_string()));
-    println!("XMODIFIERS: {}", std::env::var("XMODIFIERS").unwrap_or_else(|_| "not set".to_string()));
-    println!("QT_IM_MODULE: {}", std::env::var("QT_IM_MODULE").unwrap_or_else(|_| "not set".to_string()));
-    println!("================================");
-
-    // Bootstrap fish shell environment
-    if let Err(e) = bootstrap_fish() {
-        eprintln!("Warning: Fish bootstrap failed: {}", e);
-        eprintln!("Falling back to default shell behavior.");
-    }
+    // Shell selection is handled per-terminal spawn:
+    // - prefer fish if available
+    // - require bass to import ~/.bashrc when using fish
+    // - otherwise fallback to bash
 
     let app = Application::builder().application_id("app.jterm4").build();
 

@@ -6,7 +6,7 @@ members = [
     # "egui_bar",
     "iced_bar",
     "jterm4",
-    # "gtk_bar",
+    "gtk_bar",
     "relm_bar",
     # "dioxus_bar",
     "jwm",
