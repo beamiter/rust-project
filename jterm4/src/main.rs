@@ -71,6 +71,17 @@ struct Config {
     cursor_foreground: RGBA,
 }
 
+#[derive(Clone)]
+struct UiState {
+    window: ApplicationWindow,
+    notebook: Notebook,
+    tab_counter: Rc<Cell<u32>>,
+    font_scale: Rc<Cell<f64>>,
+    ctrl_clicked: Rc<Cell<bool>>,
+    shell_argv: Rc<Vec<String>>,
+    config: Rc<Config>,
+}
+
 fn env_f64(name: &str) -> Option<f64> {
     std::env::var(name).ok().and_then(|v| v.parse::<f64>().ok())
 }
@@ -246,7 +257,15 @@ fn create_terminal(config: &Config, font_scale: f64) -> Terminal {
     terminal
 }
 
-fn spawn_shell(terminal: &Terminal, argv_owned: &[String]) {
+fn terminal_working_directory(terminal: &Terminal) -> Option<String> {
+    let uri = terminal.current_directory_uri()?;
+    let file = gio::File::for_uri(uri.as_str());
+    file.path()
+        .map(|p| p.to_string_lossy().to_string())
+        .filter(|s| !s.is_empty())
+}
+
+fn spawn_shell(terminal: &Terminal, argv_owned: &[String], working_directory: Option<&str>) {
     let argv: Vec<&str> = argv_owned.iter().map(|s| s.as_str()).collect();
 
     // Use empty envv to inherit all environment variables from parent process
@@ -254,7 +273,7 @@ fn spawn_shell(terminal: &Terminal, argv_owned: &[String]) {
     let spawn_flags = SpawnFlags::SEARCH_PATH;
     let cancellable: Option<&Cancellable> = None;
     let home = std::env::var("HOME").ok();
-    let working_directory = home.as_deref();
+    let working_directory = working_directory.or(home.as_deref());
     terminal.spawn_async(
         PtyFlags::DEFAULT,
         working_directory,
@@ -297,65 +316,63 @@ fn setup_terminal_click_handler(terminal: &Terminal, ctrl_clicked: Rc<Cell<bool>
     terminal.add_controller(click_controller);
 }
 
-fn add_new_tab(
-    notebook: &Notebook,
-    tab_counter: Rc<Cell<u32>>,
-    window: &ApplicationWindow,
-    font_scale: Rc<Cell<f64>>,
-    ctrl_clicked: Rc<Cell<bool>>,
-    shell_argv: Rc<Vec<String>>,
-    config: Rc<Config>,
-) -> Terminal {
-    let tab_num = tab_counter.get();
-    tab_counter.set(tab_num + 1);
+impl UiState {
+    fn add_new_tab(&self, working_directory: Option<String>) -> Terminal {
+        let tab_num = self.tab_counter.get();
+        self.tab_counter.set(tab_num + 1);
 
-    let terminal = create_terminal(&config, font_scale.get());
+        let terminal = create_terminal(&self.config, self.font_scale.get());
 
-    // Setup click handler for hyperlinks
-    setup_terminal_click_handler(&terminal, ctrl_clicked);
+        // Setup click handler for hyperlinks
+        setup_terminal_click_handler(&terminal, self.ctrl_clicked.clone());
 
-    // Connect child-exited to close the tab
-    let notebook_clone = notebook.clone();
-    let terminal_clone = terminal.clone();
-    let window_clone = window.clone();
-    terminal.connect_child_exited(move |_, _| {
-        // Find and remove this terminal's page
-        let n_pages = notebook_clone.n_pages();
-        for i in 0..n_pages {
-            if let Some(page) = notebook_clone.nth_page(Some(i)) {
-                if page == terminal_clone.clone().upcast::<gtk4::Widget>() {
-                    notebook_clone.remove_page(Some(i));
-                    break;
+        // Connect child-exited to close the tab
+        let notebook_clone = self.notebook.clone();
+        let terminal_clone = terminal.clone();
+        let window_clone = self.window.clone();
+        terminal.connect_child_exited(move |_, _| {
+            // Find and remove this terminal's page
+            let n_pages = notebook_clone.n_pages();
+            for i in 0..n_pages {
+                if let Some(page) = notebook_clone.nth_page(Some(i)) {
+                    if page == terminal_clone.clone().upcast::<gtk4::Widget>() {
+                        notebook_clone.remove_page(Some(i));
+                        break;
+                    }
                 }
             }
-        }
-        // If no more tabs, close window; otherwise focus new current terminal
-        if notebook_clone.n_pages() == 0 {
-            window_clone.destroy();
-        } else if let Some(new_page) = notebook_clone.current_page() {
-            if let Some(widget) = notebook_clone.nth_page(Some(new_page)) {
-                if let Ok(term) = widget.downcast::<Terminal>() {
-                    term.grab_focus();
+            // If no more tabs, close window; otherwise focus new current terminal
+            if notebook_clone.n_pages() == 0 {
+                window_clone.destroy();
+            } else if let Some(new_page) = notebook_clone.current_page() {
+                if let Some(widget) = notebook_clone.nth_page(Some(new_page)) {
+                    if let Ok(term) = widget.downcast::<Terminal>() {
+                        term.grab_focus();
+                    }
                 }
             }
-        }
-    });
+        });
 
-    // Spawn shell
-    spawn_shell(&terminal, shell_argv.as_ref());
+        // Spawn shell
+        spawn_shell(
+            &terminal,
+            self.shell_argv.as_ref(),
+            working_directory.as_deref(),
+        );
 
-    // Create tab label
-    let label = Label::new(Some(&format!("Terminal {}", tab_num + 1)));
+        // Create tab label
+        let label = Label::new(Some(&format!("Terminal {}", tab_num + 1)));
 
-    // Add to notebook
-    let page_num = notebook.append_page(&terminal, Some(&label));
-    notebook.set_tab_reorderable(&terminal, true);
-    notebook.set_current_page(Some(page_num));
+        // Add to notebook
+        let page_num = self.notebook.append_page(&terminal, Some(&label));
+        self.notebook.set_tab_reorderable(&terminal, true);
+        self.notebook.set_current_page(Some(page_num));
 
-    // Focus the new terminal
-    terminal.grab_focus();
+        // Focus the new terminal
+        terminal.grab_focus();
 
-    terminal
+        terminal
+    }
 }
 
 fn main() -> glib::ExitCode {
@@ -397,16 +414,18 @@ fn main() -> glib::ExitCode {
         let tab_counter = Rc::new(Cell::new(0));
         let ctrl_clicked = Rc::new(Cell::new(false));
 
+        let ui = Rc::new(UiState {
+            window: window.clone(),
+            notebook: notebook.clone(),
+            tab_counter: tab_counter.clone(),
+            font_scale: font_scale.clone(),
+            ctrl_clicked: ctrl_clicked.clone(),
+            shell_argv: shell_argv.clone(),
+            config: config.clone(),
+        });
+
         // Add first tab
-        let first_terminal = add_new_tab(
-            &notebook,
-            tab_counter.clone(),
-            &window,
-            font_scale.clone(),
-            ctrl_clicked.clone(),
-            shell_argv.clone(),
-            config.clone(),
-        );
+        let first_terminal = ui.add_new_tab(None);
 
         // Setup key controller on window level with Capture phase
         // This allows us to intercept shortcuts before the terminal processes them
@@ -418,11 +437,9 @@ fn main() -> glib::ExitCode {
         let notebook_clone = notebook.clone();
         let window_clone = window.clone();
         let font_scale_clone = font_scale.clone();
-        let tab_counter_clone = tab_counter.clone();
         let ctrl_clicked_clone = ctrl_clicked.clone();
         let window_opacity_clone = window_opacity.clone();
-        let shell_argv_clone = shell_argv.clone();
-        let config_clone = config.clone();
+        let ui_clone = ui.clone();
 
         key_controller.connect_key_pressed(move |_controller, keyval, _keycode, state| {
             // Only log for shortcut keys, not every keypress (to avoid IME interference)
@@ -446,15 +463,10 @@ fn main() -> glib::ExitCode {
                     Key::T | Key::t => {
                         // New tab
                         log::info!("New tab");
-                        add_new_tab(
-                            &notebook_clone,
-                            tab_counter_clone.clone(),
-                            &window_clone,
-                            font_scale_clone.clone(),
-                            ctrl_clicked_clone.clone(),
-                            shell_argv_clone.clone(),
-                            config_clone.clone(),
-                        );
+                        let working_directory = current_terminal
+                            .as_ref()
+                            .and_then(terminal_working_directory);
+                        ui_clone.add_new_tab(working_directory);
                         return true.into();
                     }
                     Key::W | Key::w => {
