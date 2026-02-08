@@ -360,11 +360,54 @@ impl UiState {
             working_directory.as_deref(),
         );
 
-        // Create tab label
+        // Create tab header with a close button
+        let tab_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
         let label = Label::new(Some(&format!("Terminal {}", tab_num + 1)));
+        label.set_xalign(0.0);
+        label.set_hexpand(true);
+        // Make tabs wider by default so the title is visible.
+        // These are character-based hints; the notebook may still shrink tabs when crowded.
+        label.set_width_chars(24);
+        label.set_max_width_chars(64);
+        label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+
+        let close_button = gtk4::Button::from_icon_name("window-close-symbolic");
+        close_button.set_focus_on_click(false);
+        close_button.set_can_focus(false);
+        close_button.set_has_frame(false);
+        close_button.add_css_class("flat");
+        close_button.set_tooltip_text(Some("Close tab"));
+
+        tab_box.append(&label);
+        tab_box.append(&close_button);
+
+        let notebook_for_close = self.notebook.clone();
+        let window_for_close = self.window.clone();
+        let terminal_widget_for_close = terminal.clone().upcast::<gtk4::Widget>();
+        close_button.connect_clicked(move |_| {
+            let n_pages = notebook_for_close.n_pages();
+            for i in 0..n_pages {
+                if let Some(page) = notebook_for_close.nth_page(Some(i)) {
+                    if page == terminal_widget_for_close {
+                        notebook_for_close.remove_page(Some(i));
+                        break;
+                    }
+                }
+            }
+
+            if notebook_for_close.n_pages() == 0 {
+                window_for_close.destroy();
+            } else if let Some(new_page) = notebook_for_close.current_page() {
+                if let Some(widget) = notebook_for_close.nth_page(Some(new_page)) {
+                    if let Ok(term) = widget.downcast::<Terminal>() {
+                        term.grab_focus();
+                    }
+                }
+            }
+        });
 
         // Add to notebook
-        let page_num = self.notebook.append_page(&terminal, Some(&label));
+        let page_num = self.notebook.append_page(&terminal, Some(&tab_box));
         self.notebook.set_tab_reorderable(&terminal, true);
         self.notebook.set_current_page(Some(page_num));
 
