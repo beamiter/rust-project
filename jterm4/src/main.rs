@@ -6,7 +6,7 @@ use gtk4::gio::{self, Cancellable};
 use gtk4::glib::SpawnFlags;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
-use gtk4::{glib, Application, ApplicationWindow, Label, Notebook};
+use gtk4::{glib, Application, ApplicationWindow, Dialog, Entry, Label, Notebook, ResponseType};
 use gtk4::{EventControllerKey, GestureClick};
 use log::{LevelFilter, Log, Metadata, Record};
 use std::cell::Cell;
@@ -272,9 +272,43 @@ fn tabs_state_file_path() -> PathBuf {
         .join("tabs.state")
 }
 
-fn parse_tabs_state(contents: &str) -> (Option<u32>, Vec<String>) {
+fn escape_tab_state(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('\t', "\\t")
+        .replace('\n', "\\n")
+}
+
+fn unescape_tab_state(value: &str) -> String {
+    let mut out = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.peek().copied() {
+                Some('t') => {
+                    out.push('\t');
+                    chars.next();
+                }
+                Some('n') => {
+                    out.push('\n');
+                    chars.next();
+                }
+                Some('\\') => {
+                    out.push('\\');
+                    chars.next();
+                }
+                _ => out.push(ch),
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    out
+}
+
+fn parse_tabs_state(contents: &str) -> (Option<u32>, Vec<(Option<String>, String)>) {
     let mut current_page: Option<u32> = None;
-    let mut paths: Vec<String> = Vec::new();
+    let mut tabs: Vec<(Option<String>, String)> = Vec::new();
 
     for raw_line in contents.lines() {
         let line = raw_line.trim();
@@ -285,18 +319,37 @@ fn parse_tabs_state(contents: &str) -> (Option<u32>, Vec<String>) {
             current_page = rest.trim().parse::<u32>().ok();
             continue;
         }
-        paths.push(line.to_string());
+        if let Some(rest) = line.strip_prefix("tab=") {
+            if let Some((name_raw, dir_raw)) = rest.split_once('\t') {
+                let name = unescape_tab_state(name_raw);
+                let dir = unescape_tab_state(dir_raw);
+                tabs.push((Some(name), dir));
+            } else {
+                let dir = unescape_tab_state(rest);
+                tabs.push((None, dir));
+            }
+            continue;
+        }
+        tabs.push((None, line.to_string()));
     }
 
-    (current_page, paths)
+    (current_page, tabs)
 }
 
-fn load_tabs_state() -> (Option<u32>, Vec<String>) {
+fn load_tabs_state() -> (Option<u32>, Vec<(Option<String>, String)>) {
     let path = tabs_state_file_path();
     let Ok(contents) = fs::read_to_string(&path) else {
         return (None, Vec::new());
     };
     parse_tabs_state(&contents)
+}
+
+fn tab_label_text(notebook: &Notebook, widget: &gtk4::Widget) -> Option<String> {
+    let tab_label = notebook.tab_label(widget)?;
+    let tab_box = tab_label.downcast::<gtk4::Box>().ok()?;
+    let first_child = tab_box.first_child()?;
+    let label = first_child.downcast::<Label>().ok()?;
+    Some(label.text().to_string())
 }
 
 fn save_tabs_state(notebook: &Notebook) {
@@ -326,7 +379,14 @@ fn save_tabs_state(notebook: &Notebook) {
         let dir = terminal_working_directory(&terminal)
             .or_else(|| home.clone())
             .unwrap_or_else(|| "/".to_string());
-        lines.push(dir);
+        let label_text = tab_label_text(notebook, &terminal.upcast::<gtk4::Widget>())
+            .unwrap_or_else(|| format!("Terminal {}", i + 1));
+        let line = format!(
+            "tab={}\t{}",
+            escape_tab_state(&label_text),
+            escape_tab_state(&dir)
+        );
+        lines.push(line);
     }
 
     let payload = lines.join("\n") + "\n";
@@ -389,6 +449,40 @@ fn open_uri(uri: &str) {
     }
 }
 
+fn show_rename_dialog(window: &ApplicationWindow, notebook: &Notebook, label: &Label) {
+    let dialog = Dialog::builder()
+        .transient_for(window)
+        .modal(true)
+        .title("Rename tab")
+        .build();
+    dialog.add_button("Cancel", ResponseType::Cancel);
+    dialog.add_button("Rename", ResponseType::Accept);
+    dialog.set_default_response(ResponseType::Accept);
+
+    let entry = Entry::new();
+    entry.set_text(&label.text());
+    entry.set_activates_default(true);
+    dialog.content_area().append(&entry);
+
+    let label_clone = label.clone();
+    let notebook_clone = notebook.clone();
+    let value = entry.clone();
+    dialog.connect_response(move |dialog, response| {
+        if response == ResponseType::Accept {
+            let text = value.text();
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                label_clone.set_text(trimmed);
+                save_tabs_state(&notebook_clone);
+            }
+        }
+        dialog.close();
+    });
+
+    dialog.show();
+    entry.grab_focus();
+}
+
 fn setup_terminal_click_handler(terminal: &Terminal, ctrl_clicked: Rc<Cell<bool>>) {
     let click_controller = GestureClick::new();
     click_controller.set_button(0);
@@ -413,7 +507,7 @@ fn setup_terminal_click_handler(terminal: &Terminal, ctrl_clicked: Rc<Cell<bool>
 }
 
 impl UiState {
-    fn add_new_tab(&self, working_directory: Option<String>) -> Terminal {
+    fn add_new_tab(&self, working_directory: Option<String>, tab_name: Option<String>) -> Terminal {
         let tab_num = self.tab_counter.get();
         self.tab_counter.set(tab_num + 1);
 
@@ -458,7 +552,8 @@ impl UiState {
 
         // Create tab header with a close button
         let tab_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-        let label = Label::new(Some(&format!("Terminal {}", tab_num + 1)));
+        let label_text = tab_name.unwrap_or_else(|| format!("Terminal {}", tab_num + 1));
+        let label = Label::new(Some(&label_text));
         label.set_xalign(0.0);
         label.set_hexpand(true);
         // Make tabs wider by default so the title is visible.
@@ -466,6 +561,18 @@ impl UiState {
         label.set_width_chars(24);
         label.set_max_width_chars(64);
         label.set_ellipsize(gtk4::pango::EllipsizeMode::End);
+
+        let rename_click = GestureClick::new();
+        rename_click.set_button(GDK_BUTTON_PRIMARY as u32);
+        let label_for_rename = label.clone();
+        let window_for_rename = self.window.clone();
+        let notebook_for_rename = self.notebook.clone();
+        rename_click.connect_pressed(move |_, n_press, _, _| {
+            if n_press == 2 {
+                show_rename_dialog(&window_for_rename, &notebook_for_rename, &label_for_rename);
+            }
+        });
+        label.add_controller(rename_click);
 
         let close_button = gtk4::Button::from_icon_name("window-close-symbolic");
         close_button.set_focus_on_click(false);
@@ -569,13 +676,13 @@ fn main() -> glib::ExitCode {
         });
 
         // Restore tabs from last session
-        let (saved_current, saved_paths) = load_tabs_state();
-        if saved_paths.is_empty() {
-            ui.add_new_tab(None);
+        let (saved_current, saved_tabs) = load_tabs_state();
+        if saved_tabs.is_empty() {
+            ui.add_new_tab(None, None);
         } else {
-            for p in saved_paths {
-                let dir = if Path::new(&p).is_dir() { Some(p) } else { None };
-                ui.add_new_tab(dir);
+            for (name, path) in saved_tabs {
+                let dir = if Path::new(&path).is_dir() { Some(path) } else { None };
+                ui.add_new_tab(dir, name);
             }
 
             if let Some(page) = saved_current {
@@ -625,7 +732,7 @@ fn main() -> glib::ExitCode {
                         let working_directory = current_terminal
                             .as_ref()
                             .and_then(terminal_working_directory);
-                        ui_clone.add_new_tab(working_directory);
+                        ui_clone.add_new_tab(working_directory, None);
                         return true.into();
                     }
                     Key::W | Key::w => {
