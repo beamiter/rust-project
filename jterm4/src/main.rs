@@ -457,7 +457,7 @@ fn open_uri(uri: &str) {
     }
 }
 
-fn show_rename_dialog(window: &ApplicationWindow, label: &Label) {
+fn show_rename_dialog(window: &ApplicationWindow, label: &Label, custom_title: Rc<Cell<bool>>) {
     let dialog = Dialog::builder()
         .transient_for(window)
         .modal(true)
@@ -473,6 +473,7 @@ fn show_rename_dialog(window: &ApplicationWindow, label: &Label) {
     dialog.content_area().append(&entry);
 
     let label_clone = label.clone();
+    let custom_title_clone = custom_title.clone();
     let value = entry.clone();
     dialog.connect_response(move |dialog, response| {
         if response == ResponseType::Accept {
@@ -480,6 +481,7 @@ fn show_rename_dialog(window: &ApplicationWindow, label: &Label) {
             let trimmed = text.trim();
             if !trimmed.is_empty() {
                 label_clone.set_text(trimmed);
+                custom_title_clone.set(true);
             }
         }
         dialog.close();
@@ -487,6 +489,106 @@ fn show_rename_dialog(window: &ApplicationWindow, label: &Label) {
 
     dialog.show();
     entry.grab_focus();
+}
+
+fn default_tab_title(tab_index_1based: u32, working_directory: Option<&str>) -> String {
+    let mut resolved_dir = working_directory.filter(|s| !s.trim().is_empty()).map(|s| s.to_string());
+
+    // If no directory is known (e.g. first launch), default to HOME so the tab has a meaningful title.
+    if resolved_dir.is_none() {
+        resolved_dir = std::env::var("HOME").ok();
+    }
+
+    let Some(dir) = resolved_dir.as_deref() else {
+        return format!("Terminal {tab_index_1based}");
+    };
+
+    // Normalize trailing slashes.
+    let mut normalized = dir.trim_end_matches('/');
+    if normalized.is_empty() {
+        normalized = "/";
+    }
+
+    // Shorten $HOME to ~.
+    let home = std::env::var("HOME").ok();
+    let display_dir = if let Some(home) = home.as_deref() {
+        if normalized == home {
+            "~".to_string()
+        } else if let Some(rest) = normalized.strip_prefix(home) {
+            if rest.starts_with('/') {
+                format!("~{rest}")
+            } else {
+                normalized.to_string()
+            }
+        } else {
+            normalized.to_string()
+        }
+    } else {
+        normalized.to_string()
+    };
+
+    if display_dir == "/" || display_dir == "~" {
+        return display_dir;
+    }
+
+    // Fish-like prompt_pwd: abbreviate intermediate components, keep the last component.
+    // Example: /usr/local/bin -> /u/l/bin, ~/projects/rust-project/jwm -> ~/p/r/jwm
+    fn shorten_component(component: &str) -> String {
+        if component.is_empty() {
+            return String::new();
+        }
+        if component == "." || component == ".." {
+            return component.to_string();
+        }
+
+        let mut chars = component.chars();
+        let first = chars.next().unwrap();
+        if first == '.' {
+            // Better readability for dot-dirs: ".config" -> ".c".
+            if let Some(second) = chars.next() {
+                let mut out = String::new();
+                out.push(first);
+                out.push(second);
+                out
+            } else {
+                ".".to_string()
+            }
+        } else {
+            first.to_string()
+        }
+    }
+
+    let (prefix, rest) = if let Some(r) = display_dir.strip_prefix("~/") {
+        ("~/", r)
+    } else if let Some(r) = display_dir.strip_prefix('/') {
+        ("/", r)
+    } else {
+        ("", display_dir.as_str())
+    };
+
+    let parts: Vec<&str> = rest.split('/').filter(|p| !p.is_empty()).collect();
+    if parts.len() <= 1 {
+        return format!("{prefix}{rest}");
+    }
+
+    let mut out_parts: Vec<String> = Vec::with_capacity(parts.len());
+    for (i, part) in parts.iter().enumerate() {
+        if i + 1 == parts.len() {
+            out_parts.push((*part).to_string());
+        } else {
+            out_parts.push(shorten_component(part));
+        }
+    }
+
+    format!("{prefix}{}", out_parts.join("/"))
+}
+
+fn looks_like_legacy_default_title(title: &str) -> bool {
+    let trimmed = title.trim();
+    let Some(rest) = trimmed.strip_prefix("Terminal ") else {
+        return false;
+    };
+    rest.trim().parse::<u32>().is_ok()
 }
 
 fn setup_terminal_click_handler(terminal: &Terminal, ctrl_clicked: Rc<Cell<bool>>) {
@@ -558,8 +660,17 @@ impl UiState {
 
         // Create tab header with a close button
         let tab_box = gtk4::Box::new(gtk4::Orientation::Horizontal, 6);
-        let label_text = tab_name.unwrap_or_else(|| format!("Terminal {}", tab_num + 1));
+        let computed_default_title = default_tab_title(tab_num + 1, working_directory.as_deref());
+        let (label_text, is_custom) = match tab_name {
+            Some(name) => {
+                // Treat as non-custom if it matches the computed default title.
+                let custom = name != computed_default_title;
+                (name, custom)
+            }
+            None => (computed_default_title, false),
+        };
         let label = Label::new(Some(&label_text));
+        let custom_title = Rc::new(Cell::new(is_custom));
         label.set_xalign(0.0);
         label.set_hexpand(true);
         // Make tabs wider by default so the title is visible.
@@ -572,12 +683,30 @@ impl UiState {
         rename_click.set_button(GDK_BUTTON_PRIMARY as u32);
         let label_for_rename = label.clone();
         let window_for_rename = self.window.clone();
+        let custom_title_for_rename = custom_title.clone();
         rename_click.connect_pressed(move |_, n_press, _, _| {
             if n_press == 2 {
-                show_rename_dialog(&window_for_rename, &label_for_rename);
+                show_rename_dialog(&window_for_rename, &label_for_rename, custom_title_for_rename.clone());
             }
         });
         label.add_controller(rename_click);
+
+        // Auto-update tab title when PWD changes (unless user manually renamed it).
+        let label_for_pwd = label.clone();
+        let custom_title_for_pwd = custom_title.clone();
+        let tab_index_for_pwd = tab_num + 1;
+        terminal.connect_notify_local(Some("current-directory-uri"), move |term, _| {
+            if custom_title_for_pwd.get() {
+                return;
+            }
+            let Some(dir) = terminal_working_directory(term) else {
+                return;
+            };
+            let new_title = default_tab_title(tab_index_for_pwd, Some(&dir));
+            if label_for_pwd.text().as_str() != new_title {
+                label_for_pwd.set_text(&new_title);
+            }
+        });
 
         let close_button = gtk4::Button::from_icon_name("window-close-symbolic");
         close_button.set_focus_on_click(false);
@@ -688,7 +817,12 @@ fn main() -> glib::ExitCode {
         } else {
             for (name, path) in saved_tabs {
                 let dir = if Path::new(&path).is_dir() { Some(path) } else { None };
-                ui.add_new_tab(dir, name);
+                let effective_name = if dir.is_some() {
+                    name.and_then(|n| if looks_like_legacy_default_title(&n) { None } else { Some(n) })
+                } else {
+                    name
+                };
+                ui.add_new_tab(dir, effective_name);
             }
 
             if let Some(page) = saved_current {
