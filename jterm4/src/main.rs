@@ -3,6 +3,7 @@ use gtk4::gdk::Key;
 use gtk4::gdk::ModifierType;
 use gtk4::gdk::RGBA;
 use gtk4::gio::{self, Cancellable};
+use gtk4::gio::prelude::FileExt as GioFileExt;
 use gtk4::glib::SpawnFlags;
 use gtk4::pango::FontDescription;
 use gtk4::prelude::*;
@@ -341,6 +342,13 @@ fn load_tabs_state() -> (Option<u32>, Vec<(Option<String>, String)>) {
     let Ok(contents) = fs::read_to_string(&path) else {
         return (None, Vec::new());
     };
+
+    // Consume-on-start: delete after read so only one instance restores this snapshot.
+    // Each instance writes its own state on close; the last one closed wins.
+    if let Err(err) = fs::remove_file(&path) {
+        log::debug!("Failed to remove tabs state {}: {err}", path.display());
+    }
+
     parse_tabs_state(&contents)
 }
 
@@ -449,7 +457,7 @@ fn open_uri(uri: &str) {
     }
 }
 
-fn show_rename_dialog(window: &ApplicationWindow, notebook: &Notebook, label: &Label) {
+fn show_rename_dialog(window: &ApplicationWindow, label: &Label) {
     let dialog = Dialog::builder()
         .transient_for(window)
         .modal(true)
@@ -465,7 +473,6 @@ fn show_rename_dialog(window: &ApplicationWindow, notebook: &Notebook, label: &L
     dialog.content_area().append(&entry);
 
     let label_clone = label.clone();
-    let notebook_clone = notebook.clone();
     let value = entry.clone();
     dialog.connect_response(move |dialog, response| {
         if response == ResponseType::Accept {
@@ -473,7 +480,6 @@ fn show_rename_dialog(window: &ApplicationWindow, notebook: &Notebook, label: &L
             let trimmed = text.trim();
             if !trimmed.is_empty() {
                 label_clone.set_text(trimmed);
-                save_tabs_state(&notebook_clone);
             }
         }
         dialog.close();
@@ -566,10 +572,9 @@ impl UiState {
         rename_click.set_button(GDK_BUTTON_PRIMARY as u32);
         let label_for_rename = label.clone();
         let window_for_rename = self.window.clone();
-        let notebook_for_rename = self.notebook.clone();
         rename_click.connect_pressed(move |_, n_press, _, _| {
             if n_press == 2 {
-                show_rename_dialog(&window_for_rename, &notebook_for_rename, &label_for_rename);
+                show_rename_dialog(&window_for_rename, &label_for_rename);
             }
         });
         label.add_controller(rename_click);
@@ -675,7 +680,8 @@ fn main() -> glib::ExitCode {
             config: config.clone(),
         });
 
-        // Restore tabs from last session
+        // Restore tabs from last session snapshot (and delete it immediately).
+        // Each instance saves its own state on close; the last one closed wins.
         let (saved_current, saved_tabs) = load_tabs_state();
         if saved_tabs.is_empty() {
             ui.add_new_tab(None, None);
@@ -896,31 +902,10 @@ fn main() -> glib::ExitCode {
         });
 
         // Focus terminal when switching tabs
-        let notebook_for_switch_save = notebook.clone();
         notebook.connect_switch_page(move |_, widget, _page_num| {
             if let Ok(terminal) = widget.clone().downcast::<Terminal>() {
                 terminal.grab_focus();
             }
-
-            // Persist active page changes so the last focused tab is restored.
-            save_tabs_state(&notebook_for_switch_save);
-        });
-
-        // Persist tab structure changes (create/close/reorder) as they happen.
-        // Saving here avoids relying on `destroy`, where child widgets may already be torn down.
-        let notebook_for_added_save = notebook.clone();
-        notebook.connect_page_added(move |_, _, _| {
-            save_tabs_state(&notebook_for_added_save);
-        });
-
-        let notebook_for_removed_save = notebook.clone();
-        notebook.connect_page_removed(move |_, _, _| {
-            save_tabs_state(&notebook_for_removed_save);
-        });
-
-        let notebook_for_reordered_save = notebook.clone();
-        notebook.connect_page_reordered(move |_, _, _| {
-            save_tabs_state(&notebook_for_reordered_save);
         });
 
         window.add_controller(key_controller);
