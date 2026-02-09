@@ -178,7 +178,7 @@ impl SimpleComponent for AppModel {
 
     fn init(
         shared_path: Self::Init,
-        _root: Self::Root,
+        root: Self::Root,
         sender: ComponentSender<Self>,
     ) -> ComponentParts<Self> {
         // 1) 加载 UI 文件（复用 gtk_bar 的 main_layout.ui）
@@ -300,6 +300,11 @@ impl SimpleComponent for AppModel {
 
         // 6) 样式、首帧数据与后台任务
         load_css();
+
+        // Match gtk_bar defaults: use dark theme by default so window/theme styles apply.
+        root.add_css_class("theme-dark");
+        root.remove_css_class("theme-light");
+
         model.update_time_display();
 
         // 先把 UI 设为初始状态

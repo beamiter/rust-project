@@ -6262,17 +6262,26 @@ exit 127
 
     fn adjust_client_position(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
         info!("[adjust_client_position]");
-        if self.is_popup_like(backend, client_key) {
-            info!("is_popup_like");
+        let (client_total_width, client_mon_key_opt, win) = if let Some(client) =
+            self.state.clients.get(client_key)
+        {
+            (client.total_width(), client.mon, client.win)
+        } else {
+            error!("Client {:?} not found", client_key);
             return;
-        }
-        let (client_total_width, client_mon_key_opt, win) =
-            if let Some(client) = self.state.clients.get(client_key) {
-                (client.total_width(), client.mon, client.win)
-            } else {
-                error!("Client {:?} not found", client_key);
+        };
+
+        // Most popup-like windows (menus/tooltips/etc.) should not be clamped by the WM.
+        // Notifications are a special case: if they spawn at monitor y=0 they can end up
+        // hidden under the status bar. Clamp notifications to the monitor workarea so they
+        // appear below any top strut.
+        if self.is_popup_like(backend, client_key) {
+            let types = backend.property_ops().get_window_types(win);
+            if !types.contains(&WindowType::Notification) {
+                info!("is_popup_like (skip position adjustment)");
                 return;
-            };
+            }
+        }
         let client_mon_key = if let Some(mon_key) = client_mon_key_opt {
             mon_key
         } else {

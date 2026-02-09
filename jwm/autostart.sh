@@ -62,9 +62,9 @@ run_if_not_running fcitx -d
 
 # --- 7. 通知守护进程 (Dunst) ---
 # 用于显示桌面通知
-if command -v dunst > /dev/null; then
-    run_if_not_running dunst
-fi
+# if command -v dunst > /dev/null; then
+#     run_if_not_running dunst
+# fi
 
 # --- 8. 电源管理 (xfce4-power-manager) ---
 # 防止屏幕自动休眠或处理笔记本盖子关闭

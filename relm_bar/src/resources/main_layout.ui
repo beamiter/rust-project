@@ -7,7 +7,7 @@
     <property name="default-height">40</property>
     <property name="default-width">1000</property>
     <property name="resizable">true</property>
-    <property name="title">gtk_bar</property>
+    <property name="title">relm_bar</property>
     <child>
       <object class="GtkBox" id="top_hbox">
         <property name="margin-bottom">3</property>
@@ -16,6 +16,7 @@
         <property name="margin-top">3</property>
         <property name="orientation">horizontal</property>
         <property name="spacing">3</property>
+        <style><class name="panel-root"/></style>
         <child>
           <object class="GtkBox" id="tab_box">
             <property name="orientation">horizontal</property>
@@ -176,6 +177,24 @@
               <object class="GtkLabel" id="memory_label">
                 <property name="label">MEM</property>
                 <property name="width-request">60</property>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkButton" id="volume_button">
+                <property name="height-request">32</property>
+                <property name="label"> 🔊 --% </property>
+                <property name="width-request">90</property>
+                <style><class name="volume-button"/></style>
+              </object>
+            </child>
+
+            <child>
+              <object class="GtkButton" id="theme_button">
+                <property name="height-request">32</property>
+                <property name="label"> 🌙 </property>
+                <property name="width-request">46</property>
+                <style><class name="theme-button"/></style>
               </object>
             </child>
             <child>
