@@ -1,9 +1,7 @@
 use chrono::Local;
-use gdk4_x11::x11::xlib::{XFlush, XMoveWindow};
 use gtk::glib;
 use gtk::prelude::*;
 use gtk4 as gtk;
-use gtk4::Window;
 use gtk4::glib::ControlFlow;
 use log::{error, info, warn};
 use relm4::{ComponentParts, ComponentSender, RelmApp, SimpleComponent};
@@ -424,36 +422,6 @@ impl AppModel {
                 let command = SharedCommand::new(CommandType::SetLayout, layout_index, monitor_id);
                 if let Err(e) = shared_buffer.send_command(command) {
                     error!("Failed to send layout command: {}", e);
-                }
-            }
-        }
-    }
-
-    #[allow(dead_code)]
-    fn resize_window_to_monitor(
-        &self,
-        window: Window,
-        expected_x: i32,
-        expected_y: i32,
-        expected_width: i32,
-        expected_height: i32,
-    ) {
-        let current_width = window.width();
-        let current_height = window.height();
-        info!(
-            "Resizing window: {}x{} -> {}x{}",
-            current_width, current_height, expected_width, expected_height
-        );
-        window.set_default_size(expected_width, expected_height);
-        let display = gtk::gdk::Display::default().unwrap();
-        unsafe {
-            if let Some(x11_display) = display.downcast_ref::<gdk4_x11::X11Display>() {
-                let xdisplay = x11_display.xdisplay();
-                let surface = window.surface().unwrap();
-                if let Some(x11_surface) = surface.downcast_ref::<gdk4_x11::X11Surface>() {
-                    let xwindow = x11_surface.xid();
-                    XMoveWindow(xdisplay as *mut _, xwindow, expected_x, expected_y);
-                    XFlush(xdisplay as *mut _);
                 }
             }
         }
