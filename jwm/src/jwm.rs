@@ -6341,51 +6341,112 @@ exit 127
             client_y = mon_wy;
             info!("Adjusted Y to workarea top: {}", client_y);
         }
-        if let Some(work) = self.monitor_work_area(client_mon_key) {
-            if client_x < work.x {
-                client_x = work.x;
-                info!("Adjusted X to workarea left: {}", client_x);
-            }
-            if client_y < work.y {
-                client_y = work.y;
-                info!("Adjusted Y to workarea top: {}", client_y);
-            }
 
-            if client_x + client_total_width > work.x + work.w {
-                client_x = work.x + work.w - client_total_width;
-                info!("Adjusted X to workarea right: {}", client_x);
-            }
-            if client_y + client_total_height > work.y + work.h {
-                client_y = work.y + work.h - client_total_height;
-                info!("Adjusted Y to workarea bottom: {}", client_y);
-            }
+        // Clamp to workarea by default (so dialogs avoid the status bar strut), and additionally
+        // clamp transient dialogs to their parent window bounds so they don't jump across tiled
+        // columns (e.g. right tile spawning a dialog at x=0).
+        let mut clamp = self
+            .monitor_work_area(client_mon_key)
+            .unwrap_or(Rect::new(mon_wx, mon_wy, mon_ww, mon_wh));
 
-            // Keep within the monitor bounds as a final guard.
-            let min_x = mon_wx;
-            let max_x = mon_wx + mon_ww - client_total_width;
-            if min_x <= max_x {
-                client_x = client_x.clamp(min_x, max_x);
-            } else {
-                // Window wider than available area; avoid panic in clamp and pin to left.
-                client_x = min_x;
-                warn!(
-                    "Skip X clamp because max_x({}) < min_x({}); client_total_width={}, mon_ww={}",
-                    max_x, min_x, client_total_width, mon_ww
-                );
-            }
+        let types = backend.property_ops().get_window_types(win);
+        let is_dialog = types.contains(&WindowType::Dialog);
+        if is_dialog {
+            if let Some(parent_key) = self.parent_client_of(backend, client_key) {
+                if let Some(parent) = self.state.clients.get(parent_key) {
+                    let parent_rect = Rect::new(
+                        parent.geometry.x,
+                        parent.geometry.y,
+                        parent.total_width(),
+                        parent.total_height(),
+                    );
 
-            let min_y = mon_wy;
-            let max_y = mon_wy + mon_wh - client_total_height;
-            if min_y <= max_y {
-                client_y = client_y.clamp(min_y, max_y);
-            } else {
-                // Window taller than available area; avoid panic in clamp and pin to top.
-                client_y = min_y;
-                warn!(
-                    "Skip Y clamp because max_y({}) < min_y({}); client_total_height={}, mon_wh={}",
-                    max_y, min_y, client_total_height, mon_wh
-                );
+                    // Intersect clamp rect with parent rect.
+                    let left = clamp.x.max(parent_rect.x);
+                    let top = clamp.y.max(parent_rect.y);
+                    let right = (clamp.x + clamp.w).min(parent_rect.x + parent_rect.w);
+                    let bottom = (clamp.y + clamp.h).min(parent_rect.y + parent_rect.h);
+                    let w = (right - left).max(0);
+                    let h = (bottom - top).max(0);
+
+                    if w > 0 && h > 0 {
+                        clamp = Rect::new(left, top, w, h);
+                        info!(
+                            "Dialog transient clamp: parent=({},{} {}x{}) clamp=({},{} {}x{})",
+                            parent_rect.x,
+                            parent_rect.y,
+                            parent_rect.w,
+                            parent_rect.h,
+                            clamp.x,
+                            clamp.y,
+                            clamp.w,
+                            clamp.h
+                        );
+                    } else {
+                        warn!(
+                            "Skip transient parent clamp because intersection is empty; parent=({},{} {}x{}) clamp=({},{} {}x{})",
+                            parent_rect.x,
+                            parent_rect.y,
+                            parent_rect.w,
+                            parent_rect.h,
+                            clamp.x,
+                            clamp.y,
+                            clamp.w,
+                            clamp.h
+                        );
+                    }
+                }
             }
+        }
+
+        // Clamp to the computed clamp rect (workarea or workarea∩parent).
+        let min_x = clamp.x;
+        let max_x = clamp.x + clamp.w - client_total_width;
+        if min_x <= max_x {
+            client_x = client_x.clamp(min_x, max_x);
+        } else {
+            client_x = min_x;
+            warn!(
+                "Skip X clamp because max_x({}) < min_x({}); client_total_width={}, clamp_w={}",
+                max_x, min_x, client_total_width, clamp.w
+            );
+        }
+
+        let min_y = clamp.y;
+        let max_y = clamp.y + clamp.h - client_total_height;
+        if min_y <= max_y {
+            client_y = client_y.clamp(min_y, max_y);
+        } else {
+            client_y = min_y;
+            warn!(
+                "Skip Y clamp because max_y({}) < min_y({}); client_total_height={}, clamp_h={}",
+                max_y, min_y, client_total_height, clamp.h
+            );
+        }
+
+        // Keep within the monitor bounds as a final guard.
+        let min_x = mon_wx;
+        let max_x = mon_wx + mon_ww - client_total_width;
+        if min_x <= max_x {
+            client_x = client_x.clamp(min_x, max_x);
+        } else {
+            client_x = min_x;
+            warn!(
+                "Skip X clamp because max_x({}) < min_x({}); client_total_width={}, mon_ww={}",
+                max_x, min_x, client_total_width, mon_ww
+            );
+        }
+
+        let min_y = mon_wy;
+        let max_y = mon_wy + mon_wh - client_total_height;
+        if min_y <= max_y {
+            client_y = client_y.clamp(min_y, max_y);
+        } else {
+            client_y = min_y;
+            warn!(
+                "Skip Y clamp because max_y({}) < min_y({}); client_total_height={}, mon_wh={}",
+                max_y, min_y, client_total_height, mon_wh
+            );
         }
         if let Some(client) = self.state.clients.get_mut(client_key) {
             client.geometry.x = client_x;
