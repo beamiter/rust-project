@@ -758,18 +758,44 @@ fn main() -> glib::ExitCode {
         });
 
         // Focus terminal when switching tabs
+        let notebook_for_switch_save = notebook.clone();
         notebook.connect_switch_page(move |_, widget, _page_num| {
             if let Ok(terminal) = widget.clone().downcast::<Terminal>() {
                 terminal.grab_focus();
             }
+
+            // Persist active page changes so the last focused tab is restored.
+            save_tabs_state(&notebook_for_switch_save);
+        });
+
+        // Persist tab structure changes (create/close/reorder) as they happen.
+        // Saving here avoids relying on `destroy`, where child widgets may already be torn down.
+        let notebook_for_added_save = notebook.clone();
+        notebook.connect_page_added(move |_, _, _| {
+            save_tabs_state(&notebook_for_added_save);
+        });
+
+        let notebook_for_removed_save = notebook.clone();
+        notebook.connect_page_removed(move |_, _, _| {
+            save_tabs_state(&notebook_for_removed_save);
+        });
+
+        let notebook_for_reordered_save = notebook.clone();
+        notebook.connect_page_reordered(move |_, _, _| {
+            save_tabs_state(&notebook_for_reordered_save);
         });
 
         window.add_controller(key_controller);
 
+        // Save state *before* GTK starts destroying widgets.
+        let notebook_for_close_request = notebook.clone();
+        window.connect_close_request(move |_| {
+            save_tabs_state(&notebook_for_close_request);
+            false.into()
+        });
+
         let app_clone = app.clone();
-        let notebook_for_save = notebook.clone();
         window.connect_destroy(move |_| {
-            save_tabs_state(&notebook_for_save);
             app_clone.quit();
         });
 
