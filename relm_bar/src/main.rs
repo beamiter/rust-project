@@ -106,6 +106,7 @@ pub enum AppInput {
     LayoutChanged(u32),
     ToggleLayoutPanel,
     ToggleSeconds,
+    ToggleTheme,
     Screenshot,
     SharedMessageReceived(SharedMessage),
     SystemUpdate,
@@ -119,6 +120,7 @@ pub struct AppModel {
     pub layout_open: bool,
     pub monitor_num: u8,
     pub show_seconds: bool,
+    pub theme_dark: bool,
     pub tag_status_vec: Vec<TagStatus>,
     pub last_shared_message: Option<SharedMessage>,
     pub memory_usage: f64,
@@ -138,9 +140,14 @@ pub struct AppModel {
     #[do_not_track]
     time_button_widget: gtk::Button,
     #[do_not_track]
+    theme_button_widget: gtk::Button,
+    #[do_not_track]
     monitor_label_widget: gtk::Label,
     #[do_not_track]
     tab_buttons: Vec<gtk::Button>,
+
+    #[do_not_track]
+    root_window: gtk::ApplicationWindow,
 
     // 新增：布局开关与选项（与 gtk_bar 的 UI/样式一致）
     #[do_not_track]
@@ -197,6 +204,9 @@ impl SimpleComponent for AppModel {
         memory_label_widget.add_css_class("metric-label");
         let time_button_widget: gtk::Button =
             builder.object("time_label").expect("Missing time_label");
+        let theme_button_widget: gtk::Button = builder
+            .object("theme_button")
+            .expect("Missing theme_button");
         let monitor_label_widget: gtk::Label = builder
             .object("monitor_label")
             .expect("Missing monitor_label");
@@ -251,6 +261,12 @@ impl SimpleComponent for AppModel {
             time_button_widget.connect_clicked(move |_| s.input(AppInput::ToggleSeconds));
         }
 
+        // 主题按钮
+        {
+            let s = sender.clone();
+            theme_button_widget.connect_clicked(move |_| s.input(AppInput::ToggleTheme));
+        }
+
         // Tab 按钮与初始 emoji
         let mut tab_buttons = Vec::with_capacity(9);
         for i in 0..9 {
@@ -274,6 +290,7 @@ impl SimpleComponent for AppModel {
             layout_open: false,
             monitor_num: 0,
             show_seconds: false,
+            theme_dark: true,
             tag_status_vec: Vec::new(),
             last_shared_message: None,
             memory_usage: 0.0,
@@ -286,8 +303,11 @@ impl SimpleComponent for AppModel {
             cpu_label_widget,
             memory_label_widget,
             time_button_widget,
+            theme_button_widget,
             monitor_label_widget,
             tab_buttons,
+
+            root_window: root.clone(),
 
             layout_toggle_widget,
             layout_revealer_widget,
@@ -345,6 +365,11 @@ impl SimpleComponent for AppModel {
                 self.show_seconds = !self.show_seconds;
                 self.update_time_display();
                 self.sync_time_ui();
+            }
+
+            AppInput::ToggleTheme => {
+                self.theme_dark = !self.theme_dark;
+                self.sync_theme_ui();
             }
 
             AppInput::Screenshot => {
@@ -445,6 +470,7 @@ impl AppModel {
 
     fn sync_full_ui_once(&self) {
         self.sync_layout_and_monitor_ui();
+        self.sync_theme_ui();
         self.sync_time_ui();
         self.sync_metrics_ui();
         self.sync_tabs_ui();
@@ -530,6 +556,18 @@ impl AppModel {
             btn.set_label(pick_emoji(i));
             let status = self.tag_status_vec.get(i);
             apply_tab_state_classes(btn, status);
+        }
+    }
+
+    fn sync_theme_ui(&self) {
+        if self.theme_dark {
+            self.root_window.add_css_class("theme-dark");
+            self.root_window.remove_css_class("theme-light");
+            self.theme_button_widget.set_label(" 🌙 ");
+        } else {
+            self.root_window.add_css_class("theme-light");
+            self.root_window.remove_css_class("theme-dark");
+            self.theme_button_widget.set_label(" ☀️ ");
         }
     }
 }
