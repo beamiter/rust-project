@@ -502,8 +502,13 @@ impl UiState {
             }
         });
 
-        // Add to notebook
-        let page_num = self.notebook.append_page(&terminal, Some(&tab_box));
+        // Add to notebook right after the current tab when possible.
+        let page_num = if let Some(current_page) = self.notebook.current_page() {
+            self.notebook
+                .insert_page(&terminal, Some(&tab_box), Some(current_page + 1))
+        } else {
+            self.notebook.append_page(&terminal, Some(&tab_box))
+        };
         self.notebook.set_tab_reorderable(&terminal, true);
         self.notebook.set_current_page(Some(page_num));
 
