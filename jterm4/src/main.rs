@@ -330,8 +330,34 @@ fn save_tabs_state(notebook: &Notebook) {
     }
 
     let payload = lines.join("\n") + "\n";
-    if let Err(err) = fs::write(&path, payload) {
-        log::warn!("Failed to write state file {}: {err}", path.display());
+
+    // Write atomically to avoid partially-written state when the process is interrupted.
+    let tmp_path = path.with_file_name(
+        path.file_name()
+            .and_then(|s| s.to_str())
+            .map(|name| format!("{name}.tmp"))
+            .unwrap_or_else(|| "tabs.state.tmp".to_string()),
+    );
+
+    if let Err(err) = fs::write(&tmp_path, &payload) {
+        log::warn!(
+            "Failed to write temp state file {}: {err}",
+            tmp_path.display()
+        );
+        return;
+    }
+
+    if let Err(err) = fs::rename(&tmp_path, &path) {
+        // On some platforms rename may fail if the destination exists; fall back to remove+rename.
+        let _ = fs::remove_file(&path);
+        if let Err(err2) = fs::rename(&tmp_path, &path) {
+            log::warn!(
+                "Failed to move temp state file {} into place {}: {err} / {err2}",
+                tmp_path.display(),
+                path.display()
+            );
+            let _ = fs::remove_file(&tmp_path);
+        }
     }
 }
 
