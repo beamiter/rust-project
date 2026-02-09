@@ -6273,13 +6273,21 @@ exit 127
 
         // Most popup-like windows (menus/tooltips/etc.) should not be clamped by the WM.
         // Notifications are a special case: if they spawn at monitor y=0 they can end up
-        // hidden under the status bar. Clamp notifications to the monitor workarea so they
-        // appear below any top strut.
+        // hidden under the status bar. Dialogs are another special case: apps sometimes
+        // position transient dialogs at y=0, and we still want them to respect the monitor
+        // workarea (i.e. avoid any top strut / status bar).
         if self.is_popup_like(backend, client_key) {
             let types = backend.property_ops().get_window_types(win);
-            if !types.contains(&WindowType::Notification) {
+            let should_clamp = types.contains(&WindowType::Notification)
+                || types.contains(&WindowType::Dialog);
+
+            if !should_clamp {
                 info!("is_popup_like (skip position adjustment)");
                 return;
+            }
+
+            if types.contains(&WindowType::Dialog) {
+                info!("popup-like Dialog (clamp to workarea)");
             }
         }
         let client_mon_key = if let Some(mon_key) = client_mon_key_opt {
