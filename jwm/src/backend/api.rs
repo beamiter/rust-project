@@ -410,6 +410,9 @@ pub trait OutputOps: Send {
     fn screen_info(&self) -> ScreenInfo;
 
     fn output_at(&self, x: i32, y: i32) -> Option<OutputId>;
+
+    /// Invalidate cached output layout (no-op for backends that don't cache)
+    fn invalidate_output_cache(&self) {}
 }
 
 pub trait KeyOps: Send {

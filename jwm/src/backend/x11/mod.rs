@@ -1,4 +1,5 @@
 pub mod backend;
+pub mod batch;
 
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {
