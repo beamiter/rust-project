@@ -562,7 +562,11 @@ impl EventHandler for Jwm {
             // === 窗口生命周期 ===
             BackendEvent::WindowCreated(win) => self.on_map_request(backend, win),
             BackendEvent::WindowDestroyed(win) => self.on_destroy_notify(backend, win),
-            BackendEvent::WindowMapped(_) => { /* Usually handled by MapRequest or internal logic, optionally add hook */
+            BackendEvent::WindowMapped(win) => {
+                // Some X11 notification daemons (e.g. dunst) use override_redirect windows.
+                // Those bypass MapRequest, so they won't be managed/clamped via normal paths.
+                // Clamp them to the monitor workarea here to avoid being covered by the status bar.
+                self.maybe_clamp_override_redirect_notification(backend, win);
             }
             BackendEvent::WindowUnmapped(win) => self.on_unmap_notify(backend, win, false),
             BackendEvent::WindowConfigured {
@@ -732,6 +736,91 @@ impl Jwm {
             "resizemouse"
         } else {
             "<unknown>"
+        }
+    }
+
+    fn maybe_clamp_override_redirect_notification(
+        &mut self,
+        backend: &mut dyn Backend,
+        win: WindowId,
+    ) {
+        let attr = match backend.window_ops().get_window_attributes(win) {
+            Ok(a) => a,
+            Err(_) => return,
+        };
+        if !attr.override_redirect {
+            return;
+        }
+
+        // Avoid meddling with regular menus/tooltips unless we're confident.
+        let types = backend.property_ops().get_window_types(win);
+        let (inst, cls) = backend.property_ops().get_class(win);
+        let title = backend.property_ops().get_title(win);
+
+        let is_dunst = title == "Dunst"
+            || inst.eq_ignore_ascii_case("dunst")
+            || cls.eq_ignore_ascii_case("dunst")
+            || inst.eq_ignore_ascii_case("dunstify")
+            || cls.eq_ignore_ascii_case("dunstify");
+        let is_notification = types.contains(&WindowType::Notification) || is_dunst;
+        if !is_notification {
+            return;
+        }
+
+        let geom = match backend.window_ops().get_geometry(win) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+
+        // Find the monitor by window center (fallback to selected monitor).
+        let cx = geom.x.saturating_add((geom.w as i32) / 2);
+        let cy = geom.y.saturating_add((geom.h as i32) / 2);
+        let mon_key = self.recttomon(backend, cx, cy).or(self.state.sel_mon);
+        let Some(mon_key) = mon_key else {
+            return;
+        };
+
+        let work = match self.monitor_work_area(mon_key) {
+            Some(r) => r,
+            None => return,
+        };
+
+        let w = geom.w as i32;
+        let h = geom.h as i32;
+        let mut new_x = geom.x;
+        let mut new_y = geom.y;
+
+        // Clamp to workarea bounds.
+        let min_x = work.x;
+        let max_x = work.x + work.w - w;
+        new_x = if min_x <= max_x {
+            new_x.clamp(min_x, max_x)
+        } else {
+            min_x
+        };
+
+        let min_y = work.y;
+        let max_y = work.y + work.h - h;
+        new_y = if min_y <= max_y {
+            new_y.clamp(min_y, max_y)
+        } else {
+            min_y
+        };
+
+        if new_x == geom.x && new_y == geom.y {
+            return;
+        }
+
+        let changes = WindowChanges {
+            x: Some(new_x),
+            y: Some(new_y),
+            ..Default::default()
+        };
+        if let Err(e) = backend.window_ops().apply_window_changes(win, changes) {
+            debug!(
+                "Failed to clamp override_redirect notification win={:?}: {:?}",
+                win, e
+            );
         }
     }
 
@@ -1362,6 +1451,10 @@ exit 127
                 return Err("Client has no monitor assigned".into());
             };
 
+            let mut popup_apply: Option<WindowId> = None;
+            let mut popup_clamp_request: Option<(i32, i32, i32, i32)> = None;
+            let mut popup_is_dialog = false;
+
             let mut clamp_request: Option<(i32, i32, i32, i32)> = None;
 
             if let Some(client) = self.state.clients.get_mut(client_key) {
@@ -1408,6 +1501,81 @@ exit 127
                 }
 
                 if is_popup {
+                    let types = backend.property_ops().get_window_types(client.win);
+                    let should_clamp = types.contains(&WindowType::Notification)
+                        || types.contains(&WindowType::Dialog);
+                    popup_is_dialog = types.contains(&WindowType::Dialog);
+
+                    if should_clamp {
+                        popup_clamp_request = Some((
+                            client.geometry.x,
+                            client.geometry.y,
+                            client.total_width(),
+                            client.total_height(),
+                        ));
+                    }
+                    popup_apply = Some(client.win);
+                }
+            }
+
+            // Popup-like windows: apply workarea clamp for Dialog/Notification, then commit.
+            if let Some(win) = popup_apply {
+                if let (Some(mon_key), Some((x, y, total_w, total_h))) =
+                    (mon_key_opt, popup_clamp_request)
+                {
+                    let mut clamp = self
+                        .monitor_work_area(mon_key)
+                        .unwrap_or(Rect::new(mx, my, mw, mh));
+
+                    // For transient dialogs, intersect with parent bounds to avoid jumping
+                    // across tiled columns.
+                    if popup_is_dialog {
+                        if let Some(parent_key) = self.parent_client_of(backend, client_key) {
+                            if let Some(parent) = self.state.clients.get(parent_key) {
+                                let parent_rect = Rect::new(
+                                    parent.geometry.x,
+                                    parent.geometry.y,
+                                    parent.total_width(),
+                                    parent.total_height(),
+                                );
+
+                                let left = clamp.x.max(parent_rect.x);
+                                let top = clamp.y.max(parent_rect.y);
+                                let right = (clamp.x + clamp.w).min(parent_rect.x + parent_rect.w);
+                                let bottom =
+                                    (clamp.y + clamp.h).min(parent_rect.y + parent_rect.h);
+                                let w = (right - left).max(0);
+                                let h = (bottom - top).max(0);
+                                if w > 0 && h > 0 {
+                                    clamp = Rect::new(left, top, w, h);
+                                }
+                            }
+                        }
+                    }
+
+                    let min_x = clamp.x;
+                    let max_x = clamp.x + clamp.w - total_w;
+                    let clamped_x = if min_x <= max_x {
+                        x.clamp(min_x, max_x)
+                    } else {
+                        min_x
+                    };
+
+                    let min_y = clamp.y;
+                    let max_y = clamp.y + clamp.h - total_h;
+                    let clamped_y = if min_y <= max_y {
+                        y.clamp(min_y, max_y)
+                    } else {
+                        min_y
+                    };
+
+                    if let Some(client) = self.state.clients.get_mut(client_key) {
+                        client.geometry.x = clamped_x;
+                        client.geometry.y = clamped_y;
+                    }
+                }
+
+                if let Some(client) = self.state.clients.get(client_key) {
                     let changes = WindowChanges {
                         x: Some(client.geometry.x),
                         y: Some(client.geometry.y),
@@ -1415,11 +1583,10 @@ exit 127
                         height: Some(client.geometry.h as u32),
                         ..Default::default()
                     };
-                    backend
-                        .window_ops()
-                        .apply_window_changes(client.win, changes)?;
-                    return Ok(());
+                    backend.window_ops().apply_window_changes(win, changes)?;
                 }
+
+                return Ok(());
             }
 
             // Clamp floating (non-fullscreen) windows to the monitor workarea so they don't end
