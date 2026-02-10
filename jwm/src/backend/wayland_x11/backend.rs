@@ -18,6 +18,7 @@ use std::time::Duration;
 
 use smithay::backend::allocator::dmabuf::DmabufAllocator;
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags};
+use smithay::backend::allocator::Modifier;
 use smithay::backend::egl::{EGLContext, EGLDisplay};
 use smithay::backend::input::{
     AbsolutePositionEvent, Event as InputEventExt, InputBackend, InputEvent, KeyboardKeyEvent,
@@ -535,7 +536,9 @@ pub struct WaylandX11Backend {
     // On some EGL stacks (notably NVIDIA + egl-wayland), the EGL display drop path may call
     // `eglUnbindWaylandDisplayWL`, which expects the Wayland `wl_display` to still be alive.
     // Keep `display`/`display_handle` *after* the EGL/GLES renderer so they outlive it.
+    #[allow(dead_code)]
     display: Rc<RefCell<Display<JwmWaylandState>>>,
+    #[allow(dead_code)]
     display_handle: DisplayHandle,
 
     surfaces_on_output: HashSet<wayland_server::Weak<WlSurface>>,
@@ -1100,17 +1103,74 @@ impl WaylandX11Backend {
             .build(&handle)
             .map_err(|e| BackendError::Other(Box::new(e)))?;
 
-        let x11_surface = handle
+        // Prefer linear/invalid modifiers first for maximum EGLImage compatibility (notably on NVIDIA),
+        // but still pass through the full modifier list so allocation doesn't fail on stacks where
+        // linear isn't available for the chosen window format.
+        //
+        // You can override this for troubleshooting:
+        // - `JWM_X11_DMABUF_MODIFIERS=invalid` => only implicit/invalid modifier
+        // - `JWM_X11_DMABUF_MODIFIERS=linear`  => linear + invalid
+        // - `JWM_X11_DMABUF_MODIFIERS=all`     => linear + invalid + all advertised modifiers (default)
+        let modifier_policy = std::env::var("JWM_X11_DMABUF_MODIFIERS")
+            .unwrap_or_else(|_| "all".to_string())
+            .to_lowercase();
+
+        let mut preferred_modifiers = Vec::new();
+        match modifier_policy.as_str() {
+            "invalid" => {
+                preferred_modifiers.push(Modifier::Invalid);
+            }
+            "linear" => {
+                preferred_modifiers.push(Modifier::Linear);
+                preferred_modifiers.push(Modifier::Invalid);
+            }
+            _ => {
+                preferred_modifiers.push(Modifier::Linear);
+                preferred_modifiers.push(Modifier::Invalid);
+                for m in renderer.egl_context().dmabuf_render_formats().iter().map(|f| f.modifier) {
+                    if m != Modifier::Linear && m != Modifier::Invalid {
+                        preferred_modifiers.push(m);
+                    }
+                }
+            }
+        }
+
+        let mut x11_surface = handle
             .create_surface(
                 &window,
-                DmabufAllocator(GbmAllocator::new(device, GbmBufferFlags::RENDERING)),
-                renderer
-                    .egl_context()
-                    .dmabuf_render_formats()
-                    .iter()
-                    .map(|f| f.modifier),
+                DmabufAllocator(GbmAllocator::new(
+                    device,
+                    GbmBufferFlags::RENDERING,
+                )),
+                preferred_modifiers.into_iter(),
             )
             .map_err(|e| BackendError::Other(Box::new(e)))?;
+
+        // Preflight: the smithay X11 backend presents dmabufs; we must be able to bind a dmabuf
+        // as a framebuffer via EGLImage. If the EGL/GL stack lacks EGLImage support, rendering
+        // will fail every frame. Detect this early and provide a clear action.
+        {
+            let (mut test_buffer, _age) = x11_surface
+                .buffer()
+                .map_err(|e| BackendError::Message(format!(
+                    "[wayland-x11] failed to acquire initial X11 buffer for preflight: {e:?}"
+                )))?;
+            match renderer.bind(&mut test_buffer) {
+                Ok(fb) => {
+                    drop(fb);
+                    x11_surface.reset_buffers();
+                }
+                Err(e) => {
+                    let egl = renderer.egl_context().display();
+                    let egl_ver = egl.get_egl_version();
+                    return Err(BackendError::Message(format!(
+                        "[wayland-x11] cannot bind dmabuf framebuffer ({e:?}). This typically means your EGL/GL stack cannot render *into* dmabuf via EGLImage on this path. EGL version: {egl_ver:?}.\n\
+Troubleshooting (NVIDIA/GBM): try forcing simpler dmabuf modifiers: `JWM_X11_DMABUF_MODIFIERS=invalid` (or `linear`).\n\
+Fallback: build/run the windowed backend via winit instead: `cargo build --no-default-features --features \"backend-wayland-winit gtk_bar\"` and run with `JWM_BACKEND=wayland-winit`."
+                    )));
+                }
+            }
+        }
 
         let size = window.size();
         let mode = WlMode {

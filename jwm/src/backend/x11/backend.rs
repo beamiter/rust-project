@@ -519,14 +519,14 @@ mod ids {
     };
 
     #[derive(Clone, Default)]
-    pub struct X11IdRegistry {
+    pub(super) struct X11IdRegistry {
         next: Arc<AtomicU64>,
         x11_to_wid: Arc<RwLock<HashMap<u32, WindowId>>>,
         wid_to_x11: Arc<RwLock<HashMap<WindowId, u32>>>,
     }
 
     impl X11IdRegistry {
-        pub fn new(start: u64) -> Self {
+        pub(super) fn new(start: u64) -> Self {
             Self {
                 next: Arc::new(AtomicU64::new(start)),
                 x11_to_wid: Arc::new(RwLock::new(HashMap::new())),
@@ -535,7 +535,7 @@ mod ids {
         }
 
         /// X11 window(u32) intern  WindowId
-        pub fn intern(&self, x11: u32) -> WindowId {
+        pub(super) fn intern(&self, x11: u32) -> WindowId {
             if let Some(id) = self.x11_to_wid.read().unwrap().get(&x11).copied() {
                 return id;
             }
@@ -551,7 +551,7 @@ mod ids {
             id
         }
 
-        pub fn x11(&self, id: WindowId) -> Result<u32, BackendError> {
+        pub(super) fn x11(&self, id: WindowId) -> Result<u32, BackendError> {
             self.wid_to_x11
                 .read()
                 .unwrap()
@@ -560,7 +560,7 @@ mod ids {
                 .ok_or(BackendError::NotFound("WindowId not mapped to X11 window"))
         }
 
-        pub fn remove_x11(&self, x11: u32) {
+        pub(super) fn remove_x11(&self, x11: u32) {
             if let Some(id) = self.x11_to_wid.write().unwrap().remove(&x11) {
                 self.wid_to_x11.write().unwrap().remove(&id);
             }
@@ -573,7 +573,7 @@ mod adapter {
     use crate::backend::common_define::{EventMaskBits, Mods};
     use x11rb::protocol::xproto::{ButtonIndex, EventMask, KeyButMask};
 
-    pub fn mods_from_x11(mask: KeyButMask, numlock_mask: KeyButMask) -> Mods {
+    pub(super) fn mods_from_x11(mask: KeyButMask, numlock_mask: KeyButMask) -> Mods {
         let mut m = Mods::empty();
         let raw = mask.bits();
 
@@ -614,7 +614,7 @@ mod adapter {
         m
     }
 
-    pub fn mods_to_x11(mods: Mods, numlock_mask: KeyButMask) -> KeyButMask {
+    pub(super) fn mods_to_x11(mods: Mods, numlock_mask: KeyButMask) -> KeyButMask {
         let mut m = KeyButMask::default();
         if mods.contains(Mods::SHIFT) {
             m |= KeyButMask::SHIFT;
@@ -646,14 +646,17 @@ mod adapter {
         m
     }
 
-    pub fn button_from_x11(detail: u8) -> MouseButton {
+    #[allow(dead_code)]
+    pub(super) fn button_from_x11(detail: u8) -> MouseButton {
         MouseButton::from_u8(detail)
     }
-    pub fn button_to_x11(btn: MouseButton) -> ButtonIndex {
+
+    #[allow(dead_code)]
+    pub(super) fn button_to_x11(btn: MouseButton) -> ButtonIndex {
         ButtonIndex::from(btn.to_u8())
     }
 
-    pub fn event_mask_from_generic(bits: u32) -> EventMask {
+    pub(super) fn event_mask_from_generic(bits: u32) -> EventMask {
         let mut m = EventMask::default();
         if (bits & EventMaskBits::BUTTON_PRESS.bits()) != 0 {
             m |= EventMask::BUTTON_PRESS;
@@ -695,7 +698,7 @@ mod color {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::Colormap;
 
-    pub struct X11ColorAllocator<C: Connection> {
+    pub(super) struct X11ColorAllocator<C: Connection> {
         conn: Arc<C>,
         colormap: Colormap,
 
@@ -704,7 +707,7 @@ mod color {
     }
 
     impl<C: Connection> X11ColorAllocator<C> {
-        pub fn new(conn: Arc<C>, colormap: Colormap) -> Self {
+        pub(super) fn new(conn: Arc<C>, colormap: Colormap) -> Self {
             Self {
                 conn,
                 colormap,
@@ -798,8 +801,9 @@ mod cursor {
     use x11rb::connection::Connection;
     use x11rb::protocol::xproto::*;
 
+    #[allow(dead_code)]
     #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-    pub enum X11StdCursor {
+    pub(super) enum X11StdCursor {
         XCursor = 0,
         Arrow = 2,
         BasedArrowDown = 4,
@@ -880,7 +884,7 @@ mod cursor {
     }
 
     impl X11StdCursor {
-        pub fn create(&self, conn: &impl Connection, font: Font) -> Result<Cursor, BackendError> {
+        pub(super) fn create(&self, conn: &impl Connection, font: Font) -> Result<Cursor, BackendError> {
             let cursor_id = conn.generate_id()?;
             let glyph = *self as u16;
             conn.create_glyph_cursor(
@@ -899,7 +903,8 @@ mod cursor {
             Ok(cursor_id)
         }
 
-        pub fn create_colored(
+        #[allow(dead_code)]
+        pub(super) fn create_colored(
             &self,
             conn: &impl Connection,
             font: Font,
@@ -928,7 +933,8 @@ mod cursor {
             Ok(cursor_id)
         }
 
-        pub fn description(&self) -> &'static str {
+        #[allow(dead_code)]
+        pub(super) fn description(&self) -> &'static str {
             match self {
                 Self::XCursor => "Default X cursor",
                 Self::Arrow => "Standard arrow",
@@ -1010,7 +1016,8 @@ mod cursor {
             }
         }
 
-        pub fn common_cursors() -> &'static [X11StdCursor] {
+        #[allow(dead_code)]
+        pub(super) fn common_cursors() -> &'static [X11StdCursor] {
             &[
                 Self::LeftPtr,           // 
                 Self::Hand1,             // 
@@ -1028,7 +1035,8 @@ mod cursor {
             ]
         }
 
-        pub fn all_cursors() -> &'static [X11StdCursor] {
+        #[allow(dead_code)]
+        pub(super) fn all_cursors() -> &'static [X11StdCursor] {
             &[
                 Self::XCursor,
                 Self::Arrow,
@@ -1111,7 +1119,7 @@ mod cursor {
         }
     }
 
-    pub struct X11CursorProvider<C: Connection> {
+    pub(super) struct X11CursorProvider<C: Connection> {
         conn: Arc<C>,
         cursor_font: Font,
         cache: HashMap<StdCursorKind, Cursor>,
@@ -1119,7 +1127,7 @@ mod cursor {
     }
 
     impl<C: Connection> X11CursorProvider<C> {
-        pub fn new(conn: Arc<C>, ids: X11IdRegistry) -> Result<Self, BackendError> {
+        pub(super) fn new(conn: Arc<C>, ids: X11IdRegistry) -> Result<Self, BackendError> {
             use x11rb::protocol::xproto::ConnectionExt;
             let font = conn.generate_id()?;
             conn.open_font(font, b"cursor")?;
@@ -1223,7 +1231,7 @@ mod event_source {
 
     use calloop::{EventSource, Interest, Mode, Poll, PostAction, Readiness, Token, TokenFactory};
 
-    pub struct X11EventSource {
+    pub(super) struct X11EventSource {
         conn: Arc<RustConnection>,
         atoms: Atoms,
         root_x11: u32,
@@ -1231,7 +1239,7 @@ mod event_source {
     }
 
     impl X11EventSource {
-        pub fn new(conn: Arc<RustConnection>, atoms: Atoms, root_x11: u32, ids: X11IdRegistry) -> Self {
+        pub(super) fn new(conn: Arc<RustConnection>, atoms: Atoms, root_x11: u32, ids: X11IdRegistry) -> Self {
             Self {
                 conn,
                 atoms,
@@ -1459,7 +1467,7 @@ mod event_source {
             }
         }
 
-        pub fn poll_event(&mut self) -> Result<Option<BackendEvent>, Box<dyn std::error::Error>> {
+        pub(super) fn poll_event(&mut self) -> Result<Option<BackendEvent>, Box<dyn std::error::Error>> {
             let ev = self.conn.poll_for_event()?;
             Ok(ev.and_then(|e| self.map_event(e)))
         }
@@ -1565,7 +1573,7 @@ mod ewmh_facade {
     use x11rb::protocol::xproto::{AtomEnum, PropMode};
     use x11rb::wrapper::ConnectionExt as _;
 
-    pub struct X11EwmhFacade<C: Connection> {
+    pub(super) struct X11EwmhFacade<C: Connection> {
         conn: Arc<C>,
         root: WindowId,
         atoms: Atoms,
@@ -1573,7 +1581,7 @@ mod ewmh_facade {
     }
 
     impl<C: Connection + Send + Sync + 'static> X11EwmhFacade<C> {
-        pub fn new(conn: Arc<C>, root: WindowId, atoms: Atoms, ids: X11IdRegistry) -> Self {
+        pub(super) fn new(conn: Arc<C>, root: WindowId, atoms: Atoms, ids: X11IdRegistry) -> Self {
             Self {
                 conn,
                 root,
@@ -1732,7 +1740,7 @@ mod input_ops {
     use crate::backend::common_define::WindowId;
     use super::ids::X11IdRegistry;
 
-    pub struct X11InputOps<C: Connection> {
+    pub(super) struct X11InputOps<C: Connection> {
         conn: Arc<C>,
         root_x11: u32,
         ids: X11IdRegistry,
@@ -1749,7 +1757,7 @@ mod input_ops {
     }
 
     impl<C: Connection + Send + Sync + 'static> X11InputOps<C> {
-        pub fn new(conn: Arc<C>, root_x11: u32, ids: X11IdRegistry) -> Self {
+        pub(super) fn new(conn: Arc<C>, root_x11: u32, ids: X11IdRegistry) -> Self {
             Self {
                 conn,
                 root_x11,
@@ -1770,16 +1778,17 @@ mod input_ops {
             }
         }
 
-        pub fn allow_events_raw(&self, mode: Allow, time: u32) -> Result<(), BackendError> {
+        pub(super) fn allow_events_raw(&self, mode: Allow, time: u32) -> Result<(), BackendError> {
             self.conn.allow_events(mode, time)?;
             Ok(())
         }
 
-        pub fn query_pointer(&self) -> Result<QueryPointerReply, BackendError> {
+        pub(super) fn query_pointer(&self) -> Result<QueryPointerReply, BackendError> {
             Ok(self.conn.query_pointer(self.root_x11)?.reply()?)
         }
 
-        pub fn flush(&self) -> Result<(), BackendError> {
+        #[allow(dead_code)]
+        pub(super) fn flush(&self) -> Result<(), BackendError> {
             self.conn.flush()?;
             Ok(())
         }
@@ -1862,7 +1871,7 @@ mod key_ops {
     use super::adapter::mods_to_x11;
     use super::ids::X11IdRegistry;
 
-    pub struct X11KeyOps<C: Connection> {
+    pub(super) struct X11KeyOps<C: Connection> {
         conn: Arc<C>,
         cache: HashMap<u8, u32>,
         numlock_mask: Arc<Mutex<u16>>,
@@ -1873,7 +1882,7 @@ mod key_ops {
     }
 
     impl<C: Connection> X11KeyOps<C> {
-        pub fn new(conn: Arc<C>, numlock_mask: Arc<Mutex<u16>>, ids: X11IdRegistry) -> Self {
+        pub(super) fn new(conn: Arc<C>, numlock_mask: Arc<Mutex<u16>>, ids: X11IdRegistry) -> Self {
             let mut ops = Self {
                 conn: conn.clone(),
                 cache: HashMap::new(),
@@ -2072,7 +2081,7 @@ mod output_ops {
     use x11rb::connection::Connection;
     use x11rb::protocol::randr::ConnectionExt as RandrExt;
 
-    pub struct X11OutputOps<C: Connection> {
+    pub(super) struct X11OutputOps<C: Connection> {
         conn: Arc<C>,
         root: u32,
         sw: i32,
@@ -2083,7 +2092,7 @@ mod output_ops {
     }
 
     impl<C: Connection> X11OutputOps<C> {
-        pub fn new(conn: Arc<C>, root: u32, sw: i32, sh: i32) -> Self {
+        pub(super) fn new(conn: Arc<C>, root: u32, sw: i32, sh: i32) -> Self {
             Self {
                 conn,
                 root,
@@ -2094,7 +2103,7 @@ mod output_ops {
         }
 
         /// Invalidate output cache - call on RandR events
-        pub fn invalidate_cache(&self) {
+        fn invalidate_cache(&self) {
             if let Ok(mut cache) = self.cached_outputs.lock() {
                 *cache = None;
             }
@@ -2248,14 +2257,14 @@ mod property_ops {
     use x11rb::protocol::xproto::*;
     use x11rb::wrapper::ConnectionExt as _;
 
-    pub struct X11PropertyOps<C: Connection> {
+    pub(super) struct X11PropertyOps<C: Connection> {
         conn: Arc<C>,
         atoms: Atoms,
         ids: X11IdRegistry,
     }
 
     impl<C: Connection> X11PropertyOps<C> {
-        pub fn new(conn: Arc<C>, atoms: Atoms, ids: X11IdRegistry) -> Self {
+        pub(super) fn new(conn: Arc<C>, atoms: Atoms, ids: X11IdRegistry) -> Self {
             Self { conn, atoms, ids }
         }
     }
@@ -2692,7 +2701,7 @@ mod window_ops {
     use x11rb::protocol::xproto::*;
     use x11rb::x11_utils::Serialize;
 
-    pub struct X11WindowOps<C: Connection> {
+    pub(super) struct X11WindowOps<C: Connection> {
         conn: Arc<C>,
         atoms: Atoms,
         numlock_mask: Arc<Mutex<u16>>,
@@ -2702,7 +2711,7 @@ mod window_ops {
     }
 
     impl<C: Connection> X11WindowOps<C> {
-        pub fn new(
+        pub(super) fn new(
             conn: Arc<C>,
             atoms: Atoms,
             numlock_mask: Arc<Mutex<u16>>,
