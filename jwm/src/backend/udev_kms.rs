@@ -539,6 +539,37 @@ impl KmsState {
                         1.0,
                     );
                 elements.extend(window_elements);
+
+                // Render window borders (server-side decorations for tiling WM).
+                // The geometry `geo` represents the client content area. Borders are drawn
+                // outside this area. The full window extent is
+                //   (x - border, y - border, w + 2*border, h + 2*border).
+                // Borders are rendered behind the window surface (after it in the front-to-back
+                // element list) so the surface covers the inner area naturally.
+                if geo.border > 0 {
+                    let bw = geo.border as i32;
+                    let [cr, cg, cb, ca] = state
+                        .window_border_color
+                        .get(win)
+                        .copied()
+                        .unwrap_or([0.3, 0.3, 0.35, 1.0]);
+                    let border_color = smithay::backend::renderer::Color32F::new(cr, cg, cb, ca);
+
+                    // Draw as a single solid rect the size of the full window (content + borders),
+                    // placed behind the surface. The surface (already in the element list above)
+                    // will overdraw the inner area, leaving only the border visible.
+                    let full_geo: Rectangle<i32, Physical> = Rectangle::new(
+                        (geo.x - ox - bw, geo.y - oy - bw).into(),
+                        (geo.w as i32 + 2 * bw, geo.h as i32 + 2 * bw).into(),
+                    );
+                    elements.push(KmsRenderElement::Solid(SolidColorRenderElement::new(
+                        Id::new(),
+                        full_geo,
+                        0usize,
+                        border_color,
+                        Kind::Unspecified,
+                    )));
+                }
             }
 
             // Layer surfaces below normal windows.

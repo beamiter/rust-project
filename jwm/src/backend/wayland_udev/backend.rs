@@ -246,10 +246,23 @@ impl WindowOps for WaylandWindowOps {
 
     fn set_decoration_style(
         &self,
-        _win: WindowId,
+        win: WindowId,
         _border_width: u32,
-        _border_color: crate::backend::common_define::Pixel,
+        border_color: crate::backend::common_define::Pixel,
     ) -> Result<(), BackendError> {
+        unsafe {
+            self.with_state_mut(|state| {
+                // Convert Pixel (packed ARGB u32) to [f32; 4] RGBA for the renderer.
+                let raw = border_color.0;
+                let a = ((raw >> 24) & 0xFF) as f32 / 255.0;
+                let r = ((raw >> 16) & 0xFF) as f32 / 255.0;
+                let g = ((raw >> 8) & 0xFF) as f32 / 255.0;
+                let b = (raw & 0xFF) as f32 / 255.0;
+                state.window_border_color.insert(win, [r, g, b, a]);
+                state.needs_redraw = true;
+            });
+        }
+        self.request_flush();
         Ok(())
     }
 
@@ -328,7 +341,19 @@ impl WindowOps for WaylandWindowOps {
         self.request_flush();
         Ok(())
     }
-    fn kill_client(&self, _win: WindowId) -> Result<(), BackendError> {
+    fn kill_client(&self, win: WindowId) -> Result<(), BackendError> {
+        // Wayland doesn't have a direct "kill" concept. We can disconnect the client
+        // by closing the connection, but only if we have access to the client.
+        // For now, send close request which is the polite way to ask a client to exit.
+        // If the client doesn't respond, the WM user can use external tools like `kill`.
+        unsafe {
+            self.with_state_mut(|state| {
+                if let Some(toplevel) = state.try_lookup_toplevel(win) {
+                    toplevel.send_close();
+                }
+            });
+        }
+        self.request_flush();
         Ok(())
     }
     fn apply_window_changes(
@@ -1570,6 +1595,10 @@ impl Backend for UdevBackend {
     }
     fn color_allocator(&mut self) -> &mut dyn ColorAllocator {
         &mut *self.color_allocator
+    }
+
+    fn request_render(&mut self) {
+        self.state.needs_redraw = true;
     }
 
     fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), BackendError> {

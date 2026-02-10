@@ -789,6 +789,29 @@ impl WaylandX11Backend {
                     1.0,
                 );
             elements.extend(window_elements.into_iter().map(X11RenderElement::Surface));
+
+            // Server-side borders for tiling WM.
+            if geo.border > 0 {
+                let bw = geo.border as i32;
+                let [cr, cg, cb, ca] = self
+                    .state
+                    .window_border_color
+                    .get(&win)
+                    .copied()
+                    .unwrap_or([0.3, 0.3, 0.35, 1.0]);
+                let border_color = Color32F::new(cr, cg, cb, ca);
+                let full_geo: Rectangle<i32, Physical> = Rectangle::new(
+                    (geo.x - ox - bw, geo.y - oy - bw).into(),
+                    (geo.w as i32 + 2 * bw, geo.h as i32 + 2 * bw).into(),
+                );
+                elements.push(X11RenderElement::Solid(SolidColorRenderElement::new(
+                    Id::new(),
+                    full_geo,
+                    0usize,
+                    border_color,
+                    Kind::Unspecified,
+                )));
+            }
         }
 
         // Layer surfaces below normal windows.

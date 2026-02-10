@@ -95,6 +95,9 @@ pub struct JwmWaylandState {
     pub window_is_fullscreen: HashMap<WindowId, bool>,
 
     pub window_layer_info: HashMap<WindowId, LayerSurfaceInfo>,
+
+    /// Per-window border color (ARGB, used for server-side decoration in tiling WM).
+    pub window_border_color: HashMap<WindowId, [f32; 4]>,
 }
 
 delegate_compositor!(JwmWaylandState);
@@ -242,6 +245,8 @@ impl JwmWaylandState {
                 window_is_fullscreen: HashMap::new(),
 
                 window_layer_info: HashMap::new(),
+
+                window_border_color: HashMap::new(),
             },
             socket_name,
         ))
@@ -754,6 +759,7 @@ impl CompositorHandler for JwmWaylandState {
             self.window_app_id.remove(&win);
             self.window_is_fullscreen.remove(&win);
             self.window_layer_info.remove(&win);
+            self.window_border_color.remove(&win);
             self.push_event(BackendEvent::WindowDestroyed(win));
             self.needs_redraw = true;
         }
@@ -901,6 +907,7 @@ impl XdgShellHandler for JwmWaylandState {
             self.window_title.remove(&win);
             self.window_app_id.remove(&win);
             self.window_is_fullscreen.remove(&win);
+            self.window_border_color.remove(&win);
             self.push_event(BackendEvent::WindowDestroyed(win));
             self.needs_redraw = true;
         }
