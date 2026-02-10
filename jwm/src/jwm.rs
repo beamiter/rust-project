@@ -1362,6 +1362,8 @@ exit 127
                 return Err("Client has no monitor assigned".into());
             };
 
+            let mut clamp_request: Option<(i32, i32, i32, i32)> = None;
+
             if let Some(client) = self.state.clients.get_mut(client_key) {
                 if mask.contains(ConfigWindowBits::X) {
                     if let Some(x) = req.x {
@@ -1395,6 +1397,16 @@ exit 127
                     client.geometry.y = my + (mh / 2 - client.total_height() / 2);
                 }
 
+                // Defer workarea clamping until after we release the mutable borrow.
+                if client.state.is_floating && !client.state.is_fullscreen {
+                    clamp_request = Some((
+                        client.geometry.x,
+                        client.geometry.y,
+                        client.total_width(),
+                        client.total_height(),
+                    ));
+                }
+
                 if is_popup {
                     let changes = WindowChanges {
                         x: Some(client.geometry.x),
@@ -1407,6 +1419,38 @@ exit 127
                         .window_ops()
                         .apply_window_changes(client.win, changes)?;
                     return Ok(());
+                }
+            }
+
+            // Clamp floating (non-fullscreen) windows to the monitor workarea so they don't end
+            // up under dock/statusbar reserved space.
+            if let (Some(mon_key), Some((x, y, total_w, total_h))) = (mon_key_opt, clamp_request)
+            {
+                let clamp = self
+                    .monitor_work_area(mon_key)
+                    .unwrap_or(Rect::new(mx, my, mw, mh));
+
+                let min_x = clamp.x;
+                let max_x = clamp.x + clamp.w - total_w;
+                let clamped_x = if min_x <= max_x {
+                    x.clamp(min_x, max_x)
+                } else {
+                    min_x
+                };
+
+                let min_y = clamp.y;
+                let max_y = clamp.y + clamp.h - total_h;
+                let clamped_y = if min_y <= max_y {
+                    y.clamp(min_y, max_y)
+                } else {
+                    min_y
+                };
+
+                if let Some(client) = self.state.clients.get_mut(client_key) {
+                    if client.state.is_floating && !client.state.is_fullscreen {
+                        client.geometry.x = clamped_x;
+                        client.geometry.y = clamped_y;
+                    }
                 }
             }
 
