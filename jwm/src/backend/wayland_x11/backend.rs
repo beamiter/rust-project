@@ -1166,7 +1166,7 @@ impl WaylandX11Backend {
                     return Err(BackendError::Message(format!(
                         "[wayland-x11] cannot bind dmabuf framebuffer ({e:?}). This typically means your EGL/GL stack cannot render *into* dmabuf via EGLImage on this path. EGL version: {egl_ver:?}.\n\
 Troubleshooting (NVIDIA/GBM): try forcing simpler dmabuf modifiers: `JWM_X11_DMABUF_MODIFIERS=invalid` (or `linear`).\n\
-Fallback: build/run the windowed backend via winit instead: `cargo build --no-default-features --features \"backend-wayland-winit gtk_bar\"` and run with `JWM_BACKEND=wayland-winit`."
+Fallback: run the winit backend instead: `JWM_BACKEND=wayland-winit` (same binary)."
                     )));
                 }
             }

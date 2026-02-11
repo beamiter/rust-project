@@ -30,9 +30,6 @@ LOG_DIR="$ROOT_DIR/logs"
 mkdir -p "$LOG_DIR"
 LOG_FILE="$LOG_DIR/jwm_debug_$(date +%F_%H-%M-%S).log"
 
-# Prefer an already-built binary.
-FEATURES="backend-udev gtk_bar"
-
 # Cargo may put the `target/` dir either under this crate or under a workspace
 # root (one level up). Check both so we can reuse an existing build.
 TARGET_DIRS=()
@@ -60,8 +57,8 @@ elif [[ -n "$BIN_DEBUG" ]]; then
 else
   # No prebuilt binary found: build it and run the produced binary.
   if command -v cargo >/dev/null 2>&1; then
-    echo "[start_jwm_debug] building: cargo build --release --features '$FEATURES'" >&2
-    cargo build --release --features "$FEATURES"
+    echo "[start_jwm_debug] building: cargo build --release" >&2
+    cargo build --release
     # Re-resolve after build (target dir may differ).
     for target_dir in "${TARGET_DIRS[@]}"; do
       if [[ -x "$target_dir/release/jwm" ]]; then

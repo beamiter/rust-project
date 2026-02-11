@@ -163,20 +163,20 @@ WAYLAND_DEBUG=1 ./target/release/jwm 2>&1 | head -100
 
 ```bash
 # 调试版本（有符号，无优化）
-cargo build --features backend-udev
+cargo build
 
 # 发布版本但带调试符号
-cargo build --release --features backend-udev
+cargo build --release
 
 # 设置 strip=false 保留符号
-RUSTFLAGS="-g" cargo build --release --features backend-udev
+RUSTFLAGS="-g" cargo build --release
 ```
 
 ### 5.2 使用 gdb
 
 ```bash
 # 准备调试版本
-cargo build --features backend-udev
+cargo build
 
 # 用 gdb 启动
 gdb --args ./target/debug/jwm

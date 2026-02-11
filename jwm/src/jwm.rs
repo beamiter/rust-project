@@ -3364,53 +3364,32 @@ impl Jwm {
             // For Smithay-backed backends we want child processes to prefer connecting to this
             // compositor's Wayland socket, even if we're running nested inside an existing X11
             // desktop session.
-            #[cfg(any(
-				feature = "backend-udev",
-				feature = "backend-wayland-x11",
-				feature = "backend-wayland-winit"
-			))]
-            {
-                let is_smithay_backend = {
-                    #[cfg(feature = "backend-udev")]
-                    let is_udev = _backend
-                        .as_any()
-                        .is::<crate::backend::wayland_udev::backend::UdevBackend>();
-                    #[cfg(not(feature = "backend-udev"))]
-                    let is_udev = false;
+            let is_udev = _backend
+                .as_any()
+                .is::<crate::backend::wayland_udev::backend::UdevBackend>();
+            let is_wayland_x11 = _backend
+                .as_any()
+                .is::<crate::backend::wayland_x11::backend::WaylandX11Backend>();
+            let is_wayland_winit = _backend
+                .as_any()
+                .is::<crate::backend::wayland_winit::backend::WaylandWinitBackend>();
+            let is_smithay_backend = is_udev || is_wayland_x11 || is_wayland_winit;
 
-                    #[cfg(feature = "backend-wayland-x11")]
-                    let is_wayland_x11 = _backend
-                        .as_any()
-                        .is::<crate::backend::wayland_x11::backend::WaylandX11Backend>();
-                    #[cfg(not(feature = "backend-wayland-x11"))]
-                    let is_wayland_x11 = false;
+            if is_smithay_backend {
+                if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
+                    command.env("WAYLAND_DISPLAY", v);
+                }
+                if let Ok(v) = std::env::var("XDG_RUNTIME_DIR") {
+                    command.env("XDG_RUNTIME_DIR", v);
+                }
 
-                    #[cfg(feature = "backend-wayland-winit")]
-                    let is_wayland_winit = _backend
-                        .as_any()
-                        .is::<crate::backend::wayland_winit::backend::WaylandWinitBackend>();
-                    #[cfg(not(feature = "backend-wayland-winit"))]
-                    let is_wayland_winit = false;
-
-                    is_udev || is_wayland_x11 || is_wayland_winit
-                };
-
-                if is_smithay_backend {
-                    if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
-                        command.env("WAYLAND_DISPLAY", v);
-                    }
-                    if let Ok(v) = std::env::var("XDG_RUNTIME_DIR") {
-                        command.env("XDG_RUNTIME_DIR", v);
-                    }
-
-                    // Help toolkits (especially winit) pick Wayland in a nested X11 session.
-                    // Only set defaults if the user hasn't overridden them.
-                    if std::env::var_os("XDG_SESSION_TYPE").is_none() {
-                        command.env("XDG_SESSION_TYPE", "wayland");
-                    }
-                    if std::env::var_os("WINIT_UNIX_BACKEND").is_none() {
-                        command.env("WINIT_UNIX_BACKEND", "wayland");
-                    }
+                // Help toolkits (especially winit) pick Wayland in a nested X11 session.
+                // Only set defaults if the user hasn't overridden them.
+                if std::env::var_os("XDG_SESSION_TYPE").is_none() {
+                    command.env("XDG_SESSION_TYPE", "wayland");
+                }
+                if std::env::var_os("WINIT_UNIX_BACKEND").is_none() {
+                    command.env("WINIT_UNIX_BACKEND", "wayland");
                 }
             }
 
@@ -3418,11 +3397,7 @@ impl Jwm {
             // `DISPLAY` often points to GNOME's Xwayland (e.g. :0). Some apps (notably
             // Electron-based) may then choose X11 and show up back in GNOME instead of
             // connecting to this compositor.
-            #[cfg(feature = "backend-udev")]
-            if _backend
-                .as_any()
-                .is::<crate::backend::wayland_udev::backend::UdevBackend>()
-            {
+            if is_udev {
                 command.env_remove("DISPLAY");
             }
 

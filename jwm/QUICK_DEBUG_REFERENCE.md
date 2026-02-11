@@ -7,7 +7,7 @@
 ./scripts/check_system.sh
 
 # 2. 构建调试版本
-cargo build --features backend-udev
+cargo build
 
 # 3. 运行调试
 ./scripts/debug_jwm.sh

@@ -87,7 +87,7 @@ if [ -f Cargo.toml ]; then
     if [ -f target/debug/jwm ]; then
         echo "  ✅ Debug build exists"
     else
-        echo "  ⚠️  Debug build not found (run: cargo build --features backend-udev)"
+        echo "  ⚠️  Debug build not found (run: cargo build)"
     fi
 
     if [ -f target/release/jwm ]; then

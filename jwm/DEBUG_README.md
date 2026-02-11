@@ -37,7 +37,7 @@
 
 ```bash
 # 构建调试版本
-cargo build --features backend-udev
+cargo build
 
 # 从 TTY 运行（Ctrl+Alt+F2 进入 TTY）
 ./scripts/debug_jwm.sh

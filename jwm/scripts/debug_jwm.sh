@@ -6,12 +6,12 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo "🔧 Building debug version..."
-cargo build --features backend-udev
+cargo build
 
 echo "📋 Debug Configuration:"
 echo "  - Log Level: DEBUG"
 echo "  - Keyboard Debug: ON"
-echo "  - Terminal Autostart: ON"
+echo "  - Terminal Autostart: OFF"
 echo "  - Wayland Debug: ON"
 echo ""
 echo "⚠️  Make sure you're running from a TTY (Ctrl+Alt+F2)"
@@ -21,7 +21,6 @@ read
 export RUST_LOG=debug
 export RUST_BACKTRACE=full
 export JWM_DEBUG_KEYS=1
-export JWM_AUTOSTART_TERMINAL=1
 export WAYLAND_DEBUG=1
 export XDG_SESSION_TYPE=wayland
 export XDG_SESSION_CLASS=user

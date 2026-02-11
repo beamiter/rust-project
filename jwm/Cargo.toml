@@ -21,31 +21,6 @@ winit_wgpu_bar = []
 tao_wgpu_bar = []
 nixgl = []
 cairo = []
-backend-x11 = []
-backend-wayland-x11 = [
-	"smithay/backend_x11",
-	"smithay/backend_gbm",
-	"smithay/backend_egl",
-	"smithay/renderer_gl",
-	"smithay/desktop",
-]
-backend-wayland-winit = [
-	"smithay/backend_winit",
-	"smithay/backend_egl",
-	"smithay/renderer_gl",
-	"smithay/desktop",
-]
-backend-udev = [
-	"smithay/backend_udev",
-	"smithay/backend_libinput",
-	"smithay/backend_session_libseat",
-	"smithay/backend_drm",
-	"smithay/backend_gbm",
-	"smithay/backend_egl",
-	"smithay/renderer_gl",
-	"smithay/desktop",
-]
-default = ["backend-x11"]
 
 [[bin]]
 name = "jwm-tool"
@@ -83,7 +58,21 @@ once_cell.workspace = true
 rand.workspace = true
 xkbcommon = "0.9.0"
 bitflags = "2.9.4"
-smithay = { git = "https://github.com/Smithay/smithay.git", rev = "b252c0fa644222be1234904542ff1773cbfefc14", default-features = false, features = ["use_system_lib", "wayland-backend", "wayland_frontend"] }
+smithay = { git = "https://github.com/Smithay/smithay.git", rev = "b252c0fa644222be1234904542ff1773cbfefc14", default-features = false, features = [
+	"use_system_lib",
+	"wayland-backend",
+	"wayland_frontend",
+	"backend_x11",
+	"backend_winit",
+	"backend_udev",
+	"backend_libinput",
+	"backend_session_libseat",
+	"backend_drm",
+	"backend_gbm",
+	"backend_egl",
+	"renderer_gl",
+	"desktop",
+] }
 calloop = { version = "0.14.3", features = ["signals"] }
 winit = "0.30.12"
 crossbeam-channel = "0.5.15"
