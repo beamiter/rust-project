@@ -94,6 +94,7 @@ pub(super) struct KmsState {
     outputs: Vec<KmsOutputState>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug)]
 pub(super) enum KmsInitError {
     DeviceOpen(smithay::backend::session::libseat::Error),

@@ -198,8 +198,9 @@ impl WindowOps for WaylandWindowOps {
         unsafe {
             self.with_state_mut(|state| {
                 if let Some(geo) = state.window_geometry.get_mut(&_win) {
-                    geo.x = _x;
-                    geo.y = _y;
+                    let bw = geo.border as i32;
+                    geo.x = _x + bw;
+                    geo.y = _y + bw;
                 }
                 state.needs_redraw = true;
             });
@@ -220,11 +221,12 @@ impl WindowOps for WaylandWindowOps {
         unsafe {
             self.with_state_mut(|state| {
                 state.pending_initial_configure.remove(&win);
+                let bw = border as i32;
                 state.window_geometry.insert(
                     win,
                     crate::backend::api::Geometry {
-                        x,
-                        y,
+                        x: x + bw,
+                        y: y + bw,
                         w,
                         h,
                         border,
@@ -331,7 +333,11 @@ impl WindowOps for WaylandWindowOps {
     }
     fn get_geometry(&self, _win: WindowId) -> Result<crate::backend::api::Geometry, BackendError> {
         let geo = unsafe { self.with_state_mut(|state| state.window_geometry.get(&_win).copied()) };
-        Ok(geo.unwrap_or_default())
+        let mut geo = geo.unwrap_or_default();
+        let bw = geo.border as i32;
+        geo.x = geo.x - bw;
+        geo.y = geo.y - bw;
+        Ok(geo)
     }
     fn scan_windows(&self) -> Result<Vec<WindowId>, BackendError> {
         let wins = unsafe { self.with_state_mut(|state| state.window_stack.clone()) };
