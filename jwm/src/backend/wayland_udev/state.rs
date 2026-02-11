@@ -14,6 +14,7 @@ use smithay::delegate_output;
 use smithay::delegate_primary_selection;
 use smithay::delegate_seat;
 use smithay::delegate_shm;
+use smithay::delegate_viewporter;
 use smithay::delegate_xdg_shell;
 use smithay::input::keyboard::XkbConfig;
 use smithay::input::{Seat, SeatHandler, SeatState};
@@ -39,6 +40,7 @@ use smithay::wayland::output::OutputHandler;
 use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler};
 use smithay::wayland::selection::primary_selection::{PrimarySelectionHandler, PrimarySelectionState};
+use smithay::wayland::viewporter::ViewporterState;
 
 #[derive(Debug, Default)]
 pub struct JwmClientState {
@@ -66,6 +68,7 @@ pub struct JwmWaylandState {
     pub seat_state: SeatState<JwmWaylandState>,
     pub seat: Seat<JwmWaylandState>,
     pub xdg_shell_state: XdgShellState,
+    pub viewporter_state: ViewporterState,
 
     pub layer_shell_state: WlrLayerShellState,
 
@@ -115,6 +118,8 @@ delegate_output!(JwmWaylandState);
 delegate_data_device!(JwmWaylandState);
 
 delegate_primary_selection!(JwmWaylandState);
+
+delegate_viewporter!(JwmWaylandState);
 
 impl JwmWaylandState {
     pub fn set_active_toplevel(&mut self, win: Option<WindowId>) {
@@ -190,6 +195,7 @@ impl JwmWaylandState {
         let data_device_state = DataDeviceState::new::<JwmWaylandState>(dh);
         let primary_selection_state = PrimarySelectionState::new::<JwmWaylandState>(dh);
         let xdg_shell_state = XdgShellState::new::<JwmWaylandState>(dh);
+        let viewporter_state = ViewporterState::new::<JwmWaylandState>(dh);
 
         let layer_shell_state = WlrLayerShellState::new::<JwmWaylandState>(dh);
 
@@ -217,6 +223,7 @@ impl JwmWaylandState {
                 seat_state,
                 seat,
                 xdg_shell_state,
+                viewporter_state,
 
                 layer_shell_state,
                 active_toplevel: None,
@@ -608,6 +615,30 @@ impl CompositorHandler for JwmWaylandState {
     }
 
     fn commit(&mut self, surface: &WlSurface) {
+        // Snapshot the buffer assignment kind BEFORE on_commit_buffer_handler consumes it.
+        // on_commit_buffer_handler calls RendererSurfaceState::update_buffer which takes
+        // the buffer out of SurfaceAttributes::current().buffer via .take(). If we read
+        // the buffer afterwards it will always be None and windows will never be mapped.
+        #[derive(Debug, Clone, Copy)]
+        enum BufferState {
+            NewBuffer,
+            Removed,
+            None,
+        }
+
+        let (buf_state, has_damage, has_buffer_delta) = with_states(surface, |states| {
+            let mut cached = states.cached_state.get::<SurfaceAttributes>();
+            let current = cached.current();
+            let has_damage = !current.damage.is_empty();
+            let has_buffer_delta = current.buffer_delta.is_some();
+            let buf_state = match &current.buffer {
+                Some(BufferAssignment::NewBuffer(_)) => BufferState::NewBuffer,
+                Some(BufferAssignment::Removed) => BufferState::Removed,
+                None => BufferState::None,
+            };
+            (buf_state, has_damage, has_buffer_delta)
+        });
+
         // Keep renderer surface state in sync with wl_surface buffer commits.
         // Without this, WaylandSurfaceRenderElement will often have no view/texture and nothing
         // will be drawn even though windows are managed and receive input.
@@ -615,39 +646,29 @@ impl CompositorHandler for JwmWaylandState {
 
         let win = self.surface_to_window.get(&surface.id()).copied();
 
-        // Decide whether this commit impacts rendering.
-        // Note: commits can be for subsurfaces too; we still want to redraw if they have damage/buffer.
-        let (assignment, has_damage, has_buffer_delta) = with_states(surface, |states| {
-            let mut cached = states.cached_state.get::<SurfaceAttributes>();
-            let has_damage = !cached.current().damage.is_empty();
-            let has_buffer_delta = cached.current().buffer_delta.is_some();
-            let assignment = cached.current().buffer.take();
-            (assignment, has_damage, has_buffer_delta)
-        });
-
         // Root-surface mapping/unmapping -> translate into JWM window events.
         if let Some(win) = win {
-            match assignment {
-                Some(BufferAssignment::NewBuffer(_)) => {
+            match buf_state {
+                BufferState::NewBuffer => {
                     if self.mapped_windows.insert(win) {
                         info!("[udev/wayland] window mapped win={win:?}");
                         self.push_event(BackendEvent::WindowMapped(win));
                     }
                     self.needs_redraw = true;
                 }
-                Some(BufferAssignment::Removed) => {
+                BufferState::Removed => {
                     if self.mapped_windows.remove(&win) {
                         info!("[udev/wayland] window unmapped win={win:?}");
                         self.push_event(BackendEvent::WindowUnmapped(win));
                     }
                     self.needs_redraw = true;
                 }
-                None => {}
+                BufferState::None => {}
             }
         }
 
         // Rendering changes without a buffer attach (damage, buffer offset, etc).
-        if assignment.is_some() || has_damage || has_buffer_delta {
+        if !matches!(buf_state, BufferState::None) || has_damage || has_buffer_delta {
             self.needs_redraw = true;
         }
 
