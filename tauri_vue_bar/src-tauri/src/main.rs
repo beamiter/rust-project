@@ -241,6 +241,11 @@ async fn background_worker(app_handle: tauri::AppHandle, shared_path: String) {
 
 #[tokio::main]
 async fn main() {
+    // Fix for NVIDIA
+    #[cfg(target_os = "linux")]
+    unsafe {
+        std::env::set_var("WEBKIT_DISABLE_COMPOSITING_MODE", "1");
+    }
     let args: Vec<String> = env::args().collect();
     let shared_path = args.get(1).cloned().unwrap_or_default();
 
