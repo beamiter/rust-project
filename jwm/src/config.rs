@@ -455,13 +455,6 @@ impl Config {
     fn get_default_button_configs() -> Vec<ButtonConfig> {
         vec![
             ButtonConfig {
-                click_type: "ClkRootWin".to_string(),
-                modifier: vec![],
-                button: 2, // 中键
-                function: "quit".to_string(),
-                argument: ArgumentConfig::Int(0),
-            },
-            ButtonConfig {
                 click_type: "ClkClientWin".to_string(),
                 modifier: vec!["Mod1".to_string()],
                 button: 1, // 左键

@@ -214,8 +214,6 @@ pub struct Jwm {
     pub last_stacking: SecondaryMap<MonitorKey, Vec<WindowId>>,
 
     key_bindings: Vec<WMKey>,
-
-    autostart_terminal_done: bool,
 }
 
 // =================================================================================
@@ -664,8 +662,6 @@ impl EventHandler for Jwm {
             }
         }
 
-        self.maybe_autostart_terminal(backend);
-
         self.process_commands_from_status_bar(backend);
         self.flush_pending_bar_updates();
         backend.window_ops().flush()?;
@@ -886,8 +882,6 @@ impl Jwm {
             last_stacking: SecondaryMap::new(),
             key_bindings: CONFIG.get_keys(),
             last_mouse_root: (0.0, 0.0),
-
-            autostart_terminal_done: false,
         };
         if let Ok((x, y)) = backend.input_ops().get_pointer_position() {
             jwm.last_mouse_root = (x, y);
@@ -899,97 +893,6 @@ impl Jwm {
             jwm.state.sel_mon = Some(jwm.state.monitor_order[0]);
         }
         Ok(jwm)
-    }
-
-    fn env_truthy(key: &str) -> bool {
-        match env::var(key) {
-            Ok(val) => {
-                let v = val.trim();
-                v == "1"
-                    || v.eq_ignore_ascii_case("true")
-                    || v.eq_ignore_ascii_case("yes")
-                    || v.eq_ignore_ascii_case("on")
-            }
-            Err(_) => false,
-        }
-    }
-
-    fn is_udev_backend(backend: &dyn Backend) -> bool {
-        #[cfg(feature = "backend-udev")]
-        {
-            backend
-                .as_any()
-                .is::<crate::backend::wayland_udev::backend::UdevBackend>()
-        }
-        #[cfg(not(feature = "backend-udev"))]
-        {
-            let _ = backend;
-            false
-        }
-    }
-
-    fn maybe_autostart_terminal(&mut self, backend: &mut dyn Backend) {
-        if self.autostart_terminal_done {
-            return;
-        }
-        if !Self::env_truthy("JWM_AUTOSTART_TERMINAL") {
-            return;
-        }
-        if !Self::is_udev_backend(backend) {
-            return;
-        }
-
-        self.autostart_terminal_done = true;
-
-        let arg = match env::var("JWM_AUTOSTART_TERMINAL_CMD") {
-            Ok(cmd) if !cmd.trim().is_empty() => {
-                info!("[autostart] Spawning terminal via shell: {}", cmd);
-                WMArgEnum::StringVec(vec!["sh".to_string(), "-lc".to_string(), cmd])
-            }
-            _ => {
-                // In TTY+udev (Wayland) sessions, the "best" terminal command is often
-                // different from what's installed on the system. Some terminals are X11-only
-                // and will silently fail if DISPLAY isn't set.
-                //
-                // This fallback prints key env vars and execs the first available terminal.
-                let script = r#"
-set -eu
-echo "[autostart] env WAYLAND_DISPLAY=${WAYLAND_DISPLAY-} DISPLAY=${DISPLAY-} XDG_RUNTIME_DIR=${XDG_RUNTIME_DIR-}" >&2
-
-for c in \
-  foot \
-  wezterm \
-  alacritty \
-  kitty \
-  weston-terminal \
-  gnome-terminal \
-  konsole \
-  warp-terminal \
-  xterm \
-  x-terminal-emulator
-do
-  if command -v "$c" >/dev/null 2>&1; then
-    echo "[autostart] trying $c" >&2
-    exec "$c"
-  fi
-done
-
-echo "[autostart] no terminal found in PATH" >&2
-exit 127
-"#;
-
-                info!("[autostart] Spawning terminal via fallback list");
-                WMArgEnum::StringVec(vec![
-                    "sh".to_string(),
-                    "-lc".to_string(),
-                    script.to_string(),
-                ])
-            }
-        };
-
-        if let Err(e) = Self::spawn(self, backend, &arg) {
-            error!("[autostart] Failed to spawn terminal: {:?}", e);
-        }
     }
 
     // --- 热插拔处理逻辑 ---
