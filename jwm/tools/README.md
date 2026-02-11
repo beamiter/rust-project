@@ -32,6 +32,9 @@
     -   指定 JWM 可执行文件路径：
     -   jwm-tool daemon &#x2013;jwm-binary /path/to/jwm
     -   或环境变量：JWM<sub>BINARY</sub>=/path/to/jwm jwm-tool daemon
+    -   指定运行后端：
+    -   jwm-tool daemon –-backend wayland-udev
+    -   或环境变量：JWM_BACKEND=wayland-udev jwm-tool daemon
 
 
 <a id="org9c3f4b6"></a>

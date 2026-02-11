@@ -38,6 +38,9 @@ enum Commands {
         /// 自定义JWM可执行文件路径（默认 /usr/local/bin/jwm，可用 env JWM_BINARY 覆盖）
         #[arg(long, env = "JWM_BINARY")]
         jwm_binary: Option<String>,
+        /// 指定运行后端（可用 env JWM_BACKEND 覆盖）
+        #[arg(long, env = "JWM_BACKEND")]
+        backend: Option<String>,
     },
 
     /// 向守护进程发送命令
@@ -103,14 +106,16 @@ fn log_line(msg: &str) {
 
 struct JwmManager {
     jwm_binary: PathBuf,
+    backend: Option<String>,
     jwm_child: Option<Child>,
     jwm_pid: Option<i32>,
 }
 
 impl JwmManager {
-    fn new(jwm_binary: PathBuf) -> Self {
+    fn new(jwm_binary: PathBuf, backend: Option<String>) -> Self {
         Self {
             jwm_binary,
+            backend,
             jwm_child: None,
             jwm_pid: None,
         }
@@ -132,7 +137,13 @@ impl JwmManager {
             ));
         }
         log_line(&format!("启动JWM: {}", self.jwm_binary.display()));
-        let child = Command::new(&self.jwm_binary)
+        let mut command = Command::new(&self.jwm_binary);
+        if let Some(backend) = self.backend.as_ref() {
+            if !backend.trim().is_empty() {
+                command.env("JWM_BACKEND", backend);
+            }
+        }
+        let child = command
             .stdin(Stdio::null())
             .stdout(Stdio::null())
             .stderr(Stdio::null())
@@ -347,7 +358,7 @@ fn write_response(resp_file: &Path, s: &str) {
 
 /* ------------------------ 子命令：daemon ------------------------ */
 
-fn run_daemon(jwm_binary: PathBuf) -> io::Result<()> {
+fn run_daemon(jwm_binary: PathBuf, backend: Option<String>) -> io::Result<()> {
     // 信号处理
     let term_flag = Arc::new(AtomicBool::new(false));
     flag::register(SIGTERM, Arc::clone(&term_flag)).expect("注册SIGTERM失败");
@@ -388,7 +399,7 @@ fn run_daemon(jwm_binary: PathBuf) -> io::Result<()> {
     log_line(&format!("JWM守护进程启动，PID: {}", daemon_pid));
     log_line(&format!("控制管道: {}", control_pipe.display()));
 
-    let mut mgr = JwmManager::new(jwm_binary);
+    let mut mgr = JwmManager::new(jwm_binary, backend);
     let _ = mgr.start();
 
     log_line("开始主循环，监听命令...");
@@ -770,11 +781,12 @@ fn main() -> io::Result<()> {
     let cli = Cli::parse();
 
     match cli.cmd {
-        Commands::Daemon { jwm_binary } => {
+        Commands::Daemon { jwm_binary, backend } => {
             let jwm_bin = jwm_binary
                 .or_else(|| env::var("JWM_BINARY").ok())
                 .unwrap_or_else(|| "/usr/local/bin/jwm".to_string());
-            run_daemon(PathBuf::from(jwm_bin))?;
+            let backend = backend.or_else(|| env::var("JWM_BACKEND").ok());
+            run_daemon(PathBuf::from(jwm_bin), backend)?;
         }
 
         Commands::Restart => send_command("restart")?,
