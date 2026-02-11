@@ -6,7 +6,6 @@ set -e
 cd "$(dirname "$0")/.."
 
 echo "🔧 Building debug version..."
-cargo build
 
 echo "📋 Debug Configuration:"
 echo "  - Log Level: DEBUG"
@@ -24,6 +23,7 @@ export JWM_DEBUG_KEYS=1
 export WAYLAND_DEBUG=1
 export XDG_SESSION_TYPE=wayland
 export XDG_SESSION_CLASS=user
+export JWM_BACKEND=wayland-udev
 
 LOG_FILE="/tmp/jwm_debug_$(date +%s).log"
 echo "📝 Logging to: $LOG_FILE"
