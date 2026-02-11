@@ -23,11 +23,13 @@ export RUST_BACKTRACE=full
 export JWM_DEBUG_KEYS=1
 export JWM_AUTOSTART_TERMINAL=1
 export WAYLAND_DEBUG=1
+export XDG_SESSION_TYPE=wayland
+export XDG_SESSION_CLASS=user
 
 LOG_FILE="/tmp/jwm_debug_$(date +%s).log"
 echo "📝 Logging to: $LOG_FILE"
 
-./target/debug/jwm 2>&1 | tee "$LOG_FILE"
+jwm 2>&1 | tee "$LOG_FILE"
 
 echo ""
 echo "✅ Debug session ended"
