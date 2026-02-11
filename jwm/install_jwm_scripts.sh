@@ -5,10 +5,10 @@ sudo rm /usr/local/bin/jwm
 sudo rm /usr/local/bin/jwm-tool
 sudo install ../target/release/jwm /usr/local/bin/
 sudo install ../target/release/jwm-tool /usr/local/bin/
-sudo install jwm.desktop /usr/local/share/xsessions/
-sudo install jwm.desktop /usr/share/xsessions/
-mkdir -p ~/.config/picom/
-cp picom.conf ~/.config/picom/picom.conf
+sudo install jwm-x11.desktop /usr/share/xsessions/
+sudo install jwm-wayland.desktop /usr/share/wayland-sessions/
+# mkdir -p ~/.config/picom/
+# cp picom.conf ~/.config/picom/picom.conf
 
 echo "jwm-tool"
 echo "JWM 管理工具（单二进制多子命令）"

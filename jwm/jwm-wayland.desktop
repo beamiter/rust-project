@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=JWM (wayland-udev)
 Comment=JWM compositor using wayland-udev (DRM/KMS)
-Exec=env JWM_BACKEND=wayland-udev /usr/local/bin/jwm
+Exec=env JWM_BACKEND=wayland-udev XDG_SESSION_TYPE=wayland XDG_SESSION_CLASS=user /usr/local/bin/jwm
 TryExec=/usr/local/bin/jwm
 Type=Application
 
