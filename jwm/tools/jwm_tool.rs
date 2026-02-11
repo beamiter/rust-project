@@ -57,6 +57,13 @@ enum Commands {
         jwm_dir: String,
     },
 
+    /// 安装 JWM 与桌面入口（参考 install_jwm_scripts.sh）
+    Install {
+        /// JWM 源码目录（默认 $HOME/jwm，可用 env JWM_DIR 覆盖）
+        #[arg(long, env = "JWM_DIR", default_value_t = default_jwm_dir())]
+        jwm_dir: String,
+    },
+
     /// 守护进程检查/重启
     DaemonCheck,
     DaemonRestart,
@@ -641,21 +648,103 @@ fn rebuild_and_restart(jwm_dir: &str) -> io::Result<()> {
         return Err(io::Error::new(io::ErrorKind::Other, "cargo build failed"));
     }
 
-    println!("安装新的JWM二进制文件...");
-    let status = Command::new("sudo")
-        .arg("cp")
-        .arg("target/release/jwm")
-        .arg("/usr/local/bin/jwm")
-        .current_dir(jwm_dir)
-        .status()?;
-    if !status.success() {
-        eprintln!("安装失败！");
-        return Err(io::Error::new(io::ErrorKind::Other, "sudo cp failed"));
-    }
+    install_jwm(jwm_dir)?;
 
     println!("重启JWM...");
     let _ = send_command("restart");
     println!("✅ JWM编译并重启完成！");
+    Ok(())
+}
+
+fn install_jwm(jwm_dir: &str) -> io::Result<()> {
+    let jwm_dir = Path::new(jwm_dir);
+    let jwm_bin = jwm_dir.join("target/release/jwm");
+    let tool_bin = jwm_dir.join("target/release/jwm-tool");
+    let x11_desktop = jwm_dir.join("jwm-x11.desktop");
+    let wayland_desktop = jwm_dir.join("jwm-wayland.desktop");
+
+    if !jwm_bin.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("jwm 未找到: {}", jwm_bin.display()),
+        ));
+    }
+    if !tool_bin.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("jwm-tool 未找到: {}", tool_bin.display()),
+        ));
+    }
+    if !x11_desktop.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("jwm-x11.desktop 未找到: {}", x11_desktop.display()),
+        ));
+    }
+    if !wayland_desktop.is_file() {
+        return Err(io::Error::new(
+            io::ErrorKind::NotFound,
+            format!("jwm-wayland.desktop 未找到: {}", wayland_desktop.display()),
+        ));
+    }
+
+    println!("安装 JWM 与 jwm-tool...");
+
+    let status = Command::new("sudo")
+        .args(["rm", "-f", "/usr/local/bin/jwm", "/usr/local/bin/jwm-tool"])
+        .status()?;
+    if !status.success() {
+        eprintln!("清理旧二进制失败！");
+        return Err(io::Error::new(io::ErrorKind::Other, "sudo rm failed"));
+    }
+
+    let status = Command::new("sudo")
+        .arg("install")
+        .arg(&jwm_bin)
+        .arg("/usr/local/bin/")
+        .status()?;
+    if !status.success() {
+        eprintln!("安装 jwm 失败！");
+        return Err(io::Error::new(io::ErrorKind::Other, "install jwm failed"));
+    }
+
+    let status = Command::new("sudo")
+        .arg("install")
+        .arg(&tool_bin)
+        .arg("/usr/local/bin/")
+        .status()?;
+    if !status.success() {
+        eprintln!("安装 jwm-tool 失败！");
+        return Err(io::Error::new(io::ErrorKind::Other, "install jwm-tool failed"));
+    }
+
+    let status = Command::new("sudo")
+        .arg("install")
+        .arg(&x11_desktop)
+        .arg("/usr/share/xsessions/")
+        .status()?;
+    if !status.success() {
+        eprintln!("安装 jwm-x11.desktop 失败！");
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "install jwm-x11.desktop failed",
+        ));
+    }
+
+    let status = Command::new("sudo")
+        .arg("install")
+        .arg(&wayland_desktop)
+        .arg("/usr/share/wayland-sessions/")
+        .status()?;
+    if !status.success() {
+        eprintln!("安装 jwm-wayland.desktop 失败！");
+        return Err(io::Error::new(
+            io::ErrorKind::Other,
+            "install jwm-wayland.desktop failed",
+        ));
+    }
+
+    println!("✅ 安装完成");
     Ok(())
 }
 
@@ -797,6 +886,10 @@ fn main() -> io::Result<()> {
 
         Commands::Rebuild { jwm_dir } => {
             rebuild_and_restart(&jwm_dir)?;
+        }
+
+        Commands::Install { jwm_dir } => {
+            install_jwm(&jwm_dir)?;
         }
 
         Commands::DaemonCheck => {
