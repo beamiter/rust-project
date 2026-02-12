@@ -35,7 +35,8 @@ use smithay::reexports::wayland_server;
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
 use smithay::utils::{DeviceFd, Physical, Point, Rectangle, Scale};
-use smithay::wayland::compositor::{TraversalAction, with_surface_tree_downward};
+use smithay::wayland::compositor::{TraversalAction, with_states, with_surface_tree_downward};
+use smithay::wayland::shell::xdg::SurfaceCachedState;
 use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
 
 smithay::backend::renderer::element::render_elements! {
@@ -461,6 +462,19 @@ impl KmsState {
                     continue;
                 };
 
+                // Many toolkits set an xdg_surface window-geometry with a non-zero loc (e.g. to
+                // exclude client-side shadows). `state.window_geometry` tracks the window-geometry
+                // origin in global coords, but the wl_surface buffer origin must be shifted by
+                // -committed_geometry.loc to visually align.
+                let (toplevel_off_x, toplevel_off_y) = with_states(&surface, |states| {
+                    let mut cached = states.cached_state.get::<SurfaceCachedState>();
+                    cached
+                        .current()
+                        .geometry
+                        .map(|r| (r.loc.x, r.loc.y))
+                        .unwrap_or((0, 0))
+                });
+
                 // Render any popups belonging to this toplevel above it (but below cursor).
                 // Popups are separate wl_surfaces, not subsurfaces, so they won't appear in the
                 // parent's SurfaceTree.
@@ -488,8 +502,20 @@ impl KmsState {
                         |_, _, _| true,
                     );
 
-                    let location: Point<i32, Physical> =
-                        (popup_rect.loc.x - ox, popup_rect.loc.y - oy).into();
+                    let (popup_off_x, popup_off_y) = with_states(&popup_surface, |states| {
+                        let mut cached = states.cached_state.get::<SurfaceCachedState>();
+                        cached
+                            .current()
+                            .geometry
+                            .map(|r| (r.loc.x, r.loc.y))
+                            .unwrap_or((0, 0))
+                    });
+
+                    let location: Point<i32, Physical> = (
+                        popup_rect.loc.x - ox - popup_off_x,
+                        popup_rect.loc.y - oy - popup_off_y,
+                    )
+                        .into();
                     let tree = SurfaceTree::from_surface(&popup_surface);
                     let popup_elements: Vec<KmsRenderElement<GlesRenderer>> =
                         AsRenderElements::<GlesRenderer>::render_elements(
@@ -529,7 +555,11 @@ impl KmsState {
                     |_, _, _| true,
                 );
 
-                let location: Point<i32, Physical> = (geo.x - ox, geo.y - oy).into();
+                let location: Point<i32, Physical> = (
+                    geo.x - ox - toplevel_off_x,
+                    geo.y - oy - toplevel_off_y,
+                )
+                    .into();
                 let tree = SurfaceTree::from_surface(&surface);
                 let window_elements: Vec<KmsRenderElement<GlesRenderer>> =
                     AsRenderElements::<GlesRenderer>::render_elements(

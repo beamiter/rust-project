@@ -5,7 +5,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use log::{info, warn};
+use log::{debug, info, warn};
 
 use smithay::delegate_compositor;
 use smithay::delegate_data_device;
@@ -31,7 +31,7 @@ use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{with_states, BufferAssignment, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes};
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::shell::wlr_layer::{Anchor, Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState};
-use smithay::wayland::shell::xdg::{PopupSurface, PositionerState, ToplevelSurface, XdgShellHandler, XdgShellState};
+use smithay::wayland::shell::xdg::{PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler, XdgShellState};
 use smithay::wayland::shell::xdg::XdgToplevelSurfaceData;
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::wayland::shm::{ShmHandler, ShmState};
@@ -101,6 +101,41 @@ pub struct JwmWaylandState {
 
     /// Per-window border color (ARGB, used for server-side decoration in tiling WM).
     pub window_border_color: HashMap<WindowId, [f32; 4]>,
+}
+
+impl JwmWaylandState {
+    fn surface_window_geometry_loc(&self, surface: &WlSurface) -> Point<i32, Logical> {
+        // xdg_surface.set_window_geometry sets this. When non-zero, the compositor must shift the
+        // wl_surface buffer origin by -loc so the window-geometry aligns with the WM's x/y.
+        with_states(surface, |states| {
+            let mut cached = states.cached_state.get::<SurfaceCachedState>();
+            cached
+                .current()
+                .geometry
+                .map(|r| r.loc)
+                .unwrap_or_else(|| (0, 0).into())
+        })
+    }
+
+    fn toplevel_buffer_origin(&self, win: WindowId) -> Option<Point<i32, Logical>> {
+        let geo = self.window_geometry.get(&win).copied()?;
+        let surface = self.surface_for_window(win)?;
+        let offset = self.surface_window_geometry_loc(&surface);
+        Some((geo.x - offset.x, geo.y - offset.y).into())
+    }
+
+    fn popup_buffer_origin(
+        &self,
+        win: WindowId,
+        popup_surface: &WlSurface,
+        popup_rect: Rectangle<i32, Logical>,
+    ) -> Option<Point<i32, Logical>> {
+        // `popup_rect.loc` is the window-geometry origin of the popup in global coords.
+        // Convert it to the actual buffer origin by subtracting the committed geometry loc.
+        let _ = win;
+        let offset = self.surface_window_geometry_loc(popup_surface);
+        Some((popup_rect.loc.x - offset.x, popup_rect.loc.y - offset.y).into())
+    }
 }
 
 delegate_compositor!(JwmWaylandState);
@@ -347,7 +382,14 @@ impl JwmWaylandState {
                 let x1 = x0 + popup_rect.size.w as f64;
                 let y1 = y0 + popup_rect.size.h as f64;
                 if location.x >= x0 && location.y >= y0 && location.x < x1 && location.y < y1 {
-                    return Some((Some(*win), popup_surface, (x0, y0).into()));
+                    let origin = self
+                        .popup_buffer_origin(*win, &popup_surface, popup_rect)
+                        .unwrap_or(popup_rect.loc);
+                    return Some((
+                        Some(*win),
+                        popup_surface,
+                        (origin.x as f64, origin.y as f64).into(),
+                    ));
                 }
             }
         }
@@ -363,7 +405,12 @@ impl JwmWaylandState {
             let y1 = y0 + geo.h as f64;
             if location.x >= x0 && location.y >= y0 && location.x < x1 && location.y < y1 {
                 if let Some(surface) = self.surface_for_window(*win) {
-                    return Some((Some(*win), surface, (x0, y0).into()));
+                    let origin = self.toplevel_buffer_origin(*win).unwrap_or((geo.x, geo.y).into());
+                    return Some((
+                        Some(*win),
+                        surface,
+                        (origin.x as f64, origin.y as f64).into(),
+                    ));
                 }
             }
         }
@@ -652,6 +699,18 @@ impl CompositorHandler for JwmWaylandState {
                 BufferState::NewBuffer => {
                     if self.mapped_windows.insert(win) {
                         info!("[udev/wayland] window mapped win={win:?}");
+
+                        let offset = self.surface_window_geometry_loc(surface);
+                        if offset.x != 0 || offset.y != 0 {
+                            let geo = self.window_geometry.get(&win).copied();
+                            debug!(
+                                "[udev/wayland] mapped window-geometry offset win={win:?} surface_id={:?} window_geo={geo:?} xdg_loc=({}, {})",
+                                surface.id(),
+                                offset.x,
+                                offset.y
+                            );
+                        }
+
                         self.push_event(BackendEvent::WindowMapped(win));
                     }
                     self.needs_redraw = true;
