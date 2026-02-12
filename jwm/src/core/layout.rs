@@ -146,10 +146,10 @@ pub fn calculate_tile<K: Copy>(
             (wx + mw, res_y, ww - mw, h)
         };
 
-        // 减去边框宽度
+        // 边框由 X server (X11) 或 compositor (Wayland) 管理，不从平铺尺寸扣除
         results.push(LayoutResult {
             key: c.key,
-            rect: Rect::new(x, y, w - 2 * c.border_w, h - 2 * c.border_w),
+            rect: Rect::new(x, y, w, h),
         });
     }
 
@@ -167,7 +167,7 @@ pub fn calculate_monocle<K: Copy>(
         .iter()
         .map(|c| LayoutResult {
             key: c.key,
-            rect: Rect::new(wx, wy, ww - 2 * c.border_w, wh - 2 * c.border_w),
+            rect: Rect::new(wx, wy, ww, wh),
         })
         .collect()
 }
@@ -230,7 +230,7 @@ pub fn calculate_fibonacci<K: Copy>(
 
             results.push(LayoutResult {
                 key: c.key,
-                rect: Rect::new(wx, res_y, mw - 2 * c.border_w, h - 2 * c.border_w),
+                rect: Rect::new(wx, res_y, mw, h),
             });
         } else {
             // --- Stack 区域处理 (Fibonacci 螺旋) ---
@@ -242,7 +242,7 @@ pub fn calculate_fibonacci<K: Copy>(
             if stack_idx == stack_count - 1 {
                 results.push(LayoutResult {
                     key: c.key,
-                    rect: Rect::new(sx, sy, sw - 2 * c.border_w, sh - 2 * c.border_w),
+                    rect: Rect::new(sx, sy, sw, sh),
                 });
             } else {
                 // 确定切割方向：偶数水平切割，奇数垂直切割 (或者反过来，看个人喜好)
@@ -257,7 +257,7 @@ pub fn calculate_fibonacci<K: Copy>(
                     let h = sh / 2;
                     results.push(LayoutResult {
                         key: c.key,
-                        rect: Rect::new(sx, sy, sw - 2 * c.border_w, h - 2 * c.border_w),
+                        rect: Rect::new(sx, sy, sw, h),
                     });
                     // 更新剩余空间：Y 下移，高度减半
                     sy += h;
@@ -267,7 +267,7 @@ pub fn calculate_fibonacci<K: Copy>(
                     let w = sw / 2;
                     results.push(LayoutResult {
                         key: c.key,
-                        rect: Rect::new(sx, sy, w - 2 * c.border_w, sh - 2 * c.border_w),
+                        rect: Rect::new(sx, sy, w, sh),
                     });
                     // 更新剩余空间：X 右移，宽度减半
                     sx += w;
