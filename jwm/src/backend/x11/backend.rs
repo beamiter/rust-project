@@ -15,6 +15,7 @@ use calloop::signals::{Signal, Signals};
 use std::any::Any;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
+use std::env;
 use x11rb::connection::Connection;
 use x11rb::connection::RequestConnection;
 use x11rb::protocol::randr::ConnectionExt as RandrExt;
@@ -86,6 +87,12 @@ struct X11Interaction {
 }
 
 impl X11Backend {
+    fn debug_drag_enabled() -> bool {
+        env::var("JWM_DEBUG_DRAG")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(true)
+    }
+
     fn enrich_event_with_output(&self, mut ev: BackendEvent) -> BackendEvent {
         let fill_output = |x: f64, y: f64| self.output_ops.output_at(x as i32, y as i32);
 
@@ -331,6 +338,15 @@ impl Backend for X11Backend {
     fn begin_move(&mut self, win: WindowId) -> Result<(), BackendError> {
         let geom = self.window_ops.get_geometry(win)?;
         let (rx, ry) = self.input_ops.get_pointer_position()?;
+        if Self::debug_drag_enabled() {
+            log::info!(
+                "[drag] begin_move win={:?} geom={:?} pointer=({:.1},{:.1})",
+                win,
+                geom,
+                rx,
+                ry
+            );
+        }
 
         // 1. 设置光标
         self.cursor_provider.get(StdCursorKind::Hand)?; // 预加载
@@ -349,6 +365,8 @@ impl Backend for X11Backend {
                 start_root_y: ry,
                 action: InteractionAction::Move,
             });
+        } else if Self::debug_drag_enabled() {
+            log::info!("[drag] begin_move grab_pointer failed win={:?}", win);
         }
         Ok(())
     }
@@ -357,6 +375,10 @@ impl Backend for X11Backend {
     fn begin_resize(&mut self, win: WindowId, edge: ResizeEdge) -> Result<(), BackendError> {
         let geom = self.window_ops.get_geometry(win)?;
         let (_rx, _ry) = self.input_ops.get_pointer_position()?;
+
+        if Self::debug_drag_enabled() {
+            log::info!("[drag] begin_resize win={:?} edge={:?} geom={:?}", win, edge, geom);
+        }
 
         if self.caps.can_warp_pointer {
             let _ = self.input_ops.warp_pointer_to_window(
@@ -381,6 +403,8 @@ impl Backend for X11Backend {
                 start_root_y: ry_new,
                 action: InteractionAction::Resize(edge),
             });
+        } else if Self::debug_drag_enabled() {
+            log::info!("[drag] begin_resize grab_pointer failed win={:?}", win);
         }
         Ok(())
     }
@@ -395,11 +419,41 @@ impl Backend for X11Backend {
                 InteractionAction::Move => {
                     let new_x = state.start_geom.x + dx;
                     let new_y = state.start_geom.y + dy;
+                    if Self::debug_drag_enabled() {
+                        log::debug!(
+                            "[drag] motion(move) win={:?} start=({},{}) dxdy=({},{}) -> pos=({},{}) keep_size=({}x{})",
+                            state.win,
+                            state.start_geom.x,
+                            state.start_geom.y,
+                            dx,
+                            dy,
+                            new_x,
+                            new_y,
+                            state.start_geom.w,
+                            state.start_geom.h
+                        );
+                    }
                     self.window_ops.set_position(state.win, new_x, new_y)?;
                 }
                 InteractionAction::Resize(_) => {
                     let new_w = (state.start_geom.w as i32 + dx).max(1) as u32;
                     let new_h = (state.start_geom.h as i32 + dy).max(1) as u32;
+
+                    if Self::debug_drag_enabled() {
+                        log::debug!(
+                            "[drag] motion(resize) win={:?} start_size=({}x{}) dxdy=({},{}) -> size=({}x{}) pos=({},{}) border={}",
+                            state.win,
+                            state.start_geom.w,
+                            state.start_geom.h,
+                            dx,
+                            dy,
+                            new_w,
+                            new_h,
+                            state.start_geom.x,
+                            state.start_geom.y,
+                            state.start_geom.border
+                        );
+                    }
 
                     self.window_ops.configure(
                         state.win,
@@ -420,6 +474,13 @@ impl Backend for X11Backend {
     // [实现] 处理 ButtonRelease
     fn handle_button_release(&mut self, _time: u32) -> Result<bool, BackendError> {
         if self.interaction.is_some() {
+            if Self::debug_drag_enabled() {
+                if let Some(state) = self.interaction.as_ref() {
+                    log::info!("[drag] end_interaction win={:?} action={:?}", state.win, state.action);
+                } else {
+                    log::info!("[drag] end_interaction");
+                }
+            }
             self.input_ops.ungrab_pointer()?;
             self.input_ops.set_cursor(StdCursorKind::LeftPtr)?;
             self.interaction = None;
@@ -2695,6 +2756,7 @@ mod window_ops {
     use super::adapter::{event_mask_from_generic, mods_to_x11};
     use super::ids::X11IdRegistry;
     use log::debug;
+    use std::env;
     use std::sync::Arc;
     use std::sync::Mutex;
     use x11rb::connection::Connection;
@@ -2711,6 +2773,12 @@ mod window_ops {
     }
 
     impl<C: Connection> X11WindowOps<C> {
+        fn debug_drag_enabled() -> bool {
+            env::var("JWM_DEBUG_DRAG")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(true)
+        }
+
         pub(super) fn new(
             conn: Arc<C>,
             atoms: Atoms,
@@ -2761,6 +2829,9 @@ mod window_ops {
     impl<C: Connection + Send + Sync + 'static> WindowOps for X11WindowOps<C> {
         fn set_position(&self, win: WindowId, x: i32, y: i32) -> Result<(), BackendError> {
             let w = self.ids.x11(win)?;
+            if Self::debug_drag_enabled() {
+                debug!("[drag] x11 set_position win={:?} x={} y={}", win, x, y);
+            }
             let aux = ConfigureWindowAux::new().x(x).y(y);
             self.conn.configure_window(w, &aux)?;
             Ok(())
@@ -2776,6 +2847,13 @@ mod window_ops {
             border: u32,
         ) -> Result<(), BackendError> {
             let wid = self.ids.x11(win)?;
+
+            if Self::debug_drag_enabled() {
+                debug!(
+                    "[drag] x11 configure win={:?} x={} y={} w={} h={} border={}",
+                    win, x, y, w, h, border
+                );
+            }
 
             // 1. 
             let aux = ConfigureWindowAux::new()

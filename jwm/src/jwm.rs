@@ -675,6 +675,34 @@ impl EventHandler for Jwm {
 }
 
 impl Jwm {
+    fn enable_floating_keep_geometry(
+        &mut self,
+        backend: &mut dyn Backend,
+        client_key: ClientKey,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let Some(sel_mon_key) = self.state.sel_mon else {
+            return Ok(());
+        };
+
+        if let Some(client) = self.state.clients.get_mut(client_key) {
+            if !client.state.is_floating {
+                client.state.is_floating = true;
+                client.geometry.floating_x = client.geometry.x;
+                client.geometry.floating_y = client.geometry.y;
+                client.geometry.floating_w = client.geometry.w;
+                client.geometry.floating_h = client.geometry.h;
+            }
+        }
+
+        self.arrange(backend, Some(sel_mon_key));
+        Ok(())
+    }
+    fn debug_drag_enabled() -> bool {
+        std::env::var("JWM_DEBUG_DRAG")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(true)
+    }
+
     fn func_name(func: WMFuncType) -> &'static str {
         macro_rules! eq {
             ($f:path) => {
@@ -1155,10 +1183,12 @@ impl Jwm {
             self.focus(backend, None)?;
         }
         let mut is_client_click = false;
+        let mut clicked_client_key: Option<ClientKey> = None;
         if let Some(wid) = clicked_win {
             if Some(wid) != backend.root_window() {
                 if let Some(client_key) = self.wintoclient(wid) {
                     is_client_click = true;
+                    clicked_client_key = Some(client_key);
                     self.focus(backend, Some(client_key))?;
                     let _ = self.restack(backend, self.state.sel_mon);
                     click_type = WMClickType::ClickClientWin;
@@ -1186,6 +1216,39 @@ impl Jwm {
             {
                 handled_by_wm = true;
                 if let Some(ref func) = config.func {
+                    if Self::debug_drag_enabled()
+                        && event_mask.contains(Mods::CONTROL)
+                        && mouse_button == MouseButton::Left
+                        && is_client_click
+                    {
+                        let (px, py) = backend
+                            .input_ops()
+                            .get_pointer_position()
+                            .unwrap_or((self.last_mouse_root.0, self.last_mouse_root.1));
+
+                        let (win, geom) = clicked_client_key
+                            .and_then(|ck| {
+                                self.state
+                                    .clients
+                                    .get(ck)
+                                    .map(|c| (c.win, c.geometry.clone()))
+                            })
+                            .map(|(w, g)| (Some(w), Some(g)))
+                            .unwrap_or((clicked_win, None));
+
+                        let func_name = Self::func_name(*func);
+                        info!(
+                            "[drag] Ctrl+Left ButtonPress: click_type={:?} win={:?} client={:?} func={} mods=0x{:x} pointer=({:.1},{:.1}) geom={:?}",
+                            click_type,
+                            win,
+                            clicked_client_key,
+                            func_name,
+                            event_mask.bits(),
+                            px,
+                            py,
+                            geom
+                        );
+                    }
                     let _ = func(self, backend, &config.arg);
                 }
                 break;
@@ -3834,6 +3897,12 @@ impl Jwm {
         let geom = if let Some(client) = self.state.clients.get_mut(sel_client_key) {
             client.state.is_floating = !client.state.is_floating;
             if client.state.is_floating {
+                if client.geometry.floating_w <= 0 || client.geometry.floating_h <= 0 {
+                    client.geometry.floating_x = client.geometry.x;
+                    client.geometry.floating_y = client.geometry.y;
+                    client.geometry.floating_w = client.geometry.w;
+                    client.geometry.floating_h = client.geometry.h;
+                }
                 Some((
                     client.geometry.floating_x,
                     client.geometry.floating_y,
@@ -5135,10 +5204,14 @@ impl Jwm {
             return Ok(());
         }
 
-        // 浮动检查：如果是平铺窗口，自动切换为浮动
+        // 浮动检查：如果是平铺窗口，自动切换为浮动（保持当前几何，不恢复历史 floating_*）
         if !is_floating {
-            self.togglefloating(backend, &WMArgEnum::Int(0))?;
+            self.enable_floating_keep_geometry(backend, client_key)?;
         }
+        debug!(
+            "Initiating move for window {:?} (floating: {}, fullscreen: {})",
+            win_id, !is_floating, is_fullscreen
+        );
 
         // [修改] 提升窗口堆叠顺序
         self.restack(backend, self.state.sel_mon)?;
@@ -5170,7 +5243,7 @@ impl Jwm {
         }
 
         if !is_floating {
-            self.togglefloating(backend, &WMArgEnum::Int(0))?;
+            self.enable_floating_keep_geometry(backend, client_key)?;
         }
 
         self.restack(backend, self.state.sel_mon)?;

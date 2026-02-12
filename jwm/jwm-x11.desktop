@@ -1,7 +1,7 @@
 [Desktop Entry]
 Name=JWM (via daemon)
 Comment=JWM Window Manager managed by jwm-tool
-Exec=env JWM_BACKEND=x11 /usr/local/bin/jwm-tool daemon
+Exec=env JWM_BACKEND=x11 JWM_DEBUG_DRAG=1 /usr/local/bin/jwm-tool daemon
 TryExec=/usr/local/bin/jwm-tool
 Type=Application
 Categories=System;
