@@ -1,5 +1,6 @@
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
+use std::io::Read;
 use std::path::Path;
 use std::rc::Rc;
 use std::sync::Arc;
@@ -15,6 +16,9 @@ use smithay::backend::drm::output::{DrmOutput, DrmOutputManager, DrmOutputRender
 use smithay::backend::drm::{DrmDevice, DrmDeviceFd, DrmEvent, DrmEventMetadata};
 use smithay::backend::egl::context::ContextPriority;
 use smithay::backend::egl::{EGLContext, EGLDisplay};
+use smithay::backend::renderer::element::memory::{
+    MemoryRenderBuffer, MemoryRenderBufferRenderElement,
+};
 use smithay::backend::renderer::element::solid::SolidColorRenderElement;
 use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::{AsRenderElements, Id, Kind};
@@ -34,15 +38,23 @@ use smithay::reexports::rustix::fs::OFlags;
 use smithay::reexports::wayland_server;
 use smithay::reexports::wayland_server::Resource;
 use smithay::reexports::wayland_server::protocol::wl_surface::WlSurface;
-use smithay::utils::{DeviceFd, Physical, Point, Rectangle, Scale};
+use smithay::utils::{DeviceFd, Physical, Point, Rectangle, Scale, Transform};
 use smithay::wayland::compositor::{TraversalAction, with_states, with_surface_tree_downward};
 use smithay::wayland::shell::xdg::SurfaceCachedState;
 use smithay::wayland::shell::wlr_layer::Layer as WlrLayer;
+
+use crate::backend::common_define::StdCursorKind;
+
+use xcursor::{
+    parser::{parse_xcursor, Image},
+    CursorTheme,
+};
 
 smithay::backend::renderer::element::render_elements! {
     pub KmsRenderElement<R> where R: ImportAll + ImportMem;
     Surface=WaylandSurfaceRenderElement<R>,
     Solid=SolidColorRenderElement,
+    Memory=MemoryRenderBufferRenderElement<R>,
 }
 
 pub(super) type KmsHandle = Rc<RefCell<KmsState>>;
@@ -89,10 +101,61 @@ pub(super) struct KmsState {
     needs_render: bool,
     background_id: Id,
 
-    cursor_id: Id,
-    cursor_size: i32,
+    cursor_theme: CursorTheme,
+    cursor_size: u32,
+    cursor_images: HashMap<String, Vec<Image>>,
+    cursor_cache: HashMap<(StdCursorKind, u32), CursorBitmap>,
+
+    cursor_fallback_body_ids: Vec<Id>,
+    cursor_fallback_shadow_ids: Vec<Id>,
 
     outputs: Vec<KmsOutputState>,
+}
+
+#[derive(Clone)]
+struct CursorBitmap {
+    buffer: MemoryRenderBuffer,
+    xhot: i32,
+    yhot: i32,
+}
+
+// A tiny software cursor (pointer arrow) expressed as a list of rectangles.
+// Coordinates are relative to the cursor hotspot (tip at 0,0).
+const CURSOR_RECTS: &[(i32, i32, i32, i32)] = &[
+    // Triangle head (11 scanlines)
+    (0, 0, 1, 1),
+    (0, 1, 2, 1),
+    (0, 2, 3, 1),
+    (0, 3, 4, 1),
+    (0, 4, 5, 1),
+    (0, 5, 6, 1),
+    (0, 6, 7, 1),
+    (0, 7, 8, 1),
+    (0, 8, 9, 1),
+    (0, 9, 10, 1),
+    (0, 10, 11, 1),
+    // Stem
+    (3, 11, 3, 7),
+    // Base
+    (2, 18, 5, 2),
+];
+
+fn cursor_candidates(kind: StdCursorKind) -> &'static [&'static str] {
+    match kind {
+        StdCursorKind::LeftPtr => &["left_ptr", "default"],
+        StdCursorKind::Hand => &["hand2", "hand1", "pointer", "default"],
+        StdCursorKind::XTerm => &["xterm", "text", "default"],
+        StdCursorKind::Watch => &["watch", "wait", "default"],
+        StdCursorKind::Crosshair => &["crosshair", "default"],
+        StdCursorKind::Fleur => &["fleur", "move", "default"],
+        StdCursorKind::HDoubleArrow => &["sb_h_double_arrow", "h_double_arrow", "default"],
+        StdCursorKind::VDoubleArrow => &["sb_v_double_arrow", "v_double_arrow", "default"],
+        StdCursorKind::TopLeftCorner => &["top_left_corner", "nw-resize", "default"],
+        StdCursorKind::TopRightCorner => &["top_right_corner", "ne-resize", "default"],
+        StdCursorKind::BottomLeftCorner => &["bottom_left_corner", "sw-resize", "default"],
+        StdCursorKind::BottomRightCorner => &["bottom_right_corner", "se-resize", "default"],
+        StdCursorKind::Sizing => &["sizing", "default"],
+    }
 }
 
 #[allow(dead_code)]
@@ -126,6 +189,76 @@ impl std::fmt::Display for KmsInitError {
 impl std::error::Error for KmsInitError {}
 
 impl KmsState {
+    fn load_xcursor_images(&mut self, icon: &str) -> Option<&Vec<Image>> {
+        if self.cursor_images.contains_key(icon) {
+            return self.cursor_images.get(icon);
+        }
+
+        let images = self
+            .cursor_theme
+            .load_icon(icon)
+            .and_then(|path| {
+                let mut file = std::fs::File::open(path).ok()?;
+                let mut data = Vec::new();
+                file.read_to_end(&mut data).ok()?;
+                parse_xcursor(&data)
+            })
+            .unwrap_or_default();
+
+        self.cursor_images.insert(icon.to_string(), images);
+        self.cursor_images.get(icon)
+    }
+
+    fn pick_nearest_image<'a>(images: &'a [Image], target_size: u32) -> Option<&'a Image> {
+        let nearest = images
+            .iter()
+            .min_by_key(|img| (target_size as i32 - img.size as i32).abs())?;
+
+        // If the cursor is animated, multiple frames share width/height.
+        // We don't animate yet; pick the first frame of the nearest size.
+        images
+            .iter()
+            .find(|img| img.width == nearest.width && img.height == nearest.height)
+    }
+
+    fn cursor_bitmap(&mut self, kind: StdCursorKind, scale: u32) -> Option<CursorBitmap> {
+        let key = (kind, scale);
+        if let Some(cached) = self.cursor_cache.get(&key) {
+            return Some(cached.clone());
+        }
+
+        let target_size = self.cursor_size.saturating_mul(scale.max(1));
+
+        for &name in cursor_candidates(kind) {
+            let images = self.load_xcursor_images(name)?;
+            if images.is_empty() {
+                continue;
+            }
+            let img = Self::pick_nearest_image(images, target_size)?;
+            if img.pixels_rgba.is_empty() || img.width == 0 || img.height == 0 {
+                continue;
+            }
+
+            let buffer = MemoryRenderBuffer::from_slice(
+                &img.pixels_rgba,
+                Fourcc::Argb8888,
+                (img.width as i32, img.height as i32),
+                1,
+                Transform::Normal,
+                None,
+            );
+            let bitmap = CursorBitmap {
+                buffer,
+                xhot: img.xhot as i32,
+                yhot: img.yhot as i32,
+            };
+            self.cursor_cache.insert(key, bitmap.clone());
+            return Some(bitmap);
+        }
+
+        None
+    }
+
     pub(super) fn request_render(&mut self) {
         self.needs_render = true;
     }
@@ -315,6 +448,15 @@ impl KmsState {
             return Err(KmsInitError::NoConnector);
         }
 
+        let cursor_theme_name = std::env::var("XCURSOR_THEME")
+            .ok()
+            .unwrap_or_else(|| "default".into());
+        let cursor_size = std::env::var("XCURSOR_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(24u32);
+        let cursor_theme = CursorTheme::load(&cursor_theme_name);
+
         let handle: KmsHandle = Rc::new(RefCell::new(KmsState {
             dev_path: dev_path.to_path_buf(),
             registration_token: None,
@@ -326,8 +468,13 @@ impl KmsState {
             needs_render: true,
             background_id: Id::new(),
 
-            cursor_id: Id::new(),
-            cursor_size: 12,
+            cursor_theme,
+            cursor_size,
+            cursor_images: HashMap::new(),
+            cursor_cache: HashMap::new(),
+
+            cursor_fallback_body_ids: (0..CURSOR_RECTS.len()).map(|_| Id::new()).collect(),
+            cursor_fallback_shadow_ids: (0..CURSOR_RECTS.len()).map(|_| Id::new()).collect(),
 
             outputs,
         }));
@@ -352,19 +499,25 @@ impl KmsState {
     pub(super) fn render_if_needed(
         &mut self,
         state: &crate::backend::wayland::state::JwmWaylandState,
+        cursor_kind: StdCursorKind,
     ) {
         if !self.needs_render {
             return;
         }
 
-        for out in &mut self.outputs {
-            if out.frame_pending {
+        for out_idx in 0..self.outputs.len() {
+            let frame_pending = self.outputs[out_idx].frame_pending;
+            if frame_pending {
                 continue;
             }
 
-            let scale: Scale<f64> = out.output.current_scale().fractional_scale().into();
-            let (out_w, out_h) = out.mode_size;
-            let (ox, oy) = out.origin;
+            let scale: Scale<f64> = self.outputs[out_idx]
+                .output
+                .current_scale()
+                .fractional_scale()
+                .into();
+            let (out_w, out_h) = self.outputs[out_idx].mode_size;
+            let (ox, oy) = self.outputs[out_idx].origin;
             let output_rect_global = Rectangle::<i32, smithay::utils::Logical>::new(
                 (ox, oy).into(),
                 (out_w, out_h).into(),
@@ -382,19 +535,64 @@ impl KmsState {
                 && cursor_x < (ox + out_w)
                 && cursor_y < (oy + out_h)
             {
-                let cursor_geo: Rectangle<i32, Physical> = Rectangle::new(
-                    (cursor_x - ox, cursor_y - oy).into(),
-                    (self.cursor_size, self.cursor_size).into(),
-                );
-                let cursor = SolidColorRenderElement::new(
-                    self.cursor_id.clone(),
-                    cursor_geo,
-                    0usize,
-                    smithay::backend::renderer::Color32F::new(0.95, 0.95, 0.95, 1.0),
-                    Kind::Cursor,
-                );
-                elements.push(KmsRenderElement::Solid(cursor));
+                // Approximate a cursor scale factor from the output scale.
+                let cursor_scale = scale.x.max(1.0).ceil() as u32;
+                let cursor_bitmap = self.cursor_bitmap(cursor_kind, cursor_scale);
+
+                if let Some(bitmap) = cursor_bitmap.as_ref() {
+                    let loc: Point<i32, Physical> = (
+                        (cursor_x - ox) - bitmap.xhot,
+                        (cursor_y - oy) - bitmap.yhot,
+                    )
+                        .into();
+                    if let Ok(elem) = MemoryRenderBufferRenderElement::from_buffer(
+                        &mut self.renderer,
+                        loc.to_f64(),
+                        &bitmap.buffer,
+                        None,
+                        None,
+                        None,
+                        Kind::Cursor,
+                    ) {
+                        elements.push(KmsRenderElement::Memory(elem));
+                    }
+                } else {
+                    // Fallback: simple software pointer so we still have a visible cursor.
+                    let base_x = cursor_x - ox;
+                    let base_y = cursor_y - oy;
+
+                    for (idx, (rx, ry, rw, rh)) in CURSOR_RECTS.iter().copied().enumerate() {
+                        let geo: Rectangle<i32, Physical> = Rectangle::new(
+                            (base_x + rx, base_y + ry).into(),
+                            (rw, rh).into(),
+                        );
+                        let body = SolidColorRenderElement::new(
+                            self.cursor_fallback_body_ids[idx].clone(),
+                            geo,
+                            0usize,
+                            smithay::backend::renderer::Color32F::new(0.98, 0.98, 0.98, 1.0),
+                            Kind::Cursor,
+                        );
+                        elements.push(KmsRenderElement::Solid(body));
+                    }
+                    for (idx, (rx, ry, rw, rh)) in CURSOR_RECTS.iter().copied().enumerate() {
+                        let geo: Rectangle<i32, Physical> = Rectangle::new(
+                            (base_x + rx + 1, base_y + ry + 1).into(),
+                            (rw, rh).into(),
+                        );
+                        let shadow = SolidColorRenderElement::new(
+                            self.cursor_fallback_shadow_ids[idx].clone(),
+                            geo,
+                            0usize,
+                            smithay::backend::renderer::Color32F::new(0.0, 0.0, 0.0, 0.55),
+                            Kind::Cursor,
+                        );
+                        elements.push(KmsRenderElement::Solid(shadow));
+                    }
+                }
             }
+
+            let out = &mut self.outputs[out_idx];
 
             let mut visible_surfaces: HashSet<wayland_server::Weak<WlSurface>> = HashSet::new();
             let mut frame_roots: Vec<WlSurface> = Vec::new();

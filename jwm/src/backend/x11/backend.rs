@@ -374,33 +374,33 @@ impl Backend for X11Backend {
     // [实现] 开始调整大小
     fn begin_resize(&mut self, win: WindowId, edge: ResizeEdge) -> Result<(), BackendError> {
         let geom = self.window_ops.get_geometry(win)?;
-        let (_rx, _ry) = self.input_ops.get_pointer_position()?;
+        let (rx, ry) = self.input_ops.get_pointer_position()?;
 
         if Self::debug_drag_enabled() {
             log::info!("[drag] begin_resize win={:?} edge={:?} geom={:?}", win, edge, geom);
         }
 
-        if self.caps.can_warp_pointer {
-            let _ = self.input_ops.warp_pointer_to_window(
-                win,
-                (geom.w + geom.border) as i16,
-                (geom.h + geom.border) as i16,
-            );
-        }
+        // Do not warp pointer: resizemouse already picked an edge based on current cursor.
+        let cursor_kind = match edge {
+            ResizeEdge::Top | ResizeEdge::Bottom => StdCursorKind::VDoubleArrow,
+            ResizeEdge::Left | ResizeEdge::Right => StdCursorKind::HDoubleArrow,
+            ResizeEdge::TopLeft => StdCursorKind::TopLeftCorner,
+            ResizeEdge::TopRight => StdCursorKind::TopRightCorner,
+            ResizeEdge::BottomLeft => StdCursorKind::BottomLeftCorner,
+            ResizeEdge::BottomRight => StdCursorKind::BottomRightCorner,
+        };
 
-        // 重新获取 Warp 后的位置
-        let (rx_new, ry_new) = self.input_ops.get_pointer_position()?;
-
-        self.input_ops.set_cursor(StdCursorKind::Fleur)?; // 或者 Sizing
-        let cursor_handle = self.cursor_provider.get(StdCursorKind::Fleur)?.0;
+        self.cursor_provider.get(cursor_kind)?; // 预加载
+        self.input_ops.set_cursor(cursor_kind)?;
+        let cursor_handle = self.cursor_provider.get(cursor_kind)?.0;
         let mask = (EventMaskBits::BUTTON_RELEASE | EventMaskBits::POINTER_MOTION).bits();
 
         if self.input_ops.grab_pointer(mask, Some(cursor_handle))? {
             self.interaction = Some(X11Interaction {
                 win,
                 start_geom: geom,
-                start_root_x: rx_new,
-                start_root_y: ry_new,
+                start_root_x: rx,
+                start_root_y: ry,
                 action: InteractionAction::Resize(edge),
             });
         } else if Self::debug_drag_enabled() {

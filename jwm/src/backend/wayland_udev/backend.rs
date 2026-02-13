@@ -10,7 +10,7 @@ use crate::backend::api::{
     InputOps, KeyOps, OutputInfo, OutputOps, PropertyOps, ResizeEdge, ScreenInfo, WindowOps,
     WindowType,
 };
-use crate::backend::common_define::{Mods, OutputId, WindowId};
+use crate::backend::common_define::{Mods, OutputId, StdCursorKind, WindowId};
 use crate::backend::error::BackendError;
 use crate::config::CONFIG;
 
@@ -70,6 +70,8 @@ struct SharedState {
     pointer_x: f64,
     pointer_y: f64,
     mods_state: u16,
+    cursor_kind: StdCursorKind,
+    cursor_dirty: bool,
     /// Cached key bindings (mods, keysym) for key event suppression.
     key_bindings: Vec<(crate::backend::common_define::Mods, crate::backend::common_define::KeySym)>,
     /// xkb keycode (0..=255) -> base (unmodified) keysym.
@@ -90,6 +92,8 @@ impl Default for SharedState {
             pointer_x: 0.0,
             pointer_y: 0.0,
             mods_state: 0,
+            cursor_kind: StdCursorKind::LeftPtr,
+            cursor_dirty: false,
             key_bindings: Vec::new(),
             keysym_table: vec![0; 256],
             suppressed_keycodes: HashSet::new(),
@@ -144,7 +148,12 @@ struct UdevInputOps {
 }
 
 impl InputOps for UdevInputOps {
-    fn set_cursor(&self, _kind: crate::backend::common_define::StdCursorKind) -> Result<(), BackendError> {
+    fn set_cursor(&self, kind: crate::backend::common_define::StdCursorKind) -> Result<(), BackendError> {
+        let mut shared = self.shared.lock().unwrap();
+        if shared.cursor_kind != kind {
+            shared.cursor_kind = kind;
+            shared.cursor_dirty = true;
+        }
         Ok(())
     }
 
@@ -1600,6 +1609,7 @@ impl Backend for UdevBackend {
     fn begin_move(&mut self, win: WindowId) -> Result<(), BackendError> {
         let geom = self.window_ops.get_geometry(win)?;
         let (rx, ry) = self.input_ops.get_pointer_position()?;
+        let _ = self.input_ops.set_cursor(StdCursorKind::Hand);
         let _ = self.input_ops.grab_pointer(0, None)?;
         self.drag = Some(UdevDragState {
             win,
@@ -1608,12 +1618,23 @@ impl Backend for UdevBackend {
             start_root_y: ry,
             action: UdevDragAction::Move,
         });
+        self.state.needs_redraw = true;
+        self.request_flush();
         Ok(())
     }
 
     fn begin_resize(&mut self, win: WindowId, edge: ResizeEdge) -> Result<(), BackendError> {
         let geom = self.window_ops.get_geometry(win)?;
         let (rx, ry) = self.input_ops.get_pointer_position()?;
+        let cursor_kind = match edge {
+            ResizeEdge::Top | ResizeEdge::Bottom => StdCursorKind::VDoubleArrow,
+            ResizeEdge::Left | ResizeEdge::Right => StdCursorKind::HDoubleArrow,
+            ResizeEdge::TopLeft => StdCursorKind::TopLeftCorner,
+            ResizeEdge::TopRight => StdCursorKind::TopRightCorner,
+            ResizeEdge::BottomLeft => StdCursorKind::BottomLeftCorner,
+            ResizeEdge::BottomRight => StdCursorKind::BottomRightCorner,
+        };
+        let _ = self.input_ops.set_cursor(cursor_kind);
         let _ = self.input_ops.grab_pointer(0, None)?;
         self.drag = Some(UdevDragState {
             win,
@@ -1622,6 +1643,8 @@ impl Backend for UdevBackend {
             start_root_y: ry,
             action: UdevDragAction::Resize(edge),
         });
+        self.state.needs_redraw = true;
+        self.request_flush();
         Ok(())
     }
 
@@ -1704,6 +1727,9 @@ impl Backend for UdevBackend {
         if self.drag.is_some() {
             self.drag = None;
             let _ = self.input_ops.ungrab_pointer();
+            let _ = self.input_ops.set_cursor(StdCursorKind::LeftPtr);
+            self.state.needs_redraw = true;
+            self.request_flush();
             return Ok(true);
         }
         Ok(false)
@@ -1759,6 +1785,18 @@ impl Backend for UdevBackend {
 
             self.maybe_reinit_kms();
 
+            // Make cursor changes visible even if nothing else requests a redraw.
+            let cursor_dirty = {
+                let mut shared = self.shared.lock().unwrap();
+                let dirty = shared.cursor_dirty;
+                shared.cursor_dirty = false;
+                dirty
+            };
+            if cursor_dirty {
+                self.state.needs_redraw = true;
+                self.request_flush();
+            }
+
             let mut had_redraw = false;
             if let Some(kms) = &self.kms {
                 if self.state.needs_redraw {
@@ -1766,7 +1804,8 @@ impl Backend for UdevBackend {
                     kms.borrow_mut().request_render();
                     self.state.needs_redraw = false;
                 }
-                kms.borrow_mut().render_if_needed(&*self.state);
+                let cursor_kind = self.shared.lock().unwrap().cursor_kind;
+                kms.borrow_mut().render_if_needed(&*self.state, cursor_kind);
             }
 
             if handler.should_exit() {
