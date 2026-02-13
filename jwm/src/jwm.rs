@@ -5248,8 +5248,57 @@ impl Jwm {
 
         self.restack(backend, self.state.sel_mon)?;
 
-        // [修改] 将控制权移交 Backend (默认右下角调整)
-        backend.begin_resize(win_id, crate::backend::api::ResizeEdge::BottomRight)?;
+        // [修改] 将控制权移交 Backend。
+        // Wayland/udev 通常不能 warp 指针，所以根据鼠标落点选择更直观的 resize 边/角：
+        // - 靠近边：Top/Bottom/Left/Right
+        // - 靠近角：TopLeft/TopRight/BottomLeft/BottomRight
+        // - 中间区域：退化为象限选择（避免出现“怎么拖都不动”的感觉）
+        let geom = backend.window_ops().get_geometry(win_id)?;
+        let (px, py) = backend.input_ops().get_pointer_position()?;
+
+        let w = (geom.w as f64).max(1.0);
+        let h = (geom.h as f64).max(1.0);
+
+        let rel_x = px - geom.x as f64;
+        let rel_y = py - geom.y as f64;
+
+        // Dynamic grip size: small windows still get a usable edge area.
+        let threshold = 24.0_f64.min(w / 3.0).min(h / 3.0).max(8.0);
+
+        let near_left = rel_x <= threshold;
+        let near_right = rel_x >= (w - threshold);
+        let near_top = rel_y <= threshold;
+        let near_bottom = rel_y >= (h - threshold);
+
+        let edge = if near_top && near_left {
+            crate::backend::api::ResizeEdge::TopLeft
+        } else if near_top && near_right {
+            crate::backend::api::ResizeEdge::TopRight
+        } else if near_bottom && near_left {
+            crate::backend::api::ResizeEdge::BottomLeft
+        } else if near_bottom && near_right {
+            crate::backend::api::ResizeEdge::BottomRight
+        } else if near_top {
+            crate::backend::api::ResizeEdge::Top
+        } else if near_bottom {
+            crate::backend::api::ResizeEdge::Bottom
+        } else if near_left {
+            crate::backend::api::ResizeEdge::Left
+        } else if near_right {
+            crate::backend::api::ResizeEdge::Right
+        } else {
+            // Not near any border: pick a quadrant as a reasonable default.
+            let left = rel_x < (w / 2.0);
+            let top = rel_y < (h / 2.0);
+            match (top, left) {
+                (true, true) => crate::backend::api::ResizeEdge::TopLeft,
+                (true, false) => crate::backend::api::ResizeEdge::TopRight,
+                (false, true) => crate::backend::api::ResizeEdge::BottomLeft,
+                (false, false) => crate::backend::api::ResizeEdge::BottomRight,
+            }
+        };
+
+        backend.begin_resize(win_id, edge)?;
 
         Ok(())
     }

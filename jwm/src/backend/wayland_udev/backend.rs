@@ -7,7 +7,8 @@ mod kms;
 use self::kms::KmsState;
 use crate::backend::api::{
     Backend, BackendEvent, Capabilities, ColorAllocator, CursorProvider, EventHandler, HitTarget,
-    InputOps, KeyOps, OutputInfo, OutputOps, PropertyOps, ScreenInfo, WindowOps, WindowType,
+    InputOps, KeyOps, OutputInfo, OutputOps, PropertyOps, ResizeEdge, ScreenInfo, WindowOps,
+    WindowType,
 };
 use crate::backend::common_define::{Mods, OutputId, WindowId};
 use crate::backend::error::BackendError;
@@ -547,12 +548,29 @@ pub struct UdevBackend {
     key_ops: Box<dyn KeyOps>,
     cursor_provider: Box<dyn CursorProvider>,
     color_allocator: Box<dyn ColorAllocator>,
+
+    drag: Option<UdevDragState>,
 }
 
 // NOTE: smithay state + calloop handle types are not thread-safe.
 // JWM runs the backend on the main thread only, so this is acceptable as long as
 // `UdevBackend` is never moved across threads.
 unsafe impl Send for UdevBackend {}
+
+#[derive(Debug, Clone, Copy)]
+enum UdevDragAction {
+    Move,
+    Resize(ResizeEdge),
+}
+
+#[derive(Debug, Clone, Copy)]
+struct UdevDragState {
+    win: WindowId,
+    start_geom: crate::backend::api::Geometry,
+    start_root_x: f64,
+    start_root_y: f64,
+    action: UdevDragAction,
+}
 
 impl UdevBackend {
     fn request_flush(&self) {
@@ -1516,6 +1534,8 @@ impl UdevBackend {
             key_ops: Box::new(key_ops_impl),
             cursor_provider: Box::new(DummyCursorProvider),
             color_allocator: Box::new(DummyColorAllocator),
+
+            drag: None,
         })
     }
 }
@@ -1575,6 +1595,118 @@ impl Backend for UdevBackend {
         self.state.needs_redraw = true;
         self.request_flush();
         Ok(())
+    }
+
+    fn begin_move(&mut self, win: WindowId) -> Result<(), BackendError> {
+        let geom = self.window_ops.get_geometry(win)?;
+        let (rx, ry) = self.input_ops.get_pointer_position()?;
+        let _ = self.input_ops.grab_pointer(0, None)?;
+        self.drag = Some(UdevDragState {
+            win,
+            start_geom: geom,
+            start_root_x: rx,
+            start_root_y: ry,
+            action: UdevDragAction::Move,
+        });
+        Ok(())
+    }
+
+    fn begin_resize(&mut self, win: WindowId, edge: ResizeEdge) -> Result<(), BackendError> {
+        let geom = self.window_ops.get_geometry(win)?;
+        let (rx, ry) = self.input_ops.get_pointer_position()?;
+        let _ = self.input_ops.grab_pointer(0, None)?;
+        self.drag = Some(UdevDragState {
+            win,
+            start_geom: geom,
+            start_root_x: rx,
+            start_root_y: ry,
+            action: UdevDragAction::Resize(edge),
+        });
+        Ok(())
+    }
+
+    fn handle_motion(&mut self, x: f64, y: f64, _time: u32) -> Result<bool, BackendError> {
+        let Some(state) = self.drag else {
+            return Ok(false);
+        };
+
+        let dx = (x - state.start_root_x) as i32;
+        let dy = (y - state.start_root_y) as i32;
+
+        match state.action {
+            UdevDragAction::Move => {
+                let new_x = state.start_geom.x + dx;
+                let new_y = state.start_geom.y + dy;
+                self.window_ops.set_position(state.win, new_x, new_y)?;
+            }
+            UdevDragAction::Resize(edge) => {
+                let mut new_x = state.start_geom.x;
+                let mut new_y = state.start_geom.y;
+                let mut new_w = state.start_geom.w as i32;
+                let mut new_h = state.start_geom.h as i32;
+
+                match edge {
+                    ResizeEdge::Top => {
+                        new_y = state.start_geom.y + dy;
+                        new_h = state.start_geom.h as i32 - dy;
+                    }
+                    ResizeEdge::Bottom => {
+                        new_h = state.start_geom.h as i32 + dy;
+                    }
+                    ResizeEdge::Left => {
+                        new_x = state.start_geom.x + dx;
+                        new_w = state.start_geom.w as i32 - dx;
+                    }
+                    ResizeEdge::Right => {
+                        new_w = state.start_geom.w as i32 + dx;
+                    }
+                    ResizeEdge::TopLeft => {
+                        new_x = state.start_geom.x + dx;
+                        new_w = state.start_geom.w as i32 - dx;
+                        new_y = state.start_geom.y + dy;
+                        new_h = state.start_geom.h as i32 - dy;
+                    }
+                    ResizeEdge::TopRight => {
+                        new_w = state.start_geom.w as i32 + dx;
+                        new_y = state.start_geom.y + dy;
+                        new_h = state.start_geom.h as i32 - dy;
+                    }
+                    ResizeEdge::BottomLeft => {
+                        new_x = state.start_geom.x + dx;
+                        new_w = state.start_geom.w as i32 - dx;
+                        new_h = state.start_geom.h as i32 + dy;
+                    }
+                    ResizeEdge::BottomRight => {
+                        new_w = state.start_geom.w as i32 + dx;
+                        new_h = state.start_geom.h as i32 + dy;
+                    }
+                }
+
+                // Keep the window in a valid state.
+                new_w = new_w.max(1);
+                new_h = new_h.max(1);
+
+                self.window_ops.configure(
+                    state.win,
+                    new_x,
+                    new_y,
+                    new_w as u32,
+                    new_h as u32,
+                    state.start_geom.border,
+                )?;
+            }
+        }
+
+        Ok(true)
+    }
+
+    fn handle_button_release(&mut self, _time: u32) -> Result<bool, BackendError> {
+        if self.drag.is_some() {
+            self.drag = None;
+            let _ = self.input_ops.ungrab_pointer();
+            return Ok(true);
+        }
+        Ok(false)
     }
 
     fn window_ops(&self) -> &dyn WindowOps {

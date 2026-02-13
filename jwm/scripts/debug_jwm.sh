@@ -13,8 +13,6 @@ echo "  - Keyboard Debug: ON"
 echo "  - Wayland Debug: ON"
 echo ""
 echo "⚠️  Make sure you're running from a TTY (Ctrl+Alt+F2)"
-echo "Press Enter to continue..."
-read
 
 export RUST_LOG=debug
 export RUST_BACKTRACE=full
