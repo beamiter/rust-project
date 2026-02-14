@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::{Arc, Mutex};
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use drm::control::{connector, Device as ControlDevice, ModeTypeFlags};
 
@@ -48,6 +48,31 @@ use smithay::input::pointer::{ButtonEvent, MotionEvent};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::desktop::layer_map_for_output;
 use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer};
+
+fn allowed_shortcut_mods() -> Mods {
+    Mods::SHIFT
+        | Mods::CONTROL
+        | Mods::ALT
+        | Mods::SUPER
+        | Mods::MOD2
+        | Mods::MOD3
+        | Mods::MOD5
+}
+
+// libinput/evdev does not generate key repeat events for us (X11 does).
+// Emulate the common behavior for WM shortcuts.
+const KEY_REPEAT_DELAY: Duration = Duration::from_millis(400);
+const KEY_REPEAT_INTERVAL: Duration = Duration::from_millis(50);
+const KEY_REPEAT_TICK: Duration = Duration::from_millis(16);
+
+#[derive(Clone, Copy, Debug)]
+struct RepeatState {
+    keycode: u8,
+    mods_raw: u16,
+    required_mods: Mods,
+    last_time: u32,
+    next_fire: Instant,
+}
 
 struct SendWrapper<T>(T);
 
@@ -78,6 +103,8 @@ struct SharedState {
     keysym_table: Vec<crate::backend::common_define::KeySym>,
     /// xkb keycodes that were intercepted on press and should be intercepted on release.
     suppressed_keycodes: HashSet<u8>,
+
+    repeat: Option<RepeatState>,
     outputs: Vec<OutputInfo>,
     output_key_to_id: HashMap<u64, OutputId>,
     next_output_raw: u64,
@@ -97,6 +124,8 @@ impl Default for SharedState {
             key_bindings: Vec::new(),
             keysym_table: vec![0; 256],
             suppressed_keycodes: HashSet::new(),
+
+            repeat: None,
             outputs: Vec::new(),
             output_key_to_id: HashMap::new(),
             next_output_raw: 0,
@@ -753,22 +782,70 @@ impl UdevBackend {
         // Prepare key binding suppression table (like X11 grabs) for the udev/Wayland path.
         // We match against the same (mods, keysym) pair that JWM uses for shortcuts.
         {
-            let allowed_mods = crate::backend::common_define::Mods::SHIFT
-                | crate::backend::common_define::Mods::CONTROL
-                | crate::backend::common_define::Mods::ALT
-                | crate::backend::common_define::Mods::SUPER
-                | crate::backend::common_define::Mods::MOD2
-                | crate::backend::common_define::Mods::MOD3
-                | crate::backend::common_define::Mods::MOD5;
-
             let key_bindings = CONFIG
                 .get_keys()
                 .into_iter()
-                .map(|k| (k.mask & allowed_mods, k.key_sym))
+                .map(|k| (k.mask & allowed_shortcut_mods(), k.key_sym))
                 .collect::<Vec<_>>();
 
             let mut s = shared.lock().unwrap();
             s.key_bindings = key_bindings;
+        }
+
+        // libinput does not synthesize key-repeat events; emulate X11-style autorepeat
+        // for WM shortcuts so holding (Alt+J) keeps cycling.
+        {
+            let shared = shared.clone();
+            let pending_events = pending_events.clone();
+            let timer = Timer::from_duration(KEY_REPEAT_TICK);
+            event_loop
+                .handle()
+                .insert_source(timer, move |_, _, _state| {
+                    let maybe_event = {
+                        let mut s = shared.lock().unwrap();
+
+                        let Some(mut rep) = s.repeat else {
+                            return TimeoutAction::ToDuration(KEY_REPEAT_TICK);
+                        };
+
+                        let now = Instant::now();
+                        if now < rep.next_fire {
+                            // Not yet time; keep waiting.
+                            s.repeat = Some(rep);
+                            return TimeoutAction::ToDuration(KEY_REPEAT_TICK);
+                        }
+
+                        let current_mods = Mods::from_bits_truncate(s.mods_state) & allowed_shortcut_mods();
+                        if !current_mods.contains(rep.required_mods) {
+                            // Modifiers released; stop repeating.
+                            s.repeat = None;
+                            return TimeoutAction::ToDuration(KEY_REPEAT_TICK);
+                        }
+
+                        // Generate one repeat event per tick at most.
+                        rep.last_time = rep
+                            .last_time
+                            .saturating_add(KEY_REPEAT_INTERVAL.as_millis().min(u128::from(u32::MAX)) as u32);
+                        rep.next_fire = now + KEY_REPEAT_INTERVAL;
+                        rep.mods_raw = s.mods_state;
+
+                        let ev = BackendEvent::KeyPress {
+                            keycode: rep.keycode,
+                            state: rep.mods_raw,
+                            time: rep.last_time,
+                        };
+                        s.repeat = Some(rep);
+                        ev
+                    };
+
+                    pending_events.lock().unwrap().push_back(maybe_event);
+                    TimeoutAction::ToDuration(KEY_REPEAT_TICK)
+                })
+                .map_err(|e| {
+                    BackendError::Message(format!(
+                        "calloop insert_source(key repeat timer) failed: {e}"
+                    ))
+                })?;
         }
 
         let (mut session, notifier) =
@@ -1334,15 +1411,8 @@ impl UdevBackend {
                                             .copied()
                                             .unwrap_or(0);
 
-                                        let allowed_mods = crate::backend::common_define::Mods::SHIFT
-                                            | crate::backend::common_define::Mods::CONTROL
-                                            | crate::backend::common_define::Mods::ALT
-                                            | crate::backend::common_define::Mods::SUPER
-                                            | crate::backend::common_define::Mods::MOD2
-                                            | crate::backend::common_define::Mods::MOD3
-                                            | crate::backend::common_define::Mods::MOD5;
                                         let clean_mods = crate::backend::common_define::Mods::from_bits_truncate(mods_bits)
-                                            & allowed_mods;
+                                            & allowed_shortcut_mods();
 
                                         let should_suppress = s
                                             .key_bindings
@@ -1383,6 +1453,36 @@ impl UdevBackend {
                                     time,
                                 });
 
+                                // Start (or reset) key repeat for bound shortcuts.
+                                // This mirrors X11 autorepeat behavior for WM shortcuts.
+                                {
+                                    let mut s = shared.lock().unwrap();
+
+                                    // Any new key press cancels previous repeat.
+                                    s.repeat = None;
+
+                                    let keysym = s
+                                        .keysym_table
+                                        .get(keycode_u8 as usize)
+                                        .copied()
+                                        .unwrap_or(0);
+                                    let clean_mods = Mods::from_bits_truncate(mods_state) & allowed_shortcut_mods();
+                                    let is_bound = s
+                                        .key_bindings
+                                        .iter()
+                                        .any(|(m, ks)| *ks == keysym && *m == clean_mods);
+
+                                    if is_bound {
+                                        s.repeat = Some(RepeatState {
+                                            keycode: keycode_u8,
+                                            mods_raw: mods_state,
+                                            required_mods: clean_mods,
+                                            last_time: time,
+                                            next_fire: Instant::now() + KEY_REPEAT_DELAY,
+                                        });
+                                    }
+                                }
+
                                 if debug_keys {
                                     log::info!(
                                         "[udev:key->wm] keycode={} mods_state=0x{:x} time={}",
@@ -1390,6 +1490,23 @@ impl UdevBackend {
                                         mods_state,
                                         time
                                     );
+                                }
+                            }
+
+                            // Stop repeating when the held shortcut key is released, or when
+                            // modifiers are no longer satisfied (e.g. Alt released).
+                            if matches!(state_key, smithay::backend::input::KeyState::Released) {
+                                let keycode_u8 = u8::try_from(u32::from(keycode)).unwrap_or(0);
+                                let mut s = shared.lock().unwrap();
+                                if let Some(rep) = s.repeat {
+                                    if rep.keycode == keycode_u8 {
+                                        s.repeat = None;
+                                    } else {
+                                        let current_mods = Mods::from_bits_truncate(s.mods_state) & allowed_shortcut_mods();
+                                        if !current_mods.contains(rep.required_mods) {
+                                            s.repeat = None;
+                                        }
+                                    }
                                 }
                             }
                         }
