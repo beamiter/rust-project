@@ -51,7 +51,7 @@ fi
 export GTK_IM_MODULE=fcitx
 export QT_IM_MODULE=fcitx
 export XMODIFIERS=@im=fcitx
-run_if_not_running fcitx -d
+# run_if_not_running fcitx -d
 run_if_not_running fcitx5 -d
 
 # --- 6. 身份认证代理 (Polkit) ---
