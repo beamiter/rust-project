@@ -16,6 +16,9 @@ use smithay::delegate_seat;
 use smithay::delegate_shm;
 use smithay::delegate_viewporter;
 use smithay::delegate_xdg_shell;
+use smithay::delegate_text_input_manager;
+use smithay::delegate_input_method_manager;
+use smithay::delegate_virtual_keyboard_manager;
 use smithay::input::keyboard::XkbConfig;
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason, ObjectId};
@@ -41,6 +44,9 @@ use smithay::wayland::selection::SelectionHandler;
 use smithay::wayland::selection::data_device::{ClientDndGrabHandler, DataDeviceHandler, DataDeviceState, ServerDndGrabHandler};
 use smithay::wayland::selection::primary_selection::{PrimarySelectionHandler, PrimarySelectionState};
 use smithay::wayland::viewporter::ViewporterState;
+use smithay::wayland::text_input::TextInputManagerState;
+use smithay::wayland::input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface as ImPopupSurface};
+use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
 
 #[derive(Debug, Default)]
 pub struct JwmClientState {
@@ -156,6 +162,12 @@ delegate_primary_selection!(JwmWaylandState);
 
 delegate_viewporter!(JwmWaylandState);
 
+delegate_text_input_manager!(JwmWaylandState);
+
+delegate_input_method_manager!(JwmWaylandState);
+
+delegate_virtual_keyboard_manager!(JwmWaylandState);
+
 impl JwmWaylandState {
     pub fn set_active_toplevel(&mut self, win: Option<WindowId>) {
         if self.active_toplevel == win {
@@ -236,6 +248,11 @@ impl JwmWaylandState {
 
         // Optional but very useful for toolkit compatibility.
         let output_manager_state = OutputManagerState::new_with_xdg_output::<JwmWaylandState>(dh);
+
+        // IME / text input support – required for Chinese / Japanese / Korean input.
+        TextInputManagerState::new::<JwmWaylandState>(dh);
+        InputMethodManagerState::new::<JwmWaylandState, _>(dh, |_client| true);
+        VirtualKeyboardManagerState::new::<JwmWaylandState, _>(dh, |_client| true);
 
         let mut seat_state = SeatState::new();
         let mut seat = seat_state.new_wl_seat(dh, seat_name);
@@ -864,6 +881,27 @@ impl SeatHandler for JwmWaylandState {
 
     fn seat_state(&mut self) -> &mut SeatState<Self> {
         &mut self.seat_state
+    }
+}
+
+impl InputMethodHandler for JwmWaylandState {
+    fn new_popup(&mut self, _surface: ImPopupSurface) {
+        // IME popup surfaces (candidate window) – currently not rendered by JWM.
+    }
+
+    fn dismiss_popup(&mut self, _surface: ImPopupSurface) {}
+
+    fn popup_repositioned(&mut self, _surface: ImPopupSurface) {}
+
+    fn parent_geometry(&self, parent: &WlSurface) -> Rectangle<i32, Logical> {
+        // Return the geometry of the toplevel that owns this surface so the IME
+        // popup can position itself correctly.
+        if let Some(win) = self.surface_to_window.get(&parent.id()).copied() {
+            if let Some(geo) = self.window_geometry.get(&win) {
+                return Rectangle::new((geo.x, geo.y).into(), (geo.w as i32, geo.h as i32).into());
+            }
+        }
+        Rectangle::default()
     }
 }
 
