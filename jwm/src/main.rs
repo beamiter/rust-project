@@ -11,12 +11,12 @@ use jwm::backend::wayland_x11::backend::WaylandX11Backend;
 use jwm::backend::x11::backend::X11Backend;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
+    initialize_logging("jwm", SHARED_PATH)?;
+    info!("[main] begin");
+
     setup_locale();
     jwm::miscellaneous::init_auto_command();
     jwm::miscellaneous::init_auto_start();
-
-    initialize_logging("jwm", SHARED_PATH)?;
-    info!("[main] begin");
 
     run_jwm()?;
     Ok(())
