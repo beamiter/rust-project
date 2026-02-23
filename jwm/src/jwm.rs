@@ -3402,6 +3402,120 @@ impl Jwm {
         self.state.sel_mon
     }
 
+    /// Returns `true` if `backend` is one of the Smithay-based compositors (udev, wayland-x11, wayland-winit).
+    fn is_smithay_backend(backend: &dyn Backend) -> bool {
+        backend
+            .as_any()
+            .is::<crate::backend::wayland_udev::backend::UdevBackend>()
+            || backend
+                .as_any()
+                .is::<crate::backend::wayland_x11::backend::WaylandX11Backend>()
+            || backend
+                .as_any()
+                .is::<crate::backend::wayland_winit::backend::WaylandWinitBackend>()
+    }
+
+    /// Returns `true` if `backend` is the udev/KMS backend (no Xwayland, no X11 DISPLAY).
+    fn is_udev_backend(backend: &dyn Backend) -> bool {
+        backend
+            .as_any()
+            .is::<crate::backend::wayland_udev::backend::UdevBackend>()
+    }
+
+    /// Set Wayland-related environment variables on a child `Command` so that
+    /// toolkits can connect to this compositor.  When running the udev backend
+    /// we also strip `DISPLAY` to avoid leaking a stale Xwayland reference.
+    fn setup_smithay_child_env(command: &mut Command, backend: &dyn Backend) {
+        if Self::is_smithay_backend(backend) {
+            if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
+                command.env("WAYLAND_DISPLAY", &v);
+            }
+            if let Ok(v) = std::env::var("XDG_RUNTIME_DIR") {
+                command.env("XDG_RUNTIME_DIR", &v);
+            }
+            if std::env::var_os("XDG_SESSION_TYPE").is_none() {
+                command.env("XDG_SESSION_TYPE", "wayland");
+            }
+            if std::env::var_os("WINIT_UNIX_BACKEND").is_none() {
+                command.env("WINIT_UNIX_BACKEND", "wayland");
+            }
+        }
+        if Self::is_udev_backend(backend) {
+            command.env_remove("DISPLAY");
+        }
+    }
+
+    /// Apply common child-process isolation: `setsid()` + restore `SIGCHLD` default.
+    fn apply_child_pre_exec(command: &mut Command) {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            command.pre_exec(move || {
+                setsid();
+                let mut sa: sigaction = std::mem::zeroed();
+                sigemptyset(&mut sa.sa_mask);
+                sa.sa_flags = 0;
+                sa.sa_sigaction = SIG_DFL;
+                sigaction(SIGCHLD, &sa, std::ptr::null_mut());
+                Ok(())
+            });
+        }
+    }
+
+    /// For the udev backend (pure Wayland, no Xwayland), `dmenu_run` (X11-only)
+    /// cannot work.  Try to transparently replace it with a Wayland-native
+    /// alternative that accepts the same `-m` flag convention.
+    ///
+    /// Search order: `bemenu-run`, `wmenu-run`, `fuzzel`.
+    fn maybe_replace_dmenu_for_wayland(v: &mut Vec<String>, backend: &dyn Backend) {
+        if !Self::is_udev_backend(backend) {
+            return;
+        }
+        // Only replace if the command is literally `dmenu_run`.
+        if v.is_empty() || v[0] != "dmenu_run" {
+            return;
+        }
+
+        // Probe for Wayland-native alternatives.
+        let alternatives: &[(&str, &[&str])] = &[
+            // bemenu-run accepts a superset of dmenu flags, so we can pass them through.
+            ("bemenu-run", &[]),
+            // wmenu-run is wlroots dmenu, also compatible.
+            ("wmenu-run", &[]),
+            // fuzzel has its own flag syntax; launch with no extra args.
+            ("fuzzel", &["--dmenu"]),
+        ];
+
+        for &(alt, extra_args) in alternatives {
+            if Command::new("which")
+                .arg(alt)
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                info!(
+                    "[spawn] udev backend: replacing X11-only `dmenu_run` with `{alt}`"
+                );
+                v[0] = alt.to_string();
+                // For fuzzel --dmenu mode we drop all dmenu-specific flags and just
+                // pass the extra args, because the flag sets are incompatible.
+                if !extra_args.is_empty() {
+                    v.truncate(1);
+                    for a in extra_args {
+                        v.push(a.to_string());
+                    }
+                }
+                return;
+            }
+        }
+
+        warn!(
+            "[spawn] udev backend: `dmenu_run` is X11-only and no Wayland alternative \
+             (bemenu-run, wmenu-run, fuzzel) was found – the command will likely fail"
+        );
+    }
+
     pub fn spawn(
         &mut self,
         _backend: &mut dyn Backend,
@@ -3419,69 +3533,23 @@ impl Jwm {
                 (*v)[2] = tmp;
             }
 
+            // On the udev backend dmenu_run (X11) cannot work; swap to a
+            // Wayland-native launcher if one is available.
+            Self::maybe_replace_dmenu_for_wayland(v, _backend);
+
             info!("[spawn] spawning command: {:?}", v);
 
             let mut command = Command::new(&v[0]);
             command.args(&v[1..]);
 
-            // For Smithay-backed backends we want child processes to prefer connecting to this
-            // compositor's Wayland socket, even if we're running nested inside an existing X11
-            // desktop session.
-            let is_udev = _backend
-                .as_any()
-                .is::<crate::backend::wayland_udev::backend::UdevBackend>();
-            let is_wayland_x11 = _backend
-                .as_any()
-                .is::<crate::backend::wayland_x11::backend::WaylandX11Backend>();
-            let is_wayland_winit = _backend
-                .as_any()
-                .is::<crate::backend::wayland_winit::backend::WaylandWinitBackend>();
-            let is_smithay_backend = is_udev || is_wayland_x11 || is_wayland_winit;
-
-            if is_smithay_backend {
-                if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
-                    command.env("WAYLAND_DISPLAY", v);
-                }
-                if let Ok(v) = std::env::var("XDG_RUNTIME_DIR") {
-                    command.env("XDG_RUNTIME_DIR", v);
-                }
-
-                // Help toolkits (especially winit) pick Wayland in a nested X11 session.
-                // Only set defaults if the user hasn't overridden them.
-                if std::env::var_os("XDG_SESSION_TYPE").is_none() {
-                    command.env("XDG_SESSION_TYPE", "wayland");
-                }
-                if std::env::var_os("WINIT_UNIX_BACKEND").is_none() {
-                    command.env("WINIT_UNIX_BACKEND", "wayland");
-                }
-            }
-
-            // When running the udev backend from a TTY while GNOME is still running,
-            // `DISPLAY` often points to GNOME's Xwayland (e.g. :0). Some apps (notably
-            // Electron-based) may then choose X11 and show up back in GNOME instead of
-            // connecting to this compositor.
-            if is_udev {
-                command.env_remove("DISPLAY");
-            }
+            Self::setup_smithay_child_env(&mut command, _backend);
 
             command
                 .stdin(std::process::Stdio::null())
                 .stdout(std::process::Stdio::inherit())
                 .stderr(std::process::Stdio::inherit());
 
-            use std::os::unix::process::CommandExt;
-
-            unsafe {
-                command.pre_exec(move || {
-                    setsid();
-                    let mut sa: sigaction = std::mem::zeroed();
-                    sigemptyset(&mut sa.sa_mask);
-                    sa.sa_flags = 0;
-                    sa.sa_sigaction = SIG_DFL;
-                    sigaction(SIGCHLD, &sa, std::ptr::null_mut());
-                    Ok(())
-                });
-            }
+            Self::apply_child_pre_exec(&mut command);
 
             match command.spawn() {
                 Ok(child) => {
@@ -3977,8 +4045,59 @@ impl Jwm {
         _backend: &mut dyn Backend,
         _arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let _ = std::process::Command::new("flameshot").arg("gui").spawn();
-        return Ok(());
+        // Prefer Wayland-native screenshot tools on udev (flameshot < 12 is X11-only).
+        let (program, args): (&str, &[&str]) = if Self::is_udev_backend(_backend) {
+            // Try grimshot (sway-contrib), grim, or flameshot (>= 0.12 has Wayland)
+            if Self::command_exists("grimshot") {
+                ("grimshot", &["save", "area"])
+            } else if Self::command_exists("grim") {
+                // grim + slurp for area selection
+                ("sh", &["-c", "grim -g \"$(slurp)\" - | wl-copy"])
+            } else {
+                // Fall back to flameshot and hope it's >= 0.12 with Wayland portal support
+                ("flameshot", &["gui"])
+            }
+        } else {
+            ("flameshot", &["gui"])
+        };
+
+        info!("[take_screenshot] launching: {} {:?}", program, args);
+
+        let mut command = Command::new(program);
+        command.args(args);
+
+        Self::setup_smithay_child_env(&mut command, _backend);
+
+        command
+            .stdin(Stdio::null())
+            .stdout(Stdio::inherit())
+            .stderr(Stdio::inherit());
+
+        Self::apply_child_pre_exec(&mut command);
+
+        match command.spawn() {
+            Ok(child) => {
+                debug!(
+                    "[take_screenshot] spawned PID: {}",
+                    child.id()
+                );
+            }
+            Err(e) => {
+                error!("[take_screenshot] failed to launch {}: {}", program, e);
+            }
+        }
+        Ok(())
+    }
+
+    /// Check whether `name` exists on `$PATH`.
+    fn command_exists(name: &str) -> bool {
+        Command::new("which")
+            .arg(name)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+            .map(|s| s.success())
+            .unwrap_or(false)
     }
 
     pub fn tag(
