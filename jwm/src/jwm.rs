@@ -3982,6 +3982,31 @@ impl Jwm {
         _backend: &mut dyn Backend,
         _arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // Try compositor-level screenshot first (supported on udev/KMS backend).
+        let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
+        let pictures_dir = std::env::var("XDG_PICTURES_DIR")
+            .or_else(|_| std::env::var("HOME").map(|h| format!("{}/Pictures", h)))
+            .unwrap_or_else(|_| "/tmp".to_string());
+        let screenshot_path =
+            std::path::PathBuf::from(format!("{}/screenshot-{}.png", pictures_dir, timestamp));
+
+        match _backend.take_screenshot_to_file(&screenshot_path) {
+            Ok(true) => {
+                info!(
+                    "[take_screenshot] compositor screenshot → {}",
+                    screenshot_path.display()
+                );
+                return Ok(());
+            }
+            Ok(false) => {
+                info!("[take_screenshot] backend doesn't support compositor screenshots, falling back to flameshot");
+            }
+            Err(e) => {
+                error!("[take_screenshot] compositor screenshot failed: {e}, falling back to flameshot");
+            }
+        }
+
+        // Fallback: launch flameshot via XWayland.
         let program = "flameshot";
         let args = vec!["gui".to_string()];
 
@@ -3992,9 +4017,6 @@ impl Jwm {
 
         Self::setup_smithay_child_env(&mut command, _backend);
 
-        // The compositor doesn't implement a screen-capture protocol, so native
-        // Wayland tools (grim, etc.) won't work.  Route flameshot through
-        // XWayland where it works reliably.
         if Self::is_udev_backend(_backend) {
             command.env_remove("WAYLAND_DISPLAY");
             command.env("QT_QPA_PLATFORM", "xcb");

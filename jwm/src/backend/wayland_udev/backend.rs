@@ -1972,6 +1972,17 @@ impl Backend for UdevBackend {
         self.state.needs_redraw = true;
     }
 
+    fn take_screenshot_to_file(&mut self, path: &std::path::Path) -> Result<bool, BackendError> {
+        if let Some(kms) = &self.kms {
+            kms.borrow_mut().request_screenshot(path.to_path_buf());
+            // Force a redraw so the screenshot is captured on the next frame.
+            self.state.needs_redraw = true;
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
     fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), BackendError> {
         loop {
             let mut handled_any = false;

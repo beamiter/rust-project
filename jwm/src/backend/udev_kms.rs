@@ -25,9 +25,12 @@ use smithay::backend::renderer::element::surface::WaylandSurfaceRenderElement;
 use smithay::backend::renderer::element::{AsRenderElements, Id, Kind};
 use smithay::backend::renderer::gles::GlesRenderer;
 use smithay::backend::renderer::utils::RendererSurfaceStateUserData;
-use smithay::backend::renderer::{ImportAll, ImportMem};
+use smithay::backend::renderer::damage::OutputDamageTracker;
+use smithay::backend::renderer::gles::GlesRenderbuffer;
+use smithay::backend::renderer::{Bind, ExportMem, ImportAll, ImportMem, Offscreen};
 use smithay::backend::session::Session;
 use smithay::backend::session::libseat::LibSeatSession;
+use smithay::utils::{Buffer as BufferCoord, Size};
 use smithay::desktop::layer_map_for_output;
 use smithay::desktop::space::SurfaceTree;
 use smithay::desktop::utils::send_frames_surface_tree;
@@ -109,6 +112,8 @@ pub(super) struct KmsState {
 
     cursor_fallback_body_ids: Vec<Id>,
     cursor_fallback_shadow_ids: Vec<Id>,
+
+    pending_screenshot: Option<std::path::PathBuf>,
 
     outputs: Vec<KmsOutputState>,
 }
@@ -262,6 +267,92 @@ impl KmsState {
 
     pub(super) fn request_render(&mut self) {
         self.needs_render = true;
+    }
+
+    /// Schedule a screenshot to be captured on the next render pass.
+    pub(super) fn request_screenshot(&mut self, path: std::path::PathBuf) {
+        self.pending_screenshot = Some(path);
+        self.needs_render = true;
+    }
+
+    /// Render all elements to an offscreen buffer and save as PNG.
+    /// Split out as a free-standing function so it can borrow `self.renderer`
+    /// without conflicting with the mutable borrow on `self.outputs`.
+    #[allow(dead_code)]
+    fn capture_screenshot_offscreen_impl(
+        renderer: &mut GlesRenderer,
+        width: i32,
+        height: i32,
+        elements: &[KmsRenderElement<GlesRenderer>],
+        path: &std::path::Path,
+    ) {
+        let size: Size<i32, BufferCoord> = (width, height).into();
+
+        // 1. Create offscreen renderbuffer
+        let mut renderbuffer: GlesRenderbuffer = match Offscreen::create_buffer(
+            renderer,
+            Fourcc::Abgr8888,
+            size,
+        ) {
+            Ok(rb) => rb,
+            Err(e) => {
+                log::error!("[screenshot] create offscreen buffer failed: {e:?}");
+                return;
+            }
+        };
+
+        // 2. Bind the offscreen renderbuffer
+        let mut target = match renderer.bind(&mut renderbuffer) {
+            Ok(t) => t,
+            Err(e) => {
+                log::error!("[screenshot] bind offscreen failed: {e:?}");
+                return;
+            }
+        };
+
+        // 3. Render all elements using OutputDamageTracker
+        let phys_size: smithay::utils::Size<i32, Physical> = (width, height).into();
+        let mut damage_tracker = OutputDamageTracker::new(
+            phys_size,
+            Scale::from(1.0f64),
+            Transform::Normal,
+        );
+        let clear_color = smithay::backend::renderer::Color32F::new(0.1, 0.15, 0.25, 1.0);
+        if let Err(e) = damage_tracker.render_output(
+            renderer,
+            &mut target,
+            0, // age=0 forces full redraw
+            elements,
+            clear_color,
+        ) {
+            log::error!("[screenshot] render_output failed: {e:?}");
+            return;
+        }
+
+        // 4. Read pixels back via ExportMem
+        let region = Rectangle::from_size(size);
+        let mapping = match renderer.copy_framebuffer(&target, region, Fourcc::Abgr8888) {
+            Ok(m) => m,
+            Err(e) => {
+                log::error!("[screenshot] copy_framebuffer failed: {e:?}");
+                return;
+            }
+        };
+
+        let pixels = match renderer.map_texture(&mapping) {
+            Ok(p) => p,
+            Err(e) => {
+                log::error!("[screenshot] map_texture failed: {e:?}");
+                return;
+            }
+        };
+
+        // 5. Save as PNG (pixels are ABGR8888 / RGBA from GL perspective)
+        if let Err(e) = save_rgba_png(path, width as u32, height as u32, pixels) {
+            log::error!("[screenshot] save PNG failed: {e}");
+        } else {
+            log::info!("[screenshot] saved to {}", path.display());
+        }
     }
 
     pub(super) fn outputs(&self) -> Vec<Output> {
@@ -485,6 +576,8 @@ impl KmsState {
 
             cursor_fallback_body_ids: (0..CURSOR_RECTS.len()).map(|_| Id::new()).collect(),
             cursor_fallback_shadow_ids: (0..CURSOR_RECTS.len()).map(|_| Id::new()).collect(),
+
+            pending_screenshot: None,
 
             outputs,
         }));
@@ -869,6 +962,9 @@ impl KmsState {
                 }
             }
             out.surfaces_on_output = visible_surfaces.clone();
+            // Drop the `out` borrow so we can access other `self` fields below.
+            // drop(out);
+            let _ = out;
 
             // Solid background LAST (back-most). Keep it opaque so we don't leak the previous
             // framebuffer contents on tty (which can look like a solid blue screen).
@@ -881,6 +977,22 @@ impl KmsState {
                 Kind::Unspecified,
             );
             elements.push(KmsRenderElement::Solid(bg));
+
+            // ── Screenshot capture (offscreen render) ───────────────────────
+            if out_idx == 0 {
+                if let Some(screenshot_path) = self.pending_screenshot.take() {
+                    Self::capture_screenshot_offscreen_impl(
+                        &mut self.renderer,
+                        out_w,
+                        out_h,
+                        &elements,
+                        &screenshot_path,
+                    );
+                }
+            }
+
+            // Re-borrow for render_frame + queue_frame.
+            let out = &mut self.outputs[out_idx];
 
             match out.drm_output.render_frame(
                 &mut self.renderer,
@@ -1018,4 +1130,39 @@ fn pick_crtc(
     }
 
     None
+}
+
+/// Save raw RGBA pixel data as a PNG file.
+///
+/// OpenGL `glReadPixels` with `GL_RGBA` returns rows bottom-to-top, so we flip
+/// the rows before encoding.
+fn save_rgba_png(
+    path: &std::path::Path,
+    width: u32,
+    height: u32,
+    pixels: &[u8],
+) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::BufWriter;
+
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let file = std::fs::File::create(path)?;
+    let w = BufWriter::new(file);
+
+    let mut encoder = png::Encoder::new(w, width, height);
+    encoder.set_color(png::ColorType::Rgba);
+    encoder.set_depth(png::BitDepth::Eight);
+    let mut writer = encoder.write_header()?;
+
+    let stride = (width * 4) as usize;
+    // Flip vertically (GL origin is bottom-left, PNG is top-left)
+    let mut flipped = Vec::with_capacity(pixels.len());
+    for row in (0..height as usize).rev() {
+        let start = row * stride;
+        flipped.extend_from_slice(&pixels[start..start + stride]);
+    }
+
+    writer.write_image_data(&flipped)?;
+    Ok(())
 }

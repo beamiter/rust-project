@@ -531,6 +531,16 @@ pub trait Backend: Send {
     fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), BackendError>;
 
     fn request_render(&mut self) {}
+
+    /// Request a compositor-level screenshot.
+    ///
+    /// On backends that own the framebuffer (udev/KMS) this captures the
+    /// rendered output directly and saves it as a PNG file.  Other backends
+    /// return `Ok(false)` to signal that the caller should fall back to an
+    /// external tool.
+    fn take_screenshot_to_file(&mut self, _path: &std::path::Path) -> Result<bool, BackendError> {
+        Ok(false)
+    }
 }
 
 // 兼容性定义
