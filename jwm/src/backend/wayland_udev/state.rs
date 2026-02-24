@@ -19,6 +19,7 @@ use smithay::delegate_xdg_shell;
 use smithay::delegate_text_input_manager;
 use smithay::delegate_input_method_manager;
 use smithay::delegate_virtual_keyboard_manager;
+use smithay::delegate_xdg_activation;
 use smithay::delegate_xwayland_shell;
 use smithay::xwayland::{X11Wm, X11Surface, XwmHandler, XWaylandClientData, xwm::{Reorder, ResizeEdge as XwmResizeEdge, XwmId, WmWindowProperty}};
 use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState};
@@ -53,6 +54,7 @@ use smithay::wayland::viewporter::ViewporterState;
 use smithay::wayland::text_input::TextInputManagerState;
 use smithay::wayland::input_method::{InputMethodHandler, InputMethodManagerState, PopupSurface as ImPopupSurface};
 use smithay::wayland::virtual_keyboard::VirtualKeyboardManagerState;
+use smithay::wayland::xdg_activation::{XdgActivationHandler, XdgActivationState, XdgActivationToken, XdgActivationTokenData};
 
 #[derive(Debug, Default)]
 pub struct JwmClientState {
@@ -86,6 +88,8 @@ pub struct JwmWaylandState {
     pub dmabuf_global: Option<DmabufGlobal>,
 
     pub layer_shell_state: WlrLayerShellState,
+
+    pub xdg_activation_state: XdgActivationState,
 
     /// XWayland shell state (for associating X11 windows with wl_surfaces).
     pub xwayland_shell_state: XWaylandShellState,
@@ -133,6 +137,10 @@ pub struct JwmWaylandState {
 
     /// Per-window border color (ARGB, used for server-side decoration in tiling WM).
     pub window_border_color: HashMap<WindowId, [f32; 4]>,
+
+    /// Shared queue for pending wlr-screencopy copy requests (filled by screencopy Dispatch,
+    /// drained during KMS render).
+    pub screencopy_pending: Option<crate::backend::wayland_udev::screencopy::PendingScreencopyQueue>,
 }
 
 impl JwmWaylandState {
@@ -210,9 +218,37 @@ delegate_input_method_manager!(JwmWaylandState);
 
 delegate_virtual_keyboard_manager!(JwmWaylandState);
 
+delegate_xdg_activation!(JwmWaylandState);
+
 delegate_xwayland_shell!(JwmWaylandState);
 
 smithay::delegate_dmabuf!(JwmWaylandState);
+
+// ---------------------------------------------------------------------------
+// XDG Activation Handler – allows clients to request surface activation
+// ---------------------------------------------------------------------------
+impl XdgActivationHandler for JwmWaylandState {
+    fn activation_state(&mut self) -> &mut XdgActivationState {
+        &mut self.xdg_activation_state
+    }
+
+    fn request_activation(
+        &mut self,
+        _token: XdgActivationToken,
+        token_data: XdgActivationTokenData,
+        surface: WlSurface,
+    ) {
+        // Accept activations from tokens younger than 10 seconds.
+        if token_data.timestamp.elapsed().as_secs() < 10 {
+            // Find the window that corresponds to this surface and activate it.
+            if let Some(&win_id) = self.surface_to_window.get(&surface.id()) {
+                debug!("[xdg_activation] activating window {:?} (app_id={:?})", win_id, token_data.app_id);
+                self.active_toplevel = Some(win_id);
+                self.needs_redraw = true;
+            }
+        }
+    }
+}
 
 // ---------------------------------------------------------------------------
 // XWayland Shell Handler – associates X11 windows with Wayland surfaces
@@ -628,8 +664,12 @@ impl JwmWaylandState {
         let dmabuf_state = DmabufState::new();
 
         let layer_shell_state = WlrLayerShellState::new::<JwmWaylandState>(dh);
+        let xdg_activation_state = XdgActivationState::new::<JwmWaylandState>(dh);
 
         let xwayland_shell_state = XWaylandShellState::new::<JwmWaylandState>(dh);
+
+        // wlr-screencopy-unstable-v1 – allows grim and similar tools to capture screen content.
+        let screencopy_pending = crate::backend::wayland_udev::screencopy::init_screencopy_manager(dh);
 
         // Optional but very useful for toolkit compatibility.
         let output_manager_state = OutputManagerState::new_with_xdg_output::<JwmWaylandState>(dh);
@@ -666,6 +706,7 @@ impl JwmWaylandState {
                 dmabuf_global: None,
 
                 layer_shell_state,
+                xdg_activation_state,
                 xwayland_shell_state,
                 x11_wm: None,
                 x11_surface_to_window: HashMap::new(),
@@ -699,6 +740,8 @@ impl JwmWaylandState {
                 window_layer_info: HashMap::new(),
 
                 window_border_color: HashMap::new(),
+
+                screencopy_pending: Some(screencopy_pending),
             },
             socket_name,
         ))

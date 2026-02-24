@@ -3982,20 +3982,54 @@ impl Jwm {
         _backend: &mut dyn Backend,
         _arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Try compositor-level screenshot first (supported on udev/KMS backend).
         let timestamp = chrono::Local::now().format("%Y%m%d-%H%M%S");
         let pictures_dir = std::env::var("XDG_PICTURES_DIR")
             .or_else(|_| std::env::var("HOME").map(|h| format!("{}/Pictures", h)))
             .unwrap_or_else(|_| "/tmp".to_string());
-        let screenshot_path =
-            std::path::PathBuf::from(format!("{}/screenshot-{}.png", pictures_dir, timestamp));
+        let screenshot_path = format!("{}/screenshot-{}.png", pictures_dir, timestamp);
 
-        match _backend.take_screenshot_to_file(&screenshot_path) {
+        if Self::is_udev_backend(_backend) {
+            // Use grim + slurp for interactive region selection (requires wlr-screencopy
+            // and wlr-layer-shell which this compositor now supports).
+            // The shell command: grim -g "$(slurp)" <path>
+            info!("[take_screenshot] launching grim + slurp → {}", screenshot_path);
+
+            let mut command = Command::new("sh");
+            command.args(["-c", &format!(
+                "grim -g \"$(slurp)\" '{}'",
+                screenshot_path,
+            )]);
+
+            Self::setup_smithay_child_env(&mut command, _backend);
+
+            command
+                .stdin(Stdio::null())
+                .stdout(Stdio::inherit())
+                .stderr(Stdio::inherit());
+
+            Self::apply_child_pre_exec(&mut command);
+
+            match command.spawn() {
+                Ok(child) => {
+                    debug!("[take_screenshot] spawned grim+slurp PID: {}", child.id());
+                }
+                Err(e) => {
+                    error!("[take_screenshot] failed to launch grim+slurp: {}", e);
+                    // Fall back to compositor-level full-screen screenshot.
+                    let path = std::path::PathBuf::from(&screenshot_path);
+                    if let Ok(true) = _backend.take_screenshot_to_file(&path) {
+                        info!("[take_screenshot] fallback compositor screenshot → {}", path.display());
+                    }
+                }
+            }
+            return Ok(());
+        }
+
+        // Non-udev backends: try compositor screenshot, then fallback to flameshot.
+        let path = std::path::PathBuf::from(&screenshot_path);
+        match _backend.take_screenshot_to_file(&path) {
             Ok(true) => {
-                info!(
-                    "[take_screenshot] compositor screenshot → {}",
-                    screenshot_path.display()
-                );
+                info!("[take_screenshot] compositor screenshot → {}", path.display());
                 return Ok(());
             }
             Ok(false) => {
@@ -4017,10 +4051,8 @@ impl Jwm {
 
         Self::setup_smithay_child_env(&mut command, _backend);
 
-        if Self::is_udev_backend(_backend) {
-            command.env_remove("WAYLAND_DISPLAY");
-            command.env("QT_QPA_PLATFORM", "xcb");
-        }
+        command.env_remove("WAYLAND_DISPLAY");
+        command.env("QT_QPA_PLATFORM", "xcb");
 
         command
             .stdin(Stdio::null())
@@ -4031,10 +4063,7 @@ impl Jwm {
 
         match command.spawn() {
             Ok(child) => {
-                debug!(
-                    "[take_screenshot] spawned PID: {}",
-                    child.id()
-                );
+                debug!("[take_screenshot] spawned PID: {}", child.id());
             }
             Err(e) => {
                 error!("[take_screenshot] failed to launch {}: {}", program, e);

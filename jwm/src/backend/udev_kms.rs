@@ -115,6 +115,9 @@ pub(super) struct KmsState {
 
     pending_screenshot: Option<std::path::PathBuf>,
 
+    /// Shared queue for pending screencopy frames (from wlr-screencopy-unstable-v1).
+    screencopy_pending: Option<crate::backend::wayland_udev::screencopy::PendingScreencopyQueue>,
+
     outputs: Vec<KmsOutputState>,
 }
 
@@ -269,6 +272,11 @@ impl KmsState {
         self.needs_render = true;
     }
 
+    /// Set the shared pending screencopy queue (called once after initialization).
+    pub(super) fn set_screencopy_pending(&mut self, queue: crate::backend::wayland_udev::screencopy::PendingScreencopyQueue) {
+        self.screencopy_pending = Some(queue);
+    }
+
     /// Schedule a screenshot to be captured on the next render pass.
     pub(super) fn request_screenshot(&mut self, path: std::path::PathBuf) {
         self.pending_screenshot = Some(path);
@@ -352,6 +360,198 @@ impl KmsState {
             log::error!("[screenshot] save PNG failed: {e}");
         } else {
             log::info!("[screenshot] saved to {}", path.display());
+        }
+    }
+
+    /// Fulfill pending wlr-screencopy copy requests for a given output.
+    ///
+    /// This renders the given elements to an offscreen buffer and copies the
+    /// RGBA pixels into each waiting client's wl_shm buffer, then sends the
+    /// `flags` + `ready` events on the screencopy frame.
+    fn fulfill_screencopy_frames(
+        renderer: &mut GlesRenderer,
+        output: &Output,
+        width: i32,
+        height: i32,
+        elements: &[KmsRenderElement<GlesRenderer>],
+        pending: &crate::backend::wayland_udev::screencopy::PendingScreencopyQueue,
+    ) {
+        use smithay::reexports::wayland_protocols_wlr::screencopy::v1::server::zwlr_screencopy_frame_v1;
+        use smithay::wayland::shm::with_buffer_contents_mut;
+
+        let mut frames: Vec<crate::backend::wayland_udev::screencopy::PendingScreencopyFrame> = {
+            let mut queue = pending.lock().unwrap();
+            // Drain frames that match this output.
+            let mut matching = Vec::new();
+            let mut remaining = Vec::new();
+            for f in queue.drain(..) {
+                if f.output == *output {
+                    matching.push(f);
+                } else {
+                    remaining.push(f);
+                }
+            }
+            *queue = remaining;
+            matching
+        };
+
+        if frames.is_empty() {
+            return;
+        }
+
+        log::debug!(
+            "[screencopy] fulfilling {} frames for output {}",
+            frames.len(),
+            output.name(),
+        );
+
+        // Render to offscreen buffer (same approach as screenshot capture).
+        let size: Size<i32, BufferCoord> = (width, height).into();
+        let mut renderbuffer: GlesRenderbuffer = match Offscreen::create_buffer(
+            renderer,
+            Fourcc::Abgr8888,
+            size,
+        ) {
+            Ok(rb) => rb,
+            Err(e) => {
+                log::error!("[screencopy] create offscreen buffer failed: {e:?}");
+                for f in &frames {
+                    f.frame.failed();
+                }
+                return;
+            }
+        };
+
+        let mut target = match renderer.bind(&mut renderbuffer) {
+            Ok(t) => t,
+            Err(e) => {
+                log::error!("[screencopy] bind offscreen failed: {e:?}");
+                for f in &frames {
+                    f.frame.failed();
+                }
+                return;
+            }
+        };
+
+        let phys_size: smithay::utils::Size<i32, Physical> = (width, height).into();
+        let mut damage_tracker = OutputDamageTracker::new(
+            phys_size,
+            Scale::from(1.0f64),
+            Transform::Normal,
+        );
+        let clear_color = smithay::backend::renderer::Color32F::new(0.1, 0.15, 0.25, 1.0);
+        if let Err(e) = damage_tracker.render_output(
+            renderer,
+            &mut target,
+            0,
+            elements,
+            clear_color,
+        ) {
+            log::error!("[screencopy] render_output failed: {e:?}");
+            for f in &frames {
+                f.frame.failed();
+            }
+            return;
+        }
+
+        // Read back pixels (ABGR8888 from GL).
+        let region = Rectangle::from_size(size);
+        let mapping = match renderer.copy_framebuffer(&target, region, Fourcc::Abgr8888) {
+            Ok(m) => m,
+            Err(e) => {
+                log::error!("[screencopy] copy_framebuffer failed: {e:?}");
+                for f in &frames {
+                    f.frame.failed();
+                }
+                return;
+            }
+        };
+
+        let pixels = match renderer.map_texture(&mapping) {
+            Ok(p) => p,
+            Err(e) => {
+                log::error!("[screencopy] map_texture failed: {e:?}");
+                for f in &frames {
+                    f.frame.failed();
+                }
+                return;
+            }
+        };
+
+        // GL gives us ABGR (little-endian RGBA bytes).
+        // wl_shm ARGB8888 is native-endian: on little-endian it's [B, G, R, A] in memory.
+        // GL ABGR8888 is [R, G, B, A] in memory.
+        // We need to convert RGBA → BGRA (swap R and B channels).
+
+        for frame_info in frames.drain(..) {
+            let copy_result = with_buffer_contents_mut(&frame_info.buffer, |ptr, pool_len, buf_data| {
+                let buf_offset = buf_data.offset as usize;
+                let buf_stride = buf_data.stride as usize;
+                let buf_h = buf_data.height as usize;
+                let buf_w = buf_data.width as usize;
+
+                // Source region
+                let (src_x, src_y, src_w, src_h) = if let Some((rx, ry, rw, rh)) = frame_info.region {
+                    (rx as usize, ry as usize, rw as usize, rh as usize)
+                } else {
+                    (0usize, 0usize, width as usize, height as usize)
+                };
+
+                let copy_h = src_h.min(buf_h);
+                let copy_w = src_w.min(buf_w);
+                let src_stride = width as usize * 4;
+
+                for row in 0..copy_h {
+                    let src_row = src_y + row;
+                    if src_row >= height as usize {
+                        break;
+                    }
+                    let src_row_start = src_row * src_stride + src_x * 4;
+                    let dst_row_start = buf_offset + row * buf_stride;
+
+                    if dst_row_start + copy_w * 4 > pool_len {
+                        break;
+                    }
+
+                    for col in 0..copy_w {
+                        let si = src_row_start + col * 4;
+                        let di = dst_row_start + col * 4;
+                        if si + 3 >= pixels.len() {
+                            break;
+                        }
+                        // ABGR (GL) = [R, G, B, A] in memory → ARGB8888 (shm) = [B, G, R, A] in memory
+                        unsafe {
+                            *ptr.add(di) = pixels[si + 2]; // B
+                            *ptr.add(di + 1) = pixels[si + 1]; // G
+                            *ptr.add(di + 2) = pixels[si]; // R
+                            *ptr.add(di + 3) = pixels[si + 3]; // A
+                        }
+                    }
+                }
+            });
+
+            match copy_result {
+                Ok(()) => {
+                    // Send flags (no y-invert) then ready.
+                    frame_info.frame.flags(zwlr_screencopy_frame_v1::Flags::empty());
+                    // Timestamp: use current time.
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default();
+                    let tv_sec = now.as_secs();
+                    let tv_nsec = now.subsec_nanos();
+                    frame_info.frame.ready(
+                        (tv_sec >> 32) as u32,
+                        (tv_sec & 0xFFFFFFFF) as u32,
+                        tv_nsec,
+                    );
+                    log::debug!("[screencopy] frame ready for output {}", output.name());
+                }
+                Err(e) => {
+                    log::warn!("[screencopy] buffer access failed: {e:?}");
+                    frame_info.frame.failed();
+                }
+            }
         }
     }
 
@@ -578,6 +778,7 @@ impl KmsState {
             cursor_fallback_shadow_ids: (0..CURSOR_RECTS.len()).map(|_| Id::new()).collect(),
 
             pending_screenshot: None,
+            screencopy_pending: None,
 
             outputs,
         }));
@@ -989,6 +1190,19 @@ impl KmsState {
                         &screenshot_path,
                     );
                 }
+            }
+
+            // ── wlr-screencopy fulfillment ──────────────────────────────────
+            if let Some(ref pending_queue) = self.screencopy_pending {
+                let output_ref = &self.outputs[out_idx].output;
+                Self::fulfill_screencopy_frames(
+                    &mut self.renderer,
+                    output_ref,
+                    out_w,
+                    out_h,
+                    &elements,
+                    pending_queue,
+                );
             }
 
             // Re-borrow for render_frame + queue_frame.

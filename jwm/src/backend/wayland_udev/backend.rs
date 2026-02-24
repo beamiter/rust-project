@@ -710,6 +710,12 @@ impl UdevBackend {
                     .as_ref()
                     .map(|k| k.borrow().outputs())
                     .unwrap_or_default();
+                // Wire screencopy pending queue to KMS state.
+                if let Some(ref screencopy_queue) = self.state.screencopy_pending {
+                    if let Some(ref kms) = self.kms {
+                        kms.borrow_mut().set_screencopy_pending(screencopy_queue.clone());
+                    }
+                }
                 self.request_flush();
             }
             Err(err) => {
@@ -721,7 +727,7 @@ impl UdevBackend {
     pub fn new() -> Result<Self, BackendError> {
         let event_loop: EventLoop<'static, JwmWaylandState> =
             EventLoop::try_new().map_err(|e| BackendError::Other(Box::new(e)))?;
-        let display = Rc::new(RefCell::new(
+        let display: Rc<RefCell<Display<JwmWaylandState>>> = Rc::new(RefCell::new(
             Display::new().map_err(|e| BackendError::Other(Box::new(e)))?,
         ));
         let display_handle = display.borrow().handle();
@@ -1041,6 +1047,11 @@ impl UdevBackend {
             // attach a buffer and appear as "no window".
             let formats = kms.borrow().dmabuf_render_formats();
             state.ensure_dmabuf_global(&display_handle, formats);
+
+            // Wire screencopy pending queue to KMS state.
+            if let Some(ref screencopy_queue) = state.screencopy_pending {
+                kms.borrow_mut().set_screencopy_pending(screencopy_queue.clone());
+            }
         }
 
         {
