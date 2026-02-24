@@ -3442,7 +3442,7 @@ impl Jwm {
         }
         if Self::is_udev_backend(backend) {
             // With XWayland running, DISPLAY is set to e.g. ":0" and is valid.
-            // Propagate it so X11 apps (dmenu_run, flameshot, etc.) can connect.
+            // Propagate it so X11 apps can connect via XWayland.
             if let Ok(display) = std::env::var("DISPLAY") {
                 command.env("DISPLAY", &display);
             }
@@ -3474,14 +3474,6 @@ impl Jwm {
 
         let mut mut_arg: WMArgEnum = arg.clone();
         if let WMArgEnum::StringVec(ref mut v) = mut_arg {
-            if *v == *CONFIG.get_dmenucmd() {
-                let monitor_num = self.get_sel_mon().unwrap().num;
-                let tmp = (b'0' + monitor_num as u8) as char;
-                let tmp = tmp.to_string();
-                info!("[spawn] dmenumon tmp: {}, num: {}", tmp, monitor_num);
-                (*v)[2] = tmp;
-            }
-
             info!("[spawn] spawning command: {:?}", v);
 
             let mut command = Command::new(&v[0]);
@@ -4000,9 +3992,9 @@ impl Jwm {
 
         Self::setup_smithay_child_env(&mut command, _backend);
 
-        // Flameshot's Wayland backend doesn't create a usable GUI on compositors that
-        // don't support screen capture/portal integration. Prefer X11 via XWayland so
-        // `flameshot gui` reliably shows its UI.
+        // The compositor doesn't implement a screen-capture protocol, so native
+        // Wayland tools (grim, etc.) won't work.  Route flameshot through
+        // XWayland where it works reliably.
         if Self::is_udev_backend(_backend) {
             command.env_remove("WAYLAND_DISPLAY");
             command.env("QT_QPA_PLATFORM", "xcb");

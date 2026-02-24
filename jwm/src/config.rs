@@ -210,20 +210,12 @@ impl Default for Config {
 impl Config {
     fn get_default_keys() -> Vec<KeyConfig> {
         let dmenu_cmd = vec![
-            "dmenu_run".to_string(),
-            "-m".to_string(),
-            "0".to_string(),
-            "-fn".to_string(),
-            "SauceCodePro Nerd Font Regular 11".to_string(),
-            "-nb".to_string(),
-            "#2e3440".to_string(),
-            "-nf".to_string(),
-            "#d8dee9".to_string(),
-            "-sb".to_string(),
-            "#81a1c1".to_string(),
-            "-sf".to_string(),
-            "#eceff4".to_string(),
-            "-b".to_string(),
+            "fuzzel".to_string(),
+            "--font=SauceCodePro Nerd Font Regular:size=11".to_string(),
+            "--background=2e3440ff".to_string(),
+            "--text-color=d8dee9ff".to_string(),
+            "--selection-color=81a1c1ff".to_string(),
+            "--selection-text-color=eceff4ff".to_string(),
         ];
 
         vec![
@@ -612,7 +604,7 @@ impl Config {
                 ArgumentConfig::StringVec(cmd) => Some(cmd.clone()),
                 _ => None,
             })
-            .unwrap_or_else(|| vec!["dmenu_run".to_string(), "-m".to_string(), "0".to_string()])
+            .unwrap_or_else(|| vec!["fuzzel".to_string()])
     }
 
     pub fn get_termcmd() -> Vec<String> {
