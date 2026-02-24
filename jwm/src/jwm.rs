@@ -4000,6 +4000,14 @@ impl Jwm {
 
         Self::setup_smithay_child_env(&mut command, _backend);
 
+        // Flameshot's Wayland backend doesn't create a usable GUI on compositors that
+        // don't support screen capture/portal integration. Prefer X11 via XWayland so
+        // `flameshot gui` reliably shows its UI.
+        if Self::is_udev_backend(_backend) {
+            command.env_remove("WAYLAND_DISPLAY");
+            command.env("QT_QPA_PLATFORM", "xcb");
+        }
+
         command
             .stdin(Stdio::null())
             .stdout(Stdio::inherit())

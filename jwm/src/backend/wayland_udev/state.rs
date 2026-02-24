@@ -33,8 +33,11 @@ use smithay::utils::{Logical, Point, Rectangle, Serial, SERIAL_COUNTER as SCOUNT
 use smithay::desktop::{find_popup_root_surface, get_popup_toplevel_coords, layer_map_for_output, LayerSurface as DesktopLayerSurface, PopupKind, WindowSurfaceType};
 use smithay::output::Output;
 use smithay::backend::renderer::utils::on_commit_buffer_handler;
+use smithay::backend::allocator::dmabuf::Dmabuf;
+use smithay::backend::allocator::Format as DmabufFormat;
 use smithay::wayland::buffer::BufferHandler;
 use smithay::wayland::compositor::{with_states, BufferAssignment, CompositorClientState, CompositorHandler, CompositorState, SurfaceAttributes};
+use smithay::wayland::dmabuf::{DmabufGlobal, DmabufHandler, DmabufState, ImportNotifier};
 use smithay::wayland::output::OutputManagerState;
 use smithay::wayland::shell::wlr_layer::{Anchor, Layer, LayerSurface as WlrLayerSurface, LayerSurfaceData, WlrLayerShellHandler, WlrLayerShellState};
 use smithay::wayland::shell::xdg::{PopupSurface, PositionerState, SurfaceCachedState, ToplevelSurface, XdgShellHandler, XdgShellState};
@@ -79,6 +82,9 @@ pub struct JwmWaylandState {
     pub xdg_shell_state: XdgShellState,
     pub viewporter_state: ViewporterState,
 
+    pub dmabuf_state: DmabufState,
+    pub dmabuf_global: Option<DmabufGlobal>,
+
     pub layer_shell_state: WlrLayerShellState,
 
     /// XWayland shell state (for associating X11 windows with wl_surfaces).
@@ -92,6 +98,11 @@ pub struct JwmWaylandState {
 
     /// Map from our WindowId -> X11Surface (for property queries etc.).
     pub x11_surfaces: HashMap<WindowId, X11Surface>,
+
+    /// XWayland may associate a `wl_surface` with an X11 window before we allocate a `WindowId`.
+    /// Stash the association so we can wire it up once `map_window_request`/`mapped_override_redirect_window`
+    /// allocates the window.
+    pub pending_x11_wl_surfaces: HashMap<u32, WlSurface>,
 
     /// KMS-backed outputs currently available for mapping layer surfaces.
     pub outputs: Vec<Output>,
@@ -157,6 +168,22 @@ impl JwmWaylandState {
         let offset = self.surface_window_geometry_loc(popup_surface);
         Some((popup_rect.loc.x - offset.x, popup_rect.loc.y - offset.y).into())
     }
+
+    pub fn ensure_dmabuf_global(
+        &mut self,
+        display_handle: &DisplayHandle,
+        formats: impl IntoIterator<Item = DmabufFormat>,
+    ) {
+        if self.dmabuf_global.is_some() {
+            return;
+        }
+
+        let global = self
+            .dmabuf_state
+            .create_global::<JwmWaylandState>(display_handle, formats);
+        self.dmabuf_global = Some(global);
+        info!("[udev/wayland] linux-dmabuf global created");
+    }
 }
 
 delegate_compositor!(JwmWaylandState);
@@ -185,6 +212,8 @@ delegate_virtual_keyboard_manager!(JwmWaylandState);
 
 delegate_xwayland_shell!(JwmWaylandState);
 
+smithay::delegate_dmabuf!(JwmWaylandState);
+
 // ---------------------------------------------------------------------------
 // XWayland Shell Handler – associates X11 windows with Wayland surfaces
 // ---------------------------------------------------------------------------
@@ -199,12 +228,20 @@ impl XWaylandShellHandler for JwmWaylandState {
         wl_surface: WlSurface,
         window: X11Surface,
     ) {
+        let x11_id = window.window_id();
         debug!(
             "[xwayland] surface_associated: x11={} wl={:?} title={:?}",
-            window.window_id(),
+            x11_id,
             wl_surface.id(),
             window.title(),
         );
+
+        if let Some(win_id) = self.x11_surface_to_window.get(&x11_id).copied() {
+            self.surface_to_window.insert(wl_surface.id(), win_id);
+            self.needs_redraw = true;
+        } else {
+            self.pending_x11_wl_surfaces.insert(x11_id, wl_surface);
+        }
     }
 }
 
@@ -262,6 +299,10 @@ impl XwmHandler for JwmWaylandState {
         let x11_id = window.window_id();
         self.x11_surface_to_window.insert(x11_id, win_id);
         self.x11_surfaces.insert(win_id, window.clone());
+
+        if let Some(wl_surface) = self.pending_x11_wl_surfaces.remove(&x11_id) {
+            self.surface_to_window.insert(wl_surface.id(), win_id);
+        }
         self.window_geometry.insert(
             win_id,
             Geometry {
@@ -280,6 +321,11 @@ impl XwmHandler for JwmWaylandState {
             .insert(win_id, window.is_fullscreen());
         self.window_stack.push(win_id);
 
+        // X11 windows don't go through our Wayland-commit mapping path unless we link the associated
+        // wl_surface. Mark them mapped here so they participate in rendering/hit-testing immediately.
+        self.mapped_windows.insert(win_id);
+        self.needs_redraw = true;
+
         self.push_event(BackendEvent::WindowCreated(win_id));
         self.push_event(BackendEvent::WindowMapped(win_id));
     }
@@ -296,6 +342,10 @@ impl XwmHandler for JwmWaylandState {
         let x11_id = window.window_id();
         self.x11_surface_to_window.insert(x11_id, win_id);
         self.x11_surfaces.insert(win_id, window.clone());
+
+        if let Some(wl_surface) = self.pending_x11_wl_surfaces.remove(&x11_id) {
+            self.surface_to_window.insert(wl_surface.id(), win_id);
+        }
 
         let geo = window.geometry();
         self.window_geometry.insert(
@@ -315,6 +365,9 @@ impl XwmHandler for JwmWaylandState {
         self.window_is_fullscreen.insert(win_id, false);
         self.window_stack.push(win_id);
 
+        self.mapped_windows.insert(win_id);
+        self.needs_redraw = true;
+
         self.push_event(BackendEvent::WindowCreated(win_id));
         self.push_event(BackendEvent::WindowMapped(win_id));
     }
@@ -325,7 +378,8 @@ impl XwmHandler for JwmWaylandState {
 
         if let Some(win_id) = self.x11_surface_to_window.remove(&x11_id) {
             self.x11_surfaces.remove(&win_id);
-            self.mapped_windows.remove(&win_id);
+            let was_mapped = self.mapped_windows.remove(&win_id);
+            self.surface_to_window.retain(|_, w| *w != win_id);
             self.window_geometry.remove(&win_id);
             self.window_stack.retain(|w| *w != win_id);
             self.window_title.remove(&win_id);
@@ -333,7 +387,11 @@ impl XwmHandler for JwmWaylandState {
             self.window_is_fullscreen.remove(&win_id);
             self.window_border_color.remove(&win_id);
 
-            self.push_event(BackendEvent::WindowUnmapped(win_id));
+            self.needs_redraw = true;
+
+            if was_mapped {
+                self.push_event(BackendEvent::WindowUnmapped(win_id));
+            }
         }
     }
 
@@ -344,12 +402,15 @@ impl XwmHandler for JwmWaylandState {
         if let Some(win_id) = self.x11_surface_to_window.remove(&x11_id) {
             self.x11_surfaces.remove(&win_id);
             self.mapped_windows.remove(&win_id);
+            self.surface_to_window.retain(|_, w| *w != win_id);
             self.window_geometry.remove(&win_id);
             self.window_stack.retain(|w| *w != win_id);
             self.window_title.remove(&win_id);
             self.window_app_id.remove(&win_id);
             self.window_is_fullscreen.remove(&win_id);
             self.window_border_color.remove(&win_id);
+
+            self.needs_redraw = true;
 
             self.push_event(BackendEvent::WindowDestroyed(win_id));
         }
@@ -402,6 +463,8 @@ impl XwmHandler for JwmWaylandState {
                 height: new_h,
             });
         }
+
+        self.needs_redraw = true;
     }
 
     fn configure_notify(
@@ -562,6 +625,8 @@ impl JwmWaylandState {
         let xdg_shell_state = XdgShellState::new::<JwmWaylandState>(dh);
         let viewporter_state = ViewporterState::new::<JwmWaylandState>(dh);
 
+        let dmabuf_state = DmabufState::new();
+
         let layer_shell_state = WlrLayerShellState::new::<JwmWaylandState>(dh);
 
         let xwayland_shell_state = XWaylandShellState::new::<JwmWaylandState>(dh);
@@ -597,11 +662,15 @@ impl JwmWaylandState {
                 xdg_shell_state,
                 viewporter_state,
 
+                dmabuf_state,
+                dmabuf_global: None,
+
                 layer_shell_state,
                 xwayland_shell_state,
                 x11_wm: None,
                 x11_surface_to_window: HashMap::new(),
                 x11_surfaces: HashMap::new(),
+                pending_x11_wl_surfaces: HashMap::new(),
                 active_toplevel: None,
 
                 outputs: Vec::new(),
@@ -1211,6 +1280,24 @@ impl ShmHandler for JwmWaylandState {
 
 impl BufferHandler for JwmWaylandState {
     fn buffer_destroyed(&mut self, _buffer: &smithay::reexports::wayland_server::protocol::wl_buffer::WlBuffer) {
+    }
+}
+
+impl DmabufHandler for JwmWaylandState {
+    fn dmabuf_state(&mut self) -> &mut DmabufState {
+        &mut self.dmabuf_state
+    }
+
+    fn dmabuf_imported(
+        &mut self,
+        _global: &DmabufGlobal,
+        _dmabuf: Dmabuf,
+        notifier: ImportNotifier,
+    ) {
+        // Create the wl_buffer resource for the client. The actual renderer import happens
+        // later when rendering the surface (via RendererSurfaceState).
+        let _ = notifier.successful::<JwmWaylandState>();
+        self.needs_redraw = true;
     }
 }
 

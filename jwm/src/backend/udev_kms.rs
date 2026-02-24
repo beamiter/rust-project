@@ -7,6 +7,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 use smithay::backend::allocator::Fourcc;
+use smithay::backend::allocator::Format as DmabufFormat;
 use smithay::backend::allocator::format::FormatSet;
 use smithay::backend::allocator::gbm::{GbmAllocator, GbmBufferFlags, GbmDevice};
 use smithay::backend::drm::compositor::FrameFlags;
@@ -265,6 +266,15 @@ impl KmsState {
 
     pub(super) fn outputs(&self) -> Vec<Output> {
         self.outputs.iter().map(|o| o.output.clone()).collect()
+    }
+
+    pub(super) fn dmabuf_render_formats(&self) -> Vec<DmabufFormat> {
+        self.renderer
+            .egl_context()
+            .dmabuf_render_formats()
+            .iter()
+            .copied()
+            .collect()
     }
 
     pub(super) fn new(

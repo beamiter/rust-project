@@ -1035,6 +1035,12 @@ impl UdevBackend {
 
         if let Some(kms) = &kms {
             state.outputs = kms.borrow().outputs();
+
+            // Advertise linux-dmabuf formats supported by our renderer.
+            // Without this, many GPU-accelerated Wayland clients (e.g. Electron/Qt) will never
+            // attach a buffer and appear as "no window".
+            let formats = kms.borrow().dmabuf_render_formats();
+            state.ensure_dmabuf_global(&display_handle, formats);
         }
 
         {
