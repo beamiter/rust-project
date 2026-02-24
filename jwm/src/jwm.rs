@@ -3424,7 +3424,7 @@ impl Jwm {
 
     /// Set Wayland-related environment variables on a child `Command` so that
     /// toolkits can connect to this compositor.  When running the udev backend
-    /// we also strip `DISPLAY` to avoid leaking a stale Xwayland reference.
+    /// we propagate the XWayland DISPLAY so X11 apps can connect.
     fn setup_smithay_child_env(command: &mut Command, backend: &dyn Backend) {
         if Self::is_smithay_backend(backend) {
             if let Ok(v) = std::env::var("WAYLAND_DISPLAY") {
@@ -3441,7 +3441,11 @@ impl Jwm {
             }
         }
         if Self::is_udev_backend(backend) {
-            command.env_remove("DISPLAY");
+            // With XWayland running, DISPLAY is set to e.g. ":0" and is valid.
+            // Propagate it so X11 apps (dmenu_run, flameshot, etc.) can connect.
+            if let Ok(display) = std::env::var("DISPLAY") {
+                command.env("DISPLAY", &display);
+            }
         }
     }
 
@@ -3461,61 +3465,6 @@ impl Jwm {
         }
     }
 
-    /// For the udev backend (pure Wayland, no Xwayland), `dmenu_run` (X11-only)
-    /// cannot work.  Try to transparently replace it with a Wayland-native
-    /// alternative that accepts the same `-m` flag convention.
-    ///
-    /// Search order: `bemenu-run`, `wmenu-run`, `fuzzel`.
-    fn maybe_replace_dmenu_for_wayland(v: &mut Vec<String>, backend: &dyn Backend) {
-        if !Self::is_udev_backend(backend) {
-            return;
-        }
-        // Only replace if the command is literally `dmenu_run`.
-        if v.is_empty() || v[0] != "dmenu_run" {
-            return;
-        }
-
-        // Probe for Wayland-native alternatives.
-        let alternatives: &[(&str, &[&str])] = &[
-            // bemenu-run accepts a superset of dmenu flags, so we can pass them through.
-            ("bemenu-run", &[]),
-            // wmenu-run is wlroots dmenu, also compatible.
-            ("wmenu-run", &[]),
-            // fuzzel has its own flag syntax; launch with no extra args.
-            ("fuzzel", &["--dmenu"]),
-        ];
-
-        for &(alt, extra_args) in alternatives {
-            if Command::new("which")
-                .arg(alt)
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-            {
-                info!(
-                    "[spawn] udev backend: replacing X11-only `dmenu_run` with `{alt}`"
-                );
-                v[0] = alt.to_string();
-                // For fuzzel --dmenu mode we drop all dmenu-specific flags and just
-                // pass the extra args, because the flag sets are incompatible.
-                if !extra_args.is_empty() {
-                    v.truncate(1);
-                    for a in extra_args {
-                        v.push(a.to_string());
-                    }
-                }
-                return;
-            }
-        }
-
-        warn!(
-            "[spawn] udev backend: `dmenu_run` is X11-only and no Wayland alternative \
-             (bemenu-run, wmenu-run, fuzzel) was found – the command will likely fail"
-        );
-    }
-
     pub fn spawn(
         &mut self,
         _backend: &mut dyn Backend,
@@ -3532,10 +3481,6 @@ impl Jwm {
                 info!("[spawn] dmenumon tmp: {}, num: {}", tmp, monitor_num);
                 (*v)[2] = tmp;
             }
-
-            // On the udev backend dmenu_run (X11) cannot work; swap to a
-            // Wayland-native launcher if one is available.
-            Self::maybe_replace_dmenu_for_wayland(v, _backend);
 
             info!("[spawn] spawning command: {:?}", v);
 
@@ -4045,26 +3990,13 @@ impl Jwm {
         _backend: &mut dyn Backend,
         _arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Prefer Wayland-native screenshot tools on udev (flameshot < 12 is X11-only).
-        let (program, args): (&str, &[&str]) = if Self::is_udev_backend(_backend) {
-            // Try grimshot (sway-contrib), grim, or flameshot (>= 0.12 has Wayland)
-            if Self::command_exists("grimshot") {
-                ("grimshot", &["save", "area"])
-            } else if Self::command_exists("grim") {
-                // grim + slurp for area selection
-                ("sh", &["-c", "grim -g \"$(slurp)\" - | wl-copy"])
-            } else {
-                // Fall back to flameshot and hope it's >= 0.12 with Wayland portal support
-                ("flameshot", &["gui"])
-            }
-        } else {
-            ("flameshot", &["gui"])
-        };
+        let program = "flameshot";
+        let args = vec!["gui".to_string()];
 
         info!("[take_screenshot] launching: {} {:?}", program, args);
 
         let mut command = Command::new(program);
-        command.args(args);
+        command.args(&args);
 
         Self::setup_smithay_child_env(&mut command, _backend);
 
@@ -4087,17 +4019,6 @@ impl Jwm {
             }
         }
         Ok(())
-    }
-
-    /// Check whether `name` exists on `$PATH`.
-    fn command_exists(name: &str) -> bool {
-        Command::new("which")
-            .arg(name)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false)
     }
 
     pub fn tag(

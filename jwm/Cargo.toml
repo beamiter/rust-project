@@ -72,6 +72,7 @@ smithay = { git = "https://github.com/Smithay/smithay.git", rev = "b252c0fa64422
 	"backend_egl",
 	"renderer_gl",
 	"desktop",
+	"xwayland",
 ] }
 calloop = { version = "0.14.3", features = ["signals"] }
 winit = "0.30.12"

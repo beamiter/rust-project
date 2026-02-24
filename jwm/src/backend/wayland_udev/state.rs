@@ -19,6 +19,9 @@ use smithay::delegate_xdg_shell;
 use smithay::delegate_text_input_manager;
 use smithay::delegate_input_method_manager;
 use smithay::delegate_virtual_keyboard_manager;
+use smithay::delegate_xwayland_shell;
+use smithay::xwayland::{X11Wm, X11Surface, XwmHandler, XWaylandClientData, xwm::{Reorder, ResizeEdge as XwmResizeEdge, XwmId, WmWindowProperty}};
+use smithay::wayland::xwayland_shell::{XWaylandShellHandler, XWaylandShellState};
 use smithay::input::keyboard::XkbConfig;
 use smithay::input::{Seat, SeatHandler, SeatState};
 use smithay::reexports::wayland_server::backend::{ClientData, ClientId, DisconnectReason, ObjectId};
@@ -77,6 +80,18 @@ pub struct JwmWaylandState {
     pub viewporter_state: ViewporterState,
 
     pub layer_shell_state: WlrLayerShellState,
+
+    /// XWayland shell state (for associating X11 windows with wl_surfaces).
+    pub xwayland_shell_state: XWaylandShellState,
+
+    /// The X11 WM instance (set after XWayland becomes ready).
+    pub x11_wm: Option<X11Wm>,
+
+    /// Map from X11Surface window_id -> our WindowId.
+    pub x11_surface_to_window: HashMap<u32, WindowId>,
+
+    /// Map from our WindowId -> X11Surface (for property queries etc.).
+    pub x11_surfaces: HashMap<WindowId, X11Surface>,
 
     /// KMS-backed outputs currently available for mapping layer surfaces.
     pub outputs: Vec<Output>,
@@ -168,6 +183,309 @@ delegate_input_method_manager!(JwmWaylandState);
 
 delegate_virtual_keyboard_manager!(JwmWaylandState);
 
+delegate_xwayland_shell!(JwmWaylandState);
+
+// ---------------------------------------------------------------------------
+// XWayland Shell Handler – associates X11 windows with Wayland surfaces
+// ---------------------------------------------------------------------------
+impl XWaylandShellHandler for JwmWaylandState {
+    fn xwayland_shell_state(&mut self) -> &mut XWaylandShellState {
+        &mut self.xwayland_shell_state
+    }
+
+    fn surface_associated(
+        &mut self,
+        _xwm: XwmId,
+        wl_surface: WlSurface,
+        window: X11Surface,
+    ) {
+        debug!(
+            "[xwayland] surface_associated: x11={} wl={:?} title={:?}",
+            window.window_id(),
+            wl_surface.id(),
+            window.title(),
+        );
+    }
+}
+
+// ---------------------------------------------------------------------------
+// XWM Handler – manages X11 windows running under XWayland
+// ---------------------------------------------------------------------------
+impl XwmHandler for JwmWaylandState {
+    fn xwm_state(&mut self, _xwm: XwmId) -> &mut X11Wm {
+        self.x11_wm.as_mut().expect("X11Wm not yet started")
+    }
+
+    fn new_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        debug!(
+            "[xwayland] new_window: id={} title={:?} class={:?} override_redirect={}",
+            window.window_id(),
+            window.title(),
+            window.class(),
+            window.is_override_redirect(),
+        );
+    }
+
+    fn new_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        debug!(
+            "[xwayland] new_override_redirect_window: id={} class={:?}",
+            window.window_id(),
+            window.class(),
+        );
+    }
+
+    fn map_window_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        info!(
+            "[xwayland] map_window_request: id={} title={:?} class={:?}",
+            window.window_id(),
+            window.title(),
+            window.class(),
+        );
+
+        // Grant the map request.
+        if let Err(e) = window.set_mapped(true) {
+            warn!("[xwayland] set_mapped(true) failed: {e:?}");
+            return;
+        }
+
+        // Send a configure with the requested geometry (or a reasonable default).
+        let geo = window.geometry();
+        let w = if geo.size.w > 0 { geo.size.w as u32 } else { 800 };
+        let h = if geo.size.h > 0 { geo.size.h as u32 } else { 600 };
+        let _ = window.configure(Some(smithay::utils::Rectangle::new(
+            (geo.loc.x, geo.loc.y).into(),
+            (w as i32, h as i32).into(),
+        )));
+
+        // Allocate a WindowId and track the surface.
+        let win_id = self.alloc_window_id();
+        let x11_id = window.window_id();
+        self.x11_surface_to_window.insert(x11_id, win_id);
+        self.x11_surfaces.insert(win_id, window.clone());
+        self.window_geometry.insert(
+            win_id,
+            Geometry {
+                x: geo.loc.x,
+                y: geo.loc.y,
+                w,
+                h,
+                border: 0,
+            },
+        );
+        self.window_title
+            .insert(win_id, window.title());
+        self.window_app_id
+            .insert(win_id, window.class());
+        self.window_is_fullscreen
+            .insert(win_id, window.is_fullscreen());
+        self.window_stack.push(win_id);
+
+        self.push_event(BackendEvent::WindowCreated(win_id));
+        self.push_event(BackendEvent::WindowMapped(win_id));
+    }
+
+    fn mapped_override_redirect_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        info!(
+            "[xwayland] mapped_override_redirect: id={} class={:?}",
+            window.window_id(),
+            window.class(),
+        );
+
+        // Override-redirect windows (menus, tooltips, etc.) are managed separately.
+        let win_id = self.alloc_window_id();
+        let x11_id = window.window_id();
+        self.x11_surface_to_window.insert(x11_id, win_id);
+        self.x11_surfaces.insert(win_id, window.clone());
+
+        let geo = window.geometry();
+        self.window_geometry.insert(
+            win_id,
+            Geometry {
+                x: geo.loc.x,
+                y: geo.loc.y,
+                w: geo.size.w.max(1) as u32,
+                h: geo.size.h.max(1) as u32,
+                border: 0,
+            },
+        );
+        self.window_title
+            .insert(win_id, window.title());
+        self.window_app_id
+            .insert(win_id, window.class());
+        self.window_is_fullscreen.insert(win_id, false);
+        self.window_stack.push(win_id);
+
+        self.push_event(BackendEvent::WindowCreated(win_id));
+        self.push_event(BackendEvent::WindowMapped(win_id));
+    }
+
+    fn unmapped_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        let x11_id = window.window_id();
+        info!("[xwayland] unmapped_window: id={}", x11_id);
+
+        if let Some(win_id) = self.x11_surface_to_window.remove(&x11_id) {
+            self.x11_surfaces.remove(&win_id);
+            self.mapped_windows.remove(&win_id);
+            self.window_geometry.remove(&win_id);
+            self.window_stack.retain(|w| *w != win_id);
+            self.window_title.remove(&win_id);
+            self.window_app_id.remove(&win_id);
+            self.window_is_fullscreen.remove(&win_id);
+            self.window_border_color.remove(&win_id);
+
+            self.push_event(BackendEvent::WindowUnmapped(win_id));
+        }
+    }
+
+    fn destroyed_window(&mut self, _xwm: XwmId, window: X11Surface) {
+        let x11_id = window.window_id();
+        info!("[xwayland] destroyed_window: id={}", x11_id);
+
+        if let Some(win_id) = self.x11_surface_to_window.remove(&x11_id) {
+            self.x11_surfaces.remove(&win_id);
+            self.mapped_windows.remove(&win_id);
+            self.window_geometry.remove(&win_id);
+            self.window_stack.retain(|w| *w != win_id);
+            self.window_title.remove(&win_id);
+            self.window_app_id.remove(&win_id);
+            self.window_is_fullscreen.remove(&win_id);
+            self.window_border_color.remove(&win_id);
+
+            self.push_event(BackendEvent::WindowDestroyed(win_id));
+        }
+    }
+
+    fn configure_request(
+        &mut self,
+        _xwm: XwmId,
+        window: X11Surface,
+        x: Option<i32>,
+        y: Option<i32>,
+        w: Option<u32>,
+        h: Option<u32>,
+        _reorder: Option<Reorder>,
+    ) {
+        let x11_id = window.window_id();
+        debug!(
+            "[xwayland] configure_request: id={} x={:?} y={:?} w={:?} h={:?}",
+            x11_id, x, y, w, h
+        );
+
+        // Apply the requested geometry.
+        let geo = window.geometry();
+        let new_x = x.unwrap_or(geo.loc.x);
+        let new_y = y.unwrap_or(geo.loc.y);
+        let new_w = w.unwrap_or(geo.size.w.max(1) as u32);
+        let new_h = h.unwrap_or(geo.size.h.max(1) as u32);
+
+        let _ = window.configure(Some(smithay::utils::Rectangle::new(
+            (new_x, new_y).into(),
+            (new_w as i32, new_h as i32).into(),
+        )));
+
+        if let Some(win_id) = self.x11_surface_to_window.get(&x11_id).copied() {
+            self.window_geometry.insert(
+                win_id,
+                Geometry {
+                    x: new_x,
+                    y: new_y,
+                    w: new_w,
+                    h: new_h,
+                    border: 0,
+                },
+            );
+            self.push_event(BackendEvent::WindowConfigured {
+                window: win_id,
+                x: new_x,
+                y: new_y,
+                width: new_w,
+                height: new_h,
+            });
+        }
+    }
+
+    fn configure_notify(
+        &mut self,
+        _xwm: XwmId,
+        window: X11Surface,
+        geometry: Rectangle<i32, Logical>,
+        _above: Option<u32>,
+    ) {
+        let x11_id = window.window_id();
+        if let Some(win_id) = self.x11_surface_to_window.get(&x11_id).copied() {
+            self.window_geometry.insert(
+                win_id,
+                Geometry {
+                    x: geometry.loc.x,
+                    y: geometry.loc.y,
+                    w: geometry.size.w.max(1) as u32,
+                    h: geometry.size.h.max(1) as u32,
+                    border: 0,
+                },
+            );
+        }
+        self.needs_redraw = true;
+    }
+
+    fn resize_request(
+        &mut self,
+        _xwm: XwmId,
+        _window: X11Surface,
+        _button: u32,
+        _resize_edge: XwmResizeEdge,
+    ) {
+        // Interactive resize not yet supported for X11 windows.
+    }
+
+    fn move_request(&mut self, _xwm: XwmId, _window: X11Surface, _button: u32) {
+        // Interactive move not yet supported for X11 windows.
+    }
+
+    fn property_notify(
+        &mut self,
+        _xwm: XwmId,
+        window: X11Surface,
+        property: WmWindowProperty,
+    ) {
+        let x11_id = window.window_id();
+        if let Some(win_id) = self.x11_surface_to_window.get(&x11_id).copied() {
+            match property {
+                WmWindowProperty::Title => {
+                    self.window_title.insert(win_id, window.title());
+                    self.push_event(BackendEvent::PropertyChanged {
+                        window: win_id,
+                        kind: PropertyKind::Title,
+                    });
+                }
+                WmWindowProperty::Class => {
+                    self.window_app_id.insert(win_id, window.class());
+                    self.push_event(BackendEvent::PropertyChanged {
+                        window: win_id,
+                        kind: PropertyKind::Class,
+                    });
+                }
+                _ => {}
+            }
+        }
+    }
+
+    fn fullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        let x11_id = window.window_id();
+        if let Some(win_id) = self.x11_surface_to_window.get(&x11_id).copied() {
+            self.window_is_fullscreen.insert(win_id, true);
+            let _ = window.set_fullscreen(true);
+        }
+    }
+
+    fn unfullscreen_request(&mut self, _xwm: XwmId, window: X11Surface) {
+        let x11_id = window.window_id();
+        if let Some(win_id) = self.x11_surface_to_window.get(&x11_id).copied() {
+            self.window_is_fullscreen.insert(win_id, false);
+            let _ = window.set_fullscreen(false);
+        }
+    }
+}
+
 impl JwmWaylandState {
     pub fn set_active_toplevel(&mut self, win: Option<WindowId>) {
         if self.active_toplevel == win {
@@ -246,6 +564,8 @@ impl JwmWaylandState {
 
         let layer_shell_state = WlrLayerShellState::new::<JwmWaylandState>(dh);
 
+        let xwayland_shell_state = XWaylandShellState::new::<JwmWaylandState>(dh);
+
         // Optional but very useful for toolkit compatibility.
         let output_manager_state = OutputManagerState::new_with_xdg_output::<JwmWaylandState>(dh);
 
@@ -278,6 +598,10 @@ impl JwmWaylandState {
                 viewporter_state,
 
                 layer_shell_state,
+                xwayland_shell_state,
+                x11_wm: None,
+                x11_surface_to_window: HashMap::new(),
+                x11_surfaces: HashMap::new(),
                 active_toplevel: None,
 
                 outputs: Vec::new(),
@@ -655,7 +979,15 @@ impl JwmWaylandState {
     }
 
     pub fn surface_for_window(&self, win: WindowId) -> Option<WlSurface> {
-        self.toplevels.get(&win).map(|t| t.wl_surface().clone())
+        // Try Wayland toplevel first.
+        if let Some(t) = self.toplevels.get(&win) {
+            return Some(t.wl_surface().clone());
+        }
+        // Fall back to X11 surface.
+        if let Some(x11) = self.x11_surfaces.get(&win) {
+            return x11.wl_surface();
+        }
+        None
     }
 
     pub fn hit_test(&self, location: Point<f64, Logical>) -> Option<(WindowId, WlSurface, Point<f64, Logical>)> {
@@ -672,10 +1004,18 @@ impl CompositorHandler for JwmWaylandState {
     }
 
     fn client_compositor_state<'a>(&self, client: &'a Client) -> &'a CompositorClientState {
-        &client
-            .get_data::<JwmClientState>()
-            .expect("Missing JwmClientState")
-            .compositor_state
+        // Regular Wayland clients are inserted with `JwmClientState`.
+        if let Some(data) = client.get_data::<JwmClientState>() {
+            return &data.compositor_state;
+        }
+
+        // XWayland is itself a Wayland client with `XWaylandClientData`.
+        // Without this branch we would panic as soon as XWayland commits a surface.
+        if let Some(data) = client.get_data::<XWaylandClientData>() {
+            return &data.compositor_state;
+        }
+
+        panic!("Missing compositor client state (neither JwmClientState nor XWaylandClientData)")
     }
 
     fn commit(&mut self, surface: &WlSurface) {

@@ -48,6 +48,7 @@ use smithay::input::pointer::{ButtonEvent, MotionEvent};
 use smithay::reexports::wayland_protocols::xdg::shell::server::xdg_toplevel;
 use smithay::desktop::layer_map_for_output;
 use smithay::wayland::shell::wlr_layer::{KeyboardInteractivity, Layer as WlrLayer};
+use smithay::xwayland::{XWayland, XWaylandEvent, X11Wm};
 
 fn allowed_shortcut_mods() -> Mods {
     Mods::SHIFT
@@ -276,6 +277,11 @@ impl WindowOps for WaylandWindowOps {
                         s.size = Some((w as i32, h as i32).into());
                     });
                     toplevel.send_configure();
+                } else if let Some(x11) = state.x11_surfaces.get(&win) {
+                    let _ = x11.configure(Some(smithay::utils::Rectangle::new(
+                        (x + bw, y + bw).into(),
+                        (w as i32, h as i32).into(),
+                    )));
                 }
                 state.reconstrain_popups_for_toplevel(win);
                 state.needs_redraw = true;
@@ -331,6 +337,8 @@ impl WindowOps for WaylandWindowOps {
             self.with_state_mut(|state| {
                 if let Some(toplevel) = state.try_lookup_toplevel(_win) {
                     toplevel.send_close();
+                } else if let Some(x11) = state.x11_surfaces.get(&_win) {
+                    let _ = x11.close();
                 }
             });
         }
@@ -364,9 +372,15 @@ impl WindowOps for WaylandWindowOps {
         Ok(())
     }
     fn get_window_attributes(&self, _win: WindowId) -> Result<crate::backend::api::WindowAttributes, BackendError> {
-        let viewable = unsafe { self.with_state_mut(|state| state.mapped_windows.contains(&_win)) };
+        let (viewable, or) = unsafe {
+            self.with_state_mut(|state| {
+                let viewable = state.mapped_windows.contains(&_win);
+                let or = state.x11_surfaces.get(&_win).map(|x| x.is_override_redirect()).unwrap_or(false);
+                (viewable, or)
+            })
+        };
         Ok(crate::backend::api::WindowAttributes {
-            override_redirect: false,
+            override_redirect: or,
             map_state_viewable: viewable,
         })
     }
@@ -387,14 +401,12 @@ impl WindowOps for WaylandWindowOps {
         Ok(())
     }
     fn kill_client(&self, win: WindowId) -> Result<(), BackendError> {
-        // Wayland doesn't have a direct "kill" concept. We can disconnect the client
-        // by closing the connection, but only if we have access to the client.
-        // For now, send close request which is the polite way to ask a client to exit.
-        // If the client doesn't respond, the WM user can use external tools like `kill`.
         unsafe {
             self.with_state_mut(|state| {
                 if let Some(toplevel) = state.try_lookup_toplevel(win) {
                     toplevel.send_close();
+                } else if let Some(x11) = state.x11_surfaces.get(&win) {
+                    let _ = x11.close();
                 }
             });
         }
@@ -499,6 +511,8 @@ impl PropertyOps for WaylandPropertyOps {
                         }
                     });
                     toplevel.send_configure();
+                } else if let Some(x11) = state.x11_surfaces.get(&win) {
+                    let _ = x11.set_fullscreen(on);
                 }
             });
         }
@@ -509,9 +523,15 @@ impl PropertyOps for WaylandPropertyOps {
     fn transient_for(&self, _win: WindowId) -> Option<WindowId> {
         unsafe {
             self.with_state_mut(|state| {
-                let toplevel = state.toplevels.get(&_win)?;
-                let parent_surface = toplevel.parent()?;
-                state.surface_to_window.get(&parent_surface.id()).copied()
+                // Wayland xdg toplevel parent
+                if let Some(toplevel) = state.toplevels.get(&_win) {
+                    if let Some(parent_surface) = toplevel.parent() {
+                        return state.surface_to_window.get(&parent_surface.id()).copied();
+                    }
+                }
+                // X11 transient_for – not directly exposed via Smithay X11Surface API,
+                // but X11 windows rarely need this in JWM's tiling model.
+                None
             })
         }
     }
@@ -868,6 +888,70 @@ impl UdevBackend {
             }
         }
         let mut state = Box::new(wayland_state);
+
+        // ---- Start XWayland ----
+        // This spawns the Xwayland binary.  When it becomes ready (writes to
+        // the displayfd), the calloop source fires `XWaylandEvent::Ready` and
+        // we create the X11 window manager (`X11Wm`).
+        {
+            use std::process::Stdio;
+
+            let (xwayland, xwayland_client) = XWayland::spawn(
+                &display_handle,
+                None,              // auto-pick display number
+                std::iter::empty::<(String, String)>(),
+                true,              // open abstract socket
+                Stdio::null(),
+                Stdio::null(),
+                |_| {},
+            )
+            .map_err(|e| BackendError::Message(format!("XWayland spawn failed: {e}")))?;
+
+            let xw_client = xwayland_client.clone();
+            let loop_handle = event_loop.handle();
+            let xw_loop_handle = loop_handle.clone();
+            loop_handle
+                .insert_source(xwayland, move |event, _, wl_state| {
+                    match event {
+                        XWaylandEvent::Ready {
+                            x11_socket,
+                            display_number,
+                        } => {
+                            log::info!(
+                                "[xwayland] ready on DISPLAY=:{display_number}"
+                            );
+                            // SAFETY: single-threaded backend, set once.
+                            unsafe {
+                                std::env::set_var(
+                                    "DISPLAY",
+                                    format!(":{display_number}"),
+                                );
+                            }
+                            // `start_wm` requires `D: XwmHandler + XWaylandShellHandler + SeatHandler`.
+                            // Our `JwmWaylandState` implements all three.
+                            match X11Wm::start_wm(
+                                xw_loop_handle.clone(),
+                                x11_socket,
+                                xw_client.clone(),
+                            ) {
+                                Ok(wm) => {
+                                    log::info!("[xwayland] X11Wm started");
+                                    wl_state.x11_wm = Some(wm);
+                                }
+                                Err(e) => {
+                                    log::error!(
+                                        "[xwayland] X11Wm::start_wm failed: {e:?}"
+                                    );
+                                }
+                            }
+                        }
+                        XWaylandEvent::Error => {
+                            log::error!("[xwayland] XWayland exited with error");
+                        }
+                    }
+                })
+                .map_err(|e| BackendError::Message(format!("calloop insert_source(xwayland) failed: {e}")))?;
+        }
 
         let udev_backend = SmithayUdevBackend::new(&seat_name)
             .map_err(|e| BackendError::Other(Box::new(io::Error::new(io::ErrorKind::Other, format!("udev init failed: {e:?}")))))?;

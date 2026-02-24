@@ -12,6 +12,7 @@ use jwm::backend::x11::backend::X11Backend;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     initialize_logging("jwm", SHARED_PATH)?;
+    install_panic_hook();
     info!("[main] begin");
 
     setup_locale();
@@ -20,6 +21,33 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     run_jwm()?;
     Ok(())
+}
+
+fn install_panic_hook() {
+    // In this workspace the release profile is configured with `panic = "abort"`.
+    // That means panics often look like a “crash with no logs”.
+    // Installing a hook lets us capture the panic payload + location (and a backtrace)
+    // into the regular log output before abort.
+    std::panic::set_hook(Box::new(|panic_info| {
+        let payload = if let Some(s) = panic_info.payload().downcast_ref::<&str>() {
+            (*s).to_string()
+        } else if let Some(s) = panic_info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "<non-string panic payload>".to_string()
+        };
+
+        let location = panic_info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "<unknown location>".to_string());
+
+        let backtrace = std::backtrace::Backtrace::force_capture();
+
+        // Best-effort: log to both stderr and our logger.
+        eprintln!("[panic] {payload} @ {location}\nBacktrace:\n{backtrace:?}");
+        error!("[panic] {payload} @ {location} | backtrace={backtrace:?}");
+    }));
 }
 
 fn run_jwm() -> Result<(), Box<dyn std::error::Error>> {
