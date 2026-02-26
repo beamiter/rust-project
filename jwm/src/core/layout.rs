@@ -35,6 +35,7 @@ impl LayoutEnum {
     pub const DECK: Self = Self("deck");
     pub const THREE_COL: Self = Self("threecol");
     pub const TATAMI: Self = Self("tatami");
+    pub const FULLSCREEN: Self = Self("fullscreen");
     pub const ANY: Self = Self("");
 
     pub fn symbol(&self) -> &str {
@@ -49,6 +50,7 @@ impl LayoutEnum {
             "deck" => "[D]",
             "threecol" => "|||",
             "tatami" => "[+]",
+            "fullscreen" => "[ ]",
             _ => "",
         }
     }
@@ -56,14 +58,18 @@ impl LayoutEnum {
     pub fn is_tile(&self) -> bool {
         matches!(
             self.0,
-            "tile" | "fibonacci" | "centeredmaster" | "bstack" | "grid" | "deck" | "threecol" | "tatami"
+            "tile" | "fibonacci" | "centeredmaster" | "bstack" | "grid" | "deck" | "threecol" | "tatami" | "fullscreen"
         )
     }
     pub fn is_float(&self) -> bool {
         self.0 == "float"
     }
     pub fn is_monocle(&self) -> bool {
-        self.0 == "monocle"
+        self.0 == "monocle" || self.0 == "fullscreen"
+    }
+
+    pub fn is_fullscreen_layout(&self) -> bool {
+        self.0 == "fullscreen"
     }
 
     /// 所有布局的循环顺序
@@ -77,6 +83,7 @@ impl LayoutEnum {
         Self::THREE_COL,
         Self::TATAMI,
         Self::MONOCLE,
+        Self::FULLSCREEN,
         Self::FLOAT,
     ];
 
@@ -104,6 +111,7 @@ impl From<u32> for LayoutEnum {
             7 => LayoutEnum::DECK,
             8 => LayoutEnum::THREE_COL,
             9 => LayoutEnum::TATAMI,
+            10 => LayoutEnum::FULLSCREEN,
             _ => LayoutEnum::ANY,
         }
     }
@@ -834,4 +842,20 @@ pub fn calculate_tatami<K: Copy>(
     }
 
     results
+}
+
+/// Fullscreen: 真全屏，占满整个显示器，无边框无 gap
+pub fn calculate_fullscreen<K: Copy>(
+    params: &LayoutParams,
+    clients: &[LayoutClient<K>],
+) -> Vec<LayoutResult<K>> {
+    let LayoutParams { screen_area, .. } = params;
+    // screen_area 由调用方传入完整显示器区域 (m_x, m_y, m_w, m_h)
+    clients
+        .iter()
+        .map(|c| LayoutResult {
+            key: c.key,
+            rect: Rect::new(screen_area.x, screen_area.y, screen_area.w, screen_area.h),
+        })
+        .collect()
 }

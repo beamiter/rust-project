@@ -730,8 +730,6 @@ impl Jwm {
             "setlayout"
         } else if eq!(Jwm::togglefloating) {
             "togglefloating"
-        } else if eq!(Jwm::togglefullscr) {
-            "togglefullscr"
         } else if eq!(Jwm::togglebar) {
             "togglebar"
         } else if eq!(Jwm::setmfact) {
@@ -3002,6 +3000,7 @@ impl Jwm {
             LayoutEnum::DECK => self.deck(backend, mon_key),
             LayoutEnum::THREE_COL => self.three_col(backend, mon_key),
             LayoutEnum::TATAMI => self.tatami(backend, mon_key),
+            LayoutEnum::FULLSCREEN => self.fullscreen_layout(backend, mon_key),
             LayoutEnum::FLOAT | _ => {}
         }
     }
@@ -3120,6 +3119,59 @@ impl Jwm {
 
     fn tatami(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
         self.tiling_layout_wrapper(backend, mon_key, "tatami", layout::calculate_tatami);
+    }
+
+    fn fullscreen_layout(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
+        info!("[fullscreen_layout] via pure layout engine");
+
+        // 使用完整显示器区域 (m_x, m_y, m_w, m_h)，不是 work area
+        let (mx, my, mw, mh) = if let Some(monitor) = self.state.monitors.get(mon_key) {
+            (
+                monitor.geometry.m_x,
+                monitor.geometry.m_y,
+                monitor.geometry.m_w,
+                monitor.geometry.m_h,
+            )
+        } else {
+            return;
+        };
+
+        let raw_clients = self.collect_tileable_clients(mon_key);
+        if raw_clients.is_empty() {
+            return;
+        }
+
+        // 全屏模式下 border_w = 0
+        let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
+            .iter()
+            .map(|&(key, factor, _border_w)| LayoutClient {
+                key,
+                factor,
+                border_w: 0,
+            })
+            .collect();
+
+        let params = LayoutParams {
+            screen_area: Rect::new(mx, my, mw, mh),
+            n_master: 0,
+            m_fact: 0.0,
+            gap: 0,
+        };
+
+        let results = layout::calculate_fullscreen(&params, &layout_clients);
+
+        // 临时将 border_w 设为 0，应用布局后恢复
+        for &(key, _, _original_border_w) in &raw_clients {
+            if let Some(client) = self.state.clients.get_mut(key) {
+                client.geometry.border_w = 0;
+            }
+        }
+
+        for res in results {
+            self.resize_client(
+                backend, res.key, res.rect.x, res.rect.y, res.rect.w, res.rect.h, false,
+            );
+        }
     }
 
     fn dirtomon(&mut self, dir: &i32) -> Option<MonitorKey> {
@@ -4726,6 +4778,35 @@ impl Jwm {
         Ok(())
     }
 
+    /// 退出当前 monitor 上所有全屏窗口的全屏状态
+    fn exit_fullscreen_on_monitor(
+        &mut self,
+        backend: &mut dyn Backend,
+        mon_key: MonitorKey,
+    ) {
+        let fs_clients: Vec<ClientKey> = self
+            .state
+            .monitor_clients
+            .get(mon_key)
+            .map(|keys| {
+                keys.iter()
+                    .copied()
+                    .filter(|&ck| {
+                        self.state
+                            .clients
+                            .get(ck)
+                            .map(|c| c.state.is_fullscreen)
+                            .unwrap_or(false)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        for ck in fs_clients {
+            let _ = self.setfullscreen(backend, ck, false);
+        }
+    }
+
     pub fn setlayout(
         &mut self,
         backend: &mut dyn Backend,
@@ -4734,7 +4815,24 @@ impl Jwm {
         info!("[setlayout]");
         let sel_mon_key = self.state.sel_mon.ok_or("No selected monitor")?;
 
+        let old_layout = self
+            .state
+            .monitors
+            .get(sel_mon_key)
+            .map(|m| m.lt[m.sel_lt].clone())
+            .ok_or("No monitor")?;
+
+        self.exit_fullscreen_on_monitor(backend, sel_mon_key);
         self.update_layout_selection(sel_mon_key, arg)?;
+
+        let new_layout = self
+            .state
+            .monitors
+            .get(sel_mon_key)
+            .map(|m| m.lt[m.sel_lt].clone())
+            .ok_or("No monitor")?;
+
+        self.handle_fullscreen_layout_transition(backend, sel_mon_key, &old_layout, &new_layout)?;
 
         let (should_arrange, mon_num) = self.finalize_layout_update(sel_mon_key);
 
@@ -4754,6 +4852,15 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[cyclelayout]");
         let sel_mon_key = self.state.sel_mon.ok_or("No selected monitor")?;
+
+        let old_layout = self
+            .state
+            .monitors
+            .get(sel_mon_key)
+            .map(|m| m.lt[m.sel_lt].clone())
+            .ok_or("No monitor")?;
+
+        self.exit_fullscreen_on_monitor(backend, sel_mon_key);
 
         let dir = match arg {
             WMArgEnum::Int(i) => *i,
@@ -4784,11 +4891,86 @@ impl Jwm {
         let next_rc = Rc::new(next.clone());
         self.set_new_layout(sel_mon_key, &next_rc, cur_tag);
 
+        self.handle_fullscreen_layout_transition(backend, sel_mon_key, &old_layout, &next_rc)?;
+
         let (should_arrange, mon_num) = self.finalize_layout_update(sel_mon_key);
         if should_arrange {
             self.arrange(backend, Some(sel_mon_key));
         } else {
             self.mark_bar_update_needed_if_visible(mon_num);
+        }
+
+        Ok(())
+    }
+
+    /// Handle bar visibility and border_w changes when transitioning to/from fullscreen layout
+    fn handle_fullscreen_layout_transition(
+        &mut self,
+        backend: &mut dyn Backend,
+        mon_key: MonitorKey,
+        old_layout: &LayoutEnum,
+        new_layout: &LayoutEnum,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let was_fullscreen = old_layout.is_fullscreen_layout();
+        let is_fullscreen = new_layout.is_fullscreen_layout();
+
+        if was_fullscreen == is_fullscreen {
+            return Ok(());
+        }
+
+        let mon_num = self
+            .state
+            .monitors
+            .get(mon_key)
+            .map(|m| m.num);
+
+        if is_fullscreen {
+            // Entering fullscreen layout: hide bar
+            if let Some(monitor) = self.state.monitors.get_mut(mon_key) {
+                if let Some(ref mut pertag) = monitor.pertag {
+                    let cur_tag = pertag.cur_tag;
+                    if let Some(show_bar) = pertag.show_bars.get_mut(cur_tag) {
+                        *show_bar = false;
+                    }
+                }
+            }
+            if let Some(num) = mon_num {
+                if self.current_bar_monitor_id == Some(num) {
+                    self.position_statusbar_on_monitor(backend, num)?;
+                }
+            }
+        } else {
+            // Leaving fullscreen layout: show bar, restore border_w
+            if let Some(monitor) = self.state.monitors.get_mut(mon_key) {
+                if let Some(ref mut pertag) = monitor.pertag {
+                    let cur_tag = pertag.cur_tag;
+                    if let Some(show_bar) = pertag.show_bars.get_mut(cur_tag) {
+                        *show_bar = true;
+                    }
+                }
+            }
+            if let Some(num) = mon_num {
+                if self.current_bar_monitor_id == Some(num) {
+                    self.position_statusbar_on_monitor(backend, num)?;
+                }
+            }
+
+            // Restore border_w for all clients on this monitor
+            let border_w = CONFIG.border_px() as i32;
+            let client_keys: Vec<ClientKey> = self
+                .state
+                .monitor_clients
+                .get(mon_key)
+                .map(|keys| keys.iter().copied().collect())
+                .unwrap_or_default();
+
+            for ck in client_keys {
+                if let Some(client) = self.state.clients.get_mut(ck) {
+                    if !client.state.is_floating {
+                        client.geometry.border_w = border_w;
+                    }
+                }
+            }
         }
 
         Ok(())
@@ -5188,25 +5370,6 @@ impl Jwm {
         self.focus(backend, None)?;
         self.arrange(backend, Some(sel_mon_key));
         self.refresh_bar_visibility_on_selected_monitor(backend)?;
-
-        Ok(())
-    }
-
-    pub fn togglefullscr(
-        &mut self,
-        backend: &mut dyn Backend,
-        _: &WMArgEnum,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[togglefullscr]");
-
-        let client_key = self.get_selected_client_key();
-
-        if let Some(key) = client_key {
-            if let Some(client) = self.state.clients.get(key) {
-                let current_fullscreen = client.state.is_fullscreen;
-                let _ = self.setfullscreen(backend, key, !current_fullscreen);
-            }
-        }
 
         Ok(())
     }

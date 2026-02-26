@@ -437,8 +437,8 @@ impl Config {
             KeyConfig {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
                 key: "f".to_string(),
-                function: "togglefullscr".to_string(),
-                argument: ArgumentConfig::Int(0),
+                function: "setlayout".to_string(),
+                argument: ArgumentConfig::String("fullscreen".to_string()),
             },
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
@@ -734,7 +734,6 @@ impl Config {
 
             "setlayout" => Some(Jwm::setlayout),
             "togglefloating" => Some(Jwm::togglefloating),
-            "togglefullscr" => Some(Jwm::togglefullscr),
             "togglebar" => Some(Jwm::togglebar),
             "setmfact" => Some(Jwm::setmfact),
             "setcfact" => Some(Jwm::setcfact),
@@ -879,6 +878,7 @@ impl Config {
                 "deck" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::DECK)),
                 "threecol" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::THREE_COL)),
                 "tatami" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::TATAMI)),
+                "fullscreen" => jwm::WMArgEnum::Layout(Rc::new(LayoutEnum::FULLSCREEN)),
                 _ => jwm::WMArgEnum::StringVec(vec![s.clone()]),
             },
         }
