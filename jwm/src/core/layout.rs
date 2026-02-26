@@ -80,6 +80,10 @@ pub fn calculate_tile<K: Copy>(
     } = params;
     let (wx, wy, ww, wh) = (screen_area.x, screen_area.y, screen_area.w, screen_area.h);
 
+    // 从每个客户端的尺寸中扣除边框占用的空间 (X11 border 是额外加在窗口外面的)
+    // 取第一个客户端的 border_w 作为通用边框宽度（通常所有客户端相同）
+    let border2 = 2 * clients.first().map_or(0, |c| c.border_w);
+
     // 1. 计算总的 factors
     let (total_m_fact, total_s_fact) =
         clients
@@ -124,7 +128,7 @@ pub fn calculate_tile<K: Copy>(
             my += h;
             remaining_m_fact -= c.factor;
 
-            (wx, res_y, mw, h)
+            (wx, res_y, mw - border2, h - border2)
         } else {
             let stack_idx = i - *n_master as usize;
             let stack_count = clients.len() - *n_master as usize;
@@ -143,10 +147,9 @@ pub fn calculate_tile<K: Copy>(
             ty += h;
             remaining_s_fact -= c.factor;
 
-            (wx + mw, res_y, ww - mw, h)
+            (wx + mw, res_y, ww - mw - border2, h - border2)
         };
 
-        // 边框由 X server (X11) 或 compositor (Wayland) 管理，不从平铺尺寸扣除
         results.push(LayoutResult {
             key: c.key,
             rect: Rect::new(x, y, w, h),
@@ -165,9 +168,12 @@ pub fn calculate_monocle<K: Copy>(
 
     clients
         .iter()
-        .map(|c| LayoutResult {
-            key: c.key,
-            rect: Rect::new(wx, wy, ww, wh),
+        .map(|c| {
+            let border2 = 2 * c.border_w;
+            LayoutResult {
+                key: c.key,
+                rect: Rect::new(wx, wy, ww - border2, wh - border2),
+            }
         })
         .collect()
 }
@@ -228,21 +234,23 @@ pub fn calculate_fibonacci<K: Copy>(
             let res_y = wy + my;
             my += h;
 
+            let border2 = 2 * c.border_w;
             results.push(LayoutResult {
                 key: c.key,
-                rect: Rect::new(wx, res_y, mw, h),
+                rect: Rect::new(wx, res_y, mw - border2, h - border2),
             });
         } else {
             // --- Stack 区域处理 (Fibonacci 螺旋) ---
             // 堆栈中的第几个元素 (从 0 开始)
             let stack_idx = (i as u32) - *n_master;
             let stack_count = n - *n_master;
+            let border2 = 2 * c.border_w;
 
             // 如果是堆栈中最后一个窗口，占据剩余所有空间
             if stack_idx == stack_count - 1 {
                 results.push(LayoutResult {
                     key: c.key,
-                    rect: Rect::new(sx, sy, sw, sh),
+                    rect: Rect::new(sx, sy, sw - border2, sh - border2),
                 });
             } else {
                 // 确定切割方向：偶数水平切割，奇数垂直切割 (或者反过来，看个人喜好)
@@ -257,7 +265,7 @@ pub fn calculate_fibonacci<K: Copy>(
                     let h = sh / 2;
                     results.push(LayoutResult {
                         key: c.key,
-                        rect: Rect::new(sx, sy, sw, h),
+                        rect: Rect::new(sx, sy, sw - border2, h - border2),
                     });
                     // 更新剩余空间：Y 下移，高度减半
                     sy += h;
@@ -267,7 +275,7 @@ pub fn calculate_fibonacci<K: Copy>(
                     let w = sw / 2;
                     results.push(LayoutResult {
                         key: c.key,
-                        rect: Rect::new(sx, sy, w, sh),
+                        rect: Rect::new(sx, sy, w - border2, sh - border2),
                     });
                     // 更新剩余空间：X 右移，宽度减半
                     sx += w;
