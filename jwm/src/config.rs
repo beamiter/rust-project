@@ -418,6 +418,12 @@ impl Config {
             },
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
+                key: "slash".to_string(),
+                function: "show_keybindings".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string()],
                 key: "space".to_string(),
                 function: "setlayout".to_string(),
                 argument: ArgumentConfig::UInt(0),
@@ -552,6 +558,10 @@ impl Config {
             .join("config.toml");
 
         Self::load_from_file(&default_config_path).unwrap_or_else(|_| Self::default())
+    }
+
+    pub fn key_configs(&self) -> &[KeyConfig] {
+        &self.inner.keybindings.keys
     }
 
     pub fn border_px(&self) -> u32 {
@@ -740,6 +750,7 @@ impl Config {
 
             "movemouse" => Some(Jwm::movemouse),
             "resizemouse" => Some(Jwm::resizemouse),
+            "show_keybindings" => Some(Jwm::show_keybindings),
 
             _ => {
                 eprintln!("Unknown function: {}", func_name);
@@ -813,6 +824,9 @@ impl Config {
             "Right" => k::KEY_Right,
             "Up" => k::KEY_Up,
             "Down" => k::KEY_Down,
+
+            "slash" => k::KEY_slash,
+            "question" => k::KEY_question,
 
             "Escape" => k::KEY_Escape,
             "BackSpace" => k::KEY_BackSpace,

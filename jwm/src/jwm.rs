@@ -3581,6 +3581,101 @@ impl Jwm {
         Ok(())
     }
 
+    pub fn show_keybindings(
+        &mut self,
+        _backend: &mut dyn Backend,
+        _arg: &WMArgEnum,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[show_keybindings]");
+
+        let mut lines: Vec<String> = Vec::new();
+        for kc in CONFIG.key_configs() {
+            let mods = kc.modifier.join("+");
+            let shortcut = if mods.is_empty() {
+                kc.key.clone()
+            } else {
+                format!("{}+{}", mods, kc.key)
+            };
+
+            let desc = match kc.function.as_str() {
+                "spawn" => match &kc.argument {
+                    crate::config::ArgumentConfig::StringVec(v) => {
+                        format!("spawn {}", v.first().map(|s| s.as_str()).unwrap_or(""))
+                    }
+                    _ => "spawn".to_string(),
+                },
+                "setlayout" => match &kc.argument {
+                    crate::config::ArgumentConfig::String(s) => format!("layout: {}", s),
+                    crate::config::ArgumentConfig::UInt(_) => "toggle layout".to_string(),
+                    _ => "setlayout".to_string(),
+                },
+                "focusstack" => match &kc.argument {
+                    crate::config::ArgumentConfig::Int(i) => {
+                        if *i > 0 { "focus next".to_string() } else { "focus prev".to_string() }
+                    }
+                    _ => "focusstack".to_string(),
+                },
+                "incnmaster" => match &kc.argument {
+                    crate::config::ArgumentConfig::Int(i) => {
+                        if *i > 0 { "master +1".to_string() } else { "master -1".to_string() }
+                    }
+                    _ => "incnmaster".to_string(),
+                },
+                "setmfact" => match &kc.argument {
+                    crate::config::ArgumentConfig::Float(f) => {
+                        if *f > 0.0 { "mfact +".to_string() } else { "mfact -".to_string() }
+                    }
+                    _ => "setmfact".to_string(),
+                },
+                "view" | "tag" | "toggleview" | "toggletag" => {
+                    match &kc.argument {
+                        crate::config::ArgumentConfig::UInt(u) => format!("{} tag {}", kc.function, u),
+                        _ => kc.function.clone(),
+                    }
+                },
+                other => other.to_string(),
+            };
+
+            lines.push(format!("{:<28} {}", shortcut, desc));
+        }
+
+        // 添加 tag 快捷键说明
+        let tags_len = CONFIG.tags_length();
+        lines.push(format!("{:<28} {}", "Mod1+[1-9]", format!("view tag 1-{}", tags_len)));
+        lines.push(format!("{:<28} {}", "Mod1+Shift+[1-9]", format!("move to tag 1-{}", tags_len)));
+        lines.push(format!("{:<28} {}", "Mod1+Ctrl+[1-9]", format!("toggle view tag 1-{}", tags_len)));
+        lines.push(format!("{:<28} {}", "Mod1+Ctrl+Shift+[1-9]", format!("toggle tag 1-{}", tags_len)));
+        lines.push(format!("{:<28} {}", "Mod1+0", "view all tags"));
+
+        let text = lines.join("\n");
+
+        let dmenu_font = CONFIG.dmenu_font();
+        let mut command = Command::new("dmenu");
+        command.args(["-l", &lines.len().to_string(), "-fn", &dmenu_font, "-p", "Keybindings:"]);
+        command.stdin(std::process::Stdio::piped());
+        command.stdout(std::process::Stdio::null());
+        command.stderr(std::process::Stdio::inherit());
+
+        Self::apply_child_pre_exec(&mut command);
+        Self::setup_smithay_child_env(&mut command, _backend);
+
+        match command.spawn() {
+            Ok(mut child) => {
+                if let Some(stdin) = child.stdin.take() {
+                    use std::io::Write;
+                    let mut stdin = stdin;
+                    let _ = stdin.write_all(text.as_bytes());
+                }
+            }
+            Err(e) => {
+                error!("[show_keybindings] failed to spawn dmenu: {:?}", e);
+                return Err(e.into());
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn reap_zombies(&mut self) {
         // 使用 WNOHANG 循环回收所有已退出的子进程
         loop {
