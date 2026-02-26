@@ -214,6 +214,7 @@ pub struct Jwm {
     pub last_stacking: SecondaryMap<MonitorKey, Vec<WindowId>>,
 
     pub scratchpad_client: Option<ClientKey>,
+    pub scratchpad_pending: bool,
 
     key_bindings: Vec<WMKey>,
 }
@@ -915,6 +916,7 @@ impl Jwm {
 
             last_stacking: SecondaryMap::new(),
             scratchpad_client: None,
+            scratchpad_pending: false,
             key_bindings: CONFIG.get_keys(),
             last_mouse_root: (0.0, 0.0),
         };
@@ -4311,12 +4313,11 @@ impl Jwm {
                 }
             }
         } else {
-            // No scratchpad — spawn terminal with scratchpad class
+            // No scratchpad — spawn terminal, mark pending
             let termcmd = crate::config::Config::get_termcmd();
             if let Some(term) = termcmd.first() {
                 let mut command = Command::new(term);
                 command.args(&termcmd[1..]);
-                command.arg("--class").arg("scratchpad");
 
                 Self::setup_smithay_child_env(&mut command, backend);
                 command
@@ -4331,6 +4332,7 @@ impl Jwm {
                             "[togglescratchpad] spawned scratchpad terminal PID: {}",
                             child.id()
                         );
+                        self.scratchpad_pending = true;
                     }
                     Err(e) => {
                         error!("[togglescratchpad] failed to spawn: {}", e);
@@ -6392,26 +6394,23 @@ impl Jwm {
         self.manage_regular_client(backend, client_key)?;
 
         // Detect scratchpad window
-        if self.scratchpad_client.is_none() {
-            if let Some(c) = self.state.clients.get(client_key) {
-                if c.class == "scratchpad" || c.instance == "scratchpad" {
-                    self.scratchpad_client = Some(client_key);
-                    // Make floating and center at 80% of monitor work area
-                    let mon_key = c.mon;
-                    if let Some(client) = self.state.clients.get_mut(client_key) {
-                        client.state.is_floating = true;
-                    }
-                    if let Some(mk) = mon_key {
-                        if let Some(area) = self.monitor_work_area(mk) {
-                            let w = (area.w as f32 * 0.8) as i32;
-                            let h = (area.h as f32 * 0.8) as i32;
-                            let x = area.x + (area.w - w) / 2;
-                            let y = area.y + (area.h - h) / 2;
-                            self.resize_client(backend, client_key, x, y, w, h, false);
-                        }
-                        self.arrange(backend, Some(mk));
-                    }
+        if self.scratchpad_pending {
+            self.scratchpad_pending = false;
+            self.scratchpad_client = Some(client_key);
+            info!("[manage] detected scratchpad client {:?}", client_key);
+            let mon_key = self.state.clients.get(client_key).and_then(|c| c.mon);
+            if let Some(client) = self.state.clients.get_mut(client_key) {
+                client.state.is_floating = true;
+            }
+            if let Some(mk) = mon_key {
+                if let Some(area) = self.monitor_work_area(mk) {
+                    let w = (area.w as f32 * 0.8) as i32;
+                    let h = (area.h as f32 * 0.8) as i32;
+                    let x = area.x + (area.w - w) / 2;
+                    let y = area.y + (area.h - h) / 2;
+                    self.resize_client(backend, client_key, x, y, w, h, false);
                 }
+                self.arrange(backend, Some(mk));
             }
         }
 

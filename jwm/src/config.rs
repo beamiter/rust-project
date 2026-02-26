@@ -483,8 +483,8 @@ impl Config {
                 argument: ArgumentConfig::Int(1),
             },
             KeyConfig {
-                modifier: vec!["Mod1".to_string()],
-                key: "grave".to_string(),
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "n".to_string(),
                 function: "togglescratchpad".to_string(),
                 argument: ArgumentConfig::Int(0),
             },
