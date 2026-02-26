@@ -346,6 +346,9 @@ impl WMController for Jwm {
         match backend.handle_button_release(0) {
             Ok(handled) => {
                 if handled {
+                    // Sync floating window geometry after drag ends
+                    self.sync_focused_floating_geometry(backend);
+
                     if let Err(e) = self.check_monitor_consistency(backend) {
                         error!(
                             "Error checking monitor consistency after button release: {:?}",
@@ -2838,6 +2841,31 @@ impl Jwm {
         Ok(())
     }
 
+    fn sync_focused_floating_geometry(&mut self, backend: &mut dyn Backend) {
+        let sel_key = match self.get_selected_client_key() {
+            Some(k) => k,
+            None => return,
+        };
+        let win = match self.state.clients.get(sel_key) {
+            Some(c) if c.state.is_floating => c.win,
+            _ => return,
+        };
+        let geom = match backend.window_ops().get_geometry(win) {
+            Ok(g) => g,
+            Err(_) => return,
+        };
+        if let Some(client) = self.state.clients.get_mut(sel_key) {
+            client.geometry.x = geom.x as i32;
+            client.geometry.y = geom.y as i32;
+            client.geometry.w = geom.w as i32;
+            client.geometry.h = geom.h as i32;
+            client.geometry.floating_x = geom.x as i32;
+            client.geometry.floating_y = geom.y as i32;
+            client.geometry.floating_w = geom.w as i32;
+            client.geometry.floating_h = geom.h as i32;
+        }
+    }
+
     fn configure_client(
         &self,
         backend: &mut dyn Backend,
@@ -3381,23 +3409,45 @@ impl Jwm {
             }
         }
 
-        // Promote selected floating window to top (but not PiP windows)
-        if let Some(sel_ck) = monitor.sel {
-            if let Some(sel_c) = self.state.clients.get(sel_ck) {
-                if sel_c.state.is_floating && !sel_c.state.is_pip {
-                    if let Some(idx) = floating_bottom_to_top.iter().position(|&w| w == sel_c.win) {
-                        let w = floating_bottom_to_top.remove(idx);
-                        floating_bottom_to_top.push(w);
-                    }
-                }
-            }
-        }
+        // Promote selected window to top of its layer, and if it's tiled,
+        // raise it above floating windows so it's not obscured.
+        let sel_win = monitor.sel.and_then(|ck| self.state.clients.get(ck)).map(|c| (c.win, c.state.is_floating, c.state.is_pip));
 
         let mut final_bottom_to_top: Vec<WindowId> =
             Vec::with_capacity(tiled_bottom_to_top.len() + floating_bottom_to_top.len() + pip_bottom_to_top.len());
-        final_bottom_to_top.extend(tiled_bottom_to_top.into_iter());
-        final_bottom_to_top.extend(floating_bottom_to_top.into_iter());
-        final_bottom_to_top.extend(pip_bottom_to_top.into_iter());
+
+        if let Some((win, is_floating, is_pip)) = sel_win {
+            if is_pip {
+                // PiP: promote within pip layer
+                if let Some(idx) = pip_bottom_to_top.iter().position(|&w| w == win) {
+                    let w = pip_bottom_to_top.remove(idx);
+                    pip_bottom_to_top.push(w);
+                }
+                final_bottom_to_top.extend(tiled_bottom_to_top);
+                final_bottom_to_top.extend(floating_bottom_to_top);
+                final_bottom_to_top.extend(pip_bottom_to_top);
+            } else if is_floating {
+                // Floating: promote to top of floating layer (above other floats, below pip)
+                if let Some(idx) = floating_bottom_to_top.iter().position(|&w| w == win) {
+                    let w = floating_bottom_to_top.remove(idx);
+                    floating_bottom_to_top.push(w);
+                }
+                final_bottom_to_top.extend(tiled_bottom_to_top);
+                final_bottom_to_top.extend(floating_bottom_to_top);
+                final_bottom_to_top.extend(pip_bottom_to_top);
+            } else {
+                // Tiled: raise focused tiled window above all floats so it's not obscured
+                tiled_bottom_to_top.retain(|&w| w != win);
+                final_bottom_to_top.extend(tiled_bottom_to_top);
+                final_bottom_to_top.extend(floating_bottom_to_top);
+                final_bottom_to_top.push(win); // focused tiled above floats
+                final_bottom_to_top.extend(pip_bottom_to_top);
+            }
+        } else {
+            final_bottom_to_top.extend(tiled_bottom_to_top);
+            final_bottom_to_top.extend(floating_bottom_to_top);
+            final_bottom_to_top.extend(pip_bottom_to_top);
+        }
 
         let need_restack_windows = match self.last_stacking.get(mon_key) {
             Some(prev) => prev.as_slice() != final_bottom_to_top.as_slice(),
