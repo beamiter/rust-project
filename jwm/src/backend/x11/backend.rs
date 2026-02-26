@@ -2071,35 +2071,34 @@ mod key_ops {
             for (mods, keysym) in bindings {
                 for (offset, keysyms_for_keycode) in mapping.keysyms.chunks(per).enumerate() {
                     let keycode = min + offset as u8;
-                    if let Some(&ks) = keysyms_for_keycode.first() {
-                        if ks == *keysym {
-                            let base = mods_to_x11(*mods, numlock_mask_obj);
-                            let combos = [
-                                base,
-                                base | KBM::LOCK,
-                                base | numlock_mask_obj,
-                                base | KBM::LOCK | numlock_mask_obj,
-                            ];
-                            for mm in combos {
-                                let cookie = self.conn.grab_key(
-                                    false,
-                                    r,
-                                    ModMask::from(mm.bits()),
+                    let matched = keysyms_for_keycode.iter().any(|&ks| ks == *keysym);
+                    if matched {
+                        let base = mods_to_x11(*mods, numlock_mask_obj);
+                        let combos = [
+                            base,
+                            base | KBM::LOCK,
+                            base | numlock_mask_obj,
+                            base | KBM::LOCK | numlock_mask_obj,
+                        ];
+                        for mm in combos {
+                            let cookie = self.conn.grab_key(
+                                false,
+                                r,
+                                ModMask::from(mm.bits()),
+                                keycode,
+                                GrabMode::ASYNC,
+                                GrabMode::ASYNC,
+                            )?;
+                            if let Err(e) = cookie.check() {
+                                // If another client grabbed the same key, X11 will typically
+                                // report BadAccess asynchronously. Surface it for debugging.
+                                warn!(
+                                    "X11 grab_key failed (keysym=0x{:x}, keycode={}, mods=0x{:x}): {:?}",
+                                    *keysym,
                                     keycode,
-                                    GrabMode::ASYNC,
-                                    GrabMode::ASYNC,
-                                )?;
-                                if let Err(e) = cookie.check() {
-                                    // If another client grabbed the same key, X11 will typically
-                                    // report BadAccess asynchronously. Surface it for debugging.
-                                    warn!(
-                                        "X11 grab_key failed (keysym=0x{:x}, keycode={}, mods=0x{:x}): {:?}",
-                                        *keysym,
-                                        keycode,
-                                        mm.bits(),
-                                        e
-                                    );
-                                }
+                                    mm.bits(),
+                                    e
+                                );
                             }
                         }
                     }
