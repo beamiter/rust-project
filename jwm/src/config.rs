@@ -417,7 +417,7 @@ impl Config {
                 argument: ArgumentConfig::String("tatami".to_string()),
             },
             KeyConfig {
-                modifier: vec!["Mod1".to_string()],
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
                 key: "slash".to_string(),
                 function: "show_keybindings".to_string(),
                 argument: ArgumentConfig::Int(0),
@@ -425,14 +425,14 @@ impl Config {
             KeyConfig {
                 modifier: vec!["Mod1".to_string()],
                 key: "space".to_string(),
-                function: "setlayout".to_string(),
-                argument: ArgumentConfig::UInt(0),
+                function: "cyclelayout".to_string(),
+                argument: ArgumentConfig::Int(1),
             },
             KeyConfig {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
                 key: "space".to_string(),
-                function: "togglefloating".to_string(),
-                argument: ArgumentConfig::Int(0),
+                function: "cyclelayout".to_string(),
+                argument: ArgumentConfig::Int(-1),
             },
             KeyConfig {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
@@ -751,6 +751,7 @@ impl Config {
             "movemouse" => Some(Jwm::movemouse),
             "resizemouse" => Some(Jwm::resizemouse),
             "show_keybindings" => Some(Jwm::show_keybindings),
+            "cyclelayout" => Some(Jwm::cyclelayout),
 
             _ => {
                 eprintln!("Unknown function: {}", func_name);

@@ -65,6 +65,30 @@ impl LayoutEnum {
     pub fn is_monocle(&self) -> bool {
         self.0 == "monocle"
     }
+
+    /// 所有布局的循环顺序
+    const CYCLE: &'static [LayoutEnum] = &[
+        Self::TILE,
+        Self::FIBONACCI,
+        Self::CENTERED_MASTER,
+        Self::BSTACK,
+        Self::GRID,
+        Self::DECK,
+        Self::THREE_COL,
+        Self::TATAMI,
+        Self::MONOCLE,
+        Self::FLOAT,
+    ];
+
+    pub fn cycle_next(&self) -> &'static LayoutEnum {
+        let idx = Self::CYCLE.iter().position(|l| l == self).unwrap_or(0);
+        &Self::CYCLE[(idx + 1) % Self::CYCLE.len()]
+    }
+
+    pub fn cycle_prev(&self) -> &'static LayoutEnum {
+        let idx = Self::CYCLE.iter().position(|l| l == self).unwrap_or(0);
+        &Self::CYCLE[(idx + Self::CYCLE.len() - 1) % Self::CYCLE.len()]
+    }
 }
 
 impl From<u32> for LayoutEnum {

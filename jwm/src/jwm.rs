@@ -4747,6 +4747,53 @@ impl Jwm {
         Ok(())
     }
 
+    pub fn cyclelayout(
+        &mut self,
+        backend: &mut dyn Backend,
+        arg: &WMArgEnum,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[cyclelayout]");
+        let sel_mon_key = self.state.sel_mon.ok_or("No selected monitor")?;
+
+        let dir = match arg {
+            WMArgEnum::Int(i) => *i,
+            _ => 1,
+        };
+
+        let cur_tag = self
+            .state
+            .monitors
+            .get(sel_mon_key)
+            .and_then(|m| m.pertag.as_ref())
+            .map(|p| p.cur_tag)
+            .ok_or("No pertag")?;
+
+        let current = self
+            .state
+            .monitors
+            .get(sel_mon_key)
+            .map(|m| m.lt[m.sel_lt].clone())
+            .ok_or("No monitor")?;
+
+        let next = if dir >= 0 {
+            current.cycle_next()
+        } else {
+            current.cycle_prev()
+        };
+
+        let next_rc = Rc::new(next.clone());
+        self.set_new_layout(sel_mon_key, &next_rc, cur_tag);
+
+        let (should_arrange, mon_num) = self.finalize_layout_update(sel_mon_key);
+        if should_arrange {
+            self.arrange(backend, Some(sel_mon_key));
+        } else {
+            self.mark_bar_update_needed_if_visible(mon_num);
+        }
+
+        Ok(())
+    }
+
     fn update_layout_selection(
         &mut self,
         sel_mon_key: MonitorKey,
