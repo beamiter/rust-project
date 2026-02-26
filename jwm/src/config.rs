@@ -209,14 +209,23 @@ impl Default for Config {
 #[allow(dead_code)]
 impl Config {
     fn get_default_keys() -> Vec<KeyConfig> {
-        let dmenu_cmd = vec![
-            "fuzzel".to_string(),
-            "--font=SauceCodePro Nerd Font Regular:size=11".to_string(),
-            "--background=2e3440ff".to_string(),
-            "--text-color=d8dee9ff".to_string(),
-            "--selection-color=81a1c1ff".to_string(),
-            "--selection-text-color=eceff4ff".to_string(),
-        ];
+        let is_x11 = matches!(
+            std::env::var("JWM_BACKEND").as_deref(),
+            Err(_) | Ok("x11")
+        );
+
+        let dmenu_cmd = if is_x11 {
+            vec!["dmenu_run".to_string()]
+        } else {
+            vec![
+                "fuzzel".to_string(),
+                "--font=SauceCodePro Nerd Font Regular:size=11".to_string(),
+                "--background=2e3440ff".to_string(),
+                "--text-color=d8dee9ff".to_string(),
+                "--selection-color=81a1c1ff".to_string(),
+                "--selection-text-color=eceff4ff".to_string(),
+            ]
+        };
 
         vec![
             KeyConfig {
@@ -604,7 +613,17 @@ impl Config {
                 ArgumentConfig::StringVec(cmd) => Some(cmd.clone()),
                 _ => None,
             })
-            .unwrap_or_else(|| vec!["fuzzel".to_string()])
+            .unwrap_or_else(|| {
+                let is_x11 = matches!(
+                    std::env::var("JWM_BACKEND").as_deref(),
+                    Err(_) | Ok("x11")
+                );
+                if is_x11 {
+                    vec!["dmenu_run".to_string()]
+                } else {
+                    vec!["fuzzel".to_string()]
+                }
+            })
     }
 
     pub fn get_termcmd() -> Vec<String> {
