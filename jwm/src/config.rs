@@ -64,6 +64,7 @@ pub struct TomlConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AppearanceConfig {
     pub border_px: u32,
+    pub gap_px: u32,
     pub snap: u32,
     pub dmenu_font: String,
     pub status_bar_padding: i32,
@@ -162,6 +163,7 @@ impl Default for Config {
             inner: TomlConfig {
                 appearance: AppearanceConfig {
                     border_px: 3,
+                    gap_px: 5,
                     snap: 32,
                     dmenu_font: "SauceCodePro Nerd Font Regular 11".to_string(),
                     status_bar_padding: 5,
@@ -518,6 +520,10 @@ impl Config {
 
     pub fn border_px(&self) -> u32 {
         self.inner.appearance.border_px
+    }
+
+    pub fn gap_px(&self) -> u32 {
+        self.inner.appearance.gap_px
     }
 
     pub fn snap(&self) -> u32 {

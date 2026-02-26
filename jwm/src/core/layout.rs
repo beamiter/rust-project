@@ -12,6 +12,7 @@ pub struct LayoutParams {
     pub screen_area: Rect,
     pub n_master: u32,
     pub m_fact: f32,
+    pub gap: i32,
 }
 
 // 通用布局结果
@@ -77,12 +78,25 @@ pub fn calculate_tile<K: Copy>(
         screen_area,
         n_master,
         m_fact,
+        gap,
     } = params;
-    let (wx, wy, ww, wh) = (screen_area.x, screen_area.y, screen_area.w, screen_area.h);
+    let gap = *gap;
 
-    // 从每个客户端的尺寸中扣除边框占用的空间 (X11 border 是额外加在窗口外面的)
-    // 取第一个客户端的 border_w 作为通用边框宽度（通常所有客户端相同）
+    // 外边距：缩小可用区域
+    let wx = screen_area.x + gap;
+    let wy = screen_area.y + gap;
+    let ww = screen_area.w - 2 * gap;
+    let wh = screen_area.h - 2 * gap;
+
     let border2 = 2 * clients.first().map_or(0, |c| c.border_w);
+
+    let has_stack = n > *n_master && *n_master > 0;
+    // Master 和 Stack 列之间留 gap
+    let mw = if has_stack {
+        ((ww - gap) as f32 * m_fact) as i32
+    } else {
+        ww
+    };
 
     // 1. 计算总的 factors
     let (total_m_fact, total_s_fact) =
@@ -97,13 +111,16 @@ pub fn calculate_tile<K: Copy>(
                 }
             });
 
-    // 2. 计算 Master 区域宽度
-    let mw = if n > *n_master && *n_master > 0 {
-        (ww as f32 * m_fact) as i32
-    } else {
-        ww
-    };
+    let n_master_count = n.min(*n_master) as i32;
+    let n_stack_count = (clients.len() as i32 - *n_master as i32).max(0);
 
+    // Master 列中 N 个窗口之间有 (N-1) 个 gap
+    let master_avail_h = wh - (n_master_count - 1).max(0) * gap;
+    // Stack 列同理
+    let stack_avail_h = wh - (n_stack_count - 1).max(0) * gap;
+
+    let mut mi = 0; // Master 窗口序号
+    let mut si = 0; // Stack 窗口序号
     let mut my = 0; // Master Y offset
     let mut ty = 0; // Stack Y offset
     let mut remaining_m_fact = total_m_fact;
@@ -113,41 +130,41 @@ pub fn calculate_tile<K: Copy>(
         let is_master = i < *n_master as usize;
 
         let (x, y, w, h) = if is_master {
-            let remaining_masters = *n_master - i as u32;
-            let remaining_h = (wh - my).max(0);
+            let remaining_masters = n_master_count - mi;
+            let remaining_h = (master_avail_h - my).max(0);
 
             let h = if remaining_m_fact > 0.001 {
                 (remaining_h as f32 * (c.factor / remaining_m_fact)) as i32
             } else if remaining_masters > 0 {
-                remaining_h / remaining_masters as i32
+                remaining_h / remaining_masters
             } else {
                 remaining_h
             };
 
-            let res_y = wy + my;
+            let res_y = wy + my + mi * gap;
             my += h;
+            mi += 1;
             remaining_m_fact -= c.factor;
 
             (wx, res_y, mw - border2, h - border2)
         } else {
-            let stack_idx = i - *n_master as usize;
-            let stack_count = clients.len() - *n_master as usize;
-            let remaining_stacks = stack_count - stack_idx;
-            let remaining_h = (wh - ty).max(0);
+            let remaining_stacks = n_stack_count - si;
+            let remaining_h = (stack_avail_h - ty).max(0);
 
             let h = if remaining_s_fact > 0.001 {
                 (remaining_h as f32 * (c.factor / remaining_s_fact)) as i32
             } else if remaining_stacks > 0 {
-                remaining_h / remaining_stacks as i32
+                remaining_h / remaining_stacks
             } else {
                 remaining_h
             };
 
-            let res_y = wy + ty;
+            let res_y = wy + ty + si * gap;
             ty += h;
+            si += 1;
             remaining_s_fact -= c.factor;
 
-            (wx + mw, res_y, ww - mw - border2, h - border2)
+            (wx + mw + gap, res_y, ww - mw - gap - border2, h - border2)
         };
 
         results.push(LayoutResult {
@@ -164,6 +181,7 @@ pub fn calculate_monocle<K: Copy>(
     clients: &[LayoutClient<K>],
 ) -> Vec<LayoutResult<K>> {
     let LayoutParams { screen_area, .. } = params;
+    // monocle 模式不使用 gap，窗口占满整个工作区
     let (wx, wy, ww, wh) = (screen_area.x, screen_area.y, screen_area.w, screen_area.h);
 
     clients
@@ -192,94 +210,84 @@ pub fn calculate_fibonacci<K: Copy>(
         screen_area,
         n_master,
         m_fact,
+        gap,
     } = params;
+    let gap = *gap;
 
-    // 初始屏幕区域
-    let (wx, wy, ww, wh) = (screen_area.x, screen_area.y, screen_area.w, screen_area.h);
+    // 外边距
+    let wx = screen_area.x + gap;
+    let wy = screen_area.y + gap;
+    let ww = screen_area.w - 2 * gap;
+    let wh = screen_area.h - 2 * gap;
 
-    // 计算 Master 区域宽度
-    // 如果有 Stack 窗口，Master 宽度受 m_fact 控制，否则占满全屏
-    let mw = if n > *n_master {
-        (ww as f32 * m_fact) as i32
+    let has_stack = n > *n_master;
+    let mw = if has_stack {
+        ((ww - gap) as f32 * m_fact) as i32
     } else {
         ww
     };
 
-    let mut my = 0; // Master Y 偏移
+    let n_master_count = n.min(*n_master) as i32;
+    let master_avail_h = wh - (n_master_count - 1).max(0) * gap;
+    let mut mi = 0i32;
+    let mut my = 0;
 
     // Stack 区域的初始状态
-    // 如果有 Master，Stack 从 Master 右侧开始，宽度为剩余宽度
-    // 如果没有 Master (n_master=0)，Stack 占满全屏
-    let mut sx = if *n_master > 0 { wx + mw } else { wx };
+    let mut sx = if *n_master > 0 { wx + mw + gap } else { wx };
     let mut sy = wy;
-    let mut sw = if *n_master > 0 { ww - mw } else { ww };
+    let mut sw = if *n_master > 0 { ww - mw - gap } else { ww };
     let mut sh = wh;
 
     for (i, c) in clients.iter().enumerate() {
         let is_master = (i as u32) < *n_master;
+        let border2 = 2 * c.border_w;
 
         if is_master {
-            // --- Master 区域处理 (垂直列表) ---
-            let remaining_masters = *n_master - i as u32;
-            // 剩余高度
-            let remaining_h = (wh - my).max(0);
+            let remaining_masters = n_master_count - mi;
+            let remaining_h = (master_avail_h - my).max(0);
 
-            // 计算当前 Master 窗口高度 (平均分配)
             let h = if remaining_masters > 0 {
-                remaining_h / remaining_masters as i32
+                remaining_h / remaining_masters
             } else {
                 remaining_h
             };
 
-            let res_y = wy + my;
+            let res_y = wy + my + mi * gap;
             my += h;
+            mi += 1;
 
-            let border2 = 2 * c.border_w;
             results.push(LayoutResult {
                 key: c.key,
                 rect: Rect::new(wx, res_y, mw - border2, h - border2),
             });
         } else {
-            // --- Stack 区域处理 (Fibonacci 螺旋) ---
-            // 堆栈中的第几个元素 (从 0 开始)
             let stack_idx = (i as u32) - *n_master;
             let stack_count = n - *n_master;
-            let border2 = 2 * c.border_w;
 
-            // 如果是堆栈中最后一个窗口，占据剩余所有空间
             if stack_idx == stack_count - 1 {
                 results.push(LayoutResult {
                     key: c.key,
                     rect: Rect::new(sx, sy, sw - border2, sh - border2),
                 });
             } else {
-                // 确定切割方向：偶数水平切割，奇数垂直切割 (或者反过来，看个人喜好)
-                // 这里采用：
-                // stack_idx % 2 == 0 -> 上下分割 (当前窗口取上半部分)
-                // stack_idx % 2 != 0 -> 左右分割 (当前窗口取左半部分)
-                // 这样会形成：右 -> 下 -> 右 -> 下 的螺旋效果 (相对于上级容器)
-                // 但因为我们是在剩余空间切，实际效果是 Dwindle
-
                 if stack_idx % 2 == 0 {
-                    // 水平分割：当前窗口取高度的一半
-                    let h = sh / 2;
+                    // 水平分割
+                    let h = (sh - gap) / 2;
                     results.push(LayoutResult {
                         key: c.key,
                         rect: Rect::new(sx, sy, sw - border2, h - border2),
                     });
-                    // 更新剩余空间：Y 下移，高度减半
-                    sy += h;
-                    sh -= h;
+                    sy += h + gap;
+                    sh -= h + gap;
                 } else {
-                    // 垂直分割：当前窗口取宽度的一半
-                    let w = sw / 2;
+                    // 垂直分割
+                    let w = (sw - gap) / 2;
                     results.push(LayoutResult {
                         key: c.key,
                         rect: Rect::new(sx, sy, w - border2, sh - border2),
                     });
-                    // 更新剩余空间：X 右移，宽度减半
-                    sx += w;
-                    sw -= w;
+                    sx += w + gap;
+                    sw -= w + gap;
                 }
             }
         }

@@ -3033,6 +3033,7 @@ impl Jwm {
             screen_area,
             n_master: nmaster,
             m_fact: mfact,
+            gap: CONFIG.gap_px() as i32,
         };
 
         // 4. 计算布局
@@ -3570,6 +3571,7 @@ impl Jwm {
             screen_area,
             n_master: nmaster,
             m_fact: mfact,
+            gap: CONFIG.gap_px() as i32,
         };
         let results = layout::calculate_tile(&params, &layout_clients);
 
@@ -6464,6 +6466,7 @@ impl Jwm {
             screen_area,
             n_master: 0, // 不相关
             m_fact: 0.0, // 不相关
+            gap: 0,      // monocle 不使用 gap
         };
         let results = layout::calculate_monocle(&params, &layout_clients);
         // 应用
