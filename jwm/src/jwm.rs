@@ -4728,6 +4728,8 @@ impl Jwm {
         if let Some(client_key) = target_client {
             self.focus(backend, Some(client_key))?;
             self.restack(backend, self.state.sel_mon)?;
+            self.suppress_mouse_focus_until =
+                Some(std::time::Instant::now() + std::time::Duration::from_millis(200));
         }
         Ok(())
     }
