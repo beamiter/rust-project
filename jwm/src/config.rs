@@ -483,6 +483,24 @@ impl Config {
                 argument: ArgumentConfig::Int(1),
             },
             KeyConfig {
+                modifier: vec!["Mod1".to_string()],
+                key: "grave".to_string(),
+                function: "togglescratchpad".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "s".to_string(),
+                function: "togglesticky".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "p".to_string(),
+                function: "togglepip".to_string(),
+                argument: ArgumentConfig::Int(0),
+            },
+            KeyConfig {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
                 key: "q".to_string(),
                 function: "quit".to_string(),
@@ -751,6 +769,9 @@ impl Config {
             "resizemouse" => Some(Jwm::resizemouse),
             "show_keybindings" => Some(Jwm::show_keybindings),
             "cyclelayout" => Some(Jwm::cyclelayout),
+            "togglesticky" => Some(Jwm::togglesticky),
+            "togglescratchpad" => Some(Jwm::togglescratchpad),
+            "togglepip" => Some(Jwm::togglepip),
 
             _ => {
                 eprintln!("Unknown function: {}", func_name);
@@ -827,6 +848,7 @@ impl Config {
 
             "slash" => k::KEY_slash,
             "question" => k::KEY_question,
+            "grave" => k::KEY_grave,
 
             "Escape" => k::KEY_Escape,
             "BackSpace" => k::KEY_BackSpace,

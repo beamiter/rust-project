@@ -77,6 +77,8 @@ pub struct ClientState {
     pub never_focus: bool,
     pub old_state: bool,
     pub is_fullscreen: bool,
+    pub is_sticky: bool,
+    pub is_pip: bool,
     pub is_dock: bool,
 
     pub dock_layer_info: Option<LayerSurfaceInfo>,

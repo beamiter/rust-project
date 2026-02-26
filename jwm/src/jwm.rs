@@ -213,6 +213,8 @@ pub struct Jwm {
 
     pub last_stacking: SecondaryMap<MonitorKey, Vec<WindowId>>,
 
+    pub scratchpad_client: Option<ClientKey>,
+
     key_bindings: Vec<WMKey>,
 }
 
@@ -756,6 +758,12 @@ impl Jwm {
             "movemouse"
         } else if eq!(Jwm::resizemouse) {
             "resizemouse"
+        } else if eq!(Jwm::togglesticky) {
+            "togglesticky"
+        } else if eq!(Jwm::togglescratchpad) {
+            "togglescratchpad"
+        } else if eq!(Jwm::togglepip) {
+            "togglepip"
         } else {
             "<unknown>"
         }
@@ -906,6 +914,7 @@ impl Jwm {
             suppress_mouse_focus_until: None,
 
             last_stacking: SecondaryMap::new(),
+            scratchpad_client: None,
             key_bindings: CONFIG.get_keys(),
             last_mouse_root: (0.0, 0.0),
         };
@@ -1836,7 +1845,7 @@ impl Jwm {
             self.state.clients.get(client_key),
             self.state.monitors.get(mon_key),
         ) {
-            (client.state.tags & monitor.tag_set[monitor.sel_tags]) > 0
+            client.state.is_sticky || (client.state.tags & monitor.tag_set[monitor.sel_tags]) > 0
         } else {
             false
         }
@@ -1846,7 +1855,7 @@ impl Jwm {
         if let Some(client) = self.state.clients.get(client_key) {
             if let Some(mon_key) = client.mon {
                 if let Some(monitor) = self.state.monitors.get(mon_key) {
-                    return (client.state.tags & monitor.tag_set[monitor.sel_tags]) > 0;
+                    return client.state.is_sticky || (client.state.tags & monitor.tag_set[monitor.sel_tags]) > 0;
                 }
             }
         }
@@ -3023,13 +3032,25 @@ impl Jwm {
             return;
         }
 
+        let is_single = raw_clients.len() == 1;
+        let default_border = CONFIG.border_px() as i32;
+
+        // Smart gaps: single window gets no border
+        for &(key, _, _) in &raw_clients {
+            if let Some(client) = self.state.clients.get_mut(key) {
+                client.geometry.border_w = if is_single { 0 } else { default_border };
+            }
+        }
+
+        let effective_gap = if is_single { 0 } else { CONFIG.gap_px() as i32 };
+
         // 转换为 LayoutClient 结构
         let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
             .iter()
-            .map(|&(key, factor, border_w)| LayoutClient {
+            .map(|&(key, factor, _)| LayoutClient {
                 key,
                 factor,
-                border_w,
+                border_w: self.state.clients.get(key).map(|c| c.geometry.border_w).unwrap_or(default_border),
             })
             .collect();
 
@@ -3038,7 +3059,7 @@ impl Jwm {
             screen_area,
             n_master: nmaster,
             m_fact: mfact,
-            gap: CONFIG.gap_px() as i32,
+            gap: effective_gap,
         };
 
         // 4. 计算布局
@@ -3072,12 +3093,24 @@ impl Jwm {
             return;
         }
 
+        let is_single = raw_clients.len() == 1;
+        let default_border = CONFIG.border_px() as i32;
+
+        // Smart gaps: single window gets no border
+        for &(key, _, _) in &raw_clients {
+            if let Some(client) = self.state.clients.get_mut(key) {
+                client.geometry.border_w = if is_single { 0 } else { default_border };
+            }
+        }
+
+        let effective_gap = if is_single { 0 } else { CONFIG.gap_px() as i32 };
+
         let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
             .iter()
-            .map(|&(key, factor, border_w)| LayoutClient {
+            .map(|&(key, factor, _)| LayoutClient {
                 key,
                 factor,
-                border_w,
+                border_w: self.state.clients.get(key).map(|c| c.geometry.border_w).unwrap_or(default_border),
             })
             .collect();
 
@@ -3085,7 +3118,7 @@ impl Jwm {
             screen_area,
             n_master: nmaster,
             m_fact: mfact,
-            gap: CONFIG.gap_px() as i32,
+            gap: effective_gap,
         };
 
         let results = calc_fn(&params, &layout_clients);
@@ -3329,13 +3362,16 @@ impl Jwm {
 
         let mut tiled_bottom_to_top: Vec<WindowId> = Vec::new();
         let mut floating_bottom_to_top: Vec<WindowId> = Vec::new();
+        let mut pip_bottom_to_top: Vec<WindowId> = Vec::new();
 
         for &ck in stack.iter().rev() {
             if let Some(c) = self.state.clients.get(ck) {
                 if !self.is_client_visible_on_monitor(ck, mon_key) {
                     continue;
                 }
-                if c.state.is_floating {
+                if c.state.is_pip {
+                    pip_bottom_to_top.push(c.win);
+                } else if c.state.is_floating {
                     floating_bottom_to_top.push(c.win);
                 } else {
                     tiled_bottom_to_top.push(c.win);
@@ -3343,9 +3379,10 @@ impl Jwm {
             }
         }
 
+        // Promote selected floating window to top (but not PiP windows)
         if let Some(sel_ck) = monitor.sel {
             if let Some(sel_c) = self.state.clients.get(sel_ck) {
-                if sel_c.state.is_floating {
+                if sel_c.state.is_floating && !sel_c.state.is_pip {
                     if let Some(idx) = floating_bottom_to_top.iter().position(|&w| w == sel_c.win) {
                         let w = floating_bottom_to_top.remove(idx);
                         floating_bottom_to_top.push(w);
@@ -3355,9 +3392,10 @@ impl Jwm {
         }
 
         let mut final_bottom_to_top: Vec<WindowId> =
-            Vec::with_capacity(tiled_bottom_to_top.len() + floating_bottom_to_top.len());
+            Vec::with_capacity(tiled_bottom_to_top.len() + floating_bottom_to_top.len() + pip_bottom_to_top.len());
         final_bottom_to_top.extend(tiled_bottom_to_top.into_iter());
         final_bottom_to_top.extend(floating_bottom_to_top.into_iter());
+        final_bottom_to_top.extend(pip_bottom_to_top.into_iter());
 
         let need_restack_windows = match self.last_stacking.get(mon_key) {
             Some(prev) => prev.as_slice() != final_bottom_to_top.as_slice(),
@@ -3778,13 +3816,25 @@ impl Jwm {
             return;
         }
 
+        let is_single = raw_clients.len() == 1;
+        let default_border = CONFIG.border_px() as i32;
+
+        // Smart gaps: single window gets no border
+        for &(key, _, _) in &raw_clients {
+            if let Some(client) = self.state.clients.get_mut(key) {
+                client.geometry.border_w = if is_single { 0 } else { default_border };
+            }
+        }
+
+        let effective_gap = if is_single { 0 } else { CONFIG.gap_px() as i32 };
+
         // 转换为纯数据结构 LayoutClient
         let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
             .iter()
-            .map(|&(key, factor, border_w)| LayoutClient {
+            .map(|&(key, factor, _)| LayoutClient {
                 key,
                 factor,
-                border_w,
+                border_w: self.state.clients.get(key).map(|c| c.geometry.border_w).unwrap_or(default_border),
             })
             .collect();
 
@@ -3793,7 +3843,7 @@ impl Jwm {
             screen_area,
             n_master: nmaster,
             m_fact: mfact,
-            gap: CONFIG.gap_px() as i32,
+            gap: effective_gap,
         };
         let results = layout::calculate_tile(&params, &layout_clients);
 
@@ -4154,6 +4204,209 @@ impl Jwm {
         }
 
         self.arrange(backend, Some(sel_mon_key));
+        Ok(())
+    }
+
+    pub fn togglesticky(
+        &mut self,
+        backend: &mut dyn Backend,
+        _arg: &WMArgEnum,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let Some(sel_mon_key) = self.state.sel_mon else {
+            return Ok(());
+        };
+        let Some(sel_client_key) = self.state.monitors.get(sel_mon_key).and_then(|m| m.sel) else {
+            return Ok(());
+        };
+        if let Some(client) = self.state.clients.get_mut(sel_client_key) {
+            client.state.is_sticky = !client.state.is_sticky;
+            if client.state.is_sticky {
+                // Ensure sticky client has current monitor tags
+                if let Some(monitor) = self.state.monitors.get(sel_mon_key) {
+                    let current_tags = monitor.tag_set[monitor.sel_tags];
+                    if let Some(client) = self.state.clients.get_mut(sel_client_key) {
+                        client.state.tags = current_tags;
+                    }
+                }
+            }
+        }
+        self.arrange(backend, Some(sel_mon_key));
+        Ok(())
+    }
+
+    fn update_sticky_tags(&mut self, mon_key: MonitorKey) {
+        let new_tags = if let Some(monitor) = self.state.monitors.get(mon_key) {
+            monitor.tag_set[monitor.sel_tags]
+        } else {
+            return;
+        };
+        let client_keys: Vec<ClientKey> = self
+            .state
+            .monitor_clients
+            .get(mon_key)
+            .map(|keys| keys.clone())
+            .unwrap_or_default();
+        for ck in client_keys {
+            if let Some(client) = self.state.clients.get_mut(ck) {
+                if client.state.is_sticky {
+                    client.state.tags = new_tags;
+                }
+            }
+        }
+    }
+
+    pub fn togglescratchpad(
+        &mut self,
+        backend: &mut dyn Backend,
+        _arg: &WMArgEnum,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        // Check if scratchpad client still exists
+        if let Some(sp_key) = self.scratchpad_client {
+            if self.state.clients.get(sp_key).is_none() {
+                self.scratchpad_client = None;
+            }
+        }
+
+        if let Some(sp_key) = self.scratchpad_client {
+            // Scratchpad exists — toggle visibility
+            let is_visible = self.is_client_visible_by_key(sp_key);
+            if is_visible {
+                // Hide: set tags to 0
+                if let Some(client) = self.state.clients.get_mut(sp_key) {
+                    client.state.tags = 0;
+                }
+                let mon_key = self.state.clients.get(sp_key).and_then(|c| c.mon);
+                self.focus(backend, None)?;
+                if let Some(mk) = mon_key {
+                    self.arrange(backend, Some(mk));
+                }
+            } else {
+                // Show: move to current monitor and tags
+                let sel_mon_key = self.state.sel_mon;
+                if let Some(mon_key) = sel_mon_key {
+                    let current_tags = self
+                        .state
+                        .monitors
+                        .get(mon_key)
+                        .map(|m| m.tag_set[m.sel_tags])
+                        .unwrap_or(1);
+
+                    if let Some(client) = self.state.clients.get_mut(sp_key) {
+                        client.state.tags = current_tags;
+                        client.mon = Some(mon_key);
+                        client.state.is_floating = true;
+                    }
+
+                    // Center at 80% of monitor work area
+                    if let Some(area) = self.monitor_work_area(mon_key) {
+                        let w = (area.w as f32 * 0.8) as i32;
+                        let h = (area.h as f32 * 0.8) as i32;
+                        let x = area.x + (area.w - w) / 2;
+                        let y = area.y + (area.h - h) / 2;
+                        self.resize_client(backend, sp_key, x, y, w, h, false);
+                    }
+
+                    self.arrange(backend, Some(mon_key));
+                    self.focus(backend, Some(sp_key))?;
+                }
+            }
+        } else {
+            // No scratchpad — spawn terminal with scratchpad class
+            let termcmd = crate::config::Config::get_termcmd();
+            if let Some(term) = termcmd.first() {
+                let mut command = Command::new(term);
+                command.args(&termcmd[1..]);
+                command.arg("--class").arg("scratchpad");
+
+                Self::setup_smithay_child_env(&mut command, backend);
+                command
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::inherit())
+                    .stderr(std::process::Stdio::inherit());
+                Self::apply_child_pre_exec(&mut command);
+
+                match command.spawn() {
+                    Ok(child) => {
+                        info!(
+                            "[togglescratchpad] spawned scratchpad terminal PID: {}",
+                            child.id()
+                        );
+                    }
+                    Err(e) => {
+                        error!("[togglescratchpad] failed to spawn: {}", e);
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn togglepip(
+        &mut self,
+        backend: &mut dyn Backend,
+        _arg: &WMArgEnum,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let Some(sel_mon_key) = self.state.sel_mon else {
+            return Ok(());
+        };
+        let Some(sel_client_key) = self.state.monitors.get(sel_mon_key).and_then(|m| m.sel) else {
+            return Ok(());
+        };
+
+        let is_pip = self
+            .state
+            .clients
+            .get(sel_client_key)
+            .map(|c| c.state.is_pip)
+            .unwrap_or(false);
+
+        if is_pip {
+            // Exit PiP: restore state
+            if let Some(client) = self.state.clients.get_mut(sel_client_key) {
+                client.state.is_pip = false;
+                client.state.is_floating = client.state.old_state;
+                client.state.is_sticky = false;
+            }
+            let (fx, fy, fw, fh) = if let Some(client) = self.state.clients.get(sel_client_key) {
+                (
+                    client.geometry.floating_x,
+                    client.geometry.floating_y,
+                    client.geometry.floating_w,
+                    client.geometry.floating_h,
+                )
+            } else {
+                return Ok(());
+            };
+            if fw > 0 && fh > 0 {
+                self.resize_client(backend, sel_client_key, fx, fy, fw, fh, false);
+            }
+            self.arrange(backend, Some(sel_mon_key));
+        } else {
+            // Enter PiP: save state, shrink to bottom-right
+            if let Some(client) = self.state.clients.get_mut(sel_client_key) {
+                client.state.old_state = client.state.is_floating;
+                client.geometry.floating_x = client.geometry.x;
+                client.geometry.floating_y = client.geometry.y;
+                client.geometry.floating_w = client.geometry.w;
+                client.geometry.floating_h = client.geometry.h;
+                client.state.is_pip = true;
+                client.state.is_floating = true;
+                client.state.is_sticky = true;
+            }
+
+            // Position at bottom-right, 25% of monitor, 10px padding
+            if let Some(area) = self.monitor_work_area(sel_mon_key) {
+                let w = (area.w as f32 * 0.25) as i32;
+                let h = (area.h as f32 * 0.25) as i32;
+                let x = area.x + area.w - w - 10;
+                let y = area.y + area.h - h - 10;
+                self.resize_client(backend, sel_client_key, x, y, w, h, false);
+            }
+
+            self.arrange(backend, Some(sel_mon_key));
+            self.restack(backend, Some(sel_mon_key))?;
+        }
+
         Ok(())
     }
 
@@ -5136,6 +5389,9 @@ impl Jwm {
         );
 
         let cur_tag = self.switch_to_tag(next_tag, next_tag)?;
+        if let Some(sel_mon_key) = self.state.sel_mon {
+            self.update_sticky_tags(sel_mon_key);
+        }
 
         let sel_opt = self.apply_pertag_settings(cur_tag)?;
 
@@ -5216,6 +5472,7 @@ impl Jwm {
             // 获取该 Tag 上次选中的 Client
             client_to_focus = monitor.get_selected_client_for_current_tag();
         }
+        self.update_sticky_tags(sel_mon_key);
 
         // 3. 副作用 (Backend / Arrange)
         self.focus(backend, client_to_focus)?;
@@ -5365,6 +5622,7 @@ impl Jwm {
         if let Some(monitor) = self.state.monitors.get_mut(sel_mon_key) {
             monitor.view_tag(mask, true); // true = toggle
         }
+        self.update_sticky_tags(sel_mon_key);
 
         // 2. 副作用
         self.focus(backend, None)?;
@@ -6131,7 +6389,33 @@ impl Jwm {
         }
 
         let client_key = self.insert_client(client);
-        self.manage_regular_client(backend, client_key)
+        self.manage_regular_client(backend, client_key)?;
+
+        // Detect scratchpad window
+        if self.scratchpad_client.is_none() {
+            if let Some(c) = self.state.clients.get(client_key) {
+                if c.class == "scratchpad" || c.instance == "scratchpad" {
+                    self.scratchpad_client = Some(client_key);
+                    // Make floating and center at 80% of monitor work area
+                    let mon_key = c.mon;
+                    if let Some(client) = self.state.clients.get_mut(client_key) {
+                        client.state.is_floating = true;
+                    }
+                    if let Some(mk) = mon_key {
+                        if let Some(area) = self.monitor_work_area(mk) {
+                            let w = (area.w as f32 * 0.8) as i32;
+                            let h = (area.h as f32 * 0.8) as i32;
+                            let x = area.x + (area.w - w) / 2;
+                            let y = area.y + (area.h - h) / 2;
+                            self.resize_client(backend, client_key, x, y, w, h, false);
+                        }
+                        self.arrange(backend, Some(mk));
+                    }
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn setup_client_window(
@@ -6806,7 +7090,7 @@ impl Jwm {
         info!("[monocle] via pure layout engine");
         let (wx, wy, ww, wh, _, _, monitor_num, _client_y_offset) = self.get_monitor_info(mon_key);
         let mut visible_count = 0u32;
-        let mut layout_clients = Vec::new();
+        let mut tiled_keys = Vec::new();
         if let Some(client_keys) = self.state.monitor_clients.get(mon_key) {
             for &client_key in client_keys {
                 if let Some(client) = self.state.clients.get(client_key) {
@@ -6815,16 +7099,30 @@ impl Jwm {
                     if is_visible {
                         visible_count += 1;
                         if !client.state.is_floating {
-                            layout_clients.push(LayoutClient {
-                                key: client_key,
-                                factor: 1.0, // Monocle 不关心 factor
-                                border_w: client.geometry.border_w,
-                            });
+                            tiled_keys.push(client_key);
                         }
                     }
                 }
             }
         }
+
+        // Smart borders: monocle windows get no border
+        let default_border = CONFIG.border_px() as i32;
+        let effective_border = if tiled_keys.len() == 1 { 0 } else { default_border };
+        for &ck in &tiled_keys {
+            if let Some(client) = self.state.clients.get_mut(ck) {
+                client.geometry.border_w = effective_border;
+            }
+        }
+
+        let layout_clients: Vec<LayoutClient<ClientKey>> = tiled_keys
+            .iter()
+            .map(|&key| LayoutClient {
+                key,
+                factor: 1.0,
+                border_w: effective_border,
+            })
+            .collect();
         if visible_count > 0 {
             let formatted_string = format!("[{}]", visible_count);
             if let Some(monitor) = self.state.monitors.get_mut(mon_key) {
@@ -7151,6 +7449,9 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         if let Some(client) = self.state.clients.get(client_key) {
             info!("[unmanage_regular_client] Removing client {}", client);
+        }
+        if self.scratchpad_client == Some(client_key) {
+            self.scratchpad_client = None;
         }
         let mon_key = self
             .state
