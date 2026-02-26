@@ -700,6 +700,8 @@ impl Jwm {
             }
         }
 
+        self.reorder_client_in_monitor_groups(client_key);
+
         self.arrange(backend, Some(sel_mon_key));
         Ok(())
     }
@@ -1772,6 +1774,7 @@ impl Jwm {
                 }
             }
         }
+        self.reorder_client_in_monitor_groups(client_key);
     }
 
     fn detach(&mut self, client_key: ClientKey) {
@@ -1784,6 +1787,44 @@ impl Jwm {
                 }
             }
         }
+    }
+
+    fn reorder_client_in_monitor_groups(&mut self, client_key: ClientKey) {
+        let (Some(mon_key), Some(is_floating)) = (
+            self.state.clients.get(client_key).and_then(|c| c.mon),
+            self.state.clients.get(client_key).map(|c| c.state.is_floating),
+        ) else {
+            return;
+        };
+
+        let Some(client_list) = self.state.monitor_clients.get_mut(mon_key) else {
+            return;
+        };
+
+        if let Some(pos) = client_list.iter().position(|&k| k == client_key) {
+            client_list.remove(pos);
+        }
+
+        if is_floating {
+            client_list.push(client_key);
+            return;
+        }
+
+        let mut insert_pos = client_list.len();
+        for (idx, &key) in client_list.iter().enumerate() {
+            let other_is_floating = self
+                .state
+                .clients
+                .get(key)
+                .map(|c| c.state.is_floating)
+                .unwrap_or(false);
+            if other_is_floating {
+                insert_pos = idx;
+                break;
+            }
+        }
+
+        client_list.insert(insert_pos, client_key);
     }
 
     fn attachstack(&mut self, client_key: ClientKey) {
@@ -1812,6 +1853,7 @@ impl Jwm {
         if let Some(stack_list) = self.state.monitor_stack.get_mut(mon_key) {
             stack_list.push(client_key);
         }
+        self.reorder_client_in_monitor_groups(client_key);
     }
 
     fn detachstack(&mut self, client_key: ClientKey) {
@@ -2656,6 +2698,7 @@ impl Jwm {
                 client.geometry.border_w = 0;
                 client.state.is_floating = true;
             }
+            self.reorder_client_in_monitor_groups(client_key);
             if let Some(mon_key) = self.state.clients.get(client_key).and_then(|c| c.mon) {
                 if let Some(monitor) = self.state.monitors.get(mon_key) {
                     let (mx, my, mw, mh) = (
@@ -2684,6 +2727,7 @@ impl Jwm {
                 client.geometry.w = client.geometry.old_w;
                 client.geometry.h = client.geometry.old_h;
             }
+            self.reorder_client_in_monitor_groups(client_key);
             let (x, y, w, h) = if let Some(client) = self.state.clients.get(client_key) {
                 (
                     client.geometry.x,
@@ -4255,6 +4299,8 @@ impl Jwm {
             self.resize_client(backend, sel_client_key, x, y, w, h, false);
         }
 
+        self.reorder_client_in_monitor_groups(sel_client_key);
+
         self.arrange(backend, Some(sel_mon_key));
         Ok(())
     }
@@ -4349,6 +4395,8 @@ impl Jwm {
                         client.state.is_floating = true;
                     }
 
+                    self.reorder_client_in_monitor_groups(sp_key);
+
                     // Center at 80% of monitor work area
                     if let Some(area) = self.monitor_work_area(mon_key) {
                         let w = (area.w as f32 * 0.8) as i32;
@@ -4419,6 +4467,7 @@ impl Jwm {
                 client.state.is_floating = client.state.old_state;
                 client.state.is_sticky = false;
             }
+            self.reorder_client_in_monitor_groups(sel_client_key);
             let (fx, fy, fw, fh) = if let Some(client) = self.state.clients.get(sel_client_key) {
                 (
                     client.geometry.floating_x,
@@ -4445,6 +4494,8 @@ impl Jwm {
                 client.state.is_floating = true;
                 client.state.is_sticky = true;
             }
+
+            self.reorder_client_in_monitor_groups(sel_client_key);
 
             // Position at bottom-right, 25% of monitor, 10px padding
             if let Some(area) = self.monitor_work_area(sel_mon_key) {
@@ -4749,21 +4800,26 @@ impl Jwm {
     fn find_next_visible_client(&self) -> Result<Option<ClientKey>, Box<dyn std::error::Error>> {
         let sel_mon_key = self.state.sel_mon.ok_or("No selected monitor")?;
         let current_sel = self.get_selected_client_key().ok_or("No selected client")?;
+        let (tile_clients, floating_clients) = self.grouped_visible_clients(sel_mon_key);
+        let current_is_floating = self
+            .state
+            .clients
+            .get(current_sel)
+            .map(|client| client.state.is_floating)
+            .unwrap_or(false);
 
-        if let Some(client_list) = self.state.monitor_clients.get(sel_mon_key) {
-            if let Some(current_index) = client_list.iter().position(|&k| k == current_sel) {
-                for &client_key in &client_list[current_index + 1..] {
-                    if self.is_client_visible_by_key(client_key) {
-                        return Ok(Some(client_key));
-                    }
-                }
+        let (current_group, other_group) = if current_is_floating {
+            (&floating_clients, &tile_clients)
+        } else {
+            (&tile_clients, &floating_clients)
+        };
 
-                for &client_key in &client_list[..current_index] {
-                    if self.is_client_visible_by_key(client_key) {
-                        return Ok(Some(client_key));
-                    }
-                }
-            }
+        if let Some(next) = Self::next_in_group(current_group, current_sel) {
+            return Ok(Some(next));
+        }
+
+        if let Some(next) = other_group.first().copied() {
+            return Ok(Some(next));
         }
 
         Ok(None)
@@ -4774,24 +4830,66 @@ impl Jwm {
     ) -> Result<Option<ClientKey>, Box<dyn std::error::Error>> {
         let sel_mon_key = self.state.sel_mon.ok_or("No selected monitor")?;
         let current_sel = self.get_selected_client_key().ok_or("No selected client")?;
+        let (tile_clients, floating_clients) = self.grouped_visible_clients(sel_mon_key);
+        let current_is_floating = self
+            .state
+            .clients
+            .get(current_sel)
+            .map(|client| client.state.is_floating)
+            .unwrap_or(false);
 
-        if let Some(client_list) = self.state.monitor_clients.get(sel_mon_key) {
-            if let Some(current_index) = client_list.iter().position(|&k| k == current_sel) {
-                for &client_key in client_list[..current_index].iter().rev() {
-                    if self.is_client_visible_by_key(client_key) {
-                        return Ok(Some(client_key));
-                    }
+        let (current_group, other_group) = if current_is_floating {
+            (&floating_clients, &tile_clients)
+        } else {
+            (&tile_clients, &floating_clients)
+        };
+
+        if let Some(prev) = Self::prev_in_group(current_group, current_sel) {
+            return Ok(Some(prev));
+        }
+
+        if let Some(prev) = other_group.last().copied() {
+            return Ok(Some(prev));
+        }
+
+        Ok(None)
+    }
+
+    fn grouped_visible_clients(&self, mon_key: MonitorKey) -> (Vec<ClientKey>, Vec<ClientKey>) {
+        let mut tile_clients = Vec::new();
+        let mut floating_clients = Vec::new();
+
+        if let Some(client_list) = self.state.monitor_clients.get(mon_key) {
+            for &client_key in client_list {
+                if !self.is_client_visible_on_monitor(client_key, mon_key) {
+                    continue;
                 }
 
-                for &client_key in client_list[current_index + 1..].iter().rev() {
-                    if self.is_client_visible_by_key(client_key) {
-                        return Ok(Some(client_key));
+                if let Some(client) = self.state.clients.get(client_key) {
+                    if client.state.is_floating {
+                        floating_clients.push(client_key);
+                    } else {
+                        tile_clients.push(client_key);
                     }
                 }
             }
         }
 
-        Ok(None)
+        (tile_clients, floating_clients)
+    }
+
+    fn next_in_group(group: &[ClientKey], current_sel: ClientKey) -> Option<ClientKey> {
+        group
+            .iter()
+            .position(|&k| k == current_sel)
+            .and_then(|idx| group.get(idx + 1).copied())
+    }
+
+    fn prev_in_group(group: &[ClientKey], current_sel: ClientKey) -> Option<ClientKey> {
+        group
+            .iter()
+            .position(|&k| k == current_sel)
+            .and_then(|idx| idx.checked_sub(1).and_then(|prev_idx| group.get(prev_idx).copied()))
     }
 
     pub fn togglebar(
@@ -5827,6 +5925,8 @@ impl Jwm {
                     if let Some(client) = self.state.clients.get_mut(client_key) {
                         client.state.is_floating = true;
                     }
+
+                    self.reorder_client_in_monitor_groups(client_key);
 
                     debug!(
                         "Window '{}' became floating due to transient_for: {:?}",
@@ -7779,6 +7879,13 @@ impl Jwm {
             return;
         };
 
+        let was_floating = self
+            .state
+            .clients
+            .get(client_key)
+            .map(|client| client.state.is_floating)
+            .unwrap_or(false);
+
         // 处理全屏
         if backend.property_ops().is_fullscreen(win) {
             let _ = self.setfullscreen(backend, client_key, true);
@@ -7810,6 +7917,16 @@ impl Jwm {
                     c.state.never_focus = true; // 这些窗口通常不接受焦点
                 }
             }
+        }
+
+        let is_floating_now = self
+            .state
+            .clients
+            .get(client_key)
+            .map(|client| client.state.is_floating)
+            .unwrap_or(was_floating);
+        if is_floating_now != was_floating {
+            self.reorder_client_in_monitor_groups(client_key);
         }
     }
 
