@@ -49,7 +49,7 @@ use crate::config::CONFIG;
 use crate::core::layout::LayoutEnum;
 use crate::core::models::{ClientKey, MonitorKey, Pertag, SizeHints, WMClient, WMMonitor};
 
-use crate::core::layout::{self, LayoutClient, LayoutParams};
+use crate::core::layout::{self, LayoutClient, LayoutParams, LayoutResult};
 use crate::core::types::Rect;
 use shared_structures::CommandType;
 use shared_structures::SharedCommand;
@@ -2996,6 +2996,12 @@ impl Jwm {
             LayoutEnum::TILE => self.tile(backend, mon_key),
             LayoutEnum::MONOCLE => self.monocle(backend, mon_key),
             LayoutEnum::FIBONACCI => self.fibonacci(backend, mon_key),
+            LayoutEnum::CENTERED_MASTER => self.centered_master(backend, mon_key),
+            LayoutEnum::BSTACK => self.bstack(backend, mon_key),
+            LayoutEnum::GRID => self.grid(backend, mon_key),
+            LayoutEnum::DECK => self.deck(backend, mon_key),
+            LayoutEnum::THREE_COL => self.three_col(backend, mon_key),
+            LayoutEnum::TATAMI => self.tatami(backend, mon_key),
             LayoutEnum::FLOAT | _ => {}
         }
     }
@@ -3045,6 +3051,75 @@ impl Jwm {
                 backend, res.key, res.rect.x, res.rect.y, res.rect.w, res.rect.h, false,
             );
         }
+    }
+
+    fn tiling_layout_wrapper(
+        &mut self,
+        backend: &mut dyn Backend,
+        mon_key: MonitorKey,
+        name: &str,
+        calc_fn: fn(&LayoutParams, &[LayoutClient<ClientKey>]) -> Vec<LayoutResult<ClientKey>>,
+    ) {
+        info!("[{}] via pure layout engine", name);
+        let (wx, wy, ww, wh, mfact, nmaster, _monitor_num, _client_y_offset) =
+            self.get_monitor_info(mon_key);
+
+        let screen_area = self
+            .monitor_work_area(mon_key)
+            .unwrap_or(Rect::new(wx, wy, ww, wh));
+
+        let raw_clients = self.collect_tileable_clients(mon_key);
+        if raw_clients.is_empty() {
+            return;
+        }
+
+        let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
+            .iter()
+            .map(|&(key, factor, border_w)| LayoutClient {
+                key,
+                factor,
+                border_w,
+            })
+            .collect();
+
+        let params = LayoutParams {
+            screen_area,
+            n_master: nmaster,
+            m_fact: mfact,
+            gap: CONFIG.gap_px() as i32,
+        };
+
+        let results = calc_fn(&params, &layout_clients);
+
+        for res in results {
+            self.resize_client(
+                backend, res.key, res.rect.x, res.rect.y, res.rect.w, res.rect.h, false,
+            );
+        }
+    }
+
+    fn centered_master(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
+        self.tiling_layout_wrapper(backend, mon_key, "centered_master", layout::calculate_centered_master);
+    }
+
+    fn bstack(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
+        self.tiling_layout_wrapper(backend, mon_key, "bstack", layout::calculate_bstack);
+    }
+
+    fn grid(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
+        self.tiling_layout_wrapper(backend, mon_key, "grid", layout::calculate_grid);
+    }
+
+    fn deck(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
+        self.tiling_layout_wrapper(backend, mon_key, "deck", layout::calculate_deck);
+    }
+
+    fn three_col(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
+        self.tiling_layout_wrapper(backend, mon_key, "three_col", layout::calculate_three_col);
+    }
+
+    fn tatami(&mut self, backend: &mut dyn Backend, mon_key: MonitorKey) {
+        self.tiling_layout_wrapper(backend, mon_key, "tatami", layout::calculate_tatami);
     }
 
     fn dirtomon(&mut self, dir: &i32) -> Option<MonitorKey> {
