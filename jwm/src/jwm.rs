@@ -61,6 +61,7 @@ pub const STEXT_MAX_LEN: usize = 512;
 pub const NORMAL_STATE: u8 = 1;
 pub const ICONIC_STATE: u8 = 2;
 pub const SHARED_PATH: &str = "/dev/shm/jwm_bar_global";
+const MOUSE_RESTACK_DEBOUNCE_MS: u64 = 50;
 
 lazy_static::lazy_static! {
     pub static ref BUTTONMASK: EventMaskBits  = EventMaskBits::BUTTON_PRESS | EventMaskBits::BUTTON_RELEASE;
@@ -210,6 +211,7 @@ pub struct Jwm {
     pub pending_bar_updates: HashSet<MonitorIndex>,
 
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
+    pub last_mouse_restack_at: Option<std::time::Instant>,
 
     pub last_stacking: SecondaryMap<MonitorKey, Vec<WindowId>>,
 
@@ -918,6 +920,7 @@ impl Jwm {
             pending_bar_updates: HashSet::new(),
 
             suppress_mouse_focus_until: None,
+            last_mouse_restack_at: None,
 
             last_stacking: SecondaryMap::new(),
             scratchpad_client: None,
@@ -1306,6 +1309,7 @@ impl Jwm {
                 if let Some(client_key) = self.wintoclient(win) {
                     if !self.is_client_selected(client_key) {
                         self.focus(backend, Some(client_key))?;
+                        self.restack_after_mouse_focus(backend)?;
                     }
                 }
             }
@@ -3037,7 +3041,27 @@ impl Jwm {
         }
         if self.should_focus_client(client_key_opt, is_on_selected_monitor) {
             self.focus(backend, client_key_opt)?;
+            self.restack_after_mouse_focus(backend)?;
         }
+        Ok(())
+    }
+
+    fn restack_after_mouse_focus(
+        &mut self,
+        backend: &mut dyn Backend,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let now = Instant::now();
+        if let Some(last) = self.last_mouse_restack_at {
+            if now.duration_since(last) < Duration::from_millis(MOUSE_RESTACK_DEBOUNCE_MS) {
+                return Ok(());
+            }
+        }
+
+        if let Some(mon_key) = self.state.sel_mon {
+            self.restack(backend, Some(mon_key))?;
+            self.last_mouse_restack_at = Some(now);
+        }
+
         Ok(())
     }
 
