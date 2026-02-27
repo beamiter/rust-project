@@ -251,10 +251,14 @@ mod tests {
     use super::*;
     use std::io::Write;
 
-    /// Helper: create an IpcServer bound to a temp path.
+    use std::sync::atomic::{AtomicU64, Ordering};
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(0);
+
+    /// Helper: create an IpcServer bound to a unique temp path.
     fn make_test_server() -> IpcServer {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::Relaxed);
         let dir = std::env::temp_dir();
-        let path = dir.join(format!("jwm-ipc-test-{}.sock", std::process::id()));
+        let path = dir.join(format!("jwm-ipc-test-{}-{}.sock", std::process::id(), id));
         let _ = std::fs::remove_file(&path);
         let listener = UnixListener::bind(&path).unwrap();
         listener.set_nonblocking(true).unwrap();
