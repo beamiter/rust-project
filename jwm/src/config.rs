@@ -1,8 +1,10 @@
+use arc_swap::ArcSwap;
 use cfg_if::cfg_if;
 use once_cell::sync::Lazy;
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 
 use std::fmt;
 use std::rc::Rc;
@@ -15,7 +17,7 @@ use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
 use crate::backend::common_define::keys as k;
 use crate::backend::common_define::{KeySym, Mods, MouseButton};
 
-pub const LOAD_LOCAL_CONFIG: bool = false;
+pub const LOAD_LOCAL_CONFIG: bool = true;
 
 macro_rules! status_bar_config {
     ($($feature:literal => $name:literal),* $(,)?) => {
@@ -1099,33 +1101,27 @@ impl From<toml::ser::Error> for ConfigError {
     }
 }
 
-pub static CONFIG: Lazy<Config> = Lazy::new(|| {
-    if !LOAD_LOCAL_CONFIG {
-        return Config::default();
-    }
-
-    let config = Config::load_default();
-    if !Config::config_exists() {
-        Config::generate_template(Config::get_default_config_path()).unwrap();
-        println!(
-            "Generated default config file at: {:?}",
-            Config::get_default_config_path()
-        );
-    }
-
-    // Usage test case:
-    // // 备份现有配置
-    // let backup_path = Config::backup_config(Config::get_default_config_path()).unwrap();
-    // println!("Backup created at: {:?}", backup_path);
-    // // 保存当前配置
-    // config.save_default().unwrap();
-    // println!("Configuration saved successfully!");
-    // // 验证配置文件
-    // Config::validate_config_file(Config::get_default_config_path()).unwrap();
-    // println!("Configuration file is valid!");
-    // // 重新加载配置
-    // config.reload().unwrap();
-    println!("Configuration reloaded!");
-
-    return config;
+pub static CONFIG: Lazy<ArcSwap<Config>> = Lazy::new(|| {
+    let config = if !LOAD_LOCAL_CONFIG {
+        Config::default()
+    } else {
+        if !Config::config_exists() {
+            Config::generate_template(Config::get_default_config_path()).unwrap();
+            println!(
+                "Generated default config file at: {:?}",
+                Config::get_default_config_path()
+            );
+        }
+        let config = Config::load_default();
+        println!("Configuration loaded!");
+        config
+    };
+    ArcSwap::from_pointee(config)
 });
+
+/// Reload the global CONFIG from disk. Returns Ok on success.
+pub fn reload_global() -> Result<(), ConfigError> {
+    let new_config = Config::load_from_file(Config::get_default_config_path())?;
+    CONFIG.store(Arc::new(new_config));
+    Ok(())
+}

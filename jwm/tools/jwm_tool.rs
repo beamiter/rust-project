@@ -17,6 +17,7 @@ use std::io::{self, Write};
 use std::os::fd::AsFd;
 use std::os::fd::OwnedFd;
 use std::os::unix::fs::FileTypeExt;
+use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -103,6 +104,21 @@ enum Commands {
 
     /// 调试信息
     Debug,
+
+    /// 向 JWM IPC 发送消息 (JSON)
+    Msg {
+        /// 命令或查询名称 (e.g. view, get_windows, reload_config)
+        name: String,
+        /// JSON 参数 (e.g. '{"tag": 2}')
+        #[arg(long, default_value = "null")]
+        args: String,
+        /// 订阅事件流 (逗号分隔, e.g. window,tag,layout)
+        #[arg(long)]
+        subscribe: Option<String>,
+        /// 输出原始 JSON (不格式化)
+        #[arg(long)]
+        raw: bool,
+    },
 }
 
 fn default_jwm_dir() -> String {
@@ -917,7 +933,117 @@ fn main() -> io::Result<()> {
         }
 
         Commands::Debug => debug_info(),
+
+        Commands::Msg { name, args, subscribe, raw } => {
+            run_ipc_msg(&name, &args, subscribe.as_deref(), raw)?;
+        }
     }
 
     Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// IPC msg subcommand
+// ---------------------------------------------------------------------------
+
+fn ipc_socket_path() -> PathBuf {
+    let runtime = env::var("XDG_RUNTIME_DIR")
+        .unwrap_or_else(|_| format!("/tmp/jwm-{}", unsafe { libc::getuid() }));
+    Path::new(&runtime).join("jwm-ipc.sock")
+}
+
+fn run_ipc_msg(name: &str, args_str: &str, subscribe: Option<&str>, raw: bool) -> io::Result<()> {
+    let sock_path = ipc_socket_path();
+    if !sock_path.exists() {
+        eprintln!("Error: IPC socket not found at {}", sock_path.display());
+        eprintln!("Is JWM running?");
+        std::process::exit(1);
+    }
+
+    let mut stream = UnixStream::connect(&sock_path)?;
+    stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+
+    // Handle subscribe mode
+    if let Some(topics) = subscribe {
+        let topic_list: Vec<String> = topics.split(',').map(|s| s.trim().to_string()).collect();
+        let msg = serde_json::json!({ "subscribe": topic_list });
+        let mut line = serde_json::to_string(&msg).unwrap();
+        line.push('\n');
+        stream.write_all(line.as_bytes())?;
+
+        // Read subscription confirmation
+        let resp = read_ipc_line(&mut stream)?;
+        if !raw {
+            eprintln!("Subscribed: {}", resp.trim());
+        }
+
+        // Continuously read events (no timeout)
+        stream.set_read_timeout(None)?;
+        loop {
+            match read_ipc_line(&mut stream) {
+                Ok(line) => {
+                    if raw {
+                        println!("{}", line.trim());
+                    } else {
+                        match serde_json::from_str::<serde_json::Value>(line.trim()) {
+                            Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap_or(line)),
+                            Err(_) => println!("{}", line.trim()),
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Connection closed: {e}");
+                    break;
+                }
+            }
+        }
+        return Ok(());
+    }
+
+    // Parse args
+    let args: serde_json::Value = serde_json::from_str(args_str).unwrap_or_else(|_| {
+        eprintln!("Warning: could not parse args as JSON, using null");
+        serde_json::Value::Null
+    });
+
+    // Determine if this is a command or query
+    let msg = if name.starts_with("get_") {
+        serde_json::json!({ "query": name, "args": args })
+    } else {
+        serde_json::json!({ "command": name, "args": args })
+    };
+
+    let mut line = serde_json::to_string(&msg).unwrap();
+    line.push('\n');
+    stream.write_all(line.as_bytes())?;
+
+    // Read response
+    let resp = read_ipc_line(&mut stream)?;
+    if raw {
+        print!("{}", resp);
+    } else {
+        match serde_json::from_str::<serde_json::Value>(resp.trim()) {
+            Ok(v) => println!("{}", serde_json::to_string_pretty(&v).unwrap_or(resp)),
+            Err(_) => print!("{}", resp),
+        }
+    }
+
+    Ok(())
+}
+
+fn read_ipc_line(stream: &mut UnixStream) -> io::Result<String> {
+    let mut buf = Vec::new();
+    let mut byte = [0u8; 1];
+    loop {
+        match io::Read::read(stream, &mut byte) {
+            Ok(0) => return Err(io::Error::new(io::ErrorKind::UnexpectedEof, "connection closed")),
+            Ok(_) => {
+                if byte[0] == b'\n' {
+                    return Ok(String::from_utf8_lossy(&buf).to_string());
+                }
+                buf.push(byte[0]);
+            }
+            Err(e) => return Err(e),
+        }
+    }
 }

@@ -480,7 +480,8 @@ impl PropertyOps for WaylandPropertyOps {
             }
         }
 
-        let bar_name = crate::config::CONFIG.status_bar_name();
+        let cfg = crate::config::CONFIG.load();
+        let bar_name = cfg.status_bar_name();
         if !bar_name.is_empty() && (app_id == bar_name || title == bar_name) {
             return vec![WindowType::Dock];
         }
@@ -809,6 +810,7 @@ impl UdevBackend {
         // We match against the same (mods, keysym) pair that JWM uses for shortcuts.
         {
             let key_bindings = CONFIG
+                .load()
                 .get_keys()
                 .into_iter()
                 .map(|k| (k.mask & allowed_shortcut_mods(), k.key_sym))
@@ -1376,7 +1378,8 @@ impl UdevBackend {
                                 }
 
                                 // Check exclusive layer-shell first.
-                                let bar_name = crate::config::CONFIG.status_bar_name();
+                                let cfg = crate::config::CONFIG.load();
+                                let bar_name = cfg.status_bar_name();
 
                                 let exclusive_surface = state
                                     .layer_shell_state

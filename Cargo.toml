@@ -3,7 +3,7 @@
 [workspace]
 # 列出所有属于该工作区的成员 crate
 members = [
-    # "egui_bar",
+    "egui_bar",
     # "iced_bar",
     "jterm4",
     # "gtk_bar",
@@ -46,6 +46,7 @@ libc = "0.2.176"
 cfg-if = "1.0.3"
 criterion = "0.7.0"
 once_cell = "1.21.3"
+arc-swap = "1"
 rand = "0.9.2"
 lazy_static = "1.5.0"
 nix = { version = "0.30.1", features = ["signal"] }

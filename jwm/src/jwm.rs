@@ -47,6 +47,8 @@ use crate::backend::common_define::SchemeType;
 use crate::backend::common_define::{KeySym, Mods, MouseButton, StdCursorKind};
 use crate::config::CONFIG;
 use crate::core::layout::LayoutEnum;
+use crate::ipc::{self, IpcEvent, IpcResponse, MonitorInfoIpc, TreeNode, WindowInfo, WorkspaceInfo};
+use crate::ipc_server::{IpcServer, IncomingIpc};
 use crate::core::models::{ClientKey, MonitorKey, Pertag, SizeHints, WMClient, WMMonitor};
 
 use crate::core::layout::{self, LayoutClient, LayoutParams, LayoutResult};
@@ -219,6 +221,13 @@ pub struct Jwm {
     pub scratchpad_pending: bool,
 
     key_bindings: Vec<WMKey>,
+
+    // IPC
+    pub ipc_server: Option<IpcServer>,
+
+    // Config hot-reload
+    pub config_last_modified: Option<std::time::SystemTime>,
+    pub config_reload_debounce: Option<std::time::Instant>,
 }
 
 // =================================================================================
@@ -473,7 +482,7 @@ impl WMController for Jwm {
                     .state
                     .clients
                     .get(client_key)
-                    .map(|c| c.is_status_bar(CONFIG.status_bar_name()))
+                    .map(|c| c.is_status_bar(CONFIG.load().status_bar_name()))
                     .unwrap_or(false);
 
                 if is_bar {
@@ -671,6 +680,8 @@ impl EventHandler for Jwm {
         }
 
         self.process_commands_from_status_bar(backend);
+        self.process_ipc(backend);
+        self.check_config_reload(backend);
         self.flush_pending_bar_updates();
         backend.window_ops().flush()?;
         Ok(())
@@ -876,7 +887,7 @@ impl Jwm {
             backend.root_window()
         );
         let alloc = backend.color_allocator();
-        let colors = crate::config::CONFIG.colors();
+        let colors = crate::config::CONFIG.load().colors().clone();
         alloc.set_scheme(
             SchemeType::Norm,
             ColorScheme::new(
@@ -925,8 +936,18 @@ impl Jwm {
             last_stacking: SecondaryMap::new(),
             scratchpad_client: None,
             scratchpad_pending: false,
-            key_bindings: CONFIG.get_keys(),
+            key_bindings: CONFIG.load().get_keys(),
             last_mouse_root: (0.0, 0.0),
+
+            ipc_server: match IpcServer::new() {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    warn!("[ipc] failed to start IPC server: {e}");
+                    None
+                }
+            },
+            config_last_modified: crate::config::Config::get_config_modified_time().ok(),
+            config_reload_debounce: None,
         };
         if let Ok((x, y)) = backend.input_ops().get_pointer_position() {
             jwm.last_mouse_root = (x, y);
@@ -943,7 +964,7 @@ impl Jwm {
     // --- 热插拔处理逻辑 ---
     fn add_monitor(&mut self, info: crate::backend::api::OutputInfo) {
         info!("[add_monitor] Adding output: {:?}", info);
-        let mut m = self.createmon(CONFIG.show_bar());
+        let mut m = self.createmon(CONFIG.load().show_bar());
 
         // 设置 Monitor 几何属性
         m.geometry.m_x = info.x;
@@ -1217,7 +1238,7 @@ impl Jwm {
         let mouse_button = MouseButton::from_u8(detail_btn);
 
         let mut handled_by_wm = false;
-        for config in CONFIG.get_buttons().iter() {
+        for config in CONFIG.load().get_buttons().iter() {
             let kc_mask = config.mask
                 & (Mods::SHIFT
                     | Mods::CONTROL
@@ -1382,7 +1403,7 @@ impl Jwm {
         }
         if mask.contains(ConfigWindowBits::HEIGHT) {
             if let Some(h) = req.height {
-                let new_h = (h as i32).max(CONFIG.status_bar_height());
+                let new_h = (h as i32).max(CONFIG.load().status_bar_height());
                 statusbar_mut.geometry.h = new_h;
                 changes.height = Some(new_h as u32);
             }
@@ -2203,7 +2224,7 @@ impl Jwm {
             .map(|client| client.state.is_floating)
             .unwrap_or(false);
 
-        if !CONFIG.behavior().resize_hints && !is_floating {
+        if !CONFIG.load().behavior().resize_hints && !is_floating {
             return Ok(false);
         }
 
@@ -2331,6 +2352,11 @@ impl Jwm {
 
     pub fn cleanup(&mut self, backend: &mut dyn Backend) -> Result<(), Box<dyn std::error::Error>> {
         info!("[cleanup] Starting essential cleanup (letting Rust handle memory)");
+        // Shut down IPC server (also handled by Drop, but explicit is clearer)
+        if let Some(ref mut ipc) = self.ipc_server {
+            ipc.shutdown();
+        }
+        self.ipc_server = None;
         self.cleanup_x11_resources(backend)?;
         self.cleanup_system_resources()?;
         backend.color_allocator().free_all_theme_pixels()?;
@@ -2964,19 +2990,19 @@ impl Jwm {
         let mut m: WMMonitor = WMMonitor::new();
         m.tag_set[0] = 1;
         m.tag_set[1] = 1;
-        m.layout.m_fact = CONFIG.m_fact();
-        m.layout.n_master = CONFIG.n_master();
+        m.layout.m_fact = CONFIG.load().m_fact();
+        m.layout.n_master = CONFIG.load().n_master();
         m.lt[0] = Rc::new(LayoutEnum::FIBONACCI);
         m.lt[1] = Rc::new(LayoutEnum::TILE);
         m.lt_symbol = m.lt[0].symbol().to_string();
-        m.pertag = Some(Pertag::new(show_bar, CONFIG.tags_length()));
+        m.pertag = Some(Pertag::new(show_bar, CONFIG.load().tags_length()));
         // SAFETY: pertag was just set to Some on the line above
         let ref_pertag = m.pertag.as_mut().expect("pertag just initialized");
         ref_pertag.cur_tag = 1;
         ref_pertag.prev_tag = 1;
         let default_layout_0 = m.lt[0].clone();
         let default_layout_1 = m.lt[1].clone();
-        for i in 0..=CONFIG.tags_length() {
+        for i in 0..=CONFIG.load().tags_length() {
             ref_pertag.n_masters[i] = m.layout.n_master;
             ref_pertag.m_facts[i] = m.layout.m_fact;
 
@@ -3138,7 +3164,7 @@ impl Jwm {
         }
 
         let (_effective_border, effective_gap) = self.apply_smart_borders(&raw_clients);
-        let default_border = CONFIG.border_px() as i32;
+        let default_border = CONFIG.load().border_px() as i32;
 
         // 转换为 LayoutClient 结构
         let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
@@ -3190,7 +3216,7 @@ impl Jwm {
         }
 
         let (_effective_border, effective_gap) = self.apply_smart_borders(&raw_clients);
-        let default_border = CONFIG.border_px() as i32;
+        let default_border = CONFIG.load().border_px() as i32;
 
         let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
             .iter()
@@ -3379,10 +3405,10 @@ impl Jwm {
         // 3. 准备启动命令
         let mut command = if cfg!(feature = "nixgl") {
             let mut cmd = Command::new("nixGL");
-            cmd.arg(CONFIG.status_bar_name()).arg(shared_path);
+            cmd.arg(CONFIG.load().status_bar_name()).arg(shared_path);
             cmd
         } else {
-            let mut cmd = Command::new(CONFIG.status_bar_name());
+            let mut cmd = Command::new(CONFIG.load().status_bar_name());
             cmd.arg(shared_path);
             cmd
         };
@@ -3399,7 +3425,7 @@ impl Jwm {
         // can't import those buffers (common with certain driver stacks), the bar can become
         // invisible while still receiving input. Default to the cairo renderer unless the user
         // explicitly chose another one.
-        if CONFIG.status_bar_name() == "gtk_bar" {
+        if CONFIG.load().status_bar_name() == "gtk_bar" {
             if std::env::var_os("GSK_RENDERER").is_none() {
                 command.env("GSK_RENDERER", "cairo");
             }
@@ -3788,7 +3814,7 @@ impl Jwm {
         info!("[show_keybindings]");
 
         let mut lines: Vec<String> = Vec::new();
-        for kc in CONFIG.key_configs() {
+        for kc in CONFIG.load().key_configs() {
             let mods = kc.modifier.join("+");
             let shortcut = if mods.is_empty() {
                 kc.key.clone()
@@ -3839,7 +3865,7 @@ impl Jwm {
         }
 
         // 添加 tag 快捷键说明
-        let tags_len = CONFIG.tags_length();
+        let tags_len = CONFIG.load().tags_length();
         lines.push(format!("{:<28} {}", "Mod1+[1-9]", format!("view tag 1-{}", tags_len)));
         lines.push(format!("{:<28} {}", "Mod1+Shift+[1-9]", format!("move to tag 1-{}", tags_len)));
         lines.push(format!("{:<28} {}", "Mod1+Ctrl+[1-9]", format!("toggle view tag 1-{}", tags_len)));
@@ -3848,9 +3874,10 @@ impl Jwm {
 
         let text = lines.join("\n");
 
-        let dmenu_font = CONFIG.dmenu_font();
+        let cfg = CONFIG.load();
+        let dmenu_font = cfg.dmenu_font();
         let mut command = Command::new("dmenu");
-        command.args(["-l", &lines.len().to_string(), "-fn", &dmenu_font, "-p", "Keybindings:"]);
+        command.args(["-l", &lines.len().to_string(), "-fn", dmenu_font, "-p", "Keybindings:"]);
         command.stdin(std::process::Stdio::piped());
         command.stdout(std::process::Stdio::null());
         command.stderr(std::process::Stdio::inherit());
@@ -3926,7 +3953,7 @@ impl Jwm {
         }
 
         let (_effective_border, effective_gap) = self.apply_smart_borders(&raw_clients);
-        let default_border = CONFIG.border_px() as i32;
+        let default_border = CONFIG.load().border_px() as i32;
 
         // 转换为纯数据结构 LayoutClient
         let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
@@ -3978,9 +4005,9 @@ impl Jwm {
     /// multiple tiled windows get the configured border and gap.
     fn apply_smart_borders(&mut self, clients: &[(ClientKey, f32, i32)]) -> (i32, i32) {
         let is_single = clients.len() == 1;
-        let default_border = CONFIG.border_px() as i32;
+        let default_border = CONFIG.load().border_px() as i32;
         let effective_border = if is_single { 0 } else { default_border };
-        let effective_gap = if is_single { 0 } else { CONFIG.gap_px() as i32 };
+        let effective_gap = if is_single { 0 } else { CONFIG.load().gap_px() as i32 };
         for &(key, _, _) in clients {
             if let Some(client) = self.state.clients.get_mut(key) {
                 client.geometry.border_w = effective_border;
@@ -4016,8 +4043,8 @@ impl Jwm {
             // Prefer the actual status bar geometry if we have it.
             // This is important for Wayland, where the bar may be a layer-shell surface
             // and its real size/position comes from the compositor arrangement.
-            let fallback = CONFIG.status_bar_height() + CONFIG.status_bar_padding() * 2;
-            let pad = CONFIG.status_bar_padding().max(0);
+            let fallback = CONFIG.load().status_bar_height() + CONFIG.load().status_bar_padding() * 2;
+            let pad = CONFIG.load().status_bar_padding().max(0);
 
             if self.current_bar_monitor_id == Some(monitor.num) {
                 if let Some(bar_key) = self.status_bar_client {
@@ -4063,7 +4090,7 @@ impl Jwm {
         let mut left = 0i32;
         let mut right = 0i32;
 
-        let pad = CONFIG.status_bar_padding().max(0);
+        let pad = CONFIG.load().status_bar_padding().max(0);
         let threshold = pad.max(8);
 
         if let Some(client_keys) = self.state.monitor_clients.get(mon_key) {
@@ -4566,6 +4593,13 @@ impl Jwm {
                 }
                 self.switch_to_monitor(backend, target_mon_key)?;
                 self.focus(backend, None)?;
+
+                let mon_num = self.state.monitors.get(target_mon_key).map(|m| m.num);
+                if let Some(num) = mon_num {
+                    self.broadcast_ipc_event("monitor/focus", serde_json::json!({
+                        "monitor": num,
+                    }));
+                }
             }
         }
         Ok(())
@@ -4674,7 +4708,7 @@ impl Jwm {
         // info!("[tag]");
         if let WMArgEnum::UInt(ui) = *arg {
             let sel_client_key = self.get_selected_client_key();
-            let target_tag = ui & CONFIG.tagmask();
+            let target_tag = ui & CONFIG.load().tagmask();
 
             if let Some(client_key) = sel_client_key {
                 if target_tag > 0 {
@@ -4804,7 +4838,7 @@ impl Jwm {
 
         if let Some(client) = self.state.clients.get(sel_client_key) {
             let is_locked_fullscreen =
-                client.state.is_fullscreen && CONFIG.behavior().lock_fullscreen;
+                client.state.is_fullscreen && CONFIG.load().behavior().lock_fullscreen;
             Ok(!is_locked_fullscreen)
         } else {
             Err("Selected client not found".into())
@@ -5275,6 +5309,10 @@ impl Jwm {
             self.mark_bar_update_needed_if_visible(mon_num);
         }
 
+        self.broadcast_ipc_event("layout/set", serde_json::json!({
+            "layout": format!("{:?}", *new_layout),
+        }));
+
         Ok(())
     }
 
@@ -5333,6 +5371,10 @@ impl Jwm {
             self.mark_bar_update_needed_if_visible(mon_num);
         }
 
+        self.broadcast_ipc_event("layout/set", serde_json::json!({
+            "layout": format!("{:?}", next),
+        }));
+
         Ok(())
     }
 
@@ -5389,7 +5431,7 @@ impl Jwm {
             }
 
             // Restore border_w for all clients on this monitor
-            let border_w = CONFIG.border_px() as i32;
+            let border_w = CONFIG.load().border_px() as i32;
             let client_keys: Vec<ClientKey> = self
                 .state
                 .monitor_clients
@@ -5631,7 +5673,7 @@ impl Jwm {
             WMArgEnum::UInt(val) => *val,
             _ => return Ok(()),
         };
-        let target_mask = ui & CONFIG.tagmask();
+        let target_mask = ui & CONFIG.load().tagmask();
 
         let sel_mon_key = match self.state.sel_mon {
             Some(k) => k,
@@ -5659,6 +5701,10 @@ impl Jwm {
         self.arrange(backend, Some(sel_mon_key));
         self.refresh_bar_visibility_on_selected_monitor(backend)?;
         self.update_ewmh_desktop(backend)?;
+
+        self.broadcast_ipc_event("tag/view", serde_json::json!({
+            "tag": target_mask,
+        }));
 
         Ok(())
     }
@@ -5796,7 +5842,7 @@ impl Jwm {
             WMArgEnum::UInt(val) => *val,
             _ => return Ok(()),
         };
-        let mask = ui & CONFIG.tagmask();
+        let mask = ui & CONFIG.load().tagmask();
         let sel_mon_key = self.state.sel_mon.ok_or("No monitor selected")?;
 
         // 1. 状态变更
@@ -5844,7 +5890,7 @@ impl Jwm {
                 return Ok(());
             };
 
-            let newtags = current_tags ^ (ui & CONFIG.tagmask());
+            let newtags = current_tags ^ (ui & CONFIG.load().tagmask());
 
             if newtags > 0 {
                 if let Some(client) = self.state.clients.get_mut(sel_client_key) {
@@ -6003,10 +6049,17 @@ impl Jwm {
             return;
         };
         let new_title = self.fetch_window_title(backend, win);
+        let title_for_event;
         if let Some(client) = self.state.clients.get_mut(client_key) {
             client.name = new_title;
+            title_for_event = client.name.clone();
             debug!("Updated title for window {:?}: '{}'", win, client.name);
+        } else {
+            return;
         }
+        self.broadcast_ipc_event("window/title", serde_json::json!({
+            "id": win.raw(), "name": title_for_event,
+        }));
     }
 
     fn truncate_chars(input: String, max_chars: usize) -> String {
@@ -6393,6 +6446,16 @@ impl Jwm {
 
         self.mark_bar_update_needed_if_visible(None);
 
+        // Broadcast focus event
+        if let Some(ck) = client_key_opt {
+            let event_data = self.state.clients.get(ck).map(|c| (c.win.raw(), c.name.clone()));
+            if let Some((id, name)) = event_data {
+                self.broadcast_ipc_event("window/focus", serde_json::json!({
+                    "id": id, "name": name,
+                }));
+            }
+        }
+
         Ok(())
     }
 
@@ -6505,7 +6568,7 @@ impl Jwm {
         &self,
         backend: &mut dyn Backend,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let total = CONFIG.tags_length() as u32;
+        let total = CONFIG.load().tags_length() as u32;
         let current = if let Some(sel_mon_key) = self.state.sel_mon {
             if let Some(monitor) = self.state.monitors.get(sel_mon_key) {
                 let tagset = monitor.tag_set[monitor.sel_tags];
@@ -6583,7 +6646,7 @@ impl Jwm {
         self.update_class_info(backend, &mut client);
 
         info!("{}", client);
-        if client.is_status_bar(CONFIG.status_bar_name()) {
+        if client.is_status_bar(CONFIG.load().status_bar_name()) {
             info!("Detected status bar, managing as statusbar");
             let client_key = self.insert_client(client);
             let current_mon_id = self.get_sel_mon().map(|m| m.num).unwrap_or(0);
@@ -6596,6 +6659,16 @@ impl Jwm {
 
         let client_key = self.insert_client(client);
         self.manage_regular_client(backend, client_key)?;
+
+        // Broadcast window/new event
+        let new_event_data = self.state.clients.get(client_key).map(|c| {
+            (c.win.raw(), c.name.clone(), c.class.clone())
+        });
+        if let Some((id, name, class)) = new_event_data {
+            self.broadcast_ipc_event("window/new", serde_json::json!({
+                "id": id, "name": name, "class": class,
+            }));
+        }
 
         // Detect scratchpad window
         if self.scratchpad_pending {
@@ -6648,7 +6721,7 @@ impl Jwm {
         info!("Setting up window {:?}", win);
 
         if let Some(client) = self.state.clients.get_mut(client_key) {
-            client.geometry.border_w = CONFIG.border_px() as i32;
+            client.geometry.border_w = CONFIG.load().border_px() as i32;
         }
 
         self.update_client_decoration(backend, client_key, true)?;
@@ -6788,7 +6861,7 @@ impl Jwm {
             self.arrange(backend, Some(target_mon_key));
         }
 
-        if CONFIG.behavior().focus_follows_new_window && !is_never_focus {
+        if CONFIG.load().behavior().focus_follows_new_window && !is_never_focus {
             if let Some(target_mon_key) = client_mon_key {
                 self.switch_to_monitor(backend, target_mon_key)?;
                 self.focus(backend, Some(client_key))?;
@@ -6813,7 +6886,7 @@ impl Jwm {
         let _ = backend.window_ops().ungrab_all_buttons(win);
 
         if focused {
-            let buttons = crate::config::CONFIG.get_buttons();
+            let buttons = crate::config::CONFIG.load().get_buttons();
             let modifiers_combinations = [
                 Mods::NONE,
                 Mods::CAPS,
@@ -6995,7 +7068,7 @@ impl Jwm {
 
     fn set_default_tags(&mut self, client_key: ClientKey) {
         if let Some(client) = self.state.clients.get_mut(client_key) {
-            let current_tags = client.state.tags & CONFIG.tagmask();
+            let current_tags = client.state.tags & CONFIG.load().tagmask();
             if current_tags > 0 {
                 client.state.tags = current_tags;
             } else {
@@ -7051,7 +7124,7 @@ impl Jwm {
             info!("No window info available, setting as floating");
         }
         let mut rule_applied = false;
-        for rule in &CONFIG.get_rules() {
+        for rule in &CONFIG.load().get_rules() {
             if self.rule_matches(rule, &name, &class, &instance) {
                 self.apply_single_rule(client_key, rule);
                 rule_applied = true;
@@ -7128,7 +7201,7 @@ impl Jwm {
             client.state.never_focus = true;
             client.state.is_floating = true;
             client.state.is_dock = true;
-            client.state.tags = CONFIG.tagmask();
+            client.state.tags = CONFIG.load().tagmask();
             client.geometry.border_w = 0;
         }
 
@@ -7194,12 +7267,12 @@ impl Jwm {
         let (client_win, client_height) =
             if let Some(client) = self.state.clients.get_mut(client_key) {
                 if show_bar {
-                    let pad = CONFIG.status_bar_padding();
+                    let pad = CONFIG.load().status_bar_padding();
                     let border_width = client.geometry.border_w;
                     client.geometry.x = monitor.geometry.m_x + pad;
                     client.geometry.y = monitor.geometry.m_y + pad;
                     client.geometry.w = monitor.geometry.m_w - 2 * pad - 2 * border_width;
-                    client.geometry.h = CONFIG.status_bar_height();
+                    client.geometry.h = CONFIG.load().status_bar_height();
 
                     let changes = WindowChanges {
                         x: Some(client.geometry.x),
@@ -7316,7 +7389,7 @@ impl Jwm {
             }
         }
 
-        let default_border = CONFIG.border_px() as i32;
+        let default_border = CONFIG.load().border_px() as i32;
         let effective_border = if tiled_keys.len() == 1 { 0 } else { default_border };
         for &ck in &tiled_keys {
             if let Some(client) = self.state.clients.get_mut(ck) {
@@ -7408,6 +7481,16 @@ impl Jwm {
 
         if Some(win) == self.status_bar_window {
             return self.unmanage_statusbar();
+        }
+
+        // Broadcast window/close event before removing the client
+        let close_event_data = self.state.clients.get(client_key).map(|c| {
+            (c.win.raw(), c.name.clone())
+        });
+        if let Some((id, name)) = close_event_data {
+            self.broadcast_ipc_event("window/close", serde_json::json!({
+                "id": id, "name": name,
+            }));
         }
 
         self.unmanage_regular_client(backend, client_key, destroyed)?;
@@ -7701,7 +7784,7 @@ impl Jwm {
     fn clear_pertag_references(&mut self, client_key: ClientKey, mon_key: MonitorKey) {
         if let Some(monitor) = self.state.monitors.get_mut(mon_key) {
             if let Some(ref mut pertag) = monitor.pertag {
-                for i in 0..=CONFIG.tags_length() {
+                for i in 0..=CONFIG.load().tags_length() {
                     if pertag.sel[i] == Some(client_key) {
                         pertag.sel[i] = None;
                     }
@@ -7806,7 +7889,7 @@ impl Jwm {
         let mut dirty = false;
 
         if self.state.monitor_order.is_empty() {
-            let new_monitor = self.createmon(CONFIG.show_bar());
+            let new_monitor = self.createmon(CONFIG.load().show_bar());
             let mon_key = self.insert_monitor(new_monitor);
             self.state.sel_mon = Some(mon_key);
             dirty = true;
@@ -7840,7 +7923,7 @@ impl Jwm {
         if num_detected_monitors > current_num_monitors {
             dirty = true;
             for _ in current_num_monitors..num_detected_monitors {
-                let new_monitor = self.createmon(CONFIG.show_bar());
+                let new_monitor = self.createmon(CONFIG.load().show_bar());
                 let mon_key = self.insert_monitor(new_monitor);
                 info!(
                     "[setup_multiple_monitors] Created new monitor {:?}",
@@ -7986,7 +8069,7 @@ impl Jwm {
                     || types.contains(&WindowType::Desktop)
                 {
                     if !is_transient {
-                        c.state.tags = crate::config::CONFIG.tagmask();
+                        c.state.tags = crate::config::CONFIG.load().tagmask();
                         c.state.never_focus = true;
                     }
                 }
@@ -8066,7 +8149,7 @@ impl Jwm {
 
         let (occupied_tags_mask, urgent_tags_mask) = self.calculate_tag_masks(mon_key);
 
-        for i in 0..CONFIG.tags_length() {
+        for i in 0..CONFIG.load().tags_length() {
             let tag_bit = 1 << i;
 
             let is_filled_tag = self.is_filled_tag(mon_key, tag_bit);
@@ -8096,7 +8179,7 @@ impl Jwm {
         let mut occupied_tags_mask = 0u32;
         let mut urgent_tags_mask = 0u32;
 
-        let config_mask = crate::config::CONFIG.tagmask();
+        let config_mask = crate::config::CONFIG.load().tagmask();
 
         if let Some(client_keys) = self.state.monitor_clients.get(mon_key) {
             for &client_key in client_keys {
@@ -8141,7 +8224,7 @@ impl Jwm {
         if let Some(monitor) = self.state.monitors.get(mon_key) {
             if let Some(sel_client_key) = monitor.sel {
                 if let Some(client) = self.state.clients.get(sel_client_key) {
-                    let mask = crate::config::CONFIG.tagmask();
+                    let mask = crate::config::CONFIG.load().tagmask();
 
                     if (client.state.tags & mask) == mask {
                         // 策略 A: 直接返回 false。
@@ -8170,5 +8253,331 @@ impl Jwm {
             }
         }
         String::new()
+    }
+
+    // =========================================================================
+    // IPC processing
+    // =========================================================================
+
+    fn process_ipc(&mut self, backend: &mut dyn Backend) {
+        let ipc = match self.ipc_server.as_mut() {
+            Some(s) => s,
+            None => return,
+        };
+
+        ipc.accept_connections();
+        let messages = ipc.poll_clients();
+
+        for msg in messages {
+            match msg {
+                IncomingIpc::Command { client_id, name, args } => {
+                    let resp = self.handle_ipc_command(backend, &name, &args);
+                    if let Some(ipc) = self.ipc_server.as_mut() {
+                        ipc.respond(client_id, &resp);
+                    }
+                }
+                IncomingIpc::Query { client_id, name, args } => {
+                    let resp = self.handle_ipc_query(&name, &args);
+                    if let Some(ipc) = self.ipc_server.as_mut() {
+                        ipc.respond(client_id, &resp);
+                    }
+                }
+                IncomingIpc::Subscribe { client_id, topics } => {
+                    if let Some(ipc) = self.ipc_server.as_mut() {
+                        ipc.subscribe(client_id, topics);
+                        ipc.respond(client_id, &IpcResponse::ok(None));
+                    }
+                }
+            }
+        }
+    }
+
+    fn handle_ipc_command(
+        &mut self,
+        backend: &mut dyn Backend,
+        name: &str,
+        args: &serde_json::Value,
+    ) -> IpcResponse {
+        // Special command: reload_config
+        if name == "reload_config" {
+            return self.do_config_reload(backend);
+        }
+
+        match ipc::dispatch_command(name, args) {
+            Ok((func, arg)) => {
+                match func(self, backend, &arg) {
+                    Ok(()) => IpcResponse::ok(None),
+                    Err(e) => IpcResponse::err(format!("{e}")),
+                }
+            }
+            Err(e) => IpcResponse::err(e),
+        }
+    }
+
+    fn handle_ipc_query(&self, name: &str, _args: &serde_json::Value) -> IpcResponse {
+        match name {
+            "get_windows" => {
+                let windows = self.query_windows();
+                IpcResponse::ok(Some(serde_json::to_value(windows).unwrap_or_default()))
+            }
+            "get_workspaces" => {
+                let workspaces = self.query_workspaces();
+                IpcResponse::ok(Some(serde_json::to_value(workspaces).unwrap_or_default()))
+            }
+            "get_monitors" => {
+                let monitors = self.query_monitors();
+                IpcResponse::ok(Some(serde_json::to_value(monitors).unwrap_or_default()))
+            }
+            "get_tree" => {
+                let tree = self.query_tree();
+                IpcResponse::ok(Some(serde_json::to_value(tree).unwrap_or_default()))
+            }
+            "get_config" => {
+                let cfg = CONFIG.load();
+                IpcResponse::ok(Some(serde_json::json!({
+                    "border_px": cfg.border_px(),
+                    "gap_px": cfg.gap_px(),
+                    "snap": cfg.snap(),
+                    "m_fact": cfg.m_fact(),
+                    "n_master": cfg.n_master(),
+                    "tags_length": cfg.tags_length(),
+                    "show_bar": cfg.show_bar(),
+                })))
+            }
+            "get_version" => {
+                IpcResponse::ok(Some(serde_json::json!({
+                    "version": env!("CARGO_PKG_VERSION"),
+                    "name": "jwm",
+                })))
+            }
+            _ => IpcResponse::err(format!("unknown query: {name}")),
+        }
+    }
+
+    // -------------------------------------------------------------------------
+    // Query helpers
+    // -------------------------------------------------------------------------
+
+    fn query_windows(&self) -> Vec<WindowInfo> {
+        let sel_client = self.get_selected_client_key();
+        self.state.client_order.iter().filter_map(|&ck| {
+            let c = self.state.clients.get(ck)?;
+            if Some(c.win) == self.status_bar_window {
+                return None;
+            }
+            Some(WindowInfo {
+                id: c.win.raw(),
+                name: c.name.clone(),
+                class: c.class.clone(),
+                instance: c.instance.clone(),
+                tags: c.state.tags,
+                monitor: c.monitor_num as i32,
+                x: c.geometry.x,
+                y: c.geometry.y,
+                w: c.geometry.w,
+                h: c.geometry.h,
+                is_floating: c.state.is_floating,
+                is_fullscreen: c.state.is_fullscreen,
+                is_urgent: c.state.is_urgent,
+                is_sticky: c.state.is_sticky,
+                is_focused: sel_client == Some(ck),
+            })
+        }).collect()
+    }
+
+    fn query_workspaces(&self) -> Vec<WorkspaceInfo> {
+        let cfg = CONFIG.load();
+        let mut result = Vec::new();
+        for &mk in &self.state.monitor_order {
+            let mon = match self.state.monitors.get(mk) {
+                Some(m) => m,
+                None => continue,
+            };
+            let active_tags = mon.tag_set[mon.sel_tags];
+            let client_count = self.state.monitor_clients.get(mk)
+                .map(|v| v.len())
+                .unwrap_or(0);
+            for i in 0..cfg.tags_length() {
+                let tag_bit = 1u32 << i;
+                let is_active = (active_tags & tag_bit) != 0;
+                result.push(WorkspaceInfo {
+                    tag_mask: tag_bit,
+                    tag_index: i,
+                    monitor: mon.num,
+                    layout: format!("{:?}", *mon.lt[mon.sel_lt]),
+                    m_fact: mon.layout.m_fact,
+                    n_master: mon.layout.n_master,
+                    num_clients: if is_active { client_count } else { 0 },
+                    focused: is_active && self.state.sel_mon == Some(mk),
+                });
+            }
+        }
+        result
+    }
+
+    fn query_monitors(&self) -> Vec<MonitorInfoIpc> {
+        self.state.monitor_order.iter().filter_map(|&mk| {
+            let m = self.state.monitors.get(mk)?;
+            Some(MonitorInfoIpc {
+                num: m.num,
+                x: m.geometry.m_x,
+                y: m.geometry.m_y,
+                w: m.geometry.m_w,
+                h: m.geometry.m_h,
+                active_tags: m.tag_set[m.sel_tags],
+                layout: format!("{:?}", *m.lt[m.sel_lt]),
+                focused: self.state.sel_mon == Some(mk),
+            })
+        }).collect()
+    }
+
+    fn query_tree(&self) -> Vec<TreeNode> {
+        self.state.monitor_order.iter().filter_map(|&mk| {
+            let m = self.state.monitors.get(mk)?;
+            let sel_client = m.sel;
+            let windows: Vec<WindowInfo> = self.state.monitor_clients.get(mk)
+                .map(|clients| {
+                    clients.iter().filter_map(|&ck| {
+                        let c = self.state.clients.get(ck)?;
+                        if Some(c.win) == self.status_bar_window {
+                            return None;
+                        }
+                        Some(WindowInfo {
+                            id: c.win.raw(),
+                            name: c.name.clone(),
+                            class: c.class.clone(),
+                            instance: c.instance.clone(),
+                            tags: c.state.tags,
+                            monitor: c.monitor_num as i32,
+                            x: c.geometry.x,
+                            y: c.geometry.y,
+                            w: c.geometry.w,
+                            h: c.geometry.h,
+                            is_floating: c.state.is_floating,
+                            is_fullscreen: c.state.is_fullscreen,
+                            is_urgent: c.state.is_urgent,
+                            is_sticky: c.state.is_sticky,
+                            is_focused: sel_client == Some(ck),
+                        })
+                    }).collect()
+                })
+                .unwrap_or_default();
+            Some(TreeNode {
+                monitor: MonitorInfoIpc {
+                    num: m.num,
+                    x: m.geometry.m_x,
+                    y: m.geometry.m_y,
+                    w: m.geometry.m_w,
+                    h: m.geometry.m_h,
+                    active_tags: m.tag_set[m.sel_tags],
+                    layout: format!("{:?}", *m.lt[m.sel_lt]),
+                    focused: self.state.sel_mon == Some(mk),
+                },
+                windows,
+            })
+        }).collect()
+    }
+
+    // =========================================================================
+    // IPC event broadcast helper
+    // =========================================================================
+
+    pub fn broadcast_ipc_event(&mut self, event_type: &str, payload: serde_json::Value) {
+        if let Some(ipc) = self.ipc_server.as_mut() {
+            ipc.broadcast(&IpcEvent {
+                event: event_type.to_string(),
+                payload,
+            });
+        }
+    }
+
+    // =========================================================================
+    // Config hot-reload
+    // =========================================================================
+
+    fn check_config_reload(&mut self, backend: &mut dyn Backend) {
+        let now = Instant::now();
+
+        // Check if file modification time changed
+        if let Ok(mtime) = crate::config::Config::get_config_modified_time() {
+            if self.config_last_modified != Some(mtime) {
+                // File changed — start or restart debounce timer
+                self.config_last_modified = Some(mtime);
+                self.config_reload_debounce = Some(now);
+            }
+        }
+
+        // Process debounced reload
+        if let Some(debounce_start) = self.config_reload_debounce {
+            if now.duration_since(debounce_start) >= Duration::from_millis(300) {
+                self.config_reload_debounce = None;
+                info!("[config] detected config file change, reloading");
+                let resp = self.do_config_reload(backend);
+                if resp.success {
+                    info!("[config] reload successful");
+                } else {
+                    warn!("[config] reload failed: {:?}", resp.error);
+                }
+            }
+        }
+    }
+
+    fn do_config_reload(&mut self, backend: &mut dyn Backend) -> IpcResponse {
+        match crate::config::reload_global() {
+            Ok(()) => {
+                self.apply_config_changes(backend);
+                self.broadcast_ipc_event("config/reload", serde_json::json!({}));
+                IpcResponse::ok(None)
+            }
+            Err(e) => IpcResponse::err(format!("config reload failed: {e}")),
+        }
+    }
+
+    fn apply_config_changes(&mut self, backend: &mut dyn Backend) {
+        let cfg = CONFIG.load();
+
+        // 1. Rebind keys
+        self.key_bindings = cfg.get_keys();
+        if let Err(e) = self.grabkeys(backend) {
+            warn!("[config] failed to re-grab keys: {e}");
+        }
+
+        // 2. Re-apply color schemes
+        let colors = cfg.colors();
+        let alloc = backend.color_allocator();
+        let _ = alloc.free_all_theme_pixels();
+        if let (Ok(norm_fg), Ok(norm_bg), Ok(norm_border)) = (
+            ArgbColor::from_hex(&colors.dark_sea_green1, colors.opaque),
+            ArgbColor::from_hex(&colors.light_sky_blue1, colors.opaque),
+            ArgbColor::from_hex(&colors.light_sky_blue1, colors.opaque),
+        ) {
+            alloc.set_scheme(SchemeType::Norm, ColorScheme::new(norm_fg, norm_bg, norm_border));
+        }
+        if let (Ok(sel_fg), Ok(sel_bg), Ok(sel_border)) = (
+            ArgbColor::from_hex(&colors.dark_sea_green2, colors.opaque),
+            ArgbColor::from_hex(&colors.pale_turquoise1, colors.opaque),
+            ArgbColor::from_hex(&colors.cyan, colors.opaque),
+        ) {
+            alloc.set_scheme(SchemeType::Sel, ColorScheme::new(sel_fg, sel_bg, sel_border));
+        }
+        let _ = alloc.allocate_schemes_pixels();
+
+        // 3. Re-arrange all monitors (border/gap changes take effect)
+        let mon_keys: Vec<MonitorKey> = self.state.monitor_order.clone();
+        for mk in &mon_keys {
+            self.arrange(backend, Some(*mk));
+        }
+
+        // 4. Update decoration on all visible clients
+        let sel_ck = self.get_selected_client_key();
+        let client_keys: Vec<ClientKey> = self.state.client_order.clone();
+        for ck in client_keys {
+            if let Some(client) = self.state.clients.get(ck) {
+                if Some(client.win) != self.status_bar_window {
+                    let is_sel = sel_ck == Some(ck);
+                    let _ = self.update_client_decoration(backend, ck, is_sel);
+                }
+            }
+        }
     }
 }

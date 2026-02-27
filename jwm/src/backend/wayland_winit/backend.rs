@@ -426,7 +426,8 @@ impl PropertyOps for WaylandPropertyOps {
             }
         }
 
-        let bar_name = crate::config::CONFIG.status_bar_name();
+        let cfg = crate::config::CONFIG.load();
+        let bar_name = cfg.status_bar_name();
         if !bar_name.is_empty() && (title == bar_name || app_id == bar_name) {
             return vec![crate::backend::api::WindowType::Dock];
         }
@@ -979,6 +980,7 @@ impl WaylandWinitBackend {
                 | Mods::MOD5;
 
             let key_bindings = CONFIG
+                .load()
                 .get_keys()
                 .into_iter()
                 .map(|k| (k.mask & allowed_mods, k.key_sym))
@@ -1562,7 +1564,8 @@ fn process_input_event_windowed<B: InputBackend>(
                     }
                 }
 
-                let bar_name = crate::config::CONFIG.status_bar_name();
+                let cfg = crate::config::CONFIG.load();
+                let bar_name = cfg.status_bar_name();
                 let exclusive_surface = state
                     .layer_shell_state
                     .layer_surfaces()

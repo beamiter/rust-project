@@ -55,6 +55,7 @@ nix.workspace = true
 cfg-if.workspace = true
 lazy_static.workspace = true
 once_cell.workspace = true
+arc-swap.workspace = true
 rand.workspace = true
 xkbcommon = "0.9.0"
 bitflags = "2.9.4"
