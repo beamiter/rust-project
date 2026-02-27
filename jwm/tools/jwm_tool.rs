@@ -59,7 +59,21 @@ fn control_pipe_glob_pattern() -> String {
 // --- CLI ---
 
 #[derive(Parser)]
-#[command(name = "jwm-tool", version, about = "JWM 管理工具（单二进制多子命令）")]
+#[command(
+    name = "jwm-tool",
+    version,
+    about = "JWM 管理工具（单二进制多子命令）",
+    long_about = "JWM 管理工具 — 通过 IPC 控制 JWM 窗口管理器。\n\
+                  支持守护进程管理、窗口/标签/布局操作、事件订阅等功能。\n\
+                  IPC 套接字位于 $XDG_RUNTIME_DIR/jwm-ipc.sock",
+    after_help = "\x1b[1m示例:\x1b[0m\n  \
+                  jwm-tool daemon                        # 启动守护进程\n  \
+                  jwm-tool status                        # 查看守护进程状态\n  \
+                  jwm-tool msg view --args '{\"tag\":2}'   # 切换到标签 2\n  \
+                  jwm-tool msg get_windows               # 查询所有窗口\n  \
+                  jwm-tool msg get_windows --raw          # 查询并输出原始 JSON\n  \
+                  jwm-tool rebuild                       # 重新编译并重启 JWM",
+)]
 struct Cli {
     #[command(subcommand)]
     cmd: Commands,
@@ -67,7 +81,7 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// 启动守护进程
+    /// 启动守护进程（管理 JWM 进程的生命周期）
     Daemon {
         /// 自定义JWM可执行文件路径（默认 /usr/local/bin/jwm，可用 env JWM_BINARY 覆盖）
         #[arg(long, env = "JWM_BINARY")]
@@ -77,14 +91,18 @@ enum Commands {
         backend: Option<String>,
     },
 
-    /// 向守护进程发送命令
+    /// 重启 JWM 进程
     Restart,
+    /// 停止 JWM 进程（守护进程保持运行）
     Stop,
+    /// 启动 JWM 进程（需先启动守护进程）
     Start,
+    /// 退出守护进程及 JWM
     Quit,
+    /// 查看守护进程与 JWM 运行状态
     Status,
 
-    /// 编译并重启 JWM
+    /// 编译并重启 JWM（cargo build --release）
     Rebuild {
         /// JWM 源码目录（默认 $HOME/jwm，可用 env JWM_DIR 覆盖）
         #[arg(long, env = "JWM_DIR", default_value_t = default_jwm_dir())]
@@ -98,24 +116,70 @@ enum Commands {
         jwm_dir: String,
     },
 
-    /// 守护进程检查/重启
+    /// 检查守护进程是否存活
     DaemonCheck,
+    /// 重启守护进程
     DaemonRestart,
 
-    /// 调试信息
+    /// 打印调试信息（PID、套接字、控制管道等）
     Debug,
 
     /// 向 JWM IPC 发送消息 (JSON)
+    #[command(
+        long_about = "通过 Unix 套接字向 JWM 发送 IPC 消息。\n\
+                      名称以 get_ 开头的自动作为查询发送，其余作为命令发送。\n\n\
+                      \x1b[1m可用命令:\x1b[0m\n  \
+                      窗口: focusstack, killclient, zoom, togglefloating, togglesticky,\n        \
+                      togglepip, togglescratchpad, movestack\n  \
+                      布局: setmfact, setcfact, incnmaster, setlayout, cyclelayout, togglebar\n  \
+                      标签: view, tag, toggleview, toggletag, loopview\n  \
+                      显示器: focusmon, tagmon\n  \
+                      其他: spawn, quit, restart, reload_config\n\n\
+                      \x1b[1m可用查询:\x1b[0m\n  \
+                      get_windows, get_workspaces, get_monitors, get_tree, get_config, get_version\n\n\
+                      \x1b[1m可用布局:\x1b[0m\n  \
+                      tile, float, monocle, fibonacci, centered_master, bstack,\n  \
+                      grid, deck, three_col, tatami, fullscreen\n\n\
+                      \x1b[1m事件主题 (--subscribe):\x1b[0m\n  \
+                      window (window/new, window/close, window/focus, window/title)\n  \
+                      tag (tag/view), layout (layout/set), monitor (monitor/focus)\n  \
+                      config (config/reload), * (订阅全部)",
+        after_help = "\x1b[1m示例:\x1b[0m\n  \
+                      jwm-tool msg view --args '{\"tag\":2}'              # 切换到标签 2\n  \
+                      jwm-tool msg focusstack --args '{\"value\":-1}'     # 聚焦上一个窗口\n  \
+                      jwm-tool msg setlayout --args '{\"layout\":\"monocle\"}' # 设置布局\n  \
+                      jwm-tool msg setmfact --args '0.05'               # 调整主区比例\n  \
+                      jwm-tool msg spawn --args '{\"cmd\":[\"alacritty\"]}' # 启动终端\n  \
+                      jwm-tool msg killclient                           # 关闭当前窗口\n  \
+                      jwm-tool msg get_windows                          # 查询所有窗口\n  \
+                      jwm-tool msg get_windows --raw                    # 原始 JSON 输出\n  \
+                      jwm-tool msg reload_config                        # 重新加载配置\n  \
+                      jwm-tool msg \"\" --subscribe 'window,tag'          # 订阅事件流\n  \
+                      jwm-tool msg \"\" --subscribe '*'                   # 订阅全部事件",
+    )]
     Msg {
-        /// 命令或查询名称 (e.g. view, get_windows, reload_config)
+        /// 命令或查询名称（get_ 前缀自动识别为查询）
+        #[arg(help = "命令或查询名称（get_ 前缀自动识别为查询）\n\
+                      命令: view, tag, focusstack, killclient, zoom, setlayout, spawn, ...\n\
+                      查询: get_windows, get_workspaces, get_monitors, get_tree, get_config, get_version")]
         name: String,
-        /// JSON 参数 (e.g. '{"tag": 2}')
-        #[arg(long, default_value = "null")]
+        /// JSON 参数，格式取决于命令类型
+        #[arg(long, default_value = "null",
+              help = "JSON 参数，格式取决于命令类型\n\
+                      整数参数: '{\"value\": N}' 或直接 'N'  (focusstack, movestack, ...)\n\
+                      浮点参数: '{\"value\": F}' 或直接 'F'  (setmfact, setcfact)\n\
+                      标签参数: '{\"tag\": N}'               (view, tag, toggleview, ...)\n\
+                      布局参数: '{\"layout\": \"name\"}'       (setlayout)\n\
+                      命令参数: '{\"cmd\": [\"prog\", ...]}'   (spawn)")]
         args: String,
-        /// 订阅事件流 (逗号分隔, e.g. window,tag,layout)
-        #[arg(long)]
+        /// 订阅事件流（逗号分隔的主题列表）
+        #[arg(long,
+              help = "订阅事件流（逗号分隔的主题列表）\n\
+                      主题: window, tag, layout, monitor, config, * (全部)\n\
+                      事件: window/new, window/close, window/focus, window/title,\n\
+                            tag/view, layout/set, monitor/focus, config/reload")]
         subscribe: Option<String>,
-        /// 输出原始 JSON (不格式化)
+        /// 输出原始 JSON（不做格式化美化）
         #[arg(long)]
         raw: bool,
     },
