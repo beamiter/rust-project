@@ -4846,6 +4846,13 @@ impl Jwm {
             return Ok(Some(next));
         }
 
+        // Wrap around to the first of current group
+        if let Some(next) = current_group.first().copied() {
+            if next != current_sel {
+                return Ok(Some(next));
+            }
+        }
+
         Ok(None)
     }
 
@@ -4874,6 +4881,13 @@ impl Jwm {
 
         if let Some(prev) = other_group.last().copied() {
             return Ok(Some(prev));
+        }
+
+        // Wrap around to the last of current group
+        if let Some(prev) = current_group.last().copied() {
+            if prev != current_sel {
+                return Ok(Some(prev));
+            }
         }
 
         Ok(None)
