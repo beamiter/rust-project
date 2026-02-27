@@ -4447,8 +4447,10 @@ impl Jwm {
                         self.resize_client(backend, sp_key, x, y, w, h, false);
                     }
 
-                    self.arrange(backend, Some(mon_key));
+                    // Focus first so monitor.sel points to the scratchpad,
+                    // then arrange/restack will keep it on top of tiled windows.
                     self.focus(backend, Some(sp_key))?;
+                    self.arrange(backend, Some(mon_key));
                 }
             }
         } else {
@@ -6687,6 +6689,9 @@ impl Jwm {
                     let y = area.y + (area.h - h) / 2;
                     self.resize_client(backend, client_key, x, y, w, h, false);
                 }
+                // Focus the scratchpad so monitor.sel points to it,
+                // then arrange/restack will keep it on top of tiled windows.
+                let _ = self.focus(backend, Some(client_key));
                 self.arrange(backend, Some(mk));
             }
         }
