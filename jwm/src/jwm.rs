@@ -1359,8 +1359,14 @@ impl Jwm {
         let mut changes = WindowChanges::default();
         let mask = ConfigWindowBits::from_bits_truncate(mask_bits);
 
-        let bar_key = self.status_bar_client.unwrap();
-        let statusbar_mut = self.state.clients.get_mut(bar_key).unwrap();
+        let bar_key = match self.status_bar_client {
+            Some(k) => k,
+            None => return Ok(()),
+        };
+        let statusbar_mut = match self.state.clients.get_mut(bar_key) {
+            Some(c) => c,
+            None => return Ok(()),
+        };
 
         if mask.contains(ConfigWindowBits::X) {
             if let Some(x) = req.x {
@@ -1386,7 +1392,7 @@ impl Jwm {
 
         backend.window_ops().apply_window_changes(window, changes)?;
 
-        let monitor_key = self.get_monitor_by_id(self.current_bar_monitor_id.unwrap());
+        let monitor_key = self.current_bar_monitor_id.and_then(|id| self.get_monitor_by_id(id));
         self.arrange(backend, monitor_key);
         if let Some(client_key) = self.wintoclient(window) {
             self.configure_client(backend, client_key)?;
@@ -1708,8 +1714,10 @@ impl Jwm {
     }
 
     fn insert_client(&mut self, client: WMClient) -> ClientKey {
+        let win = client.win;
         let key = self.state.clients.insert(client);
         self.state.client_order.push(key);
+        self.state.win_to_client.insert(win, key);
         key
     }
 
@@ -1960,11 +1968,7 @@ impl Jwm {
                 return self.status_bar_client;
             }
         }
-        self.state
-            .clients
-            .iter()
-            .find(|(_, client)| client.win == win)
-            .map(|(key, _)| key)
+        self.state.win_to_client.get(&win).copied()
     }
 
     fn log_x11_environment() {
@@ -2964,7 +2968,8 @@ impl Jwm {
         m.lt[1] = Rc::new(LayoutEnum::TILE);
         m.lt_symbol = m.lt[0].symbol().to_string();
         m.pertag = Some(Pertag::new(show_bar, CONFIG.tags_length()));
-        let ref_pertag = m.pertag.as_mut().unwrap();
+        // SAFETY: pertag was just set to Some on the line above
+        let ref_pertag = m.pertag.as_mut().expect("pertag just initialized");
         ref_pertag.cur_tag = 1;
         ref_pertag.prev_tag = 1;
         let default_layout_0 = m.lt[0].clone();
@@ -3130,17 +3135,8 @@ impl Jwm {
             return;
         }
 
-        let is_single = raw_clients.len() == 1;
+        let (_effective_border, effective_gap) = self.apply_smart_borders(&raw_clients);
         let default_border = CONFIG.border_px() as i32;
-
-        // Smart gaps: single window gets no border
-        for &(key, _, _) in &raw_clients {
-            if let Some(client) = self.state.clients.get_mut(key) {
-                client.geometry.border_w = if is_single { 0 } else { default_border };
-            }
-        }
-
-        let effective_gap = if is_single { 0 } else { CONFIG.gap_px() as i32 };
 
         // 转换为 LayoutClient 结构
         let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
@@ -3191,17 +3187,8 @@ impl Jwm {
             return;
         }
 
-        let is_single = raw_clients.len() == 1;
+        let (_effective_border, effective_gap) = self.apply_smart_borders(&raw_clients);
         let default_border = CONFIG.border_px() as i32;
-
-        // Smart gaps: single window gets no border
-        for &(key, _, _) in &raw_clients {
-            if let Some(client) = self.state.clients.get_mut(key) {
-                client.geometry.border_w = if is_single { 0 } else { default_border };
-            }
-        }
-
-        let effective_gap = if is_single { 0 } else { CONFIG.gap_px() as i32 };
 
         let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
             .iter()
@@ -3523,10 +3510,7 @@ impl Jwm {
         };
 
         if need_restack_windows {
-            for i in 0..final_bottom_to_top.len() {
-                let win = final_bottom_to_top[i];
-                backend.window_ops().raise_window(win)?;
-            }
+            backend.window_ops().restack_windows(&final_bottom_to_top)?;
             self.last_stacking
                 .insert(mon_key, final_bottom_to_top.clone());
         }
@@ -3679,7 +3663,10 @@ impl Jwm {
             }
             return self.state.sel_mon;
         }
-        let win_id = w.unwrap();
+        let win_id = match w {
+            Some(id) => id,
+            None => return self.state.sel_mon,
+        };
         if let Some(client_key) = self.wintoclient(win_id) {
             if let Some(client) = self.state.clients.get(client_key) {
                 return client.mon.or(self.state.sel_mon);
@@ -3936,17 +3923,8 @@ impl Jwm {
             return;
         }
 
-        let is_single = raw_clients.len() == 1;
+        let (_effective_border, effective_gap) = self.apply_smart_borders(&raw_clients);
         let default_border = CONFIG.border_px() as i32;
-
-        // Smart gaps: single window gets no border
-        for &(key, _, _) in &raw_clients {
-            if let Some(client) = self.state.clients.get_mut(key) {
-                client.geometry.border_w = if is_single { 0 } else { default_border };
-            }
-        }
-
-        let effective_gap = if is_single { 0 } else { CONFIG.gap_px() as i32 };
 
         // 转换为纯数据结构 LayoutClient
         let layout_clients: Vec<LayoutClient<ClientKey>> = raw_clients
@@ -3994,23 +3972,33 @@ impl Jwm {
         }
     }
 
-    fn collect_tileable_clients(&self, mon_key: MonitorKey) -> Vec<(ClientKey, f32, i32)> {
-        let mut clients = Vec::new();
-        let mut current_client = self.nexttiled(mon_key, None);
-
-        while let Some(client_key) = current_client {
-            if let Some(client) = self.state.clients.get(client_key) {
-                let client_fact = client.state.client_fact;
-                let border_w = client.geometry.border_w;
-
-                clients.push((client_key, client_fact, border_w));
-
-                current_client = self.nexttiled(mon_key, Some(client_key));
-            } else {
-                break;
+    /// Apply smart borders: single tiled window gets no border/gap;
+    /// multiple tiled windows get the configured border and gap.
+    fn apply_smart_borders(&mut self, clients: &[(ClientKey, f32, i32)]) -> (i32, i32) {
+        let is_single = clients.len() == 1;
+        let default_border = CONFIG.border_px() as i32;
+        let effective_border = if is_single { 0 } else { default_border };
+        let effective_gap = if is_single { 0 } else { CONFIG.gap_px() as i32 };
+        for &(key, _, _) in clients {
+            if let Some(client) = self.state.clients.get_mut(key) {
+                client.geometry.border_w = effective_border;
             }
         }
+        (effective_border, effective_gap)
+    }
 
+    fn collect_tileable_clients(&self, mon_key: MonitorKey) -> Vec<(ClientKey, f32, i32)> {
+        let client_list = self.get_monitor_clients(mon_key);
+        let mut clients = Vec::new();
+        for &client_key in client_list {
+            if let Some(client) = self.state.clients.get(client_key) {
+                if !client.state.is_floating
+                    && self.is_client_visible_on_monitor(client_key, mon_key)
+                {
+                    clients.push((client_key, client.state.client_fact, client.geometry.border_w));
+                }
+            }
+        }
         clients
     }
 
@@ -4894,8 +4882,9 @@ impl Jwm {
     }
 
     fn grouped_visible_clients(&self, mon_key: MonitorKey) -> (Vec<ClientKey>, Vec<ClientKey>) {
-        let mut tile_clients = Vec::new();
-        let mut floating_clients = Vec::new();
+        let total = self.state.monitor_clients.get(mon_key).map(|v| v.len()).unwrap_or(0);
+        let mut tile_clients = Vec::with_capacity(total);
+        let mut floating_clients = Vec::with_capacity(total / 4 + 1);
 
         if let Some(client_list) = self.state.monitor_clients.get(mon_key) {
             for &client_key in client_list {
@@ -5022,11 +5011,10 @@ impl Jwm {
     ) -> Result<(), Box<dyn std::error::Error>> {
         info!("[setcfact]");
 
-        let sel_client_key = self.get_selected_client_key();
-        if sel_client_key.is_none() {
-            return Ok(());
-        }
-        let client_key = sel_client_key.unwrap();
+        let client_key = match self.get_selected_client_key() {
+            Some(k) => k,
+            None => return Ok(()),
+        };
 
         if let WMArgEnum::Float(f0) = *arg {
             let current_fact = if let Some(client) = self.state.clients.get(client_key) {
@@ -5668,6 +5656,7 @@ impl Jwm {
         self.focus(backend, client_to_focus)?;
         self.arrange(backend, Some(sel_mon_key));
         self.refresh_bar_visibility_on_selected_monitor(backend)?;
+        self.update_ewmh_desktop(backend)?;
 
         Ok(())
     }
@@ -5729,7 +5718,7 @@ impl Jwm {
 
         info!(
             "[switch_to_tag] prev_tag: {}, cur_tag: {}",
-            sel_mon_mut.pertag.as_ref().unwrap().prev_tag,
+            sel_mon_mut.pertag.as_ref().map(|p| p.prev_tag).unwrap_or(0),
             cur_tag
         );
 
@@ -5818,6 +5807,7 @@ impl Jwm {
         self.focus(backend, None)?;
         self.arrange(backend, Some(sel_mon_key));
         self.refresh_bar_visibility_on_selected_monitor(backend)?;
+        self.update_ewmh_desktop(backend)?;
 
         Ok(())
     }
@@ -5910,6 +5900,7 @@ impl Jwm {
         self.arrange(backend, None);
         let _ = self.restack(backend, self.state.sel_mon);
         let _ = self.focus(backend, None);
+        let _ = self.update_ewmh_desktop(backend);
 
         backend.window_ops().flush()?;
         Ok(())
@@ -6236,9 +6227,9 @@ impl Jwm {
             None => return Ok(()),
         };
 
-        let (x, y) = {
-            let client = self.state.clients.get(client_key).unwrap();
-            (client.geometry.x, client.geometry.y)
+        let (x, y) = match self.state.clients.get(client_key) {
+            Some(client) => (client.geometry.x, client.geometry.y),
+            None => return Ok(()),
         };
 
         let target_monitor = self.recttomon(backend, x, y);
@@ -6508,6 +6499,27 @@ impl Jwm {
         Ok(backend.on_focused_client_changed(None)?)
     }
 
+    fn update_ewmh_desktop(
+        &self,
+        backend: &mut dyn Backend,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let total = CONFIG.tags_length() as u32;
+        let current = if let Some(sel_mon_key) = self.state.sel_mon {
+            if let Some(monitor) = self.state.monitors.get(sel_mon_key) {
+                let tagset = monitor.tag_set[monitor.sel_tags];
+                if tagset > 0 { tagset.trailing_zeros() } else { 0 }
+            } else {
+                0
+            }
+        } else {
+            0
+        };
+        let names: Vec<String> = (1..=total).map(|i| i.to_string()).collect();
+        let name_refs: Vec<&str> = names.iter().map(|s| s.as_str()).collect();
+        backend.on_desktop_changed(current, total, &name_refs)?;
+        Ok(())
+    }
+
     fn update_net_client_list(
         &mut self,
         backend: &mut dyn Backend,
@@ -6619,11 +6631,9 @@ impl Jwm {
             self.update_client_decoration(backend, client_key, false)?;
 
             self.configure_client(backend, client_key)?;
-            self.setclientstate(
-                backend,
-                self.state.clients.get(client_key).unwrap().win,
-                NORMAL_STATE as i64,
-            )?;
+            if let Some(client) = self.state.clients.get(client_key) {
+                self.setclientstate(backend, client.win, NORMAL_STATE as i64)?;
+            }
             return Ok(());
         }
 
@@ -6852,13 +6862,13 @@ impl Jwm {
         self.register_client_events(backend, client_key)?;
         self.grabbuttons(backend, client_key, false);
 
-        let already_mapped = {
-            let win = self.state.clients.get(client_key).unwrap().win;
-            backend
+        let already_mapped = match self.state.clients.get(client_key) {
+            Some(client) => backend
                 .window_ops()
-                .get_window_attributes(win)
+                .get_window_attributes(client.win)
                 .map(|a| a.map_state_viewable)
-                .unwrap_or(false)
+                .unwrap_or(false),
+            None => false,
         };
         if !already_mapped {
             self.map_client_window(backend, client_key)?;
@@ -7161,7 +7171,10 @@ impl Jwm {
             Some(k) => k,
             None => return Ok(()),
         };
-        let monitor = self.state.monitors.get(mon_key).unwrap();
+        let monitor = match self.state.monitors.get(mon_key) {
+            Some(m) => m,
+            None => return Ok(()),
+        };
 
         let show_bar = monitor
             .pertag
@@ -7295,7 +7308,6 @@ impl Jwm {
             }
         }
 
-        // Smart borders: monocle windows get no border
         let default_border = CONFIG.border_px() as i32;
         let effective_border = if tiled_keys.len() == 1 { 0 } else { default_border };
         for &ck in &tiled_keys {
@@ -7399,6 +7411,13 @@ impl Jwm {
         self.cleanup_statusbar_processes()?;
         self.status_bar_shmem = None;
         self.status_bar_child = None;
+        if let Some(bar_win) = self.status_bar_window {
+            self.state.win_to_client.remove(&bar_win);
+        }
+        if let Some(bar_key) = self.status_bar_client {
+            self.state.clients.remove(bar_key);
+            self.state.client_order.retain(|&k| k != bar_key);
+        }
         self.status_bar_client = None;
         self.status_bar_window = None;
         info!("Successfully removed statusbar",);
@@ -7636,6 +7655,7 @@ impl Jwm {
         client_key: ClientKey,
         destroyed: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        let win = self.state.clients.get(client_key).map(|c| c.win);
         if let Some(client) = self.state.clients.get(client_key) {
             info!("[unmanage_regular_client] Removing client {}", client);
         }
@@ -7654,6 +7674,9 @@ impl Jwm {
         self.detachstack(client_key);
         if !destroyed {
             self.cleanup_window_state(backend, client_key)?;
+        }
+        if let Some(win) = win {
+            self.state.win_to_client.remove(&win);
         }
         self.state.clients.remove(client_key);
         self.state.client_order.retain(|&k| k != client_key);
@@ -8035,7 +8058,10 @@ impl Jwm {
 
             let is_filled_tag = self.is_filled_tag(mon_key, tag_bit);
 
-            let monitor = self.state.monitors.get(mon_key).unwrap();
+            let monitor = match self.state.monitors.get(mon_key) {
+                Some(m) => m,
+                None => break,
+            };
             let active_tagset = monitor.tag_set[monitor.sel_tags];
             let is_selected_tag = (active_tagset & tag_bit) != 0;
             let is_urgent_tag = (urgent_tags_mask & tag_bit) != 0;

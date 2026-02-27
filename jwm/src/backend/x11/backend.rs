@@ -291,6 +291,10 @@ impl Backend for X11Backend {
                 EwmhFeature::ClientInfo,
                 EwmhFeature::WmWindowType,
                 EwmhFeature::WmWindowTypeDialog,
+                EwmhFeature::CurrentDesktop,
+                EwmhFeature::NumberOfDesktops,
+                EwmhFeature::DesktopNames,
+                EwmhFeature::DesktopViewport,
             ];
             facade.declare_supported(&supported)?;
         }
@@ -298,6 +302,10 @@ impl Backend for X11Backend {
     }
 
     fn cleanup(&mut self) -> Result<(), BackendError> {
+        // Free X11 resources
+        let _ = self.color_allocator.free_all_theme_pixels();
+        let _ = self.cursor_provider.cleanup();
+
         if let Some(facade) = self.ewmh_facade.as_ref() {
             let _ = facade.reset_root_properties();
         }
@@ -309,7 +317,10 @@ impl Backend for X11Backend {
             // 1. 设置 X11 输入焦点
             self.window_ops.set_input_focus(w)?;
 
-            // 2. 更新 EWMH 属性
+            // 2. 发送 WM_TAKE_FOCUS (ICCCM)
+            let _ = self.window_ops.send_take_focus(w);
+
+            // 3. 更新 EWMH 属性
             if let Some(facade) = self.ewmh_facade.as_ref() {
                 facade.set_active_window(w)?;
             }
@@ -331,6 +342,18 @@ impl Backend for X11Backend {
         if let Some(facade) = self.ewmh_facade.as_ref() {
             facade.set_client_list(clients)?;
             facade.set_client_list_stacking(stack)?;
+        }
+        Ok(())
+    }
+
+    fn on_desktop_changed(
+        &mut self,
+        current: u32,
+        total: u32,
+        names: &[&str],
+    ) -> Result<(), BackendError> {
+        if let Some(facade) = self.ewmh_facade.as_ref() {
+            facade.set_desktop_info(current, total, names)?;
         }
         Ok(())
     }
@@ -1662,6 +1685,10 @@ mod ewmh_facade {
                 EwmhFeature::ClientInfo => self.atoms._NET_CLIENT_INFO,
                 EwmhFeature::WmWindowType => self.atoms._NET_WM_WINDOW_TYPE,
                 EwmhFeature::WmWindowTypeDialog => self.atoms._NET_WM_WINDOW_TYPE_DIALOG,
+                EwmhFeature::CurrentDesktop => self.atoms._NET_CURRENT_DESKTOP,
+                EwmhFeature::NumberOfDesktops => self.atoms._NET_NUMBER_OF_DESKTOPS,
+                EwmhFeature::DesktopNames => self.atoms._NET_DESKTOP_NAMES,
+                EwmhFeature::DesktopViewport => self.atoms._NET_DESKTOP_VIEWPORT,
             }
         }
     }
@@ -1687,6 +1714,10 @@ mod ewmh_facade {
                 self.atoms._NET_SUPPORTED,
                 self.atoms._NET_CLIENT_LIST_STACKING,
                 self.atoms._NET_SUPPORTING_WM_CHECK,
+                self.atoms._NET_CURRENT_DESKTOP,
+                self.atoms._NET_NUMBER_OF_DESKTOPS,
+                self.atoms._NET_DESKTOP_NAMES,
+                self.atoms._NET_DESKTOP_VIEWPORT,
             ]
             .iter()
             {
@@ -1763,7 +1794,7 @@ mod ewmh_facade {
 
         fn set_client_list(&self, list: &[WindowId]) -> Result<(), BackendError> {
             let r = self.ids.x11(self.root)?;
-            let raw: Vec<u32> = list.iter().map(|&w| self.ids.x11(w).unwrap()).collect();
+            let raw: Vec<u32> = list.iter().filter_map(|&w| self.ids.x11(w).ok()).collect();
             self.conn.change_property32(
                 PropMode::REPLACE,
                 r,
@@ -1776,7 +1807,7 @@ mod ewmh_facade {
 
         fn set_client_list_stacking(&self, list: &[WindowId]) -> Result<(), BackendError> {
             let r = self.ids.x11(self.root)?;
-            let raw: Vec<u32> = list.iter().map(|&w| self.ids.x11(w).unwrap()).collect();
+            let raw: Vec<u32> = list.iter().filter_map(|&w| self.ids.x11(w).ok()).collect();
             self.conn.change_property32(
                 PropMode::REPLACE,
                 r,
@@ -1784,6 +1815,55 @@ mod ewmh_facade {
                 AtomEnum::WINDOW,
                 &raw,
             )?;
+            Ok(())
+        }
+
+        fn set_desktop_info(&self, current: u32, total: u32, names: &[&str]) -> Result<(), BackendError> {
+            let r = self.ids.x11(self.root)?;
+
+            // _NET_NUMBER_OF_DESKTOPS
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                r,
+                self.atoms._NET_NUMBER_OF_DESKTOPS,
+                AtomEnum::CARDINAL,
+                &[total],
+            )?;
+
+            // _NET_CURRENT_DESKTOP
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                r,
+                self.atoms._NET_CURRENT_DESKTOP,
+                AtomEnum::CARDINAL,
+                &[current],
+            )?;
+
+            // _NET_DESKTOP_NAMES (null-separated UTF8 strings)
+            let mut name_bytes: Vec<u8> = Vec::new();
+            for name in names {
+                name_bytes.extend_from_slice(name.as_bytes());
+                name_bytes.push(0);
+            }
+            x11rb::wrapper::ConnectionExt::change_property8(
+                &*self.conn,
+                PropMode::REPLACE,
+                r,
+                self.atoms._NET_DESKTOP_NAMES,
+                self.atoms.UTF8_STRING,
+                &name_bytes,
+            )?;
+
+            // _NET_DESKTOP_VIEWPORT (all zeros for single-screen virtual desktops)
+            let viewports: Vec<u32> = vec![0; total as usize * 2];
+            self.conn.change_property32(
+                PropMode::REPLACE,
+                r,
+                self.atoms._NET_DESKTOP_VIEWPORT,
+                AtomEnum::CARDINAL,
+                &viewports,
+            )?;
+
             Ok(())
         }
     }
@@ -1981,7 +2061,8 @@ mod key_ops {
                     }
                 }
             }
-            let km = self.full_keymap.as_ref().unwrap();
+            let km = self.full_keymap.as_ref()
+                .ok_or_else(|| BackendError::Message("keymap not initialized".into()))?;
             Ok((&km.0, km.1, km.2))
         }
 
@@ -2195,28 +2276,26 @@ mod output_ops {
             if let Ok(ver) = self.conn.randr_query_version(1, 5) {
                 if let Ok(v) = ver.reply() {
                     if (v.major_version > 1) || (v.major_version == 1 && v.minor_version >= 5) {
-                        if let Ok(reply) = self
-                            .conn
-                            .randr_get_monitors(self.root, true)
-                            .and_then(|c| Ok(c.reply()))
-                        {
-                            let mut out = Vec::with_capacity(4); // Pre-allocate for typical multi-monitor
-                            for (i, m) in reply.unwrap().monitors.into_iter().enumerate() {
-                                if m.width > 0 && m.height > 0 {
-                    out.push(OutputInfo {
-                                        id: OutputId(i as u64),
-                                        name: format!("Monitor-{}", i),
-                                        x: m.x as i32,
-                                        y: m.y as i32,
-                                        width: m.width as i32,
-                                        height: m.height as i32,
-                                        scale: 1.0,
-                                        refresh_rate: 60000, // 60Hz
-                                    });
+                        if let Ok(cookie) = self.conn.randr_get_monitors(self.root, true) {
+                            if let Ok(reply) = cookie.reply() {
+                                let mut out = Vec::with_capacity(4);
+                                for (i, m) in reply.monitors.into_iter().enumerate() {
+                                    if m.width > 0 && m.height > 0 {
+                                        out.push(OutputInfo {
+                                            id: OutputId(i as u64),
+                                            name: format!("Monitor-{}", i),
+                                            x: m.x as i32,
+                                            y: m.y as i32,
+                                            width: m.width as i32,
+                                            height: m.height as i32,
+                                            scale: 1.0,
+                                            refresh_rate: 60000, // 60Hz
+                                        });
+                                    }
                                 }
-                            }
-                            if !out.is_empty() {
-                                return out;
+                                if !out.is_empty() {
+                                    return out;
+                                }
                             }
                         }
                     }
@@ -2224,35 +2303,30 @@ mod output_ops {
             }
 
             // Fallback: RandR 1.2 CRTC enumeration
-            if let Ok(resources) = self
-                .conn
-                .randr_get_screen_resources(self.root)
-                .and_then(|c| Ok(c.reply()))
-            {
-                let mut out = Vec::with_capacity(4);
-                for (i, crtc) in resources.unwrap().crtcs.into_iter().enumerate() {
-                    if let Ok(ci) = self
-                        .conn
-                        .randr_get_crtc_info(crtc, 0)
-                        .and_then(|c| Ok(c.reply()))
-                    {
-                        let ci = ci.unwrap();
-                        if ci.width > 0 && ci.height > 0 {
-                            out.push(OutputInfo {
-                                id: OutputId(i as u64),
-                                name: format!("CRTC-{}", i),
-                                x: ci.x as i32,
-                                y: ci.y as i32,
-                                width: ci.width as i32,
-                                height: ci.height as i32,
-                                scale: 1.0,
-                                refresh_rate: 60000,
-                            });
+            if let Ok(cookie) = self.conn.randr_get_screen_resources(self.root) {
+                if let Ok(resources) = cookie.reply() {
+                    let mut out = Vec::with_capacity(4);
+                    for (i, crtc) in resources.crtcs.into_iter().enumerate() {
+                        if let Ok(cookie) = self.conn.randr_get_crtc_info(crtc, 0) {
+                            if let Ok(ci) = cookie.reply() {
+                                if ci.width > 0 && ci.height > 0 {
+                                    out.push(OutputInfo {
+                                        id: OutputId(i as u64),
+                                        name: format!("CRTC-{}", i),
+                                        x: ci.x as i32,
+                                        y: ci.y as i32,
+                                        width: ci.width as i32,
+                                        height: ci.height as i32,
+                                        scale: 1.0,
+                                        refresh_rate: 60000,
+                                    });
+                                }
+                            }
                         }
                     }
-                }
-                if !out.is_empty() {
-                    return out;
+                    if !out.is_empty() {
+                        return out;
+                    }
                 }
             }
 
@@ -2455,7 +2529,10 @@ mod property_ops {
         }
 
         fn get_class(&self, win: WindowId) -> (String, String) {
-            let w = self.ids.x11(win).unwrap();
+            let w = match self.ids.x11(win) {
+                Ok(w) => w,
+                Err(_) => return (String::new(), String::new()),
+            };
             let reply = match self
                 .conn
                 .get_property(false, w, AtomEnum::WM_CLASS, AtomEnum::STRING, 0, 256)
@@ -2485,7 +2562,10 @@ mod property_ops {
         }
 
         fn get_window_types(&self, win: WindowId) -> Vec<WindowType> {
-            let w = self.ids.x11(win).unwrap();
+            let w = match self.ids.x11(win) {
+                Ok(w) => w,
+                Err(_) => return Vec::new(),
+            };
             let mut result = Vec::new();
             if let Ok(reply) = self.conn.get_property(
                 false,
@@ -2899,6 +2979,30 @@ mod window_ops {
             Ok(())
         }
 
+        fn restack_windows(&self, windows: &[WindowId]) -> Result<(), BackendError> {
+            if windows.is_empty() {
+                return Ok(());
+            }
+            // Raise the first window to the top of the stack
+            let first = self.ids.x11(windows[0])?;
+            let aux = ConfigureWindowAux::new()
+                .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE);
+            self.conn.configure_window(first, &aux)?;
+
+            // Stack subsequent windows above their predecessor using sibling
+            let mut prev = first;
+            for &win in &windows[1..] {
+                if let Ok(w) = self.ids.x11(win) {
+                    let aux = ConfigureWindowAux::new()
+                        .sibling(prev)
+                        .stack_mode(x11rb::protocol::xproto::StackMode::ABOVE);
+                    self.conn.configure_window(w, &aux)?;
+                    prev = w;
+                }
+            }
+            Ok(())
+        }
+
         fn close_window(&self, win: WindowId) -> Result<CloseResult, BackendError> {
             let w = self.ids.x11(win)?;
             let supports_delete = {
@@ -3064,6 +3168,31 @@ mod window_ops {
             self.conn
                 .set_input_focus(InputFocus::PARENT, w, x11rb::CURRENT_TIME)?;
             Ok(())
+        }
+
+        fn send_take_focus(&self, win: WindowId) -> Result<bool, BackendError> {
+            let w = self.ids.x11(win)?;
+            let reply = self
+                .conn
+                .get_property(false, w, self.atoms.WM_PROTOCOLS, AtomEnum::ATOM, 0, 1024)?
+                .reply()?;
+            let supports_take_focus = reply
+                .value32()
+                .into_iter()
+                .flatten()
+                .any(|a| a == self.atoms.WM_TAKE_FOCUS);
+            if supports_take_focus {
+                let event = ClientMessageEvent::new(
+                    32,
+                    w,
+                    self.atoms.WM_PROTOCOLS,
+                    [self.atoms.WM_TAKE_FOCUS, x11rb::CURRENT_TIME as u32, 0, 0, 0],
+                );
+                self.conn.send_event(false, w, EventMask::NO_EVENT, event.serialize())?;
+                self.conn.flush()?;
+                return Ok(true);
+            }
+            Ok(false)
         }
 
         fn get_geometry(&self, win: WindowId) -> Result<Geometry, BackendError> {

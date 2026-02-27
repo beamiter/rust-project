@@ -301,6 +301,21 @@ pub trait WindowOps: Send {
     fn get_tree_child(&self, _win: WindowId) -> Result<Vec<WindowId>, BackendError> {
         Ok(vec![])
     }
+    /// Send WM_TAKE_FOCUS client message if the window supports it.
+    /// Returns true if the message was sent.
+    fn send_take_focus(&self, _win: WindowId) -> Result<bool, BackendError> {
+        Ok(false)
+    }
+
+    /// Restack windows in order (first = bottom, last = top).
+    /// Uses sibling stacking for fewer X11 round-trips.
+    /// Default implementation falls back to sequential raise_window.
+    fn restack_windows(&self, windows: &[WindowId]) -> Result<(), BackendError> {
+        for &win in windows {
+            self.raise_window(win)?;
+        }
+        Ok(())
+    }
 }
 
 pub trait InputOps: Send {
@@ -434,6 +449,7 @@ pub trait EwmhFacade: Send {
     fn setup_supporting_wm_check(&self, wm_name: &str) -> Result<WindowId, BackendError>;
     fn declare_supported(&self, features: &[EwmhFeature]) -> Result<(), BackendError>;
     fn reset_root_properties(&self) -> Result<(), BackendError>;
+    fn set_desktop_info(&self, current: u32, total: u32, names: &[&str]) -> Result<(), BackendError>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -448,6 +464,10 @@ pub enum EwmhFeature {
     ClientInfo,
     WmWindowType,
     WmWindowTypeDialog,
+    CurrentDesktop,
+    NumberOfDesktops,
+    DesktopNames,
+    DesktopViewport,
 }
 
 pub trait ColorAllocator: Send {
@@ -508,6 +528,15 @@ pub trait Backend: Send {
         &mut self,
         _clients: &[WindowId],
         _stack: &[WindowId],
+    ) -> Result<(), BackendError> {
+        Ok(())
+    }
+
+    fn on_desktop_changed(
+        &mut self,
+        _current: u32,
+        _total: u32,
+        _names: &[&str],
     ) -> Result<(), BackendError> {
         Ok(())
     }
