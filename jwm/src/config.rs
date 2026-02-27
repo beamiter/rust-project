@@ -9,10 +9,12 @@ use std::sync::Arc;
 use std::fmt;
 use std::rc::Rc;
 
+use crate::core::animation::Easing;
 use crate::core::layout::LayoutEnum;
 use crate::jwm::WMFuncType;
 use crate::jwm::{self, Jwm, WMButton, WMClickType, WMKey, WMRule};
 use crate::terminal_prober::ADVANCED_TERMINAL_PROBER;
+use std::time::Duration;
 
 use crate::backend::common_define::keys as k;
 use crate::backend::common_define::{KeySym, Mods, MouseButton};
@@ -61,6 +63,8 @@ pub struct TomlConfig {
     pub mouse_bindings: MouseBindingsConfig,
     pub rules: Vec<RuleConfig>,
     pub layout: LayoutConfig,
+    #[serde(default = "AnimationConfig::default_value")]
+    pub animation: AnimationConfig,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -105,6 +109,23 @@ pub struct LayoutConfig {
     pub m_fact: f32,
     pub n_master: u32,
     pub tags_length: usize,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AnimationConfig {
+    pub enabled: bool,
+    pub duration_ms: u64,
+    pub easing: String,
+}
+
+impl AnimationConfig {
+    pub fn default_value() -> Self {
+        Self {
+            enabled: true,
+            duration_ms: 150,
+            easing: "ease-out".to_string(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -197,6 +218,7 @@ impl Default for Config {
                     n_master: 1,
                     tags_length: 9,
                 },
+                animation: AnimationConfig::default_value(),
                 keybindings: KeyBindingsConfig {
                     modkey: "Mod1".to_string(),
                     keys: Self::get_default_keys(),
@@ -642,6 +664,18 @@ impl Config {
 
     pub fn tagmask(&self) -> u32 {
         (1 << self.tags_length()) - 1
+    }
+
+    pub fn animation_enabled(&self) -> bool {
+        self.inner.animation.enabled
+    }
+
+    pub fn animation_duration(&self) -> Duration {
+        Duration::from_millis(self.inner.animation.duration_ms)
+    }
+
+    pub fn animation_easing(&self) -> Easing {
+        Easing::from_str(&self.inner.animation.easing)
     }
 
     pub fn get_keys(&self) -> Vec<WMKey> {

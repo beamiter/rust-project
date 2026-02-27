@@ -51,6 +51,7 @@ use crate::ipc::{self, IpcEvent, IpcResponse, MonitorInfoIpc, TreeNode, WindowIn
 use crate::ipc_server::{IpcServer, IncomingIpc};
 use crate::core::models::{ClientKey, MonitorKey, Pertag, SizeHints, WMClient, WMMonitor};
 
+use crate::core::animation::{AnimationKind, AnimationManager};
 use crate::core::layout::{self, LayoutClient, LayoutParams, LayoutResult};
 use crate::core::types::Rect;
 use shared_structures::CommandType;
@@ -63,8 +64,6 @@ pub const STEXT_MAX_LEN: usize = 512;
 pub const NORMAL_STATE: u8 = 1;
 pub const ICONIC_STATE: u8 = 2;
 pub const SHARED_PATH: &str = "/dev/shm/jwm_bar_global";
-const MOUSE_RESTACK_DEBOUNCE_MS: u64 = 50;
-
 lazy_static::lazy_static! {
     pub static ref BUTTONMASK: EventMaskBits  = EventMaskBits::BUTTON_PRESS | EventMaskBits::BUTTON_RELEASE;
     pub static ref MOUSEMASK: EventMaskBits   = EventMaskBits::BUTTON_PRESS | EventMaskBits::BUTTON_RELEASE | EventMaskBits::POINTER_MOTION;
@@ -213,12 +212,13 @@ pub struct Jwm {
     pub pending_bar_updates: HashSet<MonitorIndex>,
 
     pub suppress_mouse_focus_until: Option<std::time::Instant>,
-    pub last_mouse_restack_at: Option<std::time::Instant>,
 
     pub last_stacking: SecondaryMap<MonitorKey, Vec<WindowId>>,
 
     pub scratchpad_client: Option<ClientKey>,
     pub scratchpad_pending: bool,
+
+    pub animations: AnimationManager,
 
     key_bindings: Vec<WMKey>,
 
@@ -683,6 +683,7 @@ impl EventHandler for Jwm {
         self.process_ipc(backend);
         self.check_config_reload(backend);
         self.flush_pending_bar_updates();
+        self.tick_animations(backend);
         backend.window_ops().flush()?;
         Ok(())
     }
@@ -690,6 +691,10 @@ impl EventHandler for Jwm {
     fn should_exit(&self) -> bool {
         // 检查原子布尔值
         !self.running.load(Ordering::SeqCst)
+    }
+
+    fn needs_tick(&self) -> bool {
+        self.animations.has_active()
     }
 }
 
@@ -931,11 +936,11 @@ impl Jwm {
             pending_bar_updates: HashSet::new(),
 
             suppress_mouse_focus_until: None,
-            last_mouse_restack_at: None,
 
             last_stacking: SecondaryMap::new(),
             scratchpad_client: None,
             scratchpad_pending: false,
+            animations: AnimationManager::new(),
             key_bindings: CONFIG.load().get_keys(),
             last_mouse_root: (0.0, 0.0),
 
@@ -1330,7 +1335,6 @@ impl Jwm {
                 if let Some(client_key) = self.wintoclient(win) {
                     if !self.is_client_selected(client_key) {
                         self.focus(backend, Some(client_key))?;
-                        self.restack_after_mouse_focus(backend)?;
                     }
                 }
             }
@@ -2856,16 +2860,41 @@ impl Jwm {
     }
 
     fn hide_client(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
-        let (win, y, width) = if let Some(client) = self.state.clients.get(client_key) {
-            (client.win, client.geometry.y, client.total_width())
+        let (win, x, y, w, h, width) = if let Some(client) = self.state.clients.get(client_key) {
+            (
+                client.win,
+                client.geometry.x,
+                client.geometry.y,
+                client.geometry.w,
+                client.geometry.h,
+                client.total_width(),
+            )
         } else {
             warn!("[hide_client] Client {:?} not found", client_key);
             return;
         };
 
         let hidden_x = width * -2;
-        if let Err(e) = self.move_window(backend, win, hidden_x, y) {
-            warn!("[hide_client] Failed to hide window {:?}: {:?}", win, e);
+        let cfg = CONFIG.load();
+        if cfg.animation_enabled() {
+            let now = Instant::now();
+            let visual = self
+                .animations
+                .current_visual_rect(client_key, now)
+                .unwrap_or(Rect::new(x, y, w, h));
+            let target = Rect::new(hidden_x, y, w, h);
+            self.animations.start(
+                client_key,
+                visual,
+                target,
+                cfg.animation_duration(),
+                cfg.animation_easing(),
+                AnimationKind::Hide,
+            );
+        } else {
+            if let Err(e) = self.move_window(backend, win, hidden_x, y) {
+                warn!("[hide_client] Failed to hide window {:?}: {:?}", win, e);
+            }
         }
     }
 
@@ -2909,16 +2938,88 @@ impl Jwm {
             client.geometry.w = w;
             client.geometry.h = h;
 
-            backend.window_ops().configure(
-                client.win,
-                x,
-                y,
-                w as u32,
-                h as u32,
-                client.geometry.border_w as u32,
-            )?;
+            let cfg = CONFIG.load();
+            if cfg.animation_enabled() {
+                let old_rect = Rect::new(
+                    client.geometry.old_x,
+                    client.geometry.old_y,
+                    client.geometry.old_w,
+                    client.geometry.old_h,
+                );
+                let target = Rect::new(x, y, w, h);
+                let duration = cfg.animation_duration();
+                let easing = cfg.animation_easing();
+                drop(cfg);
+                let now = Instant::now();
+                let visual = self
+                    .animations
+                    .current_visual_rect(client_key, now)
+                    .unwrap_or(old_rect);
+                self.animations.start(
+                    client_key,
+                    visual,
+                    target,
+                    duration,
+                    easing,
+                    AnimationKind::Layout,
+                );
+            } else {
+                backend.window_ops().configure(
+                    client.win,
+                    x,
+                    y,
+                    w as u32,
+                    h as u32,
+                    client.geometry.border_w as u32,
+                )?;
+            }
         }
         Ok(())
+    }
+
+    fn tick_animations(&mut self, backend: &mut dyn Backend) {
+        if !self.animations.has_active() {
+            return;
+        }
+        let now = Instant::now();
+        let mut completed = Vec::new();
+        let keys: Vec<ClientKey> = self.animations.active.keys().copied().collect();
+        for key in keys {
+            let anim = match self.animations.active.get(&key) {
+                Some(a) => a,
+                None => continue,
+            };
+            let (rect, done) = anim.sample(now);
+            if let Some(client) = self.state.clients.get(key) {
+                let _ = backend.window_ops().configure(
+                    client.win,
+                    rect.x,
+                    rect.y,
+                    rect.w as u32,
+                    rect.h as u32,
+                    client.geometry.border_w as u32,
+                );
+            } else {
+                completed.push(key);
+                continue;
+            }
+            if done {
+                completed.push(key);
+            }
+        }
+        for key in completed {
+            if let Some(client) = self.state.clients.get(key) {
+                let _ = backend.window_ops().configure(
+                    client.win,
+                    client.geometry.x,
+                    client.geometry.y,
+                    client.geometry.w as u32,
+                    client.geometry.h as u32,
+                    client.geometry.border_w as u32,
+                );
+            }
+            self.animations.active.remove(&key);
+        }
     }
 
     fn sync_focused_floating_geometry(&mut self, backend: &mut dyn Backend) {
@@ -3074,27 +3175,7 @@ impl Jwm {
         }
         if self.should_focus_client(client_key_opt, is_on_selected_monitor) {
             self.focus(backend, client_key_opt)?;
-            self.restack_after_mouse_focus(backend)?;
         }
-        Ok(())
-    }
-
-    fn restack_after_mouse_focus(
-        &mut self,
-        backend: &mut dyn Backend,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let now = Instant::now();
-        if let Some(last) = self.last_mouse_restack_at {
-            if now.duration_since(last) < Duration::from_millis(MOUSE_RESTACK_DEBOUNCE_MS) {
-                return Ok(());
-            }
-        }
-
-        if let Some(mon_key) = self.state.sel_mon {
-            self.restack(backend, Some(mon_key))?;
-            self.last_mouse_restack_at = Some(now);
-        }
-
         Ok(())
     }
 
@@ -6672,6 +6753,35 @@ impl Jwm {
             }));
         }
 
+        // Appear animation for new windows
+        {
+            let cfg = CONFIG.load();
+            if cfg.animation_enabled() {
+                if let Some(client) = self.state.clients.get(client_key) {
+                    let target = Rect::new(
+                        client.geometry.x,
+                        client.geometry.y,
+                        client.geometry.w,
+                        client.geometry.h,
+                    );
+                    // Start from 85% scale centered on target
+                    let sw = (target.w as f32 * 0.85) as i32;
+                    let sh = (target.h as f32 * 0.85) as i32;
+                    let sx = target.x + (target.w - sw) / 2;
+                    let sy = target.y + (target.h - sh) / 2;
+                    let from = Rect::new(sx, sy, sw, sh);
+                    self.animations.start(
+                        client_key,
+                        from,
+                        target,
+                        cfg.animation_duration(),
+                        cfg.animation_easing(),
+                        AnimationKind::Appear,
+                    );
+                }
+            }
+        }
+
         // Detect scratchpad window
         if self.scratchpad_pending {
             self.scratchpad_pending = false;
@@ -7751,6 +7861,7 @@ impl Jwm {
         client_key: ClientKey,
         destroyed: bool,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        self.animations.remove(client_key);
         let win = self.state.clients.get(client_key).map(|c| c.win);
         if let Some(client) = self.state.clients.get(client_key) {
             info!("[unmanage_regular_client] Removing client {}", client);

@@ -494,6 +494,12 @@ pub trait EventHandler {
     fn update(&mut self, backend: &mut dyn Backend) -> Result<(), BackendError>;
 
     fn should_exit(&self) -> bool;
+
+    /// Returns true when the handler has active animations and needs
+    /// the event loop to keep ticking (non-blocking dispatch).
+    fn needs_tick(&self) -> bool {
+        false
+    }
 }
 
 pub trait Backend: Send {

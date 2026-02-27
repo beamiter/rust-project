@@ -2011,7 +2011,7 @@ impl Backend for UdevBackend {
                 }
             }
 
-            if handled_any {
+            if handled_any || handler.needs_tick() {
                 handler.update(self)?;
             }
 
@@ -2047,8 +2047,11 @@ impl Backend for UdevBackend {
             // Block only when there's no pending work; otherwise, poll once to
             // allow queued calloop sources (notably Wayland flush) to run.
             let has_pending_events = !self.pending_events.lock().unwrap().is_empty();
+            let needs_tick = handler.needs_tick();
             let timeout = if has_pending_events || handled_any || had_redraw {
                 Some(std::time::Duration::ZERO)
+            } else if needs_tick {
+                Some(std::time::Duration::from_millis(16))
             } else {
                 None
             };

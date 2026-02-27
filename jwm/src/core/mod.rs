@@ -5,3 +5,4 @@ pub mod layout;
 pub mod workspace;
 pub mod state;
 pub mod controller;
+pub mod animation;
