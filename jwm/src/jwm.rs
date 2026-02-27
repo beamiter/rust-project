@@ -6722,12 +6722,18 @@ impl Jwm {
                     false
                 } else {
                     let types = backend.property_ops().get_window_types(c.win);
+                    let is_transient = backend.property_ops().transient_for(c.win).is_some();
 
-                    let is_no_auto_focus = types.contains(&WindowType::Tooltip)
-                        || types.contains(&WindowType::Notification)
-                        || types.contains(&WindowType::Dnd)
-                        || types.contains(&WindowType::Combo);
-                    !is_no_auto_focus
+                    // Transient 窗口（用户交互触发的子窗口）应获得焦点
+                    if is_transient {
+                        true
+                    } else {
+                        let is_no_auto_focus = types.contains(&WindowType::Tooltip)
+                            || types.contains(&WindowType::Notification)
+                            || types.contains(&WindowType::Dnd)
+                            || types.contains(&WindowType::Combo);
+                        !is_no_auto_focus
+                    }
                 }
             } else {
                 false
@@ -7956,6 +7962,7 @@ impl Jwm {
         let types = backend.property_ops().get_window_types(win);
         let is_desktop = types.contains(&WindowType::Desktop);
         let is_dock = types.contains(&WindowType::Dock);
+        let is_transient = backend.property_ops().transient_for(win).is_some();
 
         let layer_info = backend.property_ops().get_layer_surface_info(win);
 
@@ -7969,13 +7976,17 @@ impl Jwm {
                 c.state.is_floating = true;
 
                 // 如果是 通知、Dock、桌面，则设置为所有标签可见
+                // 但如果窗口是 transient（有父窗口），说明是用户交互触发的子窗口，
+                // 不应设置 never_focus，否则会导致弹窗失焦后被应用自动关闭
                 if types.contains(&WindowType::Notification)
                     || types.contains(&WindowType::Tooltip)
                     || types.contains(&WindowType::Dock)
                     || types.contains(&WindowType::Desktop)
                 {
-                    c.state.tags = crate::config::CONFIG.tagmask();
-                    c.state.never_focus = true; // 这些窗口通常不接受焦点
+                    if !is_transient {
+                        c.state.tags = crate::config::CONFIG.tagmask();
+                        c.state.never_focus = true;
+                    }
                 }
             }
         }
