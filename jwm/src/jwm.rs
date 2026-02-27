@@ -1412,8 +1412,10 @@ impl Jwm {
 
         if mask.contains(ConfigWindowBits::BORDER_WIDTH) {
             if let Some(border) = req.border_width {
-                if let Some(client) = self.state.clients.get_mut(client_key) {
-                    client.geometry.border_w = border as i32;
+                if !is_popup {
+                    if let Some(client) = self.state.clients.get_mut(client_key) {
+                        client.geometry.border_w = border as i32;
+                    }
                 }
             }
         }
