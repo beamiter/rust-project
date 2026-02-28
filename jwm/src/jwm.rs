@@ -216,8 +216,8 @@ pub struct Jwm {
 
     pub last_stacking: SecondaryMap<MonitorKey, Vec<WindowId>>,
 
-    pub scratchpad_client: Option<ClientKey>,
-    pub scratchpad_pending: bool,
+    pub scratchpads: HashMap<String, ClientKey>,
+    pub scratchpad_pending_name: Option<String>,
 
     pub animations: AnimationManager,
 
@@ -942,8 +942,8 @@ impl Jwm {
             suppress_mouse_focus_until: None,
 
             last_stacking: SecondaryMap::new(),
-            scratchpad_client: None,
-            scratchpad_pending: false,
+            scratchpads: HashMap::new(),
+            scratchpad_pending_name: None,
             animations: AnimationManager::new(),
             key_bindings: CONFIG.load().get_keys(),
             last_mouse_root: (0.0, 0.0),
@@ -4581,19 +4581,40 @@ impl Jwm {
         }
     }
 
+    /// Toggle a named scratchpad.
+    ///
+    /// Argument encoding (via `StringVec`):
+    ///   `["name", "cmd", "arg1", ...]`  — name + spawn command
+    ///   `["name"]`                      — name only (uses default terminal)
+    ///
+    /// Legacy `Int(0)` falls back to the default name `"term"`.
     pub fn togglescratchpad(
         &mut self,
         backend: &mut dyn Backend,
-        _arg: &WMArgEnum,
+        arg: &WMArgEnum,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        // Check if scratchpad client still exists
-        if let Some(sp_key) = self.scratchpad_client {
+        // Parse name and optional command from argument
+        let (name, spawn_cmd) = match arg {
+            WMArgEnum::StringVec(v) if !v.is_empty() => {
+                let name = v[0].clone();
+                let cmd = if v.len() > 1 {
+                    v[1..].to_vec()
+                } else {
+                    crate::config::Config::get_termcmd()
+                };
+                (name, cmd)
+            }
+            _ => ("term".to_string(), crate::config::Config::get_termcmd()),
+        };
+
+        // Check if the scratchpad's client still exists
+        if let Some(&sp_key) = self.scratchpads.get(&name) {
             if self.state.clients.get(sp_key).is_none() {
-                self.scratchpad_client = None;
+                self.scratchpads.remove(&name);
             }
         }
 
-        if let Some(sp_key) = self.scratchpad_client {
+        if let Some(&sp_key) = self.scratchpads.get(&name) {
             // Scratchpad exists — toggle visibility
             let is_visible = self.is_client_visible_by_key(sp_key);
             if is_visible {
@@ -4634,18 +4655,15 @@ impl Jwm {
                         self.resize_client(backend, sp_key, x, y, w, h, false);
                     }
 
-                    // Focus first so monitor.sel points to the scratchpad,
-                    // then arrange/restack will keep it on top of tiled windows.
                     self.focus(backend, Some(sp_key))?;
                     self.arrange(backend, Some(mon_key));
                 }
             }
         } else {
-            // No scratchpad — spawn terminal, mark pending
-            let termcmd = crate::config::Config::get_termcmd();
-            if let Some(term) = termcmd.first() {
-                let mut command = Command::new(term);
-                command.args(&termcmd[1..]);
+            // No scratchpad with this name — spawn command, mark pending
+            if let Some(prog) = spawn_cmd.first() {
+                let mut command = Command::new(prog);
+                command.args(&spawn_cmd[1..]);
 
                 Self::setup_smithay_child_env(&mut command, backend);
                 command
@@ -4657,13 +4675,14 @@ impl Jwm {
                 match command.spawn() {
                     Ok(child) => {
                         info!(
-                            "[togglescratchpad] spawned scratchpad terminal PID: {}",
+                            "[togglescratchpad] spawned '{}' PID: {}",
+                            name,
                             child.id()
                         );
-                        self.scratchpad_pending = true;
+                        self.scratchpad_pending_name = Some(name);
                     }
                     Err(e) => {
-                        error!("[togglescratchpad] failed to spawn: {}", e);
+                        error!("[togglescratchpad] failed to spawn '{}': {}", name, e);
                     }
                 }
             }
@@ -6888,11 +6907,10 @@ impl Jwm {
             }
         }
 
-        // Detect scratchpad window
-        if self.scratchpad_pending {
-            self.scratchpad_pending = false;
-            self.scratchpad_client = Some(client_key);
-            info!("[manage] detected scratchpad client {:?}", client_key);
+        // Detect named scratchpad window
+        if let Some(sp_name) = self.scratchpad_pending_name.take() {
+            self.scratchpads.insert(sp_name.clone(), client_key);
+            info!("[manage] detected scratchpad '{}' client {:?}", sp_name, client_key);
             let mon_key = self.state.clients.get(client_key).and_then(|c| c.mon);
             if let Some(client) = self.state.clients.get_mut(client_key) {
                 client.state.is_floating = true;
@@ -6905,8 +6923,6 @@ impl Jwm {
                     let y = area.y + (area.h - h) / 2;
                     self.resize_client(backend, client_key, x, y, w, h, false);
                 }
-                // Focus the scratchpad so monitor.sel points to it,
-                // then arrange/restack will keep it on top of tiled windows.
                 let _ = self.focus(backend, Some(client_key));
                 self.arrange(backend, Some(mk));
             }
@@ -7972,9 +7988,7 @@ impl Jwm {
         if let Some(client) = self.state.clients.get(client_key) {
             info!("[unmanage_regular_client] Removing client {}", client);
         }
-        if self.scratchpad_client == Some(client_key) {
-            self.scratchpad_client = None;
-        }
+        self.scratchpads.retain(|_, &mut v| v != client_key);
         let mon_key = self
             .state
             .clients

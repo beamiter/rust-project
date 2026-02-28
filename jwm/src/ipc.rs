@@ -133,7 +133,11 @@ pub fn dispatch_command(name: &str, args: &Value) -> Result<(WMFuncType, WMArgEn
         "togglefloating" => Ok((Jwm::togglefloating, parse_int_arg(args, 0))),
         "togglesticky" => Ok((Jwm::togglesticky, parse_int_arg(args, 0))),
         "togglepip" => Ok((Jwm::togglepip, parse_int_arg(args, 0))),
-        "togglescratchpad" => Ok((Jwm::togglescratchpad, parse_int_arg(args, 0))),
+        "togglescratchpad" => {
+            let cmd = parse_string_vec_arg(args)
+                .unwrap_or_else(|_| vec!["term".to_string()]);
+            Ok((Jwm::togglescratchpad, WMArgEnum::StringVec(cmd)))
+        }
         "movestack" => Ok((Jwm::movestack, parse_int_arg(args, 1))),
 
         // --- Layout ---

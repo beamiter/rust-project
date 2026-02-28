@@ -510,7 +510,19 @@ impl Config {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
                 key: "n".to_string(),
                 function: "togglescratchpad".to_string(),
-                argument: ArgumentConfig::Int(0),
+                argument: ArgumentConfig::StringVec(vec!["term".to_string()]),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "m".to_string(),
+                function: "togglescratchpad".to_string(),
+                argument: ArgumentConfig::StringVec(vec!["music".to_string(), "spotify".to_string()]),
+            },
+            KeyConfig {
+                modifier: vec!["Mod1".to_string(), "Shift".to_string()],
+                key: "c".to_string(),
+                function: "togglescratchpad".to_string(),
+                argument: ArgumentConfig::StringVec(vec!["calc".to_string(), "qalculate-gtk".to_string()]),
             },
             KeyConfig {
                 modifier: vec!["Mod1".to_string(), "Shift".to_string()],
