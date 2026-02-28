@@ -2836,6 +2836,18 @@ impl Jwm {
     }
 
     fn show_client(&mut self, backend: &mut dyn Backend, client_key: ClientKey) {
+        // Cancel any in-flight Hide animation so it doesn't keep moving
+        // the window off-screen.
+        self.animations.remove(client_key);
+
+        // Restore on-screen x from old_x if client.geometry.x is still at
+        // the hidden position (negative, off-screen).
+        if let Some(client) = self.state.clients.get_mut(client_key) {
+            if client.geometry.x < -(client.geometry.w) {
+                client.geometry.x = client.geometry.old_x;
+            }
+        }
+
         let (win, x, y, is_floating, is_fullscreen) =
             if let Some(client) = self.state.clients.get(client_key) {
                 (
@@ -2880,6 +2892,18 @@ impl Jwm {
         };
 
         let hidden_x = width * -2;
+
+        // Save visible geometry so show_client can restore it, then update
+        // client.geometry to the hidden position. This prevents
+        // tick_animations from snapping the window back on-screen when the
+        // Hide animation completes.
+        if let Some(client) = self.state.clients.get_mut(client_key) {
+            client.geometry.old_x = client.geometry.x;
+            client.geometry.old_y = client.geometry.y;
+            client.geometry.x = hidden_x;
+            // y, w, h stay unchanged
+        }
+
         let cfg = CONFIG.load();
         if cfg.animation_enabled() {
             let now = Instant::now();
@@ -3013,16 +3037,8 @@ impl Jwm {
             }
         }
         for key in completed {
-            if let Some(client) = self.state.clients.get(key) {
-                let _ = backend.window_ops().configure(
-                    client.win,
-                    client.geometry.x,
-                    client.geometry.y,
-                    client.geometry.w as u32,
-                    client.geometry.h as u32,
-                    client.geometry.border_w as u32,
-                );
-            }
+            // sample() already returned `to` rect on the final tick, so
+            // the window is already at the animation target. Just clean up.
             self.animations.active.remove(&key);
         }
     }
