@@ -20,6 +20,7 @@ use crate::core::controller::WMController;
 use crate::core::models::MonitorGeometry;
 use crate::core::state::WMState;
 use slotmap::SecondaryMap;
+use std::collections::HashMap;
 use std::collections::HashSet;
 use std::env;
 use std::process::Stdio;
@@ -645,6 +646,9 @@ impl EventHandler for Jwm {
                 state,
             } => self.on_window_state_request(backend, window, action, state),
             BackendEvent::ActiveWindowMessage { window } => self.on_client_message(backend, window),
+
+            // Compositor: damage events are handled at the backend level
+            BackendEvent::DamageNotify { .. } => {}
 
             // 忽略或不需要显式处理的事件
             BackendEvent::ClientMessage { .. } => { /* ClientMessage Generic */ }
@@ -3007,11 +3011,22 @@ impl Jwm {
     }
 
     fn tick_animations(&mut self, backend: &mut dyn Backend) {
+        let composited = backend.has_compositor();
+
         if !self.animations.has_active() {
+            if composited {
+                // No animations but compositor still needs to render
+                // (window contents may have updated via damage)
+                let scene = self.build_compositor_scene(&HashMap::new());
+                let _ = backend.compositor_render_frame(&scene);
+            }
             return;
         }
+
         let now = Instant::now();
         let mut completed = Vec::new();
+        let mut visual_overrides: HashMap<ClientKey, Rect> = HashMap::new();
+
         let keys: Vec<ClientKey> = self.animations.active.keys().copied().collect();
         for key in keys {
             let anim = match self.animations.active.get(&key) {
@@ -3019,28 +3034,98 @@ impl Jwm {
                 None => continue,
             };
             let (rect, done) = anim.sample(now);
-            if let Some(client) = self.state.clients.get(key) {
-                let _ = backend.window_ops().configure(
-                    client.win,
-                    rect.x,
-                    rect.y,
-                    rect.w as u32,
-                    rect.h as u32,
-                    client.geometry.border_w as u32,
-                );
-            } else {
+
+            if self.state.clients.get(key).is_none() {
                 completed.push(key);
                 continue;
             }
+
+            if composited {
+                // Store visual override — compositor draws at interpolated position.
+                // Real window is already at the target position (set by resizeclient).
+                visual_overrides.insert(key, rect);
+            } else {
+                // Non-composited fallback: physically move the window each frame
+                if let Some(client) = self.state.clients.get(key) {
+                    let _ = backend.window_ops().configure(
+                        client.win,
+                        rect.x,
+                        rect.y,
+                        rect.w as u32,
+                        rect.h as u32,
+                        client.geometry.border_w as u32,
+                    );
+                }
+            }
+
             if done {
                 completed.push(key);
             }
         }
+
+        if composited {
+            let scene = self.build_compositor_scene(&visual_overrides);
+            let _ = backend.compositor_render_frame(&scene);
+        }
+
         for key in completed {
-            // sample() already returned `to` rect on the final tick, so
-            // the window is already at the animation target. Just clean up.
             self.animations.active.remove(&key);
         }
+    }
+
+    /// Build an ordered scene for the compositor: Vec<(window_id_raw, x, y, w, h)>
+    /// from bottom to top, using the last_stacking order. For windows with
+    /// active animation overrides, use the interpolated rect instead of actual geometry.
+    fn build_compositor_scene(
+        &self,
+        visual_overrides: &HashMap<ClientKey, Rect>,
+    ) -> Vec<(u64, i32, i32, u32, u32)> {
+        let mut scene = Vec::new();
+
+        // Iterate all monitors, using last_stacking order (bottom to top)
+        for &mon_key in &self.state.monitor_order {
+            if let Some(stacking) = self.last_stacking.get(mon_key) {
+                for &win_id in stacking {
+                    // Find the client key for this window
+                    if let Some(&ck) = self.state.win_to_client.get(&win_id) {
+                        if let Some(client) = self.state.clients.get(ck) {
+                            let (x, y, w, h) = if let Some(rect) = visual_overrides.get(&ck) {
+                                (rect.x, rect.y, rect.w as u32, rect.h as u32)
+                            } else {
+                                (
+                                    client.geometry.x,
+                                    client.geometry.y,
+                                    client.geometry.w as u32,
+                                    client.geometry.h as u32,
+                                )
+                            };
+                            if w > 0 && h > 0 {
+                                scene.push((win_id.raw(), x, y, w, h));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Also include the status bar if present
+        if let Some(bar_key) = self.status_bar_client {
+            if let Some(bar) = self.state.clients.get(bar_key) {
+                let w = bar.geometry.w as u32;
+                let h = bar.geometry.h as u32;
+                if w > 0 && h > 0 {
+                    scene.push((
+                        bar.win.raw(),
+                        bar.geometry.x,
+                        bar.geometry.y,
+                        w,
+                        h,
+                    ));
+                }
+            }
+        }
+
+        scene
     }
 
     fn sync_focused_floating_geometry(&mut self, backend: &mut dyn Backend) {

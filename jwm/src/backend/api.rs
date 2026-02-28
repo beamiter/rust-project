@@ -240,6 +240,7 @@ pub enum BackendEvent {
         format: u8,
     },
     MappingNotify,
+    DamageNotify { drawable: WindowId },
 }
 
 pub trait WindowOps: Send {
@@ -566,6 +567,17 @@ pub trait Backend: Send {
     fn run(&mut self, handler: &mut dyn EventHandler) -> Result<(), BackendError>;
 
     fn request_render(&mut self) {}
+
+    fn has_compositor(&self) -> bool {
+        false
+    }
+
+    fn compositor_render_frame(
+        &mut self,
+        _scene: &[(u64, i32, i32, u32, u32)],
+    ) -> Result<bool, BackendError> {
+        Ok(false)
+    }
 
     /// Request a compositor-level screenshot.
     ///

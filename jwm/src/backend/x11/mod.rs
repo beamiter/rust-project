@@ -1,5 +1,7 @@
 pub mod backend;
 pub mod batch;
+pub mod compositor;
+pub mod shaders;
 
 x11rb::atom_manager! {
     pub Atoms: AtomsCookie {

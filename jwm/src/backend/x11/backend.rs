@@ -76,6 +76,8 @@ pub struct X11Backend {
     _init_event_source: Option<X11EventSource>,
 
     interaction: Option<X11Interaction>,
+
+    compositor: Option<super::compositor::Compositor>,
 }
 
 struct X11Interaction {
@@ -202,6 +204,28 @@ impl X11Backend {
             ..Default::default()
         };
 
+        // Try to initialize compositor (GPU compositing)
+        let compositor = if env::var("JWM_NO_COMPOSITOR").map(|v| v == "1").unwrap_or(false) {
+            log::info!("Compositor disabled by JWM_NO_COMPOSITOR=1");
+            None
+        } else {
+            match super::compositor::Compositor::new(
+                conn.clone(),
+                root_x11,
+                screen.width_in_pixels as u32,
+                screen.height_in_pixels as u32,
+            ) {
+                Ok(c) => {
+                    log::info!("GPU compositor initialized successfully");
+                    Some(c)
+                }
+                Err(e) => {
+                    log::warn!("Compositor init failed, falling back to non-composited mode: {e}");
+                    None
+                }
+            }
+        };
+
         Ok(Self {
             conn,
             screen,
@@ -220,7 +244,47 @@ impl X11Backend {
             color_allocator,
             _init_event_source: Some(event_source),
             interaction: None,
+            compositor,
         })
+    }
+
+    fn compositor_handle_event(&mut self, event: &BackendEvent) {
+        let compositor = match self.compositor.as_mut() {
+            Some(c) => c,
+            None => return,
+        };
+        match event {
+            BackendEvent::WindowMapped(win) => {
+                if let Ok(x11w) = self.ids.x11(*win) {
+                    if x11w != self.root_x11 {
+                        if let Ok(geom) = self.window_ops.get_geometry(*win) {
+                            compositor.add_window(x11w, geom.x, geom.y, geom.w, geom.h);
+                        }
+                    }
+                }
+            }
+            BackendEvent::WindowUnmapped(win) => {
+                if let Ok(x11w) = self.ids.x11(*win) {
+                    compositor.remove_window(x11w);
+                }
+            }
+            BackendEvent::WindowDestroyed(win) => {
+                if let Ok(x11w) = self.ids.x11(*win) {
+                    compositor.remove_window(x11w);
+                }
+            }
+            BackendEvent::WindowConfigured { window, x, y, width, height } => {
+                if let Ok(x11w) = self.ids.x11(*window) {
+                    compositor.update_geometry(x11w, *x, *y, *width, *height);
+                }
+            }
+            BackendEvent::DamageNotify { drawable } => {
+                if let Ok(x11w) = self.ids.x11(*drawable) {
+                    compositor.mark_damaged(x11w);
+                }
+            }
+            _ => {}
+        }
     }
 
     pub fn atoms(&self) -> &Atoms {
@@ -255,6 +319,30 @@ impl Backend for X11Backend {
 
     fn request_render(&mut self) {
         let _ = self.conn.flush();
+    }
+
+    fn has_compositor(&self) -> bool {
+        self.compositor.is_some()
+    }
+
+    fn compositor_render_frame(
+        &mut self,
+        scene: &[(u64, i32, i32, u32, u32)],
+    ) -> Result<bool, BackendError> {
+        let compositor = match self.compositor.as_mut() {
+            Some(c) => c,
+            None => return Ok(false),
+        };
+        // Convert WindowId raw u64 to x11 window u32 via ids registry
+        let x11_scene: Vec<(u32, i32, i32, u32, u32)> = scene
+            .iter()
+            .filter_map(|&(wid_raw, x, y, w, h)| {
+                let wid = WindowId::from_raw(wid_raw);
+                self.ids.x11(wid).ok().map(|x11w| (x11w, x, y, w, h))
+            })
+            .collect();
+        let _ = self.conn.flush();
+        Ok(compositor.render_frame(&x11_scene))
     }
     fn as_any(&self) -> &dyn Any {
         self
@@ -302,6 +390,9 @@ impl Backend for X11Backend {
     }
 
     fn cleanup(&mut self) -> Result<(), BackendError> {
+        // Drop compositor before other X11 resources
+        self.compositor.take();
+
         // Free X11 resources
         let _ = self.color_allocator.free_all_theme_pixels();
         let _ = self.cursor_provider.cleanup();
@@ -523,7 +614,7 @@ impl Backend for X11Backend {
         let handle = event_loop.handle();
 
         // 1. 注册 X11 事件源
-        let x11_source = if let Some(src) = self._init_event_source.take() {
+        let mut x11_source = if let Some(src) = self._init_event_source.take() {
             src
         } else {
             X11EventSource::new(
@@ -534,8 +625,15 @@ impl Backend for X11Backend {
             )
         };
 
+        // Pass damage event base to event source if compositor is active
+        if let Some(ref compositor) = self.compositor {
+            x11_source.set_damage_event_base(compositor.damage_event_base());
+        }
+
         handle
             .insert_source(x11_source, |event, _, data| {
+                // Compositor hooks: track window lifecycle and damage
+                data.backend.compositor_handle_event(&event);
                 let event = data.backend.enrich_event_with_output(event);
                 if let Err(e) = data.handler.handle_event(data.backend, event) {
                     log::error!("Error handling X11 event: {:?}", e);
@@ -1320,6 +1418,7 @@ mod event_source {
         atoms: Atoms,
         root_x11: u32,
         ids: X11IdRegistry,
+        damage_event_base: Option<u8>,
     }
 
     impl X11EventSource {
@@ -1329,7 +1428,12 @@ mod event_source {
                 atoms,
                 root_x11,
                 ids,
+                damage_event_base: None,
             }
+        }
+
+        pub(super) fn set_damage_event_base(&mut self, base: u8) {
+            self.damage_event_base = Some(base);
         }
 
         fn hit_target_from_event_window(&self, event_window: u32) -> HitTarget {
@@ -1547,6 +1651,20 @@ mod event_source {
                 XEvent::Expose(e) => Some(BackendEvent::Expose {
                     window: self.ids.intern(e.window),
                 }),
+                XEvent::Unknown(ref raw) => {
+                    if let Some(base) = self.damage_event_base {
+                        if raw.len() >= 8 && (raw[0] & 0x7f) == base {
+                            // DamageNotify: bytes 4..8 contain the drawable (u32 LE)
+                            let drawable = u32::from_ne_bytes([
+                                raw[4], raw[5], raw[6], raw[7],
+                            ]);
+                            return Some(BackendEvent::DamageNotify {
+                                drawable: self.ids.intern(drawable),
+                            });
+                        }
+                    }
+                    None
+                }
                 _ => None,
             }
         }
