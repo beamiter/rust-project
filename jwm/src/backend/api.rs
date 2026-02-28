@@ -110,6 +110,7 @@ pub enum PropertyKind {
     Urgency,
     WindowType,
     Protocols,
+    Strut,
     Other,
 }
 
@@ -238,6 +239,11 @@ pub enum BackendEvent {
         type_: u32,
         data: [u32; 5],
         format: u8,
+    },
+    MoveResizeRequest {
+        window: WindowId,
+        direction: u32,
+        button: u32,
     },
     MappingNotify,
     DamageNotify { drawable: WindowId },
@@ -395,9 +401,29 @@ pub trait PropertyOps: Send {
         monitor_num: u32,
     ) -> Result<(), BackendError>;
 
+    fn get_window_strut_partial(&self, _win: WindowId) -> Option<StrutPartial> {
+        None
+    }
+
     fn get_layer_surface_info(&self, _win: WindowId) -> Option<LayerSurfaceInfo> {
         None
     }
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StrutPartial {
+    pub left: u32,
+    pub right: u32,
+    pub top: u32,
+    pub bottom: u32,
+    pub left_start_y: u32,
+    pub left_end_y: u32,
+    pub right_start_y: u32,
+    pub right_end_y: u32,
+    pub top_start_x: u32,
+    pub top_end_x: u32,
+    pub bottom_start_x: u32,
+    pub bottom_end_x: u32,
 }
 
 pub struct WmHints {
@@ -469,6 +495,7 @@ pub enum EwmhFeature {
     NumberOfDesktops,
     DesktopNames,
     DesktopViewport,
+    WmMoveResize,
 }
 
 pub trait ColorAllocator: Send {

@@ -383,6 +383,7 @@ impl Backend for X11Backend {
                 EwmhFeature::NumberOfDesktops,
                 EwmhFeature::DesktopNames,
                 EwmhFeature::DesktopViewport,
+                EwmhFeature::WmMoveResize,
             ];
             facade.declare_supported(&supported)?;
         }
@@ -1459,6 +1460,10 @@ mod event_source {
                 PropertyKind::WindowType
             } else if atom == self.atoms.WM_PROTOCOLS {
                 PropertyKind::Protocols
+            } else if atom == self.atoms._NET_WM_STRUT
+                || atom == self.atoms._NET_WM_STRUT_PARTIAL
+            {
+                PropertyKind::Strut
             } else {
                 PropertyKind::Other
             }
@@ -1634,6 +1639,15 @@ mod event_source {
                             window: self.ids.intern(e.window),
                         });
                     }
+                    if e.type_ == self.atoms._NET_WM_MOVERESIZE && e.format == 32 {
+                        let direction = data32.get(2).copied().unwrap_or(0);
+                        let button = data32.get(3).copied().unwrap_or(0);
+                        return Some(BackendEvent::MoveResizeRequest {
+                            window: self.ids.intern(e.window),
+                            direction,
+                            button,
+                        });
+                    }
                     Some(BackendEvent::ClientMessage {
                         window: self.ids.intern(e.window),
                         type_: e.type_,
@@ -1807,6 +1821,7 @@ mod ewmh_facade {
                 EwmhFeature::NumberOfDesktops => self.atoms._NET_NUMBER_OF_DESKTOPS,
                 EwmhFeature::DesktopNames => self.atoms._NET_DESKTOP_NAMES,
                 EwmhFeature::DesktopViewport => self.atoms._NET_DESKTOP_VIEWPORT,
+                EwmhFeature::WmMoveResize => self.atoms._NET_WM_MOVERESIZE,
             }
         }
     }
@@ -2338,7 +2353,27 @@ mod output_ops {
     use crate::backend::common_define::OutputId;
     use std::sync::{Arc, Mutex};
     use x11rb::connection::Connection;
-    use x11rb::protocol::randr::ConnectionExt as RandrExt;
+    use x11rb::protocol::randr::{self, ConnectionExt as RandrExt};
+
+    /// Calculate refresh rate in millihertz from a RandR ModeInfo.
+    fn calc_refresh_mhz(mode: &randr::ModeInfo) -> u32 {
+        if mode.htotal == 0 || mode.vtotal == 0 {
+            return 60000;
+        }
+        let mut vtotal = mode.vtotal as u64;
+        let flags = u32::from(mode.mode_flags);
+        if flags & (1 << 4) != 0 {
+            vtotal *= 2; // DoubleScan
+        }
+        if flags & (1 << 0) != 0 {
+            vtotal /= 2; // Interlace (fields per second → frames)
+        }
+        let denom = mode.htotal as u64 * vtotal;
+        if denom == 0 {
+            return 60000;
+        }
+        ((mode.dot_clock as u64 * 1000) / denom) as u32
+    }
 
     pub(super) struct X11OutputOps<C: Connection> {
         conn: Arc<C>,
@@ -2396,9 +2431,47 @@ mod output_ops {
                     if (v.major_version > 1) || (v.major_version == 1 && v.minor_version >= 5) {
                         if let Ok(cookie) = self.conn.randr_get_monitors(self.root, true) {
                             if let Ok(reply) = cookie.reply() {
+                                // Pre-fetch screen resources for mode info lookup
+                                let modes: Vec<randr::ModeInfo> = self
+                                    .conn
+                                    .randr_get_screen_resources(self.root)
+                                    .ok()
+                                    .and_then(|c| c.reply().ok())
+                                    .map(|r| r.modes)
+                                    .unwrap_or_default();
+
                                 let mut out = Vec::with_capacity(4);
                                 for (i, m) in reply.monitors.into_iter().enumerate() {
                                     if m.width > 0 && m.height > 0 {
+                                        // Resolve refresh rate: output → output_info → crtc → crtc_info → mode
+                                        let refresh = m
+                                            .outputs
+                                            .first()
+                                            .and_then(|&output| {
+                                                self.conn
+                                                    .randr_get_output_info(output, 0)
+                                                    .ok()?
+                                                    .reply()
+                                                    .ok()
+                                            })
+                                            .and_then(|oi| {
+                                                if oi.crtc == 0 {
+                                                    return None;
+                                                }
+                                                self.conn
+                                                    .randr_get_crtc_info(oi.crtc, 0)
+                                                    .ok()?
+                                                    .reply()
+                                                    .ok()
+                                            })
+                                            .and_then(|ci| {
+                                                modes
+                                                    .iter()
+                                                    .find(|mode| mode.id == ci.mode)
+                                                    .map(calc_refresh_mhz)
+                                            })
+                                            .unwrap_or(60000);
+
                                         out.push(OutputInfo {
                                             id: OutputId(i as u64),
                                             name: format!("Monitor-{}", i),
@@ -2407,7 +2480,7 @@ mod output_ops {
                                             width: m.width as i32,
                                             height: m.height as i32,
                                             scale: 1.0,
-                                            refresh_rate: 60000, // 60Hz
+                                            refresh_rate: refresh,
                                         });
                                     }
                                 }
@@ -2423,11 +2496,17 @@ mod output_ops {
             // Fallback: RandR 1.2 CRTC enumeration
             if let Ok(cookie) = self.conn.randr_get_screen_resources(self.root) {
                 if let Ok(resources) = cookie.reply() {
+                    let modes = &resources.modes;
                     let mut out = Vec::with_capacity(4);
-                    for (i, crtc) in resources.crtcs.into_iter().enumerate() {
-                        if let Ok(cookie) = self.conn.randr_get_crtc_info(crtc, 0) {
+                    for (i, crtc) in resources.crtcs.iter().enumerate() {
+                        if let Ok(cookie) = self.conn.randr_get_crtc_info(*crtc, 0) {
                             if let Ok(ci) = cookie.reply() {
                                 if ci.width > 0 && ci.height > 0 {
+                                    let refresh = modes
+                                        .iter()
+                                        .find(|m| m.id == ci.mode)
+                                        .map(calc_refresh_mhz)
+                                        .unwrap_or(60000);
                                     out.push(OutputInfo {
                                         id: OutputId(i as u64),
                                         name: format!("CRTC-{}", i),
@@ -2436,7 +2515,7 @@ mod output_ops {
                                         width: ci.width as i32,
                                         height: ci.height as i32,
                                         scale: 1.0,
-                                        refresh_rate: 60000,
+                                        refresh_rate: refresh,
                                     });
                                 }
                             }
@@ -2497,6 +2576,7 @@ mod output_ops {
 
 mod property_ops {
     use crate::backend::api::NormalHints;
+    use crate::backend::api::StrutPartial;
     use crate::backend::api::WmHints;
     use crate::backend::api::{PropertyOps as PropertyOpsTrait, WindowType};
     use crate::backend::common_define::WindowId;
@@ -2890,6 +2970,72 @@ mod property_ops {
                 .conn
                 .delete_property(w, self.atoms._NET_WM_STRUT_PARTIAL);
             Ok(())
+        }
+
+        fn get_window_strut_partial(&self, win: WindowId) -> Option<StrutPartial> {
+            let w = self.ids.x11(win).ok()?;
+            // Try _NET_WM_STRUT_PARTIAL first (12 CARDINAL values)
+            if let Ok(reply) = self
+                .conn
+                .get_property(
+                    false,
+                    w,
+                    self.atoms._NET_WM_STRUT_PARTIAL,
+                    AtomEnum::CARDINAL,
+                    0,
+                    12,
+                )
+                .ok()?
+                .reply()
+            {
+                if reply.format == 32 {
+                    let vals: Vec<u32> = reply.value32()?.collect();
+                    if vals.len() >= 12 {
+                        return Some(StrutPartial {
+                            left: vals[0],
+                            right: vals[1],
+                            top: vals[2],
+                            bottom: vals[3],
+                            left_start_y: vals[4],
+                            left_end_y: vals[5],
+                            right_start_y: vals[6],
+                            right_end_y: vals[7],
+                            top_start_x: vals[8],
+                            top_end_x: vals[9],
+                            bottom_start_x: vals[10],
+                            bottom_end_x: vals[11],
+                        });
+                    }
+                }
+            }
+            // Fallback: _NET_WM_STRUT (4 CARDINAL values, no start/end ranges)
+            if let Ok(reply) = self
+                .conn
+                .get_property(
+                    false,
+                    w,
+                    self.atoms._NET_WM_STRUT,
+                    AtomEnum::CARDINAL,
+                    0,
+                    4,
+                )
+                .ok()?
+                .reply()
+            {
+                if reply.format == 32 {
+                    let vals: Vec<u32> = reply.value32()?.collect();
+                    if vals.len() >= 4 {
+                        return Some(StrutPartial {
+                            left: vals[0],
+                            right: vals[1],
+                            top: vals[2],
+                            bottom: vals[3],
+                            ..Default::default()
+                        });
+                    }
+                }
+            }
+            None
         }
 
         fn set_client_info_props(

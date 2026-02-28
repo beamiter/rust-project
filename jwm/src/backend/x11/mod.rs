@@ -33,6 +33,7 @@ x11rb::atom_manager! {
         _NET_NUMBER_OF_DESKTOPS,
         _NET_DESKTOP_NAMES,
         _NET_DESKTOP_VIEWPORT,
+        _NET_WM_MOVERESIZE,
         _NET_WM_STRUT,
         _NET_WM_STRUT_PARTIAL,
         _NET_WM_WINDOW_TYPE_POPUP_MENU,

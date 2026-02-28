@@ -37,6 +37,7 @@ use crate::backend::api::Geometry;
 use crate::backend::api::NetWmAction;
 use crate::backend::api::NetWmState;
 use crate::backend::api::PropertyKind;
+use crate::backend::api::StrutPartial;
 use crate::backend::api::StackMode;
 use crate::backend::api::WindowChanges;
 use crate::backend::api::WindowType;
@@ -223,6 +224,9 @@ pub struct Jwm {
 
     key_bindings: Vec<WMKey>,
 
+    /// Strut reservations from external panels (polybar, trayer, etc.)
+    external_struts: HashMap<WindowId, StrutPartial>,
+
     // IPC
     pub ipc_server: Option<IpcServer>,
 
@@ -265,6 +269,10 @@ impl WMController for Jwm {
     fn on_screen_layout_changed(&mut self, backend: &mut dyn Backend) {
         info!("[WMController] Screen Layout Changed (Hotplug detected), refreshing geometry...");
         if self.updategeom(backend) {
+            // Re-apply external strut reservations after geometry reset
+            if !self.external_struts.is_empty() {
+                self.apply_strut_reservations();
+            }
             if let Err(e) = self.handle_screen_geometry_change(backend) {
                 error!("Error handling ScreenLayoutChanged: {:?}", e);
             }
@@ -462,6 +470,37 @@ impl WMController for Jwm {
         win: WindowId,
         kind: PropertyKind,
     ) {
+        // Handle external strut changes (polybar, trayer, etc.) — works for
+        // both managed and unmanaged (override-redirect) windows.
+        if kind == PropertyKind::Strut {
+            // Skip our own bar window
+            if Some(win) != self.status_bar_window {
+                if let Some(strut) = backend.property_ops().get_window_strut_partial(win) {
+                    if strut.left > 0 || strut.right > 0 || strut.top > 0 || strut.bottom > 0 {
+                        let changed = self.external_struts.get(&win) != Some(&strut);
+                        self.external_struts.insert(win, strut);
+                        if changed {
+                            info!("[strut] Updated external strut for {:?}: top={} bottom={} left={} right={}",
+                                win, strut.top, strut.bottom, strut.left, strut.right);
+                            self.apply_strut_reservations();
+                            self.arrange(backend, None);
+                        }
+                    } else {
+                        // All edges zero — remove
+                        if self.external_struts.remove(&win).is_some() {
+                            info!("[strut] Removed external strut for {:?}", win);
+                            self.apply_strut_reservations();
+                            self.arrange(backend, None);
+                        }
+                    }
+                } else if self.external_struts.remove(&win).is_some() {
+                    info!("[strut] Property deleted for {:?}", win);
+                    self.apply_strut_reservations();
+                    self.arrange(backend, None);
+                }
+            }
+        }
+
         if let Some(client_key) = self.wintoclient(win) {
             let res = match kind {
                 PropertyKind::TransientFor => self.handle_transient_for_change(backend, client_key),
@@ -561,6 +600,165 @@ impl WMController for Jwm {
     }
 }
 
+// =================================================================================
+// _NET_WM_MOVERESIZE & Strut helpers
+// =================================================================================
+impl Jwm {
+    fn on_moveresize_request(
+        &mut self,
+        backend: &mut dyn Backend,
+        win: WindowId,
+        direction: u32,
+    ) {
+        const _NET_WM_MOVERESIZE_CANCEL: u32 = 11;
+        const _NET_WM_MOVERESIZE_MOVE: u32 = 8;
+
+        if direction == _NET_WM_MOVERESIZE_CANCEL {
+            let _ = backend.handle_button_release(0);
+            return;
+        }
+
+        let client_key = match self.wintoclient(win) {
+            Some(ck) => ck,
+            None => return,
+        };
+
+        if direction == _NET_WM_MOVERESIZE_MOVE {
+            if let Err(e) = self.enable_floating_keep_geometry(backend, client_key) {
+                error!("Error enabling floating for move-resize move: {:?}", e);
+                return;
+            }
+            if let Err(e) = backend.begin_move(win) {
+                error!("Error begin_move for _NET_WM_MOVERESIZE: {:?}", e);
+            }
+            return;
+        }
+
+        if direction <= 7 {
+            let edge = match direction {
+                0 => ResizeEdge::TopLeft,
+                1 => ResizeEdge::Top,
+                2 => ResizeEdge::TopRight,
+                3 => ResizeEdge::Right,
+                4 => ResizeEdge::BottomRight,
+                5 => ResizeEdge::Bottom,
+                6 => ResizeEdge::BottomLeft,
+                7 => ResizeEdge::Left,
+                _ => unreachable!(),
+            };
+            if let Err(e) = self.enable_floating_keep_geometry(backend, client_key) {
+                error!("Error enabling floating for move-resize resize: {:?}", e);
+                return;
+            }
+            if let Err(e) = backend.begin_resize(win, edge) {
+                error!("Error begin_resize for _NET_WM_MOVERESIZE: {:?}", e);
+            }
+        }
+        // direction 9 (SIZE_KEYBOARD) and 10 (MOVE_KEYBOARD) are ignored
+    }
+
+    /// Compute the maximum strut reservation for a given monitor from external panels.
+    /// Returns (top, bottom, left, right) in pixels.
+    fn get_strut_reserved(&self, mon_key: MonitorKey) -> (i32, i32, i32, i32) {
+        let monitor = match self.state.monitors.get(mon_key) {
+            Some(m) => m,
+            None => return (0, 0, 0, 0),
+        };
+        let mx = monitor.geometry.m_x;
+        let my = monitor.geometry.m_y;
+        let mw = monitor.geometry.m_w;
+        let mh = monitor.geometry.m_h;
+        let mx_end = mx + mw;
+        let my_end = my + mh;
+
+        let mut top = 0i32;
+        let mut bottom = 0i32;
+        let mut left = 0i32;
+        let mut right = 0i32;
+
+        for strut in self.external_struts.values() {
+            // Top edge: strut applies if the monitor's X range overlaps [top_start_x, top_end_x]
+            if strut.top > 0 {
+                let sx = strut.top_start_x as i32;
+                let ex = strut.top_end_x as i32;
+                // If start/end are both 0, the strut applies to all monitors
+                if (sx == 0 && ex == 0) || (sx < mx_end && ex >= mx) {
+                    top = top.max(strut.top as i32 - my);
+                }
+            }
+            // Bottom edge
+            if strut.bottom > 0 {
+                let sx = strut.bottom_start_x as i32;
+                let ex = strut.bottom_end_x as i32;
+                if (sx == 0 && ex == 0) || (sx < mx_end && ex >= mx) {
+                    bottom = bottom.max(strut.bottom as i32 - (my_end - mh).max(0));
+                }
+            }
+            // Left edge
+            if strut.left > 0 {
+                let sy = strut.left_start_y as i32;
+                let ey = strut.left_end_y as i32;
+                if (sy == 0 && ey == 0) || (sy < my_end && ey >= my) {
+                    left = left.max(strut.left as i32 - mx);
+                }
+            }
+            // Right edge
+            if strut.right > 0 {
+                let sy = strut.right_start_y as i32;
+                let ey = strut.right_end_y as i32;
+                if (sy == 0 && ey == 0) || (sy < my_end && ey >= my) {
+                    right = right.max(strut.right as i32 - (mx_end - mw).max(0));
+                }
+            }
+        }
+
+        (top.max(0), bottom.max(0), left.max(0), right.max(0))
+    }
+
+    /// Apply external strut reservations to all monitors' workarea geometry.
+    fn apply_strut_reservations(&mut self) {
+        let mon_keys: Vec<MonitorKey> = self.state.monitor_order.clone();
+        for mon_key in mon_keys {
+            let (strut_top, strut_bottom, strut_left, strut_right) =
+                self.get_strut_reserved(mon_key);
+            if let Some(monitor) = self.state.monitors.get_mut(mon_key) {
+                // Reset workarea to monitor area, then subtract struts
+                monitor.geometry.w_x = monitor.geometry.m_x + strut_left;
+                monitor.geometry.w_y = monitor.geometry.m_y + strut_top;
+                monitor.geometry.w_w = monitor.geometry.m_w - strut_left - strut_right;
+                monitor.geometry.w_h = monitor.geometry.m_h - strut_top - strut_bottom;
+            }
+        }
+    }
+
+    /// Check and read strut property on newly mapped windows.
+    fn check_strut_on_manage(&mut self, backend: &mut dyn Backend, win: WindowId) {
+        if Some(win) == self.status_bar_window {
+            return;
+        }
+        if let Some(strut) = backend.property_ops().get_window_strut_partial(win) {
+            if strut.left > 0 || strut.right > 0 || strut.top > 0 || strut.bottom > 0 {
+                info!(
+                    "[strut] New window {:?} has strut: top={} bottom={} left={} right={}",
+                    win, strut.top, strut.bottom, strut.left, strut.right
+                );
+                self.external_struts.insert(win, strut);
+                self.apply_strut_reservations();
+                self.arrange(backend, None);
+            }
+        }
+    }
+
+    /// Remove strut for a window being unmanaged.
+    fn remove_strut_on_unmanage(&mut self, backend: &mut dyn Backend, win: WindowId) {
+        if self.external_struts.remove(&win).is_some() {
+            info!("[strut] Removed strut on unmanage for {:?}", win);
+            self.apply_strut_reservations();
+            self.arrange(backend, None);
+        }
+    }
+}
+
 impl EventHandler for Jwm {
     fn handle_event(
         &mut self,
@@ -646,6 +844,12 @@ impl EventHandler for Jwm {
                 state,
             } => self.on_window_state_request(backend, window, action, state),
             BackendEvent::ActiveWindowMessage { window } => self.on_client_message(backend, window),
+
+            BackendEvent::MoveResizeRequest {
+                window,
+                direction,
+                button: _,
+            } => self.on_moveresize_request(backend, window, direction),
 
             // Compositor: damage events are handled at the backend level
             BackendEvent::DamageNotify { .. } => {}
@@ -946,6 +1150,7 @@ impl Jwm {
             scratchpad_pending_name: None,
             animations: AnimationManager::new(),
             key_bindings: CONFIG.load().get_keys(),
+            external_struts: HashMap::new(),
             last_mouse_root: (0.0, 0.0),
 
             ipc_server: match IpcServer::new() {
@@ -3290,6 +3495,13 @@ impl Jwm {
         backend: &mut dyn Backend,
         window: WindowId,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        // Clean up external struts for override-redirect windows (e.g. polybar)
+        // that are never managed but may have set strut properties.
+        if self.external_struts.remove(&window).is_some() {
+            info!("[strut] Removed strut on destroy for {:?}", window);
+            self.apply_strut_reservations();
+            self.arrange(backend, None);
+        }
         let c = self.wintoclient(window);
         if c.is_some() {
             self.unmanage(backend, c, true)?;
@@ -6865,6 +7077,9 @@ impl Jwm {
             return self.manage_statusbar(backend, client_key, win, current_mon_id);
         }
 
+        // Check for external strut (polybar, trayer, etc.)
+        self.check_strut_on_manage(backend, win);
+
         let client_key = self.insert_client(client);
         self.manage_regular_client(backend, client_key)?;
 
@@ -7715,6 +7930,9 @@ impl Jwm {
             warn!("[unmanage] Client {:?} not found", client_key);
             return Ok(());
         };
+
+        // Remove any external strut reservation for this window
+        self.remove_strut_on_unmanage(backend, win);
 
         if Some(win) == self.status_bar_window {
             return self.unmanage_statusbar();
