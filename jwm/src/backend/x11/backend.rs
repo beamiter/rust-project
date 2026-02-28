@@ -205,10 +205,11 @@ impl X11Backend {
         };
 
         // Try to initialize compositor (GPU compositing)
-        let compositor = if env::var("JWM_NO_COMPOSITOR").map(|v| v == "1").unwrap_or(false) {
-            log::info!("Compositor disabled by JWM_NO_COMPOSITOR=1");
-            None
-        } else {
+        // Compositor uses MANUAL redirect + GLX texture_from_pixmap, which requires
+        // direct GLX rendering. This does NOT work in nested X servers (Xephyr/Xnest)
+        // because GLX renders to the host GPU framebuffer, not the nested server's.
+        // Default: OFF. Set JWM_COMPOSITOR=1 to enable.
+        let compositor = if env::var("JWM_COMPOSITOR").map(|v| v == "1").unwrap_or(false) {
             match super::compositor::Compositor::new(
                 conn.clone(),
                 root_x11,
@@ -224,6 +225,9 @@ impl X11Backend {
                     None
                 }
             }
+        } else {
+            log::info!("Compositor disabled (set JWM_COMPOSITOR=1 to enable)");
+            None
         };
 
         Ok(Self {

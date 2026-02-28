@@ -3,8 +3,8 @@
 
 sudo rm /usr/local/bin/jwm
 sudo rm /usr/local/bin/jwm-tool
-sudo install ../target/release/jwm /usr/local/bin/
-sudo install ../target/release/jwm-tool /usr/local/bin/
+sudo install ../target/debug/jwm /usr/local/bin/
+sudo install ../target/debug/jwm-tool /usr/local/bin/
 sudo install jwm-x11.desktop /usr/share/xsessions/
 sudo install jwm-wayland.desktop /usr/share/wayland-sessions/
 # mkdir -p ~/.config/picom/

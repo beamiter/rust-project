@@ -96,7 +96,13 @@ impl Drop for Compositor {
         for w in wins {
             self.remove_window(w);
         }
+        // Undo the MANUAL redirect so the X server renders windows normally again
+        let _ = self.conn.composite_unredirect_subwindows(
+            self.root,
+            x11rb::protocol::composite::Redirect::MANUAL,
+        );
         let _ = self.conn.composite_release_overlay_window(self.overlay_window);
+        let _ = self.conn.flush();
         unsafe {
             x11::glx::glXDestroyContext(self.xlib_display, self.glx_context);
             x11::xlib::XCloseDisplay(self.xlib_display);
@@ -121,6 +127,35 @@ impl Compositor {
         conn.composite_redirect_subwindows(root, x11rb::protocol::composite::Redirect::MANUAL)
             .map_err(|e| format!("redirect_subwindows: {e}"))?;
 
+        // RAII guard: if we return Err after the redirect, undo it so the screen
+        // doesn't go permanently black.
+        struct RedirectGuard {
+            conn: Arc<RustConnection>,
+            root: u32,
+            overlay: Option<u32>,
+            active: bool,
+        }
+        impl Drop for RedirectGuard {
+            fn drop(&mut self) {
+                if self.active {
+                    let _ = self.conn.composite_unredirect_subwindows(
+                        self.root,
+                        x11rb::protocol::composite::Redirect::MANUAL,
+                    );
+                    if let Some(ow) = self.overlay {
+                        let _ = self.conn.composite_release_overlay_window(ow);
+                    }
+                    let _ = self.conn.flush();
+                }
+            }
+        }
+        let mut guard = RedirectGuard {
+            conn: conn.clone(),
+            root,
+            overlay: None,
+            active: true,
+        };
+
         // 3. Damage extension
         conn.damage_query_version(1, 1)
             .map_err(|e| format!("damage_query_version: {e}"))?
@@ -140,6 +175,7 @@ impl Compositor {
             .reply()
             .map_err(|e| format!("overlay reply: {e}"))?;
         let overlay_window = overlay_reply.overlay_win;
+        guard.overlay = Some(overlay_window);
 
         // 5. Make overlay input-passthrough using XFixes
         {
@@ -167,6 +203,28 @@ impl Compositor {
         }
 
         let screen_num = unsafe { x11::xlib::XDefaultScreen(xlib_display) };
+
+        // 6b. Verify GLX_EXT_texture_from_pixmap is advertised in the extension string.
+        // glXGetProcAddress can return non-null pointers even when the extension
+        // is not actually supported (e.g. indirect GLX in nested X servers).
+        {
+            let ext_str = unsafe {
+                let raw = x11::glx::glXQueryExtensionsString(xlib_display, screen_num);
+                if raw.is_null() {
+                    ""
+                } else {
+                    std::ffi::CStr::from_ptr(raw).to_str().unwrap_or("")
+                }
+            };
+            if !ext_str.contains("GLX_EXT_texture_from_pixmap") {
+                unsafe { x11::xlib::XCloseDisplay(xlib_display) };
+                // Guard will undo redirect + release overlay
+                return Err(
+                    "GLX_EXT_texture_from_pixmap not available (nested X server?)".into(),
+                );
+            }
+            log::info!("GLX extensions: {ext_str}");
+        }
 
         // 7. Choose FBConfig for GLX context
         let ctx_attrs: Vec<i32> = vec![
@@ -214,6 +272,19 @@ impl Compositor {
         };
         if glx_context.is_null() {
             return Err("glXCreateNewContext failed".into());
+        }
+
+        // 8b. Require direct rendering — indirect GLX (e.g. in Xephyr) cannot
+        //     do texture-from-pixmap because the pixmaps live in the nested
+        //     server's address space, not the host GPU's.
+        let is_direct = unsafe { x11::glx::glXIsDirect(xlib_display, glx_context) };
+        if is_direct == 0 {
+            log::warn!("GLX context is indirect — compositor cannot work (nested X server?)");
+            unsafe {
+                x11::glx::glXDestroyContext(xlib_display, glx_context);
+                x11::xlib::XCloseDisplay(xlib_display);
+            }
+            return Err("GLX context is indirect; compositor requires direct rendering".into());
         }
 
         // 9. Create GLX window on the overlay
@@ -378,6 +449,9 @@ impl Compositor {
             overlay_window,
             damage_event_base
         );
+
+        // Success — defuse the guard so it doesn't undo our redirect
+        guard.active = false;
 
         Ok(Self {
             conn,
