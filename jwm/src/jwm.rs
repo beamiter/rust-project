@@ -1233,6 +1233,11 @@ impl Jwm {
                     is_client_click = true;
                     clicked_client_key = Some(client_key);
                     self.focus(backend, Some(client_key))?;
+                    // Invalidate stacking cache so restack always applies the
+                    // new z-order when clicking a partially-obscured window.
+                    if let Some(mon_key) = self.state.sel_mon {
+                        self.last_stacking.remove(mon_key);
+                    }
                     let _ = self.restack(backend, self.state.sel_mon);
                     click_type = WMClickType::ClickClientWin;
                 }

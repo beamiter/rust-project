@@ -852,10 +852,14 @@ impl JwmWaylandState {
                 continue;
             }
             let geo = self.window_geometry.get(win)?;
-            let x0 = geo.x as f64;
-            let y0 = geo.y as f64;
-            let x1 = x0 + geo.w as f64;
-            let y1 = y0 + geo.h as f64;
+            // Hit test includes border area so clicks on the border count as
+            // clicking the window. `geo` stores the content-area origin
+            // (x = original_x + bw), so expand outward by `border`.
+            let bw = geo.border as f64;
+            let x0 = geo.x as f64 - bw;
+            let y0 = geo.y as f64 - bw;
+            let x1 = geo.x as f64 + geo.w as f64 + bw;
+            let y1 = geo.y as f64 + geo.h as f64 + bw;
             if location.x >= x0 && location.y >= y0 && location.x < x1 && location.y < y1 {
                 if let Some(surface) = self.surface_for_window(*win) {
                     let origin = self.toplevel_buffer_origin(*win).unwrap_or((geo.x, geo.y).into());

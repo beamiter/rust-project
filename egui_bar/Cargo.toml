@@ -29,7 +29,33 @@ eframe = { version = "0.32.3", features = ["persistence"] }
 egui_plot = "0.33.0"
 egui = "0.32.3"
 
+# Config system
+toml = { workspace = true }
+notify = "8"
+dirs = "6.0"
+arc-swap = { workspace = true }
+once_cell = { workspace = true }
+
+# Phase 3: New modules
+mpris = "2.0"
+
+# Phase 7: System tray
+system-tray = "0.8"
+
+# Wayland layer-shell (Phase 4)
+smithay-client-toolkit = { version = "0.19", optional = true }
+wayland-client = { version = "0.31", optional = true }
+wayland-protocols-wlr = { version = "0.3", optional = true, features = ["client"] }
+raw-window-handle = { version = "0.6", optional = true }
+
 [features]
-default = []
+default = ["x11"]
+x11 = []
+wayland = [
+    "dep:smithay-client-toolkit",
+    "dep:wayland-client",
+    "dep:wayland-protocols-wlr",
+    "dep:raw-window-handle",
+]
 
 debug_mode = []
