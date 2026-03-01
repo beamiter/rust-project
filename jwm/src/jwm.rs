@@ -3287,26 +3287,70 @@ impl Jwm {
     ) -> Vec<(u64, i32, i32, u32, u32)> {
         let mut scene = Vec::new();
 
+        let debug_compositor = std::env::var("JWM_DEBUG_COMPOSITOR")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
         // Iterate all monitors, using last_stacking order (bottom to top)
         for &mon_key in &self.state.monitor_order {
-            if let Some(stacking) = self.last_stacking.get(mon_key) {
-                for &win_id in stacking {
-                    // Find the client key for this window
-                    if let Some(&ck) = self.state.win_to_client.get(&win_id) {
-                        if let Some(client) = self.state.clients.get(ck) {
-                            let (x, y, w, h) = if let Some(rect) = visual_overrides.get(&ck) {
-                                (rect.x, rect.y, rect.w as u32, rect.h as u32)
+            if debug_compositor {
+                let has_stacking = self.last_stacking.get(mon_key).is_some();
+                let stack_len = self
+                    .last_stacking
+                    .get(mon_key)
+                    .map(|s| s.len())
+                    .unwrap_or(0);
+                let client_count = self
+                    .state
+                    .monitor_clients
+                    .get(mon_key)
+                    .map(|c| c.len())
+                    .unwrap_or(0);
+                info!(
+                    "[compositor_scene] mon={:?} has_stacking={} stack_len={} clients={}",
+                    mon_key, has_stacking, stack_len, client_count
+                );
+            }
+            // Use last_stacking if available, otherwise fall back to
+            // monitor_stack so the compositor still has something to render
+            // when restack() hasn't run yet for this monitor.
+            let stacking_source: Vec<WindowId> =
+                if let Some(stacking) = self.last_stacking.get(mon_key) {
+                    stacking.clone()
+                } else if let Some(stack) = self.state.monitor_stack.get(mon_key) {
+                    // Fallback: build bottom-to-top from monitor_stack (which is top-to-bottom)
+                    stack
+                        .iter()
+                        .rev()
+                        .filter_map(|&ck| {
+                            let c = self.state.clients.get(ck)?;
+                            if self.is_client_visible_on_monitor(ck, mon_key) {
+                                Some(c.win)
                             } else {
-                                (
-                                    client.geometry.x,
-                                    client.geometry.y,
-                                    client.geometry.w as u32,
-                                    client.geometry.h as u32,
-                                )
-                            };
-                            if w > 0 && h > 0 {
-                                scene.push((win_id.raw(), x, y, w, h));
+                                None
                             }
+                        })
+                        .collect()
+                } else {
+                    Vec::new()
+                };
+
+            for &win_id in &stacking_source {
+                // Find the client key for this window
+                if let Some(&ck) = self.state.win_to_client.get(&win_id) {
+                    if let Some(client) = self.state.clients.get(ck) {
+                        let (x, y, w, h) = if let Some(rect) = visual_overrides.get(&ck) {
+                            (rect.x, rect.y, rect.w as u32, rect.h as u32)
+                        } else {
+                            (
+                                client.geometry.x,
+                                client.geometry.y,
+                                client.geometry.w as u32,
+                                client.geometry.h as u32,
+                            )
+                        };
+                        if w > 0 && h > 0 {
+                            scene.push((win_id.raw(), x, y, w, h));
                         }
                     }
                 }

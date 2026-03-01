@@ -564,14 +564,33 @@ impl Compositor {
 
         let _ = self.conn.flush();
 
-        // Determine if we use RGBA or RGB fbconfig
-        let has_rgba = !self.fbconfig_rgba.is_null();
-        let fbconfig = if has_rgba {
+        // Determine if we use RGBA or RGB fbconfig based on the window's depth.
+        // Most X11 windows are 24-bit (RGB); only 32-bit windows have alpha.
+        // Using the wrong fbconfig for TFP causes black textures.
+        let win_depth = self
+            .conn
+            .get_geometry(x11_win)
+            .ok()
+            .and_then(|c| c.reply().ok())
+            .map(|g| g.depth)
+            .unwrap_or(24);
+        let use_rgba = win_depth == 32 && !self.fbconfig_rgba.is_null();
+        let fbconfig = if use_rgba {
             self.fbconfig_rgba
         } else {
             self.fbconfig_rgb
         };
-        let tex_fmt = if has_rgba {
+        if fbconfig.is_null() {
+            log::warn!(
+                "compositor: no fbconfig for depth={} win=0x{:x}",
+                win_depth,
+                x11_win
+            );
+            let _ = self.conn.free_pixmap(pixmap);
+            let _ = self.conn.damage_destroy(damage_id);
+            return;
+        }
+        let tex_fmt = if use_rgba {
             GLX_TEXTURE_FORMAT_RGBA_EXT
         } else {
             GLX_TEXTURE_FORMAT_RGB_EXT
@@ -659,7 +678,7 @@ impl Compositor {
                 glx_pixmap,
                 gl_texture,
                 dirty: true,
-                has_rgba,
+                has_rgba: use_rgba,
             },
         );
 
@@ -788,6 +807,27 @@ impl Compositor {
     /// `scene` is an ordered list of (x11_win, x, y, w, h) from bottom to top.
     /// Returns true if a frame was rendered.
     pub(super) fn render_frame(&mut self, scene: &[(u32, i32, i32, u32, u32)]) -> bool {
+        // Diagnostics: log mismatches between scene and tracked windows
+        if !scene.is_empty() {
+            let mut drawn = 0usize;
+            let mut missed = 0usize;
+            for &(win, _, _, _, _) in scene {
+                if self.windows.contains_key(&win) {
+                    drawn += 1;
+                } else {
+                    missed += 1;
+                }
+            }
+            if missed > 0 {
+                log::warn!(
+                    "[compositor::render_frame] scene={} drawn={} missed={} (not tracked)",
+                    scene.len(),
+                    drawn,
+                    missed
+                );
+            }
+        }
+
         // Ensure context is current
         unsafe {
             x11::glx::glXMakeContextCurrent(
@@ -848,6 +888,7 @@ impl Compositor {
 
             let loc_rect = self.gl.get_uniform_location(self.program, "u_rect");
             let loc_tex = self.gl.get_uniform_location(self.program, "u_texture");
+            let loc_opacity = self.gl.get_uniform_location(self.program, "u_opacity");
             self.gl.uniform_1_i32(loc_tex.as_ref(), 0);
 
             self.gl.bind_vertex_array(Some(self.quad_vao));
@@ -855,7 +896,10 @@ impl Compositor {
             // Draw each window quad bottom-to-top
             for &(win, x, y, w, h) in scene {
                 if let Some(wt) = self.windows.get(&win) {
-                    let _ = wt;
+                    // For RGBA windows, pass through the texture alpha;
+                    // for RGB windows, force opacity to 1.0 since TFP alpha is undefined.
+                    let opacity = if wt.has_rgba { -1.0f32 } else { 1.0f32 };
+                    self.gl.uniform_1_f32(loc_opacity.as_ref(), opacity);
                     self.gl.uniform_4_f32(
                         loc_rect.as_ref(),
                         x as f32,
@@ -879,6 +923,10 @@ impl Compositor {
         }
 
         true
+    }
+
+    pub(super) fn tracked_window_count(&self) -> usize {
+        self.windows.len()
     }
 
     #[allow(dead_code)]

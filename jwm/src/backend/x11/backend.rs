@@ -345,6 +345,19 @@ impl Backend for X11Backend {
                 self.ids.x11(wid).ok().map(|x11w| (x11w, x, y, w, h))
             })
             .collect();
+        if !scene.is_empty() && x11_scene.is_empty() {
+            log::warn!(
+                "[compositor] scene has {} entries but x11_scene is empty (ID lookup failed)",
+                scene.len()
+            );
+        }
+        let tracked = compositor.tracked_window_count();
+        if !x11_scene.is_empty() && tracked == 0 {
+            log::warn!(
+                "[compositor] x11_scene has {} entries but compositor tracks 0 windows",
+                x11_scene.len()
+            );
+        }
         let _ = self.conn.flush();
         Ok(compositor.render_frame(&x11_scene))
     }
