@@ -443,59 +443,6 @@ fn read_commands_from_fd<F: AsFd>(fd: F, buf: &mut String) -> io::Result<Vec<Str
     Ok(cmds)
 }
 
-// --- Crash restart backoff ---
-
-struct RestartBackoff {
-    consecutive_crashes: u32,
-    last_start: Option<Instant>,
-}
-
-impl RestartBackoff {
-    fn new() -> Self {
-        Self {
-            consecutive_crashes: 0,
-            last_start: None,
-        }
-    }
-
-    fn on_start(&mut self) {
-        self.last_start = Some(Instant::now());
-    }
-
-    fn on_crash(&mut self) -> Duration {
-        // If JWM ran for > 30s, it's not a startup crash — reset counter
-        if let Some(started) = self.last_start {
-            if started.elapsed() > Duration::from_secs(30) {
-                self.consecutive_crashes = 0;
-            }
-        }
-        self.consecutive_crashes += 1;
-
-        const MAX_CRASHES: u32 = 10;
-        const MAX_DELAY_SECS: u64 = 30;
-
-        if self.consecutive_crashes > MAX_CRASHES {
-            log_line(&format!(
-                "JWM连续崩溃 {} 次，停止自动重启",
-                self.consecutive_crashes
-            ));
-            return Duration::from_secs(u64::MAX); // sentinel: don't restart
-        }
-
-        // Exponential backoff: 1s, 2s, 4s, 8s, 16s, 30s, 30s, ...
-        let delay = (1u64 << (self.consecutive_crashes - 1).min(5)).min(MAX_DELAY_SECS);
-        log_line(&format!(
-            "第 {} 次崩溃，等待 {}s 后重启",
-            self.consecutive_crashes, delay
-        ));
-        Duration::from_secs(delay)
-    }
-
-    fn on_successful_stop(&mut self) {
-        self.consecutive_crashes = 0;
-    }
-}
-
 // --- Daemon main loop ---
 
 fn run_daemon(jwm_binary: PathBuf, backend: Option<String>) -> io::Result<()> {
@@ -538,9 +485,7 @@ fn run_daemon(jwm_binary: PathBuf, backend: Option<String>) -> io::Result<()> {
     log_line(&format!("控制管道: {}", control_pipe.display()));
 
     let mut mgr = JwmManager::new(jwm_binary, backend);
-    let mut backoff = RestartBackoff::new();
     let _ = mgr.start();
-    backoff.on_start();
 
     log_line("开始主循环，监听命令...");
 
@@ -568,18 +513,14 @@ fn run_daemon(jwm_binary: PathBuf, backend: Option<String>) -> io::Result<()> {
                     match cmd.as_str() {
                         "restart" => {
                             mgr.restart();
-                            backoff.on_successful_stop();
-                            backoff.on_start();
                             write_response(&resp_path, "restart_done");
                         }
                         "stop" => {
                             mgr.stop();
-                            backoff.on_successful_stop();
                             write_response(&resp_path, "stop_done");
                         }
                         "start" => {
                             let _ = mgr.start();
-                            backoff.on_start();
                             write_response(&resp_path, "start_done");
                         }
                         "quit" => {
@@ -608,19 +549,11 @@ fn run_daemon(jwm_binary: PathBuf, backend: Option<String>) -> io::Result<()> {
         // Check JWM process health
         if let Some(pid) = mgr.jwm_pid {
             if kill(Pid::from_raw(pid), None).is_err() {
-                log_line("检测到JWM意外退出");
+                log_line(&format!("检测到JWM意外退出 (PID: {}), 守护进程一并退出", pid));
                 mgr.jwm_pid = None;
                 mgr.jwm_child = None;
-
-                let delay = backoff.on_crash();
-                if delay.as_secs() == u64::MAX {
-                    // Too many crashes, stop trying
-                    continue;
-                }
-                log_line(&format!("等待 {}s 后重新启动...", delay.as_secs()));
-                thread::sleep(delay);
-                let _ = mgr.start();
-                backoff.on_start();
+                cleanup_resources(&control_pipe);
+                return Ok(());
             } else {
                 // Reap zombie
                 let _ = waitpid(Pid::from_raw(pid), Some(WaitPidFlag::WNOHANG));

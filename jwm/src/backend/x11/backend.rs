@@ -351,13 +351,19 @@ impl Backend for X11Backend {
                 scene.len()
             );
         }
-        let tracked = compositor.tracked_window_count();
-        if !x11_scene.is_empty() && tracked == 0 {
-            log::warn!(
-                "[compositor] x11_scene has {} entries but compositor tracks 0 windows",
-                x11_scene.len()
-            );
+        // Lazily register any windows in the scene that the compositor doesn't
+        // yet track.  This happens for windows that were already mapped before
+        // the compositor was initialised (e.g. during setup_initial_windows).
+        for &(x11w, x, y, w, h) in &x11_scene {
+            if !compositor.has_window(x11w) && x11w != self.root_x11 {
+                log::info!(
+                    "[compositor] lazily adding untracked window 0x{:x} {}x{} at ({},{})",
+                    x11w, w, h, x, y
+                );
+                compositor.add_window(x11w, x, y, w, h);
+            }
         }
+
         let _ = self.conn.flush();
         Ok(compositor.render_frame(&x11_scene))
     }

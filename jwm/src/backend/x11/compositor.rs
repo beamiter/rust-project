@@ -660,6 +660,12 @@ impl Compositor {
         ];
 
         let glx_pixmap = unsafe {
+            // Sync X state before GLX call — the x11rb conn and Xlib display are
+            // separate connections so we must ensure the pixmap is visible on the
+            // server before the Xlib side tries to use it.
+            let _ = self.conn.flush();
+            x11::xlib::XSync(self.xlib_display, 0);
+
             x11::glx::glXCreatePixmap(
                 self.xlib_display,
                 fbconfig,
@@ -688,8 +694,11 @@ impl Compositor {
             }
         };
 
-        // Bind texture
+        // Bind texture — trap X errors in case the window/pixmap is already gone
         unsafe {
+            x11::xlib::XSync(self.xlib_display, 0);
+            let _prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+
             self.gl.bind_texture(glow::TEXTURE_2D, Some(gl_texture));
             self.gl.tex_parameter_i32(
                 glow::TEXTURE_2D,
@@ -718,6 +727,9 @@ impl Compositor {
                 std::ptr::null(),
             );
             self.gl.bind_texture(glow::TEXTURE_2D, None);
+
+            x11::xlib::XSync(self.xlib_display, 0);
+            x11::xlib::XSetErrorHandler(_prev_handler);
         }
 
         self.windows.insert(
@@ -815,6 +827,7 @@ impl Compositor {
                     0,
                 ];
                 let glx_pixmap = unsafe {
+                    x11::xlib::XSync(self.xlib_display, 0);
                     x11::glx::glXCreatePixmap(
                         self.xlib_display,
                         fbconfig,
@@ -829,6 +842,7 @@ impl Compositor {
 
                 // Re-bind
                 unsafe {
+                    let _prev = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
                     self.gl.bind_texture(glow::TEXTURE_2D, Some(wt.gl_texture));
                     (self.tfp.bind)(
                         self.xlib_display,
@@ -837,6 +851,8 @@ impl Compositor {
                         std::ptr::null(),
                     );
                     self.gl.bind_texture(glow::TEXTURE_2D, None);
+                    x11::xlib::XSync(self.xlib_display, 0);
+                    x11::xlib::XSetErrorHandler(_prev);
                 }
 
                 wt.pixmap = pixmap;
@@ -892,11 +908,17 @@ impl Compositor {
             );
         }
 
-        // Refresh dirty textures
+        // Refresh dirty textures — trap X errors so a dead pixmap doesn't crash us
         for &(win, _, _, _, _) in scene {
             if let Some(wt) = self.windows.get_mut(&win) {
                 if wt.dirty {
                     unsafe {
+                        // Sync + trap X errors around TFP release/bind so that a
+                        // destroyed window's pixmap doesn't cause a fatal X error.
+                        x11::xlib::XSync(self.xlib_display, 0);
+                        let _prev_handler =
+                            x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+
                         self.gl.bind_texture(glow::TEXTURE_2D, Some(wt.gl_texture));
                         (self.tfp.release)(
                             self.xlib_display,
@@ -910,6 +932,9 @@ impl Compositor {
                             std::ptr::null(),
                         );
                         self.gl.bind_texture(glow::TEXTURE_2D, None);
+
+                        x11::xlib::XSync(self.xlib_display, 0);
+                        x11::xlib::XSetErrorHandler(_prev_handler);
                     }
                     wt.dirty = false;
                 }
@@ -987,6 +1012,14 @@ impl Compositor {
     pub(super) fn has_window(&self, x11_win: u32) -> bool {
         self.windows.contains_key(&x11_win)
     }
+}
+
+/// Dummy X error handler used to suppress errors from stale TFP pixmaps.
+unsafe extern "C" fn ignore_x_error(
+    _display: *mut x11::xlib::Display,
+    _event: *mut x11::xlib::XErrorEvent,
+) -> i32 {
+    0
 }
 
 // Orthographic projection matrix (column-major for OpenGL)
