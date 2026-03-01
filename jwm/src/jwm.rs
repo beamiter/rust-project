@@ -3223,6 +3223,19 @@ impl Jwm {
                 // No animations but compositor still needs to render
                 // (window contents may have updated via damage)
                 let scene = self.build_compositor_scene(&HashMap::new());
+                if scene.is_empty() {
+                    // Log once per second at most
+                    static LAST_EMPTY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+                    let now = std::time::SystemTime::now()
+                        .duration_since(std::time::UNIX_EPOCH)
+                        .unwrap_or_default()
+                        .as_secs();
+                    let prev = LAST_EMPTY.load(std::sync::atomic::Ordering::Relaxed);
+                    if now > prev {
+                        LAST_EMPTY.store(now, std::sync::atomic::Ordering::Relaxed);
+                        log::warn!("[tick_animations] compositor scene is EMPTY (no windows to render)");
+                    }
+                }
                 let _ = backend.compositor_render_frame(&scene);
             }
             return;

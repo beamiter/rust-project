@@ -883,6 +883,25 @@ impl Compositor {
     /// `scene` is an ordered list of (x11_win, x, y, w, h) from bottom to top.
     /// Returns true if a frame was rendered.
     pub(super) fn render_frame(&mut self, scene: &[(u32, i32, i32, u32, u32)]) -> bool {
+        // One-time log to confirm rendering is happening
+        static RENDER_LOG_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+        let count = RENDER_LOG_COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        if count < 5 || count % 500 == 0 {
+            log::info!(
+                "[compositor::render_frame] frame={} scene={} tracked={}",
+                count,
+                scene.len(),
+                self.windows.len()
+            );
+            for &(win, x, y, w, h) in scene {
+                let tracked = self.windows.contains_key(&win);
+                log::info!(
+                    "  win=0x{:x} at ({},{}) {}x{} tracked={}",
+                    win, x, y, w, h, tracked
+                );
+            }
+        }
+
         // Diagnostics: log mismatches between scene and tracked windows
         if !scene.is_empty() {
             let mut drawn = 0usize;
