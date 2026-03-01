@@ -226,9 +226,25 @@ impl Compositor {
             log::info!("GLX extensions: {ext_str}");
         }
 
-        log::info!("compositor: choosing FBConfig for GLX context...");
-        // 7. Choose FBConfig for GLX context
-        let ctx_attrs: Vec<i32> = vec![
+        // 7. Choose FBConfig for GLX context.
+        // We must pick an FBConfig whose visual matches the overlay window's
+        // visual — otherwise glXCreateWindow / glXMakeContextCurrent will fail
+        // (or even segfault) due to the visual mismatch.
+        let overlay_visual_id = {
+            let attrs = conn
+                .get_window_attributes(overlay_window)
+                .map_err(|e| format!("get_window_attributes(overlay): {e}"))?
+                .reply()
+                .map_err(|e| format!("overlay attrs reply: {e}"))?;
+            attrs.visual
+        };
+        log::info!(
+            "compositor: overlay visual=0x{:x}, choosing matching FBConfig...",
+            overlay_visual_id
+        );
+
+        // First try: request an FBConfig matching the overlay's exact visual.
+        let ctx_attrs_visual: Vec<i32> = vec![
             x11::glx::GLX_RENDER_TYPE,
             x11::glx::GLX_RGBA_BIT,
             x11::glx::GLX_DRAWABLE_TYPE,
@@ -241,8 +257,6 @@ impl Compositor {
             8,
             x11::glx::GLX_BLUE_SIZE,
             8,
-            x11::glx::GLX_ALPHA_SIZE,
-            8,
             0,
         ];
 
@@ -251,16 +265,40 @@ impl Compositor {
             x11::glx::glXChooseFBConfig(
                 xlib_display,
                 screen_num,
-                ctx_attrs.as_ptr(),
+                ctx_attrs_visual.as_ptr(),
                 &mut n_configs,
             )
         };
         if configs.is_null() || n_configs == 0 {
             return Err("No suitable GLX FBConfig found".into());
         }
-        log::info!("compositor: found {} FBConfigs for context", n_configs);
-        let ctx_fbconfig = unsafe { *configs };
-        unsafe { x11::xlib::XFree(configs as *mut _) };
+
+        // Pick the first FBConfig whose visual matches the overlay window.
+        let mut ctx_fbconfig: x11::glx::GLXFBConfig = std::ptr::null_mut();
+        unsafe {
+            for i in 0..n_configs {
+                let cfg = *configs.offset(i as isize);
+                let vi = x11::glx::glXGetVisualFromFBConfig(xlib_display, cfg);
+                if !vi.is_null() {
+                    let vid = (*vi).visualid;
+                    x11::xlib::XFree(vi as *mut _);
+                    if vid == overlay_visual_id as u64 {
+                        ctx_fbconfig = cfg;
+                        break;
+                    }
+                }
+            }
+            // Fallback: if no exact match, just use the first config
+            if ctx_fbconfig.is_null() {
+                log::warn!(
+                    "compositor: no FBConfig matching overlay visual 0x{:x}, using first available",
+                    overlay_visual_id
+                );
+                ctx_fbconfig = *configs;
+            }
+            x11::xlib::XFree(configs as *mut _);
+        }
+        log::info!("compositor: found matching FBConfig for context (from {} candidates)", n_configs);
 
         // 8. Create GLX context
         log::info!("compositor: creating GLX context...");
