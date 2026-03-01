@@ -226,6 +226,7 @@ impl Compositor {
             log::info!("GLX extensions: {ext_str}");
         }
 
+        log::info!("compositor: choosing FBConfig for GLX context...");
         // 7. Choose FBConfig for GLX context
         let ctx_attrs: Vec<i32> = vec![
             x11::glx::GLX_RENDER_TYPE,
@@ -257,10 +258,12 @@ impl Compositor {
         if configs.is_null() || n_configs == 0 {
             return Err("No suitable GLX FBConfig found".into());
         }
+        log::info!("compositor: found {} FBConfigs for context", n_configs);
         let ctx_fbconfig = unsafe { *configs };
         unsafe { x11::xlib::XFree(configs as *mut _) };
 
         // 8. Create GLX context
+        log::info!("compositor: creating GLX context...");
         let glx_context = unsafe {
             x11::glx::glXCreateNewContext(
                 xlib_display,
@@ -274,6 +277,7 @@ impl Compositor {
             return Err("glXCreateNewContext failed".into());
         }
 
+        log::info!("compositor: GLX context created, checking direct rendering...");
         // 8b. Require direct rendering — indirect GLX (e.g. in Xephyr) cannot
         //     do texture-from-pixmap because the pixmaps live in the nested
         //     server's address space, not the host GPU's.
@@ -287,6 +291,7 @@ impl Compositor {
             return Err("GLX context is indirect; compositor requires direct rendering".into());
         }
 
+        log::info!("compositor: direct rendering OK, creating GLX window on overlay 0x{:x}...", overlay_window);
         // 9. Create GLX window on the overlay
         let glx_drawable = unsafe {
             x11::glx::glXCreateWindow(
@@ -300,6 +305,7 @@ impl Compositor {
             return Err("glXCreateWindow failed".into());
         }
 
+        log::info!("compositor: GLX window created, making context current...");
         // Make context current
         let ok = unsafe {
             x11::glx::glXMakeContextCurrent(
@@ -313,6 +319,7 @@ impl Compositor {
             return Err("glXMakeContextCurrent failed".into());
         }
 
+        log::info!("compositor: context current OK, loading TFP extension functions...");
         // 10. Load TFP extension functions
         let bind_name = CString::new("glXBindTexImageEXT").unwrap();
         let release_name = CString::new("glXReleaseTexImageEXT").unwrap();
@@ -328,6 +335,7 @@ impl Compositor {
             release: unsafe { std::mem::transmute(release_ptr.unwrap()) },
         };
 
+        log::info!("compositor: TFP functions loaded, enabling VSync...");
         // 11. Try to enable VSync
         {
             let swap_name = CString::new("glXSwapIntervalEXT").unwrap();
@@ -339,6 +347,7 @@ impl Compositor {
             }
         }
 
+        log::info!("compositor: finding TFP FBConfigs...");
         // 12. Find FBConfigs for TFP (RGBA and RGB)
         let tfp_rgba_attrs: Vec<i32> = vec![
             x11::glx::GLX_DRAWABLE_TYPE,
@@ -409,8 +418,14 @@ impl Compositor {
         if fbconfig_rgba.is_null() && fbconfig_rgb.is_null() {
             return Err("No FBConfig for texture_from_pixmap".into());
         }
+        log::info!(
+            "compositor: TFP FBConfigs: rgba={} rgb={}",
+            !fbconfig_rgba.is_null(),
+            !fbconfig_rgb.is_null()
+        );
 
         // 13. Create glow GL context
+        log::info!("compositor: creating glow GL context...");
         let gl = unsafe {
             glow::Context::from_loader_function(|name| {
                 let cname = CString::new(name).unwrap();
@@ -421,6 +436,7 @@ impl Compositor {
             })
         };
 
+        log::info!("compositor: glow GL context created, compiling shaders...");
         // 14. Compile shaders and create program
         let program = unsafe { Self::create_program(&gl)? };
 
