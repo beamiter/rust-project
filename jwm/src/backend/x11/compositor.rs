@@ -201,6 +201,12 @@ impl Compositor {
         if xlib_display.is_null() {
             return Err("XOpenDisplay failed".into());
         }
+        // Install a no-op error handler for this Xlib display permanently.
+        // The default Xlib handler calls exit() on ANY X error, which would
+        // kill the entire WM for benign issues like stale pixmaps.
+        unsafe {
+            x11::xlib::XSetErrorHandler(Some(ignore_x_error));
+        }
 
         let screen_num = unsafe { x11::xlib::XDefaultScreen(xlib_display) };
 
@@ -584,6 +590,10 @@ impl Compositor {
         if w == 0 || h == 0 {
             return;
         }
+        log::info!(
+            "compositor: add_window START 0x{:x} {}x{} at ({},{})",
+            x11_win, w, h, x, y
+        );
 
         // Create damage
         let damage_id = match self.conn.generate_id() {
@@ -615,7 +625,7 @@ impl Compositor {
             let _ = self.conn.damage_destroy(damage_id);
             return;
         }
-
+        // Flush x11rb AND sync Xlib so the pixmap XID is visible to GLX.
         let _ = self.conn.flush();
 
         // Determine if we use RGBA or RGB fbconfig based on the window's depth.
@@ -659,11 +669,13 @@ impl Compositor {
             0,
         ];
 
+        log::info!(
+            "compositor: add_window 0x{:x} depth={} rgba={} pixmap=0x{:x}, calling glXCreatePixmap...",
+            x11_win, win_depth, use_rgba, pixmap
+        );
         let glx_pixmap = unsafe {
-            // Sync X state before GLX call — the x11rb conn and Xlib display are
-            // separate connections so we must ensure the pixmap is visible on the
-            // server before the Xlib side tries to use it.
-            let _ = self.conn.flush();
+            // Sync both connections so the Xlib display can see the pixmap
+            // created by x11rb.
             x11::xlib::XSync(self.xlib_display, 0);
 
             x11::glx::glXCreatePixmap(
@@ -673,6 +685,7 @@ impl Compositor {
                 pixmap_attrs.as_ptr(),
             )
         };
+        log::info!("compositor: glXCreatePixmap returned 0x{:x}", glx_pixmap);
         if glx_pixmap == 0 {
             log::warn!("compositor: glXCreatePixmap failed for 0x{x11_win:x}");
             let _ = self.conn.free_pixmap(pixmap);
@@ -694,11 +707,9 @@ impl Compositor {
             }
         };
 
-        // Bind texture — trap X errors in case the window/pixmap is already gone
+        // Bind texture
+        log::info!("compositor: add_window 0x{:x} binding TFP texture...", x11_win);
         unsafe {
-            x11::xlib::XSync(self.xlib_display, 0);
-            let _prev_handler = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
-
             self.gl.bind_texture(glow::TEXTURE_2D, Some(gl_texture));
             self.gl.tex_parameter_i32(
                 glow::TEXTURE_2D,
@@ -727,10 +738,8 @@ impl Compositor {
                 std::ptr::null(),
             );
             self.gl.bind_texture(glow::TEXTURE_2D, None);
-
-            x11::xlib::XSync(self.xlib_display, 0);
-            x11::xlib::XSetErrorHandler(_prev_handler);
         }
+        log::info!("compositor: add_window 0x{:x} COMPLETE", x11_win);
 
         self.windows.insert(
             x11_win,
@@ -842,7 +851,6 @@ impl Compositor {
 
                 // Re-bind
                 unsafe {
-                    let _prev = x11::xlib::XSetErrorHandler(Some(ignore_x_error));
                     self.gl.bind_texture(glow::TEXTURE_2D, Some(wt.gl_texture));
                     (self.tfp.bind)(
                         self.xlib_display,
@@ -851,8 +859,6 @@ impl Compositor {
                         std::ptr::null(),
                     );
                     self.gl.bind_texture(glow::TEXTURE_2D, None);
-                    x11::xlib::XSync(self.xlib_display, 0);
-                    x11::xlib::XSetErrorHandler(_prev);
                 }
 
                 wt.pixmap = pixmap;
@@ -908,17 +914,11 @@ impl Compositor {
             );
         }
 
-        // Refresh dirty textures — trap X errors so a dead pixmap doesn't crash us
+        // Refresh dirty textures
         for &(win, _, _, _, _) in scene {
             if let Some(wt) = self.windows.get_mut(&win) {
                 if wt.dirty {
                     unsafe {
-                        // Sync + trap X errors around TFP release/bind so that a
-                        // destroyed window's pixmap doesn't cause a fatal X error.
-                        x11::xlib::XSync(self.xlib_display, 0);
-                        let _prev_handler =
-                            x11::xlib::XSetErrorHandler(Some(ignore_x_error));
-
                         self.gl.bind_texture(glow::TEXTURE_2D, Some(wt.gl_texture));
                         (self.tfp.release)(
                             self.xlib_display,
@@ -932,9 +932,6 @@ impl Compositor {
                             std::ptr::null(),
                         );
                         self.gl.bind_texture(glow::TEXTURE_2D, None);
-
-                        x11::xlib::XSync(self.xlib_display, 0);
-                        x11::xlib::XSetErrorHandler(_prev_handler);
                     }
                     wt.dirty = false;
                 }
